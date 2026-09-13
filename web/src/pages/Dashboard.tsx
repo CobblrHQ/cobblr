@@ -233,6 +233,9 @@ function PutAwayCard({ slug }: { slug: string }) {
   });
   const unfiled = q.data?.unfiled ?? 0;
   const ready = q.data?.ready ?? 0;
+  // A receipt whose read failed has no rows of its own; it is a state on its
+  // session, and the same count the inbox header shows (#2892).
+  const failedReads = q.data?.failed_reads ?? 0;
   // Warm the plan the moment the card shows a count (debounced so a scanning
   // burst settles first): the click should REVEAL a plan, not start one. The
   // server dedupes by backlog fingerprint, so repeats are free.
@@ -243,12 +246,14 @@ function PutAwayCard({ slug }: { slug: string }) {
     }, 5_000);
     return () => clearTimeout(t);
   }, [slug, unfiled, ready]);
-  if (unfiled === 0 && ready === 0) return null;
+  if (unfiled === 0 && ready === 0 && failedReads === 0) return null;
   // Acknowledge BOTH: things that still need a home AND things already set,
-  // just waiting to be physically put away.
+  // just waiting to be physically put away. And a receipt that could not be
+  // read, which needs a person before it has any items at all.
   const parts: string[] = [];
   if (unfiled > 0) parts.push(`${unfiled} scanned item${unfiled === 1 ? "" : "s"} without a home`);
   if (ready > 0) parts.push(`${ready} ready to put away`);
+  if (failedReads > 0) parts.push(`${failedReads} receipt${failedReads === 1 ? "" : "s"} that couldn't be read`);
   return (
     // Stack until there's room for a real side-by-side. `flex-wrap` did NOT save
     // this: the copy is flex-1 + min-w-0, so it SHRANK to whatever the button
@@ -266,15 +271,17 @@ function PutAwayCard({ slug }: { slug: string }) {
             {parts.join(", and ")}.
           </div>
           <div className="text-xs text-muted dark:text-slate-400">
-            Preview where everything should go - nothing moves until you confirm.
+            {unfiled === 0 && ready === 0
+              ? "Open the session to see why, and read it again."
+              : "Preview where everything should go - nothing moves until you confirm."}
           </div>
         </div>
       </div>
       <Link
-        to="/scan?view=plan"
+        to={unfiled === 0 && ready === 0 ? "/scan" : "/scan?view=plan"}
         className="inline-flex items-center gap-1.5 rounded-lg bg-cobble-600 hover:bg-cobble-700 text-white px-3 py-1.5 text-sm font-medium transition shrink-0"
       >
-        Put them away <ArrowRight size={14} />
+        {unfiled === 0 && ready === 0 ? "Open the inbox" : "Put them away"} <ArrowRight size={14} />
       </Link>
     </section>
   );
@@ -483,6 +490,8 @@ function AttentionFeed({ slug }: { slug: string }) {
     queryFn: () => api.getAttention(slug, today),
     enabled: !!slug,
     staleTime: 30_000,
+    // A feed over every kind: any action re-reads it (platform-web run-action).
+    meta: { kinds: "*" },
     refetchInterval: 60_000,
   });
   // pending_scans is dropped HERE (not in the endpoint): the dashboard already
@@ -2174,7 +2183,7 @@ function ActivityGroupRow({ group, labels }: { group: ActivityGroup; labels: Kin
     <>{activityTitle(first, labels)}</>
   ) : (
     <>
-      <strong>{group.items.length}</strong> {group.items.length === 1 ? noun : pluralise(noun)}
+      <strong>{group.items.length}</strong> {group.items.length === 1 ? noun : labels.plural(activityKind(first))}
       {distinct.length > 0 && (
         <span className="text-faint dark:text-slate-400"> — {distinct.slice(0, 2).join(", ")}{distinct.length > 2 ? ", …" : ""}</span>
       )}
@@ -2314,6 +2323,9 @@ function humanAction(a: string): string {
     user_created: "joined",
     pairing_created: "linked",
     pairing_deleted: "unlinked",
+    // A boot pass moved the record to the table its fields belong to (the
+    // Groceries base-kind twin, 2026-09-13); the row says so, not "system".
+    moved_by_upgrade: "moved into its own table by the upgrade:",
     // "ran a wire" read as jargon to a new user (2026-09-12): the row is
     // "<actor> <verb> <event -> action>", so the verb says what happened.
     wire_fired: "ran an automation",

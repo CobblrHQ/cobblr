@@ -20,6 +20,7 @@ import { useQuery } from "@tanstack/react-query";
 import { Printer } from "lucide-react";
 import { usePlatformWeb } from "./context";
 import { useInvokeEntityAction } from "./use-invoke-action";
+import { ActionOutcome } from "./ActionOutcome";
 import { AskCobbAbout } from "./AskCobbAbout";
 
 /** The action whose chip lives up here rather than in the strip. */
@@ -62,8 +63,9 @@ function PrintChip({
   id: string;
   action: { id: string; label: string; description: string | null; invoke_route: string | null; invoke_handler: string | null };
 }) {
-  const { run, flash, pending } = useInvokeEntityAction({ entityKind: kind, entityId: id });
+  const { run, flash, failure, dismissFailure, note, pending } = useInvokeEntityAction({ entityKind: kind, entityId: id });
   return (
+    <>
     <button
       type="button"
       disabled={pending}
@@ -85,5 +87,7 @@ function PrintChip({
       <Printer size={10} />
       {flash === "ok" ? "queued" : flash === "err" ? "err" : pending ? "…" : action.label}
     </button>
+    <ActionOutcome note={note} failure={failure} onDismiss={dismissFailure} />
+    </>
   );
 }

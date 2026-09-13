@@ -1,0 +1,9 @@
+{
+  "_about": "What the real model answered on staging for a typed code no catalog knows (#2918): it made a name up. The row must not adopt it.",
+  "match": "\"barcode\":\"6299999999998\"",
+  "rounds": [
+    {
+      "content": "{\"candidates\": [{\"module\": \"inventory\", \"instance\": null, \"kind\": \"inventory:part\", \"label\": \"Inventory\", \"name\": \"Unidentified Item\", \"confidence\": 0.5, \"fields\": {}, \"notes\": \"No catalog knows this code; filed under Inventory as an unidentified item.\"}]}"
+    }
+  ]
+}

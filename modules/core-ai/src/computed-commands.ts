@@ -15,6 +15,8 @@
 import type { Operation } from "./learned-commands.js";
 import type { WorkspaceApi } from "@cobblr/workspace-tools";
 import { getTool, fetchKinds } from "@cobblr/workspace-tools";
+import { rankFits, type FitTable } from "@cobblr/platform-contract/table-fit";
+import { fitTablesFor } from "./table-fit-menu.js";
 import { pluralise } from "@cobblr/platform-contract";
 
 export interface ComputedPlan {
@@ -23,18 +25,72 @@ export interface ComputedPlan {
   /** A true thing about the plan that is not part of it: what it found and
    *  did NOT touch. "5 more tea are in other lists" belongs here, because a
    *  plan that quietly moves 2 of 7 is precise and unhelpful, and one that
-   *  moves all 7 when the page held 2 is helpful and wrong. */
+   *  moves all 7 when the page held 2 is helpful and wrong. A SENTENCE, never
+   *  a list: the records it counts are `also`, one bullet each on the card,
+   *  and the sentence ends where that list begins (the owner, 2026-09-13,
+   *  on a note that hid five records behind "and 2 more" in parentheses). */
   note?: string;
   /** Everything it touches, one per line, by what a person calls it. The
    *  summary names a few; this is the whole list, for the card to fold. */
   lines?: string[];
   operations: Operation[];
-  /** What the plan saw in its scope and did NOT take, by id: the records the
-   *  word did not reach. A later card can be built from these when the model
-   *  names some of them as covered after all. */
-  also?: Array<{ id: string; title: string }>;
+  /** What the plan saw in its scope and did NOT take, by id and kind: the
+   *  records the word did not reach, every one, so the card draws each as
+   *  its own record link. `why` says what kept it out when the reason is
+   *  per record ("no category"). A later card can be built from these when
+   *  the model names some of them as covered after all. */
+  also?: Array<{ id: string; title: string; kind?: string; why?: string }>;
+  /** The continuation after the list: what pressing Enter would do about
+   *  the records the plan left ("Send the message and Cobb will look through
+   *  them."). Its own line, so the reply card, where the message has been
+   *  sent, can leave it out. */
+  hint?: string;
+  /** The label over the records the plan left, with their count: "Left in
+   *  Inventory, could not tell (6):". A block of records under a sentence
+   *  that read like a plan had the person asking why they were listed (the
+   *  owner, 2026-09-13); the label says what the block is. */
+  leftHeading?: string;
   /** Where the plan puts things, for that later card to put more. */
   to?: { name: string; label: string };
+  /** One per destination: what goes where, with only that destination's
+   *  operations (a new list's create included), so the card can offer each
+   *  on its own and the whole is their sum. The flat `operations` is exactly
+   *  the concatenation, in order. Always present on a plan that groups by
+   *  destination, even with one group left: a card holding a section's key
+   *  from before the other part ran must still be able to name it. The card
+   *  draws sections only when there are two or more. */
+  sections?: PlanSection[];
+}
+
+export interface PlanSection {
+  /** Names the section across a re-computation of the same sentence, so a
+   *  run can say which one: "into:<list>" or "new:<list>". */
+  key: string;
+  /** "4 into Groceries", "2 into a new Spices section". */
+  heading: string;
+  /** The records it moves, by id and kind, so each is a link on the card;
+   *  `why` is the word that put it there when that was the table's own
+   *  vocabulary rather than the person's ("seasoning"). */
+  lines: Array<{ id: string; title: string; kind?: string; why?: string }>;
+  operations: Operation[];
+  note?: string;
+}
+
+/** The label over what a plan left, and how many. */
+export function leftHeadingFor(where: string, count: number): string {
+  return `Left in ${where}, could not tell (${count}):`;
+}
+
+/** The flat plan from its sections: the operations in order, the lines with
+ *  the destination on each, and the parts of the summary. */
+function flatten(sections: PlanSection[], labelOf: (s: PlanSection) => string): { operations: Operation[]; lines: string[] } {
+  const operations: Operation[] = [];
+  const lines: string[] = [];
+  for (const s of sections) {
+    operations.push(...s.operations);
+    for (const l of s.lines) lines.push(`${l.title} → ${labelOf(s)}${l.why ? ` (${l.why})` : ""}`);
+  }
+  return { operations, lines };
 }
 
 export interface ComputedCommand {
@@ -332,19 +388,16 @@ export function moveNote(o: {
   elsewhere: number;
   emptyPage: boolean;
   sources?: string[];
-  /** What else is on the page, by name: the records the word did not reach.
-   *  "All the other grocery" on a kitchen page matched the one record filed
-   *  under Groceries; the eight it had no word for are groceries by
-   *  judgement, and an offer that names one and says nothing of the eight
-   *  looks like the whole answer. It is not, and it says so. */
-  others?: string[];
   /** What the scope is called: a named list ("Pantry"), or the page. */
   where?: string;
 }): string {
   const total = o.here + o.elsewhere;
   const here = o.where ? `in ${o.where}` : "on this page";
   if (o.emptyPage) {
-    const where = (o.sources ?? []).length ? ` (in ${(o.sources ?? []).join(", ")})` : "";
+    // The lists they are in, said as a clause: a parenthesis holding a comma
+    // list is the shape this note gave up.
+    const srcs = o.sources ?? [];
+    const where = srcs.length ? `, in ${srcs.length > 1 ? `${srcs.slice(0, -1).join(", ")} and ${srcs[srcs.length - 1]}` : srcs[0]}` : "";
     return `No ${o.term} ${here}. There ${o.elsewhere === 1 ? "is 1" : `are ${o.elsewhere}`} elsewhere${where}.`;
   }
   const parts: string[] = [];
@@ -354,16 +407,14 @@ export function moveNote(o: {
         `the other ${o.elsewhere} ${o.elsewhere === 1 ? "stays where it is" : "stay where they are"}.`,
     );
   }
-  const others = o.others ?? [];
-  if (others.length) {
-    const named = others.length > 3 ? `${others.slice(0, 3).join(", ")} and ${others.length - 3} more` : others.join(", ");
-    parts.push(
-      `The other ${others.length} ${here} (${named}) ${others.length === 1 ? "says" : "say"} nothing about ${o.term} by name or category. ` +
-        `Send the message and Cobb will look through them.`,
-    );
-  }
+  // What the word did not reach is not a sentence here: those records are the
+  // plan's own labelled block ("Left in Inventory, could not tell (6):"), one
+  // chip each, with the continuation under its label.
   return parts.join(" ");
 }
+
+/** The continuation under the list of what a plan left: what Enter does. */
+export const LOOK_THROUGH_HINT = "Send the message and Cobb will look through them.";
 
 function titleCase(s: string): string {
   return s.replace(/\b[a-z]/g, (c) => c.toUpperCase());
@@ -495,32 +546,47 @@ export const COMPUTED_COMMANDS: ComputedCommand[] = [
       }
       const uncategorised = recs.filter((x) => !x.category);
       if (!moves.size && !promotions.length) return null;
-      const operations: Operation[] = [];
-      const lines: string[] = [];
+      const planSections: PlanSection[] = [];
+      const labels = new Map<string, string>();
       const parts: string[] = [];
       for (const { dest, recs: group } of moves.values()) {
         const label = listNameOf(dest, listNames);
-        operations.push({ tool: "action", entity_kind: "", action_id: "platform:move-records", payload: { ids: group.map((x) => x.id), to: dest.instance_name! } });
-        for (const x of group) lines.push(`${x.title} → ${label}`);
+        const key = `into:${dest.instance_name!}`;
+        labels.set(key, label);
+        planSections.push({
+          key,
+          heading: `${group.length} into ${label}`,
+          lines: group.map((x) => ({ id: x.id, title: x.title, kind: scope.id })),
+          operations: [{ tool: "action", entity_kind: "", action_id: "platform:move-records", payload: { ids: group.map((x) => x.id), to: dest.instance_name! } }],
+        });
         parts.push(`${group.length} into ${label}`);
       }
       for (const { category, recs: group } of promotions) {
         const label = titleCase(category);
-        operations.push({ tool: "action", entity_kind: "", action_id: "platform:promote-category", payload: { from: fromInstance, category, display_name: label } });
-        for (const x of group) lines.push(`${x.title} → ${label} (new section)`);
+        const key = `new:${instanceSlug(category)}`;
+        labels.set(key, `${label} (new section)`);
+        planSections.push({
+          key,
+          heading: `${group.length} into a new ${label} section`,
+          lines: group.map((x) => ({ id: x.id, title: x.title, kind: scope.id })),
+          operations: [{ tool: "action", entity_kind: "", action_id: "platform:promote-category", payload: { from: fromInstance, category, display_name: label } }],
+        });
         parts.push(`${group.length} into a new ${label} section`);
       }
+      const { operations, lines } = flatten(planSections, (s) => labels.get(s.key) ?? "");
       const moved = operations.length ? lines.length : 0;
       const list = (xs: string[]) => (xs.length > 1 ? `${xs.slice(0, -1).join(", ")} and ${xs[xs.length - 1]}` : xs[0] ?? "");
-      const left: string[] = [];
-      if (alone.length) left.push(`${alone.length} alone in their category (${alone.map((x) => x.title).join(", ")})`);
-      if (uncategorised.length) left.push(`${uncategorised.length} with no category (${uncategorised.map((x) => x.title).join(", ")})`);
-      const leftRecs = [...alone, ...uncategorised];
+      // The records it left are the card's own labelled block, each with its
+      // reason, none hidden in a parenthesis.
+      const leftRecs = [
+        ...alone.map((x) => ({ id: x.id, title: x.title, kind: scope.id, why: "alone in its category" })),
+        ...uncategorised.map((x) => ({ id: x.id, title: x.title, kind: scope.id, why: "no category" })),
+      ];
       return {
         summary: `Sort ${moved} from ${where}: ${list(parts)}.`,
         lines,
-        ...(left.length ? { note: `Left in ${where}: ${list(left)}. Send the message and Cobb will look through them.` } : {}),
-        ...(leftRecs.length ? { also: leftRecs.map((x) => ({ id: x.id, title: x.title })) } : {}),
+        ...(leftRecs.length ? { leftHeading: leftHeadingFor(where, leftRecs.length), also: leftRecs, hint: LOOK_THROUGH_HINT } : {}),
+        ...(planSections.length ? { sections: planSections } : {}),
         operations,
       };
     },
@@ -609,10 +675,22 @@ export const COMPUTED_COMMANDS: ComputedCommand[] = [
         : undefined;
       const scopeKind = pageIsAList ? pageKind! : namedList?.id;
       const where = namedList && !pageIsAList ? listNameOf(namedList, listNames) : undefined;
-      const found: Array<{ id: string; title: string; module: string; from: string; kind: string; term: string }> = [];
+      // What each named destination IS, by the rule the scan floor routes
+      // with: its noun, the words its bundle declared, its category axis. A
+      // record is matched to a term by that vocabulary in its NAME, or by the
+      // literal word (the person's own term in its name or category). When
+      // it fits several, the narrower table wins: Spices over Groceries.
+      const destKinds = terms.map((t) => (each ? listFor(t) : dest)).filter((k): k is NonNullable<typeof k> => !!k);
+      const fitTables = destKinds.length ? await fitTablesFor(wsApi, destKinds).catch(() => new Map<string, FitTable>()) : new Map<string, FitTable>();
+      const destTables = terms.flatMap((term) => {
+        const k = each ? listFor(term) : dest;
+        const table = k ? fitTables.get(k.id) : undefined;
+        return table ? [{ ...table, term }] : [];
+      });
+      const found: Array<{ id: string; title: string; module: string; from: string; kind: string; term: string; why?: string }> = [];
       // Everything on the page, matched or not, so the offer can name what it
       // is leaving there.
-      const onPage: Array<{ id: string; title: string }> = [];
+      const onPage: Array<{ id: string; title: string; kind: string }> = [];
       for (const k of everywhere) {
         const r = await getTool("list_records")!.execute(wsApi, { kind: k.id, limit: 500 });
         if (!r.ok) continue;
@@ -621,19 +699,40 @@ export const COMPUTED_COMMANDS: ComputedCommand[] = [
           const id = typeof row.id === "string" ? row.id : null;
           if (!id) continue;
           if (selectionIds?.length && !selectionIds.includes(id)) continue;
-          if (scopeKind && k.id === scopeKind) onPage.push({ id, title: typeof row.title === "string" ? row.title : id });
+          if (scopeKind && k.id === scopeKind) onPage.push({ id, title: typeof row.title === "string" ? row.title : id, kind: k.id });
           const what = saidOf(rec);
-          const hit = terms.find((t) => what.some((v) => mentionsWord(v, t)));
+          const literal = terms.find((t) => what.some((v) => mentionsWord(v, t)));
+          const fields = ((rec as { fields?: Record<string, unknown> }).fields ?? {}) as Record<string, unknown>;
+          const title = typeof row.title === "string" ? row.title : id;
+          const fits = destTables.length
+            ? rankFits(
+                {
+                  name: title,
+                  category: typeof fields.category_name === "string" ? fields.category_name : null,
+                  description: typeof fields.description === "string" ? fields.description : null,
+                },
+                destTables,
+                "named",
+              )
+            : [];
+          const best = fits[0];
+          const hit = best?.table.term ?? literal;
           if (!hit) continue;
           // A thing already in its own section is home, not elsewhere.
           if (each && listFor(hit)?.id === k.id) continue;
+          // The word that put it there, when that was the table's vocabulary
+          // and not the person's term; and what it beat, when it fit two.
+          const word = best ? (best.evidence.nameHits[0] ?? best.table.noun) : undefined;
+          const overWhat = best && fits.length > 1 ? fits.slice(1).map((f) => f.table.label) : literal && best && literal !== best.table.term ? [destTables.find((d) => d.term === literal)?.label ?? literal] : [];
+          const why = best && word && !mentionsWord(word, hit) ? `${word}${overWhat.length ? `, over ${overWhat.join(" and ")}` : ""}` : undefined;
           found.push({
             id,
-            title: typeof row.title === "string" ? row.title : id,
+            title,
             module: k.module_name ?? "",
             from: listNameOf(k, listNames),
             kind: k.id,
             term: hit,
+            ...(why ? { why } : {}),
           });
         }
       }
@@ -663,16 +762,19 @@ export const COMPUTED_COMMANDS: ComputedCommand[] = [
         payload: { ids: moving.map((x) => x.id), to: toName },
       };
       const titles = moving.map((x) => x.title);
+      const reasoned = (x: (typeof moving)[number], base: string): string => (x.why ? `${base} (${x.why})` : base);
       const sources = [...new Set(moving.map((x) => x.from))];
       // Where they came from, on every line, when they did not all come from
       // one place. A person who said "from this page" and got things from
       // three lists can see that at a glance instead of finding out after.
       // Where each one is, whenever that is not already obvious: several
       // lists, or a plan the person did not think they were asking for.
-      const named = sources.length > 1 || emptyPage ? moving.map((x) => `${x.title} (in ${x.from})`) : titles;
+      const named = sources.length > 1 || emptyPage ? moving.map((x) => reasoned(x, `${x.title} (in ${x.from})`)) : moving.map((x) => reasoned(x, x.title));
       const left = scoped ? onPage.filter((p) => !here.some((h) => h.id === p.id)) : [];
-      const others = left.map((p) => p.title);
-      const note = moveNote({ term: termWord, here: here.length, elsewhere: elsewhere.length, emptyPage, sources, others, ...(where ? { where } : {}) });
+      const note = moveNote({ term: termWord, here: here.length, elsewhere: elsewhere.length, emptyPage, sources, ...(where ? { where } : {}) });
+      // The block of what it left: its label with the count, and the
+      // continuation under it, only when there is one.
+      const hint = left.length ? { leftHeading: leftHeadingFor(where ?? "this page", left.length), hint: LOOK_THROUGH_HINT } : {};
       if (each) {
         // One group per thing, in the order they were said: the list called
         // that, or a new one named after it. Made lists need one module.
@@ -697,17 +799,26 @@ export const COMPUTED_COMMANDS: ComputedCommand[] = [
           });
         }
         if (!groups.length) return null;
-        const operations: Operation[] = [];
-        const lines: string[] = [];
+        const sections: PlanSection[] = [];
+        const labels = new Map<string, string>();
         const parts: string[] = [];
         for (const g of groups) {
-          if (g.creating) {
-            operations.push({ tool: "action", entity_kind: "", action_id: "platform:create-instance", payload: { module_name: g.module, display_name: g.label, instance_name: g.toName } });
-          }
-          operations.push({ tool: "action", entity_kind: "", action_id: "platform:move-records", payload: { ids: g.recs.map((x) => x.id), to: g.toName } });
-          for (const x of g.recs) lines.push(`${x.title} → ${g.label}${g.creating ? " (new section)" : ""}`);
+          const key = `${g.creating ? "new" : "into"}:${g.toName}`;
+          labels.set(key, `${g.label}${g.creating ? " (new section)" : ""}`);
+          sections.push({
+            key,
+            heading: g.creating ? `${g.recs.length} into a new ${g.label} section` : `${g.recs.length} into ${g.label}`,
+            lines: g.recs.map((x) => ({ id: x.id, title: x.title, kind: x.kind, ...(x.why ? { why: x.why } : {}) })),
+            operations: [
+              ...(g.creating
+                ? [{ tool: "action" as const, entity_kind: "", action_id: "platform:create-instance", payload: { module_name: g.module, display_name: g.label, instance_name: g.toName } }]
+                : []),
+              { tool: "action", entity_kind: "", action_id: "platform:move-records", payload: { ids: g.recs.map((x) => x.id), to: g.toName } },
+            ],
+          });
           parts.push(g.creating ? `${g.recs.length} into a new ${g.label} section` : `${g.recs.length} into ${g.label}`);
         }
+        const { operations, lines } = flatten(sections, (s) => labels.get(s.key) ?? "");
         const list = (xs: string[]) => (xs.length > 1 ? `${xs.slice(0, -1).join(", ")} and ${xs[xs.length - 1]}` : xs[0] ?? "");
         const from = scoped ? ` from ${where ?? "this page"}` : sources.length === 1 ? ` from ${sources[0]}` : sources.length > 1 ? " from every list" : "";
         const none = missing.length ? `No ${missing.join(" or ")} ${where ? `in ${where}` : "on this page"}. ` : "";
@@ -715,6 +826,8 @@ export const COMPUTED_COMMANDS: ComputedCommand[] = [
           summary: `${emptyPage ? "None here. " : ""}Move ${moving.length}${from}: ${list(parts)}.`,
           ...(none || note ? { note: `${none}${note}`.trim() } : {}),
           ...(left.length ? { also: left } : {}),
+          ...hint,
+          ...(sections.length ? { sections } : {}),
           lines,
           operations,
         };
@@ -724,6 +837,7 @@ export const COMPUTED_COMMANDS: ComputedCommand[] = [
           summary: moveHeadline({ titles, label, creating: true, sources, scoped, emptyPage, ...(where ? { where } : {}) }),
           ...(note ? { note } : {}),
           ...(left.length ? { also: left } : {}),
+          ...hint,
           to: { name: toName, label },
           lines: [`New section: ${label}`, ...named],
           operations: [
@@ -741,6 +855,7 @@ export const COMPUTED_COMMANDS: ComputedCommand[] = [
         summary: moveHeadline({ titles, label, creating: false, sources, scoped, emptyPage, ...(where ? { where } : {}) }),
         ...(note ? { note } : {}),
         ...(left.length ? { also: left } : {}),
+        ...hint,
         to: { name: toName, label },
         // One thing is named in the headline; a list of several is named
         // once, in the lines, not twice. When none were on the page, the list

@@ -23,7 +23,7 @@
 // role is left alone and the situation is logged loudly, because dropping the
 // role would destroy the last thing needed to reattach a restored database.
 
-import { Client } from "pg";
+import { createClient } from "../db/client-error-guard.js";
 import { env } from "../env.js";
 import { meta } from "../db/meta.js";
 
@@ -42,8 +42,7 @@ export async function reconcileOrphanTenantRoles(): Promise<OrphanRoleSweep> {
   // URL (a deploy that never provisions tenants) means nothing to do here.
   if (!env.SUPERUSER_DATABASE_URL) return out;
 
-  const client = new Client({ connectionString: env.SUPERUSER_DATABASE_URL });
-  client.on("error", (err) => console.error("[reconcile-tenant-roles] connection error:", (err as Error).message));
+  const client = createClient({ connectionString: env.SUPERUSER_DATABASE_URL }, "reconcile-tenant-roles");
   try {
     await client.connect();
     // One round trip: every tenant-shaped role with no database of the same

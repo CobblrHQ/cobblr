@@ -1,0 +1,7 @@
+{
+  "_fixture": "the crop of the blue set out of the review pack's two-sets-phone.jpg (cropBytes, the split's box, 5% pad)",
+  "_note": "Scripted BLIND on purpose, the way the owner's black crops read: the child must keep what the group photo knew and ask for a look, never take a field invented from this.",
+  "image_ahash": "bffe7e4242787800",
+  "capability": "classify-image",
+  "reply": "{\"observations\":\"The image is entirely dark and obscured, appearing completely black; no discernible objects.\",\"distinct_items\":1,\"items\":[]}"
+}

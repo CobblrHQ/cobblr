@@ -5,7 +5,7 @@
 // each collection's declared field-defs.
 
 import { countOf, itemNounFor, pluralise } from "@cobblr/platform-contract";
-import { useEffect, useState, type FormEvent } from "react";
+import { useCallback, useEffect, useState, type FormEvent } from "react";
 import { useNavigate, useParams, useSearchParams } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Album, ChevronRight, Image as ImageIcon, Plus, Search, Trash2 } from "lucide-react";
@@ -21,6 +21,7 @@ import {
   Modal,
   ViewModeToggle,
   useConfirm,
+  useCreateDoor,
   usePageTitle,
   usePageWidth,
   useToast,
@@ -114,6 +115,8 @@ export function RecordsPage({
     : allRows;
 
   const [newOpen, setNewOpen] = useState(false);
+  // `?new=1` (a view's empty state, a card) opens the form on arrival.
+  const closeCreateDoor = useCreateDoor(useCallback(() => setNewOpen(true), []));
   const [viewMode, setViewMode] = useViewMode("records", "list");
   const openRecord = (rid: string) => openDetail(rid);
 
@@ -210,7 +213,15 @@ export function RecordsPage({
       )}
 
       <RecordDetailModal recordId={selectedId} onClose={closeDetail} instance={instance} noun={noun} />
-      <NewRecordModal open={newOpen} onClose={() => setNewOpen(false)} instance={instance} noun={noun} />
+      <NewRecordModal
+        open={newOpen}
+        onClose={() => {
+          setNewOpen(false);
+          closeCreateDoor();
+        }}
+        instance={instance}
+        noun={noun}
+      />
     </div>
   );
 }

@@ -127,17 +127,8 @@ export function registerScanHandlers(): void {
         userId: ctx.userId,
       });
       if (r.routed) return { ok: true, receipt: true, items: r.items };
-      // Called it a receipt and could not read it. The row is still there, so
-      // say why on it rather than leaving a nameless photo and no explanation.
-      await db
-        .updateTable("core_scan_inbox_items")
-        .set({
-          ai_notes: `That looked like a receipt, but its line items could not be read (${r.reason}). Re-run to identify it as an item instead.`,
-          ai_suggested_at: new Date(),
-          updated_at: new Date(),
-        })
-        .where("id", "=", itemId)
-        .execute();
+      // Called it a receipt and could not read it. The row is still there,
+      // with the reason on it (routeScannedReceiptPhoto wrote the note).
       return { ok: true, receipt: false, skipped: r.reason };
     }
     void platform().events.emit("core-scan.scan.enriched", { orgId: ctx.orgId, itemId });

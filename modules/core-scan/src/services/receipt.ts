@@ -8,7 +8,8 @@
 //                  └ no usable table → parseTextReceipt (line-wise, no AI)
 //                     └ doesn't reconcile → core-ai `chat` on the text
 //   plain text   → parseTextReceipt (no AI) → core-ai `chat`
-//   image        → core-ai `classify-image`  (vision OCR + structuring)
+//   image        → OCR (tesseract, no AI) → parseTextReceipt
+//                  └ no engine, or doesn't reconcile → core-ai `classify-image`
 //   scanned PDF  → no text → "upload a photo instead"
 //
 // The text tier only wins when the line items ADD UP to the receipt's own
@@ -20,10 +21,14 @@
 // — a receipt becomes N parts without retyping. Mirrors the invoice-parse path.
 
 import { platform } from "@cobblr/platform-contract";
+import { classifyAiFailure } from "@cobblr/platform-contract/ai-refusal";
+import { providerReasonOf } from "@cobblr/platform-contract/provider-reason";
+import { receiptReadWords } from "@cobblr/platform-contract/scan-session";
 import { hostedIdentify, hostedIdentifyEnabled, receiptAsModelReply } from "./hosted-identify.js";
 import {
   buildReceipt,
   type ParsedReceipt,
+  type ParseMethod,
   type ReceiptResult,
   enrichReceiptFromText,
 } from "./receipt-shared.js";
@@ -32,7 +37,9 @@ import {
   parseCsvReceipt,
   parsePdfTableReceipt,
 } from "./receipt-deterministic.js";
-import { parseTextReceipt } from "./receipt-text.js";
+import { detectOrderRef, parseTextReceipt } from "./receipt-text.js";
+import { ocrImageText } from "./ocr.js";
+import { readReceiptDate, workspaceConventionFrom, type DateConvention, type ReceiptDateReading } from "./receipt-date.js";
 
 // Re-export the shared types + the pure shaper so existing importers (the route,
 // the unit test) keep their import site.
@@ -169,11 +176,13 @@ async function visionExtract(
   return aiText(r);
 }
 
-function aiError(e: unknown): string {
-  const provider = e instanceof Error && /provider|capability|budget/i.test(e.message);
-  return provider
-    ? "No AI provider is set up for this workspace yet (Configuration → AI)."
-    : "AI is unavailable right now.";
+/** The AI failed: the router's coded reason rides the result (the session's
+ *  verdict reads the code), and the sentence is for the toast. */
+function aiFailed(e: unknown, userId: string | null | undefined): Extract<ReceiptResult, { ok: false }> {
+  const ai = classifyAiFailure(e, { hadUser: !!userId });
+  const ai_reason = providerReasonOf(e) ?? undefined;
+  const words = receiptReadWords({ code: "ai_unavailable", ai, ai_reason, reason: "" });
+  return { ok: false, reason: words.sentence, code: "ai_unavailable", ai, ...(ai_reason ? { ai_reason } : {}) };
 }
 
 /** Extract a text PDF's full text + discovered tables. Either may be empty. */
@@ -195,9 +204,51 @@ async function readPdf(bytes: Buffer): Promise<{ text: string; tables: string[][
   }
 }
 
+/** The convention this workspace's earlier receipts established, read off
+ *  their sessions; null with nothing to go on, or when the tenant cannot be
+ *  read (a unit test's platform has no tenants). */
+async function workspaceDateConvention(orgId: string): Promise<DateConvention | null> {
+  try {
+    const db = (await platform().tenants.getDb(orgId)) as unknown as {
+      selectFrom: (t: string) => {
+        select: (c: string[]) => {
+          where: (c: string, op: string, v: unknown) => {
+            orderBy: (c: string, d: string) => { limit: (n: number) => { execute: () => Promise<Array<{ date_convention: string | null; date_decided_by: string | null }>> } };
+          };
+        };
+      };
+    };
+    const rows = await db
+      .selectFrom("core_scan_batches")
+      .select(["date_convention", "date_decided_by"])
+      .where("date_convention", "is not", null)
+      .orderBy("created_at", "desc")
+      .limit(50)
+      .execute();
+    return workspaceConventionFrom(rows);
+  } catch {
+    return null;
+  }
+}
+
 /** Parse a receipt file (CSV, PDF, or image, already stored in core-files) into
  *  a ParsedReceipt. Deterministic tiers run first; AI is the fallback. Never
  *  throws — every failure is a typed `{ ok:false, reason }`. */
+/**
+ * What the receipt prints, read from its text onto a parse that left it
+ * null: the order reference, then the header meta (vendor, date, total,
+ * currency) and what the lines cannot say (seller, totals, arrival). The
+ * one rule for every tier, so a field printed on the paper reaches the
+ * session whether the lines came from a table, the line parser, the OCR
+ * engine or a model. A value the tier established stands. No text, no
+ * change.
+ */
+export function printedReceiptMeta(receipt: ParsedReceipt, text: string | null | undefined): ParsedReceipt {
+  if (!text?.trim()) return receipt;
+  const withRef = { ...receipt, order_ref: receipt.order_ref ?? detectOrderRef(text) };
+  return enrichReceiptFromText(enrichReceiptMeta(withRef, text), text);
+}
+
 export async function parseReceipt(
   orgId: string,
   fileId: string,
@@ -212,10 +263,29 @@ export async function parseReceipt(
   const isImage = mime.startsWith("image/");
   const looksCsv = /csv|excel|spreadsheet/.test(mime) || (!isPdf && !isImage);
 
+  // Every successful tier goes out through here. What the receipt PRINTS is
+  // read from its own text at this one door, whichever tier read the lines:
+  // the order reference and the header meta (printedReceiptMeta, #2964), and
+  // the date by the platform's rule (receipt-date.ts), never left to a
+  // model's habit, with the reading riding the result so the session can
+  // record which way round a numeric date went (#2917). A value a tier
+  // already established (a model-read order reference) stands; the text
+  // fills only what the tier left null. A tier with no text (vision on a
+  // machine with no OCR engine) keeps the model's answer and says so.
+  const done = async (parsed: ParsedReceipt, method: ParseMethod, text: string | null): Promise<ReceiptResult> => {
+    const receipt = printedReceiptMeta(parsed, text);
+    const reading: ReceiptDateReading = readReceiptDate({
+      text,
+      iso: receipt.date,
+      workspace: text ? await workspaceDateConvention(orgId) : null,
+    });
+    return { ok: true, receipt: { ...receipt, date: reading.date ?? receipt.date }, method, date_reading: reading };
+  };
+
   // ── Tier 1: CSV (deterministic) ────────────────────────────────────────────
   if (looksCsv && !isPdf && !isImage) {
     const csv = parseCsvReceipt(bytes.toString("utf8"));
-    if (csv) return { ok: true, receipt: csv, method: "csv" };
+    if (csv) return done(csv, "csv", bytes.toString("utf8"));
     // A text file that isn't a recognisable CSV → let AI read it as text below.
   }
 
@@ -224,9 +294,7 @@ export async function parseReceipt(
     const pdf = await readPdf(bytes);
     if (!pdf) return { ok: false, reason: "Couldn't read that PDF.", code: "unreadable" };
     const table = parsePdfTableReceipt(pdf.tables);
-    if (table) {
-      return { ok: true, receipt: enrichReceiptMeta(table, pdf.text), method: "pdf-table" };
-    }
+    if (table) return done(table, "pdf-table", pdf.text);
     if (!pdf.text.trim()) {
       return {
         ok: false,
@@ -239,38 +307,51 @@ export async function parseReceipt(
     // No ruled table, but a till-style PDF is still line-structured. Free, and
     // it only accepts a parse whose items reconcile.
     const byLine = parseTextReceipt(pdf.text);
-    if (byLine) return { ok: true, receipt: byLine.receipt, method: "text-lines" };
+    if (byLine) return done(byLine.receipt, "text-lines", pdf.text);
     try {
       const receipt = shapeReceipt(await chatExtract(orgId, pdf.text, fileId, userId));
       if (!receipt) return { ok: false, reason: "Couldn't find any line items on that receipt.", code: "no_line_items" };
-      // The model is asked for line items; the totals, the seller and the ETA
-      // are read deterministically from the same text rather than trusted to it.
-      return { ok: true, receipt: enrichReceiptFromText(receipt, pdf.text), method: "ai-chat" };
+      // The model is asked for line items; the totals, the seller, the ETA
+      // and the order reference are read from the same text at the door.
+      return done(receipt, "ai-chat", pdf.text);
     } catch (e) {
-      return { ok: false, reason: aiError(e), code: "ai_unavailable" };
+      return aiFailed(e, userId);
     }
   }
 
-  // ── Tier 3: image → AI vision ──────────────────────────────────────────────
+  // ── Tier 3: image → OCR + the line parser, then AI vision ──────────────────
   if (isImage) {
+    // The engine is optional and the parse is gated: it only wins when the
+    // lines add up to the receipt's own subtotal, so a mangled read declines
+    // to the model rather than shipping a wrong answer that looks right. The
+    // fallback is vision, not chat on the OCR text: if the text was not good
+    // enough to reconcile, the text is the weak link, and the model should
+    // look at the picture itself (no-ai-receipt-reading.md §5.3).
+    const read = await ocrImageText(bytes);
+    if (read) {
+      const byLine = parseTextReceipt(read.text);
+      if (byLine) return done(byLine.receipt, "ocr-lines", read.text);
+    }
     try {
       const receipt = shapeReceipt(await visionExtract(orgId, bytes.toString("base64"), mime, fileId, userId, visitorIp));
       if (!receipt) return { ok: false, reason: "Couldn't find any line items on that receipt.", code: "no_line_items" };
-      return { ok: true, receipt, method: "ai-vision" };
+      // The engine's text, when it read any, is the evidence for the date
+      // even though the lines came from the model.
+      return done(receipt, "ai-vision", read?.text ?? null);
     } catch (e) {
-      return { ok: false, reason: aiError(e), code: "ai_unavailable" };
+      return aiFailed(e, userId);
     }
   }
 
   // ── Non-CSV text file → line-wise parse first, AI on the raw text ──────────
   const asText = bytes.toString("utf8");
   const byLine = parseTextReceipt(asText);
-  if (byLine) return { ok: true, receipt: byLine.receipt, method: "text-lines" };
+  if (byLine) return done(byLine.receipt, "text-lines", asText);
   try {
     const receipt = shapeReceipt(await chatExtract(orgId, asText, fileId, userId));
     if (!receipt) return { ok: false, reason: "Couldn't find any line items on that receipt.", code: "no_line_items" };
-    return { ok: true, receipt: enrichReceiptFromText(receipt, asText), method: "ai-chat" };
+    return done(receipt, "ai-chat", asText);
   } catch (e) {
-    return { ok: false, reason: aiError(e), code: "ai_unavailable" };
+    return aiFailed(e, userId);
   }
 }

@@ -6,10 +6,55 @@ import { Router } from "express";
 import { z } from "zod";
 import { sql } from "kysely";
 import { platform } from "@cobblr/platform-contract";
+import { verificationOf, type ConnectionVerification } from "@cobblr/platform-contract/connection-verification";
+import { providerSentence } from "@cobblr/platform-contract/provider-reason";
 import { tenantDb, tenantContext } from "../db.js";
 import { asyncHandler, badBody, requireRole } from "./util.js";
 
 export const providersRouter = Router({ mergeParams: true });
+
+/**
+ * The probe a save runs before a key is presented as ready (#2895): the
+ * provider's cheapest call, no workspace data, and the verdict becomes the
+ * row's verification. A provider with no probe is "unverified" by
+ * construction and says so.
+ */
+async function probeForSave(providerId: string, credentials: Record<string, unknown>, orgId: string): Promise<ConnectionVerification> {
+  const def = platform().ai.getProvider(providerId);
+  // A credential-less provider (a local model with its default address, the
+  // replay double) has nothing to reject; only a probe the provider can run
+  // says anything, and one that cannot is "unverified" by construction.
+  if (!Object.values(credentials).some((v) => typeof v === "string" && v.trim()) && !def?.testConnection) {
+    return { state: "unverified", at: new Date().toISOString(), message: "This provider has no way to be tested from here." };
+  }
+  if (!def?.testConnection) return { state: "unverified", at: new Date().toISOString(), message: "This provider has no way to be tested from here." };
+  try {
+    const probe = await def.testConnection({ ...credentials, __org_id: orgId });
+    // The adapter cannot know which door the key came through; this one is
+    // the workspace's, so the sentence points at Configuration → AI.
+    const model = typeof credentials.model === "string" && credentials.model.trim() ? credentials.model.trim() : null;
+    return verificationOf(probe.reason ? { ...probe, error: providerSentence(probe.reason, { provider: providerId, door: "workspace" }) } : probe, model);
+  } catch (err) {
+    return verificationOf({ ok: false, reason: "unknown", error: providerSentence("unknown", { provider: providerId, door: "workspace" }) });
+  }
+}
+
+/** A key the probe rejected is saved only on the person's say-so; so is a
+ *  REPLACEMENT the probe could not settle, because the key it would displace
+ *  works (a made-up key replaced a working one on the rig while the probe
+ *  read "unverifiable", #2895). On create there is nothing to lose. */
+function refuseUnverified(res: import("express").Response, verification: ConnectionVerification): void {
+  const invalid = verification.state === "invalid";
+  res.status(409).json({
+    error: {
+      code: invalid ? "key_invalid" : "key_unverifiable",
+      message: verification.message ?? (invalid ? "The provider rejected this key." : "The key could not be verified just now."),
+    },
+    verification,
+  });
+}
+
+const verificationJson = (v: ConnectionVerification) => sql`${JSON.stringify(v)}::jsonb` as never;
 
 const ProviderCreate = z.object({
   provider_id: z.string().min(1),
@@ -21,6 +66,8 @@ const ProviderCreate = z.object({
   enabled: z.boolean().optional(),
   config: z.record(z.unknown()).optional(),
   monthly_budget_cents: z.number().int().positive().nullable().optional(),
+  /** Save a key the probe rejected anyway, marked unverified. */
+  confirm_unverified: z.boolean().optional(),
 });
 
 const ProviderUpdate = z.object({
@@ -29,6 +76,7 @@ const ProviderUpdate = z.object({
   config: z.record(z.unknown()).optional(),
   enabled: z.boolean().optional(),
   monthly_budget_cents: z.number().int().positive().nullable().optional(),
+  confirm_unverified: z.boolean().optional(),
 });
 
 // Test credentials that have NOT been saved. The existing /:id/test needs a stored row,
@@ -92,6 +140,7 @@ providersRouter.get(
         "config",
         "enabled",
         "monthly_budget_cents",
+        "verification",
         "created_at",
         "updated_at",
       ])
@@ -119,6 +168,15 @@ providersRouter.post(
       return;
     }
     const ctx = tenantContext(req);
+    // The key is tested before the connection is presented as ready. A
+    // rejected key is not saved unless the person says so, and then it is
+    // saved as unverified rather than as ready.
+    let verification = await probeForSave(parsed.data.provider_id, parsed.data.credentials, ctx.org.id);
+    if (verification.state === "invalid" && !parsed.data.confirm_unverified) {
+      refuseUnverified(res, verification);
+      return;
+    }
+    if (verification.state === "invalid") verification = { ...verification, state: "unverified" };
     const enc = await platform().integrations.encryptCredentials(
       ctx.org.id,
       parsed.data.credentials,
@@ -148,6 +206,7 @@ providersRouter.post(
         credentials_enc: enc,
         config: sql`${JSON.stringify(parsed.data.config ?? {})}::jsonb` as never,
         monthly_budget_cents: parsed.data.monthly_budget_cents ?? null,
+        verification: verificationJson(verification),
       })
       .returning([
         "id",
@@ -156,6 +215,7 @@ providersRouter.post(
         "config",
         "enabled",
         "monthly_budget_cents",
+        "verification",
         "created_at",
         "updated_at",
       ])
@@ -193,6 +253,25 @@ providersRouter.patch(
       set.monthly_budget_cents = parsed.data.monthly_budget_cents;
     }
     if (parsed.data.credentials !== undefined) {
+      // A replacement key is probed before it replaces anything: a rejected
+      // one leaves the working credential in place until the person
+      // confirms the swap, and then it is saved as unverified.
+      const current = await db.selectFrom("core_ai_providers").select(["provider_id", "verification"]).where("id", "=", id).executeTakeFirst();
+      if (!current) {
+        res.status(404).json({ error: { code: "not_found", message: "provider not found" } });
+        return;
+      }
+      let verification = await probeForSave(current.provider_id, parsed.data.credentials, ctx.org.id);
+      // A rejected key is always refused until confirmed; an unsettled one only
+      // when it would displace a key that VERIFIED (there is a working key to
+      // protect). A row never verified takes the new state as it is.
+      const displacesWorking = (current.verification as { state?: string } | null)?.state === "verified";
+      if ((verification.state === "invalid" || (verification.state !== "verified" && displacesWorking)) && !parsed.data.confirm_unverified) {
+        refuseUnverified(res, verification);
+        return;
+      }
+      if (verification.state === "invalid") verification = { ...verification, state: "unverified" };
+      set.verification = verificationJson(verification);
       set.credentials_enc = await platform().integrations.encryptCredentials(
         ctx.org.id,
         parsed.data.credentials,
@@ -209,6 +288,7 @@ providersRouter.patch(
         "config",
         "enabled",
         "monthly_budget_cents",
+        "verification",
         "created_at",
         "updated_at",
       ])
@@ -278,17 +358,19 @@ providersRouter.post(
       return;
     }
     const def = platform().ai.getProvider(row.provider_id);
-    if (!def?.testConnection) {
-      res.json({ ok: true, note: "provider has no test implementation; assumed ok" });
-      return;
-    }
     const creds = await platform().integrations.decryptCredentials(
       ctx.org.id,
       row.credentials_enc,
     );
     // Inject the org so a bridge-transit provider can derive its channel key
-    // (testConnection gets credentials only — no invoke ctx).
-    const result = await def.testConnection({ ...creds, __org_id: ctx.org.id });
-    res.json(result);
+    // (testConnection gets credentials only — no invoke ctx). The verdict is
+    // kept on the row: this is the Test button, and the row shows what it said.
+    const probed = def?.testConnection
+      ? await def.testConnection({ ...creds, __org_id: ctx.org.id }).catch(() => ({ ok: false, reason: "unknown" as const }))
+      : { ok: true, note: "provider has no test implementation; assumed ok" };
+    const result = probed.reason ? { ...probed, error: providerSentence(probed.reason, { provider: row.provider_id, door: "workspace" }) } : probed;
+    const verification = def?.testConnection ? verificationOf(result) : { state: "unverified" as const, at: new Date().toISOString(), message: "This provider has no way to be tested from here." };
+    await db.updateTable("core_ai_providers").set({ verification: verificationJson(verification), updated_at: new Date() } as never).where("id", "=", id).execute();
+    res.json({ ...result, verification });
   }),
 );

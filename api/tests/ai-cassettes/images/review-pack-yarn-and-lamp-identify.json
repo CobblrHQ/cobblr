@@ -1,0 +1,6 @@
+{
+  "_fixture": "e2e/fixtures/review-pack/receipts/yarn-and-lamp.png",
+  "image_ahash": "df0f1f030f1f1fbf",
+  "capability": "identify-image",
+  "reply": "{\"name\":\"Stitch & Spark Worsted Wool Yarn 100g Blue\",\"brand\":\"Stitch & Spark\",\"category\":\"Yarn\",\"entity_type\":\"part\",\"is_receipt\":\"no\",\"observations\":\"A printed receipt from Stitch & Spark listing two units of worsted wool yarn, a desk lamp and trail mix.\",\"confidence\":0.82}"
+}

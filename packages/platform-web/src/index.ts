@@ -12,6 +12,8 @@ export { EntityActionsBar } from "./EntityActionsBar";
 export { RecordHeaderChips } from "./RecordHeaderChips";
 export { RecordFaces, FaceSection, useFaces, useFaceOn } from "./faces";
 export { useInvokeEntityAction } from "./use-invoke-action";
+export { runAction, useRunAction, refreshAfterAction, queryShowsKinds, affectedKindsOf, type ActionBody, type ActionRun, type ActionAffected, type KindMeta } from "./run-action";
+export { ActionOutcome } from "./ActionOutcome";
 export { summariseParts, summaryLine, type TileSummary } from "./tileSummary";
 export { EntityChip } from "./EntityChip";
 export { EntityThumb } from "./EntityThumb";
@@ -52,7 +54,7 @@ export {
 } from "./feedback-source";
 export { FeedbackCard, PriorityChip, FEEDBACK_STATUSES, fbStatusLabel } from "./FeedbackCard";
 
-export { fieldControl, type FieldControl } from "./fieldControl";
+export { fieldControl, valueFromInput, type FieldControl } from "./fieldControl";
 export { relativeTime } from "./relativeTime";
 export { FieldRenderer, boolLabel, boolTruthy, NoImage } from "./FieldRenderer";
 export {
@@ -90,6 +92,7 @@ export { BackToTop } from "./BackToTop";
 export { CatalogTypeahead, type CatalogTypeaheadHit } from "./CatalogTypeahead";
 export { usePageTitle } from "./usePageTitle";
 export { usePageWidth, type PageWidth } from "./usePageWidth";
+export { useCreateDoor, CREATE_PARAM } from "./useCreateDoor";
 export { AskCobbAbout } from "./AskCobbAbout";
 export { RecordRow, recordRowMarks } from "./RecordRow";
 export { toggleRecordInContext, nounForKind, labelForSet } from "./toggle-record-context";

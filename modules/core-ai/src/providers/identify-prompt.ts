@@ -116,6 +116,17 @@ export const IDENTIFY_PROMPT =
   "IS the item's photograph with no page around it, or when no photograph of " +
   "the item is visible. Identify the ITEM either way: a listing screenshot is " +
   "still a scan of that item.\n\n" +
+  // A receipt is not an item, and a model asked "what item is this" answers
+  // with an item: a receipt with one dominant product line came back as that
+  // product, and a sparse one as nothing at all (#2916). So the question is
+  // asked outright, as a field the pipeline reads as data rather than a word
+  // it hopes to find in the prose.
+  'Also report "is_receipt": "yes" when this image is a purchase receipt, an ' +
+  "invoice, an order confirmation or a till slip (a printed or on-screen list " +
+  'of purchased lines with prices and a total), "no" when it is a thing or a ' +
+  'listing of a thing, and "unsure" when you cannot tell. A receipt PRINTER, a ' +
+  'roll of receipt paper, or a product with a price tag on it is "no". When it ' +
+  'is "yes", still fill in "observations" and leave "name" empty.\n\n' +
   'Reply with ONLY a JSON object: {"name": <string>, "brand": <string|null>, ' +
   '"color": <the item\'s colour in plain English, else null>, ' +
   '"category": <string|null>, "entity_type": "asset"|"part"|null, ' +
@@ -125,6 +136,7 @@ export const IDENTIFY_PROMPT =
   '"observations": <string>, "distinct_items": <integer>, ' +
   '"product_photo_box": {"x": <0..1>, "y": <0..1>, "w": <0..1>, "h": <0..1>}|null, ' +
   '"items": [{"name": <string>, "brand": <string|null>, "qty": <integer>}], ' +
+  '"is_receipt": "yes"|"no"|"unsure", ' +
   '"confidence": <0..1, how sure you are>}. If the photo is unclear, empty, or ' +
   "not an identifiable object, reply name \"\" and confidence 0.";
 

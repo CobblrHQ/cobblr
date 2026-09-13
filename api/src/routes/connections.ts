@@ -17,10 +17,12 @@ import * as aiImpl from "../platform/ai.js";
 import * as connectionProviders from "../platform/connections.js";
 import { notifyAccount } from "../platform/notifications.js";
 import { absoluteAppUrl } from "../platform/public-url.js";
+import { verificationOf, type ConnectionVerification } from "@cobblr/platform-contract/connection-verification";
 import {
   addUserCredential,
   updateUserCredential,
   deleteUserCredential,
+  storedUserCredentials,
   setMyConnectionOrder,
   listUserCredentials,
   listWorkspaceAiOffers,
@@ -47,6 +49,9 @@ const CreateBody = z.object({
   auto_enable_new: z.boolean().optional(),
   org_ids: z.array(z.string().uuid()).max(200).optional(),
   routes: z.array(Route).max(200).optional(),
+  /** Save a key the probe rejected anyway, marked unverified. The person's
+   *  say-so, never the default. */
+  confirm_unverified: z.boolean().optional(),
 });
 
 const PatchBody = z.object({
@@ -57,7 +62,47 @@ const PatchBody = z.object({
   auto_enable_new: z.boolean().optional(),
   org_ids: z.array(z.string().uuid()).max(200).optional(),
   routes: z.array(Route).max(200).optional(),
+  confirm_unverified: z.boolean().optional(),
 });
+
+/**
+ * The probe a save runs before a key is presented as ready (#2895): the
+ * provider's cheapest call, no workspace data, and the verdict becomes the
+ * connection's verification. A provider with no probe is "unverified" by
+ * construction and says so. `null` when the credentials carry nothing to
+ * probe (an edit that changed only the label or the routing).
+ */
+async function probeForSave(
+  providerId: string,
+  credentials: Record<string, unknown> | undefined,
+  userId: string,
+): Promise<ConnectionVerification | null> {
+  if (!credentials || !Object.values(credentials).some((v) => typeof v === "string" && v.trim())) return null;
+  const def = aiImpl.getProvider(providerId);
+  if (!def) return null;
+  if (!def.testConnection) return { state: "unverified", at: new Date().toISOString(), message: "This provider has no way to be tested from here." };
+  try {
+    const model = typeof credentials.model === "string" && credentials.model.trim() ? credentials.model.trim() : null;
+    return verificationOf(await def.testConnection({ ...credentials, __connection_user_id: userId }), model);
+  } catch (err) {
+    return verificationOf({ ok: false, reason: "unknown", error: (err as Error)?.message });
+  }
+}
+
+/** A key the probe rejected is saved only on the person's say-so, and so is
+ *  a REPLACEMENT the probe could not settle: the key it would displace works
+ *  (a made-up key replaced a working one on the rig while the probe read
+ *  "unverifiable", #2895). On create there is nothing to lose. */
+function refuseUnverified(res: import("express").Response, verification: ConnectionVerification): void {
+  const invalid = verification.state === "invalid";
+  res.status(409).json({
+    error: {
+      code: invalid ? "key_invalid" : "key_unverifiable",
+      message: verification.message ?? (invalid ? "The provider rejected this key." : "The key could not be verified just now."),
+    },
+    verification,
+  });
+}
 
 /** Every org id the user actually belongs to — guards explicit routing so you
  *  can't route a personal cred into a workspace you're not in. */
@@ -239,15 +284,25 @@ connectionsRouter.post("/me/connections", requireAuth, async (req, res, next) =>
         return;
       }
     }
+    // The key is tested before the connection is presented as ready. A
+    // rejected key is not saved unless the person says so, and then it is
+    // saved as unverified, not as ready.
+    let verification = await probeForSave(parsed.data.provider_id, parsed.data.credentials, req.session!.id);
+    if (verification?.state === "invalid" && !parsed.data.confirm_unverified) {
+      refuseUnverified(res, verification);
+      return;
+    }
+    if (verification?.state === "invalid") verification = { ...verification, state: "unverified" };
+    const { confirm_unverified: _c, ...input } = parsed.data;
     // The KIND comes from the provider, never from the body: it decides which
     // resolver will later find this credential, so letting a client name it
     // would let one connection answer for a service it is not.
-    const id = await addUserCredential(req.session!.id, { ...parsed.data, kind: provider.kind });
+    const id = await addUserCredential(req.session!.id, { ...input, kind: provider.kind, ...(verification ? { verification } : {}) });
     if (parsed.data.routes?.length) {
       const me = await meta.selectFrom("users").select("display_name").where("id", "=", req.session!.id).executeTakeFirst();
       await notifyOwnersOfOffers(req.session!.id, me?.display_name ?? "A member", parsed.data.routes);
     }
-    res.status(201).json({ id });
+    res.status(201).json({ id, ...(verification ? { verification } : {}) });
   } catch (err) {
     next(err);
   }
@@ -274,7 +329,29 @@ connectionsRouter.patch("/me/connections/:id", requireAuth, async (req, res, nex
         return;
       }
     }
-    const ok = await updateUserCredential(req.session!.id, id, parsed.data);
+    // A replacement key is probed with the stored values it merges over
+    // (the form sends only what was re-typed), and a rejected one leaves the
+    // working credential in place until the person confirms the swap.
+    const stored = parsed.data.credentials !== undefined ? await storedUserCredentials(req.session!.id, id) : null;
+    if (parsed.data.credentials !== undefined && !stored) {
+      res.status(404).json({ error: { code: "not_found", message: "Connection not found." } });
+      return;
+    }
+    let verification =
+      stored && parsed.data.credentials !== undefined
+        ? await probeForSave(stored.provider_id, { ...stored.credentials, ...parsed.data.credentials }, req.session!.id)
+        : null;
+    // A rejected key is always refused until confirmed; an unsettled one only
+    // when it would displace a key that VERIFIED. A row never verified takes
+    // the new state as it is.
+    const displacesWorking = stored?.verification?.state === "verified";
+    if (verification && (verification.state === "invalid" || (verification.state !== "verified" && displacesWorking)) && !parsed.data.confirm_unverified) {
+      refuseUnverified(res, verification);
+      return;
+    }
+    if (verification?.state === "invalid") verification = { ...verification, state: "unverified" };
+    const { confirm_unverified: _c, ...patch } = parsed.data;
+    const ok = await updateUserCredential(req.session!.id, id, { ...patch, ...(verification ? { verification } : {}) });
     if (!ok) {
       res.status(404).json({ error: { code: "not_found", message: "Connection not found." } });
       return;
@@ -283,7 +360,30 @@ connectionsRouter.patch("/me/connections/:id", requireAuth, async (req, res, nex
       const me = await meta.selectFrom("users").select("display_name").where("id", "=", req.session!.id).executeTakeFirst();
       await notifyOwnersOfOffers(req.session!.id, me?.display_name ?? "A member", parsed.data.routes);
     }
-    res.status(204).end();
+    if (verification) res.json({ verification });
+    else res.status(204).end();
+  } catch (err) {
+    next(err);
+  }
+});
+
+// The Test button: the same probe as a save, on the stored key nobody can
+// read back, and the verdict replaces the row's verification.
+connectionsRouter.post("/me/connections/:id/test", requireAuth, async (req, res, next) => {
+  try {
+    const id = req.params.id;
+    const stored = id ? await storedUserCredentials(req.session!.id, id) : null;
+    if (!id || !stored) {
+      res.status(404).json({ error: { code: "not_found", message: "Connection not found." } });
+      return;
+    }
+    const verification = (await probeForSave(stored.provider_id, stored.credentials, req.session!.id)) ?? {
+      state: "unverified" as const,
+      at: new Date().toISOString(),
+      message: "This connection holds nothing to test.",
+    };
+    await updateUserCredential(req.session!.id, id, { verification });
+    res.json({ verification });
   } catch (err) {
     next(err);
   }

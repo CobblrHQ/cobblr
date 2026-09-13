@@ -17,7 +17,7 @@
   },
   "cobblr.community.garden": {
     "version": "0.1.1",
-    "hash": "fc1bd40da35c74f4a18efed28f4c66aae004b404bd5b73ece403b70826ca1660"
+    "hash": "655d5b060fc62c6adefa58f71fb9a5b770a4b09513f40d0de6f6503c47964ed2"
   },
   "cobblr.community.laser-cutters": {
     "version": "0.3.1",
@@ -33,7 +33,7 @@
   },
   "cobblr.community.printer-parts": {
     "version": "0.2.0",
-    "hash": "387652c72eb85e0a17c891e7990a24ed795944ed066730d0c6e02ac6a1748cd1"
+    "hash": "ae75074f70ad9c065303685553dd803f0a5152e142bbf0dca7d7225f3b0ac7d0"
   },
   "cobblr.community.rebrickable-catalogs": {
     "version": "0.5.0",
@@ -41,11 +41,11 @@
   },
   "cobblr.community.tool-library": {
     "version": "0.1.0",
-    "hash": "c26b6118ddfd23d5dd2a00d0dc5f7b7ed7298d942b79e37bf2aa4612e0bca09a"
+    "hash": "fcfa96917331b3fbfcb958abf78df5a053b4b82850271e953e1979be77225643"
   },
   "cobblr.community.vintage-tools": {
     "version": "0.1.0",
-    "hash": "0b6b6342e616f282a60660ec07f90c8e18cb7d90a327c5feca4f7c883f1cba8c"
+    "hash": "f641ed9f1861f4e262edec5da8e397b7b2c8ef7760e7e2d889e117210c623dcc"
   },
   "cobblr.flagship.cnc-tooling": {
     "version": "0.2.1",
@@ -72,16 +72,16 @@
     "hash": "24ca0447bad1d722cdd18aceb900cc1593de21513e082185d69b05a952306852"
   },
   "cobblr.flagship.groceries": {
-    "version": "0.10.7",
-    "hash": "26270606e9000088d8bbe383141937ae593f39357e3e9bf1543544ff128fac41"
+    "version": "0.11.0",
+    "hash": "afd68ad875ce8285f909489bcad73a432365841359ba5bcad562898a779431ff"
   },
   "cobblr.flagship.grocery-spend": {
     "version": "0.1.2",
     "hash": "cbf3e315cfabb0f74716241205e63efd015ed79692f46b3d13b4f0145afb4c48"
   },
   "cobblr.flagship.home-inventory": {
-    "version": "0.5.1",
-    "hash": "a0358dbd0616ac669e9c97ea7f6cc53ce29477704c2d21aa59b4a83e15128d5f"
+    "version": "0.5.2",
+    "hash": "60389b7c8f8d33e84ffeaf6cac85078439f7be0f9d8e9930755cb640c099e003"
   },
   "cobblr.flagship.home-maintenance": {
     "version": "0.3.2",
@@ -93,7 +93,7 @@
   },
   "cobblr.flagship.maker-workshop": {
     "version": "0.1.2",
-    "hash": "88629587d496a68237bf6fb8784252b9415b5a1622c91bcc4fa0e05174bf90d3"
+    "hash": "51d85c9ec2f7803682a6d4918b1341bbc20dcf111a5dd489306309b5488fe77e"
   },
   "cobblr.flagship.medications": {
     "version": "0.3.1",

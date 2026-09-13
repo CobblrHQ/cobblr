@@ -1,10 +1,11 @@
 {
   "manifest": {
     "id": "cobblr.community.printer-parts",
+    "base_kind_fields_reason": "Adds voltage, footprint and datasheet to the printer parts already kept in plain Inventory; a drawer skin on the workshop's own stock, not a table of its own, written before instances existed.",
     "released_at": "2026-06-20",
     "changelog": "First catalogued release: the printer-parts drawer skin on inventory.",
     "catalog": "extended",
-    "version": "0.2.1",
+    "version": "0.2.2",
     "name": "3D Printer Parts",
     "description": "Datasheet-aware part fields + a narrow-bin label template. Manufacturer is a native inventory:part field; this bundle adds the electronics-specific extras.",
     "author": "Cobblr community",

@@ -1,8 +1,9 @@
 {
   "manifest": {
     "id": "cobblr.community.tool-library",
+    "base_kind_fields_reason": "Adds lending fields (borrower, due date, condition, deposit) to the machines already kept as Machines; lending is a face on the workspace's own tools, not a table of its own.",
     "catalog": "disabled",
-    "version": "0.1.0",
+    "version": "0.1.1",
     "name": "Tool Library",
     "description": "Track who's borrowed a tool, when it's due back, and its condition. Custom machine:machine fields.",
     "author": "Cobblr community",

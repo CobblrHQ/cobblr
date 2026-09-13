@@ -4,11 +4,12 @@
 // consume these to discover what kinds/actions exist, look up
 // entities polymorphically, manage bindings, and run actions.
 
-import { Router } from "express";
+import { Router, type Request } from "express";
 import { z } from "zod";
 import { parseWireFilter } from "../platform/wire-filter.js";
 import { sql } from "kysely";
-import { platform } from "@cobblr/platform-contract";
+import { platform, isActionRefusal, crashSentence } from "@cobblr/platform-contract";
+import { randomBytes } from "node:crypto";
 import { requireAuth, appTokenMayInvoke } from "../auth/middleware.js";
 import { requireCapability, requireRole } from "../auth/capability.js";
 import { withTenant } from "../middleware/tenant.js";
@@ -17,6 +18,7 @@ import { listEntries } from "../modules/registry.js";
 import * as activity from "../platform/activity.js";
 import { checkAvailability as checkAiAvailability } from "../platform/ai.js";
 import { hostedIdentifyEnabled } from "@cobblr/platform-contract/hosted-identify";
+import { ocrAvailable } from "@cobblr/core-scan/services/ocr";
 import { AiCapabilities, type AiCapability } from "@cobblr/platform-contract";
 import { clearComputedDefsCache } from "../platform/computed-fields.js";
 import { effectiveAppliesTo, matchAction, getActionScope, planFor, undoFor, hasUndo } from "../platform/actions.js";
@@ -149,6 +151,7 @@ platformOrgRouter.get(
           limit: Math.min(Number(req.query.limit) || 50, 200),
           offset: Number(req.query.offset) || 0,
           filter: Object.keys(filter).length ? filter : undefined,
+          ...(req.query.include_retired === "1" || req.query.include_retired === "true" ? { include_retired: true } : {}),
         },
         { userId: req.session?.id, role: req.tenant!.role },
       );
@@ -429,6 +432,30 @@ platformOrgRouter.post(
   },
 );
 
+/** The origin a person's request came from, for a handler that must mint an
+ *  absolute URL: the isolated-stack e2e header wins, else protocol + host,
+ *  the same rule the labels module's own routes use for a QR base. */
+function requestOrigin(req: Request): string {
+  const header = req.headers["x-cobblr-base-url"];
+  if (typeof header === "string" && header.trim()) return header.trim().replace(/\/+$/, "");
+  return `${req.protocol}://${req.headers.host ?? "localhost"}`;
+}
+
+/** The kinds an action on `kind` touches, for the client's refresh: the kind
+ *  as invoked and its base kind when it is an instance's (`groceries:item`
+ *  and `inventory:part` name the same rows). Null for a workspace action. */
+async function affectedKindsOf(orgId: string, kind: string | null): Promise<string[]> {
+  if (!kind) return [];
+  const kinds = new Set([kind]);
+  try {
+    const r = await platform().entities.resolveKind(orgId, kind);
+    if (r?.base) kinds.add(r.base);
+  } catch {
+    /* an unknown kind still names itself */
+  }
+  return [...kinds];
+}
+
 // AI-REACH: this IS the door. Every action the assistant runs arrives here,
 // so giving it one of its own would be a door into the door.
 platformOrgRouter.post(
@@ -575,9 +602,18 @@ platformOrgRouter.post(
         }
       }
 
-      const result = await platform().actions.invoke(parsed.data.actionId, {
+      // A handler that throws is answered the way a handler that refuses is:
+      // 200, `result.ok:false`, and a sentence. A bare 500 here hid
+      // "no label base URL is set ... set one under Configuration" behind
+      // "Internal server error" and a flash of ERR on the button (#2847).
+      // Only the handler's run is caught; a bug in the route itself is
+      // still a 500.
+      let result: unknown;
+      try {
+        result = await platform().actions.invoke(parsed.data.actionId, {
         orgId: req.tenant!.org.id,
         userId: req.session!.id,
+        origin: requestOrigin(req),
         scope: isWorkspaceAction ? "workspace" : "entity",
         entity: isWorkspaceAction
           ? undefined
@@ -598,14 +634,45 @@ platformOrgRouter.post(
         // Deprecated compat aliases (absent for workspace-scoped actions).
         entityKind: isWorkspaceAction ? undefined : parsed.data.entityKind,
         entityId: isWorkspaceAction ? undefined : parsed.data.entityId,
-      });
+        });
+      } catch (err) {
+        // A refusal is a sentence written for the person; it is repeated as
+        // written. Anything else is a crash: its message may name a table, a
+        // loopback address or a provider's request id, so the person gets a
+        // generic sentence and a reference, and the log (already carrying the
+        // handler's name, from actions.invoke) carries the reference too.
+        if (isActionRefusal(err) && err.message.trim()) {
+          res.json({ ok: true, result: { ok: false, error: err.message } });
+          return;
+        }
+        const ref = `act-${randomBytes(3).toString("hex")}`;
+        console.error(`[actions] ${parsed.data.actionId} crashed (${ref}):`, err);
+        res.json({ ok: true, result: { ok: false, error: crashSentence(ref), ref } });
+        return;
+      }
       // The way back, when the action knows one: stored by the caller's
       // ledger beside the write, so Undo on the card runs it.
       const undo = await undoFor(parsed.data.actionId, result, {
         orgId: req.tenant!.org.id,
         ...(parsed.data.entityKind && parsed.data.entityId ? { entity: { kind: parsed.data.entityKind, id: parsed.data.entityId } } : {}),
       }).catch(() => null);
-      res.json({ ok: true, result, ...(undo ? { undo } : {}) });
+      // What the client should refresh, said once here: the record's kind
+      // under both its spellings (an instance kind and the module's base
+      // kind name the same rows), so every surface showing it can re-read
+      // without knowing which action ran. A workspace action names none,
+      // and the client refreshes everything.
+      const affected = await affectedKindsOf(req.tenant!.org.id, isWorkspaceAction ? null : parsed.data.entityKind ?? null);
+      res.json({
+        ok: true,
+        result,
+        ...(undo ? { undo } : {}),
+        affected: {
+          kinds: affected,
+          ...(!isWorkspaceAction && parsed.data.entityKind && parsed.data.entityId
+            ? { entity: { kind: parsed.data.entityKind, id: parsed.data.entityId } }
+            : {}),
+        },
+      });
     } catch (err) {
       next(err);
     }
@@ -1205,7 +1272,25 @@ platformOrgRouter.get(
       // sandbox - and it was telling every visitor that scanning ran in basic
       // mode while cheerfully naming their groceries from a photo. The UI needs
       // both facts to say anything true.
-      res.json({ ...status, identify_available: hostedIdentifyEnabled() });
+      //
+      // And the other way round: with the hosted service off, a person whose
+      // own connection can read a photo was told "No AI to read this photo
+      // yet (set it up)" under every card (the 2026-09-13 review, #2845). The
+      // axis is "can THIS person's photo be read here", which the hosted
+      // service answers, or a provider with the image capability routed to
+      // them: their own connection, the workspace's, or the plan's.
+      const identify = hostedIdentifyEnabled()
+        ? { available: true, source: "hosted" as const }
+        : await checkAiAvailability(req.tenant!.org.id, req.session?.id ?? null, "classify-image").then(
+            (r) => ({ available: r.available, source: r.available ? r.source : undefined }),
+            () => ({ available: false, source: undefined }),
+          );
+      // A third axis: can this deployment read the TEXT off an image with no
+      // model at all (the OCR engine behind the receipt-shape check and the
+      // receipt door's line tier)? Reported so "the receipt went to the
+      // model" is a fact a person can read off the deployment rather than
+      // infer from what happened.
+      res.json({ ...status, identify_available: identify.available, identify_source: identify.source, ocr_available: await ocrAvailable() });
     } catch (err) {
       next(err);
     }

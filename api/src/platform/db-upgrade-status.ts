@@ -13,7 +13,7 @@
 //
 // PERMANENT RECONCILE — not a one-shot shim: every future major bump can hold.
 
-import { Client } from "pg";
+import { createClient } from "../db/client-error-guard.js";
 import { env } from "../env.js";
 import { notifyOperators } from "./operator-alert.js";
 import { runExclusive } from "./exclusive.js";
@@ -35,8 +35,7 @@ export async function readDbUpgradeHold(): Promise<DbUpgradeHold | null> {
   // credentials the meta pool uses.
   const url = new URL(env.DATABASE_URL);
   url.pathname = "/postgres";
-  const client = new Client({ connectionString: url.toString() });
-  client.on("error", (err) => console.error("[db-upgrade-status] connection error:", (err as Error).message));
+  const client = createClient({ connectionString: url.toString() }, "db-upgrade-status");
   try {
     await client.connect();
     // ASK whether the table is there before selecting from it. On a healthy

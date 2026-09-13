@@ -45,6 +45,8 @@ interface InboxItem {
   suggested_name?: string | null;
   suggested_candidates?: Array<{
     bundle_external_id?: string;
+    module?: string;
+    instance?: string | null;
     kind?: string;
     name?: string;
     quantity?: number;
@@ -282,10 +284,22 @@ quickstartRouter.post("/materialize", requireAuth, withTenant, async (req, res, 
     const pending = await fetchPendingInbox(baseUrl, slug, token);
     let created = 0;
     const errors: Array<{ id: string; status: number }> = [];
+    // Which captures fit this bundle. The inbox serves each row with its
+    // offers judged against the workspace NOW (core-scan's resolve-offers):
+    // once the install above has run, a capture that was offered this bundle
+    // comes back routed to the table the install made, no bundle id on it. So
+    // "fits" is either: still carries the offer (the read could not see the
+    // table yet), or is routed to one of the bundle's own tables.
+    const fits = (top: { bundle_external_id?: string; module?: string; instance?: string | null } | undefined): boolean => {
+      if (!top) return false;
+      if (top.bundle_external_id === bundleId) return true;
+      if (top.bundle_external_id) return false;
+      return targets.some((t) => t.module === top.module && (t.instance ?? null) === (top.instance ?? null));
+    };
     for (const it of pending) {
       if (onlyIds && !onlyIds.has(it.id)) continue;
       const top = (it.suggested_candidates ?? [])[0];
-      if (top?.bundle_external_id !== bundleId) continue;
+      if (!fits(top)) continue;
       const target = pickTarget(top?.kind);
       const confirmRes = await fetch(`${baseUrl}/api/v1/orgs/${slug}/modules/core-scan/inbox/${it.id}/confirm`, {
         method: "POST",

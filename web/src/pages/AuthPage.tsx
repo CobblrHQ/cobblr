@@ -5,8 +5,12 @@ import { useEffect, useRef, useState, type FormEvent } from "react";
 import { useAuth } from "../auth/AuthContext";
 import { CobblestoneMark } from "../CobblestoneMark";
 import { api, ApiError, setToken } from "../lib/api";
+import { getManagedAppMeta } from "../lib/managed-apps";
+import { isTouchPrimary } from "../lib/useIsTouch";
 import { usePageTitle } from "@cobblr/platform-web";
 import { useDeployEnv } from "../lib/deploy-env";
+import { useAuthConfig } from "../lib/useAuthConfig";
+import { AuthConfigUnavailable } from "../components/AuthConfigUnavailable";
 
 type Mode = "login" | "signup";
 
@@ -60,40 +64,33 @@ export function AuthPage() {
       return "login";
     }
   });
-  // signup_enabled gates the "create account" toggle. Default true
-  // so the toggle is shown in the brief window before /auth/config
-  // resolves — if the server says signup is disabled, we both hide
-  // the toggle AND snap any user already on signup back to login.
-  const [signupEnabled, setSignupEnabled] = useState(true);
+  // What this surface allows, from /auth/config through the shared hook. The
+  // toggle is shown while the answer is on its way (the brief window at
+  // boot); if the server says signup is disabled, both the toggle goes AND
+  // anyone already on signup is snapped back to login. A fetch that FAILS is
+  // not "signup on": the page says it could not check and offers to retry,
+  // rather than drawing a form the server may refuse after typing (#2804).
+  const authCfg = useAuthConfig();
+  const signupEnabled = authCfg.cfg ? authCfg.cfg.signup_enabled : true;
   // Null until /auth/config says this surface can complete a hand-off. Defaulting to
   // null (rather than showing the button optimistically) means we never offer a route
   // that fails after the redirect, on a site that cannot explain what went wrong.
-  const [identityCfg, setIdentityCfg] = useState<{ authorize_url: string; deployment: string; name?: string } | null>(null);
-  const [demoCfg, setDemoCfg] = useState<{ email: string; password: string; note: string | null } | null>(null);
+  const identityCfg = authCfg.cfg?.identity ?? null;
+  const demoCfg = authCfg.cfg?.demo_signin ?? null;
   useEffect(() => {
-    api
-      .authConfig()
-      .then((cfg) => {
-        setSignupEnabled(cfg.signup_enabled);
-        setCaptchaCfg(cfg.captcha ?? null);
-        setIdentityCfg(cfg.identity ?? null);
-        // A public demo pre-fills its shared login, so the first thing a visitor
-        // does is press one button rather than copy two strings. Only when the
-        // fields are still untouched: someone who has started typing their own
-        // credentials must never have them overwritten by a late config reply.
-        const demo = cfg.demo_signin ?? null;
-        setDemoCfg(demo);
-        if (demo) {
-          setEmail((cur) => (cur ? cur : demo.email));
-          setPassword((cur) => (cur ? cur : demo.password));
-        }
-        if (!cfg.signup_enabled) setMode("login");
-      })
-      .catch(() => {
-        // Network/early-boot — leave toggle visible; the POST will
-        // surface the real error if the user clicks through.
-      });
-  }, []);
+    if (!authCfg.cfg) return;
+    setCaptchaCfg(authCfg.cfg.captcha);
+    // A public demo pre-fills its shared login, so the first thing a visitor
+    // does is press one button rather than copy two strings. Only when the
+    // fields are still untouched: someone who has started typing their own
+    // credentials must never have them overwritten by a late config reply.
+    const demo = authCfg.cfg.demo_signin;
+    if (demo) {
+      setEmail((cur) => (cur ? cur : demo.email));
+      setPassword((cur) => (cur ? cur : demo.password));
+    }
+    if (!authCfg.cfg.signup_enabled) setMode("login");
+  }, [authCfg.cfg]);
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [displayName, setDisplayName] = useState("");
@@ -227,6 +224,8 @@ export function AuthPage() {
               and signing you in. This takes a few seconds - hang tight.
             </p>
           </div>
+        ) : authCfg.status === "failed" ? (
+          <AuthConfigUnavailable onRetry={authCfg.retry} />
         ) : (
         <form
           onSubmit={submit}
@@ -564,7 +563,11 @@ export function IdentityCallbackPage() {
   const [detail, setDetail] = useState<string | null>(null);
 
   useEffect(() => {
-    const code = new URLSearchParams(window.location.search).get("code");
+    const params = new URLSearchParams(window.location.search);
+    const code = params.get("code");
+    // /start/<app> put the app on return_to, so a NEW account is provisioned as
+    // the app and lands in it rather than on the generic home.
+    const app = params.get("app") ?? undefined;
     if (!code) {
       setError("This sign-in link is missing its code.");
       return;
@@ -572,11 +575,14 @@ export function IdentityCallbackPage() {
     let cancelled = false;
     void (async () => {
       try {
-        const res = await api.identityCallback({ code });
+        const res = await api.identityCallback(app ? { code, app } : { code });
         if (cancelled) return;
         setToken(res.token);
         // Hard redirect so AuthContext re-reads the new session, same as the magic link.
-        window.location.href = "/";
+        const made = res.provisioned;
+        const meta = made?.app ? getManagedAppMeta(made.app) : null;
+        const first = meta?.firstRunPath && isTouchPrimary() ? meta.firstRunPath.replace(/^\//, "") : "";
+        window.location.href = made && meta ? `/w/${made.slug}/${first}` : "/";
       } catch (err) {
         if (cancelled) return;
         const code = err instanceof ApiError ? err.code : "";

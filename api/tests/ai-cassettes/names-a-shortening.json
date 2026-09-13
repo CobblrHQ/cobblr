@@ -1,0 +1,7 @@
+{
+  "match": "where is my led desk lamp",
+  "rounds": [
+    { "tool_calls": [{ "name": "list_records", "args": { "kind": "inventory:part", "limit": 50 } }] },
+    { "content": "Your LED desk lamp is in the Living room. For the blue cotton yarn, you have 2." }
+  ]
+}

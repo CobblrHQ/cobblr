@@ -1,0 +1,6 @@
+{
+  "_fixture": "e2e/fixtures/review-pack/receipts/short-grocery.png",
+  "image_ahash": "9f1f07070f1f1f87",
+  "capability": "classify-image",
+  "reply": "{\"vendor\":\"CORNER GROCER\",\"order_ref\":null,\"date\":\"2026-09-02\",\"currency\":\"USD\",\"total\":9.47,\"items\":[{\"description\":\"WHOLE MILK 1 GAL\",\"qty\":1,\"unit_price\":3.79,\"line_total\":3.79,\"discount\":null,\"code\":null,\"model\":null,\"weight\":null,\"weight_unit\":null},{\"description\":\"BANANAS\",\"qty\":1,\"unit_price\":1.18,\"line_total\":1.18,\"discount\":null,\"code\":null,\"model\":null,\"weight\":null,\"weight_unit\":null},{\"description\":\"SOURDOUGH LOAF\",\"qty\":1,\"unit_price\":4.5,\"line_total\":4.5,\"discount\":null,\"code\":null,\"model\":null,\"weight\":null,\"weight_unit\":null}]}"
+}

@@ -45,6 +45,9 @@ export interface CoreScanInboxItemsTable {
   created_at: Generated<Date>;
   updated_at: Generated<Date>;
   resolved_at: Date | null;
+  /** Physically put away, confirmed by a person in a put-away walk. Set on the
+   *  item, not on the walk, so every plan and every session reads one truth. */
+  placed_at: Date | null;
 }
 
 export interface CoreScanBatchesTable {
@@ -67,6 +70,21 @@ export interface CoreScanBatchesTable {
    *  original" (rendered in an iframe, any type) + "Re-parse". Null for a plain
    *  scan session. */
   source_file_id: ColumnType<string | null, string | null | undefined, string | null | undefined>;
+  /** The receipt read as a STATE on the session (never an inbox item):
+   *  in_flight | read | failed, with the last failure and its history in
+   *  `read_failure` (platform-contract scan-session.ts). Null on a plain scan
+   *  session and on receipt sessions from before the column, which the
+   *  verdict judges by their lines. */
+  read_state: ColumnType<string | null, string | null | undefined, string | null | undefined>;
+  read_failure: ColumnType<unknown, unknown, unknown>;
+  read_started_at: ColumnType<Date | null, Date | string | null | undefined, Date | string | null | undefined>;
+  read_at: ColumnType<Date | null, Date | string | null | undefined, Date | string | null | undefined>;
+  /** Which way round the receipt's numeric date was read, and by what
+   *  (services/receipt-date.ts, #2917): mdy | dmy; unambiguous | receipt |
+   *  workspace | nearest-past | model; the date as printed. */
+  date_convention: ColumnType<string | null, string | null | undefined, string | null | undefined>;
+  date_decided_by: ColumnType<string | null, string | null | undefined, string | null | undefined>;
+  date_printed: ColumnType<string | null, string | null | undefined, string | null | undefined>;
   /** Receipt vendor + order/invoice number as their own fields, so the user can
    *  EDIT the order # and we recompute `label` = "Receipt · <vendor> #<ref>". */
   vendor: ColumnType<string | null, string | null | undefined, string | null | undefined>;

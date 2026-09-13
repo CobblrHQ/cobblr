@@ -86,6 +86,8 @@ export function vendorFromLabel(label: string | null | undefined): string | null
   return m?.[1]?.trim() || null;
 }
 
+import type { AiFallback, ProviderErrorReason } from "@cobblr/platform-contract/scan-fallback";
+import type { ReceiptDateReading } from "./receipt-date.js";
 import {
   detectSeller,
   parseEstimatedDelivery,
@@ -137,7 +139,7 @@ export interface ParsedReceipt {
 /** How a receipt was read — surfaced on the result + stamped into each inbox
  *  row's metadata so triage (and debugging) knows whether a line came from a
  *  deterministic parse or the AI fallback. */
-export type ParseMethod = "csv" | "pdf-table" | "text-lines" | "ai-chat" | "ai-vision";
+export type ParseMethod = "csv" | "pdf-table" | "text-lines" | "ocr-lines" | "ai-chat" | "ai-vision";
 
 /**
  * WHY a parse failed, in a form something can branch on.
@@ -159,8 +161,13 @@ export type ParseMethod = "csv" | "pdf-table" | "text-lines" | "ai-chat" | "ai-v
 export type ReceiptFailure = "ai_unavailable" | "no_line_items" | "unreadable";
 
 export type ReceiptResult =
-  | { ok: true; receipt: ParsedReceipt; method: ParseMethod }
-  | { ok: false; reason: string; code: ReceiptFailure };
+  /** `date_reading`: how the receipt's date was read (receipt-date.ts), so
+   *  the session can record which way round a numeric date went (#2917). */
+  | { ok: true; receipt: ParsedReceipt; method: ParseMethod; date_reading?: ReceiptDateReading }
+  /** `ai` / `ai_reason`: the router's coded reason when the AI was the reason
+   *  (scan-fallback / provider-reason), so the session's verdict can say what
+   *  to do rather than "unavailable" (#2892). `reason` stays for a person. */
+  | { ok: false; reason: string; code: ReceiptFailure; ai?: AiFallback; ai_reason?: ProviderErrorReason };
 
 export function num(v: unknown): number | null {
   if (typeof v === "number") return Number.isFinite(v) ? v : null;

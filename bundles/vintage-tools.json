@@ -1,8 +1,9 @@
 {
   "manifest": {
     "id": "cobblr.community.vintage-tools",
+    "base_kind_fields_reason": "Adds maker, model, era, finish and provenance to hand tools already kept in plain Inventory; written before instances existed, for a collector whose tools are their stock.",
     "catalog": "disabled",
-    "version": "0.1.1",
+    "version": "0.1.2",
     "name": "Vintage Tools",
     "description": "Custom fields + label wires for vintage hand tools.",
     "author": "Cobblr community",

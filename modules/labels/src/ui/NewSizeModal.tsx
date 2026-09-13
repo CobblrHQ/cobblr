@@ -20,6 +20,7 @@ function NumField({ label, value, onChange, step = 0.25 }: { label: string; valu
   return (
     <label className="flex flex-col gap-1">
       <span className="text-[10px] font-mono uppercase tracking-widest text-faint dark:text-slate-500">{label}</span>
+      {/* NUMBER-INPUT-TEXT: the modal keeps the size as typed text until Save, where it parses and converts the unit. */}
       <input
         type="number" min={0} step={step} inputMode="decimal"
         value={value}

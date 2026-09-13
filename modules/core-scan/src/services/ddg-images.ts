@@ -134,6 +134,18 @@ export function colorFromText(text: string | null | undefined): string | null {
   for (const w of words) if (COLOR_WORDS.has(w)) return w;
   return null;
 }
+
+/** A colour value that may be written into PROSE (a title, a search phrase):
+ *  the value itself when it is said in words ("navy", "dark green"), null for
+ *  a hex, an rgb(), or anything with a digit. A normaliser fills a colour
+ *  field with a hex; that value is for the swatch and the ranking, never for a
+ *  sentence. "Blue cotton yarn 100g 200m #0000FF" was a search phrase once, and
+ *  "#0000ff cotton yarn 100g 200m" a title (#2885). */
+export function colorWordOnly(value: string | null | undefined): string | null {
+  const v = (value ?? "").trim();
+  if (!v || !colorFromText(v) || /[#\d]/.test(v)) return null;
+  return v;
+}
 const colorsIn = (tokens: string[]): Set<string> =>
   new Set(tokens.filter((t) => COLOR_WORDS.has(t)).map((t) => COLOR_SYNONYM[t] ?? t));
 
@@ -335,7 +347,8 @@ export function deriveImageQuery(opts: {
   const name = (opts.name ?? "").trim();
   if (!name || isJunkName(name)) return null;
   const { author, mediaWord } = mediaSearchExtras([{ fields: opts.fields ?? {} }]);
-  const color = typeof opts.fields?.color === "string" ? (opts.fields.color as string).trim() : "";
+  // A colour word or nothing: the field's hex is for the swatch, not the phrase.
+  const color = colorWordOnly(typeof opts.fields?.color === "string" ? (opts.fields.color as string) : null) ?? "";
   // The item's DECLARED category, on the same footing as its colour. A receipt
   // line is a bare noun with nothing else to go on - "Baby Carrots" - and the
   // search answers with the most photographed thing of that name, which for

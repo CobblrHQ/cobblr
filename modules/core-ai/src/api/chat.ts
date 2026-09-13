@@ -9,7 +9,8 @@
 // ignores the field) degrade to the legacy one-JSON-move protocol below.
 
 import { Router, type Response } from "express";
-import { humanizeProviderError } from "./provider-error.js";
+import { humanizeProviderError, type ProviderFailureDetail } from "./provider-error.js";
+import { providerReasonOf } from "@cobblr/platform-contract/provider-reason";
 import { missingActionArgs, reconcileActionArgs } from "./action-args-guard.js";
 import { groundingNudgeFor } from "./groundless-answer.js";
 import { movedNotCreated } from "./move-not-create.js";
@@ -22,7 +23,7 @@ import { GROUNDING_RULES, PLAIN_ANSWER_RULES, TOOL_USE_RULES } from "./prompt-ru
 import { z } from "zod";
 import { platform } from "@cobblr/platform-contract";
 import { matchCommand } from "./basics.js";
-import { withPlanCard } from "./plan-card.js";
+import { replyDespiteRefusal, withPlanCard } from "./plan-card.js";
 import { tenantContext, sessionUserId, sessionDisplayName, tenantDb } from "../db.js";
 import { asyncHandler, badBody, requireRole } from "./util.js";
 import {
@@ -38,6 +39,7 @@ import {
   type WorkspaceApi,
 } from "@cobblr/workspace-tools";
 import { runAgentLoop, type AgentLoopDeps, type AgentLoopOutcome, type AppliedWrite } from "./agent-loop.js";
+import { recordsFromToolResult, withMentions, type ChatMention } from "./mentions.js";
 import { createTurn, emitTurnEvent, finishTurn, readTurn, eventsAfter, openTurnFor, subscribe, sweepTurns } from "./turns.js";
 import { recordRound } from "../providers/replay.js";
 import { performWrite, performWrites, undoWrite, undoableOf, type WriteRequest, type WriteOutcome } from "./chat-ledger.js";
@@ -577,7 +579,23 @@ const ChatBody = z.object({
  *  Extracted so the SAME code serves the legacy blocking POST and the
  *  persisted-turn path; a `res.json` in here would tie it to one. */
 class TurnError extends Error {
-  constructor(public status: number, message: string) { super(message); }
+  constructor(public status: number, message: string, public detail?: ProviderFailureDetail) { super(message); }
+}
+
+/** What a failed call carried beside its message (the router's refusal:
+ *  provider-reason.ts), for the sentence a person reads. */
+function failureDetailOf(err: unknown): ProviderFailureDetail | undefined {
+  if (err instanceof TurnError) return err.detail;
+  const e = err as { reason?: unknown; door?: unknown; retryAfterSec?: unknown; message?: string } | null;
+  const reason = providerReasonOf(err);
+  if (!reason) return undefined;
+  const provider = String(e?.message ?? "").replace(/^core-ai invoke failed:\s*/i, "").match(/^([a-z0-9-]+):/i)?.[1];
+  return {
+    reason,
+    ...(e?.door === "personal" || e?.door === "workspace" ? { door: e.door } : {}),
+    ...(typeof e?.retryAfterSec === "number" ? { retryAfterSec: e.retryAfterSec } : {}),
+    ...(provider ? { provider } : {}),
+  };
 }
 
 async function runTurn(
@@ -589,6 +607,24 @@ async function runTurn(
   onEvent?: AgentLoopDeps["onEvent"],
   /** The persisted turn this run belongs to, so a write can be traced back to
    *  the sentence that asked for it. Absent for the blocking (non-turn) path. */
+  turnId?: string,
+): Promise<Record<string, unknown>> {
+  // Every record the turn's reads handed back. The answer goes out with the
+  // ones its words name (`mentions`), so a read answer opens what it names
+  // the way a write's card does. See mentions.ts.
+  const reads: ChatMention[] = [];
+  const out = await answerTurn(req, parsed, system, c, orgId, reads, onEvent, turnId);
+  return withMentions(out, reads);
+}
+
+async function answerTurn(
+  req: Parameters<typeof tenantDb>[0],
+  parsed: { data: z.infer<typeof ChatBody> },
+  system: string,
+  c: Ctx,
+  orgId: string,
+  reads: ChatMention[],
+  onEvent?: AgentLoopDeps["onEvent"],
   turnId?: string,
 ): Promise<Record<string, unknown>> {
   // The agent loop: read tools auto-run (through THIS caller's permissions,
@@ -665,6 +701,8 @@ async function runTurn(
           if (bounce) return { ok: false, error: bounce };
         }
         const result = await tool.execute(wsApi, args);
+        // What it read, kept: the reply is named by these and nothing else.
+        for (const r of recordsFromToolResult(result)) reads.push(r);
         // The escort tool (tier 1.5) rides the read rail — it mutates nothing
         // — but its OUTPUT is for the widget, not only the model: collect the
         // destinations so the response can move the user's screen there.
@@ -772,7 +810,7 @@ async function runTurn(
     // proxy, container and relay logs. The chat that fails for an
     // infrastructure reason is exactly the one worth logging (2026-08-18).
     if (status === 502) console.error(`[core-ai] chat failed: ${msg}`);
-    throw new TurnError(status, msg);
+    throw new TurnError(status, msg, failureDetailOf(err));
   }
 
   const done = appliedSummaries(outcome.applied);
@@ -977,6 +1015,8 @@ chatRouter.post(
           summary: hit.summary ?? `${hit.operations.length} changes`,
           operations: hit.operations.length,
           ...(hit.note ? { note: hit.note } : {}),
+          ...(hit.leftHeading ? { leftHeading: hit.leftHeading } : {}),
+          ...(hit.also?.length ? { also: hit.also } : {}),
         }
       : undefined;
     const situational: PromptOptions = {
@@ -1012,7 +1052,13 @@ chatRouter.post(
         // The blocking route (older clients, tests, the MCP server) gets the
         // same one sentence the turn path gives a person, never a provider's
         // JSON body; the raw text is in the log above and the AI call log.
-        const human = humanizeProviderError(msg);
+        const human = humanizeProviderError(msg, failureDetailOf(err));
+        // A plan worked out before the model was asked does not need it: the
+        // reply is the refusal, and the card is still the plan.
+        if (hit) {
+          res.json(replyDespiteRefusal(human, hit, asked));
+          return;
+        }
         res.status(status).json({
           type: "error",
           error: {
@@ -1064,7 +1110,13 @@ chatRouter.post(
         if (!(err instanceof TurnError) || err.status === 502) console.error(`[core-ai] chat failed: ${msg}`);
         // The raw provider text is in the log above and in the AI call log;
         // the person gets one sentence, never a JSON body.
-        const human = humanizeProviderError(msg);
+        const human = humanizeProviderError(msg, failureDetailOf(err));
+        if (hit) {
+          // The plan needed no model; the turn ends on it, with the refusal as
+          // what the reply says.
+          await finishTurn(tdb, turnId, { ok: true, result: replyDespiteRefusal(human, hit, asked) }).catch(() => {});
+          return;
+        }
         await finishTurn(tdb, turnId, {
           ok: false,
           error: human.message,

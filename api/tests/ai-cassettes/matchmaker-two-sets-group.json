@@ -1,0 +1,9 @@
+{
+  "_about": "The router's answer for the group photo of two boxed sets: the Sets table, with the FIRST set's number, sealed, and a theme. The shape of the parent row a split gets wrong (#2945).",
+  "match": "\"name\":\"Two boxed building sets: Mountain Explorer 31058 and Patrol Car 60312\"",
+  "rounds": [
+    {
+      "content": "{\"candidates\":[{\"module\":\"inventory\",\"instance\":\"sets\",\"kind\":\"inventory:part\",\"label\":\"Sets\",\"name\":\"Two boxed building sets\",\"confidence\":0.8,\"fields\":{\"set_number\":\"31058\",\"lifecycle\":\"sealed\",\"theme\":\"Creator\",\"year\":2024},\"notes\":\"Two sealed building sets in one photo; filed under Sets with the first set's number. Split to file them separately.\"}]}"
+    }
+  ]
+}

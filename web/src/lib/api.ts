@@ -2,6 +2,8 @@
 // call so the AuthProvider can update it without rewiring the client.
 // Everything goes through `request<T>` so error shape stays uniform.
 
+import type { AiFallback } from "@cobblr/platform-contract/scan-fallback";
+import type { ReceiptReadFailure } from "@cobblr/platform-contract/scan-session";
 import { getImpersonationToken } from "./impersonation";
 import type { ResolveOutcome as RegistryResolveOutcome } from "@cobblr/platform-contract/resolvables";
 import type {
@@ -645,6 +647,9 @@ export interface OrgModuleListItem {
     overrideKey?: string;
     /** A row in the nav (Locations, Scan Inbox); absent = search-only. */
     primary?: boolean;
+    /** A live number for the row: the host polls this module path and shows
+     *  the integer at `field` as a pill (see useNavBadges). */
+    count?: { path: string; field: string };
   };
   /** Release maturity — the UI shows an Experimental/Beta badge for non-stable
    *  modules. Absent → treat as stable. ("hidden" modules never load, so they
@@ -657,6 +662,9 @@ export interface OrgModuleListItem {
    *  modules' things and is not itself a trackable kind, so the funnel's
    *  "track a kind of thing" column excludes it. */
   operates_on?: string[];
+  /** Which side of a grown sidebar the row sits on, when the manifest says
+   *  (`navKind`); absent → derived, see components/nav-groups.ts. */
+  nav_kind?: "collection" | "tool" | null;
   /** UI panels this module contributes into ANOTHER module's pages —
    *  rendered through web/src/panels/registry.tsx by the target module's
    *  host page. Present only for modules that declare contributes.panels. */
@@ -888,8 +896,14 @@ export const api = {
   // Central identity: trade the one-time code from account.cobblr.xyz for a session
   // here. The code arrives in the URL; the identity token never does (the api redeems
   // it server to server). See docs/architecture/central-identity.md.
-  identityCallback: (body: { code: string }) =>
-    request<AuthResponse>("POST", "/auth/identity/callback", body),
+  /** `app` is the managed app asked for on /start/<app>; `provisioned` says what
+   *  this sign-in made (null when an existing account was adopted). */
+  identityCallback: (body: { code: string; app?: string }) =>
+    request<AuthResponse & { provisioned: { slug: string; app: string | null } | null }>(
+      "POST",
+      "/auth/identity/callback",
+      body,
+    ),
   // QR pair-login (desktop mints a code → phone scans + claims → signed in to
   // the same workspace). See api/src/routes/auth.ts "QR pair-login".
   pairStart: (body: { org_slug: string }) =>
@@ -967,6 +981,11 @@ export const api = {
     request<{ name: string; slug: string }>("PATCH", `/orgs/${slug}`, body),
 
   // Per-org module enable/disable + listing
+  /** The number a module declared for its nav row (manifest `nav.count`): one
+   *  GET on the module's own path, read as a plain object so the host never
+   *  has to know the endpoint's shape beyond the one field it was told. */
+  moduleNavCount: (slug: string, moduleName: string, path: string) =>
+    request<Record<string, unknown>>("GET", `/orgs/${slug}/modules/${moduleName}${path}`),
   orgModules: (slug: string) =>
     request<{ items: OrgModuleListItem[] }>("GET", `/orgs/${slug}/modules`),
   enableModule: (slug: string, name: string) =>
@@ -1285,9 +1304,12 @@ export const api = {
   testConnection: (body: { provider_id: string; credentials: Record<string, string> }) =>
     request<AiConnectionTest>("POST", "/me/connections/test", body),
   addConnection: (body: UserConnectionInput) =>
-    request<{ id: string }>("POST", "/me/connections", body),
+    request<{ id: string; verification?: ConnectionVerification }>("POST", "/me/connections", body),
   updateConnection: (id: string, body: Partial<UserConnectionInput>) =>
-    request<void>("PATCH", `/me/connections/${id}`, body),
+    request<{ verification?: ConnectionVerification } | void>("PATCH", `/me/connections/${id}`, body),
+  /** The Test button: probe the stored key again; the row's state follows. */
+  testStoredConnection: (id: string) =>
+    request<{ verification: ConnectionVerification }>("POST", `/me/connections/${id}/test`, {}),
   deleteConnection: (id: string) =>
     request<void>("DELETE", `/me/connections/${id}`),
   /** The order of MY connections in a workspace, first to last. Only meaningful
@@ -1575,8 +1597,24 @@ export const api = {
     ),
   validateBundle: (slug: string, manifest: PlatformBundleManifest) =>
     request<BundleValidation>("POST", `/orgs/${slug}/bundles/validate`, { manifest }),
-  uninstallBundle: (slug: string, id: string) =>
-    request<void>("DELETE", `/orgs/${slug}/bundles/${id}`),
+  /** Turn a bundle's optional features on or off. One call: the api re-applies
+   *  the stored manifest on its upgrade path, so fields, wires and views move
+   *  and the bundle's tables keep their rows and ids. `kept` is what it read
+   *  back afterwards, not what it meant to do (#2889). */
+  setBundleFeatures: (slug: string, id: string, enabledFeatures: string[]) =>
+    request<{
+      bundle: PlatformBundle;
+      features: { enabled: string[]; turned_on: string[]; turned_off: string[] };
+      kept: Array<{ instance_name: string; id: string; records: number | null }>;
+      removed_empty: string[];
+      incomplete?: { message: string };
+    }>("PATCH", `/orgs/${slug}/bundles/${id}/features`, { enabled_features: enabledFeatures }),
+  /** Remove a bundle's fields, wires and views. Its instances and their records
+   *  stay unless `deleteData` is set, which only the uninstall dialog's
+   *  confirmation (the one that names what it deletes) sets. A feature change
+   *  re-applies the bundle and never passes it (#2889). */
+  uninstallBundle: (slug: string, id: string, opts: { deleteData?: boolean } = {}) =>
+    request<void>("DELETE", `/orgs/${slug}/bundles/${id}${opts.deleteData ? "?delete_data=1" : ""}`),
   /** What uninstalling this bundle would tear down: its instances no other source
    *  still claims (with item counts) + modules that would be turned off. Powers
    *  the uninstall-confirm warning. */
@@ -3075,7 +3113,10 @@ export const api = {
       items: ScanInboxItem[];
       /** Session labels keyed by scan_batch_id — the inbox group header + the
        *  receipt's stored original (for View original / Re-parse). */
-      batches?: Record<string, { label: string | null; origin: string | null; source_file_id: string | null; order_ref: string | null; tracking_number: string | null; shipment_state: string | null; shipment_description: string | null; shipment_location: string | null }>;
+      batches?: Record<string, ScanBatchMeta>;
+      /** Receipt sessions with no rows on any page: a failed or in-flight read
+       *  (the failure is a state on the session, never an item). */
+      sessions?: Record<string, ScanBatchMeta>;
       next_cursor?: string | null;
       total?: number;
     }>("GET", `/orgs/${slug}/modules/core-scan/inbox${qs ? "?" + qs : ""}`);
@@ -3149,7 +3190,7 @@ export const api = {
   /** Cheap inbox counts for the put-away front door (dashboard card / scan
    *  strip): pending captures, and how many still have no home. */
   getScanStats: (slug: string) =>
-    request<{ pending: number; unfiled: number; ready: number }>(
+    request<{ pending: number; unfiled: number; ready: number; failed_reads?: number }>(
       "GET",
       `/orgs/${slug}/modules/core-scan/inbox/stats`,
     ),
@@ -3221,7 +3262,25 @@ export const api = {
       placed_item_ids?: string[];
       entries?: LiveSortEntry[];
       resumed: boolean;
+      /** Plan mode: the walk's queue, every accepted group still to place
+       *  from every plan in play, and what was left out with the reason. */
+      groups?: PutawayWalkGroup[];
+      left_out?: PutawayLeftOut[];
+      remaining?: number;
+      item_names?: Record<string, string>;
+      item_quantities?: Record<string, number>;
+      item_barcodes?: Record<string, string>;
     }>("POST", `/orgs/${slug}/modules/core-scan/putaway/start`, body),
+  /** What is accepted and still to be put away, across every plan in play:
+   *  the resume chip's one source. */
+  getPutawayQueue: (slug: string) =>
+    request<{
+      remaining: number;
+      groups: number;
+      plan_id: string | null;
+      session_id: string | null;
+      left_out: PutawayLeftOut[];
+    }>("GET", `/orgs/${slug}/modules/core-scan/putaway/queue`),
   /** Live Sort: route an intaken inbox item → a destination directive. */
   putawayScan: (slug: string, sessionId: string, body: { inbox_item_id: string }) =>
     request<{
@@ -3513,7 +3572,7 @@ export const api = {
              *  total charged. False means the receipt is only mostly read. */
             lines_total: number;
             lines_reconcile: boolean | null;
-            method: "csv" | "pdf-table" | "ai-chat" | "ai-vision";
+            method: "csv" | "pdf-table" | "text-lines" | "ocr-lines" | "ai-chat" | "ai-vision";
           };
           items: ScanInboxItem[];
           duplicate?: undefined;
@@ -3573,6 +3632,16 @@ export const api = {
    *  answers. It cannot test a PROMPT change: the cache is keyed on the input
    *  (the image), not the prompt, so a cached reply answers the prompt that was
    *  live when it was bought. */
+  /** "That is a receipt": the photo on this item goes to the receipt parser
+   *  (the same route the dedicated upload uses) and the photo row is retired
+   *  once its lines land. The intake's identify verdict does this on its own;
+   *  this is the one-tap correction when it missed. */
+  readScanItemAsReceipt: (slug: string, id: string) =>
+    request<{ ok: true; receipt: true; items: number }>(
+      "POST",
+      `/orgs/${slug}/modules/core-scan/inbox/${id}/as-receipt`,
+      {},
+    ),
   rerunScanAi: (
     slug: string,
     id: string,
@@ -3832,6 +3901,10 @@ export const api = {
   /** Split a group photo into separate items (vision segments + crops). */
   splitScanItem: (slug: string, id: string) =>
     request<{ children: ScanInboxItem[] }>("POST", `/orgs/${slug}/modules/core-scan/inbox/${id}/split`),
+  /** Undo a split: the group photo comes back as it was, its pieces are
+   *  discarded. Works from the parent or from any of its pieces. */
+  unsplitScanItem: (slug: string, id: string) =>
+    request<{ parent: ScanInboxItem; discarded: number }>("POST", `/orgs/${slug}/modules/core-scan/inbox/${id}/unsplit`),
   createScanBatch: (slug: string) =>
     request<{ id: string }>(
       "POST",
@@ -3932,7 +4005,7 @@ export const api = {
   // Answer a question that is still being typed, from the workspace, with no
   // model involved. Null when it is not a question this can answer.
   peekAnswer: (slug: string, message: string, aiOn: boolean) =>
-    request<{ answer: string | null; detail?: string; from?: "guide" }>(
+    request<{ answer: string | null; detail?: string; from?: "guide"; mentions?: Array<{ kind: string; id: string; label: string }> }>(
       "POST",
       `/orgs/${slug}/modules/core-ai/basics/peek`,
       { message, ai_on: aiOn },
@@ -3953,11 +4026,23 @@ export const api = {
       "POST",
       `/orgs/${slug}/modules/core-ai/chat/undo-turn/${encodeURIComponent(turnId)}${force ? "?force=1" : ""}`,
     ),
-  runCommand: (slug: string, id: string, message: string, selectionIds?: string[]) =>
-    request<{ ok: boolean; done: number; failed: number; message: string; ledger_ids?: string[]; undoable?: boolean; destination?: { kind: string; label: string } }>(
+  runCommand: (slug: string, id: string, message: string, selectionIds?: string[], section?: string) =>
+    request<{
+      ok: boolean;
+      done: number;
+      failed: number;
+      message: string;
+      /** The section that ran, when one was named. */
+      section?: string;
+      ledger_ids?: string[];
+      undoable?: boolean;
+      destination?: { kind: string; label: string };
+      /** The records it changed, named, so the result's sentence opens them. */
+      touched?: Array<{ kind: string; id: string; label: string }>;
+    }>(
       "POST",
       `/orgs/${slug}/modules/core-ai/basics/commands/${id}/run`,
-      { message, ...(selectionIds?.length ? { selection_ids: selectionIds } : {}) },
+      { message, ...(selectionIds?.length ? { selection_ids: selectionIds } : {}), ...(section ? { section } : {}) },
     ),
 
   // core-ai — provider config + capability defaults + usage. See
@@ -3980,6 +4065,8 @@ export const api = {
       credentials: Record<string, unknown>;
       config?: Record<string, unknown>;
       monthly_budget_cents?: number | null;
+      /** Save a key the probe rejected anyway, marked unverified. */
+      confirm_unverified?: boolean;
     },
   ) => request<AiProvider>("POST", `/orgs/${slug}/modules/core-ai/providers`, body),
   updateAiProvider: (
@@ -3988,6 +4075,7 @@ export const api = {
     body: {
       label?: string;
       credentials?: Record<string, unknown>;
+      confirm_unverified?: boolean;
       config?: Record<string, unknown>;
       enabled?: boolean;
       monthly_budget_cents?: number | null;
@@ -4004,7 +4092,7 @@ export const api = {
       body,
     ),
   testAiProvider: (slug: string, id: string) =>
-    request<{ ok: boolean; error?: string; note?: string }>(
+    request<{ ok: boolean; error?: string; note?: string; reason?: ConnectionVerification["reason"]; verification?: ConnectionVerification }>(
       "POST",
       `/orgs/${slug}/modules/core-ai/providers/${id}/test`,
     ),
@@ -4711,15 +4799,43 @@ export interface LocationImportResponse {
   updated?: number;
 }
 
+/** A scan session (batch) as the inbox list reports it beside its rows. */
+export interface ScanBatchMeta {
+  label: string | null;
+  origin: string | null;
+  source_file_id: string | null;
+  order_ref: string | null;
+  tracking_number: string | null;
+  shipment_state: string | null;
+  shipment_description: string | null;
+  shipment_location: string | null;
+  /** The receipt read as a state on the session (platform-contract scan-session). */
+  read_state?: "in_flight" | "read" | "failed" | null;
+  read_failure?: ReceiptReadFailure | null;
+  read_started_at?: string | null;
+  created_at?: string | null;
+  /** Which way round the receipt's numeric date was read, and by what
+   *  (core-scan receipt-date.ts, #2917). */
+  date_convention?: "mdy" | "dmy" | null;
+  date_decided_by?: "unambiguous" | "receipt" | "workspace" | "nearest-past" | "model" | null;
+  date_printed?: string | null;
+}
+
 export interface AiStatus {
   available: boolean;
   reason: "ok" | "operator_disabled" | "not_entitled" | "no_provider" | "workspace_disabled";
   /** When available, where the call would be served from — drives honest copy. */
   source?: "personal" | "workspace" | "managed";
-  /** A SEPARATE axis: this deployment can identify a photo or barcode through
-   *  the hosted service even with no chat provider connected. Scan surfaces must
-   *  not claim "basic mode" when identification is exactly what does work. */
+  /** A SEPARATE axis: this person's photo or barcode can be identified here,
+   *  through the hosted service (even with no chat provider connected) or a
+   *  provider with the image capability routed to them. Scan surfaces must
+   *  not claim "basic mode" or "set it up" when identification does work. */
   identify_available?: boolean;
+  /** Where identification would be served from, when it is available. */
+  identify_source?: "hosted" | "personal" | "workspace" | "managed";
+  /** This deployment can read the text off an image with no model (the
+   *  receipt-shape check before identify, the receipt door's line tier). */
+  ocr_available?: boolean;
 }
 
 /** What the no-AI matcher offers to RUN, when a learned command fits. */
@@ -4730,7 +4846,33 @@ export interface BasicCommandOffer {
   summary: string;
   /** Everything it will touch, one per line. */
   lines?: string[];
-  /** What it found and is NOT touching, said plainly. */
+  /** What it found and is NOT touching: one sentence, ending in a colon when
+   *  `also` lists the records it counts. */
+  note?: string;
+  /** Every record the note counts, each its own bullet on the card; a link
+   *  when its kind is known, `why` when the sentence does not say. */
+  also?: Array<{ id: string; title: string; kind?: string; why?: string }>;
+  /** What sending the message would do about them; under the list. */
+  hint?: string;
+  /** The label over the records it left, with their count ("Left in
+   *  Inventory, could not tell (6):"). */
+  leftHeading?: string;
+  /** One per destination when there are two or more: what goes where, each
+   *  runnable on its own by key (`runCommand(..., section)`). Absent for one
+   *  destination, which is one card. */
+  sections?: PlanSectionOffer[];
+}
+
+/** One destination of a plan with several. */
+export interface PlanSectionOffer {
+  key: string;
+  /** "4 into Groceries", "2 into a new Spices section". */
+  heading: string;
+  /** The records it moves; each a link on the card. `why` is the word that
+   *  put it there when that was the table's vocabulary, not the person's. */
+  lines: Array<{ id: string; title: string; kind?: string; why?: string }>;
+  /** How many operations it is (a new list's create counts). */
+  operations: number;
   note?: string;
 }
 
@@ -4832,6 +4974,16 @@ export interface BasicRuleRaw {
   updated_at: string;
 }
 
+/** What a saved connection knows about its own key: the verdict of the
+ *  save's probe, or of the Test button (connection-verification.ts). */
+export interface ConnectionVerification {
+  state: "verified" | "invalid" | "unverifiable" | "unverified";
+  reason?: "invalid_key" | "quota" | "model_unavailable" | "unreachable" | "unknown";
+  message?: string;
+  model?: string;
+  at: string;
+}
+
 export interface AiProvider {
   id: string;
   provider_id: string;
@@ -4839,6 +4991,8 @@ export interface AiProvider {
   config: Record<string, unknown>;
   enabled: boolean;
   monthly_budget_cents: number | null;
+  /** Null for a row never checked. */
+  verification?: ConnectionVerification | null;
   created_at: string;
   updated_at: string;
 }
@@ -4950,6 +5104,8 @@ export interface UserConnection {
   /** Depends on the user's personal edge agent (the edge-bridge provider, or a
    *  URL provider with bridge transit) — drives the live status indicators. */
   uses_edge: boolean;
+  /** What the last probe said about the key; null for a row never checked. */
+  verification?: ConnectionVerification | null;
   created_at: string;
   updated_at: string;
 }
@@ -4964,6 +5120,9 @@ export interface UserConnectionInput {
   org_ids?: string[];
   /** Per-workspace routing (preferred over org_ids). */
   routes?: ConnRoute[];
+  /** Save a key the probe rejected anyway, marked unverified: the person's
+   *  say-so after the save answered 409 key_invalid. */
+  confirm_unverified?: boolean;
 }
 
 /** An AI-share offer as the workspace OWNER sees it. */
@@ -5273,6 +5432,11 @@ export interface ScanCandidate {
    *  "keywords" (corroborating hits only — tentative, no one-tap Add, skipped
    *  by File all), "fallback" (the honest catch-all + category). */
   basis?: "noun" | "keywords" | "fallback";
+  /** Why the keyword floor routed this instead of the model (the router's own
+   *  answer, scan-fallback): the chip says the matching sentence. */
+  ai_fallback?: AiFallback;
+  /** On a provider error, the provider's own reason (the card says what to do). */
+  ai_fallback_reason?: "invalid_key" | "quota" | "model_unavailable" | "unreachable" | "unknown";
 }
 
 /** One field on a scan-menu table (a trimmed field def). */
@@ -5505,14 +5669,40 @@ export interface OrganizeStoredPlan {
   walk_state: { placed_item_ids?: string[] };
   /** The active put-away session backing walk_state (null = none started). */
   putaway_session_id?: string | null;
+  /** The latest walk over this plan ended (Done was pressed). */
+  walk_ended?: boolean;
   expires_at: string;
 }
 
 export interface OrganizeApplyResponse {
   applied_group_ids: string[];
+  /** Items whose record now exists (the api filed them through the confirm door). */
   filed_item_ids: string[];
+  /** Items given the destination by this apply, filed or not. */
+  assigned_item_ids?: string[];
+  /** The filing's own result, per item: the record that now exists. */
+  filed?: Array<{ item_id: string; name: string; entity_id: string | null; entity_kind: string | null }>;
+  /** Items that got their destination but could not be filed, and why. */
+  assigned_only?: Array<{ item_id: string; name: string | null; reason: string }>;
   created_locations: Array<{ id: string; name: string; group_id: string }>;
   skipped: Array<{ group_id: string; reason: string }>;
+}
+
+/** One bin of a put-away walk, as the api assembled it from every plan in play. */
+export interface PutawayWalkGroup {
+  plan_id: string;
+  group_id: string;
+  label: string;
+  item_ids: string[];
+  location_id: string;
+  location_name: string;
+  location_path: string;
+}
+export interface PutawayLeftOut {
+  plan_id: string;
+  group_id: string;
+  label: string;
+  reason: string;
 }
 
 /** "Already tracked" — an existing entity matching a scan (by barcode or name). */
@@ -5586,6 +5776,9 @@ export interface BundleInstallSummary {
   /** `skin` creates no table and no nav entry - the fact users most need told. */
   kind: "instance" | "skin";
   instance: string | null;
+  /** This install found the table already there rather than creating it
+   *  (#2919). Absent from an older api: read as created. */
+  instance_existed?: boolean;
   module: string | null;
   fields: number;
   wires: number;
@@ -5950,6 +6143,9 @@ export interface ViewDataResponse {
     detailUrl?: string;
     fields: Record<string, unknown>;
   }>;
+  /** With no rows: true when the collection itself has nothing (a first-item
+   *  door belongs here), false when the view's filter excluded everything. */
+  collection_empty?: boolean;
 }
 
 export interface TagRecord {
@@ -6056,6 +6252,8 @@ export interface SearchHit {
   subtitle?: string;
   image_path?: string;
   detailUrl?: string;
+  /** Archived / out of use. Search still finds these, after the live ones. */
+  retired?: boolean;
   fields: Record<string, unknown>;
 }
 
@@ -6119,7 +6317,22 @@ export interface AiChatResponse {
   text?: string;
   /** The plan the workspace worked out for this sentence without AI, as the
    *  same Do-it card the offer strip shows. Present whatever the model said. */
-  command?: { id: string; template: string; operations: number; summary: string; message: string; lines?: string[]; note?: string };
+  command?: {
+    id: string;
+    template: string;
+    operations: number;
+    summary: string;
+    message: string;
+    lines?: string[];
+    note?: string;
+    leftHeading?: string;
+    also?: BasicCommandOffer["also"];
+    sections?: PlanSectionOffer[];
+  };
+  /** The model could not be asked (refused, rate-limited, out of quota, not
+   *  entitled, or it errored) and `text` is that sentence; the plan the
+   *  workspace worked out without it still rides as `command`. */
+  refusal?: { code?: string; retry_after_sec?: number; resets_at?: string };
   summary?: string;
   proposal?: AiChatProposal;
   /** type:"proposals" — several writes from one turn, each its own confirm. */
@@ -6144,6 +6357,10 @@ export interface AiChatResponse {
    *  widget navigates; prefill.* params fill the form; the page's own
    *  submit stays the user's). */
   escorts?: Array<{ path: string; label: string }>;
+  /** The records this turn READ whose name the words carry, so a read answer
+   *  opens what it names the way a write's card does. Decided server-side
+   *  from what the tools returned; never a name the turn did not read. */
+  mentions?: Array<{ kind: string; id: string; label: string }>;
 }
 
 export type AiChatProposal =
@@ -7104,6 +7321,10 @@ export interface PlatformBundle {
 }
 
 export interface PlatformBundleManifest {
+  /** Why this manifest declares fields on a module's BASE kind rather than on
+   *  an instance of its own; lint:bundle-fields-on-own-kinds refuses base-kind
+   *  fields without it. */
+  base_kind_fields_reason?: string;
   id: string;
   version: string;
   name: string;

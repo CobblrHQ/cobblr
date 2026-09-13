@@ -55,6 +55,8 @@ import { discordInviteUrl, discordAppId } from "../platform/discord-oauth.js";
 import { communityLinks, type CommunityLink } from "../platform/community.js";
 import { enableDefaultModulesForOrg } from "../modules/enable.js";
 import { provisionAppWorkspace, ProvisionAppError } from "../platform/provision-app.js";
+import { getManagedApp } from "../platform/managed-apps.js";
+import { planIdentityWorkspace } from "../platform/identity-provision.js";
 import type { OrgRole } from "../db/schema.js";
 
 class SkipNotify extends Error {}
@@ -797,9 +799,17 @@ const IdentityExchangeBody = z.object({ token: z.string().min(1) });
 //
 // The deployment secret is what makes redemption ours: intercepting the code is not
 // enough to redeem it. It never leaves this process.
-const IdentityCallbackBody = z.object({ code: z.string().min(20).max(512) });
+const IdentityCallbackBody = z.object({
+  code: z.string().min(20).max(512),
+  // The managed app the person asked for on /start/<app>, carried through the
+  // hand-off so a NEW account is provisioned as it. Unknown values are
+  // ignored (see identity-provision.ts); a stale link must not strand a sign-in.
+  app: z.string().min(1).max(40).optional(),
+});
 
-type AdoptResult = { userId: string } | { status: number; error: { code: string; message: string } };
+type AdoptResult =
+  | { userId: string; provisioned: { slug: string; app: string | null } | null }
+  | { status: number; error: { code: string; message: string } };
 
 const NO_LOCAL_ACCOUNT = {
   status: 404,
@@ -820,7 +830,11 @@ const NO_LOCAL_ACCOUNT = {
  *  registering someone else's email at the account service and never confirming it
  *  would take over their workspace here. The account service is the only thing that
  *  knows whether the address was proven, so this asks it rather than assuming. */
-async function adoptOrProvisionIdentity(identityId: string, identityToken: string): Promise<AdoptResult> {
+async function adoptOrProvisionIdentity(
+  identityId: string,
+  identityToken: string,
+  app?: string,
+): Promise<AdoptResult> {
   const profile = await fetchIdentityProfile(identityToken);
   if (!profile) return NO_LOCAL_ACCOUNT;
   if (!profile.emailVerified) {
@@ -844,7 +858,8 @@ async function adoptOrProvisionIdentity(identityId: string, identityToken: strin
     // hand one person the other's workspace.
     if (byEmail.identity_id && byEmail.identity_id !== identityId) return NO_LOCAL_ACCOUNT;
     await meta.updateTable("users").set({ identity_id: identityId }).where("id", "=", byEmail.id).execute();
-    return { userId: byEmail.id };
+    // Adopted as it is, whatever app the link named (planIdentityWorkspace).
+    return { userId: byEmail.id, provisioned: null };
   }
 
   if (!autoProvisionEnabled()) return NO_LOCAL_ACCOUNT;
@@ -872,7 +887,25 @@ async function adoptOrProvisionIdentity(identityId: string, identityToken: strin
     .returning("id")
     .executeTakeFirstOrThrow();
 
-  const provisioned = await provisionOrgForUser(created.id, `${profile.displayName}'s workspace`);
+  // The fourth create path agrees with the other three: asked for from
+  // /start/<app>, a new account's first workspace IS the app, the way the
+  // signup form's app branch does it. Otherwise the plain workspace as before.
+  const plan = planIdentityWorkspace({ existing: false, app, isKnownApp: (id) => getManagedApp(id) !== null });
+  let wantApp = plan.kind === "provision" ? plan.app : null;
+  let provisioned: { orgId: string; slug: string } | null = null;
+  if (wantApp) {
+    try {
+      provisioned = await provisionAppWorkspace(created.id, wantApp, undefined, { auth_method: "session" });
+    } catch (err) {
+      // The bundle could not be resolved right now. The sign-in still has to
+      // succeed: the account exists already, so the person gets a plain
+      // workspace and can add the app from inside it.
+      if (!(err instanceof ProvisionAppError)) throw err;
+      console.warn(`[identity] ${wantApp} app unavailable (${err.code}); provisioning a plain workspace instead`);
+      wantApp = null;
+    }
+  }
+  provisioned ??= await provisionOrgForUser(created.id, `${profile.displayName}'s workspace`);
   // Same lifecycle seam signup uses, so the hosted overlay sees these accounts too
   // (trial stamping, welcome flows) rather than only the ones that came through a form.
   await fireSignup({ userId: created.id, email: profile.email, orgId: provisioned.orgId });
@@ -887,8 +920,8 @@ async function adoptOrProvisionIdentity(identityId: string, identityToken: strin
   } catch (err) {
     console.error("[identity] user_created log failed:", err);
   }
-  console.log(`[identity] provisioned a workspace for a central account (${created.id})`);
-  return { userId: created.id };
+  console.log(`[identity] provisioned ${wantApp ? `the ${wantApp} app` : "a workspace"} for a central account (${created.id})`);
+  return { userId: created.id, provisioned: { slug: provisioned.slug, app: wantApp } };
 }
 
 authRouter.post("/identity/callback", async (req, res, next) => {
@@ -901,7 +934,7 @@ authRouter.post("/identity/callback", async (req, res, next) => {
     if (!identityExchangeLimiter(req.ip ?? "unknown")) {
       return res.status(429).json({ error: { code: "rate_limited", message: "Too many attempts — wait a moment." } });
     }
-    const { code } = IdentityCallbackBody.parse(req.body);
+    const { code, app } = IdentityCallbackBody.parse(req.body);
     const redeemed = await redeemIdentityCode(code);
     if (!redeemed) {
       return res.status(401).json({
@@ -931,13 +964,17 @@ authRouter.post("/identity/callback", async (req, res, next) => {
       });
     }
     let userId = linked?.id;
+    let provisioned: { slug: string; app: string | null } | null = null;
     if (!userId) {
-      const outcome = await adoptOrProvisionIdentity(identityId, redeemed);
+      const outcome = await adoptOrProvisionIdentity(identityId, redeemed, app);
       if ("error" in outcome) return res.status(outcome.status).json({ error: outcome.error });
       userId = outcome.userId;
+      provisioned = outcome.provisioned;
     }
     await meta.updateTable("users").set({ last_login_at: new Date() }).where("id", "=", userId).execute();
-    return res.json(await buildAuthResponse(userId));
+    // `provisioned` says what THIS sign-in made, so the page can land the person
+    // in the app they asked for rather than on the generic home.
+    return res.json({ ...(await buildAuthResponse(userId)), provisioned });
   } catch (err) {
     if (err instanceof z.ZodError) {
       return res.status(400).json({ error: { code: "invalid_body", message: "Bad callback payload", details: err.issues } });

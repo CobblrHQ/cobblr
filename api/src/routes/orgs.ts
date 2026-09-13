@@ -122,6 +122,9 @@ orgsRouter.get("/:slug/modules", requireAuth, withTenant, async (req, res, next)
         // Non-empty → an operator/capability (acts ON these modules'
         // things), not a trackable kind; the funnel's col 1 excludes it.
         operates_on: m.operatesOn,
+        // Which side of a grown sidebar the row sits on, when the module
+        // says (the web derives it otherwise).
+        nav_kind: m.navKind ?? null,
         // Icon-only quick-action for the navbar's right cluster (only
         // surfaced when the module is enabled — the web filters on that).
         headerAction: m.headerAction ?? null,

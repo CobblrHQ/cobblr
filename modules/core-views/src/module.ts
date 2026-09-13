@@ -18,7 +18,7 @@ import { defineModule } from "@cobblr/platform-contract";
 
 export default defineModule({
   name: "core-views",
-  version: "0.2.6",
+  version: "0.2.7",
   displayName: "Views",
   description:
     "Saved filtered/sorted views per entity kind. List today; kanban, calendar, table land as renderers ship. Removes the need for every module to invent its own list page.",

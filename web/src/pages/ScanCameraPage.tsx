@@ -35,12 +35,15 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { useLocation, useNavigate, useSearchParams } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { AlertTriangle, ArrowLeftRight, ArrowRight, Camera, Check, Flashlight, Loader2, MapPin, Package, Plus, ScanLine, SkipForward, Undo2, X, Zap } from "lucide-react";
+import { AlertTriangle, ArrowLeftRight, ArrowRight, Camera, Check, Flashlight, ImagePlus, Loader2, MapPin, Package, Plus, ScanLine, SkipForward, Undo2, X, Zap } from "lucide-react";
 import { LiveSurfaceProvider, Modal, usePageTitle, useOverlayOpenFlag } from "@cobblr/platform-web";
-import { qrTokenFromUrl } from "@cobblr/platform-contract/qr-token";
+import { classifyScanPayload, typedVerdict } from "../lib/scanPayload";
+import { doorPlan, frameFromImage } from "../lib/imageDoor";
+import { useDeployEnv } from "../lib/deploy-env";
+import { ManualScanField } from "../components/ManualScanField";
 import { ApiError, api, type LiveSortEntry, type ScanInboxItem, type ScanResolveCandidate, type TrackedMatch } from "../lib/api";
 import { LOCATION_ENTITY_KIND, decideLocationScan, filingLabel } from "../lib/scanFiling";
-import { freshDedupState, shouldFireScan, pickDetection, makeDetectionCollector, isGenericLink, type DedupState } from "../lib/scanDedup";
+import { freshDedupState, shouldFireScan, pickDetection, makeDetectionCollector, type DedupState } from "../lib/scanDedup";
 import { PHOTO_WANTED_ARM_MODE, nextWanted, photoQueue, promptLabel } from "../lib/photoQueue";
 import { useActiveOrg } from "../auth/ActiveOrgContext";
 import { LocationChipPicker } from "../components/LocationChipPicker";
@@ -206,7 +209,16 @@ export function ScanCameraPage() {
   const [diagOpen, setDiagOpen] = useState(scanDiagEnabled);
   const [supported, setSupported] = useState<boolean | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [manual, setManual] = useState("");
+  // The camera could not be acquired (no device, permission refused). A
+  // result that arrives another way (the typed field, the image door, the
+  // wedge) still moves the phase to "result", and until this flag existed
+  // that flip re-ran the acquisition, which failed again and put the phase
+  // back to idle a frame later: the row landed in the inbox, the result sheet
+  // never showed, and a browser with no camera could not see what a scan
+  // does (#2891). While dead, a phase change is not a reason to retry;
+  // "Try again" is.
+  const [cameraDead, setCameraDead] = useState(false);
+  const cameraDeadRef = useRef(false);
   const [pendingBarcode, setPendingBarcode] = useState<string | null>(null);
   // While armed for ＋Photo/Retake the scanner must not auto-detect: the label
   // you're photographing usually HAS a barcode on it, and a detection would
@@ -1024,6 +1036,33 @@ export function ScanCameraPage() {
   // saved" toast used to RESTART the camera (the flicker/reset the author saw). The
   // ref lets that effect depend only on `running`.
   const onDetectRef = useRef<(raw: string) => void>(() => {});
+  /** A Cobblr label, from the lens or the typed field: resolve the token and
+   *  go where it points (routeResolved), the token as the fallback target.
+   *  `freeze` pauses decode and the preview while the answer is fetched;
+   *  Sort mode with a directive on screen keeps the camera live instead. */
+  const routeQr = useCallback(
+    (token: string, opts: { freeze: boolean }) => {
+      if (opts.freeze) {
+        setPhase("resolving"); // freeze decode + preview; the stream stays live
+        setResolvingNote(true);
+      }
+      void (async () => {
+        const resolved = await api.resolveQrToken(token).catch(() => null);
+        setResolvingNote(false);
+        await routeResolvedRef.current(
+          resolved?.entity_kind && resolved.entity_id
+            ? {
+                entity_kind: resolved.entity_kind,
+                entity_id: resolved.entity_id,
+                org_slug: resolved.org_slug,
+              }
+            : null,
+          `/qr/${token}`,
+        );
+      })();
+    },
+    [setPhase],
+  );
   /** The code the last armed shot landed on - see isEchoOfHandled. */
   const handledCodeRef = useRef<HandledCode | null>(null);
   const onDetect = useCallback(
@@ -1047,6 +1086,9 @@ export function ScanCameraPage() {
         return;
       const raw = rawIn.trim();
       if (!raw) return;
+      // ONE classification for the value, the same rule the typed field
+      // applies (lib/scanPayload.ts): what it is decides where it goes.
+      const payload = classifyScanPayload(raw);
       if (isEchoOfHandled(raw, handledCodeRef.current, Date.now())) {
         // SLIDES. The decoder reads a label in view about ten times a second;
         // a fixed window expired with the can still in front of the lens and
@@ -1065,7 +1107,7 @@ export function ScanCameraPage() {
       // 2026-07-24). Give the barcode a window: hold the link, and a non-link code
       // seen meanwhile fires and cancels the hold; only a link still alone after
       // LINK_HOLD_MS falls through to fire.
-      if (isGenericLink(raw)) {
+      if (payload.kind === "link") {
         const now = Date.now();
         const h = linkHoldRef.current;
         if (!h || h.value !== raw || now - h.heldAt > REPEAT_GAP_MS + LINK_HOLD_MS) {
@@ -1115,28 +1157,11 @@ export function ScanCameraPage() {
       const sortRetarget = sortModeRef.current && !!sortEntryRef.current;
 
       // A native Cobblr label. What it points at decides what happens
-      // (routeResolved); the token is only the fallback nav target.
-      const qrToken = qrTokenFromUrl(raw);
-      if (qrToken) {
-        const token = qrToken;
-        if (!sortRetarget) {
-          setPhase("resolving"); // freeze decode + preview; the stream stays live
-          setResolvingNote(true);
-        }
-        void (async () => {
-          const resolved = await api.resolveQrToken(token).catch(() => null);
-          setResolvingNote(false);
-          await routeResolvedRef.current(
-            resolved?.entity_kind && resolved.entity_id
-              ? {
-                  entity_kind: resolved.entity_kind,
-                  entity_id: resolved.entity_id,
-                  org_slug: resolved.org_slug,
-                }
-              : null,
-            `/qr/${token}`,
-          );
-        })();
+      // (routeResolved); the token is only the fallback nav target. The typed
+      // field reaches the same routeQr, so a pasted label goes where a read
+      // one goes.
+      if (payload.kind === "cobblr-qr") {
+        routeQr(payload.token, { freeze: !sortRetarget });
         return;
       }
 
@@ -1158,8 +1183,7 @@ export function ScanCameraPage() {
       // be a foreign QR label, so it skips the round trip and Sort mode's hot
       // loop stays as fast as it was.
       // See docs/design-decisions/external-qr-resolver.md.
-      const bareProductBarcode = /^\d{8,14}$/.test(raw);
-      if (hasQrRulesRef.current && !bareProductBarcode) {
+      if (hasQrRulesRef.current && payload.kind !== "product-code") {
         if (!sortRetarget) {
           setPhase("resolving"); // freeze decode + preview; the stream stays live
           setResolvingNote(true);
@@ -1228,7 +1252,7 @@ export function ScanCameraPage() {
       setPendingBarcode(raw);
       setPhase("result");
     },
-    [setPhase, activeSlug, handleSortScan, noteError],
+    [setPhase, activeSlug, handleSortScan, noteError, routeQr],
   );
   useEffect(() => {
     onDetectRef.current = onDetect;
@@ -1292,6 +1316,7 @@ export function ScanCameraPage() {
   }, []);
   useEffect(() => {
     if (!running) return;
+    if (cameraDeadRef.current) return; // a result on a dead camera is not a retry
     let cancelled = false;
     let raf: number | null = null;
     let zxingControls: { stop: () => void } | null = null;
@@ -1424,6 +1449,8 @@ export function ScanCameraPage() {
         }
       } catch (err) {
         setError((err as Error).message);
+        cameraDeadRef.current = true;
+        setCameraDead(true);
         setPhase("idle");
       }
     }
@@ -1838,6 +1865,53 @@ export function ScanCameraPage() {
     }
   }, [activeSlug, onSaved, qc, saveShot, showFilingNote, shutterBusy, noteError]);
 
+  // THE IMAGE DOOR (a test door, #2891): an image file stands in for a live
+  // frame, for a reviewer with no camera. The same decoder the live loop
+  // runs, the same typed verdict the manual field applies, the same shot path
+  // the shutter takes; the door only makes the frame (lib/imageDoor.ts). It
+  // renders only where /healthz says test_doors (never production/canary).
+  const { testDoors } = useDeployEnv();
+  const doorInputRef = useRef<HTMLInputElement>(null);
+  const scanImageFile = useCallback(
+    async (file: File) => {
+      if (shutterBusy) return;
+      setShutterBusy(true);
+      try {
+        const { canvas, blob } = await frameFromImage(file);
+        const r = decodeCanvasSmart(createBarcodeReader(), canvas, document.createElement("canvas"));
+        const plan = doorPlan(r.text ? typedVerdict(r.text) : null);
+        if (plan.kind === "route-qr") {
+          routeQr(plan.token, { freeze: phaseRef.current === "scanning" });
+          return;
+        }
+        if (plan.kind === "lookup") {
+          // The image is the frame the code was read off: it rides the inbox
+          // row as the person's photo, the way a live frame does.
+          frameBlobRef.current = Promise.resolve(blob);
+          setPendingBarcode(plan.code);
+          setPhase("result");
+          showFilingNote(`Read ${plan.code} off the image`);
+          return;
+        }
+        // No code on it: the shutter's photo path, with the image as the shot.
+        setFrame(blob);
+        const areaIdNow = areaIdRef.current;
+        const loc = (locsRef.current ?? []).find((l) => l.id === areaIdNow);
+        await saveShot(blob, {
+          areaName: loc ? (loc.short_name ?? loc.name) : null,
+          areaId: areaIdNow,
+          container: containerBinRef.current,
+        });
+        showFilingNote("Taken from the image; identifying it…");
+      } catch (e) {
+        noteError(e);
+      } finally {
+        setShutterBusy(false);
+      }
+    },
+    [noteError, routeQr, saveShot, setFrame, showFilingNote, shutterBusy],
+  );
+
   // The + shutter: while a sheet blocks the viewfinder the shutter can't
   // photograph anything, so it becomes "add a photo to THIS item" — it puts
   // the sheet away (the mini drawer's armed strip takes over as the "still on
@@ -2239,14 +2313,18 @@ export function ScanCameraPage() {
           <div className="mx-8 border-2 border-accent/80 rounded-xl h-40" />
           <div className="mt-4 text-center text-white/85 text-sm px-8 [text-shadow:0_1px_2px_rgba(0,0,0,0.7)]">
             {supported === false
-              ? "Hold a barcode steady, snap a photo, or type the UPC below."
+              ? "Hold a barcode steady, snap a photo, or type the barcode number below."
               : "Point at a barcode or a Cobblr QR label — or hit the shutter to photograph it."}
           </div>
         </div>
       )}
 
       {/* ── permission / error state ─────────────────────────────────── */}
-      {!running && (
+      {/* Shown while idle, and while a dead camera is back on the scanning
+          phase after a result was dealt with; never over a result sheet or a
+          review sheet, which a camera-less browser reaches through the typed
+          field, the wedge and the image door. */}
+      {(!running || (cameraDead && !sheetBlocking)) && (
         <div className="absolute inset-0 flex flex-col items-center justify-center gap-3 bg-slate-900/90 text-white p-6 text-center">
           <Camera size={28} className="opacity-80" />
           <div className="text-sm font-medium">Camera unavailable</div>
@@ -2259,7 +2337,11 @@ export function ScanCameraPage() {
             type="button"
             onClick={() => {
               setError(null);
-              setPhase("scanning");
+              cameraDeadRef.current = false;
+              setCameraDead(false);
+              setPhase("idle");
+              // idle → scanning is the 0→1 the acquisition effect runs on.
+              window.setTimeout(() => setPhase("scanning"), 0);
             }}
             className="inline-flex items-center gap-2 rounded-full bg-cobble-600 hover:bg-cobble-700 px-4 py-2 text-sm font-medium"
           >
@@ -2564,37 +2646,45 @@ export function ScanCameraPage() {
           />
         )}
         {/* Hidden while a sheet is open: you already scanned/opened something,
-            so "Or type the UPC" is dead weight under the sheet - the row (and
-            its height) comes back the moment the sheet closes. */}
+            so the typed field is dead weight under the sheet - the row (and
+            its height) comes back the moment the sheet closes. The field goes
+            where the camera would: a Cobblr label routes, a code looks up,
+            words are refused there and never reach the inbox (#2850). */}
+        {testDoors && !(sheetOpen || !!reviewItem || (phase === "result" && !!pendingBarcode)) && (
+          <div className="max-w-md mx-auto px-2 mb-1.5 flex justify-end">
+            <input
+              ref={doorInputRef}
+              type="file"
+              accept="image/*"
+              className="hidden"
+              data-testid="image-door-input"
+              onChange={(e) => {
+                const f = e.target.files?.[0];
+                e.target.value = "";
+                if (f) void scanImageFile(f);
+              }}
+            />
+            <button
+              type="button"
+              onClick={() => doorInputRef.current?.click()}
+              disabled={shutterBusy}
+              data-testid="image-door"
+              title="Test door: an image file is scanned the way a live frame is (a barcode is read and looked up; anything else is photographed)"
+              className="inline-flex items-center gap-1.5 rounded-full bg-amber-400/90 dark:bg-amber-400/90 text-amber-950 dark:text-amber-950 px-3 py-1.5 text-xs font-medium hover:bg-amber-300 disabled:opacity-50"
+            >
+              <ImagePlus size={13} /> Scan an image file
+              <span className="text-[10px] font-normal opacity-80">test door</span>
+            </button>
+          </div>
+        )}
         {!(sheetOpen || !!reviewItem || (phase === "result" && !!pendingBarcode)) && (
-        <form
-          onSubmit={(e) => {
-            e.preventDefault();
-            const v = manual.trim();
-            if (!v) return;
-            setManual("");
-            setPendingBarcode(v);
-            setPhase("result");
-          }}
-          className="flex gap-2 items-center bg-black/55 rounded-full px-3 py-2 max-w-md mx-auto"
-        >
-          <ScanLine size={16} className="text-white/60 shrink-0" />
-          <input
-            type="text"
-            inputMode="numeric"
-            value={manual}
-            onChange={(e) => setManual(e.target.value)}
-            placeholder="Or type the UPC"
-            className="flex-1 min-w-0 bg-transparent text-white placeholder-white/50 text-sm font-mono px-1 py-0.5 focus:outline-none"
+          <ManualScanField
+            onLookup={(code) => {
+              setPendingBarcode(code);
+              setPhase("result");
+            }}
+            onCobblrQr={(token) => routeQr(token, { freeze: phaseRef.current === "scanning" })}
           />
-          <button
-            type="submit"
-            disabled={!manual.trim()}
-            className="rounded-full bg-cobble-600 hover:bg-cobble-700 text-white px-3 py-1 text-sm font-medium disabled:opacity-50 shrink-0"
-          >
-            Scan
-          </button>
-        </form>
         )}
 
         {/* Assign · SHUTTER · Done — the bottom bar. The shutter is the

@@ -13,7 +13,7 @@ import { defineModule } from "@cobblr/platform-contract";
 
 export default defineModule({
   name: "inventory",
-  version: "0.21.19",
+  version: "0.21.24",
   displayName: "Inventory",
   description:
     "Parts, locations, categories, stock tracking, polymorphic allocations. The generalised toolkit you'd otherwise Frankenstein from a spreadsheet.",
@@ -65,6 +65,8 @@ export default defineModule({
           { name: "notes", type: "text" },
           // The category it is filed under, by name (resolved from category_id).
           { name: "category_name", type: "text" },
+          // Where it lives, by name (resolved from location_id through the platform).
+          { name: "location_name", type: "text" },
           // Free-form JSON attribute blob. Declared so we can also
           // include it in exposableFields below — cross-module readers
           // (bricklink-connector reading metadata.lego.color_id, etc.)
@@ -99,6 +101,8 @@ export default defineModule({
           // A grouping, not a secret: what a thing is filed under is how
           // another module (or the assistant) tells rice from screws.
           "category_name",
+          // Where it lives, by name: the answer to "where is my lamp".
+          "location_name",
           // `metadata` is the per-part free-form attribute blob —
           // already conceptually a cross-module surface (modules
           // stuff their own keys here, e.g. metadata.lego.color_id

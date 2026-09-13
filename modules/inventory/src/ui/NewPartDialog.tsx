@@ -7,7 +7,7 @@
 // `matches → core-catalogs:entry` pairing is written after create so
 // the rest of the app can hydrate matched-entry data into the row.
 
-import { useMemo, useRef, useState, type FormEvent, type ReactNode } from "react";
+import { useEffect, useMemo, useRef, useState, type FormEvent, type ReactNode } from "react";
 import { useNavigate } from "react-router-dom";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import {
@@ -16,6 +16,7 @@ import {
   RelationSelect,
   MarkdownEditor,
   fieldControl,
+  valueFromInput,
   useUnits,
   type CatalogTypeaheadHit,
   type FieldType,
@@ -487,6 +488,14 @@ function CustomFieldInput({
   entityKind: string;
 }) {
   const s = value == null ? "" : String(value);
+  // The text as typed, beside the typed value the form holds: a number field
+  // stores a number (valueFromInput), and "1." on the way to "1.5" must not
+  // be re-rendered as "1" under the person's cursor. A value set from outside
+  // (a catalog match filling blanks) replaces the draft.
+  const [draft, setDraft] = useState(s);
+  useEffect(() => {
+    if (valueFromInput(def.type, draft) !== value && s !== draft) setDraft(s);
+  }, [value]);
   const help = def.help ? (
     <p className="text-[11px] text-faint dark:text-slate-500 leading-snug mt-1">{def.help}</p>
   ) : null;
@@ -579,8 +588,11 @@ function CustomFieldInput({
       <input
         type={inputType}
         step={control === "number" ? "any" : undefined}
-        value={s}
-        onChange={(e) => onChange(e.target.value === "" ? null : e.target.value)}
+        value={draft}
+        onChange={(e) => {
+          setDraft(e.target.value);
+          onChange(valueFromInput(def.type, e.target.value));
+        }}
         className="input"
       />
       {help}

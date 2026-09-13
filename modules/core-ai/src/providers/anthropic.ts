@@ -1,6 +1,7 @@
 // anthropic — Claude provider. Messages API.
 
 import { platform, type AiCapability } from "@cobblr/platform-contract";
+import { providerError, providerSentence, reasonFromResponse, reasonFromTransportError, redactSecrets, retryAfterSecOf } from "@cobblr/platform-contract/provider-reason";
 import { identifyPromptFor, visionPromptFor } from "./identify-prompt.js";
 import { rankImagesPromptFor } from "./rank-images-prompt.js";
 import { toolsOf, turnsOf, anthropicToolsOf, anthropicMessagesOf, parseAnthropicContent } from "./tool-wire.js";
@@ -132,7 +133,10 @@ export function register(): void {
         },
         body: JSON.stringify(body),
       });
-      if (!res.ok) throw new Error(`anthropic: ${res.status} ${await res.text()}`);
+      if (!res.ok) {
+        const body = await res.text();
+        throw providerError("anthropic", reasonFromResponse(res.status, body), redactSecrets(`anthropic: ${res.status} ${body}`, [apiKey]), res.status, retryAfterSecOf(body));
+      }
       const out = (await res.json()) as {
         content: Array<{ type: string; text?: string; id?: string; name?: string; input?: unknown }>;
         usage: { input_tokens: number; output_tokens: number };
@@ -156,9 +160,22 @@ export function register(): void {
     testConnection: async (credentials) => {
       const apiKey = String(credentials.api_key ?? "");
       if (!apiKey || !apiKey.startsWith("sk-ant-")) {
-        return { ok: false, error: "api_key looks malformed (expected sk-ant-…)" };
+        return { ok: false, reason: "invalid_key", error: "api_key looks malformed (expected sk-ant-…)" };
       }
-      return { ok: true };
+      // A real probe, the cheapest there is: the models list needs the key and
+      // spends nothing. A prefix check alone saved a mistyped key as ready.
+      try {
+        const res = await fetch("https://api.anthropic.com/v1/models", {
+          headers: { "x-api-key": apiKey, "anthropic-version": "2023-06-01" },
+        });
+        if (res.ok) return { ok: true };
+        const body = await res.text().catch(() => "");
+        const reason = reasonFromResponse(res.status, body);
+        return { ok: false, reason, error: providerSentence(reason, { provider: "anthropic", retryAfterSec: retryAfterSecOf(body) }) };
+      } catch (err) {
+        const reason = reasonFromTransportError(err);
+        return { ok: false, reason, error: providerSentence(reason, { provider: "anthropic" }), detail: redactSecrets((err as Error).message, [apiKey]) };
+      }
     },
   });
 }

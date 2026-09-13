@@ -175,18 +175,26 @@ export function poolCountLabel(
   return `${head} · ${parts.join(" · ")}`;
 }
 
+/** What the LIST says beside the count for a model with open units, from the
+ *  summary the list route carries (`open_units`): "1 open · 160 m", or for
+ *  several "2 open · 160 m + 30 m". Each open unit's remaining is shown on
+ *  its own, never summed (§0): the metres live on the unit. Null when nothing
+ *  is open, so a plain row reads as before. */
+export function openUnitsLabel(
+  open: { count: number; remaining: ReadonlyArray<{ qty: number; unit: string | null }> } | null | undefined,
+  fmt: (n: number) => string = (n) => String(n),
+): string | null {
+  if (!open || !(open.count > 0)) return null;
+  const amounts = open.remaining
+    .filter((u) => u.qty > 0)
+    .map((u) => `${fmt(u.qty)}${u.unit ? ` ${u.unit}` : ""}`);
+  const head = `${open.count} open`;
+  return amounts.length ? `${head} · ${amounts.join(" + ")}` : head;
+}
+
 // ── Provenance (§8.3) — is the capacity derived or typed? ─────────────────────
 
-/** Parse a computed capacity template like "{{ length_per_skein }}" back to the
- *  single source field name it reads, so the panel can label the provenance
- *  chip with that field's own display label ("full skein from Length / skein").
- *  Returns null for a template that isn't a single bare substitution (e.g. one
- *  using a filter or arithmetic — not the P1 direct-read shape). */
-export function capacitySourceField(template: string | null | undefined): string | null {
-  if (!template) return null;
-  const m = template.trim().match(/^\{\{\s*([a-zA-Z0-9_]+)\s*\}\}$/);
-  return m ? (m[1] ?? null) : null;
-}
+export { capacitySourceField, consumptionUnitOf } from "../../consumption-unit.js";
 
 function round(n: number): number {
   // Trim float noise from repeated subtraction (546 - 0.1 - 0.2 …) without

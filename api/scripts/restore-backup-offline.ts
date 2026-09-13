@@ -30,8 +30,7 @@
 import { readFileSync, writeFileSync, mkdirSync } from "node:fs";
 import { basename, join } from "node:path";
 import unzipper from "unzipper";
-import { Pool } from "pg";
-import { guardPoolClients } from "../src/db/client-error-guard.js";
+import { createPool } from "../src/db/client-error-guard.js";
 
 async function main() {
   const args = process.argv.slice(2).filter((a) => !a.startsWith("--"));
@@ -80,15 +79,11 @@ async function main() {
   const totalRows = [...tables.values()].reduce((n, r) => n + r.length, 0);
   console.log(`${tables.size} dumped table(s), ${totalRows} row(s), ${fileCount} file blob(s).`);
 
-  const pool = new Pool({ connectionString: dbUrl });
   // A pool 'error' with no listener terminates Node outright, so a database
   // blip mid-restore would abort with a raw unhandled-event stack rather than
   // saying what happened. This is a RESTORE: the operator needs to know whether
-  // it stopped, and where.
-  guardPoolClients(pool, "restore-backup");
-  pool.on("error", (err) => {
-    console.error("[restore] database connection error:", (err as Error).message);
-  });
+  // it stopped, and where. createPool's clients listen from creation.
+  const pool = createPool({ connectionString: dbUrl }, "restore-backup");
   const existing = new Set(
     (
       await pool.query<{ tablename: string }>(

@@ -1,0 +1,231 @@
+{
+  "_about": "What the OCR engine read off each image (modules/core-scan/src/services/ocr.ts, psm 4) and the receipt-shape verdict the text must score. Regenerate with: npx tsx scripts/receipt-shape-fixtures.mjs --write",
+  "cases": [
+    {
+      "source": "e2e/fixtures/review-pack/receipts/short-grocery.png",
+      "want": "receipt",
+      "quality": "tesseract, the file as committed",
+      "ocr_text": "pack-short-grocery.png.txt"
+    },
+    {
+      "source": "e2e/fixtures/review-pack/receipts/mixed-hardware.png",
+      "want": "receipt",
+      "quality": "tesseract, the file as committed",
+      "ocr_text": "pack-mixed-hardware.png.txt"
+    },
+    {
+      "source": "e2e/fixtures/review-pack/receipts/yarn-and-lamp.png",
+      "want": "receipt",
+      "quality": "tesseract, the file as committed",
+      "ocr_text": "pack-yarn-and-lamp.png.txt"
+    },
+    {
+      "source": "e2e/fixtures/review-pack/photos/book.jpg",
+      "want": "not",
+      "quality": "tesseract, the file as committed; the engine read no text at all"
+    },
+    {
+      "source": "e2e/fixtures/review-pack/photos/coffee-mug.jpg",
+      "want": "not",
+      "quality": "tesseract, the file as committed; the engine read no text at all"
+    },
+    {
+      "source": "e2e/fixtures/review-pack/photos/crochet-blanket.jpg",
+      "want": "not",
+      "quality": "tesseract, the file as committed; the engine read no text at all"
+    },
+    {
+      "source": "e2e/fixtures/review-pack/photos/flashlight.jpg",
+      "want": "not",
+      "quality": "tesseract, the file as committed; the engine read no text at all"
+    },
+    {
+      "source": "e2e/fixtures/review-pack/photos/kettle.jpg",
+      "want": "not",
+      "quality": "tesseract, the file as committed; the engine read no text at all"
+    },
+    {
+      "source": "e2e/fixtures/review-pack/photos/screwdriver.jpg",
+      "want": "not",
+      "quality": "tesseract, the file as committed; the engine read no text at all"
+    },
+    {
+      "source": "e2e/fixtures/review-pack/photos/spice-jar.jpg",
+      "want": "not",
+      "quality": "tesseract, the file as committed; the engine read no text at all"
+    },
+    {
+      "source": "e2e/fixtures/review-pack/photos/yarn-skein.jpg",
+      "want": "not",
+      "quality": "tesseract, the file as committed; the engine read no text at all"
+    },
+    {
+      "source": "e2e/fixtures/bench-vision/receipt.png",
+      "want": "receipt",
+      "quality": "tesseract, the file as committed",
+      "ocr_text": "bench-vision-receipt.png.txt"
+    },
+    {
+      "source": "e2e/fixtures/bench-vision/label.png",
+      "want": "not",
+      "quality": "tesseract, the file as committed",
+      "ocr_text": "bench-vision-label.png.txt",
+      "note": "a product label with a serial and a UPC: text, no prices"
+    },
+    {
+      "source": "e2e/fixtures/bench-vision/two-things.png",
+      "want": "not",
+      "quality": "tesseract, the file as committed",
+      "ocr_text": "bench-vision-two-things.png.txt"
+    },
+    {
+      "source": "e2e/fixtures/bench-vision/blank.png",
+      "want": "not",
+      "quality": "tesseract, the file as committed; the engine read no text at all"
+    },
+    {
+      "source": "e2e/fixtures/receipt-ocr/corpus.mjs#superstore-flags",
+      "want": "receipt",
+      "quality": "the printed text itself",
+      "ocr_text": "corpus-superstore-flags-printed.txt"
+    },
+    {
+      "source": "e2e/fixtures/receipt-ocr/corpus.mjs#superstore-flags",
+      "want": "receipt",
+      "quality": "renderClean, tesseract",
+      "ocr_text": "corpus-superstore-flags-ocr-clean.txt"
+    },
+    {
+      "source": "e2e/fixtures/receipt-ocr/corpus.mjs#superstore-flags",
+      "want": "receipt",
+      "quality": "degrade(renderClean, 2), tesseract",
+      "ocr_text": "corpus-superstore-flags-ocr-camera.txt"
+    },
+    {
+      "source": "e2e/fixtures/receipt-ocr/corpus.mjs#grocery-coupons",
+      "want": "receipt",
+      "quality": "the printed text itself",
+      "ocr_text": "corpus-grocery-coupons-printed.txt"
+    },
+    {
+      "source": "e2e/fixtures/receipt-ocr/corpus.mjs#grocery-coupons",
+      "want": "receipt",
+      "quality": "renderClean, tesseract",
+      "ocr_text": "corpus-grocery-coupons-ocr-clean.txt"
+    },
+    {
+      "source": "e2e/fixtures/receipt-ocr/corpus.mjs#grocery-coupons",
+      "want": "receipt",
+      "quality": "degrade(renderClean, 2), tesseract",
+      "ocr_text": "corpus-grocery-coupons-ocr-camera.txt"
+    },
+    {
+      "source": "e2e/fixtures/receipt-ocr/corpus.mjs#warehouse-club",
+      "want": "receipt",
+      "quality": "the printed text itself",
+      "ocr_text": "corpus-warehouse-club-printed.txt"
+    },
+    {
+      "source": "e2e/fixtures/receipt-ocr/corpus.mjs#warehouse-club",
+      "want": "receipt",
+      "quality": "renderClean, tesseract",
+      "ocr_text": "corpus-warehouse-club-ocr-clean.txt"
+    },
+    {
+      "source": "e2e/fixtures/receipt-ocr/corpus.mjs#warehouse-club",
+      "want": "receipt",
+      "quality": "degrade(renderClean, 2), tesseract",
+      "ocr_text": "corpus-warehouse-club-ocr-camera.txt"
+    },
+    {
+      "source": "e2e/fixtures/receipt-ocr/corpus.mjs#hardware-qty-at",
+      "want": "receipt",
+      "quality": "the printed text itself",
+      "ocr_text": "corpus-hardware-qty-at-printed.txt"
+    },
+    {
+      "source": "e2e/fixtures/receipt-ocr/corpus.mjs#hardware-qty-at",
+      "want": "receipt",
+      "quality": "renderClean, tesseract",
+      "ocr_text": "corpus-hardware-qty-at-ocr-clean.txt"
+    },
+    {
+      "source": "e2e/fixtures/receipt-ocr/corpus.mjs#hardware-qty-at",
+      "want": "receipt",
+      "quality": "degrade(renderClean, 2), tesseract",
+      "ocr_text": "corpus-hardware-qty-at-ocr-camera.txt"
+    },
+    {
+      "source": "e2e/fixtures/receipt-ocr/corpus.mjs#minimal-dollar-signs",
+      "want": "receipt",
+      "quality": "the printed text itself",
+      "ocr_text": "corpus-minimal-dollar-signs-printed.txt"
+    },
+    {
+      "source": "e2e/fixtures/receipt-ocr/corpus.mjs#minimal-dollar-signs",
+      "want": "receipt",
+      "quality": "renderClean, tesseract",
+      "ocr_text": "corpus-minimal-dollar-signs-ocr-clean.txt"
+    },
+    {
+      "source": "e2e/fixtures/receipt-ocr/corpus.mjs#minimal-dollar-signs",
+      "want": "receipt",
+      "quality": "degrade(renderClean, 2), tesseract",
+      "ocr_text": "corpus-minimal-dollar-signs-ocr-camera.txt"
+    },
+    {
+      "source": "e2e/fixtures/receipt-ocr/corpus.mjs#pharmacy-mixed",
+      "want": "receipt",
+      "quality": "the printed text itself",
+      "ocr_text": "corpus-pharmacy-mixed-printed.txt"
+    },
+    {
+      "source": "e2e/fixtures/receipt-ocr/corpus.mjs#pharmacy-mixed",
+      "want": "receipt",
+      "quality": "renderClean, tesseract",
+      "ocr_text": "corpus-pharmacy-mixed-ocr-clean.txt"
+    },
+    {
+      "source": "e2e/fixtures/receipt-ocr/corpus.mjs#pharmacy-mixed",
+      "want": "receipt",
+      "quality": "degrade(renderClean, 2), tesseract",
+      "ocr_text": "corpus-pharmacy-mixed-ocr-camera.txt"
+    },
+    {
+      "source": "e2e/fixtures/receipt-ocr/corpus.mjs#restaurant-qty-prefix",
+      "want": "receipt",
+      "quality": "the printed text itself",
+      "ocr_text": "corpus-restaurant-qty-prefix-printed.txt"
+    },
+    {
+      "source": "e2e/fixtures/receipt-ocr/corpus.mjs#restaurant-qty-prefix",
+      "want": "receipt",
+      "quality": "renderClean, tesseract",
+      "ocr_text": "corpus-restaurant-qty-prefix-ocr-clean.txt"
+    },
+    {
+      "source": "e2e/fixtures/receipt-ocr/corpus.mjs#restaurant-qty-prefix",
+      "want": "receipt",
+      "quality": "degrade(renderClean, 2), tesseract",
+      "ocr_text": "corpus-restaurant-qty-prefix-ocr-camera.txt"
+    },
+    {
+      "source": "e2e/fixtures/receipt-ocr/corpus.mjs#fuel-and-shop",
+      "want": "receipt",
+      "quality": "the printed text itself",
+      "ocr_text": "corpus-fuel-and-shop-printed.txt"
+    },
+    {
+      "source": "e2e/fixtures/receipt-ocr/corpus.mjs#fuel-and-shop",
+      "want": "receipt",
+      "quality": "renderClean, tesseract",
+      "ocr_text": "corpus-fuel-and-shop-ocr-clean.txt"
+    },
+    {
+      "source": "e2e/fixtures/receipt-ocr/corpus.mjs#fuel-and-shop",
+      "want": "receipt",
+      "quality": "degrade(renderClean, 2), tesseract",
+      "ocr_text": "corpus-fuel-and-shop-ocr-camera.txt"
+    }
+  ]
+}

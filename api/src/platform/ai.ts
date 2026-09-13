@@ -13,6 +13,8 @@
 //
 // See docs/modules/core-ai.md.
 
+import { aiRefusal } from "@cobblr/platform-contract/ai-refusal";
+import { providerReasonOf } from "@cobblr/platform-contract/provider-reason";
 import { createHash } from "node:crypto";
 import type {
   AiCapability,
@@ -331,11 +333,11 @@ async function resolveProviderAndModel(
     }
   }
   if (!providerId) {
-    throw new Error(`no provider configured for capability ${capability}`);
+    throw aiRefusal("no_provider", `no provider configured for capability ${capability}`);
   }
   const def = providers.get(providerId);
   if (!def) {
-    throw new Error(`provider ${providerId} not registered with the platform`);
+    throw aiRefusal("no_provider", `provider ${providerId} not registered with the platform`);
   }
   let row = await tdb
     .selectFrom("core_ai_providers")
@@ -352,7 +354,7 @@ async function resolveProviderAndModel(
     // not a row-existence check. Credentialed providers still require a row.
     const needsCreds = Object.keys(def.describeCredentials()).length > 0;
     if (needsCreds) {
-      throw new Error(`provider ${providerId} not installed (or disabled) in this workspace`);
+      throw aiRefusal("no_provider", `provider ${providerId} not installed (or disabled) in this workspace`);
     }
     row = { id: `virtual:${providerId}`, provider_id: providerId, credentials_enc: "", enabled: true, config: {} };
   }
@@ -363,7 +365,7 @@ async function resolveProviderAndModel(
     }
   }
   if (!model) {
-    throw new Error(`provider ${providerId} does not support ${capability}`);
+    throw aiRefusal("no_provider", `provider ${providerId} does not support ${capability}`);
   }
   return { row, model };
 }
@@ -475,7 +477,7 @@ export const invoke: PlatformAi["invoke"] = async (req) => {
   // "no provider configured" so every caller's existing degrade path
   // (the ai:false contract) handles it with no per-feature changes.
   if (!env.COBBLR_AI_ENABLED) {
-    throw new Error("no provider configured: AI features are disabled for this instance (COBBLR_AI_ENABLED=false)");
+    throw aiRefusal("operator_disabled", "no provider configured: AI features are disabled for this instance (COBBLR_AI_ENABLED=false)");
   }
   // Personal (user-scoped) connections — DEFAULT-OFF. When the caller hasn't
   // forced a provider, a credential the user (or a member, per its routing
@@ -547,7 +549,7 @@ export const invoke: PlatformAi["invoke"] = async (req) => {
   if (!resolved && !req.provider_id) {
     const org = await meta.selectFrom("orgs").select("ai_disabled").where("id", "=", req.orgId).executeTakeFirst().catch(() => null);
     if (org?.ai_disabled) {
-      throw new Error("no provider configured: AI is turned off for this workspace");
+      throw aiRefusal("workspace_disabled", "no provider configured: AI is turned off for this workspace");
     }
   }
   const { row, model } =
@@ -616,7 +618,7 @@ export const invoke: PlatformAi["invoke"] = async (req) => {
       model,
     });
     if (!verdict.allow) {
-      throw new Error(`no provider available: ${verdict.reason ?? "not entitled for this workspace"}`);
+      throw aiRefusal("not_entitled", `no provider available: ${verdict.reason ?? "not entitled for this workspace"}`);
     }
   }
 
@@ -701,9 +703,7 @@ export const invoke: PlatformAi["invoke"] = async (req) => {
     // degrade path (identify → null, matchmaker → keyword heuristic) handles it
     // with no per-feature changes.
     if (req.cache_only) {
-      throw new Error(
-        `no provider available: replay-only (no cached ${req.capability} result for this input)`,
-      );
+      throw aiRefusal("replay_only", `no provider available: replay-only (no cached ${req.capability} result for this input)`);
     }
   }
 
@@ -759,6 +759,7 @@ export const invoke: PlatformAi["invoke"] = async (req) => {
   const start = Date.now();
   let ok = false;
   let errMsg: string | null = null;
+  let failure: unknown = null;
   let payload: Awaited<ReturnType<AiProviderDef["invoke"]>> = { result: null };
   try {
     payload = await def.invoke({
@@ -779,6 +780,7 @@ export const invoke: PlatformAi["invoke"] = async (req) => {
     ok = true;
   } catch (err) {
     errMsg = (err as Error).message;
+    failure = err;
   }
   const duration_ms = Date.now() - start;
 
@@ -803,7 +805,14 @@ export const invoke: PlatformAi["invoke"] = async (req) => {
   });
 
   if (!ok) {
-    throw new Error(`core-ai invoke failed: ${errMsg}`);
+    // The provider's reason and the credential's door ride the refusal, so a
+    // surface can say "this key is not valid, replace it under ..." instead
+    // of a status (provider-reason.ts). The adapter redacted the key already.
+    throw aiRefusal("provider_error", `core-ai invoke failed: ${errMsg}`, {
+      reason: providerReasonOf(failure),
+      door: String(row.id).startsWith("personal:") ? "personal" : "workspace",
+      retryAfterSec: (failure as { retryAfterSec?: number } | null)?.retryAfterSec,
+    });
   }
 
   // Cache write (only on success + not bypassed).

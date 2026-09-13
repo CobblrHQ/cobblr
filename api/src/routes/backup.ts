@@ -20,7 +20,8 @@ import { Router } from "express";
 import multer from "multer";
 import { ZipArchive } from "archiver";
 import unzipper from "unzipper";
-import { Client } from "pg";
+import type { Client } from "pg";
+import { createClient } from "../db/client-error-guard.js";
 import { z } from "zod";
 import { SignJWT, jwtVerify } from "jose";
 import { sql, type Kysely } from "kysely";
@@ -100,15 +101,13 @@ function superuserTenantClient(dbName: string): Client {
   // This client sits connected to a TENANT database through a long restore,
   // with plenty of await gaps between queries - the exact shape that killed
   // the api from migrate.ts when the backend vanished in a gap.
-  const client = new Client({
+  return createClient({
     host: url.hostname,
     port: url.port ? Number(url.port) : 5432,
     user: decodeURIComponent(url.username),
     password: decodeURIComponent(url.password),
     database: dbName,
-  });
-  client.on("error", (err) => console.error("[backup] tenant connection error:", (err as Error).message));
-  return client;
+  }, "backup tenant");
 }
 
 async function listTenantTables(tdb: Kysely<unknown>): Promise<string[]> {

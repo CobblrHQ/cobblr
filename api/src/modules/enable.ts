@@ -13,6 +13,7 @@ import { readdirSync } from "node:fs";
 import { sql } from "kysely";
 import { meta } from "../db/meta.js";
 import { runMigrations } from "../db/migrate.js";
+import { describeMigrationFiles, moduleIsBehind, type ModuleMigrationFiles } from "./migration-currency.js";
 import { getTenantPool, evictTenantPool } from "../db/tenant.js";
 import { getEntry, listEntries } from "./registry.js";
 import * as activity from "../platform/activity.js";
@@ -173,6 +174,7 @@ export async function enableModuleForOrg(
   // that case — the module is purely a contributions container.
   let lastMigration: string | null = null;
   let migrationsApplied: string[] = [];
+  let migrationCount: number | null = 0;
   if (entry.manifest.schema) {
     const migrationsDir = resolve(entry.rootPath, entry.manifest.schema.migrationsDir);
     const pool = await getTenantPool(orgId);
@@ -182,10 +184,8 @@ export async function enableModuleForOrg(
       scope: `tenant ${orgId} / module ${moduleName}`,
     });
     migrationsApplied = result.applied;
-    lastMigration =
-      result.applied.length > 0
-        ? result.applied[result.applied.length - 1] ?? null
-        : null;
+    lastMigration = result.latest;
+    migrationCount = result.total;
   }
 
   await meta
@@ -195,6 +195,7 @@ export async function enableModuleForOrg(
       module_name: moduleName,
       version: entry.manifest.version,
       last_migration: lastMigration,
+      migration_count: migrationCount,
     })
     .execute();
   clearEnabledModulesCache(orgId);
@@ -388,35 +389,32 @@ export async function disableModuleForOrg(orgId: string, moduleName: string): Pr
 export async function syncTenantMigrations(): Promise<number> {
   const rows = await meta
     .selectFrom("org_modules")
-    .select(["org_id", "module_name", "last_migration"])
+    .select(["org_id", "module_name", "last_migration", "migration_count"])
     .execute();
   let touched = 0;
 
-  // PRE-CHECK (meta-side, no tenant open): the newest migration filename on disk
-  // per module — the sorted-last `.sql` that runMigrations would apply — computed
-  // once + cached. An (org, module) whose `org_modules.last_migration` already
-  // equals it is fully current, so we can skip OPENING that tenant DB entirely.
-  // Migrations are append-only + sorted, so a new one always sorts later and
-  // changes this value → a behind tenant can NEVER falsely match (the pre-check
-  // never skips real work). This turns the pooled-boot common case (nothing pending
-  // across ~250 orgs) from ~10s of open→check→evict into a few string compares.
-  const latestByModule = new Map<string, string | null>();
-  const latestFileFor = (moduleName: string): string | null => {
-    const cached = latestByModule.get(moduleName);
+  // PRE-CHECK (meta-side, no tenant open): what is on disk per module, computed
+  // once + cached, against the row's marker (last name AND ledger count; the
+  // decision is moduleIsBehind, and its file says why a name alone was not
+  // enough). An (org, module) that is current is skipped without OPENING that
+  // tenant DB. This turns the pooled-boot common case (nothing pending across
+  // ~250 orgs) from ~10s of open→check→evict into a few compares.
+  const filesByModule = new Map<string, ModuleMigrationFiles>();
+  const filesFor = (moduleName: string): ModuleMigrationFiles => {
+    const cached = filesByModule.get(moduleName);
     if (cached !== undefined) return cached;
     const entry = getEntry(moduleName);
-    let latest: string | null = null;
+    let files: ModuleMigrationFiles = { latest: null, count: 0 };
     if (entry?.manifest.schema) {
       try {
         const dir = resolve(entry.rootPath, entry.manifest.schema.migrationsDir);
-        const files = readdirSync(dir).filter((f) => f.endsWith(".sql")).sort();
-        latest = files.length ? files[files.length - 1]! : null;
+        files = describeMigrationFiles(readdirSync(dir));
       } catch {
-        latest = null; // unreadable/empty dir → nothing to apply (same net effect)
+        files = { latest: null, count: 0 }; // unreadable/empty dir → nothing to apply (same net effect)
       }
     }
-    latestByModule.set(moduleName, latest);
-    return latest;
+    filesByModule.set(moduleName, files);
+    return files;
   };
 
   // Group by org, keeping a module only if it might be BEHIND (has migrations AND
@@ -433,8 +431,7 @@ export async function syncTenantMigrations(): Promise<number> {
   const rolesOn = moduleRolesEnabled();
   const byOrg = new Map<string, string[]>();
   for (const row of rows) {
-    const latest = latestFileFor(row.module_name);
-    const behind = latest !== null && row.last_migration !== latest;
+    const behind = moduleIsBehind(row, filesFor(row.module_name));
     if (behind || rolesOn) {
       const list = byOrg.get(row.org_id);
       if (list) list.push(row.module_name);
@@ -457,20 +454,17 @@ export async function syncTenantMigrations(): Promise<number> {
             directory: migrationsDir,
             scope: `tenant ${orgId} / module ${moduleName}`,
           });
-          if (result.applied.length > 0) {
-            touched++; // single-threaded event loop — ++ between awaits is safe
-            // Update the meta-side last_migration pointer so
-            // /modules/:slug/health stays accurate.
-            await meta
-              .updateTable("org_modules")
-              .set({
-                last_migration:
-                  result.applied[result.applied.length - 1] ?? null,
-              })
-              .where("org_id", "=", orgId)
-              .where("module_name", "=", moduleName)
-              .execute();
-          }
+          if (result.applied.length > 0) touched++; // single-threaded event loop — ++ between awaits is safe
+          // Update the meta-side marker so /modules/:slug/health and the next
+          // boot's pre-check stay accurate. Written even when nothing was
+          // applied: a workspace opened because its count was NULL must not be
+          // opened again next boot for the same reason.
+          await meta
+            .updateTable("org_modules")
+            .set({ last_migration: result.latest, migration_count: result.total })
+            .where("org_id", "=", orgId)
+            .where("module_name", "=", moduleName)
+            .execute();
         } catch (err) {
           console.error(
             `[migrate-sync] failed for ${moduleName} on ${orgId}:`,
@@ -500,6 +494,50 @@ export async function syncTenantMigrations(): Promise<number> {
   };
   await Promise.all(Array.from({ length: Math.min(CAP, entries.length) }, worker));
   return touched;
+}
+
+/** What /healthz reports about migrations: how many (workspace, module) pairs
+ *  the boot-time sync would still open, and which modules. Zero after a good
+ *  boot, since syncTenantMigrations runs before listen. Non-zero means a
+ *  per-workspace failure was logged and swallowed, or a workspace was enabled
+ *  behind this build's back: either way this container is serving a module
+ *  whose tables may not match its queries, and the roll in front of it
+ *  should refuse to swap it in (#2944). Meta-side only, cached briefly:
+ *  healthz is polled by every open tab and by the deploy tooling. */
+let pendingCache: { at: number; value: { count: number; modules: string[] } } | null = null;
+export async function pendingMigrationSummary(): Promise<{ count: number; modules: string[] }> {
+  if (pendingCache && Date.now() - pendingCache.at < 5_000) return pendingCache.value;
+  const rows = await meta
+    .selectFrom("org_modules")
+    .select(["module_name", "last_migration", "migration_count"])
+    .execute();
+  const filesByModule = new Map<string, ModuleMigrationFiles>();
+  const filesFor = (moduleName: string): ModuleMigrationFiles => {
+    const cached = filesByModule.get(moduleName);
+    if (cached !== undefined) return cached;
+    const entry = getEntry(moduleName);
+    let files: ModuleMigrationFiles = { latest: null, count: 0 };
+    if (entry?.manifest.schema) {
+      try {
+        files = describeMigrationFiles(readdirSync(resolve(entry.rootPath, entry.manifest.schema.migrationsDir)));
+      } catch {
+        files = { latest: null, count: 0 };
+      }
+    }
+    filesByModule.set(moduleName, files);
+    return files;
+  };
+  let count = 0;
+  const modules = new Set<string>();
+  for (const row of rows) {
+    if (moduleIsBehind(row, filesFor(row.module_name))) {
+      count++;
+      modules.add(row.module_name);
+    }
+  }
+  const value = { count, modules: [...modules].sort() };
+  pendingCache = { at: Date.now(), value };
+  return value;
 }
 
 /** Enable the always-on foundational substrate for a fresh org — and

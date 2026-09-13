@@ -325,8 +325,11 @@ export function UserMenu({ themed, inline = false }: { themed: boolean; inline?:
           </div>,
           document.body,
         )}
-        {/* The whole row opens the flyout — that's the 90% action. Profile
-            lives INSIDE it as the first item (and the identity header). */}
+        {/* The collapsed row is the person's name and a chevron, nothing else:
+            "Your account" is its own row above this one, so an icon here would
+            offer the same door twice. The menu it opens is what is left
+            (feedback, what's new, sign out); the identity header inside it
+            carries the admin chip. */}
         <button
           ref={btnRef}
           data-tour="account"
@@ -334,10 +337,8 @@ export function UserMenu({ themed, inline = false }: { themed: boolean; inline?:
           className="w-full flex items-center gap-2.5 px-3 py-1.5 rounded text-[13px] text-muted dark:text-slate-400 hover:text-accent hover:bg-subtle/60 dark:hover:bg-slate-800/40 transition"
           title={`${user.display_name} — account menu`}
         >
-          <UserCog size={16} className="shrink-0" />
           <span className="font-medium truncate">{user.display_name}</span>
-          {isAdmin && <SuperAdminChip />}
-          <ChevronDown size={12} className={"ml-auto transition " + (open ? "" : "rotate-180")} />
+          <ChevronDown size={12} className={"ml-auto shrink-0 transition " + (open ? "" : "rotate-180")} />
         </button>
         {appMode && <GrowModal open={growOpen} onClose={() => setGrowOpen(false)} />}
       </div>

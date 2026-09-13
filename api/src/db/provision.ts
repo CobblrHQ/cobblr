@@ -15,11 +15,10 @@
 import { fileURLToPath } from "node:url";
 import { dirname, resolve } from "node:path";
 import { randomBytes } from "node:crypto";
-import { Client, Pool } from "pg";
 import { env } from "../env.js";
 import { encryptCreds } from "./crypto.js";
 import { runMigrations } from "./migrate.js";
-import { guardPoolClients } from "./client-error-guard.js";
+import { createClient, createPool } from "./client-error-guard.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 // dist/db/provision.js → ../../migrations/tenant-base
@@ -87,8 +86,7 @@ async function provisionOnce(
   const escapedPassword = password.replace(/'/g, "''");
   // Steps 1–4: superuser-only operations. Drop the connection as soon as the
   // privileged work is done.
-  const superClient = new Client({ connectionString: env.SUPERUSER_DATABASE_URL });
-  superClient.on("error", (err) => console.error("[provision] superuser connection error:", (err as Error).message));
+  const superClient = createClient({ connectionString: env.SUPERUSER_DATABASE_URL }, "provision superuser");
   await superClient.connect();
   try {
     if (reset) {
@@ -125,30 +123,21 @@ async function provisionOnce(
   // tenant user. A small Pool just for this one job — tenant.ts opens the
   // long-lived Pool on first request.
   const url = new URL(env.DATABASE_URL);
-  const provisioningPool = new Pool({
+  // This pool is connected to a BRAND-NEW tenant DB while its migrations run,
+  // and a parallel test fork's end-of-file teardown drops tenant databases, so
+  // the backend really does vanish underneath it (SQLSTATE 57P01). createPool
+  // makes that a log line: every client listens from creation. Measured
+  // 2026-08-25, before this pool had any listener: ~10% of `test` runs red,
+  // reading as 472 ECONNREFUSED assertions across 34 files because the api
+  // died once and every later request failed.
+  const provisioningPool = createPool({
     host: url.hostname,
     port: url.port ? Number(url.port) : 5432,
     database: dbName,
     user: userName,
     password,
     max: 2,
-  });
-  // WITHOUT THIS, A DROPPED DATABASE KILLS THE WHOLE API. pg emits 'error' on a
-  // pool whose backend goes away, and an unhandled 'error' event terminates
-  // Node. This pool is connected to a BRAND-NEW tenant DB while its migrations
-  // run, and a parallel test fork's end-of-file teardown drops tenant databases
-  // — so the backend really does vanish underneath it, with SQLSTATE 57P01
-  // (admin_shutdown).
-  //
-  // Measured 2026-08-25: this accounted for ~10% of `test` runs going red. It
-  // does not read as one bug, either — the api dies once and every later request
-  // fails, so a single run showed 472 ECONNREFUSED assertions across 34 files.
-  // tenant.ts has carried this listener for exactly this reason; provisioning
-  // was the copy that never got it.
-  guardPoolClients(provisioningPool, `provisioning-pool ${dbName}`);
-  provisioningPool.on("error", (err) => {
-    console.error(`[provisioning-pool ${dbName}] idle client error:`, (err as Error).message);
-  });
+  }, `provisioning-pool ${dbName}`);
   try {
     const result = await runMigrations({
       pool: provisioningPool,

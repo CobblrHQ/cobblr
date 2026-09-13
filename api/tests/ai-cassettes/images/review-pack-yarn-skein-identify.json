@@ -1,0 +1,6 @@
+{
+  "_fixture": "e2e/fixtures/review-pack/photos/yarn-skein.jpg",
+  "image_ahash": "7f27e3f3f3030000",
+  "capability": "identify-image",
+  "reply": "{\"name\":\"4-ply knitting yarn, four balls\",\"observations\":\"Four distinct balls of yarn are visible, each with a different brand and colorway: West Yorkshire Spinners Signature 4 Ply (red/grey/white), Regia 4-fädig Color (blue/purple/yellow), Noro (green/orange) and a second West Yorkshire Spinners Signature 4 Ply (blue/teal), side by side with their paper bands.\",\"category\":\"Yarn\",\"distinct_items\":4,\"items\":[{\"name\":\"West Yorkshire Spinners Signature 4 Ply Yarn\",\"brand\":\"West Yorkshire Spinners\",\"qty\":1},{\"name\":\"Regia 4-fädig Color Yarn\",\"brand\":\"Regia\",\"qty\":1},{\"name\":\"Noro Yarn\",\"brand\":\"Noro\",\"qty\":1},{\"name\":\"West Yorkshire Spinners Signature 4 Ply Yarn\",\"brand\":\"West Yorkshire Spinners\",\"qty\":1}],\"entity_type\":\"part\",\"is_receipt\":\"no\",\"confidence\":0.85}"
+}

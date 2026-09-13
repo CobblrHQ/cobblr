@@ -20,7 +20,28 @@ function isBuilderRoute(route: string): boolean {
   return route === "/build" || route.startsWith("/build/") || route.startsWith("/bundles");
 }
 
-export function HeaderActions() {
+/** The order the actions render in.
+ *
+ *  In the top bar they keep the order the workspace lists its modules in. As
+ *  sidebar rows, CAPTURE comes first: Scan is the action a person reaches for
+ *  many times a day and Build a few times a month, and the row under the nav
+ *  is the one the eye lands on. Stable within each half, so two capability
+ *  actions keep their listed order. Pure, so the sidebar's order is a fact a
+ *  test can hold without rendering the layout. */
+export function orderHeaderActions<T extends { headerAction: { route: string } | null }>(
+  actions: readonly T[],
+  capabilitiesFirst: boolean,
+): T[] {
+  if (!capabilitiesFirst) return [...actions];
+  const isBuilder = (a: T) => !!a.headerAction && isBuilderRoute(a.headerAction.route);
+  return [...actions.filter((a) => !isBuilder(a)), ...actions.filter(isBuilder)];
+}
+
+export function HeaderActions({ asRows = false }: {
+  /** Full-width labelled rows for the sidebar foot (capture first), instead
+   *  of the top bar's icon buttons. */
+  asRows?: boolean;
+} = {}) {
   const { activeSlug, activeOrg } = useActiveOrg();
   // Builder chrome (the AI builder, the marketplace) is the platform. Focused
   // mode hides it; a locked managed app has no platform at all, so the same
@@ -49,18 +70,21 @@ export function HeaderActions() {
   }, [activeSlug]);
 
   const hiddenSet = new Set(hidden);
-  const actions = (modules.data?.items ?? []).filter(
-    (m) =>
-      m.enabled &&
-      m.headerAction &&
-      !hiddenSet.has(m.name) &&
-      // Focused mode hides the builder header actions (the AI builder) but keeps
-      // capability actions like Scan.
-      !(focused && isBuilderRoute(m.headerAction.route)),
+  const actions = orderHeaderActions(
+    (modules.data?.items ?? []).filter(
+      (m) =>
+        m.enabled &&
+        m.headerAction &&
+        !hiddenSet.has(m.name) &&
+        // Focused mode hides the builder header actions (the AI builder) but keeps
+        // capability actions like Scan.
+        !(focused && isBuilderRoute(m.headerAction.route)),
+    ),
+    asRows,
   );
   // No count badge on the camera action: it opens the SCANNER, and a badge
-  // reads as "this is the inbox" (the author). Pending-count signals live on the
-  // "Scan Inbox" nav entry's destinations (dashboard card + /scan itself).
+  // reads as "this is the inbox" (the author). The pending count rides the
+  // "Scan Inbox" nav row itself (useNavBadges), the door to the inbox.
 
   if (actions.length === 0) return null;
 
@@ -77,16 +101,22 @@ export function HeaderActions() {
             aria-label={ha.label}
             data-testid={`header-action-${m.name}`}
             className={({ isActive }) =>
-              "relative transition p-1.5 flex items-center gap-1 " +
-              (isActive
-                ? "text-accent"
-                : "text-faint dark:text-slate-500 hover:text-accent")
+              asRows
+                ? "w-full flex items-center gap-2.5 px-3 py-1.5 rounded text-[13px] transition " +
+                  (isActive
+                    ? "text-accent font-semibold bg-subtle/60 dark:bg-slate-800/40"
+                    : "text-muted dark:text-slate-400 hover:text-accent hover:bg-subtle/60 dark:hover:bg-slate-800/40")
+                : "relative transition p-1.5 flex items-center gap-1 " +
+                  (isActive
+                    ? "text-accent"
+                    : "text-faint dark:text-slate-500 hover:text-accent")
             }
           >
-            <Icon size={16} />
+            <Icon size={16} className={asRows ? "shrink-0" : undefined} />
             {/* Text label where there's room — the bare icon alone was the
-                discoverability gap the author named. Phones keep icon-only. */}
-            <span className="hidden md:inline text-xs">{ha.label}</span>
+                discoverability gap the author named. Phones keep icon-only;
+                a sidebar row is always labelled. */}
+            <span className={asRows ? "" : "hidden md:inline text-xs"}>{ha.label}</span>
           </NavLink>
         );
       })}

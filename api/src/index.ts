@@ -75,6 +75,7 @@ import { registerPlatformActionHandlers } from "./platform/platform-action-handl
 import { registerHostedMcp } from "./platform/hosted-mcp.js";
 import { syncInstalledModules } from "./platform/installed-modules.js";
 import { migrateBookshelfToInstance } from "./platform/migrate-bookshelf-to-instance.js";
+import { retireGroceriesBaseKindTwin } from "./platform/migrate-groceries-twin-to-instance.js";
 import { mergeLabelsQr } from "./platform/merge-labels-qr.js";
 import { backfillPlacements } from "./platform/migrate-location-to-placement.js";
 import { backfillDefaultBindings } from "./platform/seed-bindings.js";
@@ -82,6 +83,7 @@ import { healApprovedButInactiveAi } from "./platform/heal-approved-ai.js";
 import { reconcileBundleUpdates, startBundleUpdateSweeper } from "./platform/bundle-updates.js";
 import { healMentionEntityRef } from "./platform/heal-mention-entity-ref.js";
 import { repairReplayTruncatedNames } from "./platform/repair-replay-truncated-names.js";
+import { retireReceiptFailurePlaceholders } from "./platform/retire-receipt-failure-placeholders.js";
 import { backfillIdentityLinks } from "./platform/backfill-identity.js";
 import { logAnnounceRouting } from "./platform/announce.js";
 import { logSignupGates } from "./platform/signup-gates.js";
@@ -245,6 +247,8 @@ async function boot() {
           field_role: d.field_role,
           type: d.type,
           choices: (d.choices as string[] | null) ?? null,
+          unit: (d as { unit?: string | null }).unit ?? null,
+          template: (d as { template?: string | null }).template ?? null,
         }));
       },
       registerComputedContext: computedFields.registerComputedContext,
@@ -1101,6 +1105,17 @@ async function boot() {
       `[cobblr-api] bookshelf → instance migration: ${shelfResult.orgsTouched} org(s), ${shelfResult.booksMoved} book(s) moved`,
     );
   }
+  // The Groceries bundle planted a twin of its food fields on inventory:part;
+  // a specialisation is an instance, and the twin cost twice (#2787, #2849).
+  // Food rows in plain Inventory move into the Groceries table, announced in
+  // the activity log, and the twin defs go (#2860). Idempotent; opens no
+  // tenant pool for a workspace already past it.
+  const twinResult = await T("retireGroceriesBaseKindTwin", retireGroceriesBaseKindTwin());
+  if (twinResult.orgsTouched > 0) {
+    console.log(
+      `[cobblr-api] groceries base-kind twin retired: ${twinResult.orgsTouched} org(s), ${twinResult.rowsMoved} row(s) moved, ${twinResult.defsDropped} field(s) dropped`,
+    );
+  }
   // (Two more heal shims retired 2026-07-18 after their DONE WHEN read true on
   // every deployment: enable-digifab-for-machines — 0 machine-bundle orgs
   // lacking digifab on all 4 metas — and migrate-inventory-locations — 0
@@ -1197,6 +1212,15 @@ async function boot() {
   if (nameRepair.rowsRepaired > 0) {
     console.log(
       `[cobblr-api] replay-truncated scan names: ${nameRepair.rowsRepaired} restored across ${nameRepair.orgsTouched} workspace(s)`,
+    );
+  }
+  // A receipt whose read failed used to be a placeholder inbox row; it is a
+  // state on the session now. Move the rows already written so nobody cleans
+  // up by hand. See platform/retire-receipt-failure-placeholders.ts.
+  const placeholders = await T("retireReceiptFailurePlaceholders", retireReceiptFailurePlaceholders());
+  if (placeholders.rowsRetired > 0) {
+    console.log(
+      `[cobblr-api] receipt-failure placeholders: ${placeholders.rowsRetired} retired into session state across ${placeholders.orgsTouched} workspace(s)`,
     );
   }
 

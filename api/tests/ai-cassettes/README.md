@@ -28,6 +28,12 @@ One file per scenario:
 model says on the Nth call of that turn. `"match": "*"` is the fallback for
 anything a test does not care to script.
 
+`"refuse": "quota"` (or `invalid_key`, `model_unavailable`, `unreachable`,
+`unknown`) makes the provider REFUSE the turn instead of answering: the same
+`ProviderError` a real adapter throws on a 429 or a rejected key, with the
+reason's sentence, so a test drives the refusal path with no key and no
+network (`refuses-the-plan.json`: a computed plan must survive it).
+
 ## Keep both transports covered
 
 Not every provider does tool-calling. A subscription bridge behind an OpenAI
@@ -48,3 +54,48 @@ from the corpus.
 To record from a real model: run an instance with `COBBLR_AI_REPLAY_RECORD=<dir>`
 and a real provider, have the conversation, then copy the files here and set
 `match`.
+
+## Image cassettes (the scan surfaces)
+
+A photo has no "last user message" to match, so the image capabilities
+(`identify-image`, `classify-image`, `extract-text`) replay by a PERCEPTUAL
+hash of the picture (an 8x8 average hash, 16 hex chars), one canned reply text
+per cassette, in the `images/` subdirectory (the corpus lint holds every file
+in THIS directory to the rounds shape above):
+
+```json
+{
+  "image_ahash": "c3030c3c3dffffff",
+  "capability": "identify-image",
+  "reply": "{\"name\":\"Hardware store receipt\",\"observations\":\"A printed receipt…\",\"category\":\"receipt\"}"
+}
+```
+
+Perceptual, not a byte hash, because the identify step sends the file store's
+resized "medium" JPEG rather than the bytes a test uploaded; a resize or a
+re-encode moves a bit or two, and a match allows a few. `capability` is
+optional (omitted = any image capability). The key for a fixture:
+
+```
+npx tsx scripts/image-cassette-key.mjs e2e/fixtures/bench-vision/receipt.png
+```
+
+The files under `images/` script the intake's receipt verdict: `receipt.png`
+identifies as a receipt and reads into three lines, `two-things.png`
+identifies as a product, `label.png` identifies as a label (a receipt the
+identify step missed) and reads into two lines when a person says "Read as a
+receipt". An image with no cassette gets the stable fake
+`{"name":"replayed item","confidence":0.5}`, as before.
+
+Two things changed on 2026-09-13 (#2916). A receipt-shaped image never
+reaches the identify cassette on a machine with the OCR engine: the shape
+check routes it first, and the receipt door's own line tier then reads a
+clean render with no model at all, so `receipt.png` reads into its lines
+without touching `receipt-lines.json` there. A test of a read that FAILS
+uploads `receipt-torn.png` instead: its three visible lines do not add up
+to the printed subtotal (a line is torn off), so the line tier declines and
+the read needs the model, which `receipt-torn-lines.json` answers for. The
+review pack's receipt identify cassettes (`review-pack-*-identify.json`)
+carry the model's `is_receipt` field; `review-pack-yarn-and-lamp-identify.json`
+deliberately scripts the wrong answer (the yarn, `is_receipt: "no"`) so the
+consequence test can show the shape check overruling the model.

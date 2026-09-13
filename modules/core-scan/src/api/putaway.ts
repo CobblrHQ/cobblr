@@ -49,6 +49,8 @@ import {
   type InteriorMm,
   type SessionRouteContext,
 } from "../services/putaway-route.js";
+import { walkQueue, type QueueGroup, type LeftOut, type QueuePlan } from "../services/putaway-queue.js";
+import { filingBlocker } from "../services/file-through-confirm.js";
 
 export const putawayRouter: Router = Router({ mergeParams: true });
 
@@ -69,6 +71,116 @@ function planItemIds(payload: unknown): Set<string> {
       (g) => g.item_ids,
     ),
   );
+}
+
+// ── The walk's queue ─────────────────────────────────────────────────────────
+// Every accepted group from every plan still in play whose items are filed
+// and not yet placed (services/putaway-queue.ts), read fresh from the items:
+// placement is placed_at on the inbox row, so a second plan, a resumed
+// session and the resume chip all read one truth. An entities plan walks its
+// own refs with the session's marks, since those are not inbox rows.
+
+interface WalkPlanRow {
+  id: string;
+  payload: unknown;
+  applied_group_ids: unknown;
+  created_at: Date;
+}
+
+export interface AssembledWalk {
+  groups: QueueGroup[];
+  left_out: LeftOut[];
+  remaining: number;
+  placed_item_ids: string[];
+  item_names: Record<string, string>;
+  item_quantities: Record<string, number>;
+  item_barcodes: Record<string, string>;
+  /** The plans whose groups the walk drew from, pinned first. */
+  plan_ids: string[];
+}
+
+function toQueuePlan(row: WalkPlanRow): QueuePlan {
+  const payload = row.payload as { subject?: string; groups?: Array<StoredGroup & { label?: string; destination: { kind: string; location_id?: string; location_name?: string; location_path?: string } }> };
+  return {
+    plan_id: row.id,
+    subject: payload.subject === "entities" ? "entities" : "inbox",
+    applied_group_ids: (row.applied_group_ids as unknown[]).filter((x): x is string => typeof x === "string"),
+    groups: (payload.groups ?? []).map((g) => ({ id: g.id, label: g.label ?? "", item_ids: g.item_ids, destination: g.destination })),
+  };
+}
+
+async function assembleWalk(
+  db: ReturnType<typeof tenantDb>,
+  pinned: WalkPlanRow | null,
+  sessionPlaced: readonly string[],
+): Promise<AssembledWalk> {
+  const pinnedPlan = pinned ? toQueuePlan(pinned) : null;
+  // An entities plan walks alone; an inbox plan walks with every other inbox
+  // plan still in play that has something accepted, newest first.
+  const rows: WalkPlanRow[] = pinned ? [pinned] : [];
+  if (!pinnedPlan || pinnedPlan.subject === "inbox") {
+    const others = await db
+      .selectFrom("core_scan_organize_plans")
+      .select(["id", "payload", "applied_group_ids", "created_at"])
+      .where("expires_at", ">", new Date())
+      .where(sql`jsonb_array_length(applied_group_ids)`, ">", 0)
+      .orderBy("created_at", "desc")
+      .orderBy("seq", "desc")
+      .limit(20)
+      .execute();
+    for (const o of others) {
+      if (pinned && o.id === pinned.id) continue;
+      if (toQueuePlan(o).subject === "inbox") rows.push(o);
+    }
+  }
+  const plans = rows.map(toQueuePlan);
+  const names: Record<string, string> = {};
+  const quantities: Record<string, number> = {};
+  const barcodes: Record<string, string> = {};
+  for (const row of rows) {
+    const payload = row.payload as { item_names?: Record<string, string | null>; item_barcodes?: Record<string, string> };
+    for (const [id, n] of Object.entries(payload.item_names ?? {})) if (n && !names[id]) names[id] = n;
+    for (const [id, b] of Object.entries(payload.item_barcodes ?? {})) if (b && !barcodes[id]) barcodes[id] = b;
+  }
+  const inboxIds = [...new Set(plans.filter((p) => p.subject === "inbox").flatMap((p) => p.groups.flatMap((g) => g.item_ids)))];
+  const placed = new Set<string>(sessionPlaced);
+  const unfiled = new Map<string, string>();
+  const missing = new Set<string>();
+  if (inboxIds.length > 0) {
+    const rows = await db
+      .selectFrom("core_scan_inbox_items")
+      .select(["id", "status", "placed_at", "suggested_name", "quantity", "barcode_text", "suggested_candidates"])
+      .where("id", "in", inboxIds)
+      .execute();
+    const byId = new Map(rows.map((r) => [r.id, r]));
+    for (const id of inboxIds) {
+      const r = byId.get(id);
+      if (!r || r.status === "discarded") {
+        missing.add(id);
+        continue;
+      }
+      if (r.placed_at) placed.add(id);
+      if (r.status !== "resolved") unfiled.set(id, filingBlocker(r) ?? "still in the inbox");
+      if (r.suggested_name) names[id] = r.suggested_name;
+      if (r.quantity && Number(r.quantity) > 1) quantities[id] = Number(r.quantity);
+      if (r.barcode_text) barcodes[id] = r.barcode_text;
+    }
+  }
+  const q = walkQueue({ plans, placed, unfiled, missing });
+  // The session's own placed list is scoped to the plan it was started on
+  // (its ticks, as before); the queue's groups hold only what is unplaced,
+  // from every plan, so nothing outside the pinned plan needs a mark here.
+  const own = new Set((pinnedPlan ?? plans[0])?.groups.flatMap((g) => g.item_ids) ?? []);
+  return {
+    groups: q.groups,
+    left_out: q.left_out,
+    remaining: q.remaining,
+    placed_item_ids: [...placed].filter((id) => own.has(id)),
+    item_names: names,
+    item_quantities: quantities,
+    item_barcodes: barcodes,
+    plan_ids: [...new Set(q.groups.map((g) => g.plan_id))],
+  };
 }
 
 // ── Live-session state (the session row's jsonb) ─────────────────────────────
@@ -290,7 +402,9 @@ putawayRouter.post(
       return;
     }
 
-    // Idempotent per plan: an active session resumes.
+    // Idempotent per plan: an active session resumes. Either way the queue is
+    // assembled NOW, from every plan in play, so a group accepted after the
+    // walk started is walked too and the sheet never shows a stale list.
     const existing = await db
       .selectFrom("core_scan_putaway_sessions")
       .select(["id", "state"])
@@ -299,15 +413,16 @@ putawayRouter.post(
       .orderBy("created_at", "desc")
       .limit(1)
       .executeTakeFirst();
+    const planRow = { id: plan.id, payload: plan.payload, applied_group_ids: plan.applied_group_ids, created_at: new Date() };
     if (existing) {
       const st = existing.state as { placed_item_ids?: string[] };
-      res.json({
-        session_id: existing.id,
-        mode: "plan",
-        plan_id: plan.id,
-        placed_item_ids: st.placed_item_ids ?? [],
-        resumed: true,
-      });
+      const walk = await assembleWalk(db, planRow, st.placed_item_ids ?? []);
+      await db
+        .updateTable("core_scan_putaway_sessions")
+        .set({ state: sql`${JSON.stringify({ placed_item_ids: walk.placed_item_ids, groups: walk.groups, left_out: walk.left_out })}::jsonb` as never })
+        .where("id", "=", existing.id)
+        .execute();
+      res.json({ session_id: existing.id, mode: "plan", plan_id: plan.id, resumed: true, ...walk });
       return;
     }
 
@@ -315,13 +430,13 @@ putawayRouter.post(
     // when this shipped resumes exactly where it left off.
     const legacy = (plan.walk_state as { placed_item_ids?: string[] }).placed_item_ids ?? [];
     const valid = planItemIds(plan.payload);
-    const placed = legacy.filter((id) => valid.has(id));
+    const walk = await assembleWalk(db, planRow, legacy.filter((id) => valid.has(id)));
     const inserted = await db
       .insertInto("core_scan_putaway_sessions")
       .values({
         mode: "plan",
         plan_id: plan.id,
-        state: sql`${JSON.stringify({ placed_item_ids: placed })}::jsonb` as never,
+        state: sql`${JSON.stringify({ placed_item_ids: walk.placed_item_ids, groups: walk.groups, left_out: walk.left_out })}::jsonb` as never,
         created_by_user_id: sessionUser(req).id,
         expires_at: plan.expires_at, // a walk lives exactly as long as its plan
       })
@@ -333,12 +448,70 @@ putawayRouter.post(
       mode: "plan",
       planId: plan.id,
     });
+    res.json({ session_id: inserted.id, mode: "plan", plan_id: plan.id, resumed: false, ...walk });
+  }),
+);
+
+// ─────────────────────── GET /putaway/queue ───────────────────────
+// What is accepted and still to be put away, across every plan in play: the
+// resume chip's one source. `remaining: 0` means nothing is waiting, whether
+// or not a walk ever ran; a plan-mode session still open is named so the
+// chip can say "resume" rather than "start". Polled casually.
+
+putawayRouter.get(
+  "/putaway/queue",
+  asyncHandler(async (req, res) => {
+    if (!requireRole(req, res, "owner", "admin", "member", "guest")) return;
+    const db = tenantDb(req);
+    let walk = await assembleWalk(db, null, []);
+    if (walk.remaining === 0) {
+      // Nothing from the inbox: an entities plan ("Organize what you track")
+      // mid-walk still deserves its chip. Its marks live on its session.
+      const entPlan = await db
+        .selectFrom("core_scan_organize_plans")
+        .select(["id", "payload", "applied_group_ids", "created_at"])
+        .where("expires_at", ">", new Date())
+        .where(sql`jsonb_array_length(applied_group_ids)`, ">", 0)
+        .where(sql`payload->>'subject'`, "=", "entities")
+        .orderBy("created_at", "desc")
+        .limit(1)
+        .executeTakeFirst();
+      if (entPlan) {
+        const sess = await db
+          .selectFrom("core_scan_putaway_sessions")
+          .select(["state"])
+          .where("plan_id", "=", entPlan.id)
+          .where("ended_at", "is", null)
+          .orderBy("created_at", "desc")
+          .limit(1)
+          .executeTakeFirst();
+        walk = await assembleWalk(db, entPlan, (sess?.state as { placed_item_ids?: string[] } | null)?.placed_item_ids ?? []);
+      }
+    }
+    // An open walk wins the plan to pin, so "resume" reopens the same
+    // session whichever plan's group happens to come first in the queue now;
+    // otherwise the newest plan with something to walk.
+    const session =
+      walk.remaining > 0
+        ? await db
+            .selectFrom("core_scan_putaway_sessions")
+            .select(["id", "plan_id"])
+            .where("mode", "=", "plan")
+            .where("ended_at", "is", null)
+            .where("expires_at", ">", new Date())
+            .orderBy("created_at", "desc")
+            .limit(1)
+            .executeTakeFirst()
+        : null;
+    // The open session's queue spans every plan in play, so it is the one to
+    // resume whichever plan's group comes first now.
+    const planId = session?.plan_id ?? walk.plan_ids[0] ?? null;
     res.json({
-      session_id: inserted.id,
-      mode: "plan",
-      plan_id: plan.id,
-      placed_item_ids: placed,
-      resumed: false,
+      remaining: walk.remaining,
+      groups: walk.groups.length,
+      plan_id: planId,
+      session_id: session?.id ?? null,
+      left_out: walk.left_out,
     });
   }),
 );
@@ -846,11 +1019,38 @@ putawayRouter.post(
       .select(["payload"])
       .where("id", "=", session.plan_id)
       .executeTakeFirst();
-    const valid = plan ? planItemIds(plan.payload) : new Set<string>();
+    const st = session.state as { placed_item_ids?: string[]; groups?: QueueGroup[]; left_out?: LeftOut[] };
+    // The session's queue spans every plan in play, so ids from any of them
+    // are valid; a session from before queues were stored falls back to its
+    // own plan's items.
+    const valid = new Set<string>([
+      ...(st.groups ?? []).flatMap((g) => g.item_ids),
+      ...(st.placed_item_ids ?? []),
+      ...(plan ? planItemIds(plan.payload) : []),
+    ]);
     const placed = parsed.data.placed_item_ids.filter((id) => valid.has(id));
+    // Placement is the item's fact: stamp placed_at on what was just placed
+    // and clear it on what was un-ticked, so every plan and the resume chip
+    // read the same answer as this walk (#2897). Entity refs are not inbox
+    // rows and are skipped by the uuid filter; their marks live on the session.
+    const isUuid = (id: string) => /^[0-9a-f-]{36}$/i.test(id);
+    const now = [...placed].filter(isUuid);
+    const was = (st.placed_item_ids ?? []).filter(isUuid);
+    const unticked = was.filter((id) => !placed.includes(id));
+    if (now.length > 0) {
+      await db
+        .updateTable("core_scan_inbox_items")
+        .set({ placed_at: new Date() })
+        .where("id", "in", now)
+        .where("placed_at", "is", null)
+        .execute();
+    }
+    if (unticked.length > 0) {
+      await db.updateTable("core_scan_inbox_items").set({ placed_at: null }).where("id", "in", unticked).execute();
+    }
     await db
       .updateTable("core_scan_putaway_sessions")
-      .set({ state: sql`${JSON.stringify({ placed_item_ids: placed })}::jsonb` as never })
+      .set({ state: sql`${JSON.stringify({ ...st, placed_item_ids: placed })}::jsonb` as never })
       .where("id", "=", session.id)
       .execute();
     res.json({ placed_item_ids: placed });

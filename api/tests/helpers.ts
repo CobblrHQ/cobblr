@@ -71,6 +71,17 @@ async function tryCheckoutPoolOrg(): Promise<TestSession | null> {
   }
 }
 
+/** The worst case of one fresh workspace, and so the floor for any test that
+ *  signs up inside its own body: the pool checkout is instant, but the pool
+ *  runs out on a full suite and the fallback is a CREATE DATABASE behind a
+ *  template lock that serialises every concurrent signup (5 to 15 s on a
+ *  loaded runner) followed by enabling every module in waves (another 20 to
+ *  30 s under DDL contention). The suite's global testTimeout is this same
+ *  number for that reason. A per-test budget BELOW it timed
+ *  attention.test.ts out twice on one tree and blocked a deploy (#2867);
+ *  lint:test-budget-covers-signup refuses a smaller one. */
+export const FRESH_ORG_BUDGET_MS = 60_000;
+
 export async function signupFreshOrg(label: string): Promise<TestSession> {
   // Pool fast path — a checked-out org is already all-modules-provisioned.
   const pooled = await tryCheckoutPoolOrg();
@@ -81,6 +92,23 @@ export async function signupFreshOrg(label: string): Promise<TestSession> {
     await enableAllModulesForTests(pooled);
     return pooled;
   }
+  const session = await signupBlankOrg(label);
+  // Signup now enables ONLY the foundational substrate (blank-slate
+  // onboarding — see enableFoundationalForOrg). Tests exercise module
+  // functionality, not the empty-workspace default, so the harness
+  // turns every module on — mirroring the pre-blank-slate behaviour the
+  // suite was written against. (The blank-slate default itself is
+  // covered by the driven walkthrough, not the unit suite.)
+  await enableAllModulesForTests(session);
+  return session;
+}
+
+/** A workspace exactly as signup leaves it: the foundational substrate and
+ *  NOTHING else on. For the few tests whose subject is the blank slate itself
+ *  (what a step does before any domain module exists), since signupFreshOrg
+ *  turns every module on. Never pooled (a pooled org is fully provisioned);
+ *  same retries and teardown as the helper above. */
+export async function signupBlankOrg(label: string): Promise<TestSession> {
   // Random suffix per signup so tests can run in parallel.
   const suffix = Math.random().toString(36).slice(2, 8);
   const body = {
@@ -106,13 +134,6 @@ export async function signupFreshOrg(label: string): Promise<TestSession> {
   // every registered workspace at end-of-file. Without this the
   // dev/CI DB accumulates orphan tenant DBs forever.
   registerOrgForTeardown({ token: session.token, slug: session.slug });
-  // Signup now enables ONLY the foundational substrate (blank-slate
-  // onboarding — see enableFoundationalForOrg). Tests exercise module
-  // functionality, not the empty-workspace default, so the harness
-  // turns every module on — mirroring the pre-blank-slate behaviour the
-  // suite was written against. (The blank-slate default itself is
-  // covered by the driven walkthrough, not the unit suite.)
-  await enableAllModulesForTests(session);
   return session;
 }
 

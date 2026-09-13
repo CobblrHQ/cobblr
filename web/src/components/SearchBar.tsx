@@ -147,7 +147,17 @@ export function SearchBar() {
               }}
               className="w-full text-left px-3 py-2 hover:bg-subtle dark:hover:bg-slate-800/60 text-sm"
             >
-              <div className="font-medium truncate">{h.title}</div>
+              <div className="font-medium truncate">
+                {h.title}
+                {/* A retired record is still found (an old drill is exactly
+                    what a person searches for) and says so, ranked after
+                    the live ones by the search itself. */}
+                {h.retired && (
+                  <span className="ml-2 align-middle text-[10px] font-mono uppercase tracking-widest text-faint dark:text-slate-500">
+                    archived
+                  </span>
+                )}
+              </div>
               <div className="text-xs text-muted dark:text-slate-400 truncate">
                 {labels.collection(h.kind)}
                 {h.subtitle ? ` · ${h.subtitle}` : ""}

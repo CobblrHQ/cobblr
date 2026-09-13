@@ -1,0 +1,6 @@
+{
+  "_fixture": "e2e/fixtures/review-pack/photos/two-sets-phone.jpg",
+  "image_ahash": "fffffff760040000",
+  "capability": "identify-image",
+  "reply": "{\"name\":\"Two boxed building sets: Mountain Explorer 31058 and Patrol Car 60312\",\"brand\":\"Brickwright\",\"series\":\"Brickwright Creator\",\"observations\":\"Two sealed building-set boxes on a wooden table: a red box for set 31058 (a mountain scene, ages 7+) on the left and a blue box for set 60312 (a black car, ages 5+) on the right.\",\"category\":\"Building sets\",\"distinct_items\":2,\"items\":[{\"name\":\"Brickwright Mountain Explorer 31058\",\"brand\":\"Brickwright\",\"qty\":1},{\"name\":\"Brickwright Patrol Car 60312\",\"brand\":\"Brickwright\",\"qty\":1}],\"entity_type\":\"part\",\"is_receipt\":\"no\",\"confidence\":0.85}"
+}

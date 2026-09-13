@@ -1,0 +1,7 @@
+{
+  "_fixture": "e2e/fixtures/review-pack/photos/two-sets-phone.jpg (and bench-vision/two-sets.png, its upright twin)",
+  "_note": "What the segmentation call answers: boxes on the picture as displayed, and names WITHOUT the set numbers the observation pass read. The observed names win; these boxes only say where.",
+  "image_ahash": "fffffff760040000",
+  "capability": "split-image",
+  "reply": "{\"items\":[{\"name\":\"Mountain Explorer building set\",\"brand\":\"Brickwright\",\"qty\":1,\"box\":{\"x\":0.06,\"y\":0.22,\"w\":0.44,\"h\":0.55}},{\"name\":\"Patrol car set\",\"brand\":null,\"qty\":1,\"box\":{\"x\":0.52,\"y\":0.25,\"w\":0.4,\"h\":0.53}}]}"
+}

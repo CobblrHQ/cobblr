@@ -1,6 +1,6 @@
 {
   "name": "@cobblr/platform-contract",
-  "version": "0.5.26",
+  "version": "0.5.36",
   "private": true,
   "type": "module",
   "main": "src/index.ts",
@@ -39,8 +39,17 @@
     "./bundle-update-tier": "./src/bundle-update-tier.ts",
     "./stated-quantity": "./src/stated-quantity.ts",
     "./fresh-lot": "./src/fresh-lot.ts",
+    "./field-values": "./src/field-values.ts",
     "./action-consent": "./src/action-consent.ts",
-    "./action-undo": "./src/action-undo.ts"
+    "./action-refusal": "./src/action-refusal.ts",
+    "./action-undo": "./src/action-undo.ts",
+    "./record-mentions": "./src/record-mentions.ts",
+    "./scan-fallback": "./src/scan-fallback.ts",
+    "./scan-session": "./src/scan-session.ts",
+    "./ai-refusal": "./src/ai-refusal.ts",
+    "./provider-reason": "./src/provider-reason.ts",
+    "./table-fit": "./src/table-fit.ts",
+    "./connection-verification": "./src/connection-verification.ts"
   },
   "types": "src/index.ts",
   "scripts": {

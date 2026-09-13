@@ -1,0 +1,9 @@
+{
+  "_about": "The router's answer for the Noro child: a shop the photo cannot support.",
+  "match": "\"x\":0.458,\"y\":0",
+  "rounds": [
+    {
+      "content": "{\"candidates\":[{\"module\":\"inventory\",\"instance\":\"yarn\",\"kind\":\"inventory:part\",\"label\":\"Yarn\",\"name\":\"Noro Yarn\",\"confidence\":0.8,\"fields\":{\"vendor\":\"Local yarn shop\"},\"notes\":\"A Noro yarn, likely from a local yarn shop.\"}]}"
+    }
+  ]
+}

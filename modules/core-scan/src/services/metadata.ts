@@ -56,6 +56,12 @@ export const IDENTIFY_OWNED_KEYS = [
   // releases it; the retry worker releases it itself on its no-result and
   // budget-spent endings, which never come back through an identify write.
   "retry_queued",
+  // Why the last identify produced no name (the coded reason the card's note
+  // and remedy read), and what the receipt-shape check made of the image.
+  // Both are this pass's findings about THIS read; a new read replaces them.
+  "identify_failure",
+  "receipt_shape",
+  "receipt_decided_by",
   // NOT "purchases_order_id" / "receipt_group_id" on an item a person attached
   // paperwork to: which receipt this was bought on is a FACT about the purchase,
   // not an output of the identify pass, and a re-run has no standing to forget

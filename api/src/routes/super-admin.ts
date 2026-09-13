@@ -61,7 +61,7 @@ import {
   type ScanMenuEntry,
 } from "@cobblr/core-scan/services/matchmaker";
 import { llmIdentify } from "@cobblr/core-scan/services/barcode-websearch";
-import { identifyImage } from "@cobblr/core-scan/services/enrich-photo";
+import { identifyImage, identifyPhoto, intakeVerdict, receiptShapeOf } from "@cobblr/core-scan/services/enrich-photo";
 import { platform } from "@cobblr/platform-contract";
 import { assembleContext, compilePrompt, nativeFieldsByBaseKind, repairPrompt } from "@cobblr/core-authoring/services/compile";
 import { kindFieldsOf, modulesOf, shapeCandidate } from "@cobblr/core-authoring/services/shape";
@@ -3198,6 +3198,16 @@ const ScanEvalBody = z.discriminatedUnion("surface", [
     image_media_type: z.string().min(1).max(80),
     org: z.string().optional(),
   }),
+  // The general upload door's whole verdict on an image: the receipt-shape
+  // check (OCR, no model) and the model's own is_receipt answer, and which of
+  // them decided. Both always run here, so a case records the model's answer
+  // even for an image the shape check would have routed without asking it.
+  z.object({
+    surface: z.literal("photo-door"),
+    image_b64: z.string().min(1),
+    image_media_type: z.string().min(1).max(80),
+    org: z.string().optional(),
+  }),
 ]);
 
 superAdminRouter.post("/scan-eval", async (req, res, next) => {
@@ -3270,6 +3280,25 @@ superAdminRouter.post("/scan-eval", async (req, res, next) => {
 
     if (parsed.data.surface === "barcode-identify") {
       res.json({ identity: await llmIdentify(orgId, parsed.data.upc, parsed.data.titles) });
+      return;
+    }
+
+    if (parsed.data.surface === "photo-door") {
+      const bytes = Buffer.from(parsed.data.image_b64, "base64");
+      const { shape, ocr_ms } = await receiptShapeOf(bytes);
+      const outcome = await identifyPhoto({ orgId, imageB64: parsed.data.image_b64, mediaType: parsed.data.image_media_type });
+      const door = intakeVerdict(shape, outcome);
+      res.json({
+        ...door,
+        shape,
+        ocr_ms,
+        identify: {
+          is_receipt: outcome.identity?.is_receipt ?? null,
+          name: outcome.identity?.name ?? null,
+          category: outcome.identity?.category ?? null,
+          failure: outcome.failure ?? null,
+        },
+      });
       return;
     }
 

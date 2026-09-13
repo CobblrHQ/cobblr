@@ -28,6 +28,9 @@ import { ArrowLeft } from "lucide-react";
 import { useActiveOrg } from "../auth/ActiveOrgContext";
 import { isConfigurationPath } from "../lib/configuration-nav";
 import { ConfigSidebarBody } from "./ConfigurationLayout";
+import { NavCountBadge } from "./NavCountBadge";
+import { useNavBadges } from "./useNavBadges";
+import { dragStaysInGroup, groupNavRows } from "./nav-groups";
 import {
   useNavModules,
   HEADING_PREFIX,
@@ -37,8 +40,10 @@ import {
   surfaceTops,
 } from "./useNavModules";
 
+// A flex row, not a block: a row can carry a live count (the Scan Inbox's
+// pending captures) after its label, and the label alone truncates.
 const linkCls = ({ isActive }: { isActive: boolean }) =>
-  "block px-3 py-1.5 rounded text-sm transition truncate " +
+  "flex items-center gap-2 px-3 py-1.5 rounded text-sm transition " +
   (isActive
     ? "text-accent font-semibold bg-subtle dark:bg-slate-800/60"
     : "text-muted dark:text-slate-400 hover:text-accent hover:bg-subtle/60 dark:hover:bg-slate-800/40");
@@ -65,8 +70,13 @@ export function SidebarNav({
   const { activeSlug, activeOrg } = useActiveOrg();
   const appMode = !!activeOrg?.app_mode;
   const { pathname } = useLocation();
-  const { tops: allVisibleTops, childrenByParent: children, instanceGroups } = useNavModules(activeSlug);
+  const { tops: allVisibleTops, childrenByParent: children, instanceGroups, doorNames } = useNavModules(activeSlug);
   const tops = surfaceTops(allVisibleTops, appMode);
+  const badges = useNavBadges(activeSlug);
+  // Past a handful of rows the middle splits into collections and tools
+  // (nav-groups.ts); under it the list is flat, exactly as a fresh workspace
+  // has always seen it.
+  const groups = groupNavRows(tops, doorNames, { homeRow: !appMode });
   // HOOKS STAY ABOVE the config-fold early return — a hook below it renders
   // in one branch but not the other, and React throws "Rendered more hooks
   // than during the previous render" the moment you navigate between them.
@@ -170,7 +180,8 @@ export function SidebarNav({
           return (
             <div key={m.name}>
               <NavLink {...handle} to={to} className={linkCls}>
-                {m.displayName}
+                <span className="truncate">{m.displayName}</span>
+                <NavCountBadge count={badges.get(m.name)} label={m.displayName} className="ml-auto" />
               </NavLink>
               <SortableContext items={kids.map((k) => k.name)} strategy={verticalListSortingStrategy}>
                 {kids.map((k) => (
@@ -200,31 +211,60 @@ export function SidebarNav({
       : (children.get(t.name) ?? []).map((k) => k.name),
   }));
 
+  const childrenOf = (top: string) => branches.find((b) => b.name === top)?.children ?? [];
   const onDragEnd = (e: DragEndEvent) => {
     const over = e.over?.id;
     if (!over) return;
+    // A collection dropped among the tools is a mis-drop, not an instruction:
+    // the groups are a reading of what each row IS, and a drag cannot change
+    // that.
+    if (!dragStaysInGroup(groups, String(e.active.id), String(over), childrenOf)) return;
     const next = reorderNav(branches, String(e.active.id), String(over));
     if (next) writeNavOrder(activeSlug, next);
   };
+
+  const homeRow = !appMode && (
+    <NavLink to="/" end className={linkCls}>
+      <span className="truncate">Home</span>
+    </NavLink>
+  );
+  const sortable = (list: typeof tops) => (
+    <SortableContext items={list.map((t) => t.name)} strategy={verticalListSortingStrategy}>
+      {list.map((m) => (
+        <SortableTop key={m.name} id={m.name}>
+          {(handle) => renderTop(m, handle)}
+        </SortableTop>
+      ))}
+    </SortableContext>
+  );
+  // The same quiet stem an instance nav-group uses, so the grown sidebar reads
+  // as one vocabulary: a small label, the rows under it.
+  const stemCls = "px-3 pt-2 pb-0.5 text-[10px] font-mono uppercase tracking-widest text-faint dark:text-slate-500 select-none";
 
   return (
     <div className="flex flex-col h-full min-h-0">
       {head}
       {!head && controls && <div className="shrink-0 flex justify-end px-2 pt-1.5">{controls}</div>}
       <nav data-tour="nav" className="flex-1 min-h-0 overflow-y-auto px-2 py-3 space-y-0.5">
-        {!appMode && (
-          <NavLink to="/" end className={linkCls}>
-            Home
-          </NavLink>
-        )}
         <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={onDragEnd}>
-          <SortableContext items={tops.map((t) => t.name)} strategy={verticalListSortingStrategy}>
-            {tops.map((m) => (
-              <SortableTop key={m.name} id={m.name}>
-                {(handle) => renderTop(m, handle)}
-              </SortableTop>
-            ))}
-          </SortableContext>
+          {groups.grouped ? (
+            <>
+              <div data-nav-group="collections" className={stemCls}>
+                Collections
+              </div>
+              {homeRow}
+              {sortable(groups.collections)}
+              <div data-nav-group="tools" className={stemCls + " pt-3"}>
+                Tools
+              </div>
+              {sortable(groups.tools)}
+            </>
+          ) : (
+            <>
+              {homeRow}
+              {sortable(tops)}
+            </>
+          )}
         </DndContext>
       </nav>
         {foot}

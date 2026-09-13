@@ -57,6 +57,9 @@ export interface BulkOutcome {
   undoable: boolean;
   /** Where the batch put things, when one of its actions said. */
   destination?: { kind: string; label: string };
+  /** Every record the batch changed or an action in it touched, named once,
+   *  so the panel draws the result's names as chips like a single write's. */
+  touched?: Array<{ kind: string; id: string; label: string }>;
 }
 
 export interface WriteOutcome {
@@ -271,7 +274,28 @@ export async function performWrites(
     ledger_ids: done.map((d) => d.ledger_id).filter((id): id is string => !!id),
     undoable: done.every((d) => d.undoable !== false),
     ...(done.find((d) => d.destination)?.destination ? { destination: done.find((d) => d.destination)!.destination } : {}),
+    ...(touchedBy(done).length ? { touched: touchedBy(done) } : {}),
   };
+}
+
+/** The records a set of outcomes name, once each: each write's own record and
+ *  whatever its action reported touching. */
+export function touchedBy(done: readonly WriteOutcome[]): Array<{ kind: string; id: string; label: string }> {
+  const out: Array<{ kind: string; id: string; label: string }> = [];
+  const seen = new Set<string>();
+  for (const d of done) {
+    const refs = [
+      ...(d.entity?.id && d.entity.label ? [{ kind: d.entity.kind, id: d.entity.id, label: d.entity.label }] : []),
+      ...(d.touched ?? []),
+    ];
+    for (const r of refs) {
+      const key = `${r.kind} ${r.id}`;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      out.push(r);
+    }
+  }
+  return out;
 }
 
 /** The records an action reports having touched, named. A handler says
@@ -349,8 +373,16 @@ export async function performWrite(
     // What the action itself said it did, rather than a tick with no sentence.
     const touched = await touchedByAction(wsApi, (r.data as { result?: unknown } | undefined)?.result);
     const destination = destinationOf((r.data as { result?: unknown } | undefined)?.result);
+    // The record it ran on, named, the way a create's or an update's outcome
+    // names its record: the card draws it even when the action's own sentence
+    // ("Done.") does not.
+    const ranOn =
+      req.entity_id && entity_kind
+        ? labelOfImage(await imageOf(wsApi, entity_kind, req.entity_id).catch(() => null), "")
+        : "";
     return {
       ok: true,
+      ...(ranOn ? { entity: { kind: entity_kind, id: req.entity_id, label: ranOn } } : {}),
       // The card never promises more than the ledger can do: a run that handed
       // back no way back says so beside what it did.
       message: undo

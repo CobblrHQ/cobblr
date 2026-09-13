@@ -1,0 +1,15 @@
+MAIN ST PHARMACY #22
+PRESCRIPTION RECEIPT
+
+RX 4482910 GENERIC 30CT     10.00
+VITAMIN D 1000IU 90CT       11.49
+BANDAGE ASSORTED            6.99
+COUGH SYRUP 8OZ             9.79
+READING GLASSES +1.5        2.99
+
+SUBTOTAL                    41.26
+TAX                          0.01
+TOTAL                       41.27
+FSA CARD                    41.27
+
+06/11/2026 11:47 AM

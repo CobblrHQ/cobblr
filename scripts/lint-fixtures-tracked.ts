@@ -25,7 +25,14 @@ function sh(args: string[]): string {
 
 // Every path under any fixtures/ dir that git would ignore. --others includes
 // untracked files (the ones at risk); --ignored lists what is excluded.
-const ignored = sh(["ls-files", "--others", "--ignored", "--exclude-standard"])
+// --directory stops the walk at a directory that is ignored as a whole
+// (node_modules: 305,796 files on a CI checkout, 135 entries with it), because
+// that walk is IO-bound and its cost depends on the page cache: 0.5s warm,
+// 8-34s with another job installing beside it, which the lint budget read as
+// this lint regressing four runs out of ten (2026-09-13). A fixture inside a
+// fixtures dir that has tracked siblings is still listed on its own; a fixtures
+// dir ignored whole is listed as the dir, which the filter below still catches.
+const ignored = sh(["ls-files", "--others", "--ignored", "--exclude-standard", "--directory"])
   .split("\n")
   .map((l) => l.trim())
   .filter(Boolean)

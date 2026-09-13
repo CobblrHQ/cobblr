@@ -139,7 +139,7 @@ export interface PlatformWebApi {
       bindingId?: string;
       args?: Record<string, unknown>;
     },
-  ): Promise<{ ok: boolean; result: unknown }>;
+  ): Promise<{ ok: boolean; result: unknown; undo?: unknown; affected?: { kinds: string[]; entity?: { kind: string; id: string } } }>;
   lookupEntity(slug: string, kind: string, id: string): Promise<PlatformResolvedEntity>;
   /** The workspace's printers. Needed only to honour a `ui.print` directive,
    *  which is how walk-up printing reaches a browser-driven printer. Optional:

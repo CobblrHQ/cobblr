@@ -9,7 +9,7 @@
 // Deterministic, not asked of a model: the colour is already resolved, and code
 // that appends a known word is free, instant and testable (heuristic-first).
 
-import { colorFromText } from "./ddg-images.js";
+import { colorFromText, colorWordOnly } from "./ddg-images.js";
 import { isVarietyColour } from "./colour-compound.js";
 
 const title = (s: string): string => s.charAt(0).toUpperCase() + s.slice(1).toLowerCase();
@@ -38,6 +38,11 @@ export function nameWithColor(
   const n = (name ?? "").trim();
   const c = (color ?? "").trim();
   if (!n || !c) return n;
+  // Only colour WORDS are composed into a name ("navy", "dark green"): the one
+  // rule the search phrase follows too (colorWordOnly). A normaliser writes
+  // fields, never names; a yarn's "#0000FF" once replaced the "Blue" in its
+  // title (#2885).
+  if (!colorWordOnly(c)) return n;
 
   const inName = colorFromText(n);
   // Already says the right colour.

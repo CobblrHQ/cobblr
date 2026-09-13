@@ -19,7 +19,7 @@
 // a ready-made tracker → "set it up & drop me in"; a blank slate → "add a
 // blank one" / "name a new category". Build-it-yourself is a CTA, not a lane.
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { photoOrder } from "../lib/scanPhoto";
 import { Link, useNavigate } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
@@ -478,12 +478,27 @@ export function WhatToDoPanel({
 
   // Picking a kind clears any chosen recipe (they drive the same hero); picking
   // the same kind again deselects it.
-  const pickModule = (name: string) =>
+  // A blank-kind pick has a name field or a button in the hero, not a single
+  // action that fits inside a tile, so for that path the hero is brought to
+  // the person instead: scrolled into view and focused, on the next frame,
+  // once it has rendered its new shape. Recipes render their action inline
+  // (see recipeTile); this is the fallback for the shape that cannot.
+  const heroRef = useRef<HTMLDivElement | null>(null);
+  const pickModule = (name: string) => {
+    let picked = false;
     setSelectedModule((cur) => {
       const next = cur === name ? null : name;
+      picked = next !== null;
       setSelectedRecipe(null);
       return next;
     });
+    requestAnimationFrame(() => {
+      if (!picked || !heroRef.current) return;
+      heroRef.current.scrollIntoView({ behavior: "smooth", block: "center" });
+      const target = heroRef.current.querySelector<HTMLElement>("input, button");
+      target?.focus({ preventScroll: true });
+    });
+  };
   const pickRecipe = (b: CatalogBundle) =>
     // Just select/deselect the recipe (drives col 3). Leave the chosen KIND
     // alone — picking a recipe shouldn't hijack the column you were browsing
@@ -495,15 +510,34 @@ export function WhatToDoPanel({
   // small "details" button opens the full modal. The card is a
   // div[role=button] (NOT <button>) because it contains that inner button —
   // nested buttons are invalid HTML and break keyboard/screen-reader semantics.
-  const recipeTile = (b: CatalogBundle) => (
-    <BundleTile
-      key={b.manifest.id}
-      b={b}
-      selected={selectedRecipe?.manifest.id === b.manifest.id}
-      onOpen={() => pickRecipe(b)}
-      onDetails={() => setPicked(b)}
-    />
-  );
+  // The same next action the hero shows, rendered inside the chosen tile too,
+  // so a pick far down the catalog has its button under the thumb rather than
+  // in a panel that scrolled off the top (the 2026-09-13 review's "Set up
+  // Groceries" that nothing pointed at).
+  const setupRecipe = (b: CatalogBundle) => (b.manifest.features?.length ? setPicked(b) : setupRecipeMut.mutate(b));
+  const recipeTile = (b: CatalogBundle) => {
+    const on = selectedRecipe?.manifest.id === b.manifest.id;
+    return (
+      <BundleTile
+        key={b.manifest.id}
+        b={b}
+        selected={on}
+        onOpen={() => pickRecipe(b)}
+        onDetails={() => setPicked(b)}
+        action={
+          <button
+            type="button"
+            disabled={setupRecipeMut.isPending}
+            onClick={() => setupRecipe(b)}
+            className="w-full inline-flex items-center justify-center gap-1.5 rounded-md bg-cobble-600 text-white text-sm font-medium px-3 py-2 hover:bg-cobble-700 transition disabled:opacity-50"
+          >
+            {setupRecipeMut.isPending ? <Loader2 size={14} className="animate-spin" /> : <ArrowRight size={14} />}
+            Set up {b.manifest.name}
+          </button>
+        }
+      />
+    );
+  };
 
   // One blank-slate tile: an empty kind, or another category of one you already
   // run. Deliberately quieter than a recipe tile (a dashed glyph, no cover art)
@@ -768,7 +802,7 @@ export function WhatToDoPanel({
         {/* The hero — the captive terminal step. Reacts to the funnel: a chosen
             recipe → "set it up & drop me in"; a chosen kind → "add a blank one";
             nothing → the freeform "type what you've got". */}
-        <div className={
+        <div ref={heroRef} className={
           "order-first rounded-xl border p-3 transition " +
           (selectedRecipe || selectedModuleObj ? "border-accent/60 bg-accent/5 dark:bg-cobble-900/15" : "border-line dark:border-slate-700 bg-surface/60 dark:bg-slate-900/40")
         }>
@@ -803,7 +837,7 @@ export function WhatToDoPanel({
             <button
               type="button"
               disabled={setupRecipeMut.isPending}
-              onClick={() => (recipeHasFeatures ? setPicked(selectedRecipe) : setupRecipeMut.mutate(selectedRecipe))}
+              onClick={() => setupRecipe(selectedRecipe)}
               className="w-full mb-2 inline-flex items-center justify-center gap-1.5 rounded-lg bg-cobble-600 text-white text-sm font-medium px-3 py-2 hover:bg-cobble-700 transition disabled:opacity-50"
             >
               {setupRecipeMut.isPending ? <Loader2 size={15} className="animate-spin" /> : <ArrowRight size={15} />}

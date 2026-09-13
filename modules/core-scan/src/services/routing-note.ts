@@ -14,18 +14,58 @@
 // the parser together is what lets that be trusted.
 
 import { categoryDisplay } from "@cobblr/platform-contract/category-reconcile";
+import { fallbackHint, type AiFallback, type ProviderErrorReason } from "@cobblr/platform-contract/scan-fallback";
 
-/** What a no-AI routing note says when the fallback carried a category. */
-export function routingNoteWithCategory(tableLabel: string, category: string): string {
-  return `Filed into ${tableLabel} as “${categoryDisplay(category)}”. ${AI_HINT}`;
+// ── The card's note, from the step that actually decided ─────────────────────
+//
+// Two steps can each have something to say about one item: the LOOKUP (a
+// store's own label, nothing to look up; no catalog hit; a web guess held
+// back) and the ROUTING (the matchmaker fell to the keyword floor, and why).
+// The matchmaker used to overwrite whatever the lookup had written, so a
+// store-internal code in a workspace whose AI errors read "The AI errored on
+// this one, so it was matched by keywords" and lost "This is a store's own
+// label": a note about a step that never applied to that code, over the one
+// that did (#2907). The lookup's verdict is about the code and comes first;
+// the routing's sentence is about where it went and follows, when there is
+// one. Re-composing on a re-run must not stack routing sentences, so the
+// known fallback sentences are stripped from the verdict before composing.
+
+const FALLBACKS: AiFallback[] = ["no-provider", "background", "not-entitled", "provider-error", "no-answer"];
+const REASONS: Array<ProviderErrorReason | undefined> = [undefined, "invalid_key", "quota", "model_unavailable", "unreachable", "unknown"];
+const KNOWN_ROUTING_SENTENCES = [...new Set(FALLBACKS.flatMap((why) => REASONS.map((r) => fallbackHint(why, r))))];
+
+/** `note` with every known routing (fallback) sentence removed, so what is
+ *  left is the lookup's own words, or nothing. */
+export function withoutRoutingSentences(note: string | null | undefined): string {
+  let out = (note ?? "").trim();
+  for (const sentence of KNOWN_ROUTING_SENTENCES) {
+    while (out.includes(sentence)) out = out.replace(sentence, "").replace(/\s{2,}/g, " ").trim();
+  }
+  return out;
+}
+
+/** The card's note: the lookup's verdict first, the routing's sentence
+ *  second, each its own sentence when both apply; whichever exists alone
+ *  when only one does; null when neither. */
+export function cardNote(lookupVerdict: string | null | undefined, routing: string | null | undefined): string | null {
+  const verdict = withoutRoutingSentences(lookupVerdict);
+  const r = (routing ?? "").trim();
+  if (!verdict) return r || null;
+  if (!r || verdict.includes(r)) return verdict;
+  return `${verdict} ${r}`;
+}
+
+/** What a no-AI routing note says when the fallback carried a category. The
+ *  hint names WHY the model was not the one routing (scan-fallback): "connect
+ *  a provider" is only the sentence for having none. */
+export function routingNoteWithCategory(tableLabel: string, category: string, why: AiFallback = "no-provider", reason?: ProviderErrorReason): string {
+  return `Filed into ${tableLabel} as “${categoryDisplay(category)}”. ${fallbackHint(why, reason)}`;
 }
 
 /** What it says when there was no category to file under. */
-export function routingNoteBare(): string {
-  return AI_HINT;
+export function routingNoteBare(why: AiFallback = "no-provider", reason?: ProviderErrorReason): string {
+  return fallbackHint(why, reason);
 }
-
-const AI_HINT = "Connect an AI provider for a sharper name and filled-in fields.";
 
 /** Every lead this note has ever been written with. Old rows keep the old
  *  prose, so the parser has to recognise all of them; a wording change ADDS to

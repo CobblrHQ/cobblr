@@ -34,6 +34,12 @@ export function getNavMode(): NavMode {
 export function getNavAutoHide(): boolean {
   return localStorage.getItem(HIDE_KEY) === "1";
 }
+/** Has this device recorded a layout at all? A device that has never chosen
+ *  reads as "top" too, and the graduation rules (nav-graduation.ts) need to
+ *  tell the two apart: the default is offered a sidebar once, a choice never. */
+export function hasLocalNavChoice(): boolean {
+  return localStorage.getItem(MODE_KEY) !== null;
+}
 export function setNavMode(mode: NavMode): void {
   localStorage.setItem(MODE_KEY, mode);
   changed();
@@ -62,6 +68,61 @@ export interface NavPref {
 /** What this device currently shows. */
 export function getNavPref(): NavPref {
   return { mode: getNavMode(), autohide: getNavAutoHide(), topbar: getNavTopBar() };
+}
+
+/** The three layouts a person can name. `mode` and `topbar` are one decision
+ *  seen from Appearance: "Sidebar" keeps the top bar, "Sidebar only" hides it.
+ *  Autohide is not part of a layout (it is spatial, and lives on the pin in
+ *  the sidebar itself). */
+export type NavLayout = "top" | "side" | "side-only";
+
+export const NAV_LAYOUTS: ReadonlyArray<{
+  value: NavLayout;
+  label: string;
+  desc: string;
+  pref: Pick<NavPref, "mode" | "topbar">;
+}> = [
+  {
+    value: "top",
+    label: "Top bar",
+    desc: "Your modules run across the top. Roomy with a handful of them; folds into more as they grow.",
+    pref: { mode: "top", topbar: true },
+  },
+  {
+    value: "side",
+    label: "Sidebar",
+    desc: "Everything down the left, always visible, with the top bar kept for the workspace and tools.",
+    pref: { mode: "side", topbar: true },
+  },
+  {
+    value: "side-only",
+    label: "Sidebar only",
+    desc: "The sidebar is the whole frame: brand and workspace at its head, the tools at its foot, no top bar.",
+    pref: { mode: "side", topbar: false },
+  },
+];
+
+/** Which of the three a pref is. `topbar` only means anything in side mode, so
+ *  a top-bar layout with the bar flag off is still "top". */
+export function layoutOf(pref: Pick<NavPref, "mode" | "topbar">): NavLayout {
+  if (pref.mode !== "side") return "top";
+  return pref.topbar ? "side" : "side-only";
+}
+
+export function getNavLayout(): NavLayout {
+  return layoutOf(getNavPref());
+}
+
+/** Pick a layout as ONE change: both keys land, then one event and one push.
+ *  Setting mode and topbar through their own setters pushed twice, and the
+ *  second write could lose to the first on a slow link, leaving the account
+ *  on a layout nobody chose. Autohide is kept as it was. */
+export function setNavLayout(layout: NavLayout): void {
+  const target = NAV_LAYOUTS.find((l) => l.value === layout);
+  if (!target) return;
+  localStorage.setItem(MODE_KEY, target.pref.mode);
+  localStorage.setItem(TOPBAR_KEY, target.pref.topbar ? "1" : "0");
+  changed();
 }
 
 /** Tell this tab, then the account. The push is fire-and-forget: a failed sync
@@ -109,4 +170,10 @@ export function useNavAutoHide(): boolean {
 }
 export function useNavTopBar(): boolean {
   return useSyncExternalStore(subscribe, getNavTopBar, () => true);
+}
+export function useNavLayout(): NavLayout {
+  return useSyncExternalStore(subscribe, getNavLayout, () => "top" as const);
+}
+export function useNavChoiceMade(): boolean {
+  return useSyncExternalStore(subscribe, hasLocalNavChoice, () => false);
 }

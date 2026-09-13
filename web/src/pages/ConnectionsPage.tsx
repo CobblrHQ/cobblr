@@ -11,7 +11,9 @@ import { CredentialFields } from "../components/CredentialFields";
 import { ProviderSetupSteps } from "../components/ProviderSetupSteps";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Pencil, Plug, Plus, Trash2, X } from "lucide-react";
-import { useToast, usePageTitle } from "@cobblr/platform-web";
+import { useToast, useConfirm, usePageTitle } from "@cobblr/platform-web";
+import { TestConnectionButton, VerificationBadge } from "../components/ConnectionState";
+import { keyRefusedBy, refusalDialog, verificationToast } from "../lib/connection-state";
 import {
   ApiError,
   api,
@@ -19,6 +21,7 @@ import {
   CONNECTION_KIND_LABELS,
   type ConnRouteMode,
   type ConnRouteScope,
+  type ConnectionVerification,
   type UserConnection,
   type UserConnectionInput,
 } from "../lib/api";
@@ -97,9 +100,10 @@ export function ConnectionsPage({ startAdding = false }: { startAdding?: boolean
           >
           <div className="p-3 flex items-start gap-3">
             <div className="flex-1 min-w-0">
-              <div className="font-medium text-content dark:text-mortar-100">
-                {c.label || providerLabel(c.provider_id)}
-                <span className="ml-2 text-[11px] font-mono text-faint">{c.provider_id}</span>
+              <div className="font-medium text-content dark:text-mortar-100 flex items-center gap-2 flex-wrap">
+                <span>{c.label || providerLabel(c.provider_id)}</span>
+                <span className="text-[11px] font-mono text-faint">{c.provider_id}</span>
+                {c.kind === "ai-provider" && <VerificationBadge verification={c.verification} />}
               </div>
               <div className="text-[11px] text-muted mt-0.5">
                 {c.routes.length === 0 ? (
@@ -156,6 +160,9 @@ export function ConnectionsPage({ startAdding = false }: { startAdding?: boolean
               >
                 <Pencil size={14} />
               </button>
+              {c.kind === "ai-provider" && (
+                <TestConnectionButton test={() => api.testStoredConnection(c.id)} invalidate={[["my-connections"]]} className="text-[11px] px-2 py-1 rounded border border-line dark:border-slate-700 text-faint hover:text-accent" />
+              )}
               <button
                 type="button"
                 onClick={() => del.mutate(c.id)}
@@ -307,8 +314,13 @@ function ConnectionForm({
   const provider = useMemo(() => providers.find((p) => p.id === providerId), [providers, providerId]);
   const credFields = Object.entries(provider?.credentials ?? {});
 
+  const confirm = useConfirm();
+  // The server tests a new or replaced key before the connection is
+  // presented as ready (#2895). A key the provider rejects answers 409
+  // key_invalid and is saved only when the person says so, as unverified;
+  // a refused replacement leaves the working key in place.
   const save = useMutation({
-    mutationFn: async () => {
+    mutationFn: async (confirmUnverified?: boolean) => {
       // NON-secret fields (base_url, choices, model) always ride — their current
       // value fully represents the desired state (a choice's "" is a real pick,
       // e.g. "standard", not "keep"). SECRETS only ride when re-typed (blank =
@@ -346,28 +358,43 @@ function ConnectionForm({
       };
       if (isEdit) {
         // On edit, only send credentials the user actually re-entered (blank = keep).
-        await api.updateConnection(existing!.id, {
+        const secretsRetyped = credFields.some(([key, def]) => def.secret && (creds[key] ?? "").trim() !== "");
+        const updated = await api.updateConnection(existing!.id, {
           label: label.trim(),
           ...(Object.keys(cleanCreds).length ? { credentials: cleanCreds } : {}),
           routes,
+          ...(confirmUnverified ? { confirm_unverified: true } : {}),
         });
         await claimAll(existing!.id);
-        return;
+        return { kind: "updated" as const, verification: secretsRetyped ? (updated as { verification?: ConnectionVerification } | undefined)?.verification : undefined };
       }
       const body: UserConnectionInput = {
         provider_id: providerId,
         label: label.trim() || undefined,
         credentials: cleanCreds,
         routes,
+        ...(confirmUnverified ? { confirm_unverified: true } : {}),
       };
       const made = await api.addConnection(body);
       if (made?.id) await claimAll(made.id);
+      return { kind: "added" as const, verification: made?.verification };
     },
-    onSuccess: () => {
-      toast.success(isEdit ? "Connection updated." : "Connection added.");
+    onSuccess: (out) => {
+      // A connection that is not an AI provider was never probed: "updated" is
+      // the whole truth for it. For a key, the verdict is the sentence.
+      const t = provider?.kind === "ai-provider" || out.verification ? verificationToast(out.verification, out.kind) : { kind: "success" as const, message: out.kind === "added" ? "Connection added." : "Connection updated." };
+      toast[t.kind](t.message);
       onDone();
     },
-    onError: (e) => toast.error(e instanceof ApiError ? e.message : String(e)),
+    onError: async (e) => {
+      const refused = keyRefusedBy(e);
+      if (!refused) {
+        toast.error(e instanceof ApiError ? e.message : String(e));
+        return;
+      }
+      const anyway = await confirm(refusalDialog(refused, isEdit));
+      if (anyway) save.mutate(true);
+    },
   });
 
   return (
@@ -553,7 +580,7 @@ function ConnectionForm({
         <button
           type="button"
           disabled={!providerId || save.isPending}
-          onClick={() => save.mutate()}
+          onClick={() => save.mutate(false)}
           className="px-3 py-1.5 text-sm rounded bg-cobble-600 hover:bg-cobble-700 text-white disabled:opacity-50"
         >
           {save.isPending ? "Saving…" : isEdit ? "Save changes" : "Save connection"}

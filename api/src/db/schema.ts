@@ -195,6 +195,8 @@ export interface OrgModulesTable {
   version: string;
   enabled_at: Generated<Date>;
   last_migration: string | null;
+  /** Ledger size beside the last name; NULL = never counted (see modules/migration-currency.ts). */
+  migration_count: number | null;
 }
 
 /** Provenance/refcount for what each bundle (or the user) "owns" — so a bundle
@@ -268,6 +270,8 @@ export interface UserCredentialsTable {
   route_mode: Generated<"my-calls" | "workspace-default">;
   route_scope: Generated<"sole_member" | "owner" | "all_mine" | "explicit">;
   auto_enable_new: Generated<boolean>;
+  /** What the save's probe said about the key (connection-verification.ts). */
+  verification: Generated<Record<string, unknown> | null>;
   created_at: Generated<Date>;
   updated_at: Generated<Date>;
 }

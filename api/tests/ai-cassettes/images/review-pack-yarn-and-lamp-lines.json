@@ -1,0 +1,6 @@
+{
+  "_fixture": "e2e/fixtures/review-pack/receipts/yarn-and-lamp.png",
+  "image_ahash": "df0f1f030f1f1fbf",
+  "capability": "classify-image",
+  "reply": "{\"vendor\":\"STITCH & SPARK\",\"order_ref\":\"77142\",\"date\":\"2026-09-09\",\"currency\":\"USD\",\"total\":26.47,\"items\":[{\"description\":\"WORSTED WOOL YARN 100G BLUE\",\"qty\":2,\"unit_price\":6.99,\"line_total\":13.98,\"discount\":null,\"code\":null,\"model\":null,\"weight\":null,\"weight_unit\":null},{\"description\":\"LED DESK LAMP\",\"qty\":1,\"unit_price\":9.99,\"line_total\":9.99,\"discount\":null,\"code\":null,\"model\":null,\"weight\":null,\"weight_unit\":null},{\"description\":\"TRAIL MIX 200G\",\"qty\":1,\"unit_price\":2.5,\"line_total\":2.5,\"discount\":null,\"code\":null,\"model\":null,\"weight\":null,\"weight_unit\":null}]}"
+}

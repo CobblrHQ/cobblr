@@ -14,7 +14,7 @@
 import { Router } from "express";
 import { sql } from "kysely";
 import { platform, sourceIdKey, type WireEffect } from "@cobblr/platform-contract";
-import { goodUntil, startsFreshLot } from "@cobblr/platform-contract/fresh-lot";
+import { goodUntil, shelfLifeDaysOf, startsFreshLot } from "@cobblr/platform-contract/fresh-lot";
 import { z } from "zod";
 import { tenantContext, tenantDb, sessionUser } from "../db.js";
 import { asyncHandler, badBody, requireRole } from "./util.js";
@@ -87,7 +87,7 @@ async function willDate(
   orgId: string,
   ref: { kind: string; id: string },
   effects: WireEffect[],
-): Promise<{ on: string; until: string | null } | null> {
+): Promise<WillDate | null> {
   const restock = effects.find((e) => /:adjust-stock$/.test(e.action_id) && typeof e.args?.delta === "number" && (e.args.delta as number) > 0);
   if (!restock) return null;
   let fields: Record<string, unknown> = {};
@@ -105,10 +105,25 @@ async function willDate(
   if (!starts) return null;
   const today = new Date().toISOString().slice(0, 10);
   // Custom fields ride under `metadata` on a resolved record; the shelf life
-  // is the same key the lots read (batches.ts).
+  // is the same key the lots read (batches.ts), through the same reader.
   const md = (fields.metadata as Record<string, unknown> | null) ?? {};
-  const shelf = Number(md.shelf_life_days ?? fields.shelf_life_days);
-  return { on: today, until: goodUntil(today, Number.isFinite(shelf) ? shelf : null) };
+  const until = goodUntil(today, shelfLifeDaysOf(md.shelf_life_days ?? fields.shelf_life_days));
+  // What is already there keeps its date and stays first: the record's
+  // visible expiry is the earliest lot, so a fresh lot behind an older one
+  // does not move it. The row says so, or the person reads "good until
+  // Sep 23" and then a record that still says Sep 12 (2026-09-13).
+  const onHand = Number.isFinite(qty) && qty > 0 ? qty : 0;
+  const keeps = typeof md.expires_on === "string" && md.expires_on ? md.expires_on : null;
+  return { on: today, until, ...(onHand > 0 ? { on_hand: { qty: onHand, until: keeps } } : {}) };
+}
+
+/** What checking the line off will stamp, and what it will leave alone. */
+export interface WillDate {
+  on: string;
+  until: string | null;
+  /** Stock already on the record, with the date it keeps; the visible expiry
+   *  stays the earlier of the two. Absent when the record is empty. */
+  on_hand?: { qty: number; until: string | null };
 }
 
 listsRouter.get(

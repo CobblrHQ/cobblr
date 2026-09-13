@@ -59,12 +59,10 @@ export function moduleRolesEnabled(): boolean {
  *  global, but table/sequence grants must run against the tenant DB). */
 async function superuserClientTo(dbName: string | null): Promise<PgClient> {
   const { env } = await import("../env.js");
-  const { Client } = await import("pg");
+  const { createClient } = await import("../db/client-error-guard.js");
   const u = new URL(env.SUPERUSER_DATABASE_URL);
   if (dbName) u.pathname = `/${dbName}`;
-  const client = new Client({ connectionString: u.toString() });
-  client.on("error", (err) => console.error("[module-role] connection error:", (err as Error).message));
-  return client;
+  return createClient({ connectionString: u.toString() }, "module-role");
 }
 
 /** Create (if missing) the module's role and (re)grant it exactly its

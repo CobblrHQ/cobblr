@@ -1,0 +1,7 @@
+{
+  "_fixture": "e2e/fixtures/bench-vision/receipt-torn.png",
+  "_about": "A receipt with a line torn off: the three visible lines do not add up to the printed subtotal, so the no-model line tier declines and the read needs the model. This is what a test of a FAILED read uploads.",
+  "image_ahash": "ff0f8f07038f1fbf",
+  "capability": "classify-image",
+  "reply": "{\"vendor\": \"Hardware Depot\", \"order_ref\": null, \"date\": \"2026-08-19\", \"currency\": \"USD\", \"total\": 50.57, \"items\": [{\"description\": \"M4 HEX BOLT x25\", \"qty\": 1, \"unit_price\": 7.49, \"line_total\": 7.49, \"discount\": null, \"code\": null, \"model\": null, \"weight\": null, \"weight_unit\": null}, {\"description\": \"PLA FILAMENT 1KG BLK\", \"qty\": 1, \"unit_price\": 24.99, \"line_total\": 24.99, \"discount\": null, \"code\": null, \"model\": null, \"weight\": null, \"weight_unit\": null}, {\"description\": \"SANDPAPER 120G 5PK\", \"qty\": 1, \"unit_price\": 6.35, \"line_total\": 6.35, \"discount\": null, \"code\": null, \"model\": null, \"weight\": null, \"weight_unit\": null}]}"
+}

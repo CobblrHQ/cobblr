@@ -29,8 +29,7 @@
 // a mixed-key state you must resolve by hand, not paper over).
 
 import { createCipheriv, createDecipheriv, randomBytes, scryptSync } from "node:crypto";
-import { Pool } from "pg";
-import { guardPoolClients } from "../src/db/client-error-guard.js";
+import { createPool } from "../src/db/client-error-guard.js";
 
 const SALT = "cobblr-tenant-creds-v1"; // must match api/src/db/crypto.ts
 
@@ -71,17 +70,13 @@ async function main() {
   const oldKey = keyFrom(oldPass);
   const newKey = keyFrom(newPass);
 
-  const pool = new Pool({ connectionString: dbUrl });
   // Same reason as the restore script, and it matters more here: this rewrites
   // db_credentials_encrypted for every org. Dying on an unhandled pool 'error'
   // mid-rotation gives a raw stack instead of a legible failure, on the one
   // operation where knowing exactly where it stopped is the whole ballgame.
   // (Phase 1 verifies every row before any write, so a failure here is safe —
-  // but it must be READABLE.)
-  guardPoolClients(pool, "rotate-creds-key");
-  pool.on("error", (err) => {
-    console.error("[rotate-key] database connection error:", (err as Error).message);
-  });
+  // but it must be READABLE.) createPool's clients listen from creation.
+  const pool = createPool({ connectionString: dbUrl }, "rotate-creds-key");
   const { rows } = await pool.query<{ id: string; slug: string; db_credentials_encrypted: string | null }>(
     "select id, slug, db_credentials_encrypted from orgs order by created_at",
   );

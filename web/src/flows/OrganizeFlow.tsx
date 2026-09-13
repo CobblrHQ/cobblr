@@ -11,7 +11,7 @@ import { useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { useToast } from "@cobblr/platform-web";
 import { useActiveOrg } from "../auth/ActiveOrgContext";
-import { api, type OrganizeStoredPlan, type ScanInboxItem } from "../lib/api";
+import { api, type ScanInboxItem } from "../lib/api";
 import { OrganizePlanSheet } from "../components/OrganizePlanSheet";
 import { OrganizeWalkSheet } from "../components/OrganizeWalkSheet";
 
@@ -46,13 +46,20 @@ export function OrganizeFlow({
     else localStorage.removeItem(fileBinKey);
   };
 
-  const [walkPlan, setWalkPlan] = useState<OrganizeStoredPlan | null>(null);
+  const [walkPlanId, setWalkPlanId] = useState<string | null>(null);
   const empty = new Map<string, ScanInboxItem>();
 
-  const startWalk = async () => {
+  // The plan the sheet just applied is pinned when it says which; otherwise
+  // the newest plan with something accepted (the entities plan this flow
+  // usually made). The walk's queue spans every plan in play either way.
+  const startWalk = async (planId?: string) => {
+    if (planId) {
+      setWalkPlanId(planId);
+      return;
+    }
     try {
       const r = await api.getLatestOrganizePlan(activeSlug);
-      if (r.plan && r.plan.applied_group_ids.length > 0) setWalkPlan(r.plan);
+      if (r.plan && r.plan.applied_group_ids.length > 0) setWalkPlanId(r.plan.plan_id);
       else toast.error("Nothing applied to walk yet - accept a group first.");
     } catch {
       toast.error("Couldn't load the plan for the walk.");
@@ -60,15 +67,15 @@ export function OrganizeFlow({
   };
 
   // The walk supersedes the plan sheet once it opens (same as the scan page).
-  if (walkPlan) {
+  if (walkPlanId) {
     return (
       <OrganizeWalkSheet
         slug={activeSlug}
-        plan={walkPlan}
+        planId={walkPlanId}
         itemsById={empty}
         setFileBin={setFileBin}
         onClose={() => {
-          setWalkPlan(null);
+          setWalkPlanId(null);
           void qc.invalidateQueries({ queryKey: ["organize-plan-latest", activeSlug] });
           onClose();
         }}
@@ -89,7 +96,7 @@ export function OrganizeFlow({
         void qc.invalidateQueries({ queryKey: ["organize-plan-latest", activeSlug] });
         void qc.invalidateQueries({ queryKey: ["scan-inbox", activeSlug] });
       }}
-      onStartWalk={() => void startWalk()}
+      onStartWalk={(planId) => void startWalk(planId)}
     />
   );
 }

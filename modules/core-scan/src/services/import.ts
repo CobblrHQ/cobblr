@@ -309,8 +309,14 @@ function normalize(raw: Record<string, unknown>, row: number, sourceInstance: st
 
   // source_kind: what the scan primarily IS. Barcode wins; then photo; then
   // url; a hint-only row (name/notes, no capture artifact) imports as a note.
-  const source_kind = barcode ? ("barcode" as const) : identify ? ("photo" as const) : sourceUrl ? ("url" as const) : ("note" as const);
-  if (!barcode && !identify && !sourceUrl && !name && !notes) {
+  // A photo is a photo whether it came as a link or embedded: an `embed`
+  // export of a workspace with no vision AI is full of unnamed photo rows
+  // whose only content is the picture itself, and the emptiness check used to
+  // read the link slot alone, so every one of them was "empty" and dropped on
+  // import (the review pack's export door, #2891).
+  const hasPhoto = !!identify || !!identifyEmbedded;
+  const source_kind = barcode ? ("barcode" as const) : hasPhoto ? ("photo" as const) : sourceUrl ? ("url" as const) : ("note" as const);
+  if (!barcode && !hasPhoto && !sourceUrl && !name && !notes) {
     errors.push({ row, field: "", message: "empty row: no barcode, photo, url, name or notes; skipped" });
     return null;
   }

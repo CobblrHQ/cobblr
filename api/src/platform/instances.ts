@@ -179,6 +179,42 @@ export async function deleteInstance(
     .execute();
 }
 
+type TenantQuery = { executeQuery: (s: unknown) => Promise<{ rows: Array<Record<string, unknown>> }> };
+
+/** The module's tenant tables that carry an `instance` column: the only ones an
+ *  instance's rows can live in, in a stable order. Teardown deletes from these
+ *  and nothing else; the row count reads these and nothing else, so the two
+ *  agree on what "this instance's data" means. */
+async function instanceTables(tdb: TenantQuery, prefix: string): Promise<string[]> {
+  const { rows } = await tdb.executeQuery(
+    sql`select table_name from information_schema.columns where table_schema='public' and table_name like ${prefix + "%"} and column_name = 'instance' order by table_name`.compile(
+      tdb as never,
+    ),
+  );
+  return rows.map((r) => String(r.table_name));
+}
+
+/** How many rows, across every table of its module that scopes by instance,
+ *  belong to this instance: the exact number a teardown would delete. Null when
+ *  the instance is missing or its module owns no tables. Unlike the module's
+ *  registered item counter this includes archived records and side tables
+ *  (moves, units), which is the number that matters before removing anything. */
+export async function instanceRowCount(orgId: string, instanceName: string): Promise<number | null> {
+  const inst = await getInstance(orgId, instanceName);
+  if (!inst) return null;
+  const entry = getEntry(inst.module_name);
+  if (!entry?.manifest.schema) return null;
+  const tdb = (await getTenantDb(orgId)) as unknown as TenantQuery;
+  let total = 0;
+  for (const table of await instanceTables(tdb, entry.manifest.schema.tablePrefix)) {
+    const { rows } = await tdb.executeQuery(
+      sql`select count(*)::int as n from ${sql.ref(table)} where instance = ${instanceName}`.compile(tdb as never),
+    );
+    total += Number(rows[0]?.n ?? 0);
+  }
+  return total;
+}
+
 /** Full teardown of a NON-default instance: its tenant-side data rows, its
  *  `workspace_module_instances` row, and its nav/presentation override. Shared by
  *  the DELETE /instances/:name route AND bundle uninstall (refcount teardown).
@@ -191,21 +227,22 @@ export async function tearDownInstance(orgId: string, instanceName: string): Pro
   if (entry?.manifest.schema) {
     const prefix = entry.manifest.schema.tablePrefix;
     try {
-      const tdb = (await getTenantDb(orgId)) as unknown as {
-        executeQuery: (s: unknown) => Promise<{ rows: Array<{ table_name: string }> }>;
-      };
-      const { rows } = await tdb.executeQuery(
-        sql`select table_name from information_schema.tables where table_schema='public' and table_name like ${prefix + "%"}`.compile(
-          tdb as never,
-        ),
-      );
-      for (const r of rows) {
+      const tdb = (await getTenantDb(orgId)) as unknown as TenantQuery;
+      // Only the module's tables that HAVE an instance column. The loop used
+      // to run `delete ... where instance = ...` over every prefixed table in
+      // information_schema order and die on the first one without the column,
+      // having already deleted from the ones before it: a partial teardown
+      // whose extent depended on catalog order (#2889, staging, 2026-09-13).
+      for (const table of await instanceTables(tdb, prefix)) {
         // Bind the instance value rather than interpolate it; quote the table
         // name via sql.ref (it's from information_schema, prefix-filtered).
-        // (Audit 2026-06-26 P2.)
-        await (tdb as unknown as { executeQuery: (s: unknown) => Promise<unknown> }).executeQuery(
-          sql`delete from ${sql.ref(r.table_name)} where instance = ${instanceName}`.compile(tdb as never),
-        );
+        // (Audit 2026-06-26 P2.) Each table on its own: one failure is logged
+        // and the rest still run, so what remains is never catalog-order luck.
+        try {
+          await tdb.executeQuery(sql`delete from ${sql.ref(table)} where instance = ${instanceName}`.compile(tdb as never));
+        } catch (err) {
+          console.error(`[instances] tenant cleanup for ${inst.module_name}/${instanceName}: ${table} failed:`, err);
+        }
       }
     } catch (err) {
       console.error(`[instances] tenant cleanup for ${inst.module_name}/${instanceName} failed:`, err);

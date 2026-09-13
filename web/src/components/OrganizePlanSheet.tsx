@@ -36,6 +36,7 @@ import {
 import { LocationTreePicker } from "./LocationTreePicker";
 import { resolveInstanceForFiling } from "../pages/scanInstall";
 import { installToastLine } from "../lib/installSummary";
+import { organizeApplyToast } from "../lib/organizeApplyToast";
 import { useAiStatus, AiOffNotice } from "./AiStatusNotice";
 import { planErrorView } from "./organizePlanError";
 
@@ -230,6 +231,9 @@ export function SortingPlanView({
   const [errorCode, setErrorCode] = useState<string | null>(null);
   const [reviewNeeded, setReviewNeeded] = useState(0);
   const [applied, setApplied] = useState<Set<string>>(new Set());
+  // Per applied group, the members Accept could NOT file (assigned only) and
+  // why, so the row says "Assigned" rather than "Filed" over them (#2897).
+  const [heldBack, setHeldBack] = useState<Map<string, Array<{ item_id: string; reason: string }>>>(new Map());
   const [overrides, setOverrides] = useState<Map<string, string>>(new Map()); // group → location_id
   const [pickerFor, setPickerFor] = useState<string | null>(null); // existing/ready re-route
   const [parentPickerFor, setParentPickerFor] = useState<string | null>(null); // new-bin parent
@@ -468,15 +472,24 @@ export function SortingPlanView({
           .filter((o) => o.location_id || o.new_location || o.exclude_item_ids),
       });
       setApplied((prev) => new Set([...prev, ...res.applied_group_ids]));
-      if (res.created_locations.length > 0) {
-        toast.success(
-          `Created ${res.created_locations.map((l) => l.name).join(", ")} and filed ${res.filed_item_ids.length} item(s)`,
-        );
-      } else if (res.filed_item_ids.length > 0) {
-        toast.success(`Filed ${res.filed_item_ids.length} item(s)`);
+      if (res.assigned_only?.length) {
+        setHeldBack((prev) => {
+          const next = new Map(prev);
+          for (const gid of res.applied_group_ids) {
+            const members = new Set(plan.groups.find((x) => x.id === gid)?.item_ids ?? []);
+            const held = res.assigned_only!.filter((a) => members.has(a.item_id)).map((a) => ({ item_id: a.item_id, reason: a.reason }));
+            if (held.length) next.set(gid, held);
+          }
+          return next;
+        });
       }
+      // The filing's own result, never the plan's intent (#2897).
+      const said = organizeApplyToast(res);
+      if (said.success) toast.success(said.success);
+      if (said.warning) toast.error(said.warning);
       for (const s of res.skipped) toast.error(`A group was skipped: ${s.reason}`);
-      if (res.filed_item_ids.length > 0) onApplied(res.filed_item_ids);
+      const touched = res.assigned_item_ids ?? res.filed_item_ids;
+      if (touched.length > 0) onApplied(touched);
     } catch (e) {
       toast.error(e instanceof Error ? e.message : "Apply failed");
     } finally {
@@ -800,9 +813,18 @@ export function SortingPlanView({
                       </button>
                     )
                   ) : isApplied ? (
-                    <span className="inline-flex items-center gap-1 text-emerald-600 dark:text-emerald-400 text-xs font-medium">
-                      <CheckCircle2 className="h-4 w-4" /> Filed
-                    </span>
+                    heldBack.has(g.id) ? (
+                      <span
+                        className="inline-flex items-center gap-1 text-amber-600 dark:text-amber-400 text-xs font-medium"
+                        title={[...new Set(heldBack.get(g.id)!.map((h) => h.reason))].join("; ")}
+                      >
+                        <CheckCircle2 className="h-4 w-4" /> Assigned · {heldBack.get(g.id)!.length} not filed yet
+                      </span>
+                    ) : (
+                      <span className="inline-flex items-center gap-1 text-emerald-600 dark:text-emerald-400 text-xs font-medium">
+                        <CheckCircle2 className="h-4 w-4" /> Filed
+                      </span>
+                    )
                   ) : (
                     <>
                       <button

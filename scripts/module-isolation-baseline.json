@@ -136,5 +136,11 @@
     "file": "api/src/platform/heal-mention-entity-ref.ts",
     "token": "core-discussion",
     "reason": "DELIBERATE, TIME-LIMITED: a one-shot heal shim for a historical bug, carrying a DONE WHEN header (lint:heal-shims enforces it) and deleted once every install is clean. It names core-discussion because it is repairing rows THAT MODULE wrote wrongly - notifications whose stored entity ref said the raising module instead of the thing it was about, so a Reply pressed on an already-delivered Discord DM posted into an invisible second conversation. The repair cannot be expressed through platform.* : it corrects cobblr_meta rows (kernel-owned) using the tenant's conversations as the authority, which is a data question about the past rather than a runtime dependency. Same shape as merge-labels-qr.ts. Nothing at runtime routes through it."
+  },
+  {
+    "rule": "C-kernel-names-module",
+    "file": "api/src/platform/retire-receipt-failure-placeholders.ts",
+    "token": "core-scan",
+    "reason": "INTENTIONAL (historical data migration, not kernel logic): a one-shot boot pass that moves a failed receipt's placeholder row (written by core-scan before 2026-09-13) into the session's read state, on every workspace that has one. It cannot go through a module API because the rows are exactly the ones no live code path writes any more; it names core-scan only to SCOPE itself - a workspace without core-scan opens no tenant pool. Retires with the file: see its DONE WHEN header (rowsRetired=0 on prod + staging + dev)."
   }
 ]

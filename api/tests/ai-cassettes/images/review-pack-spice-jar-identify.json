@@ -1,0 +1,6 @@
+{
+  "_fixture": "e2e/fixtures/review-pack/photos/spice-jar.jpg",
+  "image_ahash": "076301003e1ffcfe",
+  "capability": "identify-image",
+  "reply": "{\"name\":\"Spice rack with jars of spices\",\"observations\":\"A wire rack holding a row of small spice jars with coloured lids, labels facing out.\",\"category\":\"Pantry\",\"entity_type\":\"part\",\"is_receipt\":\"no\",\"confidence\":0.85}"
+}

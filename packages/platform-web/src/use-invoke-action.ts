@@ -10,12 +10,21 @@
 //
 // One implementation, so a surface that invokes an action cannot accidentally
 // implement three quarters of it. Rows use it too.
+//
+// A failure is a sentence, kept. The chip used to flash "err" for 2.4s and
+// drop the reason; the reason was "no label base URL is set ... set one under
+// Configuration", which nobody read (#2847). `failure` holds the action's own
+// words (a refusal's `result.error`, a thrown handler's message, the network's
+// sentence) until the person dismisses them, and every surface that uses this
+// hook mounts <ActionOutcome> to show them (lint:action-outcome-shown).
 
 import { useState } from "react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { useNavigate } from "react-router-dom";
 import { usePlatformWeb, useFlowHost } from "./context";
 import { printDirectiveOf, runPrintDirective } from "./print-directive";
+import { printNextStep, verdictOf } from "./action-outcome-compose";
+import { runAction } from "./run-action";
 
 export interface InvokeTarget {
   entityKind: string;
@@ -40,19 +49,32 @@ export function useInvokeEntityAction({ entityKind, entityId }: InvokeTarget) {
   // Walk-up print feedback: its own line rather than the flash chip, because it
   // lands a second or two later and says more than "done".
   const [note, setNote] = useState<string | null>(null);
+  // Why the last run did not happen, in the action's own words, until dismissed.
+  const [failure, setFailure] = useState<string | null>(null);
 
   const invoke = useMutation({
+    // Through the one door (run-action.ts), which refreshes every query
+    // showing the record's kind once the action is done.
     mutationFn: (args: RunArgs) =>
-      api.invokeAction(orgSlug, {
+      runAction(api, qc, orgSlug, {
         actionId: args.actionId,
         entityKind,
         entityId,
         ...(args.bindingId ? { bindingId: args.bindingId } : {}),
       }),
     onSuccess: (data) => {
+      setFailure(null);
       setFlash("ok");
       setTimeout(() => setFlash(null), 1200);
       void qc.invalidateQueries({ queryKey: ["labels-queue"] });
+      // The verdict is the handler's own sentence when it wrote one ("Queued,
+      // 3 in the queue"); it stays until the next press or a later step
+      // replaces it with something the person must do.
+      const verdict = verdictOf((data as { result?: unknown })?.result, "");
+      if (verdict) {
+        setNote(verdict);
+        setTimeout(() => setNote((cur) => (cur === verdict ? null : cur)), 6000);
+      }
 
       // A result may carry a `ui` directive asking the shell to open a
       // first-party flow (e.g. disassemble → the organize planner over the
@@ -70,29 +92,37 @@ export function useInvokeEntityAction({ entityKind, entityId }: InvokeTarget) {
       if (directive && api.listPrinters && api.postToModulePath) {
         const listPrinters = api.listPrinters.bind(api);
         const post = api.postToModulePath.bind(api);
+        // Printing is a readiness question the action already answered
+        // for itself (the queue holds the label). The second line, when
+        // there is one, is the next step for the person, never an error
+        // over the verdict; a workspace with no walk-up printer intent
+        // (no Print module, no default) gets the verdict alone (#2884).
         void runPrintDirective(directive, {
           listPrinters: () => listPrinters(orgSlug),
           post: (path, body) => post(orgSlug, path, body),
         })
           .then((r) => {
-            if (!r.printed) return; // no browser printer: the queue still has it
-            void qc.invalidateQueries({ queryKey: ["labels-queue"] });
-            setNote(
-              r.recordError
-                ? "Printed, but the queue could not be updated. Refresh before printing again."
-                : `Printed to ${r.deviceName}`,
-            );
-            setTimeout(() => setNote(null), 3000);
+            if (r.printed) void qc.invalidateQueries({ queryKey: ["labels-queue"] });
+            const next = printNextStep({ result: r });
+            if (next) {
+              setNote((cur) => (cur ? `${cur}. ${next}` : next));
+              setTimeout(() => setNote(null), 8000);
+            }
           })
           .catch((e: unknown) => {
-            // It did NOT print. The row is still queued, so the fallback is
-            // intact; say what went wrong rather than failing silently.
-            setNote(e instanceof Error ? e.message : String(e));
-            setTimeout(() => setNote(null), 5000);
+            const next = printNextStep({ error: e });
+            if (next) {
+              setNote((cur) => (cur ? `${cur}. ${next}` : next));
+              setTimeout(() => setNote(null), 8000);
+            }
           });
       }
     },
-    onError: () => {
+    onError: (err: unknown) => {
+      // api.invokeAction raises a refusal (`result.ok:false`) with the
+      // handler's sentence, and an HTTP failure with the server's; either
+      // way the words are here, and they stay.
+      setFailure(err instanceof Error && err.message.trim() ? err.message : "That action couldn't run.");
       setFlash("err");
       setTimeout(() => setFlash(null), 2400);
     },
@@ -113,5 +143,5 @@ export function useInvokeEntityAction({ entityKind, entityId }: InvokeTarget) {
     }
   }
 
-  return { run, flash, note, pending: invoke.isPending };
+  return { run, flash, note, failure, dismissFailure: () => setFailure(null), pending: invoke.isPending };
 }

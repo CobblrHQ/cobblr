@@ -50,11 +50,13 @@ interface CandidateLike {
 const str = (v: unknown): string | null => (typeof v === "string" && v.trim() ? v.trim() : null);
 const num = (v: unknown): number | null => (typeof v === "number" && Number.isFinite(v) ? v : null);
 
-/** The menu entry a candidate routes to, by kind then by module + instance. */
+/** The menu entry a candidate routes to: the table (module + instance) first,
+ *  since two instances of one module share a kind and the fields are the
+ *  table's; by kind when no table matches. */
 function entryFor(cand: CandidateLike, menu: readonly ScanMenuEntry[]): ScanMenuEntry | undefined {
   return (
-    menu.find((e) => e.kind === cand.kind) ??
-    menu.find((e) => e.module === cand.module && (e.instance ?? null) === (cand.instance ?? null))
+    menu.find((e) => e.module === cand.module && (e.instance ?? null) === (cand.instance ?? null)) ??
+    menu.find((e) => e.kind === cand.kind)
   );
 }
 

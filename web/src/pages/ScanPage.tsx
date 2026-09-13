@@ -1,6 +1,8 @@
 // /scan — the inbox review queue, photo-inbox-grade.
 import { createPortal } from "react-dom";
 import { FileEverythingSheet } from "../components/FileEverythingSheet";
+import { UploadKindSheet } from "../components/UploadKindSheet";
+import { SessionReadVerdict } from "../components/SessionReadVerdict";
 //
 // Layout (the author's spec):
 //   · ONE narrow header row — title + count + the intake buttons
@@ -21,7 +23,7 @@ import { Fragment, useCallback, useEffect, useMemo, useRef, useState, type React
 import { Link, useNavigate, useSearchParams } from "react-router-dom";
 import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Camera, CheckCircle, ChevronDown, Copy, Download, ExternalLink, Flag, Image as ImageIcon, ImagePlus, LayoutGrid, Library, List, Loader2, MapPin, MonitorSmartphone, MoreHorizontal, Pencil, ReceiptText, RefreshCw, RotateCcw, ScanLine, Scissors, Search, Sparkles, Tag, Trash2, Truck, Upload, Wand2, X, Zap, Database } from "lucide-react";
-import { Modal, useImageSrc, useOverlayOpenFlag, useToast, usePageTitle, colorSwatch, wantsSwatch } from "@cobblr/platform-web";
+import { Modal, useImageSrc, useOverlayOpenFlag, useToast, usePageTitle, colorSwatch, wantsSwatch, valueFromInput } from "@cobblr/platform-web";
 import { ScanImportModal } from "../components/ScanImportModal";
 import { ExportInboxModal } from "../components/ExportInboxModal";
 import { CameraCaptureSheet } from "../components/CameraCaptureSheet";
@@ -39,6 +41,10 @@ import { ReceiptSourceViewer, type ReceiptMoney } from "../components/ReceiptSou
 import { ReceiptPeek } from "../components/ReceiptPeek";
 import { fieldsStillOnTable, fieldsNoLongerOnTable, isQuietDefault, isImpliedByPeer, isStatedByReceipt } from "../lib/scanCandidateFields";
 import { canRerunLookup } from "../lib/scanRerun";
+import { namelessReason } from "../lib/identifySentence";
+import { namelessCard } from "../lib/namelessCard";
+import { receiptDateWords, type DateReading } from "../lib/receiptDateWords";
+import { fallbackChip, type IdentifyFailure } from "@cobblr/platform-contract/scan-fallback";
 import { TrackedMatchBanner, TrackedMatchLine } from "../components/TrackedMatchBanner";
 import { BinAdjustModal } from "../components/BinAdjustModal";
 import { PairPhoneButton } from "../components/PairPhoneButton";
@@ -63,20 +69,20 @@ import {
   ApiError,
   api,
   type ImageOption,
-  type OrganizeStoredPlan,
   type ScanInboxItem,
   type ScanCandidate,
   type ScanMenuEntry,
   type TrackedMatch,
 } from "../lib/api";
-import { qrTokenFromUrl } from "@cobblr/platform-contract/qr-token";
+import { classifyScanPayload } from "../lib/scanPayload";
 import { isScanStale, needsScanReview } from "@cobblr/platform-contract/scan-triage";
+import { sessionVerdict, type SessionVerdict } from "@cobblr/platform-contract/scan-session";
 import { matchParentType, readField } from "../lib/parent-type-match";
 import { isRerunInFlight, itemEnriching } from "./scan-status";
 import { attachBodyFor, baseKind, confirmBodyFor, duplicateSummary, isReadyToFile, placementPreview } from "./scanFileAll";
 import { resolveInstanceForFiling } from "./scanInstall";
 import { arrivalLabel, arrivalOf } from "./scanArrival";
-import type { BundleInstallSummary } from "../lib/api";
+import type { BundleInstallSummary, ScanBatchMeta } from "../lib/api";
 import { installToastLine } from "../lib/installSummary";
 import { looksLikeContainer, nextBinName } from "./scanContainer";
 import {
@@ -664,6 +670,7 @@ function CommittedDestination({
 export function ScanPage() {
   usePageTitle("Scan");
   const { activeSlug, activeOrg } = useActiveOrg();
+  const navigate = useNavigate();
   const [params, setParams] = useSearchParams();
   // Active filing "bin" — a core-locations node every scan files into until
   // cleared (the active-bin pattern). Stamped as target_location_id on each
@@ -920,10 +927,22 @@ export function ScanPage() {
   // Session labels by batch id, merged across pages — drives the group header
   // ("Receipt · <vendor>", "emailed <when>") instead of a bare timestamp.
   const batchMeta = useMemo(() => {
-    const m: Record<string, { label: string | null; origin: string | null; source_file_id: string | null; order_ref: string | null; tracking_number: string | null; shipment_state: string | null; shipment_description: string | null; shipment_location: string | null }> = {};
+    const m: Record<string, ScanBatchMeta> = {};
     for (const p of list.data?.pages ?? []) Object.assign(m, p.batches ?? {});
     return m;
   }, [list.data]);
+  // Receipt sessions with no rows: a failed read (a state on the session,
+  // never an item) or a read in flight. They are groups of their own below,
+  // and a failed one counts as needing a person.
+  const rowlessSessions = useMemo(() => {
+    const m: Record<string, ScanBatchMeta> = {};
+    for (const p of list.data?.pages ?? []) Object.assign(m, p.sessions ?? {});
+    return m;
+  }, [list.data]);
+  const failedSessionCount = useMemo(
+    () => Object.values({ ...batchMeta, ...rowlessSessions }).filter((b) => sessionVerdict(b, { pending: 1, ever: 1 }).kind === "failed").length,
+    [batchMeta, rowlessSessions],
+  );
   const totalPending = list.data?.pages[0]?.total ?? items.length;
   // Pull the next page when the bottom sentinel scrolls into view.
   const loadMoreRef = useRef<HTMLDivElement | null>(null);
@@ -951,7 +970,10 @@ export function ScanPage() {
   const isStale = (it: ScanInboxItem): boolean => isScanStale(it);
   const [staleOnly, setStaleOnly] = useState(false);
   const staleCount = items.filter(isStale).length;
-  const reviewCount = items.filter(needsReview).length;
+  // A receipt session whose read failed needs a person as much as an item
+  // with no name does: it counts here, so the header cannot say "2 to review"
+  // over a failed receipt (#2892).
+  const reviewCount = items.filter(needsReview).length + failedSessionCount;
   // Tell Ask Cobb what's on this screen, so "what do I have going on?" can
   // reference the backlog without a tool call. The ITEMS themselves are reachable
   // too — the list_scan_inbox tool — so an answer is never limited to this line.
@@ -1178,6 +1200,11 @@ export function ScanPage() {
       shipmentState: string | null; // where it is, per the last carrier answer
       shipmentDescription: string | null;
       shipmentLocation: string | null;
+      /** The receipt read's verdict (platform-contract scan-session): one rule
+       *  for the row, the header count and the dashboard. */
+      verdict: SessionVerdict;
+      /** Which way round the receipt's numeric date was read (#2917). */
+      dateReading: DateReading | null;
     };
     const groups: Group[] = [];
     const byBatch = new Map<string, Group>();
@@ -1195,13 +1222,13 @@ export function ScanPage() {
         if (existing) g = existing;
         else {
           const meta = batchMeta[it.scan_batch_id];
-          g = { key: it.scan_batch_id, isBatch: true, batchId: it.scan_batch_id, items: [], latest: 0, lastTouched: 0, area: null, label: meta?.label ?? null, origin: meta?.origin ?? null, sourceFileId: meta?.source_file_id ?? null, orderRef: meta?.order_ref ?? null, trackingNumber: meta?.tracking_number ?? null, shipmentState: meta?.shipment_state ?? null, shipmentDescription: meta?.shipment_description ?? null, shipmentLocation: meta?.shipment_location ?? null };
+          g = { key: it.scan_batch_id, isBatch: true, batchId: it.scan_batch_id, items: [], latest: 0, lastTouched: 0, area: null, label: meta?.label ?? null, origin: meta?.origin ?? null, sourceFileId: meta?.source_file_id ?? null, orderRef: meta?.order_ref ?? null, trackingNumber: meta?.tracking_number ?? null, shipmentState: meta?.shipment_state ?? null, shipmentDescription: meta?.shipment_description ?? null, shipmentLocation: meta?.shipment_location ?? null, verdict: { kind: "plain" }, dateReading: null };
           byBatch.set(it.scan_batch_id, g);
           groups.push(g);
         }
       } else {
         if (!pseudo || !Number.isFinite(t) || pseudoLastT - t > SESSION_GAP_MS) {
-          pseudo = { key: `gap:${it.id}`, isBatch: false, batchId: null, items: [], latest: 0, lastTouched: 0, area: null, label: null, origin: null, sourceFileId: null, orderRef: null, trackingNumber: null, shipmentState: null, shipmentDescription: null, shipmentLocation: null };
+          pseudo = { key: `gap:${it.id}`, isBatch: false, batchId: null, items: [], latest: 0, lastTouched: 0, area: null, label: null, origin: null, sourceFileId: null, orderRef: null, trackingNumber: null, shipmentState: null, shipmentDescription: null, shipmentLocation: null, verdict: { kind: "plain" }, dateReading: null };
           groups.push(pseudo);
         }
         if (Number.isFinite(t)) pseudoLastT = t;
@@ -1213,8 +1240,25 @@ export function ScanPage() {
       if (Number.isFinite(u) && u > g.lastTouched) g.lastTouched = u;
       if (!g.area && it.scan_area) g.area = it.scan_area;
     }
+    // The verdict, once the lines are counted; a session in the list whose
+    // read failed or is in flight has no lines of its own and is its own group.
+    for (const g of groups) {
+      if (!g.batchId) continue;
+      const meta = batchMeta[g.batchId];
+      if (meta) {
+        g.verdict = sessionVerdict(meta, { pending: g.items.filter((it) => it.status === "pending").length, ever: g.items.length });
+        g.dateReading = { date_convention: meta.date_convention ?? null, date_decided_by: meta.date_decided_by ?? null, date_printed: meta.date_printed ?? null };
+      }
+    }
+    for (const [id, meta] of Object.entries(rowlessSessions)) {
+      if (byBatch.has(id)) continue;
+      const v = sessionVerdict(meta, { pending: 0, ever: 0 });
+      if (v.kind !== "failed" && v.kind !== "in_flight") continue;
+      const t = meta.created_at ? Date.parse(meta.created_at) : 0;
+      groups.push({ key: id, isBatch: true, batchId: id, items: [], latest: Number.isFinite(t) ? t : 0, lastTouched: 0, area: null, label: meta.label ?? null, origin: meta.origin ?? null, sourceFileId: meta.source_file_id ?? null, orderRef: meta.order_ref ?? null, trackingNumber: meta.tracking_number ?? null, shipmentState: meta.shipment_state ?? null, shipmentDescription: meta.shipment_description ?? null, shipmentLocation: meta.shipment_location ?? null, verdict: v, dateReading: null });
+    }
     return groups.sort((a, b) => b.latest - a.latest);
-  }, [visibleItems, batchMeta]);
+  }, [visibleItems, batchMeta, rowlessSessions]);
 
   // The category label each item's SESSION agreed on, by item id.
   //
@@ -1402,6 +1446,23 @@ export function ScanPage() {
     },
     onError: (e) => toast.error(e instanceof ApiError ? e.message : String(e)),
   });
+  // A split parent in this list did not create an entry; it made N inbox
+  // items. Sending it back would leave them (the api refuses); undoing the
+  // split is the revert that fits, and it is the one offered.
+  const undoSplit = useMutation({
+    mutationFn: (id: string) => api.unsplitScanItem(activeSlug, id),
+    onSuccess: (r) => {
+      toast.success(`Split undone: the group photo is back in the inbox and its ${r.discarded} piece${r.discarded === 1 ? "" : "s"} ${r.discarded === 1 ? "is" : "are"} in Recently deleted.`);
+      setHighlightId(r.parent.id);
+      void qc.invalidateQueries({ queryKey: ["scan-inbox", activeSlug] });
+      void qc.invalidateQueries({ queryKey: ["scan-inbox-resolved", activeSlug] });
+      void qc.invalidateQueries({ queryKey: ["scan-inbox-discarded", activeSlug] });
+      void qc.invalidateQueries({ queryKey: ["scan-stats", activeSlug] });
+    },
+    onError: (e) => toast.error(e instanceof ApiError ? e.message : String(e)),
+  });
+  const splitPieces = (it: ScanInboxItem): number =>
+    ((it.suggested_metadata as { split_into?: unknown } | null)?.split_into as unknown[] | undefined)?.length ?? 0;
   // Revert a set of committed items. Returns how many ACTUALLY went back —
   // allSettled hides per-item failures (a split parent 409s, an already-pending
   // item 422s), so the caller can report the truth instead of always "N sent".
@@ -1506,15 +1567,17 @@ export function ScanPage() {
         scanDrive.scan(code);
         return;
       }
-      const qrToken = qrTokenFromUrl(code);
-      if (!qrToken) {
+      // The one classifier (lib/scanPayload.ts): what the wedge read decides
+      // where it goes, the same rule as the camera and the typed field.
+      const payload = classifyScanPayload(code);
+      if (payload.kind !== "cobblr-qr") {
         wedgeScan.mutate(code);
         return;
       }
       // A scanned LOCATION label sets the active filing bin (and nests a container
       // under the current bin) instead of staging an item — the scan-to-set
       // flow. Any other QR stages as a normal scan.
-      const token = qrToken;
+      const token = payload.token;
       void (async () => {
         const resolved = await api.resolveQrToken(token);
         const locId = resolved?.entity_id;
@@ -1623,6 +1686,12 @@ export function ScanPage() {
   const omniRef = useRef<HTMLInputElement>(null);
   const submitOmni = async () => {
     const intent = classifyOmni(searchQ);
+    if (intent.kind === "cobblr-qr") {
+      // A pasted Cobblr label: go where the QR goes, as the camera would.
+      setSearchQ("");
+      navigate(`/qr/${intent.value}`);
+      return;
+    }
     if (intent.kind === "upc") {
       wedgeScan.mutate(intent.value);
       setSearchQ("");
@@ -1686,6 +1755,12 @@ export function ScanPage() {
   // one of those is exactly how a receipt turned into two inbox sessions
   // seconds apart (reported 2026-08-19).
   const lastTakeRef = useRef<{ key: string; at: number }>({ key: "", at: 0 });
+  // Images the one upload door was handed and has not routed yet. They go in
+  // as photos and the intake's identify verdict sends a receipt to the receipt
+  // parser itself; UploadKindSheet asks "a photo, or a receipt?" only for a
+  // workspace with no AI that can look at an image (#2882, undoing #2845's
+  // ask-every-time).
+  const [askKindFor, setAskKindFor] = useState<File[]>([]);
   const takeFiles = (files: File[]) => {
     const intent = classifyFiles(files);
     if (!intent) return;
@@ -1695,7 +1770,7 @@ export function ScanPage() {
     const now = Date.now();
     if (key === lastTakeRef.current.key && now - lastTakeRef.current.at < 1000) return;
     lastTakeRef.current = { key, at: now };
-    if (intent.kind === "photos") void uploadPhotos(intent.files);
+    if (intent.kind === "photos") setAskKindFor(intent.files);
     else void uploadReceipt(intent.file);
   };
   const [dropHot, setDropHot] = useState(false);
@@ -1812,24 +1887,22 @@ export function ScanPage() {
     }, 5_000);
     return () => clearTimeout(t);
   }, [activeSlug, unfiledCount, readyCount]);
-  // Phase 2: the put-away walk. `walkPlan` set = walk sheet open. The latest
-  // stored plan also powers a "resume walk" chip after a reload mid-walk.
-  const [walkPlan, setWalkPlan] = useState<OrganizeStoredPlan | null>(null);
-  const latestPlanQ = useQuery({
+  // Phase 2: the put-away walk. `walkPlanId` set = walk sheet open, over the
+  // queue the api assembles from every plan in play. The same queue powers
+  // the chip: what is accepted and still to place, whether a walk was ever
+  // started, read from the items rather than from one plan's walk state, so
+  // a finished walk cannot come back as "resume" and a group accepted on an
+  // earlier plan is not forgotten (#2897).
+  const [walkPlanId, setWalkPlanId] = useState<string | null>(null);
+  const putawayQueueQ = useQuery({
     queryKey: ["organize-plan-latest", activeSlug],
-    queryFn: () => api.getLatestOrganizePlan(activeSlug),
+    queryFn: () => api.getPutawayQueue(activeSlug),
     staleTime: 30_000,
   });
-  const resumablePlan = (() => {
-    const p = latestPlanQ.data?.plan;
-    if (!p || p.applied_group_ids.length === 0) return null;
-    const placed = new Set(p.walk_state.placed_item_ids ?? []);
-    const appliedSet = new Set(p.applied_group_ids);
-    const remaining = p.groups
-      .filter((g) => appliedSet.has(g.id) && g.destination.kind === "existing")
-      .flatMap((g) => g.item_ids)
-      .filter((id) => !placed.has(id));
-    return remaining.length > 0 ? { plan: p, remaining: remaining.length } : null;
+  const resumableWalk = (() => {
+    const q = putawayQueueQ.data;
+    if (!q || q.remaining === 0 || !q.plan_id) return null;
+    return { planId: q.plan_id, remaining: q.remaining, resumed: !!q.session_id };
   })();
   // The organize plan's item accordion renders the REAL card inline, in
   // identity-fixer mode (planContext: no confirm form, no chips, no discard).
@@ -1852,15 +1925,12 @@ export function ScanPage() {
 
   const startWalk = async (planId?: string) => {
     setOrganizeOpen(false);
-    try {
-      // Pin the plan the user just applied when we know its id — a warm re-plan
-      // fired after Accept all is newer and empty, so "latest" alone would miss.
-      const r = await api.getLatestOrganizePlan(activeSlug, planId);
-      if (r.plan && r.plan.applied_group_ids.length > 0) setWalkPlan(r.plan);
-      else toast.error("Nothing applied to walk yet - accept a group first.");
-    } catch {
-      toast.error("Couldn't load the plan for the walk.");
-    }
+    // Pin the plan the user just applied when we know its id; the walk's
+    // queue still spans every other plan in play. Without one, the queue
+    // names the newest plan with something accepted.
+    const pinned = planId ?? (await api.getPutawayQueue(activeSlug).then((q) => q.plan_id).catch(() => null));
+    if (pinned) setWalkPlanId(pinned);
+    else toast.error("Nothing applied to walk yet - accept a group first.");
   };
   /** Set a location on a set of items. Defaults to the current selection; the
    *  header's "also set location on the N already here" passes ids directly,
@@ -1981,9 +2051,14 @@ export function ScanPage() {
     },
     onSuccess: (r) => {
       void qc.invalidateQueries({ queryKey: ["scan-inbox", activeSlug] });
-      toast.success(`Re-parsed: ${r.receipt.item_count} item${r.receipt.item_count === 1 ? "" : "s"}`);
+      toast.success(`Read again: ${r.receipt.item_count} item${r.receipt.item_count === 1 ? "" : "s"}`);
     },
-    onError: (e) => toast.error(e instanceof ApiError ? e.message : String(e)),
+    onError: (e) => {
+      // Failed again: the session's state carries the new reason; refetch so
+      // the row says it rather than keeping the old sentence.
+      void qc.invalidateQueries({ queryKey: ["scan-inbox", activeSlug] });
+      toast.error(e instanceof ApiError ? e.message : String(e));
+    },
     onSettled: () => setReparseBatch(null),
   });
   // Edit the order/invoice # on a receipt session (add one the parser missed, or
@@ -2806,11 +2881,16 @@ className="ml-1.5 sm:ml-0 rounded px-1 py-0.5 text-[12.5px] hover:bg-subtle dark
 
 
         {/* ONE upload door for everything that is "a pic or a receipt": the
-            file's TYPE routes it, so nobody has to answer "which kind of
-            upload" before they have even chosen a file. A PDF or CSV is only
-            ever a receipt, so it goes to the parser; images go to the photo
-            pipeline, which is the common case by a wide margin. Anything that
-            is neither - an export to import - stays an explicit menu item,
+            file's TYPE routes it where it can. A PDF or CSV is only ever a
+            receipt, so it goes to the parser. An IMAGE goes into the intake
+            as a photo, and the identify step's verdict sends a receipt on to
+            the receipt parser server-side (receipt-photo.ts): nothing on THIS
+            side can tell the two apart (receipt-from-a-photo.md, measured),
+            but the platform can, and asking the person on every upload broke
+            the promise the inbox is built on, "upload anything and it figures
+            it out" (#2882). The ask (UploadKindSheet) survives only for a
+            workspace with no AI that can look at an image. Anything that is
+            neither - an export to import - stays an explicit menu item,
             grouped with Export, because it is not a pic or a receipt and
             pretending otherwise would make this control mean nothing. */}
         <input
@@ -2822,14 +2902,10 @@ className="ml-1.5 sm:ml-0 rounded px-1 py-0.5 text-[12.5px] hover:bg-subtle dark
           onChange={(e) => {
             const fs = Array.from(e.target.files ?? []);
             if (!fs.length) return;
-            const isReceiptDoc = (f: File) =>
-              f.type === "application/pdf" || /\.(pdf|csv)$/i.test(f.name) || f.type === "text/csv";
-            const docs = fs.filter(isReceiptDoc);
-            const pics = fs.filter((f) => !isReceiptDoc(f));
-            // A receipt document is parsed one at a time (each is its own
-            // order); photos come in together as one session.
-            for (const d of docs) void uploadReceipt(d);
-            if (pics.length) void uploadPhotos(pics);
+            // The same intake as a drop or a paste (takeFiles): this input
+            // kept its own routing and sent every image to the photo
+            // pipeline while the drop path had learned better (#2845).
+            takeFiles(fs);
           }}
         />
         <input
@@ -3075,7 +3151,9 @@ className="ml-1.5 sm:ml-0 rounded px-1 py-0.5 text-[12.5px] hover:bg-subtle dark
           </button>
         </div>
       )}
-      {!list.isLoading && !list.isError && items.length === 0 && (
+      {/* Not empty while a receipt session is failed or being read: it has no
+          rows, and it is the one thing on the page that needs a person. */}
+      {!list.isLoading && !list.isError && items.length === 0 && Object.keys(rowlessSessions).length === 0 && (
         <div className="rounded-md border border-dashed border-line dark:border-slate-700 p-8 text-center">
           <ScanLine size={28} className="mx-auto text-faint dark:text-slate-600 mb-2" />
           <div className="text-sm text-muted dark:text-slate-400">
@@ -3137,15 +3215,16 @@ className="ml-1.5 sm:ml-0 rounded px-1 py-0.5 text-[12.5px] hover:bg-subtle dark
         </div>
       )}
 
-      {/* A put-away walk left unfinished (reload / tab switch) — offer to resume. */}
-      {resumablePlan && !walkPlan && (
+      {/* Accepted and still to be put away (a walk left unfinished, or never
+          started): offer the walk. Gone the moment nothing remains. */}
+      {resumableWalk && !walkPlanId && (
         <button
           type="button"
-          onClick={() => setWalkPlan(resumablePlan.plan)}
+          onClick={() => setWalkPlanId(resumableWalk.planId)}
           className="flex items-center gap-2 rounded-lg border border-accent/40 bg-cobble-50 dark:bg-cobble-900/30 px-3 py-2 text-sm text-accent hover:bg-cobble-100 dark:hover:bg-cobble-900/50 transition"
         >
-          ▶ Resume put-away walk - {resumablePlan.remaining} item
-          {resumablePlan.remaining === 1 ? "" : "s"} left to place
+          ▶ {resumableWalk.resumed ? "Resume put-away walk" : "Put-away walk"} - {resumableWalk.remaining} item
+          {resumableWalk.remaining === 1 ? "" : "s"} left to place
         </button>
       )}
 
@@ -3296,6 +3375,13 @@ className="ml-1.5 sm:ml-0 rounded px-1 py-0.5 text-[12.5px] hover:bg-subtle dark
         />
       )}
 
+      <UploadKindSheet
+        files={askKindFor}
+        identifyAvailable={aiStatus?.identify_available}
+        onPhotos={(files) => void uploadPhotos(files)}
+        onReceipt={(file) => void uploadReceipt(file)}
+        onClose={() => setAskKindFor([])}
+      />
       {fileEverything && (
         <FileEverythingSheet
           slug={activeSlug}
@@ -3327,14 +3413,14 @@ className="ml-1.5 sm:ml-0 rounded px-1 py-0.5 text-[12.5px] hover:bg-subtle dark
         />
       )}
 
-      {walkPlan && (
+      {walkPlanId && (
         <OrganizeWalkSheet
           slug={activeSlug}
-          plan={walkPlan}
+          planId={walkPlanId}
           itemsById={new Map(items.map((i) => [i.id, i]))}
           setFileBin={setFileBin}
           onClose={() => {
-            setWalkPlan(null);
+            setWalkPlanId(null);
             void qc.invalidateQueries({ queryKey: ["organize-plan-latest", activeSlug] });
           }}
         />
@@ -3589,7 +3675,9 @@ className="ml-1.5 sm:ml-0 rounded px-1 py-0.5 text-[12.5px] hover:bg-subtle dark
             // the one clear "is the whole session done thinking?" signal. Drives
             // the header control: "N finishing…" while any churn; once 0, it
             // becomes the "File all" button (routing is settled).
-            const busy = g.items.filter((it) => itemEnriching(it)).length;
+            // A failed read is not "finishing": the session's verdict says so
+            // and its row says why (#2892).
+            const busy = g.verdict.kind === "failed" ? 0 : g.items.filter((it) => itemEnriching(it)).length;
             // Pending items with a confident destination + a name — the ones
             // "File all" will commit to their own candidate. Pending items that
             // still need a manual look aren't counted here.
@@ -3866,7 +3954,7 @@ className="ml-1.5 sm:ml-0 rounded px-1 py-0.5 text-[12.5px] hover:bg-subtle dark
                         // the tooltip rather than the row.
                         title={
                           receiptDateOf(g)
-                            ? `Uploaded ${formatSessionTime(g.latest)}`
+                            ? [receiptDateWords(g.dateReading), `Uploaded ${formatSessionTime(g.latest)}`].filter(Boolean).join(" ")
                             : undefined
                         }
                       >
@@ -3900,9 +3988,14 @@ className="ml-1.5 sm:ml-0 rounded px-1 py-0.5 text-[12.5px] hover:bg-subtle dark
                         WHAT this session is, so they read as one phrase; pushing
                         the count to the far right made it look like a control
                         (reported 2026-08-20). */}
-                  <span className="hidden sm:inline shrink-0 whitespace-nowrap text-faint">
-                    {g.items.length} item{g.items.length === 1 ? "" : "s"}
-                  </span>
+                  {g.verdict.kind !== "failed" && g.verdict.kind !== "in_flight" && (
+                    <span className="hidden sm:inline shrink-0 whitespace-nowrap text-faint">
+                      {g.items.length} item{g.items.length === 1 ? "" : "s"}
+                    </span>
+                  )}
+                  {g.verdict.kind === "in_flight" && (
+                    <SessionReadVerdict verdict={g.verdict} reading={false} onReadAgain={() => {}} configureAiHref={`/w/${activeSlug}/configuration/ai`} />
+                  )}
                   {/* Everything after this is an ACTION, and actions sit right. */}
                   <span className="flex-1" />
                   {/* The session's action slot — its state used to be a passive
@@ -4215,6 +4308,18 @@ className="ml-1.5 sm:ml-0 rounded px-1 py-0.5 text-[12.5px] hover:bg-subtle dark
                       </span>
                     ))}
 
+                  {/* A failed read, at a glance: the chip is the header's own
+                      verdict and its Read again; the full sentence and the
+                      connect link are in the body. Never "finishing…" (#2892). */}
+                  {g.verdict.kind === "failed" && g.batchId && (
+                    <SessionReadVerdict
+                      compact
+                      verdict={g.verdict}
+                      reading={reparse.isPending && reparseBatch === g.batchId}
+                      onReadAgain={() => reparse.mutate(g.batchId!)}
+                      configureAiHref={`/w/${activeSlug}/configuration/ai`}
+                    />
+                  )}
                   {/* The session's PLACE, stated in the header rather than
                       discovered by pressing File. Filing needs a category and a
                       location; the category was already visible here while the
@@ -4422,7 +4527,9 @@ className="ml-1.5 sm:ml-0 rounded px-1 py-0.5 text-[12.5px] hover:bg-subtle dark
                     >
                       needs review
                     </span>
-                  ) : (
+                  ) : g.verdict.kind === "failed" || g.verdict.kind === "in_flight" ? null : (
+                    // No rows because they were all filed; never because the
+                    // read failed (that session's chip says so) or is running.
                     <span
                       className="shrink-0 inline-flex items-center gap-1 text-emerald-600/70 dark:text-emerald-400/70 text-[10px]"
                       title="Every item in this session has been filed"
@@ -4447,6 +4554,18 @@ className="ml-1.5 sm:ml-0 rounded px-1 py-0.5 text-[12.5px] hover:bg-subtle dark
                 </div>
                 {!collapsed && (
                   <div className="space-y-2">
+                    {/* The read's verdict, in the session's own words: a failed
+                        read says why, with a Read again you can see and the
+                        connect link when a provider is the reason (#2892). The
+                        compact chip in the header bar says the same at a glance. */}
+                    {g.verdict.kind === "failed" && g.batchId && (
+                      <SessionReadVerdict
+                        verdict={g.verdict}
+                        reading={reparse.isPending && reparseBatch === g.batchId}
+                        onReadAgain={() => reparse.mutate(g.batchId!)}
+                        configureAiHref={`/w/${activeSlug}/configuration/ai`}
+                      />
+                    )}
                     {g.items.map(card)}
                     {/* Merge lives INSIDE the expanded session (reveal-to-use),
                         not on the collapsed header where its old ↓ was mistaken
@@ -4584,6 +4703,9 @@ className="ml-1.5 sm:ml-0 rounded px-1 py-0.5 text-[12.5px] hover:bg-subtle dark
                     {d.barcode_text && d.suggested_name && (
                       <div className="text-[10px] font-mono text-faint truncate">{d.barcode_text}</div>
                     )}
+                    {!!(d.suggested_metadata as { split_undone_at?: string } | null)?.split_undone_at && (
+                      <div className="text-[10px] font-mono text-faint truncate">✂ piece of a split that was undone; the group photo is back in the inbox</div>
+                    )}
                   </div>
                   <button
                     type="button"
@@ -4643,16 +4765,31 @@ className="ml-1.5 sm:ml-0 rounded px-1 py-0.5 text-[12.5px] hover:bg-subtle dark
                       <div key={d.id} className="flex items-center gap-2 px-3 py-1.5 pl-6">
                         <div className="min-w-0 flex-1">
                           <div className="text-sm text-muted truncate">{d.suggested_name ?? d.barcode_text ?? "Unknown scan"}</div>
-                          <CommittedDestination item={d} tables={destinationTables} />
+                          {splitPieces(d) ? (
+                            <div className="text-[10px] font-mono text-faint truncate">✂ split into {splitPieces(d)} items</div>
+                          ) : (
+                            <CommittedDestination item={d} tables={destinationTables} />
+                          )}
                         </div>
-                        <button
-                          type="button"
-                          onClick={() => unconfirm.mutate(d.id)}
-                          disabled={unconfirm.isPending || sendingBackAll === grp.key}
-                          className="shrink-0 text-xs text-faint hover:text-content disabled:opacity-50"
-                        >
-                          Send back
-                        </button>
+                        {splitPieces(d) ? (
+                          <button
+                            type="button"
+                            onClick={() => undoSplit.mutate(d.id)}
+                            disabled={undoSplit.isPending || sendingBackAll === grp.key}
+                            className="shrink-0 text-xs text-faint hover:text-content disabled:opacity-50"
+                          >
+                            Undo split
+                          </button>
+                        ) : (
+                          <button
+                            type="button"
+                            onClick={() => unconfirm.mutate(d.id)}
+                            disabled={unconfirm.isPending || sendingBackAll === grp.key}
+                            className="shrink-0 text-xs text-faint hover:text-content disabled:opacity-50"
+                          >
+                            Send back
+                          </button>
+                        )}
                       </div>
                     ))}
                   </div>
@@ -4666,16 +4803,31 @@ className="ml-1.5 sm:ml-0 rounded px-1 py-0.5 text-[12.5px] hover:bg-subtle dark
                         <div className="text-sm text-muted truncate">
                           {grp.items[0].suggested_name ?? grp.items[0].barcode_text ?? "Unknown scan"}
                         </div>
-                        <CommittedDestination item={grp.items[0]} tables={destinationTables} />
+                        {splitPieces(grp.items[0]) ? (
+                          <div className="text-[10px] font-mono text-faint truncate">✂ split into {splitPieces(grp.items[0])} items</div>
+                        ) : (
+                          <CommittedDestination item={grp.items[0]} tables={destinationTables} />
+                        )}
                       </div>
-                      <button
-                        type="button"
-                        onClick={() => unconfirm.mutate(grp.items[0]!.id)}
-                        disabled={unconfirm.isPending}
-                        className="shrink-0 inline-flex items-center gap-1 text-xs rounded border border-line px-2 py-1 text-muted hover:text-content disabled:opacity-50"
-                      >
-                        <RotateCcw size={12} /> Send back
-                      </button>
+                      {splitPieces(grp.items[0]) ? (
+                        <button
+                          type="button"
+                          onClick={() => undoSplit.mutate(grp.items[0]!.id)}
+                          disabled={undoSplit.isPending}
+                          className="shrink-0 inline-flex items-center gap-1 text-xs rounded border border-line px-2 py-1 text-muted hover:text-content disabled:opacity-50"
+                        >
+                          <RotateCcw size={12} /> Undo split
+                        </button>
+                      ) : (
+                        <button
+                          type="button"
+                          onClick={() => unconfirm.mutate(grp.items[0]!.id)}
+                          disabled={unconfirm.isPending}
+                          className="shrink-0 inline-flex items-center gap-1 text-xs rounded border border-line px-2 py-1 text-muted hover:text-content disabled:opacity-50"
+                        >
+                          <RotateCcw size={12} /> Send back
+                        </button>
+                      )}
                     </div>
                   )
                 ),
@@ -5151,12 +5303,10 @@ function InboxCard({
   const readingReceipt =
     item.status === "pending" &&
     !!(item.suggested_metadata as { reading_receipt?: boolean } | null)?.reading_receipt;
-  const needsName =
-    item.status === "pending" &&
-    !item.suggested_name &&
-    !!item.ai_suggested_at &&
-    !readingReceipt &&
-    candidates.length === 0;
+  // Whatever the router gave it, a settled row with no name shows the name
+  // field and gets no one-tap Add (lib/namelessCard.ts, #2918).
+  const nameless = namelessCard({ status: item.status, suggested_name: item.suggested_name, ai_suggested_at: item.ai_suggested_at, readingReceipt });
+  const needsName = nameless.nameField;
   // How long ago enrichment finished — the matchmaker runs detached AFTER that
   // and stamps matched_at when done. If matched_at never lands (the match threw
   // before stamping), GIVE UP the "finding the best table…" pulse after a few
@@ -5219,7 +5369,15 @@ function InboxCard({
   const lowTrust = !!(item.suggested_metadata as { low_trust?: boolean } | null)?.low_trust;
   // Amber warning line vs the Source data box - one or the other, never both,
   // and never a function of whether the card happens to be open.
-  const notesPlacement = scanNotesPlacement({ notes: item.ai_notes, rateLimited, lowTrust });
+  // A photo the identify step could not name carries its reason as a code
+  // (identify_failure) beside the note; the note is then the one thing the
+  // card has to say, so it renders as a warning, never behind the box.
+  // …and for a typed code that resolved to nothing, the lookup's own note
+  // ("a store's own label", "nothing corroborated the web guess, left blank")
+  // is the reason under the field, so it renders as the warning it is too.
+  const identifyFailed =
+    item.status === "pending" && !item.suggested_name && (!!(item.suggested_metadata as { identify_failure?: unknown } | null)?.identify_failure || (!!item.barcode_text && !!item.ai_suggested_at));
+  const notesPlacement = scanNotesPlacement({ notes: item.ai_notes, rateLimited, lowTrust, identifyFailed });
   const barcodeIdentified = !!item.barcode_text && !!item.suggested_name;
   // "I said I would photograph this." A person set it, so an AI re-run must
   // not clear it (see IDENTIFY_OWNED_KEYS in core-scan metadata.ts).
@@ -5327,8 +5485,14 @@ function InboxCard({
   // the same bar to File all, so the card and the bulk sweep agree.
   const tentativeRoute = dest?.basis === "keywords";
   const cardAiStatus = useAiStatus();
-  /** No identifier reachable at all - so a nameless photo is unread, not misread. */
-  const identifyOff = !!cardAiStatus && !cardAiStatus.identify_available;
+  /** Why this card has no name: nothing here can identify a photo (the setup
+   *  sentence), a store's own code, the identify step's own coded reason
+   *  (stamped by the server beside its note), or the AI did not answer
+   *  (lib/identifySentence). */
+  const identifyFailure =
+    (item.suggested_metadata as { identify_failure?: IdentifyFailure } | null)?.identify_failure ?? null;
+  const heldWebGuess = !!item.barcode_text && !!(item.suggested_metadata as { held_reason?: string } | null)?.held_reason;
+  const namelessWhy = namelessReason(cardAiStatus, storeCode, identifyFailure, heldWebGuess);
   // The matchmaker fell to the keyword floor although this workspace HAS
   // working AI — the model call failed and the code silently downgraded. Say
   // so, with a one-tap retry, instead of letting a lexical guess sit there
@@ -5337,7 +5501,7 @@ function InboxCard({
     !!topCand?.heuristic && !!cardAiStatus?.available && item.status === "pending";
   const quickConfirmReady =
     !!dest &&
-    !!item.suggested_name &&
+    nameless.quickAdd &&
     !alreadyTracked &&
     !tentativeRoute &&
     (!dest.bundle_external_id || !!topBundle);
@@ -5403,6 +5567,17 @@ function InboxCard({
       toast.success(it.suggested_name ? `Back to “${it.suggested_name}”` : "Previous lookup restored");
     },
     onError: (e) => toast.error(e instanceof ApiError ? e.message : String(e)),
+  });
+  // "Read as a receipt": the identify step routes a photographed receipt on its
+  // own verdict; when it misses, this sends the photo to the same receipt
+  // parser from the card instead of a delete-and-rephotograph (#2882).
+  const asReceipt = useMutation({
+    mutationFn: () => api.readScanItemAsReceipt(activeSlug, item.id),
+    onSuccess: (r) => {
+      void qc.invalidateQueries({ queryKey: ["scan-inbox", activeSlug] });
+      toast.success(`Found ${r.items} item${r.items === 1 ? "" : "s"} on the receipt: review below`);
+    },
+    onError: (e: unknown) => toast.error(e instanceof Error ? e.message : "Could not read that as a receipt."),
   });
   const rerun = useMutation({
     mutationFn: (vars?: {
@@ -5677,6 +5852,18 @@ function InboxCard({
     onSuccess: (r) => {
       toast.success(`Split into ${r.children.length} items`);
       invalidateInbox();
+    },
+    onError: onErr,
+  });
+  // The other direction, from a piece: the group photo comes back as it
+  // was and every piece of the split goes to Recently deleted.
+  const unsplit = useMutation({
+    mutationFn: () => api.unsplitScanItem(activeSlug, item.id),
+    onSuccess: (r) => {
+      toast.success(`Split undone: the group photo is back in the inbox and its ${r.discarded} piece${r.discarded === 1 ? "" : "s"} ${r.discarded === 1 ? "is" : "are"} in Recently deleted.`);
+      invalidateInbox();
+      void qc.invalidateQueries({ queryKey: ["scan-inbox-resolved", activeSlug] });
+      void qc.invalidateQueries({ queryKey: ["scan-inbox-discarded", activeSlug] });
     },
     onError: onErr,
   });
@@ -5983,19 +6170,48 @@ function InboxCard({
               </span>
             ) : readingReceipt ? (
               <span className="text-muted">That’s a receipt - reading its line items…</span>
-            ) : cantIdentify && identifyOff ? (
+            ) : cantIdentify && namelessWhy === "no-identify" ? (
               // Not "couldn't": nothing tried. The banner up top says the plan
               // has no AI, and this card said "couldn't identify" under it, with
               // an Identify button that would fail the same way (blank
               // workspace e2e, 2026-09-01). Naming it by hand still works.
+              // Only when nothing here can identify a photo (lib/identifySentence.ts):
+              // a person with a working connection never reads this.
               <span className="text-muted">
                 No AI to read this {idNoun} yet (<Link to={`/w/${activeSlug}/ai`} className="underline hover:text-content" onClick={(e) => e.stopPropagation()}>set it up</Link>) - or name it:
               </span>
-            ) : cantIdentify && storeCode ? (
+            ) : cantIdentify && namelessWhy === "store-code" ? (
               // A shop's own label (the server classified it): nothing to
               // look up, so "couldn't identify" would be the wrong story.
               <span className="text-muted" title="A deli, produce or in-store code that only that shop can read. Nothing was looked up.">
                 A store's own label - name it and it files like a typed item:
+              </span>
+            ) : cantIdentify && namelessWhy === "unresolved-code" ? (
+              // No catalog knows the code and the web guess was held back
+              // (the amber line under this says which); the name is yours.
+              <span className="text-muted">Nothing found for this {idNoun} - name it:</span>
+            ) : cantIdentify && namelessWhy === "no-item" ? (
+              // The model looked and saw no one thing to name: a group shot,
+              // a document, a receipt it did not call one. The two ways out
+              // are a name, or the receipt parser (#2916).
+              // The amber line under this carries the reason; this line
+              // carries the two ways out.
+              <span className="text-muted">
+                Name this {idNoun}, or{" "}
+                <button type="button" className="underline hover:text-content" onClick={(e) => { e.stopPropagation(); asReceipt.mutate(); }} disabled={asReceipt.isPending} data-testid="nameless-read-as-receipt">
+                  read it as a receipt
+                </button>
+                :
+              </span>
+            ) : cantIdentify && namelessWhy === "ai-failed" ? (
+              // The provider was asked and failed, or the step ran without
+              // the person's own AI: the note above says which, and a retry
+              // is the remedy, not a rename.
+              <span className="text-muted">
+                <button type="button" className="underline hover:text-content" onClick={(e) => { e.stopPropagation(); rerun.mutate({}); }} disabled={rerun.isPending} data-testid="nameless-identify-again">
+                  Identify it again
+                </button>
+                , or name this {idNoun}:
               </span>
             ) : cantIdentify ? (
               <span className="text-muted">Couldn’t identify this {idNoun}  - name it:</span>
@@ -6123,7 +6339,26 @@ function InboxCard({
               const bs = (item.suggested_metadata as { box_state?: string } | null)?.box_state;
               if (bs) segs.push(<span>📦 {bs === "empty-box" ? "empty box" : "in box"}</span>);
               if ((item.suggested_metadata as { split_from?: string } | null)?.split_from)
-                segs.push(<span className="text-accent">✂ from split</span>);
+                segs.push(
+                  <span className="text-accent">
+                    ✂ from split
+                    {(item.suggested_metadata as { crop?: string } | null)?.crop === "failed" && (
+                      <span className="text-faint" title="Its crop could not be cut, so this piece keeps the group photo; the name and details come from the group photo's read."> · group shot kept</span>
+                    )}
+                    <button
+                      type="button"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        unsplit.mutate();
+                      }}
+                      disabled={unsplit.isPending}
+                      title="Put the group photo back in the inbox as it was; every piece of this split goes to Recently deleted."
+                      className="ml-1.5 rounded border border-line px-1.5 py-0.5 text-[10px] text-muted hover:text-content disabled:opacity-50"
+                    >
+                      Undo split
+                    </button>
+                  </span>,
+                );
               if (item.source_url) {
                 let host = "";
                 try {
@@ -6702,15 +6937,17 @@ function InboxCard({
               onClick={(e) => e.stopPropagation()}
             >
               <Sparkles size={11} className="shrink-0" />
-              <span>Matched by keywords: the AI didn’t answer.</span>
-              <button
-                type="button"
-                onClick={() => rerun.mutate(undefined)}
-                disabled={aiWorking || !canRerunLookup(item)}
-                className="underline underline-offset-2 hover:text-amber-900 dark:hover:text-amber-200 disabled:opacity-50"
-              >
-                Retry with AI
-              </button>
+              <span>{fallbackChip(topCand?.ai_fallback ?? "no-answer", topCand?.ai_fallback_reason).text}</span>
+              {fallbackChip(topCand?.ai_fallback ?? "no-answer", topCand?.ai_fallback_reason).retry && (
+                <button
+                  type="button"
+                  onClick={() => rerun.mutate(undefined)}
+                  disabled={aiWorking || !canRerunLookup(item)}
+                  className="underline underline-offset-2 hover:text-amber-900 dark:hover:text-amber-200 disabled:opacity-50"
+                >
+                  Retry with AI
+                </button>
+              )}
             </div>
           )}
           {/* A scanned storage tote is usually about to BECOME a bin — offer the
@@ -6837,6 +7074,18 @@ function InboxCard({
                       onClick={() => {
                         close();
                         split.mutate();
+                      }}
+                    />
+                  )}
+                  {item.image_file_id && item.status === "pending" && (
+                    <MenuItem
+                      icon={<ReceiptText size={14} />}
+                      label={asReceipt.isPending ? "Reading the receipt…" : "Read as a receipt"}
+                      hint="This photo is a receipt: split into its lines, reviewed before filing"
+                      disabled={asReceipt.isPending}
+                      onClick={() => {
+                        close();
+                        asReceipt.mutate();
                       }}
                     />
                   )}
@@ -9390,7 +9639,7 @@ function ScanFieldInput({
           type={def.type === "number" ? "number" : def.type === "date" ? "date" : def.type === "url" ? "url" : "text"}
           step={def.type === "number" ? "any" : undefined}
           value={s}
-          onChange={(e) => onChange(e.target.value === "" ? null : e.target.value)}
+          onChange={(e) => onChange(valueFromInput(def.type, e.target.value))}
           className="w-full px-2 py-1.5 text-sm border border-line dark:border-slate-600 rounded bg-surface dark:bg-slate-800"
         />
       )}

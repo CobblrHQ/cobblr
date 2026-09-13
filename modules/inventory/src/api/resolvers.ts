@@ -24,7 +24,11 @@ export function registerInventoryResolvers(): void {
         .where("id", "=", id)
         .executeTakeFirst();
       if (!row) return null;
-      return toResolvedPart(row, (await categoryNames(db, [row])).get(row.category_id ?? "") ?? null);
+      return toResolvedPart(
+        row,
+        (await categoryNames(db, [row])).get(row.category_id ?? "") ?? null,
+        (await locationNames(orgId, [row])).get(row.location_id ?? "") ?? null,
+      );
     },
   );
 
@@ -44,13 +48,21 @@ export function registerInventoryResolvers(): void {
     const offset = query.offset ?? 0;
     let q = db.selectFrom("inventory_parts").selectAll();
     if (instance) q = q.where("instance", "=", instance as never);
+    // Out of use is out of the list, as on the module's own list, unless the
+    // query names `archived` itself (a "Retired tools" view does). A saved
+    // view on the dashboard listed the opened skein beside the yarn it was
+    // opened from, because the unit is kept out of the way as archived and
+    // this door had no default (#2848).
+    const namesArchived =
+      query.include_retired === true || query.filter?.archived !== undefined || (query.where ?? []).some((p) => p.col === "archived");
+    if (!namesArchived) q = q.where("archived", "=", false);
     if (query.q?.trim()) q = q.where((eb) => textSearchWhere(eb, query.q, { text: ["name", "description", "manufacturer", "notes", "state", "unit"], json: ["metadata"] })!);
     q = applyPartFilters(q, query);
     const sortedQ = applyPartSort(q, query.sort);
     const rows = await sortedQ.limit(limit).offset(offset).execute();
-    const names = await categoryNames(db, rows);
+    const [names, places] = await Promise.all([categoryNames(db, rows), locationNames(orgId, rows)]);
     return {
-      items: rows.map((r) => toResolvedPart(r, names.get(r.category_id ?? "") ?? null)),
+      items: rows.map((r) => toResolvedPart(r, names.get(r.category_id ?? "") ?? null, places.get(r.location_id ?? "") ?? null)),
     };
   };
   // SCOPED TO THE DEFAULT INSTANCE, deliberately. This used to pass no
@@ -81,8 +93,30 @@ export function registerInventoryResolvers(): void {
       .where("instance", "=", instance as never)
       .executeTakeFirst();
     if (!row) return null;
-    return toResolvedPart(row, (await categoryNames(db, [row])).get(row.category_id ?? "") ?? null);
+    return toResolvedPart(
+      row,
+      (await categoryNames(db, [row])).get(row.category_id ?? "") ?? null,
+      (await locationNames(orgId, [row])).get(row.location_id ?? "") ?? null,
+    );
   });
+}
+
+/** The names of the places these rows live in, one batched lookup through
+ *  the platform (the locations are another module's records, so no table
+ *  read). "Where is my lamp" was answered with the collection because the
+ *  resolved record carried a location id and no name (2026-09-13). */
+async function locationNames(
+  orgId: string,
+  rows: ReadonlyArray<{ location_id?: string | null }>,
+): Promise<Map<string, string>> {
+  const ids = [...new Set(rows.map((r) => r.location_id).filter((id): id is string => !!id))];
+  if (!ids.length) return new Map();
+  try {
+    const found = await platform().entities.lookupMany(orgId, ids.map((id) => ({ kind: "core-locations:location", id })));
+    return new Map(found.map((l) => [l.id, l.title]));
+  } catch {
+    return new Map(); // a name is never worth failing a read over
+  }
 }
 
 /** The names of the categories these rows are filed under, one query. Kept
@@ -118,7 +152,7 @@ export function toResolvedPart(row: {
   metadata: unknown;
   archived?: boolean;
   category_id?: string | null;
-}, categoryName: string | null = null): ResolvedEntity {
+}, categoryName: string | null = null, locationName: string | null = null): ResolvedEntity {
   const qty = Number(row.qty);
   // A skinned instance's items live at /instances/<name>/items/:id; the default
   // ("inventory") instance lives at the base /inventory/parts/:id. Without this,
@@ -157,8 +191,12 @@ export function toResolvedPart(row: {
       // Named as the parts list route names it, so the two shapes stay one.
       category_name: categoryName,
       // Where it lives — the scan "already tracked" banner shows it, and
-      // move-mode uses it to skip entities already in the active bin.
+      // move-mode uses it to skip entities already in the active bin. Named
+      // too, as the parts list route names it: the assistant reads a record
+      // through here and cannot say a uuid, so without the name "where is my
+      // lamp" was answered with the collection (2026-09-13).
       location_id: row.location_id ?? null,
+      location_name: locationName,
       // An estimate, when this record stands for "roughly this many, jumbled".
       // Exposed through the resolver so a CONTAINER can roll its contents up
       // ("10 kinds, roughly 50") without inventory-specific knowledge, and so

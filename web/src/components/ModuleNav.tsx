@@ -22,14 +22,25 @@
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { NavLink } from "react-router-dom";
-import { ChevronDown, Settings2, Sliders } from "lucide-react";
+import { ChevronDown, PanelLeft, Settings2, Sliders } from "lucide-react";
 import { useActiveOrg } from "../auth/ActiveOrgContext";
 import { ModulePickerModal } from "./ModulePickerModal";
 import { useHoverAwareOpen } from "./hover-aware-open";
 import { isFocused } from "../lib/api";
+import { useAuth } from "../auth/AuthContext";
+import { setNavLayout, useNavChoiceMade } from "../lib/nav-mode";
+import { isInvoluntaryFold, layoutExpressed, shouldOfferSidebar } from "../lib/nav-graduation";
+import { NavCountBadge } from "./NavCountBadge";
+import { useNavBadges } from "./useNavBadges";
 import { useNavModules, HEADING_PREFIX, NAVGROUP_PREFIX, stripNavStem, navTargetFor, surfaceTops } from "./useNavModules";
 
-export function ModuleNav() {
+export function ModuleNav({ quiet = false }: {
+  /** Another surface is already asking the layout question (the tour's
+   *  welcome step), so the fold offer must not: two cards asking one thing
+   *  at once is worse than either. The fold itself still counts; the card
+   *  waits for the tour to close. */
+  quiet?: boolean;
+} = {}) {
   const { activeSlug, activeOrg } = useActiveOrg();
   // Managed app: no Dashboard (it redirects to the app home anyway) — the nav
   // is just the app's own tables + Scan.
@@ -39,6 +50,17 @@ export function ModuleNav() {
   const focused = isFocused(activeOrg);
   const { tops: allVisibleTops, overflowNames, childrenByParent: children, instanceGroups } = useNavModules(activeSlug);
   const tops = surfaceTops(allVisibleTops, appMode);
+  const badges = useNavBadges(activeSlug);
+  // A count appearing widens its chip, so the fit is re-measured when one
+  // changes; the cache below is refilled from the DOM on every recompute.
+  const badgesKey = [...badges].map(([k, n]) => `${k}=${n}`).join("|");
+  // The one-time sidebar offer needs to know whether this person has EVER
+  // chosen a layout. Until the account has loaded, assume they have: an offer
+  // shown to someone whose choice is still on its way is the nag it exists
+  // to avoid.
+  const { user } = useAuth();
+  const localChoice = useNavChoiceMade();
+  const layoutChosen = !user || layoutExpressed(user.nav_pref, localChoice);
   // Entries the user pinned to "more" never compete for row space — they're
   // always folded. The rest flow through the responsive measurement below.
   const pinned = tops.filter((t) => overflowNames.has(t.name));
@@ -58,6 +80,10 @@ export function ModuleNav() {
   const rowRef = useRef<HTMLDivElement>(null);
   const widthCache = useRef<Map<string, number>>(new Map());
   const [visibleCount, setVisibleCount] = useState(Number.MAX_SAFE_INTEGER);
+  // The row's width as last measured. Zero means the desktop nav is not on
+  // screen (a phone, where it is display:none), and a zero-width "fold" is
+  // not a fold: it offered the sidebar on a phone on the first rig run.
+  const [rowWidth, setRowWidth] = useState(0);
   const topsKey = rowEligible.map((t) => t.name).join("|") + "::" + pinned.map((t) => t.name).join("|");
 
   useLayoutEffect(() => {
@@ -74,6 +100,7 @@ export function ModuleNav() {
         reserved += n.getBoundingClientRect().width + 2;
       });
       const avail = el.clientWidth - reserved;
+      setRowWidth(el.clientWidth);
       const MORE_W = 64; // the "more ▾" chip, reserved only when it shows
       const fitWithin = (budget: number) => {
         let used = 0;
@@ -97,7 +124,7 @@ export function ModuleNav() {
     return () => ro.disconnect();
     // topsKey (not `tops`, a fresh array each render) keeps this stable.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [topsKey]);
+  }, [topsKey, badgesKey]);
 
   const visible = rowEligible.slice(0, visibleCount);
   // Folded = whatever didn't fit, then the pinned entries (always last in More).
@@ -111,7 +138,7 @@ export function ModuleNav() {
     }
     const kids = children.get(m.name) ?? [];
     return kids.length === 0 ? (
-      <ModuleTopLink key={m.name} name={m.name} label={m.displayName} />
+      <ModuleTopLink key={m.name} name={m.name} label={m.displayName} badge={badges.get(m.name)} />
     ) : (
       <ModuleGroupChip
         key={m.name}
@@ -153,7 +180,20 @@ export function ModuleNav() {
               kids: m.name.startsWith(NAVGROUP_PREFIX)
                 ? instanceGroups.get(m.name)?.members ?? []
                 : children.get(m.name) ?? [],
+              badge: badges.get(m.name),
             }))}
+            // The fold itself carries the sum, so a folded door's count is not
+            // lost behind the word "more".
+            badgeTotal={overflow.reduce((sum, m) => sum + (badges.get(m.name) ?? 0), 0)}
+            // Offered once, at the first fold the bar made on its own (a
+            // pinned entry is the person's doing and never counts), and only
+            // to someone who has never picked a layout. Either answer writes
+            // one, so the offer cannot come back.
+            offerSidebar={shouldOfferSidebar({
+              expressed: layoutChosen,
+              involuntaryFold: isInvoluntaryFold(visibleCount, rowEligible.length, rowWidth),
+              otherSurfaceAsking: quiet,
+            })}
           />
         )}
         {/* The nav-customize control was moved out of the navbar into
@@ -181,20 +221,21 @@ function useNavTarget(): (name: string) => string {
   return (name) => navTargetFor(name, appMode);
 }
 
-function ModuleTopLink({ name, label }: { name: string; label: string }) {
+function ModuleTopLink({ name, label, badge }: { name: string; label: string; badge?: number }) {
   const to = useNavTarget()(name);
   return (
     <NavLink
       to={to}
       data-top={name}
       className={({ isActive }) =>
-        "px-2 py-1 rounded transition text-sm whitespace-nowrap shrink-0 " +
+        "px-2 py-1 rounded transition text-sm whitespace-nowrap shrink-0 inline-flex items-center gap-1.5 " +
         (isActive
           ? "text-accent font-semibold"
           : "text-muted dark:text-slate-400 hover:text-accent")
       }
     >
       {label}
+      <NavCountBadge count={badge} label={label} />
     </NavLink>
   );
 }
@@ -248,8 +289,14 @@ function NavGroupSegments({
  *  backdrop-blur traps position:fixed descendants). */
 function MoreMenu({
   items,
+  badgeTotal = 0,
+  offerSidebar = false,
 }: {
-  items: { top: OrgModule; kids: { name: string; displayName: string }[] }[];
+  items: { top: OrgModule; kids: { name: string; displayName: string }[]; badge?: number }[];
+  /** Every folded row's count, summed, shown on the trigger. */
+  badgeTotal?: number;
+  /** Show the one-time "switch to the sidebar?" card under the trigger. */
+  offerSidebar?: boolean;
 }) {
   const target = useNavTarget();
   // Hover opens, click opens-or-toggles (hover-aware-open.ts), pointer over
@@ -260,7 +307,7 @@ function MoreMenu({
   const [pos, setPos] = useState<{ left: number; top: number } | null>(null);
 
   useLayoutEffect(() => {
-    if (!open || !triggerRef.current) return;
+    if ((!open && !offerSidebar) || !triggerRef.current) return;
     function reposition() {
       const r = triggerRef.current!.getBoundingClientRect();
       // Right-align the 256px panel to the trigger so it never runs off
@@ -274,7 +321,7 @@ function MoreMenu({
       window.removeEventListener("resize", reposition);
       window.removeEventListener("scroll", reposition, true);
     };
-  }, [open]);
+  }, [open, offerSidebar]);
 
   useEffect(() => {
     if (!open) return;
@@ -318,6 +365,7 @@ function MoreMenu({
         className="px-1.5 py-1 rounded text-sm whitespace-nowrap text-muted dark:text-slate-400 hover:text-accent transition flex items-center gap-0.5"
       >
         more
+        <NavCountBadge count={badgeTotal} label="folded navigation" className="ml-0.5" />
         <ChevronDown
           size={12}
           className={open ? "rotate-180 transition-transform" : "transition-transform"}
@@ -332,7 +380,7 @@ function MoreMenu({
           className="w-64 rounded-xl border border-line dark:border-slate-700 bg-surface dark:bg-slate-900 shadow-lg z-[60] max-h-[70vh] overflow-y-auto"
         >
           <ul className="py-1">
-            {items.map(({ top, kids }) => {
+            {items.map(({ top, kids, badge }) => {
               const to = topTo(top);
               return (
                 <li key={top.name}>
@@ -340,9 +388,10 @@ function MoreMenu({
                     <NavLink
                       to={to}
                       onClick={() => setOpen(false)}
-                      className="block px-3 py-2 text-sm text-content dark:text-mortar-100 hover:bg-subtle dark:hover:bg-slate-800 transition"
+                      className="flex items-center gap-2 px-3 py-2 text-sm text-content dark:text-mortar-100 hover:bg-subtle dark:hover:bg-slate-800 transition"
                     >
-                      {top.displayName}
+                      <span className="truncate">{top.displayName}</span>
+                      <NavCountBadge count={badge} label={top.displayName} className="ml-auto" />
                     </NavLink>
                   ) : (
                     <div className="px-3 py-2 text-[10px] font-mono uppercase tracking-widest text-muted dark:text-slate-400">
@@ -368,7 +417,63 @@ function MoreMenu({
                 </li>
               );
             })}
+            {/* The standing way out of the fold, inside the fold itself: it
+                nags nobody who never opens this menu, and it is the one place
+                someone standing in the pain is already looking. */}
+            <li className="mt-1 border-t border-line dark:border-slate-700 pt-1">
+              <button
+                type="button"
+                onClick={() => {
+                  setOpen(false);
+                  setNavLayout("side");
+                }}
+                className="w-full flex items-center gap-2 px-3 py-2 text-sm text-muted dark:text-slate-400 hover:text-accent hover:bg-subtle dark:hover:bg-slate-800 transition"
+              >
+                <PanelLeft size={14} className="shrink-0" />
+                Switch to the sidebar
+              </button>
+            </li>
           </ul>
+        </div>,
+        document.body,
+      )}
+      {/* The one-time offer: a small card, not a modal, anchored where the
+          fold just happened. Both answers write a layout to the account, so
+          the dismissal is the record and nothing new is stored. */}
+      {offerSidebar && pos && createPortal(
+        <div
+          role="dialog"
+          aria-label="Switch to the sidebar?"
+          data-nav-graduation-offer
+          // Right edge on the trigger, like the menu; wider than the menu so
+          // the two buttons sit on one line each (they wrapped at w-64).
+          style={{ position: "fixed", left: Math.max(8, pos.left + 256 - 304), top: pos.top + 6 }}
+          className="w-[304px] rounded-xl border border-cobble-300 dark:border-cobble-700 bg-surface dark:bg-slate-900 shadow-lg z-[59] p-3 space-y-2"
+        >
+          <p className="text-[13px] text-content dark:text-mortar-100 leading-snug">
+            Your workspace outgrew the top bar. Switch to the sidebar?
+          </p>
+          {/* Both buttons write a permanent preference, so neither may promise
+              a trial: "Try it" did, and was not one. */}
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              onClick={() => setNavLayout("side")}
+              className="px-2.5 py-1 rounded-md bg-cobble-600 hover:bg-cobble-700 text-white text-xs font-medium whitespace-nowrap transition"
+            >
+              Use the sidebar
+            </button>
+            <button
+              type="button"
+              onClick={() => setNavLayout("top")}
+              className="px-2.5 py-1 rounded-md border border-line dark:border-slate-600 text-xs text-muted dark:text-slate-400 hover:text-content dark:hover:text-mortar-100 whitespace-nowrap transition"
+            >
+              Keep the top bar
+            </button>
+          </div>
+          <p className="text-[11px] text-faint dark:text-slate-500 leading-snug">
+            Change it anytime in Your account → Appearance.
+          </p>
         </div>,
         document.body,
       )}

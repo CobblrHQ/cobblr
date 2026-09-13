@@ -21,6 +21,7 @@
 
 import {
   buildReceipt,
+  cleanOrderRef,
   enrichReceiptFromText,
   isoDate,
   type ParsedReceipt,
@@ -29,14 +30,18 @@ import {
 /** Rows that are receipt STRUCTURE, not things you bought. Matched on the
  *  label after its amount is stripped. This is a document-structure vocabulary
  *  (the same kind of thing `classifyHeader` does for table columns), not an
- *  attempt to know what any product is. */
-const STRUCTURAL =
+ *  attempt to know what any product is.
+ *
+ *  The vocabulary and the line rules below are exported for one other reader,
+ *  the receipt-shape check (receipt-shape.ts), which scores a text's
+ *  receipt-ness from the same structure this parses. One definition. */
+export const STRUCTURAL =
   /^(sub[\s-]?total|total|grand\s+total|amount\s+due|balance(\s+due)?|tax(es)?(\s*\d+)?|vat|gst|hst|pst|tip|gratuity|service\s+charge|shipping|delivery|handling|discount|change(\s+due)?|cash|cheque|check|tend(er(ed)?)?|debit|credit|visa|mastercard|master\s?card|amex|american\s+express|discover|paypal|gift\s?card|fsa(\s+card)?|hsa|ebt|store\s+credit|rounding|you\s+saved|savings?\s+today|total\s+savings?|items?\s+sold|item\s+count|auth(orization)?(\s+code)?|approval|ref(erence)?\s*(no|#)?|acct|account|card\s+#?|trans(action)?\s*(id|#)?|invoice|order\s+(no|#|number)|receipt\s*#?)\b/i;
 
 /** A totals row that ENDS the item region. Everything after the first of these
  *  is bookkeeping — the tip, the card line, "YOU SAVED TODAY $3.00" — and must
  *  never become an item, whether or not its label is in STRUCTURAL. */
-const ENDS_ITEMS = /^(sub[\s-]?total|total|grand\s+total|amount\s+due|balance)\b/i;
+export const ENDS_ITEMS = /^(sub[\s-]?total|total|grand\s+total|amount\s+due|balance)\b/i;
 
 /** The grand total, in preference order — "grand total" beats "total" when a
  *  receipt prints both (a tipped restaurant bill prints both, and they differ). */
@@ -83,7 +88,7 @@ export function readTrailingAmount(line: string): { label: string; amount: numbe
 
 /** "12 @ 3.98", "2.16 lb @ 0.58 /lb", "13.442 GAL @ 3.551 /GAL" — the
  *  quantity-times-unit-price form, wherever it appears. */
-const QTY_AT = /(\d+(?:[.,]\d+)?)\s*([a-z]{1,6})?\s*@\s*[$€£¥]?\s*(\d+(?:[.,]\d+)?)/i;
+export const QTY_AT = /(\d+(?:[.,]\d+)?)\s*([a-z]{1,6})?\s*@\s*[$€£¥]?\s*(\d+(?:[.,]\d+)?)/i;
 
 function parseQtyAt(s: string): { qty: number; unit_price: number } | null {
   const m = s.match(QTY_AT);
@@ -114,7 +119,7 @@ function leadingQty(label: string): { qty: number; label: string } {
 }
 
 /** Junk a receipt prints that carries no amount and no meaning for us. */
-const NOISE = /^[\s*=~_.-]*$/;
+export const NOISE = /^[\s*=~_.-]*$/;
 
 function detectCurrency(text: string): string | null {
   const m = text.match(/[$€£¥]|\b(USD|EUR|GBP|CAD|AUD|JPY)\b/);
@@ -122,16 +127,33 @@ function detectCurrency(text: string): string | null {
   return CURRENCY[m[0]] ?? m[0].toUpperCase();
 }
 
-function detectDate(text: string): string | null {
+export function detectDate(text: string): string | null {
   // OCR turns a leading 0 into @ or 9 often enough that anchoring on the
   // separators beats anchoring on the digits.
   const m = text.match(/\b(\d{4}-\d{2}-\d{2})\b/) ?? text.match(/\b(\d{1,2}\/\d{1,2}\/\d{2,4})\b/);
   return m ? isoDate(m[1]!) : null;
 }
 
+/** The reference a receipt prints for itself: "ORDER #77142", "Invoice
+ *  88-2214", "Ref: A7Q-1190", "Transaction 000123456". The label names it and
+ *  the token has a digit and some length; a bare "Receipt #12" counter, a
+ *  date or a time after the label, and "ORDER OF FRIES" are not references.
+ *  Read here because the tiers that reconcile the lines with no model have
+ *  no other way to get it (#2964). */
+export function detectOrderRef(text: string): string | null {
+  const re = /(?:^|[\s|])(?:order|invoice|inv|receipt|ref(?:erence)?|transaction|trans|txn|ticket|confirmation)\s*(?:no\.?|number|num|id)?\s*[:#]?\s*#?\s*([A-Z0-9][A-Z0-9-]{3,29})(?![\w/:.])/gi;
+  for (const m of text.matchAll(re)) {
+    const token = m[1]!;
+    if (!/\d/.test(token)) continue;
+    if (/^\d{1,2}[\/.-]\d{1,2}[\/.-]\d{2,4}$/.test(token) || /^\d{1,2}:\d{2}/.test(token)) continue;
+    return cleanOrderRef(token);
+  }
+  return null;
+}
+
 /** The vendor is the first line with letters that isn't an address or a phone
  *  number. Receipts put the store name at the top, always. */
-function detectVendor(lines: string[]): string | null {
+export function detectVendor(lines: string[]): string | null {
   for (const l of lines.slice(0, 4)) {
     const s = l.trim();
     if (s.length < 3 || s.length > 60) continue;

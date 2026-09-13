@@ -1,0 +1,6 @@
+{
+  "_fixture": "e2e/fixtures/review-pack/photos/coffee-mug.jpg",
+  "image_ahash": "3e1ffefe2e0c0c00",
+  "capability": "identify-image",
+  "reply": "{\"name\":\"White enamel coffee mug\",\"observations\":\"A white enamel mug with a small black print, on a wooden surface.\",\"category\":\"Kitchen\",\"entity_type\":\"part\",\"is_receipt\":\"no\",\"confidence\":0.85}"
+}

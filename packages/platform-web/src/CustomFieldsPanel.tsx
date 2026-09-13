@@ -13,7 +13,7 @@ import { useEffect, useMemo, useState, type FocusEvent } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { usePlatformWeb } from "./context";
 import type { PlatformFieldDef } from "./types";
-import { fieldControl } from "./fieldControl";
+import { fieldControl, valueFromInput } from "./fieldControl";
 import { FieldRenderer, boolLabel, boolTruthy } from "./FieldRenderer";
 import { canCarryNote, noteKey, noteOf } from "./field-note";
 import { MarkdownEditor } from "./MarkdownEditor";
@@ -287,13 +287,7 @@ function PlainRow({
   function commit(e: FocusEvent<HTMLInputElement>) {
     const next = e.target.value;
     if (next === initial) return;
-    if (def.type === "number") {
-      onCommit(next === "" ? null : Number(next));
-    } else if (def.type === "boolean") {
-      onCommit(next === "true");
-    } else {
-      onCommit(next === "" ? null : next);
-    }
+    onCommit(valueFromInput(def.type, next));
   }
   // When the field def declares a renderer, show a live preview
   // next to the input so the user sees "0033B2" → blue swatch in

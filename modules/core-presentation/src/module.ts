@@ -16,7 +16,7 @@ import { defineModule } from "@cobblr/platform-contract";
 
 export default defineModule({
   name: "core-presentation",
-  version: "0.1.2",
+  version: "0.1.3",
   displayName: "Presentation",
   description:
     "The shape of your navigation: group sections under a heading, and take them out again. Lets the assistant rearrange the nav for you instead of telling you where to click.",

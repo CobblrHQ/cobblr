@@ -19,7 +19,7 @@ export interface InstanceForLabel {
   instance_name: string;
   display_name?: string | null;
   module_name?: string | null;
-  config?: { item_noun?: unknown } | null;
+  config?: { item_noun?: unknown; item_noun_plural?: unknown } | null;
 }
 
 /** The instance a kind belongs to (`vehicles:item` -> the vehicles instance),
@@ -68,6 +68,23 @@ export function itemNounForKind(
   return "item";
 }
 
+/** Several of that thing: the collection's own plural when it declares one
+ *  (a Contacts table whose noun is "person" says "people"), else what the
+ *  caller makes of the singular. The caller supplies the rule because this
+ *  file is buildless and imports no sibling; the web passes the contract's
+ *  pluralise. A surface that pluralised the noun itself ("No matching
+ *  persons") ignored the word the person chose in Presentation. */
+export function itemNounPluralForKind(
+  kind: string | null | undefined,
+  instances: readonly InstanceForLabel[] | null | undefined,
+  pluralise: (noun: string) => string,
+): string {
+  const inst = instanceForKind(kind, instances);
+  const declared = inst?.config?.item_noun_plural;
+  if (typeof declared === "string" && declared.trim()) return declared.trim();
+  return pluralise(itemNounForKind(kind, instances));
+}
+
 /** The plain word for a view renderer. The id names an implementation; the
  *  word names what the person sees. */
 export const VIEW_TYPE_LABELS: Record<string, string> = {
@@ -85,4 +102,82 @@ export const VIEW_TYPE_LABELS: Record<string, string> = {
 export function viewTypeLabel(viewType: string | null | undefined): string {
   const t = (viewType ?? "").trim().toLowerCase();
   return VIEW_TYPE_LABELS[t] ?? humanise(t || "view");
+}
+
+// ─── The re-buy answers, in the kind's own words ──────────────────────────
+//
+// "You already have one of these, and you just scanned another" has three
+// answers, and their words come from what the collection WEARS, never from
+// the component: a bookshelf offered "Replaced the one that ran out", "+1,
+// still had some" and "Old one went bad" for a second copy of The Hobbit
+// (the 2026-09-13 blank-account review). Stock is counted and consumed, so
+// the pantry words; one of a thing (a book, a tool, a vehicle) is kept, so a
+// second one is another copy and a replacement is the same book again. Waste
+// is a verb only where the face says the thing goes off.
+
+/** The two faces that decide the words, read off the faces verdict. */
+export interface RepurchaseFace {
+  /** Counted and consumed (the `stock` face). */
+  stock: boolean;
+  /** Goes off (the `perishable` face). */
+  perishable: boolean;
+}
+
+export interface RepurchaseWord {
+  label: string;
+  title: string;
+}
+
+export interface RepurchaseWords {
+  /** The everyday re-buy; null when there is nothing to have replaced. */
+  replace: RepurchaseWord | null;
+  /** More of the same, on top of what is there. */
+  add: RepurchaseWord;
+  /** The old one is waste; null where the face says the thing does not spoil. */
+  wentBad: RepurchaseWord | null;
+  /** Whether the ledger's "~N days of the last one left" line applies. */
+  ledgerLine: boolean;
+}
+
+/** The words for one match: `noun` is the collection's ("book"), `quantity`
+ *  what the scan adds, `hasSome` whether the record still holds any. */
+export function repurchaseWords(face: RepurchaseFace, noun: string, quantity: number, hasSome: boolean): RepurchaseWords {
+  const n = Math.max(1, Math.trunc(quantity));
+  const thing = noun.trim() || "one";
+  if (face.stock) {
+    return {
+      replace: hasSome
+        ? {
+            label: "Replaced the one that ran out",
+            title: "The one you had ran out; this is the new one. The count stays what you scanned, and the ledger learns how long the last one lasted.",
+          }
+        : null,
+      add: {
+        label: `+${n}${hasSome ? ", still had some" : " to it"}`,
+        title: hasSome ? "You still have the old one; this goes on top." : "",
+      },
+      wentBad:
+        hasSome && face.perishable
+          ? { label: "Old one went bad", title: "The old one went bad and this replaces it. Recorded as waste, never as consumption." }
+          : null,
+      ledgerLine: true,
+    };
+  }
+  return {
+    replace: hasSome
+      ? {
+          label: `Same ${thing}, replacing the old one`,
+          title: `The ${thing} you had is gone and this one takes its place: one record, the count stays what you scanned.`,
+        }
+      : null,
+    add: {
+      label: n === 1 ? "Another copy" : `${n} more copies`,
+      title: hasSome ? `You keep the ${thing} you have; this one joins it on the same record.` : `The first ${thing} on this record.`,
+    },
+    wentBad:
+      hasSome && face.perishable
+        ? { label: "The old one went bad", title: "The old one went bad and this takes its place. Recorded as waste, never as use." }
+        : null,
+    ledgerLine: false,
+  };
 }

@@ -79,6 +79,8 @@ for (const cap of CAPABILITIES) {
     for (const rel of cap.scope) {
       const code = read(rel);
       if (code === null || rel === cap.owner) continue;
+      // A two-line copy: the per-line hit counts only where the other half is.
+      if (cap.also && !cap.also.test(code)) continue;
       code.split("\n").forEach((line, i) => {
         if (!cap.detect.test(line)) return;
         failures.push({ file: rel, line: i + 1, cap, detail: line.trim().slice(0, 110), fix: cap.use });

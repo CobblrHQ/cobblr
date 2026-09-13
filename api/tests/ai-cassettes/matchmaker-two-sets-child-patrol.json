@@ -1,0 +1,9 @@
+{
+  "_about": "The router's answer for the second split child, whose crop read blind: it invents lifecycle built and a theme from the title. Sealed, from the group photo, must win; nothing from the first set (31058) may land here.",
+  "match": "\"name\":\"Brickwright Patrol Car 60312\"",
+  "rounds": [
+    {
+      "content": "{\"candidates\":[{\"module\":\"inventory\",\"instance\":\"sets\",\"kind\":\"inventory:part\",\"label\":\"Sets\",\"name\":\"Brickwright Patrol Car 60312\",\"confidence\":0.55,\"fields\":{\"lifecycle\":\"built\",\"theme\":\"City\"},\"notes\":\"Inferred set details from the title; the image shows nothing.\"}]}"
+    }
+  ]
+}

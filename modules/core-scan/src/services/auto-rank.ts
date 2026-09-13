@@ -200,6 +200,28 @@ export async function deriveRankContext(
  *  identity stays as stored), so the rename that lives inside the enrich paths
  *  never ran there. That left the one free way to try a naming change unable to
  *  try this naming change (reported 2026-07-30: "should replay handle this too?"). */
+/** The colour that may be COMPOSED INTO THE TITLE: the person's hint or the
+ *  colour the vision pass observed, both words somebody said about the thing.
+ *  Never a candidate's field. NORMALISERS WRITE FIELDS, NEVER NAMES: the
+ *  matchmaker is prompted to fill a colour field with a hex, so a receipt line
+ *  "Blue cotton yarn 100g 200m" carried `color: "#0000FF"` on its candidate,
+ *  and reading that field back into the title rewrote the card as "#0000ff
+ *  cotton yarn 100g 200m" while the preview and the record kept the words
+ *  (#2885). The field is rendered as a swatch beside the title; the name is
+ *  the name. resolveItemColor above still reads the field, because a search
+ *  phrase and a ranking want the most authoritative colour there is. */
+export function titleColorFor(row: {
+  suggested_metadata?: Record<string, unknown> | null;
+}): string | null {
+  const meta = row.suggested_metadata ?? {};
+  const hints = standingHints(meta);
+  let fromHint: string | null = null;
+  for (let i = hints.length - 1; i >= 0 && !fromHint; i--) fromHint = colorFromText(hints[i]!);
+  if (fromHint) return fromHint;
+  const observed = typeof meta.color === "string" ? meta.color.trim() : "";
+  return observed || null;
+}
+
 export function colouredTitleFor(row: {
   suggested_name: string | null;
   suggested_manufacturer?: string | null;
@@ -213,7 +235,7 @@ export function colouredTitleFor(row: {
   // forever, and appending a colour compounds it - "…T-Shirt (Men's, Black".
   // Deriving means those rows heal themselves with no re-run.
   const current = tidyTruncatedName(stored);
-  const color = resolveItemColor(row);
+  const color = titleColorFor(row);
   const titled = color ? nameWithColor(current, color, row.suggested_manufacturer ?? null) : current;
   return titled && titled !== stored ? titled : null;
 }

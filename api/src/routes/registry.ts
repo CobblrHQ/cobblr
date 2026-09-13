@@ -62,6 +62,19 @@ function verifyEd25519(pubkeyB64: string, data: Buffer, sigB64: string): boolean
 // local build. Empty/unset (the default, and what compose passes) → local.
 const EXTERNAL_INDEX_URL = process.env.COBBLR_EXTENSIONS_URL || "";
 
+/** Where this deployment's bundle catalog beyond its own build comes from:
+ *  the external index's host, or false when there is none. Reported on
+ *  healthz and named by the install route when an id is unknown, so "install
+ *  by id needs a registry" is a state a person can read, not a lesson (#2922). */
+export function externalRegistry(): string | false {
+  if (!EXTERNAL_INDEX_URL) return false;
+  try {
+    return new URL(EXTERNAL_INDEX_URL).host;
+  } catch {
+    return EXTERNAL_INDEX_URL;
+  }
+}
+
 interface IndexShape {
   schema?: number;
   bundles?: Array<Record<string, unknown>>;

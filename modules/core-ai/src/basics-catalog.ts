@@ -197,6 +197,10 @@ export const BUILTIN_BASICS: BasicRule[] = [
       "where is the",
       "where's the",
       "where are the",
+      "are in this workspace",
+      "are in my workspace",
+      "is in this workspace",
+      "is in my workspace",
     ],
     reply:
       "Questions about your own records need AI connected, because answering them means reading your workspace. Connect AI using the link at the top and I will search and answer properly. In the meantime the search box at the top finds anything by name, and each list has filters and a low-stock view where the module offers one.",

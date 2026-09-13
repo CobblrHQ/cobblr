@@ -43,9 +43,31 @@ const KIND_ID_OFFENSE =
 
 // Phrases the review called out by name. "ran a wire" is a verb nobody
 // outside this codebase uses; the activity row says "ran an automation".
-const PHRASE_OFFENSE = /ran a wire|wire failed|INVENTORY:PART|\bVENDING\b|\bGALLERY\b/;
+// The pantry's re-buy verbs ("Replaced the one that ran out", "still had
+// some", "went bad") are words for STOCK, and a surface that hardcodes them
+// prints them under a book (the 2026-09-13 review); they live in the
+// contract's repurchaseWords, chosen by the collection's face, and nowhere
+// in a component.
+// "No AI to read this ... (set it up)" is the sentence for a person with NO
+// way to identify a photo. It rendered under every card for a person whose
+// own connection reads photos, because the flag it read was a deployment
+// switch (the 2026-09-13 review, #2845). The one place that may say it is
+// baselined by line and guarded by identify_available; a new one fails here.
+const PHRASE_OFFENSE = /ran a wire|wire failed|INVENTORY:PART|\bVENDING\b|\bGALLERY\b|the one that ran out|still had some|went bad|No AI to read|\(set it up\)/;
 
-const OFFENSE = new RegExp(`${COUNT_OFFENSE.source}|${KIND_ID_OFFENSE.source}|${PHRASE_OFFENSE.source}`);
+// A COUNT SHAPE as a default face: `0w · 9f`, `${wires.length}w · ${fields}f`.
+// The 2026-09-13 blank-account review saw it on the install dialog, ahead of
+// anything in plain words. Wires and fields are the bundle's plumbing; the
+// person installing it wants the noun and what they can do first. The counts
+// may live behind a details toggle, spelled out ("9 fields, 0 automations"),
+// never as a single-letter abbreviation. Matches the source shape (template
+// or literal): a number or a `}` closing an expression, `w`, the separator,
+// then the same for `f`.
+const COUNT_SHAPE_OFFENSE = /(\d+|\})\s*w\s*[·•|/]\s*(\d+|\$\{[^}]*\})\s*f\b/;
+
+const OFFENSE = new RegExp(
+  `${COUNT_OFFENSE.source}|${KIND_ID_OFFENSE.source}|${PHRASE_OFFENSE.source}|${COUNT_SHAPE_OFFENSE.source}`,
+);
 
 function tsxFiles(dir: string): string[] {
   const out: string[] = [];
@@ -59,7 +81,8 @@ function tsxFiles(dir: string): string[] {
     if (e === "node_modules" || e === "dist") continue;
     const p = join(dir, e);
     if (statSync(p).isDirectory()) out.push(...tsxFiles(p));
-    else if (p.endsWith(".tsx")) out.push(p);
+    // A test that asserts a word is absent has to name it; a test is not a surface.
+    else if (p.endsWith(".tsx") && !p.endsWith(".test.tsx")) out.push(p);
   }
   return out;
 }

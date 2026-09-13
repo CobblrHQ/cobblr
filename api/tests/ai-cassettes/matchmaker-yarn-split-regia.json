@@ -1,0 +1,9 @@
+{
+  "_about": "The router's answer for the Regia child: a colour and a colorway the photo can support, and a shop it cannot.",
+  "match": "\"x\":0.252,\"y\":0.07",
+  "rounds": [
+    {
+      "content": "{\"candidates\":[{\"module\":\"inventory\",\"instance\":\"yarn\",\"kind\":\"inventory:part\",\"label\":\"Yarn\",\"name\":\"Regia 4-fädig Color Yarn\",\"confidence\":0.8,\"fields\":{\"color\":\"#4A708B\",\"vendor\":\"Amazon\",\"colorway\":\"Color\"},\"notes\":\"Regia sock yarn, typically sold on Amazon.\"}]}"
+    }
+  ]
+}

@@ -29,6 +29,7 @@ import {
 } from "@cobblr/platform-contract";
 import { meta } from "../db/meta.js";
 import { getKind, listKindsForOrg, baseKindOf } from "./entities.js";
+import { fieldRolesForKind } from "./field-defs.js";
 
 /** The stored explicit choices for a kind: an instance's own config, or the
  *  entity-kind override for a module's base kind. */
@@ -62,21 +63,6 @@ async function moduleOfInstance(orgId: string, instanceName: string): Promise<st
   return row?.module_name ?? null;
 }
 
-/** The workspace's own field roles on this kind (and its base). */
-async function fieldRoles(orgId: string, kinds: string[]): Promise<Set<string>> {
-  try {
-    const rows = await meta
-      .selectFrom("module_field_defs")
-      .select("field_role")
-      .where("org_id", "=", orgId)
-      .where("entity_kind", "in", [...new Set(kinds)])
-      .where("field_role", "is not", null)
-      .execute();
-    return new Set(rows.map((r) => r.field_role).filter((r): r is string => typeof r === "string"));
-  } catch {
-    return new Set();
-  }
-}
 
 /** A kind's declared trait map, flattened to one value per axis.
  *
@@ -119,7 +105,9 @@ export async function facesForKind(orgId: string, kind: string): Promise<FaceVer
   let rec = await getKind(kind);
   if (!rec) rec = (await listKindsForOrg(orgId)).find((k) => k.id === kind) ?? null;
   const base = await baseKindOf(orgId, kind);
-  const [explicit, roles] = await Promise.all([explicitFaces(orgId, kind), fieldRoles(orgId, [kind, base])]);
+  // Roles come from the fields THIS kind shows, never its base's: an instance
+  // does not wear a role from a field it does not have (#2849).
+  const [explicit, roles] = await Promise.all([explicitFaces(orgId, kind), fieldRolesForKind(orgId, kind)]);
   const declared = (rec?.traits as Record<string, unknown> | null) ?? null;
   // "Serialized" is unique on a kind DECLARED fungible: the declaration comes
   // from the module's base kind, not from what this collection resolved.

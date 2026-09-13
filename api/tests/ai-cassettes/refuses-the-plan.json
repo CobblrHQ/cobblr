@@ -1,0 +1,5 @@
+{
+  "match": "tea out of inventory and into the tea section",
+  "refuse": "quota",
+  "rounds": [{ "content": "never reached: the provider refuses this turn" }]
+}

@@ -106,6 +106,14 @@ export interface PartListItem extends HomeBoxFields {
   assigned_qty: number;
   available_qty: number;
   low_stock: boolean;
+  /** What is on hand in the count's units: the unopened count plus every
+   *  open unit still holding something. `low_stock` is judged on this, so an
+   *  open skein with metres left is not "out". Absent on an older response. */
+  on_hand?: number;
+  /** The open units of a model tracked unit by unit, each with what is left
+   *  in it; null when nothing is open. The list shows "1 open · 160 m"
+   *  beside the count instead of a 0 that reads as no yarn. */
+  open_units?: { count: number; remaining: Array<{ id: string; qty: number; unit: string | null }> } | null;
   /** How many UNITS (serials) this model has on file. Derived server-side, and
    *  batched for the whole page. Absent on an older response; 0 means the model
    *  isn't serialized. The list uses it only for the passive "not yet scanned"

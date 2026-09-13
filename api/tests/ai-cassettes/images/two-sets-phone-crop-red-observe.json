@@ -1,0 +1,7 @@
+{
+  "_fixture": "the crop of the red set out of the review pack's two-sets-phone.jpg (cropBytes, the split's box, 5% pad)",
+  "_note": "A readable crop: the observation pass sees the set.",
+  "image_ahash": "c17e7e767c786800",
+  "capability": "classify-image",
+  "reply": "{\"observations\":\"A sealed red building-set box with a mountain scene and a yellow sun on the front, the number 31058 printed on a white label, ages 7+.\",\"distinct_items\":1,\"items\":[{\"name\":\"Brickwright Mountain Explorer 31058\",\"brand\":\"Brickwright\",\"qty\":1}]}"
+}

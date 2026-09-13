@@ -16,7 +16,7 @@ import { defineModule } from "@cobblr/platform-contract";
 
 export default defineModule({
   name: "core-scan",
-  version: "0.47.38",
+  version: "0.47.53",
   displayName: "Scan",
   description:
     "Scan a barcode or take a photo of a thing; end up with a draft inventory row, pre-filled with the resolved name + brand + catalog photo. One tap to commit.",
@@ -48,6 +48,10 @@ export default defineModule({
     // The other row every workspace has: what the scanner captured, waiting
     // to be filed. Used daily by anyone who scans.
     primary: true,
+    // How many are waiting, on the row itself. The same count the inbox
+    // header shows (status = pending), from the one-SQL stats endpoint the
+    // dashboard card already reads.
+    count: { path: "/inbox/stats", field: "pending" },
   },
 
   // The scan/camera button earns a permanent icon slot in the navbar's

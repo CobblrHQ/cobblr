@@ -12,8 +12,13 @@
 
 import { platform, extractJsonObject, repairJson, parseJsonReply } from "@cobblr/platform-contract";
 import { routingNoteBare, routingNoteWithCategory } from "./routing-note.js";
+import { fallbackHint, type AiFallback } from "@cobblr/platform-contract/scan-fallback";
+import { classifyAiFailure } from "@cobblr/platform-contract/ai-refusal";
+import { providerReasonOf } from "@cobblr/platform-contract/provider-reason";
 import { stripPlaceFields } from "./place-fields.js";
+import { liveTableForOffer } from "./resolve-offers.js";
 import { normaliseCategory, isJunkCategory } from "@cobblr/platform-contract/category-reconcile";
+import { makeLexicalScorer, type FitTable, type LexicalEvidence } from "@cobblr/platform-contract/table-fit";
 
 // A HANG GUARD, not a latency knob: the matchmaker
 // runs detached server-side — nobody is blocked on it — and a queued
@@ -42,8 +47,10 @@ interface MenuField {
   decode_role?: string;
 }
 
-/** One routable destination in the workspace (a table). */
-export interface ScanMenuEntry {
+/** One routable destination in the workspace (a table). The fit rule's
+ *  shape (noun, label, fields, keywords, category axis, fallback flag) is
+ *  the contract's FitTable; this is that plus where the table is. */
+export interface ScanMenuEntry extends FitTable {
   /** Owning module, e.g. "inventory" / "assets". */
   module: string;
   /** Instance slug when this is a named instance (yarn/hooks); null = the
@@ -130,6 +137,15 @@ export interface MatchCandidate {
    *  (title vs attributes vs barcode DB vs photo hints) — what matched, what
    *  was inferred, pack-size reasoning. No filler. */
   notes?: string;
+  /** Why the keyword floor routed this instead of the model (scan-fallback):
+   *  the card's chip and the note say the same thing from this. */
+  ai_fallback?: AiFallback;
+  /** On a provider error, the provider's own reason (provider-reason.ts), so
+   *  the chip can say "the key is not valid" rather than "the AI errored". */
+  ai_fallback_reason?: "invalid_key" | "quota" | "model_unavailable" | "unreachable" | "unknown";
+  /** The table the model picked when the noun plan overruled it (#2865):
+   *  both verdicts stay visible, and the eval harness can see they disagreed. */
+  overruled_model_pick?: string;
   /** When the item data implies a count ("1 Pack Of 9 Skein", "10 Pack"),
    *  the unit quantity to pre-fill. Omitted when nothing implies one. */
   quantity?: number;
@@ -469,21 +485,18 @@ export async function assembleMergedMenu(
     if (!res.ok) return live;
     const body = (await res.json()) as { items?: ScanMenuEntry[] };
     const bundle = Array.isArray(body.items) ? body.items : [];
-    const liveKeys = new Set(live.map((e) => `${e.module}::${e.instance ?? ""}`));
     // Drop a bundle entry that duplicates a live table by KEY *or* by display
     // LABEL. If the workspace already has a "Bookshelf" (say `assets::bookshelf`),
     // don't ALSO offer to install a community "Bookshelf" bundle
     // (`inventory::cobblr-community-bookshelf`) — that surfaced as two chips the
     // user can't tell apart, and confirming the phantom would spin up a duplicate
     // same-named table. You already have one by that name; file into it.
-    const liveLabels = new Set(live.map((e) => e.label.trim().toLowerCase()).filter(Boolean));
-    return [
-      ...live,
-      ...bundle.filter(
-        (e) =>
-          !liveKeys.has(`${e.module}::${e.instance ?? ""}`) && !liveLabels.has(e.label.trim().toLowerCase()),
-      ),
-    ];
+    //
+    // The same test decides, at read time, whether an offer a row was matched
+    // to earlier still stands (services/resolve-offers.ts): one rule, so the
+    // router and the reader cannot disagree about what the workspace has.
+    const liveTables = live.map((e) => ({ module: e.module, instance: e.instance, label: e.label }));
+    return [...live, ...bundle.filter((e) => liveTableForOffer(e, liveTables) === null)];
   } catch {
     return live;
   }
@@ -719,278 +732,17 @@ export function pickFallbackEntry(
   );
 }
 
-/** What the lexical scorer concluded about one (item, table) pair. `plausible`
- *  is the ROUTING verdict: real table-evidence (noun / head-noun / ≥2 keywords),
- *  the bar both the heuristic and the post-AI corroboration gate use. */
-export interface LexicalEvidence {
-  score: number;
-  plausible: boolean;
-  keywordHits: number;
-  /** Real "this item IS that thing" evidence: the table's noun matched the
-   *  name, a keyword/choice hit the head noun, or a phrase keyword appeared in
-   *  the name. Distinguishes a named route from one held up only by ≥2
-   *  corroborating keyword grazes. */
-  strong: boolean;
-  fields: Record<string, string | number | boolean>;
-}
+// The lexical floor lives in the contract now, so the no-AI move plan can
+// read the same evidence (table-fit.ts); these names stay exported from here
+// for the bench and the tests.
+export { makeLexicalScorer, GENERIC_NOUNS, rankFits, bestFit, type LexicalEvidence } from "@cobblr/platform-contract/table-fit";
 
-/** Build the per-item lexical scorer heuristicMatch routes with — exposed as a
- *  factory so runMatchmaker can CORROBORATE an AI pick against the same
- *  deterministic evidence (one bar, two callers). */
-/** Nouns that describe a container or a count, not a kind of thing. A table
- *  whose item noun is one of these (Lego "set", a generic "item") must carry
- *  scan_keywords to be routable; the noun alone would claim every "sheet set"
- *  and every "3-piece". Stemmed, lowercase. */
-export const GENERIC_NOUNS = new Set(["set", "item", "thing", "unit", "piece", "pack", "record", "entry", "object", "product"]);
-
-export function makeLexicalScorer(item: PerceivedItem): {
-  hay: string;
-  scoreEntry: (entry: ScanMenuEntry) => LexicalEvidence;
-} {
-  const hay = `${item.name ?? ""} ${item.description ?? ""} ${item.category ?? ""} ${item.notes ?? ""} ${
-    item.metadata ? JSON.stringify(item.metadata) : ""
-  }`
-    .toLowerCase()
-    // "a BAG of screws" / "3 BOXES of nails": the container word describes the
-    // packaging, not the item — drop it so it can't hit an unrelated table's
-    // choice vocabulary ("bag" is a Wardrobe accessory choice; screws aren't).
-    .replace(/\b(\d+\s*)?(skeins?|balls?|spools?|rolls?|packs?|boxe?s?|bottles?|cans?|bags?|tubes?|jars?|cases?)\s+of\s+/g, "");
-  // Light stemming so plural/singular pairs match ("Netflix subscription" hits
-  // a "subscriptions" table; "screws" hits a "screw" choice): compare tokens by
-  // their stem — trailing -ies→y, -es, -s stripped (conservative; ≥4 chars so
-  // "gas"/"its" survive).
-  const stem = (w: string): string => {
-    if (w.length >= 5 && w.endsWith("ies")) return w.slice(0, -3) + "y";
-    if (w.length >= 5 && w.endsWith("es")) return w.slice(0, -2);
-    if (w.length >= 4 && w.endsWith("s")) return w.slice(0, -1);
-    return w;
-  };
-  const tokens = new Set(hay.split(/[^a-z0-9]+/).filter((t) => t.length >= 3).map(stem));
-  // The short VALUES in the metadata, keys left out: what a catalog states as
-  // an attribute, not the name of the slot it states it in, and not a
-  // paragraph of marketing or ingredients (anything past 48 characters).
-  const attributeStems = new Set<string>();
-  // A taxonomy list is not an attribute either: a food catalog tags every
-  // product with dozens of ancestors ("en:plant-based-foods-and-beverages" on
-  // a tube of crisps, "en:dairy" in a spread's ingredient tree), so tag,
-  // hierarchy, and keyword lists and any list past eight entries stay out.
-  const TAXONOMY_KEY = /(_tags|_hierarchy|_keywords|^_?keywords)$/;
-  const walkValues = (v: unknown, depth: number): void => {
-    if (depth > 4 || v == null) return;
-    if (typeof v === "string") {
-      if (v.length <= 48) for (const t of v.toLowerCase().split(/[^a-z0-9]+/)) if (t.length >= 3) attributeStems.add(stem(t));
-    } else if (Array.isArray(v)) {
-      if (v.length <= 8) for (const x of v) walkValues(x, depth + 1);
-    } else if (typeof v === "object") {
-      for (const [k, x] of Object.entries(v as Record<string, unknown>)) if (!TAXONOMY_KEY.test(k)) walkValues(x, depth + 1);
-    }
-  };
-  walkValues(item.metadata, 0);
-  // Single words match TOKENS, never raw substrings: `hay.includes("car")` hit
-  // "old CARds", "make" hit "MAKing it easy", "vin" hit "without haVINg" — and
-  // two such grazes in one marketing description made a storage tote "plausible"
-  // for a Vehicles table (keywords car/make/vin). A compound token still counts
-  // when the keyword is a whole morpheme of it ("screw" in "screwdriver", "van"
-  // in "minivan"): prefix/suffix with ≥3 chars of remainder, so "car|ds" can
-  // never ride again. Multi-word phrases keep the verbatim substring match
-  // ("license plate" appearing as-is is real evidence).
-  const tokenList = [...tokens];
-  const wordHit = (w: string): boolean => {
-    const sw = stem(w);
-    if (tokens.has(sw)) return true;
-    return tokenList.some((t) => (t.startsWith(sw) || t.endsWith(sw)) && t.length - sw.length >= 3);
-  };
-  const hasWord = (phrase: string): boolean => {
-    const p = phrase.toLowerCase();
-    if (/\s/.test(p.trim())) return p.length >= 3 && hay.includes(p);
-    return p.split(/[^a-z0-9]+/).some((w) => w.length >= 3 && wordHit(w));
-  };
-  // The capture's HEAD NOUN — the last content token of the NAME after
-  // stripping trailing size/pack tails ("Fieldcrest Bath Towels 4 Pack" →
-  // "towel"). A keyword matching the head noun is what the item IS, not an
-  // incidental word ("Lcd Ribbon Cable" heads "cable", so Yarn's "ribbon"
-  // keyword stays weak — the original false-positive guard holds).
-  //
-  // A prepositional tail names the item's TARGET, not the item — "stainless
-  // screws FOR THE FRAME" is screws, not a frame; "replacement belt FOR Dyson
-  // V8" is a belt. Cut at the first for/with/fits so the head noun is the thing
-  // itself; a name that IS a prepositional phrase falls back to the full name.
-  const rawName = (item.name ?? "").toLowerCase();
-  const nameCore = rawName.split(/\b(?:for|with|fits)\b/)[0]!.trim() || rawName;
-  const TAIL = new Set(["pack", "packs", "count", "ct", "pcs", "pc", "set", "sets", "oz", "ml", "lb", "lbs", "kg", "inch", "in", "ft", "each", "roll", "rolls"]);
-  // Retail names end with the COLOR ("…Rocker Switch White", "…Soft White") —
-  // a color is a property, never what the item IS, and treating it as the head
-  // noun let a filament table's color choice "White" claim a light switch.
-  const COLOR_TAIL = new Set(["white", "black", "red", "blue", "green", "yellow", "gray", "grey", "silver", "gold", "brown", "beige", "ivory", "clear", "orange", "purple", "pink", "tan", "almond"]);
-  const nameTokens = nameCore.split(/[^a-z0-9]+/).filter((t) => t.length >= 3 && !/^\d+$/.test(t));
-  // Pop size/pack TAIL tokens, trailing colors, and anything digit-bearing
-  // ("20lb", "4pk") — the head noun is the thing itself, never its packaging
-  // arithmetic or its finish.
-  while (
-    nameTokens.length > 1 &&
-    (TAIL.has(nameTokens[nameTokens.length - 1]!) ||
-      COLOR_TAIL.has(nameTokens[nameTokens.length - 1]!) ||
-      /\d/.test(nameTokens[nameTokens.length - 1]!))
-  ) nameTokens.pop();
-  // A color can never BE the head noun (a name that is only color words has no
-  // head): "what the item is" is never a color, so a color choice must not gain
-  // routing strength even when it survives the pop above.
-  const headCandidate = nameTokens.length ? nameTokens[nameTokens.length - 1]! : "";
-  const headStem = headCandidate && !COLOR_TAIL.has(headCandidate) ? stem(headCandidate) : "";
-  const hitsHead = (phrase: string): boolean =>
-    !!headStem && phrase.toLowerCase().split(/[^a-z0-9]+/).some((w) => w.length >= 3 && stem(w) === headStem);
-  // ROUTING strength must come from the NAME — what the item is called — not
-  // from a word buried in the metadata blob (raw catalog attributes, photo
-  // observations, marketing text). A bundle whose noun is a generic word
-  // ("set", "type") matched a light switch because "Type:" and "set" appear in
-  // virtually every retail payload; hay-wide matches still SCORE (and count as
-  // keyword corroboration), but only name evidence makes a table strong.
-  const nameStems = new Set(nameCore.split(/[^a-z0-9]+/).filter((w) => w.length >= 3).map(stem));
-  // The CATEGORY on its own. It is not part of the metadata blob and must not be
-  // graded like it: the blob is marketing text and catalog attributes, while the
-  // category is a structured statement of what KIND of thing this is, from the
-  // lookup that identified it. A title is often silent about its kind — a book's
-  // title is the one place the word "book" never appears — so a table whose noun
-  // IS the category is the strongest signal there is for that item.
-  const catStems = new Set(
-    (item.category ?? "").toLowerCase().split(/[^a-z0-9]+/).filter((w) => w.length >= 3).map(stem),
-  );
-  const categoryIs = (phrase: string): boolean => {
-    const p = phrase.toLowerCase();
-    if (/\s/.test(p.trim())) return (item.category ?? "").toLowerCase().includes(p);
-    return p.split(/[^a-z0-9]+/).some((w) => w.length >= 3 && catStems.has(stem(w)));
-  };
-  // The category's HEAD noun is what kind of thing the lookup said this is:
-  // "Sweetened beverages" is a beverage. A table whose keyword IS that noun
-  // is claiming the kind, the same claim a keyword on the name's head noun
-  // makes, so it counts as strong. A keyword grazing the category's modifier
-  // ("sweetened") stays weak. The dashboard's sample cola carried exactly
-  // this category and no other evidence, and filed into plain Inventory
-  // while Groceries, which declared the word, sat empty (2026-09-12).
-  const catTokens = (item.category ?? "").toLowerCase().split(/[^a-z0-9]+/).filter((w) => w.length >= 3);
-  const catHeadStem = catTokens.length ? stem(catTokens[catTokens.length - 1]!) : "";
-  const hitsCategoryHead = (phrase: string): boolean =>
-    !!catHeadStem && phrase.toLowerCase().split(/[^a-z0-9]+/).some((w) => w.length >= 3 && stem(w) === catHeadStem);
-  const nameHas = (phrase: string): boolean => {
-    const p = phrase.toLowerCase();
-    if (/\s/.test(p.trim())) return nameCore.includes(p);
-    return p.split(/[^a-z0-9]+/).some((w) => w.length >= 3 && nameStems.has(stem(w)));
-  };
-
-  const scoreEntry = (entry: ScanMenuEntry): LexicalEvidence => {
-    let score = 0;
-    // `strong` = a real "this item IS that thing" signal: the table's NOUN
-    // matched, a keyword or CHOICE matched the capture's HEAD NOUN. A match on
-    // only a secondary scan_keyword is weak and incidental ("ribbon" in "Lcd
-    // Ribbon Cable" hitting Yarn's ribbon-yarn keyword) — so it takes the noun,
-    // a head-noun hit, OR ≥2 corroborating keywords to suggest a table.
-    //
-    // A field-CHOICE match is a FIELD-FILL signal, NOT table evidence, unless
-    // the choice IS the head noun. This scorer routed a "Square D Circuit
-    // Breaker" to a tooling table (its end_type choices list "Square") and a
-    // "Smart Box" device box to a wardrobe ("Smart casual") — a brand or
-    // marketing word grazing an unrelated table's choice vocabulary was treated
-    // as proof the item belonged there, and the honest fallback+category could
-    // never outscore it. ("…Nike Hoodie" hitting a garment_type choice "Hoodie"
-    // stays strong: the choice names what the item IS.)
-    let strong = false;
-    let keywordHits = 0;
-    const fields: Record<string, string | number | boolean> = {};
-    // The table's OWN noun/keywords route it (a "yarn" table for a "...yarn"),
-    // but they must NOT leak into field-value extraction — otherwise a vendor
-    // choice "Local yarn shop" gets picked just because the capture says "yarn".
-    const nounWords = new Set(
-      [entry.noun, ...(entry.scan_keywords ?? [])]
-        .flatMap((s) => s.toLowerCase().split(/[^a-z0-9]+/))
-        .filter((w) => w.length >= 3)
-        .map(stem),
-    );
-    // A table's noun routes only when the noun says what the thing IS. "set",
-    // "item", "piece", "unit" say nothing: a "3 Piece Twin Sheet Set" was
-    // offered a home in the Lego Sets table because that table's noun is
-    // "set" and the capture's head noun was "set" (2026-09-02). A generic noun
-    // scores nothing and is never strong; such a table routes by its keywords.
-    if (entry.noun && hasWord(entry.noun) && !GENERIC_NOUNS.has(stem(entry.noun.toLowerCase()))) {
-      score += 2;
-      // The NAME saying the noun is the classic signal. The CATEGORY saying it
-      // is just as strong a statement and covers the case the name cannot: an
-      // ISBN-identified textbook is categorised "Books" while its title is
-      // about refrigeration, and it filed into the catch-all next to a
-      // Bookshelf table sitting right there (reported 2026-09-02).
-      //
-      // Still gated by GENERIC_NOUNS above, so a category of "Items" cannot
-      // route to a table whose noun is "item" — a generic noun says nothing
-      // about what a thing IS, whichever field it matched.
-      if (nameHas(entry.noun) || categoryIs(entry.noun)) strong = true;
-    }
-    // Multi-word keywords match as FULL PHRASES only — "paper towel" must
-    // not claim every "towel" via its words (bath towels are linens, not
-    // supplies). Single words keep stemmed token matching.
-    const kwHit = (term: string): boolean =>
-      /\s/.test(term.trim()) ? hay.includes(term.toLowerCase()) : hasWord(term);
-    for (const term of entry.scan_keywords ?? []) {
-      if (term && kwHit(term)) {
-        score += 2;
-        keywordHits += 1;
-        // A keyword that IS the capture's head noun ("…Bath Towels" → keyword
-        // "towel") identifies the thing itself → strong on its own. So does a
-        // MULTI-WORD keyword appearing verbatim IN THE NAME: "light bulb" there
-        // is naming, not grazing ("…Soft White 4-pack" heads to the color, so
-        // the head-noun test alone misses it). The same phrase found only in
-        // the metadata blob stays a corroborating hit, not a route.
-        // (A keyword that merely LEADS the name is not naming it: "Apple iPhone"
-        // led with a grocery keyword and a Home app offered it the pantry, so a
-        // table whose noun is generic routes on TWO corroborating keywords, the
-        // way a real Lego capture carries "lego" + "building set" from its
-        // catalog category.)
-        if (hitsHead(term) || hitsCategoryHead(term) || (/\s/.test(term.trim()) && nameHas(term))) strong = true;
-      }
-    }
-    // A choice matches only on a NON-noun capture token (whole-phrase hits the
-    // noun-word guard too: every matched word must be a non-noun word).
-    // The table's CATEGORY AXIS says what kind of thing this is, so it fills
-    // only from the name and the catalog category, never from the metadata
-    // blob: a jar of arrabbiata and a bag of tortilla chips were both filed
-    // as "Meat" because that word sat somewhere in their marketing text, and a
-    // wrong category dates the food wrong (2026-09-02). Other choice fields
-    // (a fiber, a hook size) keep reading the blob, where the attributes live.
-    const nameCatStems = new Set([
-      ...nameStems,
-      ...(item.category ?? "").toLowerCase().split(/[^a-z0-9]+/).filter((w) => w.length >= 3).map(stem),
-    ]);
-    const axisHit = (ch: string): boolean => {
-      const words = ch.toLowerCase().split(/[^a-z0-9]+/).filter((w) => w.length >= 3).map(stem);
-      return words.some((w) => nameCatStems.has(w) && !nounWords.has(w));
-    };
-    // Every other choice field reads the item's ATTRIBUTES: the name, the
-    // category, and the short values in the catalog metadata ("material":
-    // "Acrylic", "weight": "Worsted"). Never a JSON key, and never a long
-    // text. A tortilla chip and a jar of pasta sauce were both filed as "Meat"
-    // because the catalog blob carries a flag named is_red_meat_product, and a
-    // chocolate spread became "Dairy" off its ingredient list (2026-09-02).
-    const attrTokens = new Set([...nameCatStems, ...attributeStems]);
-    const choiceHitAttr = (ch: string): boolean => {
-      const words = ch.toLowerCase().split(/[^a-z0-9]+/).filter((w) => w.length >= 3).map(stem);
-      return words.some((w) => attrTokens.has(w) && !nounWords.has(w));
-    };
-    for (const f of entry.fields) {
-      if (hasWord(f.name) || hasWord(f.label)) score += 1;
-      if (f.choices) {
-        for (const ch of f.choices) {
-          if (ch && (f.name === entry.category_field?.name ? axisHit(ch) : choiceHitAttr(ch))) {
-            score += 1; // a fill hint, no longer a 3-point routing vote
-            if (hitsHead(ch)) strong = true; // the choice names the thing itself
-            if (!(f.name in fields)) fields[f.name] = ch; // extract the matched choice
-          }
-        }
-      }
-    }
-    return { score, keywordHits, fields, strong, plausible: strong || keywordHits >= 2 };
-  };
-  return { hay, scoreEntry };
-}
-
-export function heuristicMatch(item: PerceivedItem, menuIn: ScanMenuEntry[]): MatchCandidate[] {
+export function heuristicMatch(
+  item: PerceivedItem,
+  menuIn: ScanMenuEntry[],
+  why: AiFallback = "no-provider",
+  reason?: MatchCandidate["ai_fallback_reason"],
+): MatchCandidate[] {
   const menu = filterMenuForItem(item, menuIn);
   if (menu.length === 0) return [];
   const { hay, scoreEntry } = makeLexicalScorer(item);
@@ -1031,10 +783,12 @@ export function heuristicMatch(item: PerceivedItem, menuIn: ScanMenuEntry[]): Ma
         fields: fallbackFields,
         heuristic: true,
         basis: "fallback",
+        ai_fallback: why,
+        ...(reason ? { ai_fallback_reason: reason } : {}),
         ...(Number.isInteger(quantity) && quantity! > 0 && quantity! <= 10_000 ? { quantity } : {}),
         ...(cat ? { category: cat.value, ...(cat.isNew ? { category_is_new: true } : {}) } : {}),
         ...(fallback.bundle_external_id ? { bundle_external_id: fallback.bundle_external_id } : {}),
-        notes: cat ? routingNoteWithCategory(fallback.label, cat.value) : routingNoteBare(),
+        notes: cat ? routingNoteWithCategory(fallback.label, cat.value, why, reason) : routingNoteBare(why, reason),
       },
     ];
   }
@@ -1057,12 +811,12 @@ export function heuristicMatch(item: PerceivedItem, menuIn: ScanMenuEntry[]): Ma
       // "noun" = the route names what the item IS; "keywords" = held up only by
       // corroborating hits — the UI renders that tentative, and File all skips it.
       basis: (strong ? "noun" : "keywords") as "noun" | "keywords",
+      ai_fallback: why,
+      ...(reason ? { ai_fallback_reason: reason } : {}),
       ...(Number.isInteger(quantity) && quantity! > 0 && quantity! <= 10_000 ? { quantity } : {}),
       ...(cat ? { category: cat.value, ...(cat.isNew ? { category_is_new: true } : {}) } : {}),
       ...(entry.bundle_external_id ? { bundle_external_id: entry.bundle_external_id } : {}),
-      ...(i === 0
-        ? { notes: "Matched by keywords (no AI). Connect an AI provider for sharper identification + field-fill." }
-        : {}),
+      ...(i === 0 ? { notes: `Matched by keywords. ${fallbackHint(why, reason)}` } : {}),
     };
   });
 }
@@ -1329,6 +1083,10 @@ export async function runMatchmaker(
   // messages, not the model, so a plain re-invoke returns the same garbled reply).
   const t0 = Date.now();
   const remaining = () => MATCH_DEADLINE_MS - (Date.now() - t0);
+  // The router's last refusal, kept so the keyword floor can say WHY it is
+  // routing: the note used to say "connect an AI provider" for a timeout, an
+  // allowance and a background step alike (#2846).
+  let lastFailure: unknown = null;
   const callOnce = async (bypassCache: boolean, budgetMs: number): Promise<unknown[] | null> => {
     if (budgetMs <= 0) return null;
     const call = platform()
@@ -1347,7 +1105,10 @@ export async function runMatchmaker(
         bypass_cache: bypassCache,
       })
       .then((r) => r.result as { content?: string })
-      .catch(() => null);
+      .catch((err: unknown) => {
+        lastFailure = err;
+        return null;
+      });
     const res = await Promise.race([
       call,
       new Promise<null>((resolve) => setTimeout(() => resolve(null), budgetMs)),
@@ -1374,7 +1135,14 @@ export async function runMatchmaker(
     // AI unavailable (no provider / not entitled / errored / timed out) → fall back
     // to the deterministic heuristic so capture-first still suggests a tracker for
     // free / no-AI workspaces. The whole point: capture-first never goes dark.
-    if (rawList === null) return heuristicMatch(item, menu);
+    if (rawList === null) {
+      return heuristicMatch(
+        item,
+        menu,
+        lastFailure ? classifyAiFailure(lastFailure, { hadUser: !!userId }) : "no-answer",
+        providerReasonOf(lastFailure) ?? undefined,
+      );
+    }
   }
 
   // Validate each candidate against the menu — the model may only route to a
@@ -1464,11 +1232,94 @@ export async function runMatchmaker(
   // table was uninstalled, or renamed), and manufacturing a keyword guess in its
   // place is the downgrade this whole path exists to stop — so keep what the row
   // already had and let the user re-identify if they want a fresh opinion.
-  if (out.length === 0) return replay ? (replay.storedCandidates as MatchCandidate[]) : heuristicMatch(item, menu);
-  // AI proposes, code corroborates: a primary routed to a NOT-installed bundle
-  // must survive the same lexical bar the heuristic routes with, or the honest
-  // fallback+category leads and the bundle drops to the alternative slot.
-  return applyCorroborationGate(out, item, menu);
+  if (out.length === 0) return replay ? (replay.storedCandidates as MatchCandidate[]) : heuristicMatch(item, menu, "no-answer");
+  // Code plans, the model narrates: a name that says what the thing IS, with
+  // a table for exactly that on the menu, is the plan; the model refines it
+  // and does not get to lose it to the catch-all (applyNounPlan). Then, AI
+  // proposes and code corroborates: a primary routed to a NOT-installed
+  // bundle must survive the same lexical bar the heuristic routes with, or
+  // the honest fallback+category leads and the bundle drops to the
+  // alternative slot.
+  return applyCorroborationGate(applyNounPlan(out, item, menu), item, menu);
+}
+
+/**
+ * The lexical evidence for a MODEL's candidate: the item's own text, and the
+ * model's name for it. The model reads the photo; its name ("Crochet supplies
+ * and yarn") is often the only text that says what the thing is when the
+ * identify step named it by its shape ("Crocheted blanket and hooks"). Scoring
+ * the identify's name alone is how a model that picked Yarn and called it
+ * yarn was demoted to the catch-all for want of the word (#2865). Either text
+ * makes a table strong or plausible; the fields read off both.
+ */
+function modelEvidence(item: PerceivedItem, primary: MatchCandidate, entry: ScanMenuEntry): LexicalEvidence {
+  const a = makeLexicalScorer(item).scoreEntry(entry);
+  const named = primary.name?.trim();
+  if (!named || named === item.name) return a;
+  const b = makeLexicalScorer({ ...item, name: named }).scoreEntry(entry);
+  return {
+    score: Math.max(a.score, b.score),
+    keywordHits: Math.max(a.keywordHits, b.keywordHits),
+    strong: a.strong || b.strong,
+    nounHit: a.nounHit || b.nounHit,
+    plausible: a.plausible || b.plausible,
+    nameHits: [...new Set([...a.nameHits, ...b.nameHits])],
+    fields: { ...b.fields, ...a.fields },
+  };
+}
+
+/**
+ * The noun plan (code plans, the model narrates). A photo of yarn was routed
+ * by the model to the catch-all Inventory while the keyword floor, given the
+ * same name, put it on the Yarn table: the model's answer lost to the table
+ * that names the thing (#2865, 2026-09-13). When the model picks the
+ * workspace's fallback table and the lexical scorer has a STRONG route for a
+ * non-fallback entry (the entry's noun, head noun or a phrase keyword is in
+ * the item's name or the model's own name for it), that entry is the plan: it
+ * leads with the model's own name and whichever of its fields exist on that
+ * table, `basis: "noun"`, and the model's pick stays as the one-tap
+ * alternative. Both verdicts are written down (`overruled_model_pick`, and
+ * the note), so a person and the eval harness can see the two disagreed and
+ * which won. A model pick that is not the catch-all is trusted; with no
+ * noun-strong entry nothing is invented. Pure, exported for tests.
+ */
+export function applyNounPlan(out: MatchCandidate[], item: PerceivedItem, menu: ScanMenuEntry[]): MatchCandidate[] {
+  const primary = out[0];
+  if (!primary) return out;
+  const primaryEntry = menu.find((m) => m.module === primary.module && (m.instance ?? null) === (primary.instance ?? null));
+  if (!primaryEntry?.is_fallback) return out;
+  const named = menu
+    .filter((m) => !m.is_fallback && !(m.module === primary.module && (m.instance ?? null) === (primary.instance ?? null)))
+    .map((entry) => ({ entry, ev: modelEvidence(item, primary, entry) }))
+    .filter(({ ev }) => ev.strong)
+    .sort((a, b) => b.ev.score - a.ev.score)[0];
+  if (!named) return out;
+  const { entry, ev } = named;
+  const allowed = new Set(entry.fields.map((f) => f.name));
+  // The model's fields, where the named table declares them; the floor's own
+  // fills (a pack size, a choice it read off the name) underneath.
+  const fields: Record<string, string | number | boolean> = { ...ev.fields };
+  for (const [k, v] of Object.entries(primary.fields)) if (allowed.has(k)) fields[k] = v;
+  seedPackSize(entry, item, fields);
+  const cat = resolveCategoryInto(entry, primary.category ?? item.category, fields);
+  const planned: MatchCandidate = {
+    module: entry.module,
+    instance: entry.instance,
+    kind: entry.kind,
+    label: entry.label,
+    confidence: primary.confidence,
+    name: primary.name,
+    fields,
+    basis: "noun",
+    overruled_model_pick: primary.label,
+    ...(primary.inferred?.length ? { inferred: primary.inferred } : {}),
+    ...(primary.quantity != null ? { quantity: primary.quantity } : {}),
+    ...(cat ? { category: cat.value, ...(cat.isNew ? { category_is_new: true } : {}) } : {}),
+    ...(entry.bundle_external_id ? { bundle_external_id: entry.bundle_external_id } : {}),
+    ...(primary.place_fields ? { place_fields: primary.place_fields } : {}),
+    notes: [`Routed to ${entry.label} by its name; the model had put it in ${primary.label}.`, primary.notes ?? ""].filter(Boolean).join(" "),
+  };
+  return [planned, primary];
 }
 
 /**
@@ -1482,6 +1333,14 @@ export async function runMatchmaker(
  * this), and the bundle stays as the one-tap alternative. Same-domain items
  * then cluster by construction instead of by model mood. Pure — exported for
  * tests. Live tables are never gated: the user's own tables, the AI's call.
+ *
+ * The bar is a textual tie, read from the item's text AND the model's own name
+ * for it: the table's noun anywhere in either, a head-noun hit, or two
+ * corroborating keywords. A model that picked the Yarn offer for a photo it
+ * named "Crochet supplies and yarn" was demoted to Inventory because the
+ * identify step had named the photo by its shape and the word "yarn" sat only
+ * in the model's reply and the description (#2865). A pick with no tie at
+ * all ("Lcd Ribbon Cable" on Yarn) still drops.
  */
 export function applyCorroborationGate(
   out: MatchCandidate[],
@@ -1498,8 +1357,8 @@ export function applyCorroborationGate(
     (m) => m.module === primary.module && (m.instance ?? null) === (primary.instance ?? null),
   );
   if (!primaryEntry) return out;
-  const { scoreEntry } = makeLexicalScorer(item);
-  if (scoreEntry(primaryEntry).plausible) return out; // corroborated → stands
+  const ev = modelEvidence(item, primary, primaryEntry);
+  if (ev.plausible || ev.nounHit) return out; // corroborated → stands
   const fields: Record<string, string | number | boolean> = {};
   seedPackSize(fallback, item, fields);
   const cat = resolveCategoryInto(fallback, item.category, fields);

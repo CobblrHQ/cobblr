@@ -11,6 +11,7 @@ import type {
 import { axisOfTrait, type AnyAxisName } from "@cobblr/platform-contract";
 import { meta } from "../db/meta.js";
 import { facesForKind } from "./faces.js";
+import { fieldRolesForKind } from "./field-defs.js";
 import { listKinds, getKind, listKindsForOrg, baseKindOf } from "./entities.js";
 
 const handlers = new Map<string, ActionHandler>();
@@ -186,7 +187,7 @@ export async function listApplicable(
   // matcher only ever saw the module's native fields, and the whole family of
   // perishable verbs had to be scoped to the entire inventory kind.
   const fields = orgId
-    ? withWorkspaceFieldRoles(kindRecord.fields, await workspaceFieldRoles(orgId, [kind, matchKind]))
+    ? withWorkspaceFieldRoles(kindRecord.fields, [...(await fieldRolesForKind(orgId, kind))])
     : kindRecord.fields;
   // Match against what the COLLECTION wears, not only what the kind declares:
   // the same laptops are a count in one collection and individuals in
@@ -209,27 +210,6 @@ export async function listApplicable(
   // takes its verbs off the record too, without the facts changing.
   const shown = verdict ? disclose(eligible, new Set(verdict.faces)) : eligible;
   return orderForRecord(shown, matchKind.split(":")[0] ?? "");
-}
-
-/** The roles a workspace gave its own fields on a kind, from module_field_defs.
- *  Instance kinds store defs under their own id; a bundle for the base kind
- *  stores them under the base. Both are asked. */
-async function workspaceFieldRoles(orgId: string, kinds: string[]): Promise<string[]> {
-  try {
-    const rows = await meta
-      .selectFrom("module_field_defs")
-      .select("field_role")
-      .where("org_id", "=", orgId)
-      .where("entity_kind", "in", [...new Set(kinds)])
-      .where("field_role", "is not", null)
-      .execute();
-    return rows.map((r) => r.field_role).filter((r): r is string => typeof r === "string");
-  } catch (err) {
-    // A workspace whose defs cannot be read still gets its native actions;
-    // it just does not get the role-scoped ones, which is the safe direction.
-    console.error("[actions] workspace field roles lookup failed:", (err as Error).message);
-    return [];
-  }
 }
 
 /** Native fields plus one `{ role }` entry per workspace role, for the matcher. */
@@ -344,7 +324,14 @@ export async function invoke(
       `Action ${actionId} declared handler "${row.invoke_handler}" but it was never registered`,
     );
   }
-  return handler(ctx);
+  try {
+    return await handler(ctx);
+  } catch (err) {
+    // The handler is named here, once, where it is known; the caller (the
+    // invoke route, the wire engine) answers in its own way.
+    console.error(`[actions] ${actionId} handler ${row.invoke_handler} threw:`, err);
+    throw err;
+  }
 }
 
 /** Why an action matched (or didn't) an entity kind. `via: null`

@@ -7,7 +7,7 @@ import { defineModule } from "@cobblr/platform-contract";
 
 export default defineModule({
   name: "purchases",
-  version: "0.10.13",
+  version: "0.10.15",
   displayName: "Purchases",
   description:
     "Orders, line items, and cost rollup. Each order is a vendor purchase; line items can link to inventory parts and to whatever consumed them: printer mods, projects, anything.",
@@ -21,6 +21,9 @@ export default defineModule({
   // this module's orders: contributing a panel into a module REQUIRES
   // declaring you operate on it, which is what keeps this list honest.
   operatesOn: ["inventory", "core-scan"],
+  // Operating on inventory does not make the orders themselves a tool: a
+  // grown sidebar files Purchases with the collections a person keeps.
+  navKind: "collection",
 
   lifecycle: {
     // Boot-time heal for orders that list each receipt line twice - see the
@@ -192,6 +195,11 @@ export default defineModule({
         description:
           "Add this part to a draft (planned) purchase order for its usual vendor at its usual quantity: derived from purchase history. Skips parts already on an open order. Args (all optional): { partId, qty, vendorId }.",
         appliesTo: { kinds: ["inventory:part"] },
+        // A purchase order re-buys a COUNT of something; it is a stock verb.
+        // Without a face it sat on every inventory record, and a Home Inventory
+        // kettle led with "Draft a purchase order" beside Opened and Threw it
+        // out (#2849). A shelf of copies (stock face) still gets it.
+        face: "stock",
         invokeHandler: "purchases.draft-po",
         argsSchema: {
           partId: { label: "Which part, defaults to the record this ran on", type: "text" },

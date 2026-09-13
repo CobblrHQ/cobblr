@@ -77,23 +77,26 @@ export const DEFAULT_HEADER =
  * Unauthenticated, so it works on the login screen too. Falls back to
  * production (no badge) on any error — fail safe, never cry-wolf a badge.
  */
-export function useDeployEnv(): { env: string; badge: EnvBadge | null } {
+export function useDeployEnv(): { env: string; badge: EnvBadge | null; testDoors: boolean } {
   const q = useQuery({
     queryKey: ["deploy-env"],
-    queryFn: async (): Promise<string> => {
+    queryFn: async (): Promise<{ env: string; testDoors: boolean }> => {
       try {
         const res = await fetch("/api/v1/healthz");
-        if (!res.ok) return "production";
-        const j = (await res.json()) as { deploy_env?: string };
-        return j.deploy_env || "production";
+        if (!res.ok) return { env: "production", testDoors: false };
+        const j = (await res.json()) as { deploy_env?: string; test_doors?: boolean };
+        // The api decides (platform/test-doors.ts): a test surface says so,
+        // production never does, and a page that guessed from the label could
+        // open a door on the wrong deployment.
+        return { env: j.deploy_env || "production", testDoors: j.test_doors === true };
       } catch {
-        return "production";
+        return { env: "production", testDoors: false };
       }
     },
     staleTime: Infinity,
     gcTime: Infinity,
     retry: false,
   });
-  const env = q.data ?? "production";
-  return { env, badge: ENV_BADGES[env] ?? null };
+  const env = q.data?.env ?? "production";
+  return { env, badge: ENV_BADGES[env] ?? null, testDoors: q.data?.testDoors ?? false };
 }

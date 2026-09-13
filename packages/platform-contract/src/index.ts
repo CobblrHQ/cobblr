@@ -16,6 +16,7 @@ export { expiryState, expiryPhrase, EXPIRING_WITHIN_DAYS, type ExpiryState, type
 export { keepMembers, isMember, parcelAudience } from "@cobblr/platform-contract/membership";
 export { splitEntityKind, entityKindOf, type EntityKindParts } from "@cobblr/platform-contract/entity-kind";
 export { actionRunsUnconfirmed, type ActionConsent } from "@cobblr/platform-contract/action-consent";
+export { ActionRefusal, isActionRefusal, crashSentence } from "@cobblr/platform-contract/action-refusal";
 export { isActionStep, type ActionUndoStep, type ActionUndoer, type ActionUndoContext } from "@cobblr/platform-contract/action-undo";
 import type { ActionUndoer, ActionUndoStep, ActionUndoContext } from "@cobblr/platform-contract/action-undo";
 export { destinationLabel, normaliseTargetKind, betterDestination, type DestinationTable } from "@cobblr/platform-contract/destination-label";
@@ -1544,6 +1545,19 @@ const ModuleManifest = z.object({
        *  nav is Home, its collections, and the primary doors; nothing else
        *  (docs/design-decisions/nav-collapse.md). */
       primary: z.boolean().optional(),
+      /** A LIVE NUMBER on the row: how much is waiting behind this door. The
+       *  host polls `GET /orgs/:slug/modules/<name><path>` and shows the
+       *  integer at `field` as a pill beside the label, on every nav surface;
+       *  zero shows nothing. Declare it only for a queue a person works down
+       *  (the scan inbox's pending captures), never for a size (a collection's
+       *  row count is not a call to action). Keep the endpoint a single cheap
+       *  count, since every open tab asks it every few seconds. */
+      count: z
+        .object({
+          path: z.string().startsWith("/"),
+          field: z.string().min(1),
+        })
+        .optional(),
     })
     .optional(),
 
@@ -1566,6 +1580,16 @@ const ModuleManifest = z.object({
   // map to declared manifest data — option (a)→(c) in
   // docs/design-decisions/what-to-do-funnel.md.
   operatesOn: z.array(z.string()).default([]),
+
+  // Which side of a grown sidebar this module's row sits on: a COLLECTION is
+  // a place a person keeps things (Inventory, Purchases, the pantry); a TOOL
+  // is a place they go to do something (Labels, Lists, Digital Fabrication).
+  // Absent, the host derives it: a primary door and an operator (`operatesOn`
+  // non-empty) read as tools, everything else as a collection. Declare it when
+  // the derivation reads wrong: Purchases operates on inventory and is still a
+  // collection of orders; Lists operate on nothing and are still a tool.
+  // docs/design-decisions/nav-collapse.md ("The growing middle").
+  navKind: z.enum(["collection", "tool"]).optional(),
 
   // Optional icon-only quick-action pinned to the navbar's RIGHT
   // cluster — a module's single most-used action that earns prime,
@@ -2074,19 +2098,24 @@ export interface PlatformActivity {
 export type EventHandler = (payload: unknown) => void | Promise<void>;
 
 export interface PlatformEvents {
-  /** Emit an event. Returns a Promise that resolves once any wires
-   *  (user-configured entity_action_bindings) for the event have
-   *  finished firing. Direct subscribers registered via on() still
-   *  run on the next microtask tick (fire-and-forget). A caller can:
-   *    • `await emit(...)` — wait for wires before returning a
-   *      response (sync read-after-write semantics for the user)
-   *    • `emit(...)` (no await) — fire-and-forget; the wires
-   *      still run, the caller just doesn't wait. */
+  /** Emit an event. Returns a Promise that resolves once every direct
+   *  subscriber registered via on() has run, in order, and then any
+   *  wires (user-configured entity_action_bindings) for the event have
+   *  finished firing. A caller can:
+   *    • `await emit(...)` — read-after-write for subscribers AND
+   *      wires; the response goes out after both have applied. Do this
+   *      when anything after you depends on what a handler does: a
+   *      ledger row an undo will void, a count a page will refetch.
+   *    • `emit(...)` (no await) — fire-and-forget; both still run, the
+   *      caller just doesn't wait. For notifications only.
+   *  Never rejects: a handler that throws is logged and the rest run. */
   emit(eventName: string, payload: unknown): Promise<void>;
   /** Subscribe a handler to an event. The module name is captured
    *  for diagnostics — failures get logged with which module's
-   *  handler threw. Subscribers run asynchronously on the next
-   *  microtask tick so emitters don't block on them. */
+   *  handler threw. Handlers run inline when the event is emitted, so
+   *  an awaiting emitter sees their effect; a handler whose work is slow
+   *  (a network call, a render) schedules that work itself with
+   *  setImmediate and returns, so the emitter is not made to wait. */
   on(eventName: string, module: string, handler: EventHandler): void;
 }
 
@@ -2237,6 +2266,13 @@ export interface EntityListQuery {
   q?: string;
   /** Sort spec: array of `field` or `-field` (prefix `-` for desc). */
   sort?: string[];
+  /** Also return records the module marks retired (archived, out of use,
+   *  a unit kept out of the way). A list, a view and the assistant's list
+   *  hide them unless asked, as a module's own list does; SEARCH asks, since
+   *  "where is my old drill" is a question about something retired, and a
+   *  search that cannot find it lies by omission. The resolver decides what
+   *  retired means for its kind; a kind with no such notion ignores this. */
+  include_retired?: boolean;
 }
 
 /** The query a saved view asks for, read off its config the ONE way every
@@ -2926,6 +2962,13 @@ export interface ActionInvokeContext {
   rendered?: string;
   /** Extra args from the binding (passed through). */
   args?: Record<string, unknown>;
+  /** The origin (`https://host`) of the request that invoked the action,
+   *  when a person pressed a button: the same origin the module's own
+   *  routes see, so a handler that must mint an absolute URL (a label's
+   *  QR) can use it the way the manual path does. Absent for a wire, a
+   *  schedule or a webhook run, which have no request; those fall back
+   *  to the workspace's configured base and may refuse without one. */
+  origin?: string;
 
   // ─── Deprecated compatibility aliases (remove in v0.3) ──────────
   /** @deprecated Use `ctx.entity.kind`. Absent for workspace-scoped actions. */
@@ -3867,6 +3910,9 @@ export interface AiProviderDef {
 export interface AiConnectionTest {
   ok: boolean;
   error?: string;
+  /** Why it failed, as the provider said it (provider-reason.ts): a bad key,
+   *  a quota, a missing model, or a provider that did not answer. */
+  reason?: "invalid_key" | "quota" | "model_unavailable" | "unreachable" | "unknown";
   /** Human-readable extra, e.g. a few model names. */
   detail?: string;
   /** Every model id the provider reported, unfiltered and in its own order. */
@@ -5423,6 +5469,10 @@ export interface RoledField {
 export interface DefinedField extends RoledField {
   display_label: string;
   type: string;
+  /** The declared unit of a number field ("m", "g"), when it has one. */
+  unit?: string | null;
+  /** A computed field's template ("{{ length_per_skein }}"). */
+  template?: string | null;
 }
 
 export interface MappedValue {

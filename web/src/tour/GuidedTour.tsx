@@ -7,8 +7,9 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { ArrowLeft, ArrowRight, Moon, Sun } from "lucide-react";
-import { useNavMode } from "../lib/nav-mode";
+import { useNavLayout } from "../lib/nav-mode";
 import { useTheme } from "../theme/ThemeContext";
+import { LayoutPreview } from "../components/LayoutPreview";
 import { LAYOUT_OPTIONS, type TourStep } from "./tour.config";
 import { OverlayFlag } from "@cobblr/platform-web";
 
@@ -37,7 +38,7 @@ export function GuidedTour({ steps, onClose }: { steps: TourStep[]; onClose: () 
   const [rect, setRect] = useState<DOMRect | null>(null);
   const [cardPos, setCardPos] = useState<{ left: number; top: number } | null>(null);
   const cardRef = useRef<HTMLDivElement>(null);
-  const navMode = useNavMode();
+  const navLayout = useNavLayout();
   const { theme, toggle: toggleTheme } = useTheme();
   const step = steps[i];
 
@@ -158,13 +159,23 @@ export function GuidedTour({ steps, onClose }: { steps: TourStep[]; onClose: () 
           <div className={`text-center ${kicker}`}>Cobblr</div>
           <h3 className="text-center text-lg font-bold">{step.title}</h3>
           <p className={`text-center text-sm mt-1.5 ${muted}`}>{step.body}</p>
-          <div className="flex flex-col gap-2.5 mt-4">
+          <div className="flex flex-col gap-2 mt-4" role="radiogroup" aria-label="Desktop layout">
             {LAYOUT_OPTIONS.map((o) => {
-              const sel = navMode === o.id || (o.id === "top" && navMode === "top") || (o.id === "side" && navMode === "side");
+              const sel = navLayout === o.id;
               return (
-                <button key={o.id} type="button" onClick={o.apply} className={"text-left rounded-xl border-2 p-3.5 transition " + (sel ? "border-blue-500 bg-blue-50 dark:bg-slate-800" : "border-slate-200 dark:border-slate-700 hover:border-blue-400")}>
-                  <div className="font-bold text-[15px]">{o.label}</div>
-                  <div className={`text-[13px] mt-1 leading-snug ${muted}`}>{o.desc}</div>
+                <button
+                  key={o.id}
+                  type="button"
+                  role="radio"
+                  aria-checked={sel}
+                  onClick={o.apply}
+                  className={"flex items-start gap-3 text-left rounded-xl border-2 p-3 transition " + (sel ? "border-blue-500 bg-blue-50 dark:bg-slate-800 text-blue-700 dark:text-blue-300" : "border-slate-200 dark:border-slate-700 hover:border-blue-400")}
+                >
+                  <LayoutPreview layout={o.id} className="mt-0.5" />
+                  <span className="min-w-0">
+                    <span className={"block font-bold text-[15px] " + (sel ? "" : "text-slate-900 dark:text-slate-100")}>{o.label}</span>
+                    <span className={`block text-[13px] mt-0.5 leading-snug ${muted}`}>{o.desc}</span>
+                  </span>
                 </button>
               );
             })}

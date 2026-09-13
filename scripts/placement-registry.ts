@@ -89,7 +89,7 @@ export const PLACEMENT: PlacementRow[] = [
     dir: "web/src/components/",
     exemplar: "web/src/components/EntityAttachments.tsx",
     why: "This layer is module-agnostic: it may not name a module's entity kind, because doing so silently excludes every module added later.",
-    lints: ["lint:component-kinds", "lint:hooks-after-return", "lint:no-emdash", "lint:ui-jargon", "lint:authed-image-src", "lint:noun-pluralisation", "lint:dark-mode-ember", "lint:dark-mode-tints"],
+    lints: ["lint:component-kinds", "lint:hooks-after-return", "lint:no-emdash", "lint:ui-jargon", "lint:authed-image-src", "lint:noun-pluralisation", "lint:dark-mode-ember", "lint:dark-mode-tints", "lint:number-input-commits-a-number", "lint:action-outcome-shown", "lint:actions-run-through-one-door"],
     notes: [
       "If it names one module's kind, it is not generic — it belongs beside that module's page (see page-level-module-ui).",
     ],
@@ -130,10 +130,23 @@ export const PLACEMENT: PlacementRow[] = [
     dir: "api/src/platform/",
     exemplar: "api/src/platform/exclusive.ts",
     why: "A capability two modules would otherwise each hand-roll belongs in the kernel, declared on the platform contract so modules reach it without importing each other.",
-    lints: ["lint:isolation", "lint:background-loops", "lint:credential-slot-kind"],
+    lints: ["lint:isolation", "lint:background-loops", "lint:credential-slot-kind", "lint:pg-clients-born-guarded"],
     notes: [
       "Declare it on `packages/platform-contract/src/index.ts` and wire it in `api/src/index.ts`; both halves or modules cannot see it.",
       "Import the db handle lazily inside the function — an eager import drags cobblr_meta into every unit test that imports an adopting file.",
+    ],
+  },
+  {
+    id: "image-op",
+    what: "a pipeline over a photo's pixels: a crop, a trim, a rotate, a read of a region",
+    keywords: ["crop", "extract", "sharp", "pixels", "image", "photo", "rotate", "trim", "orientation", "exif"],
+    dir: "modules/core-scan/src/services/",
+    exemplar: "modules/core-scan/src/services/image-ops.ts",
+    why: "Every box a model or a person draws is drawn on the picture as displayed, and a phone stores its raster a quarter turn from that; uprightBytes (trim-margins.ts) is the one place the turn is baked in, so every cut reads the same frame.",
+    lints: ["lint:extract-upright", "lint:extract-upright"],
+    notes: [
+      "Start from uprightBytes(input) and cut its bytes; never sharp(raw).extract(...). A split of a phone photo once handed each child a patch of the table beside the boxes (2026-09-13).",
+      "Look at the cut before trusting it: cropBytes refuses a sliver, a near-whole frame and a flat patch with a reason; write nothing for a refusal.",
     ],
   },
   {
@@ -209,7 +222,7 @@ export const PLACEMENT: PlacementRow[] = [
     dir: "scripts/ (git hooks in scripts/git-hooks/)",
     exemplar: "scripts/merge-pr.sh",
     why: "The same file runs on macOS (bash 3.2, BSD sed) and on the Linux CI box; a construct that is fine on one aborts on the other, after part of the work has already printed as done.",
-    lints: ["lint:bash-portable", "lint:portable-sed", "lint:sigpipe", "lint:deploy-state-in-flow", "lint:shell-lib-git-cwd", "lint:tsbuildinfo-not-shared", "lint:nightly-cut-clock", "lint:empty-array-under-set-u", "lint:scripts-typecheck", "lint:fetch-retry"],
+    lints: ["lint:bash-portable", "lint:portable-sed", "lint:sigpipe", "lint:deploy-state-in-flow", "lint:shell-lib-git-cwd", "lint:tsbuildinfo-not-shared", "lint:nightly-cut-clock", "lint:empty-array-under-set-u", "lint:scripts-typecheck", "lint:fetch-retry", "lint:porcelain-parse", "lint:alert-lib-sync", "lint:lint-durations", "lint:no-pattern-kill", "lint:forgejo-api-base"],
     notes: [
       "Prose (commit messages, PR bodies) goes through a FILE, never a quoted shell string.",
       "Linux-only scripts opt out with `# gnu-sed: <reason>`; that one line covers both sed and bash rules.",
@@ -269,7 +282,7 @@ export const PLACEMENT: PlacementRow[] = [
     dir: "api/tests/",
     exemplar: "api/tests/core-scan.test.ts",
     why: "One suite, 389 files, 4 minutes: a test that does not say what it covers runs on every change, and one that says it wrong never runs on the change that breaks it.",
-    lints: ["lint:test-affects", "lint:test-durations"],
+    lints: ["lint:test-affects", "lint:test-durations", "lint:test-budget-covers-signup"],
     notes: [
       "First line: `// affects: <module>, <module>` or `always` or `kernel`. `node scripts/test-affects.mjs --infer <file>` proposes one from the routes the test hits.",
       "Test the consequence you fear, not the mechanism you built; name it after what it costs when wrong (CLAUDE.md 14.1a).",
@@ -321,7 +334,7 @@ export const PLACEMENT: PlacementRow[] = [
     dir: "web/src/lib/featured-bundles.ts",
     exemplar: "bundles/computers.json",
     why: "featured-bundles.ts is the ONE source; bundles/*.json is GENERATED from it. Editing the json directly is the drift this pair already suffered once, and lint:bundles-synced now catches it.",
-    lints: ["lint:bundles-synced", "lint:bundle-schema", "lint:bundle-content", "lint:bundle-quality", "lint:bundle-id-noun", "lint:bundle-keyword-collisions", "lint:versions", "lint:platform-owned-roles"],
+    lints: ["lint:bundles-synced", "lint:bundle-schema", "lint:bundle-content", "lint:bundle-quality", "lint:bundle-id-noun", "lint:bundle-keyword-collisions", "lint:versions", "lint:platform-owned-roles", "lint:bundle-fields-on-own-kinds"],
     notes: [
       "Author the entry in web/src/lib/featured-bundles.ts, then run `npx tsx scripts/sync-bundles.ts` to regenerate bundles/<slug>.json. Never hand-edit the json.",
       "Then `npx tsx scripts/lint-bundle-content.ts --write` to record it in bundles/bundle-versions.lock.json, or lint:bundle-content fails on a new bundle.",
@@ -338,7 +351,7 @@ export const PLACEMENT: PlacementRow[] = [
     dir: "changelog.d/",
     exemplar: "changelog.d/a-bin-from-a-photo.md",
     why: "Entries stage here and publish with the release; the /changelog page reads the directory live.",
-    lints: ["lint:changelog", "lint:no-emdash"],
+    lints: ["lint:changelog", "lint:no-emdash", "lint:changelog-names-ui"],
     notes: [
       "Read changelog.d/README.md first: frontmatter needs `type:` and `date:`, a feature also needs `docs_target:` and a `## docs` section.",
       "A feature PR also bumps the module version and updates docs; bugfixes are exempt from all three.",

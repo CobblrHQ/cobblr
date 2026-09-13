@@ -1,7 +1,7 @@
 // The handlers behind the two nav actions. All the work is matching what a
 // person SAID ("Spices") to what the nav holds, then calling the platform.
 
-import { platform } from "@cobblr/platform-contract";
+import { platform, ActionRefusal } from "@cobblr/platform-contract";
 import { Router } from "express";
 import type { ActionUndoStep } from "@cobblr/platform-contract/action-undo";
 import { matchEntry, splitNames } from "./match.js";
@@ -22,13 +22,13 @@ function registerHandlers(): void {
       const hit = matchEntry(name, entries);
       if (!hit) missing.push(name);
       else if ("ambiguous" in hit) {
-        throw new Error(
+        throw new ActionRefusal(
           `"${name}" could be ${hit.ambiguous.map((e) => e.label).join(" or ")} — which one?`,
         );
       } else targets.push(hit);
     }
     if (missing.length) {
-      throw new Error(
+      throw new ActionRefusal(
         `I could not find ${missing.map((m) => `"${m}"`).join(", ")} in your navigation. ` +
           `It has: ${entries.map((e) => e.label).join(", ")}.`,
       );

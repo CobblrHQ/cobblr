@@ -3,6 +3,7 @@
 // static price table (rough, updated on doc-PR cadence).
 
 import { platform, type AiCapability } from "@cobblr/platform-contract";
+import { providerError, providerSentence, reasonFromResponse, reasonFromTransportError, redactSecrets, retryAfterSecOf } from "@cobblr/platform-contract/provider-reason";
 import { visionPromptFor } from "./identify-prompt.js";
 import { rankImagesPromptFor } from "./rank-images-prompt.js";
 import { toolsOf, turnsOf, openAiToolsOf, openAiMessagesOf, parseOpenAiToolCalls } from "./tool-wire.js";
@@ -61,6 +62,10 @@ export function register(): void {
     invoke: async (ctx) => {
       const apiKey = String(ctx.credentials.api_key ?? "");
       if (!apiKey) throw new Error("openai: missing api_key");
+      // Every failure carries the reason the provider gave, with the key
+      // blanked out of the message (provider-reason.ts).
+      const failed = (status: number, body: string) =>
+        providerError("openai", reasonFromResponse(status, body), redactSecrets(`openai: ${status} ${body}`, [apiKey]), status, retryAfterSecOf(body));
       switch (ctx.capability) {
         case "embed-text": {
           const text = String(ctx.input.text ?? "");
@@ -72,7 +77,7 @@ export function register(): void {
             },
             body: JSON.stringify({ model: ctx.model, input: text }),
           });
-          if (!res.ok) throw new Error(`openai: ${res.status} ${await res.text()}`);
+          if (!res.ok) throw failed(res.status, await res.text());
           const body = (await res.json()) as {
             data: Array<{ embedding: number[] }>;
             usage: { prompt_tokens: number; total_tokens: number };
@@ -120,7 +125,7 @@ export function register(): void {
             },
             body: JSON.stringify(body),
           });
-          if (!res.ok) throw new Error(`openai: ${res.status} ${await res.text()}`);
+          if (!res.ok) throw failed(res.status, await res.text());
           const out = (await res.json()) as {
             choices: Array<{
               message: {
@@ -157,9 +162,13 @@ export function register(): void {
         const res = await fetch("https://api.openai.com/v1/models", {
           headers: { authorization: `Bearer ${apiKey}` },
         });
-        return { ok: res.ok, error: res.ok ? undefined : `status ${res.status}` };
+        if (res.ok) return { ok: true };
+        const body = await res.text().catch(() => "");
+        const reason = reasonFromResponse(res.status, body);
+        return { ok: false, reason, error: providerSentence(reason, { provider: "openai", retryAfterSec: retryAfterSecOf(body) }) };
       } catch (err) {
-        return { ok: false, error: (err as Error).message };
+        const reason = reasonFromTransportError(err);
+        return { ok: false, reason, error: providerSentence(reason, { provider: "openai" }), detail: redactSecrets((err as Error).message, [apiKey]) };
       }
     },
   });

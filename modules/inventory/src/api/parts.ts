@@ -15,9 +15,12 @@ import { suggestKindsFromPhoto } from "./suggest-kinds.js";
 import { instanceOf, instanceQtyUnit, sessionUser, tenantContext, tenantDb } from "../db.js";
 import { asyncHandler, badBody, requireCapability, requireRole } from "./util.js";
 import { routeUnknownToMetadata, preserveServerManaged, coerceMetadata } from "./route-helpers.js";
+import { castFieldValues } from "@cobblr/platform-contract/field-values";
 import { disclosureHandler, fieldsShowStockSignal, latchInstanceStock } from "./disclosure.js";
 import { computeReconcile } from "../reconcile.js";
 import { recordConsumption } from "./stock-ledger.js";
+import { isLowStock, modelIsLow, modelOfUnit, onHandCount, openUnitsFor, openUnitsSummary } from "../on-hand.js";
+import { consumptionUnitOf } from "../consumption-unit.js";
 
 export const partsRouter = Router({ mergeParams: true });
 
@@ -36,6 +39,34 @@ const UNIT_OF = "unit-of";
 function partKindOf(req: Request): string {
   const instance = instanceOf(req);
   return instance === "inventory" ? "inventory:part" : `${instance}:item`;
+}
+
+/** The unit the kind's per-unit consumption is measured in, from its own
+ *  field defs; null when it declares none. One rule with the detail panel
+ *  that mints an open unit (consumption-unit.ts). */
+async function consumptionUnitFor(req: Request): Promise<string | null> {
+  const ctx = tenantContext(req);
+  try {
+    return consumptionUnitOf(await platform().entities.fieldsFor(ctx.org.id, partKindOf(req)));
+  } catch {
+    return null;
+  }
+}
+
+/** The custom-field bag with each declared field in its declared type. A
+ *  form's number input hands over text, and a bag stored as it arrived held
+ *  "10" where the lot rule expected 10, so a restock from the shopping list
+ *  dated nothing while the row promised a date (2026-09-13). The kind's own
+ *  defs decide (@cobblr/platform-contract/field-values); a value that does
+ *  not parse is kept as typed. */
+async function typedFields(req: Request, bag: Record<string, unknown>): Promise<Record<string, unknown>> {
+  if (!Object.keys(bag).length) return bag;
+  const ctx = tenantContext(req);
+  try {
+    return castFieldValues(await platform().entities.fieldsFor(ctx.org.id, partKindOf(req)), bag);
+  } catch {
+    return bag;
+  }
 }
 
 /** How many units each of these models has on file, and when the newest was
@@ -422,11 +453,19 @@ partsRouter.get(
       pageRows = rows.slice(0, filter.limit);
     }
 
+    // A model tracked unit by unit keeps its opened skeins as child records;
+    // the count face alone read "0 yarn" over 160 m on the needles (on-hand.ts).
+    const openUnits = await openUnitsFor(db, pageRows.map((r) => r.id));
+    // What is left in an open unit is measured in the kind's consumption
+    // unit (metres off a skein), never the count's (consumption-unit.ts).
+    const remainderUnit = openUnits.size ? await consumptionUnitFor(req) : null;
     const items = pageRows.map((r) => {
       const qty = Number(r.qty);
       const assigned = Number(r.assigned_qty ?? 0);
       const minQty = r.min_qty != null ? Number(r.min_qty) : null;
       const available = qty - assigned;
+      const open = openUnitsSummary(openUnits.get(r.id), remainderUnit);
+      const onHand = onHandCount(qty, open?.remaining ?? []);
       // Days until warranty expires — null when no warranty date.
       let warranty_days_until: number | null = null;
       if (r.warranty_expires) {
@@ -442,10 +481,13 @@ partsRouter.get(
         approximate_qty: approximate,
         assigned_qty: assigned,
         available_qty: available,
+        on_hand: onHand,
+        open_units: open,
         // An estimate is never low stock: its `qty` is 0 because nobody counted,
         // not because the bin is empty, so comparing it to a minimum would put a
-        // reorder warning on a bin holding fifty of the thing.
-        low_stock: minQty != null && approximate == null && available <= minQty,
+        // reorder warning on a bin holding fifty of the thing. Compared on what
+        // is on hand, so an open skein with plenty left is not "out".
+        low_stock: isLowStock({ onHand, assigned, minQty, approximate }),
         warranty_days_until,
         location_name: null as string | null,
       };
@@ -782,11 +824,15 @@ partsRouter.get(
       unitsLatestAt,
       dismissedRaw: meta.reconcile_dismissed,
     });
+    const openRows = (await openUnitsFor(db, [row.id])).get(row.id);
+    const open = openUnitsSummary(openRows, openRows?.length ? await consumptionUnitFor(req) : null);
     res.json({
       ...row,
       units_count: unitsCount,
       units_latest_at: unitsLatestAt,
       reconcile,
+      on_hand: onHandCount(Number(row.qty), open?.remaining ?? []),
+      open_units: open,
     });
   }),
 );
@@ -981,6 +1027,7 @@ partsRouter.post(
     const db = tenantDb(req);
     const ctx = tenantContext(req);
     const session = sessionUser(req);
+    if (parsed.data.metadata) parsed.data.metadata = await typedFields(req, parsed.data.metadata as Record<string, unknown>);
 
     const inserted = await db
       .insertInto("inventory_parts")
@@ -1162,8 +1209,9 @@ partsRouter.patch(
     // Server-managed keys are dropped rather than merged: the client never owns
     // those, and merging one would be a write the server has to undo.
     const smNames = await platform().entities.serverManagedFields(ctx.org.id, "inventory:part");
-    const own = Object.fromEntries(
-      Object.entries(parsed.data).filter(([k]) => !smNames.includes(k)),
+    const own = await typedFields(
+      req,
+      Object.fromEntries(Object.entries(parsed.data).filter(([k]) => !smNames.includes(k))),
     );
 
     const updated = await db
@@ -1250,18 +1298,15 @@ partsRouter.patch(
       (req.body as Record<string, unknown>).metadata !== undefined;
     let hoistedMerge: Record<string, unknown> | null = null;
     if (parsed.data.metadata !== undefined) {
+      const typed = await typedFields(req, parsed.data.metadata as Record<string, unknown>);
       if (hadExplicitMetadata) {
         parsed.data.metadata = preserveServerManaged(
-          parsed.data.metadata as Record<string, unknown>,
+          typed,
           coerceMetadata((before as { metadata?: unknown }).metadata),
           smNames,
         );
       } else {
-        hoistedMerge = Object.fromEntries(
-          Object.entries(parsed.data.metadata as Record<string, unknown>).filter(
-            ([k]) => !smNames.includes(k),
-          ),
-        );
+        hoistedMerge = Object.fromEntries(Object.entries(typed).filter(([k]) => !smNames.includes(k)));
         delete (parsed.data as Record<string, unknown>).metadata;
       }
     }
@@ -1483,13 +1528,28 @@ partsRouter.post(
     // a decrease, so re-stocking doesn't re-alert.
     const newQty = Number(updated.qty);
     const minQty = updated.min_qty == null ? null : Number(updated.min_qty);
-    if (delta < 0 && minQty != null && minQty > 0 && newQty <= minQty) {
+    // On what is on hand, open units included (on-hand.ts): opening the last
+    // skein takes the count to 0 and must not put yarn on the shopping list.
+    const onHand = onHandCount(newQty, (await openUnitsFor(db, [updated.id])).get(updated.id) ?? []);
+    if (delta < 0 && minQty != null && minQty > 0 && isLowStock({ onHand, minQty })) {
       await platform().events.emit("inventory.stock.low", {
         orgId: ctx.org.id,
         partId: updated.id,
         newQty,
         minQty,
       });
+    }
+    // Metres taken off an open skein are stock taken off its model: when
+    // that empties the skein, the model may be down to its minimum with no
+    // write of its own to notice. Announce for the model.
+    if (delta < 0) {
+      const model = await modelOfUnit(db, updated.id);
+      if (model && model.minQty != null && model.minQty > 0) {
+        const state = await modelIsLow(db, model);
+        if (state.low) {
+          await platform().events.emit("inventory.stock.low", { orgId: ctx.org.id, partId: model.id, newQty: state.onHand, minQty: model.minQty });
+        }
+      }
     }
 
     res.json({ ...updated, qty: newQty });

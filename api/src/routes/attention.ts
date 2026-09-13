@@ -17,6 +17,7 @@ import { Router } from "express";
 import { requireAuth } from "../auth/middleware.js";
 import { withTenant } from "../middleware/tenant.js";
 import { facesForKind } from "../platform/faces.js";
+import { resolveKind } from "../platform/entities.js";
 import { viewQuery } from "@cobblr/platform-contract";
 import { dueState, todayFrom } from "../lib/due-day.js";
 
@@ -34,6 +35,13 @@ interface AttentionEntry {
   /** Kind-specific action payload: tasks carry {task}; bed-clear carries
    *  {connection_id, device_id} — enough for the client's inline actions. */
   action?: Record<string, string>;
+  /** The record the entry is about, by the kind the registry names it (a
+   *  named instance's own `<name>:item`; the default instance's records are
+   *  the module's kind, `inventory:part`) and its bare name. This is what
+   *  lets an answer built from the feed open the thing it names: "what is
+   *  low?" named Cumin in plain text with nothing to open when the feed
+   *  carried titles only (2026-09-13). Absent for a capture or a device. */
+  record?: { kind: string; id: string; name: string };
 }
 
 interface AttentionRow {
@@ -136,10 +144,21 @@ attentionRouter.get("/", requireAuth, withTenant, async (req, res, next) => {
         const rowsOf = items?.items ?? [];
         if (rowsOf.length === 0) return;
         const route = inst.is_default ? `/${inst.module_name}` : `/instances/${inst.instance_name}`;
+        // The kind a chip can open: the named instance's own, or for the
+        // default instance the module's primary kind (the registry has no
+        // `inventory:item`; its records are `inventory:part`).
+        const recordKind = inst.is_default
+          ? (await resolveKind(req.tenant!.org.id, `${inst.instance_name}:item`).catch(() => ({ base: `${inst.instance_name}:item` }))).base
+          : `${inst.instance_name}:item`;
+        const recordOf = (id: string, name: string) => ({ kind: recordKind, id, name });
 
-        // Low stock: real columns on inventory-family rows.
+        // Low stock: real columns on inventory-family rows, compared on what
+        // is on hand (the list derives it: unopened count plus every open
+        // unit still holding something), so an open skein with metres left
+        // is not "out".
+        const onHandOf = (r: Record<string, unknown>) => Number(r.on_hand ?? r.qty);
         const low = rowsOf.filter((r) => {
-          const q = Number(r.qty), m = Number(r.min_qty);
+          const q = onHandOf(r), m = Number(r.min_qty);
           return Number.isFinite(q) && Number.isFinite(m) && r.min_qty !== null && q <= m;
         });
         if (low.length > 0) {
@@ -151,7 +170,8 @@ attentionRouter.get("/", requireAuth, withTenant, async (req, res, next) => {
             route,
             entries: low.slice(0, 8).map((r) => ({
               id: String(r.id ?? r.name ?? "item"),
-              title: `${String(r.name ?? "item")} — ${Number(r.qty)} left (min ${Number(r.min_qty)})`,
+              title: `${String(r.name ?? "item")} — ${onHandOf(r)} left (min ${Number(r.min_qty)})`,
+              ...(r.id ? { record: recordOf(String(r.id), String(r.name ?? "item")) } : {}),
             })),
           });
         }
@@ -228,7 +248,7 @@ attentionRouter.get("/", requireAuth, withTenant, async (req, res, next) => {
             count: overdue.length,
             sample: overdue.slice(0, 3).map((d) => d.name),
             route: dueRoute,
-            entries: overdue.slice(0, 8).map((d) => ({ id: d.id, title: `${d.name} — ${ago(d.when)}`, action: { record: d.id, kind } })),
+            entries: overdue.slice(0, 8).map((d) => ({ id: d.id, title: `${d.name} — ${ago(d.when)}`, action: { record: d.id, kind }, record: recordOf(d.id, d.name) })),
           });
         if (dueToday.length > 0)
           rows.push({
@@ -237,7 +257,7 @@ attentionRouter.get("/", requireAuth, withTenant, async (req, res, next) => {
             count: dueToday.length,
             sample: dueToday.slice(0, 3).map((d) => d.name),
             route: dueRoute,
-            entries: dueToday.slice(0, 8).map((d) => ({ id: d.id, title: `${d.name} — today`, action: { record: d.id, kind } })),
+            entries: dueToday.slice(0, 8).map((d) => ({ id: d.id, title: `${d.name} — today`, action: { record: d.id, kind }, record: recordOf(d.id, d.name) })),
           });
         if (upcoming.length > 0)
           rows.push({
@@ -246,7 +266,7 @@ attentionRouter.get("/", requireAuth, withTenant, async (req, res, next) => {
             count: upcoming.length,
             sample: upcoming.slice(0, 3).map((d) => d.name),
             route: dueRoute,
-            entries: upcoming.slice(0, 8).map((d) => ({ id: d.id, title: `${d.name} — ${ahead(d.when)}`, action: { record: d.id, kind } })),
+            entries: upcoming.slice(0, 8).map((d) => ({ id: d.id, title: `${d.name} — ${ahead(d.when)}`, action: { record: d.id, kind }, record: recordOf(d.id, d.name) })),
           });
       }),
     );
@@ -266,7 +286,12 @@ attentionRouter.get("/", requireAuth, withTenant, async (req, res, next) => {
       );
       const overdueTasks = openTasks.filter((t) => dueState(t.due_date, today, WINDOW_DAYS) === "overdue");
       const upcomingTasks = openTasks.filter((t) => ["today", "upcoming"].includes(dueState(t.due_date, today, WINDOW_DAYS)));
-      const taskEntry = (t: { id?: string; title: string }) => ({ id: String(t.id ?? t.title), title: t.title, action: { task: String(t.id ?? "") } });
+      const taskEntry = (t: { id?: string; title: string }) => ({
+        id: String(t.id ?? t.title),
+        title: t.title,
+        action: { task: String(t.id ?? "") },
+        ...(t.id ? { record: { kind: "projects:task", id: String(t.id), name: t.title } } : {}),
+      });
       if (overdueTasks.length > 0)
         rows.push({
           kind: "overdue",

@@ -1,0 +1,6 @@
+{
+  "_fixture": "e2e/fixtures/bench-vision/receipt.png",
+  "image_ahash": "c3030c3c3dffffff",
+  "capability": "identify-image",
+  "reply": "{\"name\": \"Hardware store receipt\", \"observations\": \"A printed store receipt listing three purchased items with prices and a total.\", \"category\": \"receipt\", \"entity_type\": null, \"confidence\": 0.92}"
+}

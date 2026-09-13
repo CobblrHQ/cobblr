@@ -1,0 +1,6 @@
+{
+  "_fixture": "e2e/fixtures/bench-vision/label.png",
+  "image_ahash": "0000ffff0fffffff",
+  "capability": "identify-image",
+  "reply": "{\"name\": \"Printed shipping label\", \"observations\": \"A printed label with a barcode and an address block.\", \"category\": \"label\", \"entity_type\": \"part\", \"confidence\": 0.7}"
+}

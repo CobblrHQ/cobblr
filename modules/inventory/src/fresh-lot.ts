@@ -16,7 +16,7 @@
 // because the shopping row predicts it; here are the writes that follow from
 // it. Pure, so it is a test.
 
-export { startsFreshLot } from "@cobblr/platform-contract/fresh-lot";
+export { startsFreshLot, shelfLifeDaysOf } from "@cobblr/platform-contract/fresh-lot";
 
 /** The role-field writes that go with a lot arriving today.
  *

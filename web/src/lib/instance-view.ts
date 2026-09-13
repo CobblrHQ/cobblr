@@ -6,10 +6,15 @@
 // coming back through the nav dropped them to the table again (2026-09-12).
 // Nothing declared a first view and nothing remembered a pick.
 //
-// The rule, in order: the URL's own `?view=` (a link means exactly that); the
-// view this device last picked for this collection (Table counts as a pick);
-// the view the bundle marked `is_default`; else the table.
+// The rule, in order: the URL's own `?view=` (a link means exactly that, and
+// `?view=table` means the table, this once, without remembering); the view
+// this device last picked for this collection (Table counts as a pick); the
+// view the bundle marked `is_default`; else the table.
 const KEY = (slug: string, instance: string) => `cobblr.instanceView.${slug}.${instance}`;
+
+/** The `?view=` value that names the table: a link to "everything" from a
+ *  filtered view's empty state, honoured once and never remembered. */
+export const TABLE = "table";
 
 /** Read the view this device last opened for a collection: a view id, ""
  *  for the table, or null when nothing was ever picked here. */
@@ -41,6 +46,7 @@ export function initialViewId(args: {
   remembered: string | null;
   views: ReadonlyArray<{ id: string; is_default?: boolean; pinned?: boolean }>;
 }): string | null {
+  if (args.urlView === TABLE) return null;
   if (args.urlView) return args.urlView;
   if (args.remembered === "") return null;
   if (args.remembered && args.views.some((v) => v.id === args.remembered)) return args.remembered;

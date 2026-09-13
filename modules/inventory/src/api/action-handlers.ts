@@ -33,7 +33,8 @@ import {
   type Batch,
 } from "../batches.js";
 import { observation, swapFreshObservations, type StockObservation } from "../observations.js";
-import { arrivedToday, freshLotStamps, startsFreshLot } from "../fresh-lot.js";
+import { arrivedToday, freshLotStamps, shelfLifeDaysOf, startsFreshLot } from "../fresh-lot.js";
+import { isLowStock, modelIsLow, modelOfUnit, onHandCount, openUnitsFor } from "../on-hand.js";
 import { BELOW_ZERO, NOTHING_ON_HAND, floorDelta } from "../stock-floor.js";
 
 let registered = false;
@@ -55,7 +56,7 @@ export function isPerishable(metadata: unknown): boolean {
   const md = (metadata as Record<string, unknown> | null) ?? {};
   if (typeof md.expires_on === "string" && md.expires_on) return true;
   if (Array.isArray(md.batches) && md.batches.length > 0) return true;
-  if (typeof md.shelf_life_days === "number" && md.shelf_life_days > 0) return true;
+  if (shelfLifeDaysOf(md.shelf_life_days) !== null) return true;
   return false;
 }
 
@@ -154,8 +155,19 @@ async function applyStockDelta(
   // list", so a one-tap "use one" that crosses the threshold reorders for free.
   const newQty = Number(updated.qty);
   const minQty = updated.min_qty == null ? null : Number(updated.min_qty);
-  if (applied < 0 && minQty != null && minQty > 0 && newQty <= minQty) {
+  // On what is on hand, open units included (on-hand.ts).
+  const onHand = onHandCount(newQty, (await openUnitsFor(db, [updated.id])).get(updated.id) ?? []);
+  if (applied < 0 && minQty != null && minQty > 0 && isLowStock({ onHand, minQty })) {
     await platform().events.emit("inventory.stock.low", { orgId, partId: updated.id, newQty, minQty });
+  }
+  // Taken off an open unit: its model may now be down to its minimum with no
+  // write of its own to notice (on-hand.ts).
+  if (applied < 0) {
+    const model = await modelOfUnit(db, updated.id);
+    if (model && model.minQty != null && model.minQty > 0) {
+      const state = await modelIsLow(db, model);
+      if (state.low) await platform().events.emit("inventory.stock.low", { orgId, partId: model.id, newQty: state.onHand, minQty: model.minQty });
+    }
   }
   // `delta` is what actually moved (the inverse of this is +delta); a clamp
   // says what was asked and why less happened.
@@ -487,8 +499,10 @@ async function withBatches(
   const expiresOn = typeof md.expires_on === "string" ? md.expires_on : null;
 
   const current = reconcileToQty(batchesFrom(md, qtyNow, expiresOn), qtyNow);
-  const shelfLifeDays =
-    typeof md.shelf_life_days === "number" && md.shelf_life_days > 0 ? md.shelf_life_days : null;
+  // Through the one reader the shopping row uses too (fresh-lot.ts): a
+  // number field typed on a form arrives as "10", and a `typeof` check here
+  // dated no lot while the row promised one.
+  const shelfLifeDays = shelfLifeDaysOf(md.shelf_life_days);
   const today = localToday(new Date(), opts.timezone ?? "UTC");
 
   // The CALLER decides how much stock moves; the lots only describe it. This
@@ -780,10 +794,7 @@ async function withBatches(
       if (!row) return { ok: false, error: "missing_part" };
       const md = ((row.metadata as Record<string, unknown> | null) ?? {}) as Record<string, unknown>;
       const today = localToday(new Date(), args.timezone ?? "UTC");
-      const openedDays =
-        typeof md.shelf_life_opened_days === "number" && md.shelf_life_opened_days > 0
-          ? md.shelf_life_opened_days
-          : null;
+      const openedDays = shelfLifeDaysOf(md.shelf_life_opened_days);
       // Opening does not change how many you have, so the lot count is untouched.
       // What changes is the DEADLINE on the one you opened: if we know the opened
       // clock, it takes over, because it is much shorter than the sealed one.
@@ -944,7 +955,8 @@ async function withBatches(
         reason,
       });
       const minQty = updated.min_qty == null ? null : Number(updated.min_qty);
-      if (minQty != null && minQty > 0 && newQty <= minQty) {
+      const onHand = onHandCount(newQty, (await openUnitsFor(db, [updated.id])).get(updated.id) ?? []);
+      if (minQty != null && minQty > 0 && isLowStock({ onHand, minQty })) {
         await platform().events.emit("inventory.stock.low", {
           orgId: ctx.orgId,
           partId: updated.id,

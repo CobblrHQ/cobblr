@@ -1,12 +1,12 @@
 {
   "manifest": {
     "id": "cobblr.flagship.home-inventory",
-    "version": "0.5.5",
+    "version": "0.5.6",
     "name": "Home Inventory",
     "description": "Your belongings as their own room-by-room catalog: make/model + condition, filed by room. Scan to add, print labels for boxes, optional insurance valuation.",
     "author": "Cobblr",
     "released_at": "2026-09-01",
-    "changelog": "Three optional extras, each a checkbox: Scan to add (point your phone at a thing and it lands in the catalog with a photo and a name), Labels (print a QR label for a thing or a box on a Bluetooth label printer), and Starter rooms (Kitchen, Living room, Bedroom, Bathroom, Garage, Closet, ready on day one). Earlier: Rooms are now real Locations. The separate “Room” field is gone: items file into the workspace’s Location tree (rooms, and bins inside them) like everything else, so a thing has one place, not two. Your existing room values move over automatically on this update: each becomes a Location and its items are filed into it, nothing lost. The pinned “By room” view still groups your catalog by room (now off the real Location), and the claim-ready Insurance view too. Earlier: Home Inventory became its OWN table (an inventory instance) with only the fields a home catalog needs, plain-language hints, and optional Insurance valuation.",
+    "changelog": "The Labels option says what it gives without a printer: a Print label button queues a QR label, the Labels page prints the queue, and a label printer under Print prints as you go. Earlier: Three optional extras, each a checkbox: Scan to add (point your phone at a thing and it lands in the catalog with a photo and a name), Labels (print a QR label for a thing or a box on a Bluetooth label printer), and Starter rooms (Kitchen, Living room, Bedroom, Bathroom, Garage, Closet, ready on day one). Earlier: Rooms are now real Locations. The separate “Room” field is gone: items file into the workspace’s Location tree (rooms, and bins inside them) like everything else, so a thing has one place, not two. Your existing room values move over automatically on this update: each becomes a Location and its items are filed into it, nothing lost. The pinned “By room” view still groups your catalog by room (now off the real Location), and the claim-ready Insurance view too. Earlier: Home Inventory became its OWN table (an inventory instance) with only the fields a home catalog needs, plain-language hints, and optional Insurance valuation.",
     "requires": [
       {
         "module": "inventory"
@@ -166,7 +166,7 @@
         "key": "print-labels",
         "name": "Labels",
         "question": "Print QR labels for things and boxes?",
-        "description": "One tap prints a QR label on a Bluetooth label printer, so a box says what is in it and a scan of the label opens the record.",
+        "description": "A Print label button on every thing and box queues a QR label; print the queue from the Labels page, or set up a label printer under Print and a tap prints it there and then. A scan of the label opens the record.",
         "default": false,
         "requires": [
           {

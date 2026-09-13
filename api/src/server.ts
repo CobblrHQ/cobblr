@@ -9,6 +9,8 @@
 // → listen. That keeps module wiring out of the app constructor and
 // makes the boot sequence explicit.
 
+import { pendingMigrationSummary } from "./modules/enable.js";
+import { errors5xxRecent, noteResponse } from "./platform/error-rate.js";
 import compression from "compression";
 import cors from "cors";
 import express, { type Application, type Router } from "express";
@@ -24,6 +26,7 @@ import { changelogRouter } from "./routes/changelog.js";
 import { meRouter } from "./routes/me.js";
 import { discordInteractionsRouter } from "./routes/discord-interactions.js";
 import { testSupportRouter } from "./routes/test-support.js";
+import { testDoorsEnabled } from "./platform/test-doors.js";
 import { connectionsRouter, workspaceAiSharesRouter } from "./routes/connections.js";
 import { modulesRouter } from "./routes/modules.js";
 import { orgsRouter } from "./routes/orgs.js";
@@ -47,7 +50,8 @@ import { feedbackRouter, feedbackInboundRouter } from "./routes/feedback.js";
 import { receiptInboundRouter, receiptAddressRouter } from "./routes/receipt-ingest.js";
 import { inboundEmailRouter } from "./routes/inbound-email.js";
 import { sandboxInstallRouter } from "./routes/sandbox-install.js";
-import { registryRouter, registryPublicRouter } from "./routes/registry.js";
+import { registryRouter, registryPublicRouter, externalRegistry } from "./routes/registry.js";
+import { listFlagshipManifests } from "./lib/flagship-bundles.js";
 import { customRolesRouter } from "./routes/custom-roles.js";
 import { driveRouter } from "./routes/drive.js";
 import { resolveRouter } from "./routes/resolve.js";
@@ -158,16 +162,43 @@ export function createApp(): AppHandles {
   // kernel routes and every module router. See platform/product-events.ts.
   app.use(productEventsObserver);
 
+  // Every response's status, noted for /healthz's errors_5xx_5m. On `finish`
+  // rather than in an error handler, so a 500 written by a router that never
+  // reaches next(err) still counts.
+  app.use((req, res, next) => {
+    res.on("finish", () => noteResponse(res.statusCode, req.originalUrl));
+    next();
+  });
+
   const v1 = express.Router();
 
-  v1.get("/healthz", (_req, res) => {
+  v1.get("/healthz", async (_req, res) => {
+    // Two numbers a deploy tool reads before trusting this container (#2944):
+    // migrations the boot-time sync would still open (zero after a good boot;
+    // the roll refuses a container that says otherwise, naming the modules),
+    // and 5xx answers in the last five minutes, which survive the roll only by
+    // being re-read here rather than tailed from a log that leaves with the
+    // container. A failure to compute the first is reported as unknown, not as
+    // zero: unknown is not healthy.
+    let pending: { count: number; modules: string[] } | null;
+    try {
+      pending = await pendingMigrationSummary();
+    } catch {
+      pending = null;
+    }
     res.json({
       ok: true,
+      migrations_pending: pending,
+      errors_5xx_5m: errors5xxRecent(),
       service: "cobblr-api",
       env: env.NODE_ENV,
       // Deploy label (staging/production/development) for the web's env
       // indicator. `||` not `??`: COBBLR_ENV arrives as "" when unset.
       deploy_env: env.COBBLR_ENV || env.NODE_ENV,
+      // Test doors (the camera page's "scan an image file" and its kin): open
+      // on a test surface, never on production or canary. The pages read
+      // this rather than guessing from the label (platform/test-doors.ts).
+      test_doors: testDoorsEnabled(env.COBBLR_ENV || env.NODE_ENV, process.env.COBBLR_TEST_DOORS),
       // Runtime build sha (set by the deploy env, not baked in the image) —
       // the web polls this to offer "new version — refresh" to open tabs.
       build_sha: process.env.COBBLR_BUILD_SHA || null,
@@ -176,6 +207,11 @@ export function createApp(): AppHandles {
       // re-tags a nightly digest bit-for-bit, so the bytes cannot know
       // their own CalVer. null on internal deployments.
       version: process.env.COBBLR_VERSION || null,
+      // Where bundles beyond this build's own catalog come from: the external
+      // index's host, or false. A person reads it before installing by id, and
+      // the install route names it when an id is unknown (#2922).
+      registry: externalRegistry(),
+      catalog_bundles: listFlagshipManifests("all").length,
       time: new Date().toISOString(),
     });
   });

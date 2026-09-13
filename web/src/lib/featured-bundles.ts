@@ -717,7 +717,7 @@ export const FEATURED_BUNDLES: FeaturedBundle[] = [
       "Track the fridge/pantry with expiry + storage, and auto-build a shopping list when something runs low or is about to expire. Check an item off → it restocks.",
     manifest: {
       id: "cobblr.flagship.groceries",
-      version: "0.10.7",
+      version: "0.11.0",
       // What its items are actually CALLED. A bundle's suggestion has to be
       // corroborated by the capture's own text before it is trusted, and a
       // category whose members never share its name can never corroborate:
@@ -886,7 +886,7 @@ export const FEATURED_BUNDLES: FeaturedBundle[] = [
       ],
       released_at: "2026-09-12",
       changelog:
-        "The installed Groceries table now routes with every word the bundle declares, so a scanned drink or snack lands here first instead of in plain Inventory. Groceries opens on What's on hand, the pantry board, rather than the table, and remembers the view you pick. Checking an item off the shopping list dates the fresh stock: bought today, good until today plus its shelf life, instead of inheriting the last lot's dates. The saved views that promise an order (Re-buy soonest, How often you re-buy, Use it or lose it) now deliver it on the table itself, soonest first. Checking an item off the shopping list now adds exactly what you bought, once: the restock and purchase wires were declared twice and both fired. The shopping row says what checking it off will do. Scanning a grocery now suggests this bundle. The scanner would pick it and then quietly file the item under plain Inventory instead, because a bundle's suggestion has to be corroborated by the item's own text and nothing called Tomatoes Roma or Croissant contains the word grocery. The bundle now says what its items are called. Marks the expiry date as an expiry field, so re-buying something that already went off is recorded as waste rather than as something you used up. Fixes the status dots on the What's on hand view, which never showed anything about expiry. Adds a What's on hand app: a vending-machine view of the kitchen with a quantity badge and a status dot per item, plus a use-it-or-lose-it list sorted by expiry. Answers what do we actually have without opening the fridge. Learns your cadence from ordinary shopping. Checking an item off the shopping list now also records a purchase in the consumption ledger (when the Cadence capability is on), so the system can start predicting when you will run out instead of only reacting to a low-stock threshold. Same fields, same restock behaviour.",
+        "The Groceries fields now live on the Groceries table only. An early install also put a copy of them on plain Inventory, which made every inventory table look perishable; food that was still filed in plain Inventory moves into Groceries on the next start, each move noted in the activity log, and the copy is removed. The installed Groceries table now routes with every word the bundle declares, so a scanned drink or snack lands here first instead of in plain Inventory. Groceries opens on What's on hand, the pantry board, rather than the table, and remembers the view you pick. Checking an item off the shopping list dates the fresh stock: bought today, good until today plus its shelf life, instead of inheriting the last lot's dates. The saved views that promise an order (Re-buy soonest, How often you re-buy, Use it or lose it) now deliver it on the table itself, soonest first. Checking an item off the shopping list now adds exactly what you bought, once: the restock and purchase wires were declared twice and both fired. The shopping row says what checking it off will do. Scanning a grocery now suggests this bundle. The scanner would pick it and then quietly file the item under plain Inventory instead, because a bundle's suggestion has to be corroborated by the item's own text and nothing called Tomatoes Roma or Croissant contains the word grocery. The bundle now says what its items are called. Marks the expiry date as an expiry field, so re-buying something that already went off is recorded as waste rather than as something you used up. Fixes the status dots on the What's on hand view, which never showed anything about expiry. Adds a What's on hand app: a vending-machine view of the kitchen with a quantity badge and a status dot per item, plus a use-it-or-lose-it list sorted by expiry. Answers what do we actually have without opening the fridge. Earlier changes are in the bundle's history.",
       name: "Groceries",
       description:
         "Turn inventory + lists into a kitchen system: track food with expiry + storage fields, an auto grocery list on low-stock/expiry, restock on check-off.",
@@ -922,26 +922,14 @@ export const FEATURED_BUNDLES: FeaturedBundle[] = [
       // record, so one check-off restocked twice and filed two purchases
       // (2026-09-12). lint:bundle-content refuses a twin at both scopes.
       wires: [],
-      field_defs: [
-        { entity_kind: "inventory:part", name: "shelf_life_days", display_label: "Good for (days)", type: "number", position: 1, help: "How long this keeps from the day it arrives. Used to date a new one when you add it, so you never type a use-by. Leave blank and nothing is dated for you." },
-        { entity_kind: "inventory:part", name: "shelf_life_opened_days", display_label: "Once opened, good for (days)", type: "number", position: 2, help: "A lemon lasts weeks whole and days once cut. Opening one starts this shorter clock on that one only; the unopened ones keep their own dates." },
-        { entity_kind: "inventory:part", name: "grace_days", display_label: "Still fine for (days past)", type: "number", position: 3, help: "Food does not go off at midnight. Inside this window past the use-by it is mentioned rather than alarming; beyond it you are asked whether you threw it out." },
-        { entity_kind: "inventory:part", name: "storage_requirement", display_label: "Must be kept", type: "text", position: 0, choices: ["frozen", "refrigerated", "ambient"], help: "How this has to be kept, which is not the same as where it currently is. Filled in from what the item is when you scan it, and left blank when that is not clear enough to say. Anything you choose here is used instead." },
-        { entity_kind: "inventory:part", name: "expires_on", display_label: "Expires", type: "date", position: 1, field_role: "expiry" },
-        // Shelf life counts from the day you BOUGHT it, and a receipt is often
-        // scanned days later - so this cannot be the scan date. The receipt
-        // parser fills it by its role.
-        //
-        // Deliberately the SAME NAME as the Provenance preset's field: a
-        // per-kind def shadows a trait-scoped one of the same name
-        // (resolveFieldDefsForKind), so a workspace with both gets ONE field
-        // rather than two dates meaning the same thing, and a workspace with
-        // neither the preset nor this bundle is unaffected.
-        { entity_kind: "inventory:part", name: "acquired_on", display_label: "Bought on", type: "date", position: 2, field_role: "acquired-on" },
-        { entity_kind: "inventory:part", name: "opened_on", display_label: "Opened", type: "date", position: 2 },
-        { entity_kind: "inventory:part", name: "storage", display_label: "Storage", type: "text", position: 3, choices: ["Fridge", "Freezer", "Pantry", "Counter", "Spice rack"] },
-        { entity_kind: "inventory:part", name: "food_category", display_label: "Food category", type: "text", position: 4, choices: ["Produce", "Dairy", "Meat", "Bakery", "Frozen", "Canned", "Dry goods", "Condiments", "Beverages", "Snacks"] },
-      ],
+      // The food fields live on the groceries INSTANCE below and nowhere else.
+      // They used to be declared here too, on inventory:part, "for a workspace
+      // whose food still lived in plain Inventory", and the twin cost twice:
+      // its expiry role made every inventory instance perishable (#2849), and
+      // a wire twin of the same shape restocked twice (#2787). A boot pass
+      // moved the last food rows out of plain Inventory and dropped the twin
+      // (#2860); lint:bundle-fields-on-own-kinds refuses a base-kind field.
+      field_defs: [],
       saved_views: [
         // The vending-machine renderer: slots, a qty badge, one status dot. It
         // answers "what do we actually have" at a glance, which is the question
@@ -1299,6 +1287,7 @@ export const FEATURED_BUNDLES: FeaturedBundle[] = [
       "Run a workshop: keep parts in inventory, define Builds (bills of materials) of those parts, see how many you can build right now, and auto-add anything that runs low to a parts shopping list you check off to restock.",
     manifest: {
       id: "cobblr.flagship.maker-workshop",
+      base_kind_fields_reason: "Describes the parts already in plain Inventory (part type, package, value, datasheet) rather than a table of its own; written before instances existed, and its fields belong to the workshop's own stock.",
       catalog: "disabled",
       version: "0.1.2",
       name: "Maker Workshop",
@@ -1503,6 +1492,7 @@ export const FEATURED_BUNDLES: FeaturedBundle[] = [
       "Vintage hand tool collection: model, era, finish, condition. Prints labels with model + era so you can find them across a workshop.",
     manifest: {
       id: "cobblr.community.vintage-tools",
+      base_kind_fields_reason: "Adds maker, model, era, finish and provenance to hand tools already kept in plain Inventory; written before instances existed, for a collector whose tools are their stock.",
       catalog: "disabled",
       version: "0.1.0",
       name: "Vintage Tools",
@@ -1541,6 +1531,7 @@ export const FEATURED_BUNDLES: FeaturedBundle[] = [
       "3D printer parts: track voltage, datasheet URL, footprint, and a print-label template tuned for narrow bin labels. Uses the native `manufacturer` field.",
     manifest: {
       id: "cobblr.community.printer-parts",
+      base_kind_fields_reason: "Adds voltage, footprint and datasheet to the printer parts already kept in plain Inventory; a drawer skin on the workshop's own stock, not a table of its own, written before instances existed.",
       released_at: "2026-06-20",
       changelog: "First catalogued release: the printer-parts drawer skin on inventory.",
       catalog: "extended",
@@ -1580,6 +1571,7 @@ export const FEATURED_BUNDLES: FeaturedBundle[] = [
       "Garden tracker: plants as assets with species, sun exposure, planted date, and a repeating watering schedule that the recurrence scanner picks up automatically.",
     manifest: {
       id: "cobblr.community.garden",
+      base_kind_fields_reason: "Adds species, planting date, sun and a watering schedule to plants kept as plain Assets; written before instances existed, and a plant is an asset the workspace already has.",
       released_at: "2026-07-02",
       changelog: "First catalogued release: plants as assets with species, sun exposure, and a repeating watering schedule.",
       catalog: "extended",
@@ -1874,6 +1866,7 @@ export const FEATURED_BUNDLES: FeaturedBundle[] = [
       "Tool library: checkout/checkin tracking. Marks machines with borrower, due_date, condition. Pair with the labels module to print barcoded check-out tags.",
     manifest: {
       id: "cobblr.community.tool-library",
+      base_kind_fields_reason: "Adds lending fields (borrower, due date, condition, deposit) to the machines already kept as Machines; lending is a face on the workspace's own tools, not a table of its own.",
       catalog: "disabled",
       version: "0.1.0",
       name: "Tool Library",
@@ -2481,13 +2474,13 @@ export const FEATURED_BUNDLES: FeaturedBundle[] = [
     ],
     manifest: {
       id: "cobblr.flagship.home-inventory",
-      version: "0.5.1",
+      version: "0.5.2",
       name: "Home Inventory",
       description: "Your belongings as their own room-by-room catalog: make/model + condition, filed by room. Scan to add, print labels for boxes, optional insurance valuation.",
       author: "Cobblr",
       released_at: "2026-09-01",
       changelog:
-        "Three optional extras, each a checkbox: Scan to add (point your phone at a thing and it lands in the catalog with a photo and a name), Labels (print a QR label for a thing or a box on a Bluetooth label printer), and Starter rooms (Kitchen, Living room, Bedroom, Bathroom, Garage, Closet, ready on day one). Earlier: Rooms are now real Locations. The separate “Room” field is gone: items file into the workspace’s Location tree (rooms, and bins inside them) like everything else, so a thing has one place, not two. Your existing room values move over automatically on this update: each becomes a Location and its items are filed into it, nothing lost. The pinned “By room” view still groups your catalog by room (now off the real Location), and the claim-ready Insurance view too. Earlier: Home Inventory became its OWN table (an inventory instance) with only the fields a home catalog needs, plain-language hints, and optional Insurance valuation.",
+        "The Labels option says what it gives without a printer: a Print label button queues a QR label, the Labels page prints the queue, and a label printer under Print prints as you go. Earlier: Three optional extras, each a checkbox: Scan to add (point your phone at a thing and it lands in the catalog with a photo and a name), Labels (print a QR label for a thing or a box on a Bluetooth label printer), and Starter rooms (Kitchen, Living room, Bedroom, Bathroom, Garage, Closet, ready on day one). Earlier: Rooms are now real Locations. The separate “Room” field is gone: items file into the workspace’s Location tree (rooms, and bins inside them) like everything else, so a thing has one place, not two. Your existing room values move over automatically on this update: each becomes a Location and its items are filed into it, nothing lost. The pinned “By room” view still groups your catalog by room (now off the real Location), and the claim-ready Insurance view too. Earlier: Home Inventory became its OWN table (an inventory instance) with only the fields a home catalog needs, plain-language hints, and optional Insurance valuation.",
       requires: [{ module: "inventory" }],
       // Always-on base: a "Home Inventory" instance of inventory.
       provides_instances: [
@@ -2543,7 +2536,10 @@ export const FEATURED_BUNDLES: FeaturedBundle[] = [
         key: "print-labels",
         name: "Labels",
         question: "Print QR labels for things and boxes?",
-        description: "One tap prints a QR label on a Bluetooth label printer, so a box says what is in it and a scan of the label opens the record.",
+        // What this gives WITHOUT a printer, first: the Print module is not
+        // turned on here, and a press queues. Saying "one tap prints" made a
+        // queued label read as a failure (#2884).
+        description: "A Print label button on every thing and box queues a QR label; print the queue from the Labels page, or set up a label printer under Print and a tap prints it there and then. A scan of the label opens the record.",
         default: false,
         requires: [{ module: "labels" }],
       },

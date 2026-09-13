@@ -48,14 +48,29 @@ export interface CorpusCase {
   on?: { label: string; summary?: string };
   /** The turns before this one, when the sentence only means something after
    *  them. "put it back" after a change the assistant made is the card's
-   *  Undo, and a bench that sent it alone was scoring "put what back?". */
-  before?: Array<{ role: "user" | "assistant"; content: string }>;
+   *  Undo, and a bench that sent it alone was scoring "put what back?".
+   *  `applied` marks an assistant turn that CHANGED something: its card holds
+   *  an Undo, and the widget presses it for a control word before any model
+   *  is asked (ChatWidget send()), so the bench scores that sentence by code
+   *  rather than asking a model the product never asks. */
+  before?: Array<{ role: "user" | "assistant"; content: string; applied?: boolean }>;
   /** Broad bucket, for coverage reporting. */
   cat: string;
   no_ai: NoAiExpect;
   /** Informative: "answer" | "read:<tool>" | "action:<id>" | "create:<kind>"
    *  | "update" | "delete" | "escort:<dest>" | "clarify". */
   ai: string;
+  /** The records the answer must NAME AS CHIPS: their titles, as the bench
+   *  workspace holds them. A read answer that says "The Hobbit" in plain text
+   *  with nothing to open is the failure this scores (the 2026-09-13 review):
+   *  the server returns `mentions` for the records the turn read whose title
+   *  the words carry, and the bench checks each of these is among them. */
+  names?: string[];
+  /** Words the answer must SAY, case-insensitive: "Living room" for a
+   *  where-question about a record that lives there. The collection a record
+   *  sits in is not where it is (the 2026-09-13 continuation review was told
+   *  "in the Home Inventory list"). */
+  says?: string[];
 }
 
 const answer = (rule: string) => ({ kind: "answer", rule } as const);
@@ -108,8 +123,11 @@ export const CHAT_CORPUS: CorpusCase[] = [
   // on the rig, 2026-09-13): right count, wrong road, and a second ledger row
   // where the card already had the way back. With AI off the control word
   // resolves against the prior turn's ledger in code; with AI on the widget
-  // now does the same before any model is asked, and the prompt says so for
-  // the phrasings the control vocabulary misses.
+  // does the same before any model is asked (that is the product's road, and
+  // the bench scores it by code: `applied` below), and the prompt says so for
+  // the phrasings the control vocabulary misses. The prompt line alone held
+  // 17/17 on a workspace where every count was zero and not once the counts
+  // were real (#2859): the model proposes +1 when there is stock to add to.
   {
     say: "put it back",
     cat: "control",
@@ -117,7 +135,7 @@ export const CHAT_CORPUS: CorpusCase[] = [
     ai: "answer",
     before: [
       { role: "user", content: "I just used one Basmati rice" },
-      { role: "assistant", content: "I've recorded that you used one Basmati rice." },
+      { role: "assistant", content: "I've recorded that you used one Basmati rice.", applied: true },
     ],
   },
   // ── questions about MY data (the everyday spellings) ─────────────────────
@@ -135,6 +153,30 @@ export const CHAT_CORPUS: CorpusCase[] = [
   ...ph("my-data", answer("my-data"), "read:list_records|search_records", [
     "what do I have in the garage", "show me my printers",
   ]),
+  // The reviewer's sentence, word for word. The answer was right and named
+  // the book in plain text with nothing to open; a read answer's names are
+  // chips now (mentions.ts), and this case scores that they are.
+  {
+    say: "Which books are in this workspace? Please only read, do not change anything.",
+    cat: "my-data",
+    no_ai: answer("my-data"),
+    ai: "read:list_records|search_records|list_record_kinds",
+    names: ["The Hobbit", "Dune"],
+  },
+  // The continuation review's question, word for word: the lamp was a chip,
+  // the yarn was text ("the blue cotton yarn" for Blue cotton yarn 100g
+  // 200m: a prefix of the title names the record now), and "where" was
+  // answered with the collection while the record said Living room (the
+  // resolved record carries location_name now, and the answer rules say a
+  // where-question is the recorded place).
+  {
+    say: "Where is my LED desk lamp, and how much blue cotton yarn do I have? Please only read my data.",
+    cat: "my-data",
+    no_ai: answer("my-data"),
+    ai: "read:search_records|list_records|get_record",
+    names: ["LED desk lamp", "Blue cotton yarn 100g 200m"],
+    says: ["Living room"],
+  },
   ...ph("my-data", answer("my-data"), "read:search_records", [
     "which bin did the drill end up in", "where did the multimeter go",
     "where is my soldering iron", "where are my drill bits",

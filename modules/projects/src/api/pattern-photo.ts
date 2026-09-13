@@ -292,9 +292,9 @@ export async function usePatternPhoto(
   return { ok: true, file: { id: written.fileId, width: image.width, height: image.height, bytes: image.bytes } };
 }
 
-/** The upload event: a pattern landed on a design, pull its photo. Runs on
- *  the bus's own next-tick, so the attach that raised it has already been
- *  answered. */
+/** The upload event: a pattern landed on a design, pull its photo. The pull
+ *  renders a PDF page and resizes it, so it schedules itself: the bus runs
+ *  subscribers inline and the attach that raised the event is answered first. */
 export function registerPatternPhotoSubscriber(): void {
   platform().events.on("core-files.attachment.created", "projects.pattern-photo.auto-pull", async (raw: unknown) => {
     const p = raw as {
@@ -307,7 +307,12 @@ export function registerPatternPhotoSubscriber(): void {
     };
     if (p.source_module !== SOURCE.source_module || p.source_type !== SOURCE.source_type) return;
     if (p.role !== "pattern" || !p.orgId || !p.fileId || !p.source_id) return;
-    await runPatternPhoto(p.orgId, p.source_id, p.fileId);
+    const { orgId, source_id: designId, fileId } = p;
+    setImmediate(() => {
+      runPatternPhoto(orgId, designId, fileId).catch((err: unknown) => {
+        console.error("[projects] pattern photo auto-pull failed:", (err as Error)?.message ?? err);
+      });
+    });
   });
 }
 

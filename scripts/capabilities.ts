@@ -42,6 +42,10 @@ export interface OwnsCapability extends Base {
   scope: string[];
   /** The shape of a hand-rolled copy, matched per line. */
   detect: RegExp;
+  /** When set, a `detect` hit counts only in a file that ALSO matches this
+   *  somewhere: the copy is two lines that together do the thing (a click
+   *  toggle is fine on its own; beside a hover-open it is the bug). */
+  also?: RegExp;
   /** What to do instead. */
   use: string;
 }
@@ -63,6 +67,45 @@ export interface VocabularyCapability extends Base {
 }
 
 export const CAPABILITIES: Capability[] = [
+  {
+    kind: "owns",
+    id: "nav:hover-aware-open",
+    what: "a menu that opens on hover and toggles on click: one rule for the click, since a click is a hover first",
+    why:
+      "the More navigation menu hand-rolled onMouseEnter to open and onClick to toggle over one open state; hover opened it as the " +
+      "pointer arrived and the click a moment later shut it, so the first-time review and every automated browser saw a menu that " +
+      "held nothing (#2797, 2026-09-12); after the fix nothing refused the next menu that did the same (#2923)",
+    owner: "web/src/components/hover-aware-open.ts",
+    scope: [
+      "web/src/components/ModuleNav.tsx",
+      "web/src/components/HeaderMenu.tsx",
+      "web/src/components/UserMenu.tsx",
+      "web/src/components/NavCustomizeMenu.tsx",
+      "web/src/components/SidebarNav.tsx",
+      "web/src/components/MobileNav.tsx",
+      "web/src/components/CommandPalette.tsx",
+      "web/src/components/Combobox.tsx",
+      "packages/platform-web/src/EntityActionsBar.tsx",
+    ],
+    // A click handler that TOGGLES an open state ...
+    detect: /onClick=\{[^}]*set\w*[Oo]pen\(\s*(?:\(?\s*\w+\s*\)?\s*=>\s*!\s*\w+|!\s*\w*[oO]pen\b)/,
+    // ... in a file where a hover handler also opens one.
+    also: /onMouseEnter=\{[^}]*(?:set\w*[Oo]pen\(\s*true|[oO]pen(?:Now|Menu)?\b)/,
+    use: "useHoverAwareOpen() from web/src/components/hover-aware-open.ts: hoverOpen / hoverClose on the trigger, clickTrigger for the click",
+  },
+  {
+    kind: "owns",
+    id: "field-defs:roles-for-kind",
+    what: "which field roles a kind wears in a workspace: read off the defs the record shows (its own, plus trait-scoped ones), never its base kind's",
+    why:
+      "the faces and actions resolvers each read module_field_defs rows for [kind, base] on their own; the Groceries bundle keeps a copy of its " +
+      "food fields on the base kind, so every inventory instance in that workspace inherited expiry, turned perishable, and a Home Inventory " +
+      "kettle offered Opened, Threw it out and Restock one from fields it did not have (#2849, 2026-09-13)",
+    owner: "api/src/platform/field-defs.ts",
+    scope: ["api/src/platform/faces.ts", "api/src/platform/actions.ts"],
+    detect: /selectFrom\(\s*["']module_field_defs["']\s*\)/,
+    use: "fieldRolesForKind(orgId, kind) from platform/field-defs.ts",
+  },
   {
     kind: "owns",
     id: "impersonation:start",
@@ -167,6 +210,26 @@ export const CAPABILITIES: Capability[] = [
     scope: ["modules/core-scan/src/api/inbox.ts", "modules/core-scan/src/api/putaway.ts", "modules/core-scan/src/services/autofile.ts"],
     detect: /\[[^\]\n]*(qty(_f|F)ield|\bfield)[^\]\n]*\]\s*[:=]/,
     use: "moveQuantity(orgId, target, entity, delta, { restock, reason, source, door, current }) and startingCount(scannable, qty) from services/scan-target.ts",
+  },
+  {
+    kind: "owns",
+    id: "scan:payload-classifier",
+    what: "what a scan payload IS (a Cobblr label, a retail code, another symbol, a web link, words) and so where it goes",
+    why:
+      "three doors take a payload (the lens, the typed field beside it, the inbox's paste box, plus a hardware wedge) " +
+      "and each read it its own way: the camera routed a Cobblr label URL to the place, the typed field posted the " +
+      "same URL as a barcode and made a pending item named 'Cobblr' (the 2026-09-13 review, #2850)",
+    owner: "web/src/lib/scanPayload.ts",
+    scope: [
+      "web/src/pages/ScanCameraPage.tsx",
+      "web/src/pages/ScanPage.tsx",
+      "web/src/pages/omniIntake.ts",
+      "web/src/pages/ScanResultModal.tsx",
+      "web/src/pages/ScanCaptureDrawer.tsx",
+      "web/src/components/ManualScanField.tsx",
+    ],
+    detect: /qrTokenFromUrl\(|isGenericLink\(|\^\\d\{8,14\}\$/,
+    use: "classifyScanPayload(raw) / typedVerdict(raw) from lib/scanPayload.ts",
   },
   {
     kind: "owns",

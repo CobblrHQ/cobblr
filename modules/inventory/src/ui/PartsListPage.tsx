@@ -1,7 +1,7 @@
 // Parts list — filterable table. Search, category, location, state,
 // low-stock toggle. Clicking a row opens the part detail page.
 
-import { useMemo, useState } from "react";
+import { useCallback, useMemo, useState } from "react";
 import { Link, useNavigate, useParams, useSearchParams } from "react-router-dom";
 import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
@@ -38,8 +38,9 @@ import {
   type EditableCellDef, useAskCobbAboutSelection, useUnits } from "@cobblr/platform-web";
 import { useInventory } from "./context";
 import { QtyStepper } from "./QtyStepper";
+import { openUnitsLabel } from "./consumption/perUnit";
 import { assortedQty, isAssorted } from "./assorted";
-import { noteOf } from "@cobblr/platform-web";
+import { noteOf, useCreateDoor } from "@cobblr/platform-web";
 import { useFieldPresentation } from "./useFieldPresentation";
 import { useDisclosure } from "./useDisclosure";
 import { NewPartDialog } from "./NewPartDialog";
@@ -91,6 +92,8 @@ export function PartsListPage() {
   const [insuredOnly, setInsuredOnly] = useState(false);
   const [lifecycle, setLifecycle] = useState<"" | "bulk" | "kit" | "parted-out">("");
   const [adding, setAdding] = useState(false);
+  // `?new=1` (a view's empty state, a card) opens the form on arrival.
+  const closeCreateDoor = useCreateDoor(useCallback(() => setAdding(true), []));
   const [importing, setImporting] = useState(false);
   const [spoolmanOpen, setSpoolmanOpen] = useState(false);
   const [exporting, setExporting] = useState(false);
@@ -862,6 +865,7 @@ export function PartsListPage() {
         <NewPartDialog
           onClose={(created) => {
             setAdding(false);
+            closeCreateDoor();
             if (created) void parts.refetch();
           }}
         />
@@ -1308,20 +1312,29 @@ function PartsTable({
                     {units.suffix(p.unit) && (
                       <span className="text-faint dark:text-slate-500">{units.suffix(p.unit)}</span>
                     )}
+                    {/* A model tracked unit by unit: the count is the unopened
+                        spares, and an open one with something left is stock
+                        too. Without this the row read Qty 0 over 160 m on the
+                        needles (#2848). */}
+                    {openUnitsLabel(p.open_units, fmt) && (
+                      <span className="text-[11px] text-accent whitespace-nowrap" title="Open, with what is left in each">
+                        + {openUnitsLabel(p.open_units, fmt)}
+                      </span>
+                    )}
                   </span>
                 </td>
               )}
               {showQty && (
                 <td
                   className="px-3 py-2 text-right font-mono"
-                  title="Derived from qty minus what's allocated"
+                  title="Derived from what is on hand (open units included) minus what's allocated"
                 >
                   {/* Available derives from a count. An estimate has none, and
                       printing 0 here would contradict the ~50 beside it. */}
                   {isAssorted(p) ? (
                     <span className="text-faint dark:text-slate-500">—</span>
                   ) : (
-                    fmt(p.available_qty)
+                    fmt(availableOnHand(p))
                   )}
                 </td>
               )}
@@ -1458,11 +1471,12 @@ function PartsTable({
                         </>
                       )}
                       {units.suffix(p.unit) ? ` ${units.suffix(p.unit)}` : ""}
+                      {openUnitsLabel(p.open_units, fmt) ? ` + ${openUnitsLabel(p.open_units, fmt)}` : ""}
                     </span>
                   )}
                   {showQty && !isAssorted(p) && (
-                    <span title="Derived from qty minus what's allocated">
-                      avail {fmt(p.available_qty)}
+                    <span title="Derived from what is on hand (open units included) minus what's allocated">
+                      avail {fmt(availableOnHand(p))}
                     </span>
                   )}
                   {showMin && (
@@ -1601,11 +1615,14 @@ function PartsTileGrid({ items, basePath }: { items: PartListItem[]; basePath: s
               !disclosure.stock ? undefined : isAssorted(p) ? (
                 [assortedQty(p), units.suffix(p.unit)].filter(Boolean).join(" ")
               ) : p.low_stock ? (
+                // On hand against the minimum, an open unit counted: the tile
+                // read "0 / 1" over a skein with 160 m left (#2848).
                 <span className="text-ember-600 dark:text-ember-500">
-                  {fmt(p.qty)} / {p.min_qty == null ? "—" : fmt(p.min_qty)}
+                  {fmt(onHandOf(p))} / {p.min_qty == null ? "—" : fmt(p.min_qty)}
+                  {openUnitsLabel(p.open_units, fmt) ? ` · ${openUnitsLabel(p.open_units, fmt)}` : ""}
                 </span>
               ) : (
-                [fmt(p.qty), units.suffix(p.unit)].filter(Boolean).join(" ")
+                [fmt(p.qty), units.suffix(p.unit), openUnitsLabel(p.open_units, fmt) ? `+ ${openUnitsLabel(p.open_units, fmt)}` : ""].filter(Boolean).join(" ")
               )
             }
             attention={!disclosure.stock ? false : p.low_stock}
@@ -1614,6 +1631,19 @@ function PartsTileGrid({ items, basePath }: { items: PartListItem[]; basePath: s
       ))}
     </div>
   );
+}
+
+/** Available to use: what is on hand (the unopened count plus every open
+ *  unit still holding something) minus what is reserved. An older api answers
+ *  without `on_hand`, and then this is the count face's own figure. */
+function availableOnHand(p: { qty: number | string; available_qty: number; on_hand?: number }): number {
+  if (typeof p.on_hand !== "number") return p.available_qty;
+  return p.available_qty + (p.on_hand - Number(p.qty));
+}
+
+/** On hand, or the count face itself on an older api. */
+function onHandOf(p: { qty: number | string; on_hand?: number }): number {
+  return typeof p.on_hand === "number" ? p.on_hand : Number(p.qty);
 }
 
 function fmt(n: number): string {

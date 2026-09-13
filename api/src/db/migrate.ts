@@ -46,8 +46,16 @@ export interface MigrationRunOptions {
 }
 
 export interface MigrationResult {
+  /** What THIS run applied, in order. */
   applied: string[];
   alreadyApplied: number;
+  /** The ledger after this run: how many names it holds for the scope, and
+   *  the one that sorts last. The meta-side marker records THESE, not "the
+   *  last file this run applied": a run that applies a file sorting before
+   *  the module's newest would otherwise leave a marker that reads as behind
+   *  forever (#2944). */
+  total: number;
+  latest: string | null;
 }
 
 function storedName(scope: string, file: string): string {
@@ -201,7 +209,8 @@ export async function runMigrations(opts: MigrationRunOptions): Promise<Migratio
         justRan.push(file);
       }
 
-      return { applied: justRan, alreadyApplied: applied.size };
+      const all = [...applied, ...justRan].sort();
+      return { applied: justRan, alreadyApplied: applied.size, total: all.length, latest: all.length ? all[all.length - 1]! : null };
     } finally {
       await releaseScopeLock(client, scope);
     }

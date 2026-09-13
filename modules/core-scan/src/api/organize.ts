@@ -6,8 +6,11 @@
 //   POST /organize/apply  { plan_id, group_ids, overrides? } → per-group
 //     accept: creates accepted new bins (through core-locations' registered
 //     entity WRITER — the sanctioned cross-module seam), stamps each member
-//     item's target_location_id, and records the group as applied. Items then
-//     commit through the normal confirm flow; nothing new touches commit.
+//     item's target_location_id, FILES each member through the confirm door
+//     (the record exists, the inbox item is resolved) and records the group
+//     as applied. The response says what was filed and what was only
+//     assigned, with the reason, so a toast can report the filing's own
+//     result rather than the plan's intent (#2897).
 //
 // The plan is a PROPOSAL. Nothing files or gets created until a group is
 // explicitly accepted here, human-set locations are never re-planned, and
@@ -18,8 +21,12 @@ import { Router } from "express";
 import { z } from "zod";
 import { sql } from "kysely";
 import { platform } from "@cobblr/platform-contract";
-import { sessionUser, tenantContext, tenantDb } from "../db.js";
+import { bearer, sessionUser, tenantContext, tenantDb } from "../db.js";
 import { asyncHandler, badBody, requireRole } from "./util.js";
+import { roleSatisfies } from "@cobblr/platform-contract/org-roles";
+import { BundleInstaller, fileThroughConfirm, type FilingOutcome } from "../services/file-through-confirm.js";
+import { liveTablesOf, withResolvedOffers } from "../services/resolve-offers.js";
+import { INTERNAL_API } from "./inbox.js";
 import { isJunkName } from "../services/enrich.js";
 import { LengthUnitResolver, inboxLongestMm } from "../services/organize-dims.js";
 import {
@@ -560,8 +567,23 @@ organizeRouter.post(
 
     const writer = await platform().entities.getWriter(ctx.org.id, "core-locations:location");
     const createdLocations: Array<{ id: string; name: string; group_id: string }> = [];
+    /** Inbox items whose record now exists (entities: the refs moved). */
     const filedItemIds: string[] = [];
+    /** Inbox items given a destination by this apply, filed or not. */
+    const assignedItemIds: string[] = [];
+    const filed: Array<Extract<FilingOutcome, { ok: true }>> = [];
+    const assignedOnly: Array<Extract<FilingOutcome, { ok: false }>> = [];
     const appliedGroupIds: string[] = [];
+    const token = bearer(req);
+    const door = token
+      ? {
+          baseUrl: (req.headers["x-cobblr-base-url"] as string | undefined) ?? INTERNAL_API,
+          slug: ctx.org.slug,
+          authHeaders: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+          canInstall: roleSatisfies((req as unknown as { tenant?: { role: string } }).tenant?.role as "owner", ["owner", "admin"]),
+        }
+      : null;
+    const installer = door ? new BundleInstaller(door) : null;
     const skipped: Array<{ group_id: string; reason: string }> = [];
     // Resolved destination per applied group — written back into the stored
     // payload so the put-away walk (and any later read) sees the ACTUAL bin,
@@ -671,7 +693,37 @@ organizeRouter.post(
           .where("target_container_id", "is", null)
           .returning("id")
           .execute();
-        filedItemIds.push(...stamped.map((s) => s.id));
+        const stampedIds = stamped.map((s) => s.id);
+        assignedItemIds.push(...stampedIds);
+        // Then FILE them: Accept used to stop at the stamp and the toast said
+        // "filed" over an item still pending in the inbox with an Add button
+        // (#2897). Filing goes through the confirm door with the item's own
+        // top candidate, the same call a person's Add makes; an item that
+        // cannot be filed (no name, no table) keeps its destination and is
+        // reported with the reason, never called filed.
+        if (stampedIds.length > 0 && door) {
+          const liveNow = await liveTablesOf(ctx.org.id);
+          const rows = (
+            await db
+              .selectFrom("core_scan_inbox_items")
+              .select(["id", "suggested_name", "quantity", "suggested_candidates"])
+              .where("id", "in", stampedIds)
+              .execute()
+          ).map((r) => withResolvedOffers(r, liveNow));
+          for (const id of stampedIds) {
+            const r = rows.find((x) => x.id === id);
+            if (!r) continue;
+            const outcome = await fileThroughConfirm(door, installer!, r, locationId);
+            if (outcome.ok) {
+              filedItemIds.push(id);
+              filed.push(outcome);
+            } else {
+              assignedOnly.push(outcome);
+            }
+          }
+        } else if (stampedIds.length > 0) {
+          for (const id of stampedIds) assignedOnly.push({ ok: false, item_id: id, name: null, reason: "no session to file with" });
+        }
       }
       appliedGroupIds.push(gid);
       applied.add(gid);
@@ -680,7 +732,7 @@ organizeRouter.post(
       // different bin was deliberately left where it is (the guards above), so
       // recording the full kept list would have the stored plan claim it
       // belongs here - and the put-away walk reads that stored payload.
-      const moved = new Set(filedItemIds);
+      const moved = new Set(subject === "entities" ? filedItemIds : assignedItemIds);
       resolved.set(gid, {
         location_id: locationId!,
         location_name: locationName ?? prior?.location_name ?? "",
@@ -719,7 +771,12 @@ organizeRouter.post(
 
     res.json({
       applied_group_ids: appliedGroupIds,
+      // Honest now: an id here has a record. Older readers took this as
+      // "done"; it is, at last.
       filed_item_ids: filedItemIds,
+      assigned_item_ids: assignedItemIds,
+      filed: filed.map((f) => ({ item_id: f.item_id, name: f.name, entity_id: f.entity_id, entity_kind: f.entity_kind })),
+      assigned_only: assignedOnly.map((a) => ({ item_id: a.item_id, name: a.name, reason: a.reason })),
       created_locations: createdLocations,
       skipped,
     });
@@ -757,25 +814,45 @@ organizeRouter.get(
       res.json({ plan: null });
       return;
     }
-    // Walk progress now lives on the put-away SESSION (the shared execution
-    // engine — docs/product/put-away.md §2.2); the plan row's walk_state is
-    // the legacy fallback for a walk that was mid-flight when sessions
-    // shipped. Same response shape either way.
+    // Placement is a fact about the ITEM (placed_at), so every plan that
+    // lists an item reads the same answer; the put-away session's own marks
+    // (docs/product/put-away.md §2.2) cover an entities plan, whose refs are
+    // not inbox rows, and a walk mid-flight before the column existed. The
+    // latest session is reported whether or not it ended: an ended walk used
+    // to fall back to the plan row's empty legacy walk_state and read as never
+    // started, so a finished walk came back as "Resume put-away walk" (#2897).
     const session = await db
       .selectFrom("core_scan_putaway_sessions")
-      .select(["id", "state"])
+      .select(["id", "state", "ended_at"])
       .where("plan_id", "=", row.id)
-      .where("ended_at", "is", null)
       .orderBy("created_at", "desc")
       .limit(1)
       .executeTakeFirst();
+    const sessionPlaced = ((session?.state as { placed_item_ids?: string[] } | null)?.placed_item_ids ?? []).concat(
+      (row.walk_state as { placed_item_ids?: string[] } | null)?.placed_item_ids ?? [],
+    );
+    const payload = row.payload as { subject?: string; groups?: StoredGroup[] };
+    let placed = new Set(sessionPlaced);
+    if (payload.subject !== "entities") {
+      const ids = (payload.groups ?? []).flatMap((g) => g.item_ids);
+      if (ids.length > 0) {
+        const rows = await db
+          .selectFrom("core_scan_inbox_items")
+          .select(["id", "placed_at"])
+          .where("id", "in", ids)
+          .where("placed_at", "is not", null)
+          .execute();
+        placed = new Set([...placed, ...rows.map((r) => r.id)]);
+      }
+    }
     res.json({
       plan: {
         plan_id: row.id,
         ...(row.payload as Record<string, unknown>),
         applied_group_ids: row.applied_group_ids,
-        walk_state: session ? session.state : row.walk_state,
-        putaway_session_id: session?.id ?? null,
+        walk_state: { placed_item_ids: [...placed] },
+        putaway_session_id: session && !session.ended_at ? session.id : null,
+        walk_ended: !!session?.ended_at,
         expires_at: row.expires_at,
       },
     });

@@ -12,6 +12,8 @@ export interface CoreAiProvidersTable {
   config: Generated<Record<string, unknown>>;
   enabled: Generated<boolean>;
   monthly_budget_cents: number | null;
+  /** What the save's probe said about the key (connection-verification.ts). */
+  verification: Generated<Record<string, unknown> | null>;
   created_at: Generated<Date>;
   updated_at: Generated<Date>;
 }

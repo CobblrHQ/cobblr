@@ -33,16 +33,19 @@ export function startReceiptTrackingSweeper(): void {
   // A bridge push means the carrier already answered: re-check that number NOW,
   // off-cadence, instead of letting the news wait for the next polling window.
   // The push itself carries no status — the bell is trusted, the data is not —
-  // so this runs the same tick, forced, and the state still comes through the
-  // authenticated read path.
+  // so this runs forced, and the state still comes through the authenticated
+  // read path. The re-check reaches the carrier, so it schedules itself: the
+  // bus runs subscribers inline and the inbound route that rang the bell would
+  // otherwise wait on a network round trip it does not need.
   platform().events.on("core-shipments.tracker.pushed", "core-scan", async (payload: unknown) => {
     const p = payload as { orgId?: string; tracking_number?: string };
     if (!p.orgId || !p.tracking_number) return;
-    try {
-      await receiptTrackingTick({ orgId: p.orgId, number: p.tracking_number, force: true });
-    } catch (err) {
-      console.error("[core-scan] pushed tracker re-check failed:", (err as Error).message);
-    }
+    const { orgId, tracking_number: number } = p;
+    setImmediate(() => {
+      receiptTrackingTick({ orgId, number, force: true }).catch((err: unknown) => {
+        console.error("[core-scan] pushed tracker re-check failed:", (err as Error).message);
+      });
+    });
   });
 }
 

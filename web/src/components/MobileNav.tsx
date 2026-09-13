@@ -26,6 +26,8 @@ import { usePendingAiShares } from "../lib/usePendingAiShares";
 import { useAuth } from "../auth/AuthContext";
 import { useTheme } from "../theme/ThemeContext";
 import { useNavModules, NAVGROUP_PREFIX, navTargetFor, surfaceTops } from "./useNavModules";
+import { useNavBadges } from "./useNavBadges";
+import { NavCountBadge } from "./NavCountBadge";
 import { CobblestoneMark } from "../CobblestoneMark";
 import { OverlayFlag } from "@cobblr/platform-web";
 
@@ -47,6 +49,7 @@ export function MobileNav() {
   // cannot disagree about what is inside the app.
   const appMode = !!activeOrg?.app_mode;
   const visibleTops = surfaceTops(tops, appMode);
+  const badges = useNavBadges(activeSlug);
   const pendingShares = usePendingAiShares(activeSlug, activeOrg?.role === "owner");
   const { logout } = useAuth();
   const { theme, toggle } = useTheme();
@@ -294,7 +297,11 @@ export function MobileNav() {
                         className={linkClass}
                         onClick={() => setOpen(false)}
                       >
-                        {m.displayName}
+                        <span className="truncate">{m.displayName}</span>
+                        {/* The one badge a destination row carries. It fits the
+                            fixed row height, and ml-auto keeps it off the label
+                            so a long name still truncates before the number. */}
+                        <NavCountBadge count={badges.get(m.name)} label={m.displayName} className="ml-auto" />
                       </NavLink>
                     )}
                     {kids.map((k) => {

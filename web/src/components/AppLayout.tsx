@@ -8,7 +8,7 @@
 // specialisations (3D Printers, Laser Cutters, etc.) into a hover
 // popover under the parent rather than as broken top-level links.
 
-import { useEffect, useRef, useState } from "react";
+import { Fragment, useEffect, useRef, useState, type ReactNode } from "react";
 import { Moon, PanelLeft, PanelTop, Pin, PinOff, Sliders, Sun, UserRound } from "lucide-react";
 import { Link, NavLink, Outlet, useLocation } from "react-router-dom";
 import { Search } from "lucide-react";
@@ -46,6 +46,7 @@ import { getManagedAppMeta } from "../lib/managed-apps";
 import { adminHtmlVars, fontFaceCss } from "../lib/appTheme";
 import { useDeployEnv, DEFAULT_HEADER } from "../lib/deploy-env";
 import { useNavMode, useNavAutoHide, useNavTopBar, setNavMode, setNavAutoHide, setNavTopBar } from "../lib/nav-mode";
+import { SIDEBAR_FOOT_ORDER, type SidebarFootSlot } from "./sidebar-foot";
 import { GuidedTour } from "../tour/GuidedTour";
 import { useTour } from "../tour/useTour";
 import { DASHBOARD_TOUR } from "../tour/tour.config";
@@ -86,6 +87,9 @@ export function AppLayout({ activeSlug }: { activeSlug: string }) {
   const navAutoHide = useNavAutoHide();
   const navTopBar = useNavTopBar();
   const { theme, toggle: toggleTheme } = useTheme();
+  // Nothing here ever writes a layout on its own. A never-chosen person is
+  // OFFERED the sidebar at the first involuntary fold (ModuleNav); the only
+  // writers are clicks. docs/design-decisions/nav-graduation.md.
   const flipNavMode = () => setNavMode(navMode === "top" ? "side" : "top");
   const flipAutoHide = () => setNavAutoHide(!navAutoHide);
   const flipTopBar = () => setNavTopBar(!navTopBar);
@@ -335,7 +339,7 @@ export function AppLayout({ activeSlug }: { activeSlug: string }) {
       <button
         type="button"
         onClick={flipTopBar}
-        title={navTopBar ? "Hide the top bar — everything moves into the sidebar" : "Show the top bar again"}
+        title={navTopBar ? "Sidebar only: hide the top bar, everything moves into the sidebar" : "Show the top bar again"}
         className={"p-1 rounded transition " + (navTopBar ? "text-faint dark:text-slate-500 hover:text-accent" : "text-accent")}
       >
         <PanelTop size={13} />
@@ -381,26 +385,35 @@ export function AppLayout({ activeSlug }: { activeSlug: string }) {
       </div>
     </div>
   ) : undefined;
-  const sidebarFoot = fullSide ? (
-    <div ref={footRef} className="shrink-0 border-t-2 border-line dark:border-slate-700 px-1.5 py-1.5 flex flex-col">
-      {/* The verify-email nudge docks here (sidebar card) — not as a thin bar
-          over the content. The simple-mode exit sits in the same slot (permanent
-          while simple mode is on — the always-visible way to turn it off). */}
-      <SimpleModeNotice variant="sidebar" />
-      <EmailVerifyBanner variant="sidebar" />
-      {/* Feedback sits in the "notices" realm (with verify-email) — it's a meta
-          "reach the makers" nudge, not a workspace tool, so it heads the foot as
-          its own tiny section, divided from the tools below. The floating pill is
-          suppressed in full-sidebar (App.tsx). */}
-      <FeedbackWidget asRow />
-      <div className="my-1 border-t border-line dark:border-slate-700" />
-      {/* Module quick-actions (Build/Scan) SHARE one row — half-width each,
-          wrapping if a third ever appears. */}
-      <div data-tour="actions" className="flex flex-wrap gap-0.5 [&_a]:flex-1 [&_a]:min-w-[45%] [&_a]:px-3 [&_a]:py-1.5 [&_a]:rounded [&_a]:text-[13px] [&_a]:gap-2.5">
-        <HeaderActions />
+  // The foot's ORDER is data (sidebar-foot.ts): tools above the rule, capture
+  // first; the person and the app below it. Each slot here is one row or
+  // nothing; the list decides where it goes.
+  const footRowCls = ({ isActive }: { isActive: boolean }) =>
+    "w-full flex items-center gap-2.5 px-3 py-1.5 rounded text-[13px] transition " +
+    (isActive
+      ? "text-accent font-semibold bg-subtle/60 dark:bg-slate-800/40"
+      : "text-muted dark:text-slate-400 hover:text-accent hover:bg-subtle/60 dark:hover:bg-slate-800/40");
+  const footSlots: Record<SidebarFootSlot, ReactNode> = {
+    // The verify-email nudge docks here (sidebar card), not as a thin bar over
+    // the content. The simple-mode exit sits in the same slot (permanent while
+    // simple mode is on: the always-visible way to turn it off).
+    notices: (
+      <>
+        <SimpleModeNotice variant="sidebar" />
+        <EmailVerifyBanner variant="sidebar" />
+      </>
+    ),
+    // Module quick-actions, one full row each, Scan above Build: the camera is
+    // the action a person reaches for many times a day, so it is the first row
+    // under the nav rather than half of a shared one.
+    actions: (
+      <div data-tour="actions" className="flex flex-col gap-0.5">
+        <HeaderActions asRows />
       </div>
-      {/* Search opens the ⌘K palette — a centered overlay beats an expanding
-          input + popover crammed into a 208px column. */}
+    ),
+    // Search opens the ⌘K palette: a centered overlay beats an expanding input
+    // + popover crammed into a 208px column.
+    search: (
       <button
         type="button"
         onClick={() => window.dispatchEvent(new Event(OPEN_PALETTE_EVENT))}
@@ -411,49 +424,46 @@ export function AppLayout({ activeSlug }: { activeSlug: string }) {
         <Search size={16} className="shrink-0" />
         Search
       </button>
-      <NotificationsBell panelOnly asRow />
-      {/* Label-queue lives as a foot row here (not a floating pill) so it reads
-          as workspace chrome with its neighbours; renders nothing when the
-          queue is empty. The floating pill is suppressed in full-sidebar
-          (App.tsx). */}
-      {labelsEnabled && <LabelsBasket asRow orgSlug={activeSlug} getToken={getToken} />}
-      {/* Live box — ongoing session modes (auto-print, …), tucked at the foot.
-          Self-hides when the workspace has no applicable live capability. */}
-      <LiveBox mode="sidebar" slug={activeSlug} />
-      <ChatLauncher open={chatOpen} setOpen={setChatOpen} asRow />
-      {/* Configuration lives HERE, not behind the account flyout — the flyout
-          detour (open menu → Configuration → back into the sidebar) was the
-          exact loop the author flagged. */}
-      {/* Your account is a first-class row (the author) — the account row below keeps
-          only the menu (feedback / what's new / sign out). */}
-      <NavLink
-        to="/me"
-        className={({ isActive }) =>
-          "w-full flex items-center gap-2.5 px-3 py-1.5 rounded text-[13px] transition " +
-          (isActive
-            ? "text-accent font-semibold bg-subtle/60 dark:bg-slate-800/40"
-            : "text-muted dark:text-slate-400 hover:text-accent hover:bg-subtle/60 dark:hover:bg-slate-800/40")
-        }
-      >
+    ),
+    notifications: <NotificationsBell panelOnly asRow />,
+    // The label queue lives as a foot row here (not a floating pill) so it
+    // reads as workspace chrome with its neighbours; renders nothing when the
+    // queue is empty. The floating pill is suppressed in full-sidebar (App.tsx).
+    labels: labelsEnabled ? <LabelsBasket asRow orgSlug={activeSlug} getToken={getToken} /> : null,
+    // Ongoing session modes (auto-print, …). Self-hides when the workspace has
+    // no applicable live capability.
+    live: <LiveBox mode="sidebar" slug={activeSlug} />,
+    cobb: <ChatLauncher open={chatOpen} setOpen={setChatOpen} asRow />,
+    divider: <div className="my-1 border-t border-line dark:border-slate-700" />,
+    // Feedback is a "reach the makers" nudge, not a workspace tool, so it opens
+    // the meta cluster under the rule rather than heading the foot. The
+    // floating pill is suppressed in full-sidebar (App.tsx).
+    feedback: <FeedbackWidget asRow />,
+    // Configuration lives HERE, not behind the account menu: the menu detour
+    // (open menu → Configuration → back into the sidebar) was the exact loop
+    // the author flagged.
+    configuration: !isFocused(activeOrg) ? (
+      <NavLink to="/configuration" className={footRowCls}>
+        <Sliders size={16} className="shrink-0" />
+        Configuration
+      </NavLink>
+    ) : null,
+    // Your account is a row of its own; the accordion under it keeps only the
+    // menu (feedback, what's new, sign out).
+    account: (
+      <NavLink to="/me" className={footRowCls}>
         <UserRound size={16} className="shrink-0" />
         Your account
       </NavLink>
-      {!isFocused(activeOrg) && (
-        <NavLink
-          to="/configuration"
-          className={({ isActive }) =>
-            "w-full flex items-center gap-2.5 px-3 py-1.5 rounded text-[13px] transition " +
-            (isActive
-              ? "text-accent font-semibold bg-subtle/60 dark:bg-slate-800/40"
-              : "text-muted dark:text-slate-400 hover:text-accent hover:bg-subtle/60 dark:hover:bg-slate-800/40")
-          }
-        >
-          <Sliders size={16} className="shrink-0" />
-          Configuration
-        </NavLink>
-      )}
-      {/* Account expands UPWARD in place — an accordion, not a popover. */}
-      <UserMenu themed={!!skin} inline />
+    ),
+    // Expands UPWARD in place: an accordion, not a popover.
+    "account-menu": <UserMenu themed={!!skin} inline />,
+  };
+  const sidebarFoot = fullSide ? (
+    <div ref={footRef} className="shrink-0 border-t-2 border-line dark:border-slate-700 px-1.5 py-1.5 flex flex-col">
+      {SIDEBAR_FOOT_ORDER.map((slot) => (
+        <Fragment key={slot}>{footSlots[slot]}</Fragment>
+      ))}
     </div>
   ) : undefined;
 
@@ -604,7 +614,10 @@ export function AppLayout({ activeSlug }: { activeSlug: string }) {
               app mode. */}
           {navMode === "top" ? (
             <nav data-tour="nav" className="hidden md:flex flex-nowrap items-center gap-0.5 flex-1 min-w-0">
-              <ModuleNav />
+              {/* The tour's welcome step asks the layout question itself, so
+                  the fold offer stays quiet while the tour is open: a fresh
+                  account at a narrow window got both at once. */}
+              <ModuleNav quiet={tour.open} />
             </nav>
           ) : (
             <div className="hidden md:block flex-1 min-w-0" />

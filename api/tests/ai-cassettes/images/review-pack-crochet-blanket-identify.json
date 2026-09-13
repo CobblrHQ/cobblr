@@ -1,0 +1,6 @@
+{
+  "_fixture": "e2e/fixtures/review-pack/photos/crochet-blanket.jpg",
+  "image_ahash": "7007070341e52f9e",
+  "capability": "identify-image",
+  "reply": "{\"name\":\"Crocheted granny-square blanket\",\"observations\":\"A crocheted blanket of multicoloured granny squares, folded.\",\"category\":\"Textiles\",\"entity_type\":\"part\",\"is_receipt\":\"no\",\"confidence\":0.85}"
+}

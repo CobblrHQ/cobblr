@@ -51,6 +51,7 @@ export function BundleTile({
   badges,
   showId = false,
   onDetails,
+  action,
 }: {
   b: CatalogBundle;
   /** The surface's primary click: select-to-prime (panel) or open-modal (page). */
@@ -61,6 +62,13 @@ export function BundleTile({
   showId?: boolean;
   /** Renders a small "details →" that stops propagation (panel variant). */
   onDetails?: () => void;
+  /** The next action, rendered INSIDE the tile while it is selected. On a
+   *  long catalog the hero that reacts to a pick sits far above the tile that
+   *  was pressed, and nothing moved the eye there: a person choosing
+   *  Groceries at the bottom of "More ways to start" saw the catalog stay
+   *  open and the button appear off screen. Under the thumb is the only place
+   *  that works on a phone. Clicks inside it must not toggle the selection. */
+  action?: ReactNode;
 }) {
   return (
     <li className="h-full">
@@ -99,6 +107,16 @@ export function BundleTile({
             >
               details →
             </button>
+          )}
+          {selected && action && (
+            <div
+              className="mt-2"
+              data-testid="tile-next-action"
+              onClick={(e) => e.stopPropagation()}
+              onKeyDown={(e) => e.stopPropagation()}
+            >
+              {action}
+            </div>
           )}
         </div>
         <ArrowRight size={13} className={(selected ? "text-accent" : "text-faint dark:text-slate-600 group-hover:text-accent") + " transition mt-1 shrink-0"} />

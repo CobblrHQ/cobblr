@@ -24,12 +24,15 @@ import { resolveAppViewRefs, type SeededView } from "./bundle-app-view-refs.js";
 import * as activity from "../platform/activity.js";
 import { enableModuleForOrg } from "../modules/enable.js";
 import { getEntry } from "../modules/registry.js";
+import { getFlagshipManifest, listFlagshipManifests } from "../lib/flagship-bundles.js";
+import { externalRegistry } from "./registry.js";
 import { upsertOverride, deleteOverride } from "../platform/entity-kind-overrides.js";
 import { createInstance, getInstance } from "../platform/instances.js";
-import { checkInstalled, promisedInstances } from "../platform/install-postcondition.js";
+import { checkInstalled, promisedInstances, type PromisedInstance } from "../platform/install-postcondition.js";
+import { featureChange, diffLedger, describeFeatureChange, type FeatureManifest, type InstanceLedgerRow } from "../platform/bundle-feature-change.js";
 import { SCAN_CATEGORY_SOURCE } from "../platform/reconcile-scan-category.js";
 import { listNavHeadings, createNavHeading, addNavMember } from "../platform/nav-headings.js";
-import { tearDownInstance, countInstanceItems, listInstances } from "../platform/instances.js";
+import { tearDownInstance, countInstanceItems, listInstances, instanceRowCount } from "../platform/instances.js";
 import { disableModuleForOrg } from "../modules/enable.js";
 import {
   recordClaims,
@@ -351,6 +354,12 @@ export const BundleManifest = z.object({
    *  instance's list on purpose: this is the whole domain's vocabulary. Without
    *  this key the parse dropped it and the install never saw it. */
   scan_keywords: z.array(z.string().min(1).max(60)).max(400).optional(),
+  /** Why this manifest declares fields on a module's BASE kind rather than on
+   *  an instance of its own. A specialisation is an instance, and a copy of a
+   *  bundle's fields on the base kind cost twice (#2787, #2849, #2860), so
+   *  lint:bundle-fields-on-own-kinds refuses base-kind fields unless the
+   *  manifest says why here. Display-free; stored with the manifest. */
+  base_kind_fields_reason: z.string().min(1).max(300).optional(),
   /** Catalog tier — where this bundle is OFFERED (see lib/flagship-bundles.ts):
    *  `core` (default when absent) is suggested per-scan AND browsable in the
    *  marketplace; `extended` is browsable but NOT suggested per-scan (it only
@@ -1465,6 +1474,10 @@ export async function applyValidatedBundle(
   applied: {
     wires: number; field_defs: number; field_overrides: number; catalogs: number;
     auto_enabled_modules: string[]; migrations: Array<{ to_version: string; action: string; result: unknown }>;
+    /** The tables this apply CREATED, and the ones it found already there.
+     *  An install is idempotent over instances; the report is not allowed
+     *  to be (the toast said "added a table" over a table that existed). */
+    instances_created: string[]; instances_existing: string[];
   };
 }> {
   const m = v.manifest!;
@@ -1558,6 +1571,8 @@ export async function applyValidatedBundle(
   // field defs / views / wires are applied below scoped to `<name>:item`.
   // Idempotent: skip createInstance if the instance already exists; the nav
   // override is insert-only so a re-install won't clobber a user's rename.
+  const instancesCreated: string[] = [];
+  const instancesExisting: string[] = [];
   for (const inst of m.provides_instances) {
     const existingInst = await getInstance(orgId, inst.instance_name);
     if (!existingInst) {
@@ -1568,6 +1583,9 @@ export async function applyValidatedBundle(
         displayName: inst.display_name,
         isDefault: false,
       });
+      instancesCreated.push(inst.instance_name);
+    } else {
+      instancesExisting.push(inst.instance_name);
     }
     // The table's routing vocabulary is BOTH lists, deduped: the instance's own
     // words and the manifest's. The offer for a not-yet-installed bundle has
@@ -2171,6 +2189,8 @@ export async function applyValidatedBundle(
       catalogs: catalogsInstalled,
       auto_enabled_modules: autoEnabled,
       migrations: migrationsRun,
+      instances_created: instancesCreated,
+      instances_existing: instancesExisting,
     },
   };
 }
@@ -2191,7 +2211,12 @@ bundlesRouter.post(
       // auto-enabling silently. Caller re-POSTs with `confirm:true`
       // to proceed.
       const ManifestBody = z.object({
-        manifest: z.unknown(),
+        /** The bundle, whole. Or, instead, its `id`: resolved from this
+         *  deployment's own catalog first, then the external registry when one
+         *  is configured; an id nothing here knows answers a coded 409 naming
+         *  the missing registry and this door (#2922). */
+        manifest: z.unknown().optional(),
+        id: z.string().min(1).max(200).optional(),
         confirm: z.boolean().optional(),
         /** Phase 2: which optional features to install. Omitted on a FIRST
          *  install → the features' own default:true set. Omitted on an UPDATE
@@ -2208,6 +2233,31 @@ bundlesRouter.post(
         return;
       }
       const confirm = !!body.data.confirm;
+      let manifestIn: unknown = body.data.manifest;
+      if (manifestIn === undefined) {
+        if (!body.data.id) {
+          res.status(400).json({ error: { code: "invalid_bundle", message: "Send the bundle as `manifest`, or its `id` to install from the catalog." } });
+          return;
+        }
+        manifestIn = await getFlagshipManifest(body.data.id);
+        if (manifestIn === null || manifestIn === undefined) {
+          const registry = externalRegistry();
+          if (!registry) {
+            res.status(409).json({
+              error: {
+                code: "registry_unavailable",
+                message: `This deployment has no bundle registry configured, so "${body.data.id}" cannot be installed by id here (its own catalog holds ${listFlagshipManifests("all").length} bundles and this is not one of them); send the manifest instead (\`manifest\` from bundles/<name>.json).`,
+                details: { id: body.data.id, door: "manifest", registry: false },
+              },
+            });
+          } else {
+            res.status(404).json({
+              error: { code: "bundle_not_found", message: `No bundle "${body.data.id}" in this deployment's catalog or the registry at ${registry}.`, details: { id: body.data.id, registry } },
+            });
+          }
+          return;
+        }
+      }
 
       // SINGLE SOURCE OF VALIDATION TRUTH — same helper the /validate
       // endpoint + the authoring module use. autoEnable = confirm: when
@@ -2215,7 +2265,7 @@ bundlesRouter.post(
       // preview.modules_to_enable (not a needs_enable error) and enabled
       // below. The HTTP error codes below preserve the prior contract the
       // bundle-install UI depends on.
-      const v = await validateBundle(req.tenant!.org.id, body.data.manifest, {
+      const v = await validateBundle(req.tenant!.org.id, manifestIn, {
         autoEnable: confirm,
         enabledFeatures: body.data.enabled_features,
       });
@@ -2311,6 +2361,137 @@ bundlesRouter.post(
         // What this version adds that nobody agreed to. NOT installed - handed
         // back so the surface can ask instead of the update deciding.
         features_to_offer: v.featuresToOffer ?? [],
+      });
+    } catch (err) {
+      next(err);
+    }
+  },
+);
+
+/** Every involved instance as it stands right now: id and exact row count.
+ *  Read from the workspace, never inferred from the manifest, so the report
+ *  after a change can only be true. */
+async function instanceLedger(orgId: string, involved: readonly PromisedInstance[]): Promise<InstanceLedgerRow[]> {
+  const rows: InstanceLedgerRow[] = [];
+  for (const p of involved) {
+    const inst = await getInstance(orgId, p.instance_name);
+    if (!inst) continue;
+    let records: number | null = null;
+    try {
+      records = await instanceRowCount(orgId, p.instance_name);
+    } catch (err) {
+      console.error(`[bundles] row count for ${p.instance_name} failed:`, (err as Error).message);
+    }
+    rows.push({ instance_name: p.instance_name, module: inst.module_name, id: inst.id, records });
+  }
+  return rows;
+}
+
+// PATCH /:id/features — turn a bundle's optional features on or off. The ONE
+// door for a feature change: re-applies the stored manifest with the new set
+// on the upgrade path (applyValidatedBundle replaces the prior install with
+// snapshot reason "replaced" and no teardown), so fields, wires and views move
+// and the bundle's tables keep their rows and their ids. The client used to
+// compose this as DELETE then install, and the DELETE tore the tables down:
+// two yarn records vanished under a dialog that promised "your entities stay"
+// (#2889). The route reads every involved table before and after and reports
+// what it kept, so the promise is checked, not assumed. A table only a
+// turned-off feature set up goes when it holds nothing and stays, with its
+// records, when it does not.
+// AI-REACH: changes workspace composition (enables modules, moves fields,
+// wires and views) behind the bundle dialog's own confirmation; owner/admin,
+// the same door as install.
+bundlesRouter.patch(
+  "/:id/features",
+  requireAuth,
+  withTenant,
+  async (req, res, next) => {
+    try {
+      if (!requireRole(req, res, "owner", "admin")) return;
+      const Body = z.object({ enabled_features: z.array(z.string()) });
+      const body = Body.safeParse(req.body);
+      if (!body.success) {
+        res.status(400).json({ error: { code: "invalid_body", message: "enabled_features: string[] required", details: body.error.issues } });
+        return;
+      }
+      const orgId = req.tenant!.org.id;
+      const bundle = await meta
+        .selectFrom("bundles")
+        .select(["id", "external_id", "name", "version", "manifest", "enabled_features"])
+        .where("id", "=", req.params.id ?? "")
+        .where("org_id", "=", orgId)
+        .executeTakeFirst();
+      if (!bundle) {
+        res.status(404).json({ error: { code: "not_found", message: "bundle not found" } });
+        return;
+      }
+      const rawManifest = bundle.manifest;
+      const fullManifest = (typeof rawManifest === "string" ? JSON.parse(rawManifest) : rawManifest) as FeatureManifest;
+      const before = (bundle.enabled_features as string[] | null) ?? [];
+      const change = featureChange(fullManifest, before, body.data.enabled_features);
+      const ledgerBefore = await instanceLedger(orgId, change.involved);
+
+      // The install route's gate, unchanged: a set that no longer validates
+      // (a module gone, a field the workspace now owns) is answered with the
+      // errors, and nothing has moved yet.
+      const v = await validateBundle(orgId, fullManifest, { autoEnable: true, enabledFeatures: body.data.enabled_features });
+      if (!v.valid) {
+        res.status(409).json({ error: { code: "invalid_bundle", message: v.errors.map((e) => e.message).join(" "), details: { errors: v.errors } } });
+        return;
+      }
+      const result = await applyValidatedBundle(
+        orgId,
+        { id: req.session!.id, display_name: req.session!.display_name ?? null, auth_method: req.session!.auth_method, api_token_id: req.session!.api_token_id ?? null },
+        v,
+      );
+
+      // A table only the turned-off feature set up: gone when empty (nothing
+      // to lose, and an empty table left in the nav reads as a table the
+      // person did not ask for), kept when it holds anything at all.
+      const removedEmpty: string[] = [];
+      for (const r of change.released) {
+        const row = ledgerBefore.find((x) => x.instance_name === r.instance_name);
+        if (row && row.records === 0) {
+          await tearDownInstance(orgId, r.instance_name);
+          removedEmpty.push(r.instance_name);
+        }
+      }
+
+      const ledgerAfter = await instanceLedger(orgId, change.involved);
+      const diff = diffLedger(ledgerBefore, ledgerAfter);
+      const kept = diff.kept;
+      const gone = diff.gone.filter((n) => !removedEmpty.includes(n));
+      const broken = diff.re_created.length > 0 || diff.lost_records.length > 0 || gone.length > 0;
+      const summary = describeFeatureChange(change, diff, removedEmpty);
+      if (broken) {
+        console.error(`[bundles] ${bundle.external_id} feature change did not keep every table: ${summary}${gone.length ? `; GONE: ${gone.join(", ")}` : ""}`);
+      }
+      await activity.log({
+        orgId,
+        action: "bundle_features_changed",
+        ref: { module: null, entityType: "bundle", entityId: result.bundle.id },
+        diff: {
+          name: bundle.name,
+          external_id: bundle.external_id,
+          version: bundle.version,
+          turned_on: change.turned_on,
+          turned_off: change.turned_off,
+          kept: kept.map((k) => ({ instance: k.instance_name, records: k.records })),
+          removed_empty: removedEmpty,
+          ...(broken ? { re_created: diff.re_created, lost_records: diff.lost_records, gone } : {}),
+          summary,
+        },
+      });
+      res.json({
+        ...result,
+        installed: bundleInstallSummary(v.manifest!, result.applied),
+        features: { enabled: v.enabledFeatures ?? [], turned_on: change.turned_on, turned_off: change.turned_off },
+        kept: kept.map((k) => ({ instance_name: k.instance_name, id: k.id, records: k.records })),
+        removed_empty: removedEmpty,
+        // Present ONLY when a table did not come through as it went in, so a
+        // healthy change says nothing extra and a broken one cannot be read
+        // as healthy (same shape as the install's postcondition).
+        ...(broken ? { incomplete: { re_created: diff.re_created, lost_records: diff.lost_records, gone, message: summary } } : {}),
       });
     } catch (err) {
       next(err);
@@ -2500,7 +2681,18 @@ bundlesRouter.delete(
         res.status(404).json({ error: { code: "not_found", message: "bundle not found" } });
         return;
       }
-      await uninstallBundleId(bundle.id, { teardownResources: true });
+      // Records go only when the caller SAYS so. This route tore down the
+      // bundle's instances and their rows on every DELETE, and the feature
+      // dialog's "Save feature changes" was composed as DELETE + install: two
+      // yarn records vanished on staging under a dialog that promised "your
+      // entities stay" (#2889). The uninstall dialog's confirmation, which
+      // names what it deletes, sends `delete_data=1`; nothing else does, so an
+      // older web image that still composes a feature change from two calls
+      // cannot delete through this api. Without the flag the bundle's fields,
+      // wires and views go and its instances and records stay, exactly as an
+      // upgrade leaves them.
+      const deleteData = req.query.delete_data === "1" || (req.body as { delete_data?: unknown } | undefined)?.delete_data === true;
+      await uninstallBundleId(bundle.id, deleteData ? { teardownResources: true } : { snapshotReason: "uninstalled" });
       await activity.log({
         orgId: req.tenant!.org.id,
         action: "bundle_uninstalled",

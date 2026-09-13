@@ -1,0 +1,6 @@
+{
+  "_fixture": "e2e/fixtures/bench-vision/label.png",
+  "image_ahash": "0000ffff0fffffff",
+  "capability": "classify-image",
+  "reply": "{\"vendor\": \"Corner Grocer\", \"order_ref\": \"7781\", \"date\": \"2026-09-02\", \"currency\": \"USD\", \"total\": 5.25, \"items\": [{\"description\": \"WHOLE MILK 1GAL\", \"qty\": 1, \"unit_price\": 3.75, \"line_total\": 3.75, \"discount\": null, \"code\": null, \"model\": null, \"weight\": null, \"weight_unit\": null}, {\"description\": \"BANANAS\", \"qty\": 1, \"unit_price\": 1.5, \"line_total\": 1.5, \"discount\": null, \"code\": null, \"model\": null, \"weight\": 1.2, \"weight_unit\": \"lb\"}]}"
+}

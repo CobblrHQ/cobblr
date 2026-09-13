@@ -1,0 +1,6 @@
+{
+  "_fixture": "e2e/fixtures/review-pack/photos/kettle.jpg",
+  "image_ahash": "7fbfbf3d3c3c3c00",
+  "capability": "identify-image",
+  "reply": "{\"name\":\"Philips electric kettle, white\",\"observations\":\"A white plastic electric kettle on a kitchen counter, lid closed, cord plugged in behind it.\",\"category\":\"Appliances\",\"entity_type\":\"part\",\"is_receipt\":\"no\",\"confidence\":0.85}"
+}

@@ -52,6 +52,11 @@ export function InstancePage({ instanceName }: { instanceName?: string } = {}) {
   // its bundle marked default (Groceries' "What's on hand", the Bookshelf's
   // cover wall), else the table. instance-view.ts, tested.
   const urlView = searchParams.get("view");
+  // `?new=1` is the create door from a view's empty state: the module page
+  // owns the create form, so it renders (its table underneath) until the
+  // form closes and strips the param, and the picked view returns with the
+  // first record in it. Nothing is remembered on the way.
+  const creating = searchParams.get("new") === "1";
   const early = (instancesQ.data?.items ?? []).find((i) => i.instance_name === name);
   const kindId = early ? `${early.instance_name}:item` : null;
   const viewsQ = useQuery({
@@ -61,11 +66,13 @@ export function InstancePage({ instanceName }: { instanceName?: string } = {}) {
     staleTime: 60_000,
   });
   const pinnedViews = (viewsQ.data?.items ?? []).filter((v) => v.pinned);
-  const wantView = initialViewId({
-    urlView,
-    remembered: name ? rememberedView(activeSlug, name) : null,
-    views: pinnedViews,
-  });
+  const wantView = creating
+    ? null
+    : initialViewId({
+        urlView,
+        remembered: name ? rememberedView(activeSlug, name) : null,
+        views: pinnedViews,
+      });
   const activeView = wantView
     ? (pinnedViews.find((v) => v.id === wantView) ??
       (wantView === "board" ? (pinnedViews.find((v) => v.view_type !== "table") ?? pinnedViews[0] ?? null) : null))

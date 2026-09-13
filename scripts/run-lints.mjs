@@ -20,6 +20,8 @@ import { execFileSync } from "node:child_process";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { defaultConcurrency, runParallel } from "./lib/parallel.mjs";
+import { CEILING_MS, judgeRun } from "./lib/lint-budget.mjs";
+import { writeFileSync } from "node:fs";
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
 
@@ -54,6 +56,16 @@ export function discoverLints() {
 function main() {
   const onlyArg = process.argv.indexOf("--only");
   const only = onlyArg === -1 ? null : new Set((process.argv[onlyArg + 1] ?? "").split(",").filter(Boolean));
+  // --record: write this run's per-lint times as the quiet baseline the budget
+  // judges against. Refused for a partial run or a contended one (below).
+  const record = process.argv.includes("--record");
+  const SNAPSHOT = join(ROOT, "scripts", "lint-durations.json");
+  let quietMs = {};
+  try {
+    quietMs = JSON.parse(readFileSync(SNAPSHOT, "utf8")).ms ?? {};
+  } catch {
+    /* no snapshot: every lint is "unknown" and the budget says so */
+  }
 
   const { run, scripts } = discoverLints();
   const names = only ? run.filter((n) => only.has(n) || only.has(n.slice("lint:".length))) : run;
@@ -64,26 +76,13 @@ function main() {
   }
 
   const concurrency = Number(process.env.COBBLR_LINT_CONCURRENCY) || defaultConcurrency();
-  /** Per-lint ceiling. No single check may quietly become the CI job (see below). */
-  const BUDGET_MS = Number(process.env.COBBLR_LINT_BUDGET_MS) || 45_000;
-  /** The few lints whose cost is a whole compiler, not a scan. A tsc over
-   *  scripts/ is 16s on an idle runner and 58s with three PRs building at
-   *  once (2026-09-12, three agents pushing together), so the scan budget
-   *  above reads runner contention as a regression and fails a green change.
-   *  Each entry here is a decision, with its reason; the line for everything
-   *  else stays where it is. */
-  const BUDGET_OVERRIDES_MS = {
-    // Type-checks every scripts/*.ts through tsc: the cost is the compiler.
-    "lint:scripts-typecheck": 150_000,
-  };
-  const budgetFor = (name) => BUDGET_OVERRIDES_MS[name] ?? BUDGET_MS;
   console.log(`[lints] ${names.length} lints, ${concurrency} at a time`);
 
   // Run the slowest first: a long job started last is dead wall-clock while the
   // pool drains. The order is a hint only — a lint that gets slower just drifts
   // down the list, it never breaks the run. Refresh it from a CI log's
-  // "slowest:" line when it stops matching reality; BUDGET_MS below is what
-  // actually holds the line.
+  // "slowest:" line when it stops matching reality; the budget in
+  // lib/lint-budget.mjs is what actually holds the line.
   const SLOWEST_FIRST = [
     "lint:staged-docs-reachable",
     "lint:bundle-schema",
@@ -120,7 +119,7 @@ function main() {
         console.log(r.out.trimEnd().replace(/^/gm, "    "));
       }
     },
-  }).then((results) => {
+  }).then(async (results) => {
     const failed = results.filter((r) => r.code !== 0);
     const cpu = results.reduce((s, r) => s + r.ms, 0);
     const wall = Date.now() - started;
@@ -145,21 +144,76 @@ function main() {
     // only symptom is the job creeping up. lint:ci-sink went from ~1s to 151s
     // (an unscoped `git grep -E` over a 94 MB tree) and spent eight days as the
     // ENTIRE lint suite's wall clock — 157s of 157s — while every run stayed
-    // green. Nothing was watching the number, so now something is. The budget is
-    // ~6x the whole suite's normal wall, well clear of runner contention: the
-    // second-slowest lint in that same run was 9s.
-    const over = results.filter((r) => r.ms > budgetFor(r.name)).sort((a, b) => b.ms - a.ms);
-    if (over.length) {
+    // green. Nothing was watching the number, so now something is. Each lint
+    // is judged against its own recorded quiet time, scaled by how contended
+    // this run measurably was; a run too contended to judge says so and leaves
+    // it to the next quiet one. lib/lint-budget.mjs has the numbers and the
+    // two rules that failed before it.
+    // A lint over its per-lint budget is run once more, ALONE, now that the
+    // pool has drained: a stall (run 21374: a 0.4s lint at 12.8s because it
+    // started in the compiler's wave) does not reproduce, a regression does.
+    // Both numbers are printed so the log tells the story either way.
+    const rerun = async (name) => {
+      const [r] = await runParallel([{ name, cmd: scripts[name], cwd: ROOT }], { concurrency: 1 });
+      return r.ms;
+    };
+    const { factor, contended, perLint, over, unknown, remeasured } = await judgeRun(results, quietMs, record ? null : rerun);
+    const factorLine = `this run ran at ${factor.toFixed(2)}x the recorded quiet baseline`;
+    if (contended) {
+      console.log(`[lints] contended run (${factorLine}): per-lint budgets deferred to the next quiet run; only the hard ceiling applies here`);
+    } else if (perLint) {
+      console.log(`[lints] budget: ${factorLine}; every lint judged against its own quiet time`);
+    }
+    for (const m of remeasured) {
+      console.log(`[lints] re-measured alone: ${m.name} ${(m.pooledMs / 1000).toFixed(1)}s in the pool, ${(m.aloneMs / 1000).toFixed(1)}s alone: ${m.verdict}`);
+    }
+    if (unknown.length) {
+      console.log(`[lints] ${unknown.length} lint(s) not in scripts/lint-durations.json (judged at the snapshot median): ${unknown.join(", ")}\n        Record them: node scripts/run-lints.mjs --record   (on an idle machine)`);
+    }
+    // --record exists so a justified cost can be written down in the same
+    // change; the per-lint judgement would refuse exactly that run, so under
+    // --record it is reported, not enforced. The ceiling still is: a lint that
+    // IS the CI job is not a baseline.
+    const overCeiling = over.filter((r) => r.budgetMs === CEILING_MS);
+    const overRatio = over.filter((r) => r.budgetMs !== CEILING_MS);
+    if (record && overRatio.length) {
+      console.log(
+        `[lints] --record: ${overRatio.length} lint(s) over their previous budget, becoming the new baseline:\n` +
+          overRatio.map((r) => `    ${r.name}  ${(r.ms / 1000).toFixed(1)}s — ${r.why}`).join("\n"),
+      );
+    }
+    if (record ? overCeiling.length : over.length) {
+      const shown = record ? overCeiling : over;
       console.error(
-        `\n[lints] ✗ ${over.length} lint(s) over the ${(BUDGET_MS / 1000).toFixed(0)}s budget:\n` +
-          over.map((r) => `    ${r.name}  ${(r.ms / 1000).toFixed(1)}s`).join("\n") +
+        `\n[lints] ✗ ${shown.length} lint(s) over budget:\n` +
+          shown.map((r) => `    ${r.name}  ${(r.ms / 1000).toFixed(1)}s — ${r.why}`).join("\n") +
           `\n\n  A single lint this slow becomes the whole CI job. Make it cheaper — the usual\n` +
           `  cause is scanning the tree the expensive way (prefer \`git grep -F\` over a regex\n` +
           `  that starts matching at every byte, and scope the pathspec). If the cost is\n` +
-          `  genuinely justified, raise BUDGET_MS in scripts/run-lints.mjs in the same change,\n` +
-          `  so it stays a decision someone made rather than drift nobody saw.\n`,
+          `  genuinely justified, re-record the baseline in the same change\n` +
+          `  (node scripts/run-lints.mjs --record, on an idle machine) so it stays a\n` +
+          `  decision someone made rather than drift nobody saw.\n`,
       );
       process.exit(1);
+    }
+    if (record) {
+      if (only) {
+        console.error("[lints] --record refused: a partial run (--only) is not a baseline for the suite.");
+        process.exit(1);
+      }
+      if (contended) {
+        console.error(`[lints] --record refused: ${factorLine}; a contended run is not a quiet baseline. Try again when the machine is idle.`);
+        process.exit(1);
+      }
+      const ms = Object.fromEntries(results.map((r) => [r.name, r.ms]).sort(([a], [b]) => a.localeCompare(b)));
+      const doc = {
+        recorded: new Date().toISOString().slice(0, 10),
+        source: `run-lints.mjs --record (${results.length} lints, ${(wall / 1000).toFixed(1)}s wall, ${concurrency} at a time)`,
+        note: "Quiet per-lint wall time in ms. Refresh: node scripts/run-lints.mjs --record on an idle machine (refused when the run is contended). Read by scripts/lib/lint-budget.mjs.",
+        ms,
+      };
+      writeFileSync(SNAPSHOT, JSON.stringify(doc, null, 2) + "\n");
+      console.log(`[lints] recorded ${results.length} quiet baselines to scripts/lint-durations.json`);
     }
 
     console.log(`[lints] ✓ all ${results.length} pass`);

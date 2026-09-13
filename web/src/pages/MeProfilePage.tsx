@@ -22,7 +22,8 @@ import { api, ApiError } from "../lib/api";
 import { accountSections } from "../lib/account-nav";
 import { useTheme } from "../theme/ThemeContext";
 import { useToast, usePageTitle } from "@cobblr/platform-web";
-import { setNavMode, useNavMode } from "../lib/nav-mode";
+import { NAV_LAYOUTS, setNavLayout, useNavLayout } from "../lib/nav-mode";
+import { LayoutPreview } from "../components/LayoutPreview";
 
 function AccountHead({ title, blurb }: { title: string; blurb?: string }) {
   return (
@@ -309,41 +310,47 @@ function AppearanceSection() {
   );
 }
 
-/** The desktop nav layout (top bar vs sidebar + its options) syncs to the
- *  account like the theme does — but until this section existed it was settable
- *  only through three unlabeled icons in the shell, with nowhere to SEE the
- *  current value or stop the syncing. Phones ignore all of it (the sidebar is
- *  `hidden md:block`), which is why the section says desktop. */
+/** The desktop nav layout syncs to the account like the theme does. Until this
+ *  section existed it was settable only through unlabeled icons in the shell,
+ *  and the third state (no top bar at all) existed only as a 13px icon inside
+ *  the sidebar, so a person looking for it in settings found two options and a
+ *  dead end. Phones ignore all of it (the sidebar is `hidden md:block`), which
+ *  is why the section says desktop. */
 function LayoutSection() {
-  const navMode = useNavMode();
+  const navLayout = useNavLayout();
   const toast = useToast();
   return (
     <section className="rounded-xl border border-line dark:border-slate-700 bg-surface dark:bg-slate-900 p-5 space-y-3">
       <h2 className="text-sm font-semibold text-content dark:text-mortar-100 flex items-center gap-2">
         <PanelLeft size={14} /> Layout (desktop)
       </h2>
-      <div className="flex flex-wrap items-center gap-2">
-        {(
-          [
-            { value: "top", label: "Top bar" },
-            { value: "side", label: "Sidebar" },
-          ] as const
-        ).map((o) => (
-          <button
-            key={o.value}
-            type="button"
-            onClick={() => setNavMode(o.value)}
-            className={
-              "px-3 py-1.5 rounded-md border text-sm transition " +
-              (navMode === o.value
-                ? "border-cobble-400 bg-cobble-50 text-accent dark:border-cobble-600 dark:bg-cobble-900/30 dark:text-mortar-100"
-                : "border-line dark:border-slate-600 text-muted dark:text-slate-400 hover:text-content dark:hover:text-mortar-200")
-            }
-          >
-            {o.label}
-          </button>
-        ))}
-        <div className="flex-1" />
+      <div className="grid grid-cols-1 sm:grid-cols-3 gap-2" role="radiogroup" aria-label="Desktop layout">
+        {NAV_LAYOUTS.map((o) => {
+          const selected = navLayout === o.value;
+          return (
+            <button
+              key={o.value}
+              type="button"
+              role="radio"
+              aria-checked={selected}
+              onClick={() => setNavLayout(o.value)}
+              className={
+                "flex items-start gap-3 rounded-lg border p-3 text-left transition " +
+                (selected
+                  ? "border-cobble-500 bg-cobble-50 dark:bg-cobble-500/10 ring-1 ring-cobble-500 text-cobble-700 dark:text-cobble-300"
+                  : "border-line dark:border-slate-700 text-muted dark:text-slate-400 hover:bg-subtle dark:hover:bg-slate-800/60")
+              }
+            >
+              <LayoutPreview layout={o.value} />
+              <span className="min-w-0">
+                <span className={"block text-sm font-medium " + (selected ? "" : "text-content dark:text-mortar-100")}>{o.label}</span>
+                <span className="block text-[11px] leading-snug text-faint dark:text-slate-400 mt-0.5">{o.desc}</span>
+              </span>
+            </button>
+          );
+        })}
+      </div>
+      <div className="flex justify-end">
         <button
           type="button"
           onClick={() => {
@@ -359,8 +366,8 @@ function LayoutSection() {
         </button>
       </div>
       <p className="text-[11px] text-faint leading-tight">
-        Follows your account to every desktop, like the theme. The sidebar's own pin and
-        top-bar toggles live in the sidebar itself; phones keep the mobile menu regardless.
+        Follows your account to every desktop, like the theme. Pinned or auto-hiding is the
+        sidebar's own pin, up at its top right; phones keep the mobile menu regardless.
       </p>
     </section>
   );

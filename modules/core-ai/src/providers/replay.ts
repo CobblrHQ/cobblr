@@ -35,6 +35,25 @@
 // plain reply, so a test that only cares about plumbing needs no cassette of
 // its own.
 //
+// IMAGE cassettes, for the scan surfaces (identify-image, classify-image,
+// extract-text), in the `images/` subdirectory of the cassette dir: a photo
+// has no "last user message" to match, so an image cassette is keyed by a
+// PERCEPTUAL hash of the image (an 8x8 average hash, 16 hex chars) and answers
+// with one canned reply text. Perceptual, not a byte hash: the identify step
+// sends the file store's resized "medium" JPEG, never the bytes the test
+// uploaded, so a sha256 of the fixture matched nothing (the first CI run of
+// this). A resize or a re-encode moves a bit or two of the hash, so a match
+// is a Hamming distance of at most HASH_TOLERANCE. Without one, every image
+// capability returns a stable, obviously-fake item so a scan test still runs
+// end to end. (A subdirectory, because the chat corpus lint holds every file
+// beside the chat cassettes to the rounds shape.)
+//
+//   {
+//     "image_ahash": "ffc3818181c3ffff",       // npx tsx scripts/image-cassette-key.mjs <file>
+//     "capability": "identify-image",         // optional; omitted = any image capability
+//     "reply": "{\"name\":\"Store receipt\",\"observations\":\"A printed receipt\",\"category\":\"receipt\"}"
+//   }
+//
 // Recording new cassettes: `COBBLR_AI_REPLAY_RECORD=<dir>` on an instance with a
 // real provider writes one file per turn with the rounds the model actually
 // produced. Point it at the SAME directory as COBBLR_AI_REPLAY_DIR and the
@@ -45,6 +64,8 @@
 import { existsSync, readdirSync, readFileSync, writeFileSync, mkdirSync } from "node:fs";
 import { join } from "node:path";
 import { platform, type AiCapability } from "@cobblr/platform-contract";
+import sharp from "sharp";
+import { ProviderError, providerSentence, type ProviderReason } from "@cobblr/platform-contract/provider-reason";
 import { turnsOf, type ChatTurn, type ToolCall } from "./tool-wire.js";
 import { promptFingerprint } from "./prompt-fingerprint.js";
 
@@ -57,8 +78,14 @@ interface Round {
 interface Cassette {
   match: string;
   rounds: Round[];
+  /** The provider refuses this turn for this reason instead of answering:
+   *  the same ProviderError a real adapter throws on a 429 or a bad key, so
+   *  a test can drive the refusal path with no key and no network. */
+  refuse?: ProviderReason;
   file: string;
 }
+
+const REASONS: ReadonlySet<string> = new Set(["invalid_key", "quota", "model_unavailable", "unreachable", "unknown"]);
 
 const SUPPORTED: Partial<Record<AiCapability, { models: string[]; defaultModel?: string }>> = {
   chat: { models: ["replay"], defaultModel: "replay" },
@@ -79,7 +106,8 @@ function loadCassettes(dir: string): Cassette[] {
     try {
       const raw = JSON.parse(readFileSync(join(dir, f), "utf8")) as Partial<Cassette>;
       if (typeof raw.match === "string" && Array.isArray(raw.rounds)) {
-        out.push({ match: raw.match, rounds: raw.rounds, file: f });
+        const refuse = typeof raw.refuse === "string" && REASONS.has(raw.refuse) ? (raw.refuse as ProviderReason) : undefined;
+        out.push({ match: raw.match, rounds: raw.rounds, ...(refuse ? { refuse } : {}), file: f });
       }
     } catch {
       console.warn(`[ai:replay] skipping unreadable cassette ${f}`);
@@ -89,6 +117,82 @@ function loadCassettes(dir: string): Cassette[] {
   // is always last.
   out.sort((a, b) => (a.match === "*" ? 1 : b.match === "*" ? -1 : b.match.length - a.match.length));
   return out;
+}
+
+/** An image cassette: the reply for one image, by its perceptual hash. */
+interface ImageCassette {
+  image_ahash: string;
+  capability?: string;
+  reply: string;
+  file: string;
+}
+
+/** Bits of the 64-bit average hash that may differ and still match: a resize
+ *  and a JPEG re-encode of the same picture move one or two. */
+const HASH_TOLERANCE = 6;
+
+function loadImageCassettes(dir: string): ImageCassette[] {
+  const out: ImageCassette[] = [];
+  const imagesDir = join(dir, "images");
+  if (!existsSync(imagesDir)) return out;
+  for (const f of readdirSync(imagesDir)) {
+    if (!f.endsWith(".json")) continue;
+    try {
+      const raw = JSON.parse(readFileSync(join(imagesDir, f), "utf8")) as Partial<ImageCassette>;
+      if (typeof raw.image_ahash === "string" && /^[0-9a-f]{16}$/i.test(raw.image_ahash) && typeof raw.reply === "string") {
+        out.push({ image_ahash: raw.image_ahash.toLowerCase(), reply: raw.reply, file: f, ...(typeof raw.capability === "string" ? { capability: raw.capability } : {}) });
+      }
+    } catch {
+      console.warn(`[ai:replay] skipping unreadable image cassette ${f}`);
+    }
+  }
+  return out;
+}
+
+/** The 8x8 average hash of an image, 16 hex chars. The same function keys the
+ *  cassettes (scripts/image-cassette-key.mjs), so the two cannot drift.
+ *
+ *  Hashed as DISPLAYED: a phone photo stores its raster sideways with an
+ *  orientation tag, and the scan surfaces send it both ways (the identify
+ *  sends the oriented medium variant, the split sends the original bytes).
+ *  One picture keys one cassette. A file with no tag hashes as before. */
+export async function imageAverageHash(bytes: Buffer): Promise<string> {
+  const px = await sharp(bytes).rotate().grayscale().resize(8, 8, { fit: "fill" }).raw().toBuffer();
+  const mean = px.reduce((a, b) => a + b, 0) / px.length;
+  let bits = 0n;
+  for (const v of px) bits = (bits << 1n) | (v >= mean ? 1n : 0n);
+  return bits.toString(16).padStart(16, "0");
+}
+
+function hammingHex(a: string, b: string): number {
+  let d = 0n;
+  let x = BigInt(`0x${a}`) ^ BigInt(`0x${b}`);
+  while (x) {
+    d += x & 1n;
+    x >>= 1n;
+  }
+  return Number(d);
+}
+
+/** The image cassette for this call, or null: the nearest hash within
+ *  tolerance, narrowed by capability when the cassette names one. */
+async function imageCassetteFor(dir: string, capability: string, input: Record<string, unknown>): Promise<ImageCassette | null> {
+  const b64 = typeof input.image_b64 === "string" ? input.image_b64 : typeof input.image === "string" ? input.image : null;
+  if (!b64) return null;
+  const all = loadImageCassettes(dir);
+  if (!all.length) return null;
+  let hash: string;
+  try {
+    hash = await imageAverageHash(Buffer.from(b64, "base64"));
+  } catch {
+    return null;
+  }
+  const near = all
+    .map((c) => ({ c, d: hammingHex(hash, c.image_ahash) }))
+    .filter(({ d }) => d <= HASH_TOLERANCE)
+    .sort((a, b) => a.d - b.d)
+    .map(({ c }) => c);
+  return near.find((c) => c.capability === capability) ?? near.find((c) => !c.capability) ?? null;
 }
 
 function lastUserMessage(turns: ChatTurn[]): string {
@@ -169,6 +273,11 @@ export function register(): void {
               `replay: no cassette matches "${ask.slice(0, 60)}" and no "*" fallback in ${dir} — ${have}`,
             );
           }
+          if (cassette.refuse) {
+            const status = cassette.refuse === "quota" ? 429 : cassette.refuse === "invalid_key" ? 401 : cassette.refuse === "model_unavailable" ? 404 : 503;
+            const retry = cassette.refuse === "quota" ? 30 : undefined;
+            throw new ProviderError("replay", cassette.refuse, providerSentence(cassette.refuse, { provider: "replay", retryAfterSec: retry }), status, retry);
+          }
           const n = roundIndex(turns);
           const round = cassette.rounds[Math.min(n, cassette.rounds.length - 1)] ?? { content: "" };
           const tool_calls: ToolCall[] | undefined = round.tool_calls?.map((c) => ({
@@ -189,13 +298,35 @@ export function register(): void {
         }
         case "summarise":
           return { result: { text: String(ctx.input.text ?? "").slice(0, 120) }, cost_cents: 0 };
-        default:
-          // Image capabilities: a stable, obviously-fake answer so a scan test
-          // can run end to end without a vision model.
+        default: {
+          // Image capabilities: a cassette keyed by the image's bytes when the
+          // test scripted one, else a stable, obviously-fake answer so a scan
+          // test can still run end to end without a vision model.
+          const scripted = await imageCassetteFor(dir, ctx.capability, (ctx.input ?? {}) as Record<string, unknown>);
+          if (scripted) return { result: { text: scripted.reply }, input_tokens: 0, output_tokens: 0, cost_cents: 0 };
           return { result: { text: '{"name":"replayed item","confidence":0.5}' }, cost_cents: 0 };
+        }
       }
     },
-    testConnection: async () => ({ ok: true }),
+    // The probe's cassette: what a save's key check answers, by the key's
+    // own prefix, so a route test can save a bad key, a spent quota and a
+    // dead provider without a network or a token. Anything else is a good key.
+    //   invalid-…  -> invalid_key      quota-… -> quota
+    //   down-…     -> unreachable      nomodel-… -> model_unavailable
+    testConnection: async (credentials) => {
+      const key = String(credentials.api_key ?? "");
+      const reason: ProviderReason | null = key.startsWith("invalid-")
+        ? "invalid_key"
+        : key.startsWith("quota-")
+          ? "quota"
+          : key.startsWith("down-")
+            ? "unreachable"
+            : key.startsWith("nomodel-")
+              ? "model_unavailable"
+              : null;
+      if (!reason) return { ok: true, models: ["replay-model"] };
+      return { ok: false, reason, error: providerSentence(reason, { provider: "replay", retryAfterSec: reason === "quota" ? 30 : undefined }) };
+    },
   });
 }
 

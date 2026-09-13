@@ -7,17 +7,18 @@
 
 import { useState, useMemo, useEffect } from "react";
 import { useKindLabels } from "../lib/useKindLabels";
-import { expiryPhrase, expiryState, pluralise } from "@cobblr/platform-contract";
+import { expiryPhrase, expiryState } from "@cobblr/platform-contract";
 import { tallyCadence, CADENCE_PRESETS } from "../lib/cadence";
 import { Link, useSearchParams } from "react-router-dom";
-import { useDetailRoute } from "../lib/useDetailRoute";
+import { useDetailRoute, useListRoute } from "../lib/useDetailRoute";
+import { ViewEmptyState } from "../components/ViewEmptyState";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { ChevronLeft, ChevronRight, LayoutList, Pencil, Pin, PinOff, Plus, Trash2 } from "lucide-react";
 import { WEEKDAYS, MONTHS, isoLocal, buildMonthGrid, shiftMonth } from "../lib/month-grid";
 import { useMutation } from "@tanstack/react-query";
 import { ApiError, api, type SavedView } from "../lib/api";
 import { useActiveOrg } from "../auth/ActiveOrgContext";
-import { Modal, useToast, useConfirm, usePageTitle, BulkActionBar, useFlowHost, useImageSrc } from "@cobblr/platform-web";
+import { Modal, useToast, useConfirm, usePageTitle, BulkActionBar, useFlowHost, useImageSrc, useRunAction } from "@cobblr/platform-web";
 import {
   useKindFields,
   FieldSelect,
@@ -221,35 +222,45 @@ function ViewDataModal({
   onClose: () => void;
 }) {
   const data = useQuery({
-    queryKey: ["view-data", slug, view.id],
+    // The view's kind rides in the key, so an action on one of its records
+    // refreshes it (platform-web run-action).
+    queryKey: ["view-data", slug, view.id, view.entity_kind],
     queryFn: () => api.viewData(slug, view.id),
   });
   const items = data.data?.items ?? [];
 
   return (
     <Modal open onClose={onClose} title={view.name} size="lg">
-      <SavedViewBody view={view} items={items} isLoading={data.isLoading} />
+      <SavedViewBody view={view} items={items} isLoading={data.isLoading} collectionEmpty={data.data?.collection_empty} />
     </Modal>
   );
 }
 
 /** The type-switched render of one saved view's rows — shared by the config
- *  page's preview modal and the full-page /views/:viewId surface. */
+ *  page's preview modal, the full-page /views/:viewId surface and the
+ *  instance page's view tabs. `collectionEmpty` is the server's word on
+ *  whether zero rows means an empty collection or a filter that hid it all. */
 export function SavedViewBody({
   view,
   items,
   isLoading,
+  collectionEmpty,
 }: {
   view: SavedView;
   items: ViewRow[];
   isLoading: boolean;
+  collectionEmpty?: boolean;
 }) {
   const cfg = (view.config ?? {}) as ViewConfig;
   // Count reads in the collection's own noun ("5 books"), not DB-speak "5
   // rows" and not the kind's literal suffix ("5 items" about books).
-  const labels = useKindLabels(useActiveOrg().activeSlug);
+  const { activeSlug } = useActiveOrg();
+  const labels = useKindLabels(activeSlug);
   const noun = labels.noun(view.entity_kind);
-  const plural = pluralise(noun);
+  const plural = labels.plural(view.entity_kind);
+  // The kind's own list page carries its create form (`?new=1` opens it) and
+  // shows everything (`?view=table` on an instance page, this once).
+  const listRoute = useListRoute(activeSlug)(view.entity_kind);
   // Bulk select (table view): pick rows → open the organize planner over them.
   // Generic — the planner files whatever the kind's writer accepts a location on;
   // a non-locatable kind just yields nothing to file.
@@ -277,8 +288,15 @@ export function SavedViewBody({
         <span>{items.length} {items.length === 1 ? noun : plural}</span>
       </div>
       {isLoading && <div className="text-sm text-muted">Loading…</div>}
+      {/* Before the renderer switch, so no renderer can ship without it. */}
       {items.length === 0 && !isLoading && (
-        <div className="text-sm text-muted italic">No matching {plural}.</div>
+        <ViewEmptyState
+          noun={noun}
+          plural={plural}
+          collectionEmpty={collectionEmpty}
+          createTo={listRoute ? `${listRoute}?new=1` : null}
+          seeAllTo={listRoute ? `${listRoute}?view=table` : null}
+        />
       )}
       {items.length > 0 && view.view_type === "kanban" && (
         <KanbanRenderer items={items} groupBy={cfg.group_by ?? "subtitle"} />
@@ -634,7 +652,6 @@ function EntityTitleLink({ row, className }: { row: ViewRow; className?: string 
 function VendingRenderer({ items, cfg }: { items: ViewRow[]; cfg: ViewConfig }) {
   const c = cfg as unknown as { qty_field?: string; expiry_field?: string; min_qty_field?: string; grace_field?: string };
   const { activeSlug } = useActiveOrg();
-  const qc = useQueryClient();
   const toast = useToast();
   // OFF by default. The board's first job is to be readable from across the
   // room; controls on every tile all the time is a worse board. Turning them on
@@ -647,10 +664,11 @@ function VendingRenderer({ items, cfg }: { items: ViewRow[]; cfg: ViewConfig }) 
   // if undo is buried people stop tapping rather than risk being wrong.
   const [lastAction, setLastAction] = useState<{ id: string; title: string; undo: () => Promise<void> } | null>(null);
 
-  const invalidate = () => {
-    void qc.invalidateQueries({ queryKey: ["view-items"] });
-    void qc.invalidateQueries({ queryKey: ["saved-views"] });
-  };
+  // Through the one door (platform-web run-action): the action's completion
+  // refreshes every query showing the record's kind, wherever this grid is
+  // embedded. This used to invalidate the two keys it knew, and the page it
+  // lives on read through a third (#2969).
+  const runAction = useRunAction();
 
   /** One tap. `dir` is -1 for "used one", +1 for "another arrived". */
   const tap = async (row: ViewRow, dir: -1 | 1) => {
@@ -663,24 +681,12 @@ function VendingRenderer({ items, cfg }: { items: ViewRow[]; cfg: ViewConfig }) 
     // calendar day from a UTC clock (a 9pm tap would date tomorrow).
     const timezone = Intl.DateTimeFormat().resolvedOptions().timeZone;
     try {
-      await api.invokeAction(activeSlug, {
-        actionId,
-        entityKind: row.kind,
-        entityId: row.id,
-        args: { timezone },
-      });
-      invalidate();
+      await runAction({ actionId, entityKind: row.kind, entityId: row.id, args: { timezone } });
       setLastAction({
         id: key,
         title: row.title ?? "that",
         undo: async () => {
-          await api.invokeAction(activeSlug, {
-            actionId: inverse,
-            entityKind: row.kind,
-            entityId: row.id,
-            args: { timezone },
-          });
-          invalidate();
+          await runAction({ actionId: inverse, entityKind: row.kind, entityId: row.id, args: { timezone } });
           setLastAction(null);
         },
       });

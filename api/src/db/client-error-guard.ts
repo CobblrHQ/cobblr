@@ -1,93 +1,78 @@
-import type { Pool, PoolClient } from "pg";
+import { Client, Pool } from "pg";
+import type { ClientConfig, PoolConfig } from "pg";
 
 /**
- * Keep a CHECKED-OUT client's 'error' event from killing the process.
+ * Every pg client this process opens listens for 'error' from the moment it
+ * exists. This file is the only place a Pool or a Client is constructed.
  *
- * `pool.on("error", …)` is not enough, and the reason is one line of pg-pool:
- * `_acquireClient` calls `client.removeListener('error', idleListener)`. The pool
- * listens to IDLE clients only. From the moment `pool.connect()` hands a client
- * over until `release()`, that client has no listener at all, and in Node an
- * unhandled 'error' event does not log, it THROWS. So a backend that dies while
- * a client is borrowed takes down the whole api.
+ * In Node an unhandled 'error' event does not log, it THROWS, and a throw out
+ * of a socket read is an uncaught exception: the process exits. A Postgres
+ * backend goes away under a client for ordinary reasons (a dropped database, a
+ * terminated backend, a restart, a network blip), and pg reports it as an
+ * 'error' event on the CLIENT whenever there is no query in flight to reject
+ * into. So the whole api is one unlistened client away from exit 1.
  *
- * That window is not rare, it is exactly where the slow work happens: a loop
- * holding the client across `await readFile` gaps, a migration on a freshly
- * created tenant database, a backfill, and every Kysely transaction, which holds
- * a client between its statements. If a parallel test fork's teardown DROPs that
- * database mid-run, Postgres sends 57P01 (admin_shutdown) and there is no
- * in-flight query to reject into. The api died once and every request after it
- * failed, which reads as dozens of unrelated tests breaking rather than as one
- * missing listener (CI 2026-08-31 and again 2026-09-01).
+ * Three fixes attached the listener after the fact and each left a window:
  *
- * Returns a detach function. Call it in the same `finally` that releases, so a
- * long-lived pooled connection does not accumulate a listener per checkout.
+ *   - `pool.on("error")` hears IDLE clients only. pg-pool moves its listener
+ *     off a client at checkout and back on at release (CI, 2026-08-25).
+ *   - Guarding the client after `pool.connect()` resolved covered the checkout
+ *     (2026-09-01), but a resolved promise is a microtask, and a FATAL that
+ *     arrives in the same socket read as the connect handshake is emitted
+ *     BEFORE that microtask runs: pg-pool has already removed its idle
+ *     listener inside `_acquireClient`, the caller's guard is not on yet, and
+ *     nobody is listening. That is how a workspace deletion, which terminates
+ *     every backend of the tenant while the next request is opening a
+ *     connection, took the api down (#2957).
+ *   - Bare `new Client(...)` sites each remembered their own `.on("error")`,
+ *     one at a time, with a lint counting lines.
+ *
+ * The only window-free seam is construction. `createPool` hands pg-pool a
+ * Client class whose constructor attaches the listener, so a pool client is
+ * listening before its socket opens and stays listening through checkout,
+ * release, idle and end; pg-pool's own add/remove of its idle listener happens
+ * on top and changes nothing. `createClient` does the same for a bare client.
+ * `lint:pg-clients-born-guarded` refuses `new Pool(` / `new Client(` anywhere
+ * else, so the next connection somebody opens cannot miss it.
+ *
+ * The listener logs and continues. The next query on that client rejects
+ * through the caller's ordinary error path, which is where the decision
+ * belongs; pg-pool drops a client that errored instead of re-idling it.
  */
-export function guardClient(client: PoolClient, label: string): () => void {
-  const onError = (err: Error) => {
-    // Log and continue. The next query on this client rejects through the
-    // caller's ordinary error path, which is where the decision belongs.
-    console.error(`[${label}] connection error while checked out:`, err.message);
-  };
-  client.on("error", onError);
-  return () => {
-    client.removeListener("error", onError);
+
+type ClientClass = new (config?: ClientConfig) => Client;
+
+function onClientError(label: string): (err: Error) => void {
+  return (err) => {
+    console.error(`[${label}] connection error:`, err.message);
   };
 }
 
-/**
- * Guard EVERY client a pool hands out, at the one seam they all pass through.
- *
- * Guarding call sites one at a time cannot finish the job: Kysely acquires its
- * own clients (`PostgresDriver` calls `pool.connect()` and holds the client for
- * the length of a transaction), so the most common checkout in the codebase is
- * one no application file ever writes. Wrapping `connect` here covers Kysely,
- * every hand-written `pool.connect()`, and whatever is written next, with
- * nothing for a caller to remember.
- *
- * Each client is guarded on the way out and unguarded on `release()`, so a
- * pooled connection carries one listener while borrowed and none while idle,
- * where pg-pool's own listener takes over again. Both of pg's `connect` shapes
- * are handled; the callback form is given the guarded `release` as its `done`,
- * so releasing through either name detaches.
- *
- *   const pool = new Pool({ … });
- *   pool.on("error", …);           // idle clients — pg-pool's contract
- *   guardPoolClients(pool, "meta"); // checked-out clients — this one
- */
-export function guardPoolClients(pool: Pool, label: string): void {
-  type Done = (release?: Error | boolean) => void;
-  type Callback = (err: Error | undefined, client?: PoolClient, done?: Done) => void;
-  const connect = (pool.connect as (...args: unknown[]) => unknown).bind(pool);
-
-  const guarded = function guardedConnect(this: Pool, ...args: unknown[]): unknown {
-    if (typeof args[0] === "function") {
-      const cb = args[0] as Callback;
-      return connect((err: Error | undefined, client?: PoolClient, done?: Done) => {
-        if (client) {
-          attach(client, label);
-          cb(err, client, client.release as Done);
-          return;
-        }
-        cb(err, client, done);
-      });
+/** A Client class whose every instance is listening before `connect()`. The
+ *  base is pg's Client, or whatever the pool config names (a test's fake). */
+function bornGuarded(label: string, Base: ClientClass): ClientClass {
+  return class GuardedClient extends Base {
+    constructor(config?: ClientConfig) {
+      super(config);
+      this.on("error", onClientError(label));
     }
-    return (connect() as Promise<PoolClient>).then((client) => {
-      attach(client, label);
-      return client;
-    });
   };
-
-  (pool as unknown as { connect: unknown }).connect = guarded;
 }
 
-function attach(client: PoolClient, label: string): void {
-  const detach = guardClient(client, label);
-  // pg-pool assigns a fresh once-only `release` on every checkout, so restoring
-  // the original after use keeps that contract exactly as it was.
-  const release = client.release;
-  client.release = function guardedRelease(this: PoolClient, err?: Error | boolean) {
-    detach();
-    client.release = release;
-    return release.call(this, err);
-  } as PoolClient["release"];
+/** The one way to open a pool. `label` names it in the log line. */
+export function createPool(config: PoolConfig, label: string): Pool {
+  const Base = (config.Client as ClientClass | undefined) ?? Client;
+  const pool = new Pool({ ...config, Client: bornGuarded(label, Base) });
+  // pg-pool re-emits an idle client's error on the pool and, being an
+  // EventEmitter, throws if nobody listens there either. The client's own
+  // listener already logged it; this one only keeps the pool's emit harmless.
+  pool.on("error", () => {});
+  return pool;
+}
+
+/** The one way to open a bare client (superuser work, a maintenance DB). */
+export function createClient(config: ClientConfig | string, label: string): Client {
+  const client = new Client(config);
+  client.on("error", onClientError(label));
+  return client;
 }

@@ -23,6 +23,7 @@ import { useQuery } from "@tanstack/react-query";
 import { AskCobbAbout } from "./AskCobbAbout";
 import { usePlatformWeb } from "./context";
 import { useInvokeEntityAction } from "./use-invoke-action";
+import { ActionOutcome } from "./ActionOutcome";
 import type { PlatformActionBinding } from "./types";
 
 export interface RecordRowProps {
@@ -115,7 +116,7 @@ function RowBindings({ kind, id }: { kind: string; id: string }) {
 }
 
 function RowActionButton({ kind, id, binding }: { kind: string; id: string; binding: PlatformActionBinding }) {
-  const { run, flash, note, pending } = useInvokeEntityAction({ entityKind: kind, entityId: id });
+  const { run, flash, note, failure, dismissFailure, pending } = useInvokeEntityAction({ entityKind: kind, entityId: id });
   const [armed, setArmed] = useState(false);
   const needsConfirm = rowActionNeedsConfirm(binding);
   // The module's own words, because only it knows what its action does. "Print
@@ -156,7 +157,7 @@ function RowActionButton({ kind, id, binding }: { kind: string; id: string; bind
       {/* Whatever the action reports afterwards, in its own words: a label that
           reached a walk-up printer says "Printed to <printer>" a beat after the
           queue accepted it. Generic — the row never guesses what happened. */}
-      {note && <span className="text-[10px] text-muted dark:text-slate-400">{note}</span>}
+      <ActionOutcome note={note} failure={failure} onDismiss={dismissFailure} />
     </>
   );
 }

@@ -1,0 +1,14 @@
+HIGHWAY FUEL STOP
+PUMP 04
+
+UNLEADED REGULAR           47.73
+  13.442 GAL @ 3.551 /GAL
+COFFEE LARGE                2.49
+ENERGY BAR                  2.99
+
+SUBTOTAL                    53.21
+TAX                          1.50
+TOTAL                       54.71
+CREDIT                      54.71
+
+03/30/2026 07:55

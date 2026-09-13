@@ -98,6 +98,15 @@ surface, then stamps `docs_published:`.
   blurbs.)
 - `docs_published:` is stamped by the flush, so never write it by hand. After
   publish, doc corrections go straight to the target file.
+- **A feature that names a control ships the control.** If the entry or its
+  `## docs` says button, sheet, menu, picker, tab, toggle, card, chip or link,
+  the same change must touch `web/src/`, `modules/*/src/ui/` or a bundle
+  manifest. One entry promised "One button files everything waiting" from a
+  commit that touched only the api, and the docs described a button nobody
+  could press for nineteen days. When the control already exists (copy on an
+  existing button, a wire behind it), say so where a reader sees it:
+  `ui: none (<reason>)`, in the frontmatter or the body.
+  `lint:changelog-names-ui` enforces it; improvements and fixes are out of scope.
 
 ## The PUBLIC docs site is tracked separately
 

@@ -32,6 +32,7 @@
 // The corpus behind all of this: modules/core-scan/tests/receipt-photo-detect.test.ts
 
 import { platform } from "@cobblr/platform-contract";
+import { sql } from "kysely";
 
 /** The fields this decision reads. A structural subset of PhotoIdentity, so the
  *  rule can be tested against a recorded reply or a stored row without building
@@ -45,7 +46,15 @@ export interface ReceiptPhotoSignals {
   /** What KIND of thing it decided this is, in the workspace's own vocabulary.
    *  Null or empty when it declined to say. */
   category: string | null;
+  /** The pass's own answer to the question, asked as a field (#2916). Absent
+   *  on a reply from before the prompt asked, when the prose decides. */
+  is_receipt?: "yes" | "no" | "unsure" | null;
 }
+
+/** What the receipt-shape check (receipt-shape.ts) made of the image's own
+ *  text, for the one case where the model hedges: an "unsure" lands on the
+ *  receipt side when the text had any receipt shape to it. */
+export type ReceiptShapeHint = "receipt" | "maybe" | "not";
 
 /** The observations calling it one. "Ticket" and "docket" are deliberately
  *  absent: both have common non-receipt meanings, and this list only earns its
@@ -67,9 +76,20 @@ const RECEIPTY_CATEGORY = /^\s*(?:receipts?|invoices?)\s*$/i;
  * Conservative on the side that matters: whatever its prose mentions, a photo
  * the pass filed under some other kind of thing is that thing.
  */
-export function looksLikeReceiptPhoto(id: ReceiptPhotoSignals): boolean {
+export function looksLikeReceiptPhoto(id: ReceiptPhotoSignals, shape: ReceiptShapeHint = "not"): boolean {
   const obs = id.observations ?? "";
   const name = id.name ?? "";
+  // The field first, when the pass answered it: that is the verdict as data,
+  // which is what the prose rules below were always standing in for. A "yes"
+  // settles it. An "unsure" is settled by the image's own text: any receipt
+  // shape to it and it goes to receipt review, where a wrong guess costs one
+  // parse and a one-tap "identify it as an item instead"; the other way round
+  // costs a receipt filed as a thing you own. A "no" still yields to a NAME
+  // that says receipt (the pass's primary verdict, and a contradiction the
+  // modifier rule below already knows how to read); the observations gate is
+  // then skipped, because "no" is exactly the answer it was guessing at.
+  if (id.is_receipt === "yes") return true;
+  if (id.is_receipt === "unsure" && shape !== "not") return true;
   // The pass's NAME is its primary verdict on what the thing IS - "Lidl grocery
   // store receipt" is not a hedge - so a name that says receipt settles it, and
   // only the modifier check can take it back ("receipt printer").
@@ -82,6 +102,7 @@ export function looksLikeReceiptPhoto(id: ReceiptPhotoSignals): boolean {
   // there was and the one thing this never looked at (reported 2026-09-04,
   // "this failed to morph. Again.").
   if (RECEIPT_NOUN.test(name) && !RECEIPT_AS_MODIFIER.test(name)) return true;
+  if (id.is_receipt === "no") return false;
   // Gate one, for a name that did not settle it: the description is ABOUT a
   // receipt, not about a device for printing them.
   if (!RECEIPT_NOUN.test(obs) || RECEIPT_AS_MODIFIER.test(obs)) return false;
@@ -144,7 +165,54 @@ async function workspaceIdentity(orgId: string): Promise<{ userId: string; slug:
 
 export type ReceiptRouteResult =
   | { routed: true; items: number }
-  | { routed: false; reason: string };
+  | {
+      routed: false;
+      /** For the log and the API reply. */
+      reason: string;
+      /** The receipt door's own coded failure, when it answered. */
+      failure?: string;
+      ai?: string;
+      /** The sentence written under the photo. */
+      note: string;
+    };
+
+/** A door-sized tenant handle: the two writes this file makes. */
+type RowDb = {
+  updateTable: (t: string) => {
+    set: (v: Record<string, unknown>) => {
+      where: (c: string, op: string, v: unknown) => { execute: () => Promise<unknown> };
+    };
+  };
+  deleteFrom: (t: string) => {
+    where: (c: string, op: string, v: unknown) => { execute: () => Promise<unknown> };
+  };
+};
+
+/** The photo stays the person's photo when it could not be read as a receipt:
+ *  the "reading its line items" flag comes off (it used to stay on, and the
+ *  card said "reading…" for ever over a read that had already failed), the
+ *  note says what happened in the door's own words, and the row keeps its
+ *  Identify and "Read as a receipt" ways out. The failed session the door kept
+ *  for its own callers is withdrawn: that state belongs to a receipt somebody
+ *  SAID was one; a guess that did not read out is one thing, not two. */
+async function leaveAsPhoto(opts: { orgId: string; itemId: string }, note: string, keptBatchId: string | null): Promise<void> {
+  try {
+    const db = (await platform().tenants.getDb(opts.orgId)) as unknown as RowDb;
+    await db
+      .updateTable("core_scan_inbox_items")
+      .set({
+        ai_notes: note,
+        ai_suggested_at: new Date(),
+        updated_at: new Date(),
+        suggested_metadata: sql`coalesce(suggested_metadata, '{}'::jsonb) - 'reading_receipt'`,
+      })
+      .where("id", "=", opts.itemId)
+      .execute();
+    if (keptBatchId) await db.deleteFrom("core_scan_batches").where("id", "=", keptBatchId).execute();
+  } catch (e) {
+    console.error("[core-scan] leaving the photographed receipt as a photo failed:", (e as Error).message);
+  }
+}
 
 /**
  * Hand a photographed receipt to the receipt parser.
@@ -153,9 +221,10 @@ export type ReceiptRouteResult =
  * batch keeps it as the source the lines were read from, and the session offers
  * "View original" over it exactly as an uploaded receipt does.
  *
- * On failure the row is LEFT ALONE. A photo we called a receipt and could not
- * read is still the user's photo, and deleting it because we guessed wrong would
- * be much worse than a nameless row they can re-run.
+ * On failure the row is LEFT AS THE PHOTO IT WAS, with the reason on it. A
+ * photo we called a receipt and could not read is still the user's photo, and
+ * deleting it because we guessed wrong would be much worse than a row they can
+ * re-run or read as a receipt again.
  */
 export async function routeScannedReceiptPhoto(opts: {
   orgId: string;
@@ -163,17 +232,28 @@ export async function routeScannedReceiptPhoto(opts: {
   fileId: string;
   userId?: string | null;
 }): Promise<ReceiptRouteResult> {
+  const failed = async (reason: string, door?: { failure?: string; ai?: string; message?: string; keptBatchId?: string | null }): Promise<ReceiptRouteResult> => {
+    // The door's sentence already says what to do ("Couldn't be read: no AI
+    // provider is connected. Connect one…, then read it again."); this only
+    // says what the photo was taken for.
+    const note = door?.message
+      ? `That looked like a receipt, but it ${door.message.replace(/^Couldn't/, "couldn't")} Or identify it as an item instead.`
+      : `That looked like a receipt, but its line items could not be read (${reason}). Read it as a receipt again, or identify it as an item instead.`;
+    await leaveAsPhoto(opts, note, door?.keptBatchId ?? null);
+    return { routed: false, reason, note, ...(door?.failure ? { failure: door.failure } : {}), ...(door?.ai ? { ai: door.ai } : {}) };
+  };
+
   const who = await workspaceIdentity(opts.orgId);
-  if (!who) return { routed: false, reason: "no member to attribute the capture to" };
+  if (!who) return failed("no member to attribute the capture to");
 
   let token: string;
   try {
     token = await platform().auth.mintSession({ userId: opts.userId ?? who.userId });
   } catch (e) {
-    return { routed: false, reason: `couldn't mint a capture session: ${(e as Error).message}` };
+    return failed(`couldn't mint a capture session: ${(e as Error).message}`);
   }
 
-  let body: { receipt?: { item_count?: number } } = {};
+  let body: { receipt?: { item_count?: number }; error?: { message?: string; failure?: string; ai?: string }; kept_batch_id?: string } = {};
   try {
     const r = await fetch(
       `${INTERNAL_API}/api/v1/orgs/${who.slug}/modules/core-scan/scan/receipt`,
@@ -184,13 +264,20 @@ export async function routeScannedReceiptPhoto(opts: {
       },
     );
     body = (await r.json()) as typeof body;
-    if (!r.ok) return { routed: false, reason: `receipt parse returned ${r.status}` };
+    if (!r.ok) {
+      return failed(body.error?.failure ? `${body.error.failure}: ${body.error.message ?? ""}`.trim() : `receipt parse returned ${r.status}`, {
+        failure: body.error?.failure,
+        ai: body.error?.ai,
+        message: body.error?.message,
+        keptBatchId: body.kept_batch_id ?? null,
+      });
+    }
   } catch (e) {
-    return { routed: false, reason: (e as Error).message };
+    return failed((e as Error).message);
   }
 
   const items = body.receipt?.item_count ?? 0;
-  if (!items) return { routed: false, reason: "no line items on it" };
+  if (!items) return failed("no line items on it");
 
   // The lines are in, so the single photo row has been superseded. Retire it
   // rather than leaving a nameless duplicate of the receipt beside its own line

@@ -31,6 +31,7 @@ import { diffManifests, type Manifestish } from "../lib/bundle-diff";
 import { recordSetup } from "../lib/setupCards";
 import { downloadBlob, Modal, useToast, useConfirm } from "@cobblr/platform-web";
 import { installHeadline, installChanges } from "../lib/installSummary";
+import { featureChangeToast } from "../lib/featureChangeToast";
 import type { BundleInstallSummary } from "../lib/api";
 
 interface InstalledMode {
@@ -232,7 +233,9 @@ export function BundleDetailModal(props: Props) {
         : null;
 
   const uninstall = useMutation({
-    mutationFn: () => api.uninstallBundle(slug, uninstallId!),
+    // The confirmation above this names the instances and their items it
+    // deletes; this is the one caller that asks for the data to go.
+    mutationFn: () => api.uninstallBundle(slug, uninstallId!, { deleteData: true }),
     onSuccess: () => {
       toast.success(`Uninstalled.`);
       void qc.invalidateQueries({ queryKey: ["bundles", slug] });
@@ -304,18 +307,19 @@ export function BundleDetailModal(props: Props) {
     },
   });
 
-  // Installed mode: change which optional features are on. v2 does this as a
-  // reinstall (uninstall + install with the new enabled set) — reuses the
-  // proven paths; entity data is untouched (only field defs/wires/views move).
+  // Installed mode: change which optional features are on. ONE call: the api
+  // re-applies the bundle with the new set on its upgrade path and reads its
+  // own tables back, so the toast reports what stayed rather than what was
+  // meant. This used to be composed here as uninstall then install, and the
+  // uninstall tore the bundle's tables down: two yarn records vanished under
+  // a dialog that promised "your entities stay" (#2889).
   const saveFeatures = useMutation({
     mutationFn: async () => {
       if (props.mode !== "installed" || !detail.data) throw new Error("bundle not loaded");
-      const full = detail.data.bundle.manifest;
-      await api.uninstallBundle(slug, props.bundle.id);
-      await api.installBundle(slug, full, true, [...selectedFeatures]);
+      return api.setBundleFeatures(slug, props.bundle.id, [...selectedFeatures]);
     },
-    onSuccess: () => {
-      toast.success("Features updated.");
+    onSuccess: (r) => {
+      toast.success(featureChangeToast(r, detail.data?.bundle.manifest.features ?? []));
       void qc.invalidateQueries({ queryKey: ["bundles", slug] });
       void qc.invalidateQueries({ queryKey: ["bindings", slug] });
       void qc.invalidateQueries({ queryKey: ["field-defs", slug] });
@@ -650,9 +654,13 @@ export function BundleDetailModal(props: Props) {
     toast.info("Manifest downloaded.");
   }
 
-  const subtitle = `${externalId}${version ? ` · v${version}` : ""}${
+  // The identifier and version are what a package manager wants, not what a
+  // person choosing a starter wants, so on a fresh install the dialog leads
+  // with plain words and keeps `cobblr.groceries · v0.10.2` behind details.
+  const technicalSubtitle = `${externalId}${version ? ` · v${version}` : ""}${
     author ? ` · by ${author}` : ""
   }`;
+  const subtitle = isFreshInstall ? (author ? `a ready-made setup, by ${author}` : "a ready-made setup") : technicalSubtitle;
   const titlePrefix =
     props.mode === "featured" && props.glyph ? `${props.glyph} ` : "";
 
@@ -774,6 +782,15 @@ export function BundleDetailModal(props: Props) {
         {props.mode === "featured" && props.blurb && (
           <p className="text-sm text-content dark:text-mortar-200 italic">
             {props.blurb}
+          </p>
+        )}
+        {/* What you can do first, before anything about how it is built. The
+            2026-09-13 blank-account review met the wire and field counts and the
+            package ids ahead of any plain sentence; the next steps the dialog already shows AFTER
+            install are the plain answer, so the first of them leads here. */}
+        {isFreshInstall && nextSteps.length > 0 && (
+          <p className="text-sm text-content dark:text-mortar-200" data-testid="first-thing">
+            <span className="font-medium">First thing you can do:</span> {nextSteps[0]!.label.replace(/^./, (c) => c.toLowerCase())}.
           </p>
         )}
         {/* Skip the description when it just repeats the blurb — several featured
@@ -1020,32 +1037,45 @@ export function BundleDetailModal(props: Props) {
                 <ChevronRight size={15} className="text-faint shrink-0" />
               )}
               <span className="text-[10px] font-mono uppercase tracking-widest text-accent shrink-0">
-                requires
+                {showTech ? "hide details" : "details"}
               </span>
               <div className="flex-1" />
-              <span className="text-[10px] font-mono text-faint dark:text-slate-500 shrink-0">
-                {showTech ? "hide details" : `${wires.length}w · ${fieldDefs.length}f`}
-              </span>
-            </div>
-            <div className="flex flex-wrap gap-1.5 mt-1.5 pl-[23px]">
-              {requires.length > 0 ? (
-                requires.map((r) => (
-                  <span
-                    key={r.module}
-                    className="font-mono text-[11px] px-2 py-0.5 rounded border border-line dark:border-slate-700 text-content dark:text-mortar-200 whitespace-nowrap"
-                  >
-                    {r.module}
-                    {r.version ? `@${r.version}` : ""}
-                  </span>
-                ))
-              ) : (
-                <span className="text-xs text-faint dark:text-slate-500">no extra modules</span>
+              {/* The default face says what is behind the toggle in words. The
+                  counts, the package id and the module ids live inside: they are
+                  the plumbing, and the abbreviated counts ahead of any sentence
+                  were the thing a first-time person saw (lint:ui-jargon refuses
+                  that shape). */}
+              {!showTech && (
+                <span className="text-xs text-faint dark:text-slate-500 shrink-0">
+                  what it is built on
+                </span>
               )}
             </div>
           </button>
 
           {showTech && (
             <div className="border-t border-line dark:border-slate-700 p-3 space-y-4">
+              <div className="text-xs text-content dark:text-mortar-200 space-y-1">
+                <div>
+                  <span className="text-faint dark:text-slate-500">Package </span>
+                  <code className="font-mono">{technicalSubtitle}</code>
+                </div>
+                <div>
+                  <span className="text-faint dark:text-slate-500">Built on </span>
+                  {requires.length > 0
+                    ? requires.map((r) => (
+                        <code key={r.module} className="font-mono mr-1.5">
+                          {r.module}
+                          {r.version ? `@${r.version}` : ""}
+                        </code>
+                      ))
+                    : "no extra modules"}
+                </div>
+                <div>
+                  <span className="text-faint dark:text-slate-500">Adds </span>
+                  {fieldDefs.length} field{fieldDefs.length === 1 ? "" : "s"} and {wires.length} automation{wires.length === 1 ? "" : "s"}
+                </div>
+              </div>
               {providesLens && (
                 <div className="text-xs text-content dark:text-mortar-200">
                   Adds a{" "}

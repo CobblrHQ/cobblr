@@ -21,9 +21,16 @@ export interface CodePlan {
   summary?: string;
   lines?: string[];
   note?: string;
-  /** What the plan saw and left, by id, and where it puts things. */
-  also?: Array<{ id: string; title: string }>;
+  /** The continuation under the list on the offer strip; spent on the card. */
+  hint?: string;
+  /** The label over the records it left, with their count. */
+  leftHeading?: string;
+  /** What the plan saw and left, by id and kind, and where it puts things. */
+  also?: Array<{ id: string; title: string; kind?: string; why?: string }>;
   to?: { name: string; label: string };
+  /** One per destination when there are several, as the offer carries them:
+   *  the records, and a count of operations (a run names one by key). */
+  sections?: Array<{ key: string; heading: string; lines: Array<{ id: string; title: string; kind?: string; why?: string }>; operations: number; note?: string }>;
 }
 
 type Item = { summary: string; proposal: Record<string, unknown> };
@@ -99,13 +106,14 @@ export function planCard(hit: CodePlan, message: string) {
     summary: hit.summary ?? `${hit.operations.length} changes`,
     message,
     ...(hit.lines ? { lines: hit.lines } : {}),
-    ...(hit.note ? { note: spent(hit.note) } : {}),
+    // The sentence and the records it counts; the offer strip's hint to send
+    // the message is spent once it was sent, so it does not ride here.
+    ...(hit.note ? { note: hit.note } : {}),
+    ...(hit.leftHeading ? { leftHeading: hit.leftHeading } : {}),
+    ...(hit.also?.length ? { also: hit.also } : {}),
+    // The destinations, each with its own Do this on the card.
+    ...(hit.sections?.length ? { sections: hit.sections } : {}),
   };
-}
-
-/** The offer strip's hint to send the message is spent once it was sent. */
-function spent(note: string): string {
-  return note.replace(/\s*Send the message and Cobb will look through them\.?$/, "").trim();
 }
 
 /** A model proposal that is the plan again: the same action, on records the
@@ -123,6 +131,38 @@ function repeatsPlan(item: Item, hit: CodePlan): boolean {
     if (!ids.length && !plannedIds.length) return true;
     return ids.length > 0 && ids.every((id) => plannedIds.includes(id));
   });
+}
+
+/** What the model turn's failure was, for a client that acts on the kind
+ *  rather than reads the sentence (the widget's "try again", a bench's wait). */
+export interface RefusalNote {
+  message: string;
+  code?: string;
+  retryAfterSec?: number;
+  resetsAt?: string;
+}
+
+/** The reply when the model could not be asked and the plan needs no model.
+ *
+ *  The rule is code plans, the model narrates: the plan was worked out from
+ *  the records before any model was called, so a refused, rate-limited,
+ *  quota'd, not-entitled or crashed model turn changes what the reply SAYS
+ *  (the refusal, in the one sentence a person reads) and not what it OFFERS.
+ *  The card is the same one the offer strip shows and the no-AI path runs;
+ *  the refusal rides beside it as data. Measured on the rig (2026-09-13):
+ *  the day's quota spent, Enter on a five-record move produced the sentence
+ *  and no card, and the plan had never needed the model. */
+export function replyDespiteRefusal(refusal: RefusalNote, hit: CodePlan, message: string): Record<string, unknown> {
+  return {
+    type: "reply",
+    text: refusal.message,
+    command: planCard(hit, message),
+    refusal: {
+      ...(refusal.code ? { code: refusal.code } : {}),
+      ...(refusal.retryAfterSec ? { retry_after_sec: refusal.retryAfterSec } : {}),
+      ...(refusal.resetsAt ? { resets_at: refusal.resetsAt } : {}),
+    },
+  };
 }
 
 export function withPlanCard(result: Record<string, unknown>, hit: CodePlan | null | undefined, message: string): Record<string, unknown> {

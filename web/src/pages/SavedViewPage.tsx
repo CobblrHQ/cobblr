@@ -26,7 +26,10 @@ export function SavedViewPage({ viewId: viewIdProp, embedded = false }: { viewId
   });
   const view = (views.data?.items ?? []).find((v) => v.id === viewId) ?? null;
   const data = useQuery({
-    queryKey: ["view-data", activeSlug, viewId],
+    // The view's kind rides in the key, so an action on one of its records
+    // refreshes this page wherever it is embedded (platform-web run-action):
+    // Groceries → What's on hand kept ×1 after Use until a reload (#2969).
+    queryKey: ["view-data", activeSlug, viewId, view?.entity_kind ?? ""],
     queryFn: () => api.viewData(activeSlug, viewId!),
     enabled: !!activeSlug && !!view,
   });
@@ -46,7 +49,7 @@ export function SavedViewPage({ viewId: viewIdProp, embedded = false }: { viewId
     );
   }
   if (embedded) {
-    return <SavedViewBody view={view} items={data.data?.items ?? []} isLoading={data.isLoading} />;
+    return <SavedViewBody view={view} items={data.data?.items ?? []} isLoading={data.isLoading} collectionEmpty={data.data?.collection_empty} />;
   }
   return (
     <div className="space-y-4">
@@ -61,7 +64,7 @@ export function SavedViewPage({ viewId: viewIdProp, embedded = false }: { viewId
           {view.name}
         </h1>
       </div>
-      <SavedViewBody view={view} items={data.data?.items ?? []} isLoading={data.isLoading} />
+      <SavedViewBody view={view} items={data.data?.items ?? []} isLoading={data.isLoading} collectionEmpty={data.data?.collection_empty} />
     </div>
   );
 }

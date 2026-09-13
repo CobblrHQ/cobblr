@@ -1,38 +1,47 @@
 // Guided Organize Phase 2 — the put-away walk (docs/product/guided-organize.md).
 //
-// Turns an applied plan into the hands-busy loop the active bin already
-// supports, one group at a time: the destination auto-becomes the active
+// Turns what was accepted into the hands-busy loop the active bin already
+// supports, one bin at a time: the destination auto-becomes the active
 // filing bin, each member is a checklist row, and scanning an item's barcode
 // (hardware wedge — no input focus needed) checks it off; a tap does the same
-// for unscannables. Progress persists on the plan row (walk-state), so a
-// reload resumes mid-walk. Bookkeeping only: the filing itself happened at
-// apply time.
+// for unscannables.
+//
+// The queue is the api's (POST /putaway/start): every accepted group still to
+// place, from EVERY plan in play, with anything accepted that cannot be
+// walked named and its reason shown. This sheet used to read one plan's
+// groups; a person accepted towels, the page re-planned around the bin that
+// accept had made, they accepted scissors on the new plan, and the walk
+// listed scissors alone and said "All put away" with the towels still on the
+// counter (#2897). Placement is a fact about the item (placed_at), so a
+// reload, another plan and the resume chip all read the same ticks.
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { CheckCircle2, ChevronRight, Circle, MapPin, PartyPopper, X } from "lucide-react";
 import { useToast, OverlayFlag } from "@cobblr/platform-web";
-import { api, type OrganizeStoredPlan, type ScanInboxItem } from "../lib/api";
+import { api, type PutawayLeftOut, type PutawayWalkGroup, type ScanInboxItem } from "../lib/api";
 import { useBarcodeWedge } from "../lib/useBarcodeWedge";
 
-interface WalkGroup {
-  id: string;
-  label: string;
-  item_ids: string[];
-  location_id: string;
-  location_name: string;
-  location_path: string;
+interface Walk {
+  session_id: string;
+  groups: PutawayWalkGroup[];
+  left_out: PutawayLeftOut[];
+  item_names: Record<string, string>;
+  item_quantities: Record<string, number>;
+  item_barcodes: Record<string, string>;
 }
 
 export function OrganizeWalkSheet({
   slug,
-  plan,
+  planId,
   itemsById,
   onClose,
   setFileBin,
 }: {
   slug: string;
-  plan: OrganizeStoredPlan;
+  /** The plan just applied (or the one the resume chip named). The queue the
+   *  api returns spans every plan in play; this one comes first. */
+  planId: string;
   itemsById: Map<string, ScanInboxItem>;
   onClose: () => void;
   /** The scan page's active-bin setter — each group's destination becomes the
@@ -40,67 +49,53 @@ export function OrganizeWalkSheet({
   setFileBin: (locationId: string) => void;
 }) {
   const toast = useToast();
+  const [walk, setWalk] = useState<Walk | null>(null);
+  const [failed, setFailed] = useState<string | null>(null);
+  const [placed, setPlaced] = useState<Set<string>>(() => new Set());
 
-  // Only applied groups with a real (resolved) destination are walkable.
-  const groups = useMemo<WalkGroup[]>(() => {
-    const applied = new Set(plan.applied_group_ids);
-    return plan.groups
-      .filter((g) => applied.has(g.id) && g.destination.kind === "existing")
-      .map((g) => {
-        const d = g.destination as { location_id: string; location_name: string; location_path: string };
-        return {
-          id: g.id,
-          label: g.label,
-          item_ids: g.item_ids,
-          location_id: d.location_id,
-          location_name: d.location_name,
-          location_path: d.location_path,
-        };
-      });
-  }, [plan]);
-
-  const [placed, setPlaced] = useState<Set<string>>(
-    () => new Set(plan.walk_state.placed_item_ids ?? []),
-  );
-
-  // Progress lives on a put-away SESSION (the shared execution engine —
-  // docs/product/put-away.md §2.2). Start/resume it on mount; idempotent per
-  // plan, and the response carries the authoritative placed list (a walk that
-  // predates sessions gets its legacy walk_state imported server-side).
-  const sessionIdRef = useRef<string | null>(plan.putaway_session_id ?? null);
+  // Start/resume the session on mount; idempotent per plan. The response is
+  // the authoritative queue and placed list.
   useEffect(() => {
     let cancelled = false;
     void api
-      .startPutaway(slug, { plan_id: plan.plan_id })
+      .startPutaway(slug, { plan_id: planId })
       .then((r) => {
         if (cancelled) return;
-        sessionIdRef.current = r.session_id;
+        setWalk({
+          session_id: r.session_id,
+          groups: r.groups ?? [],
+          left_out: r.left_out ?? [],
+          item_names: r.item_names ?? {},
+          item_quantities: r.item_quantities ?? {},
+          item_barcodes: r.item_barcodes ?? {},
+        });
         // UNION server progress with any ticks made while starting — neither
         // a resume nor a fast first tap may lose a checkmark.
         setPlaced((prev) => {
           const server = r.placed_item_ids ?? [];
           const merged = new Set([...prev, ...server]);
           if (merged.size > server.length) {
-            void api
-              .setPutawayState(slug, r.session_id, { placed_item_ids: [...merged] })
-              .catch(() => {});
+            void api.setPutawayState(slug, r.session_id, { placed_item_ids: [...merged] }).catch(() => {});
           }
           return merged;
         });
       })
-      .catch(() => {
-        /* best-effort — the walk keeps working; saves no-op until a session exists */
+      .catch((e: unknown) => {
+        if (cancelled) return;
+        setFailed(e instanceof Error ? e.message : "Couldn't start the walk.");
       });
     return () => {
       cancelled = true;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [plan.plan_id]);
+  }, [planId]);
+
+  const groups = useMemo(() => walk?.groups ?? [], [walk]);
 
   // The current group = the first with anything left to place.
   const currentIdx = groups.findIndex((g) => g.item_ids.some((id) => !placed.has(id)));
-  const done = currentIdx === -1;
-  const current = done ? null : groups[currentIdx]!;
+  const done = walk !== null && currentIdx === -1;
+  const current = currentIdx === -1 ? null : groups[currentIdx]!;
 
   // Standing at a new group → its bin becomes the active filing bin.
   const lastBinRef = useRef<string | null>(null);
@@ -115,7 +110,7 @@ export function OrganizeWalkSheet({
 
   // Persist progress on every change (small payload, no debounce needed).
   const save = (next: Set<string>) => {
-    const sid = sessionIdRef.current;
+    const sid = walk?.session_id;
     if (!sid) return; // session still starting — the next toggle catches up
     void api.setPutawayState(slug, sid, { placed_item_ids: [...next] }).catch(() => {
       /* best-effort — the walk keeps working; a reload just loses ticks */
@@ -132,14 +127,13 @@ export function OrganizeWalkSheet({
   };
 
   // Hardware wedge: a scanned barcode checks its item off in the CURRENT group.
-  // Inbox items match on their row's barcode; entity plans carry a barcode map
-  // in the payload.
-  const nameOf = (id: string) =>
-    itemsById.get(id)?.suggested_name ?? plan.item_names?.[id] ?? "(item)";
-  const barcodeOf = (id: string) =>
-    itemsById.get(id)?.barcode_text ?? plan.item_barcodes?.[id] ?? null;
+  // Names and barcodes come with the queue: a filed item has left the inbox
+  // list the page holds, and the walk is read by name.
+  const nameOf = (id: string) => itemsById.get(id)?.suggested_name ?? walk?.item_names[id] ?? "(item)";
+  const qtyOf = (id: string) => itemsById.get(id)?.quantity ?? walk?.item_quantities[id] ?? 1;
+  const barcodeOf = (id: string) => itemsById.get(id)?.barcode_text ?? walk?.item_barcodes[id] ?? null;
   useBarcodeWedge({
-    enabled: !done,
+    enabled: !done && !!current,
     onScan: (code) => {
       if (!current) return;
       const hit = current.item_ids.find((id) => !placed.has(id) && barcodeOf(id) === code);
@@ -153,10 +147,9 @@ export function OrganizeWalkSheet({
   });
 
   const totalItems = groups.reduce((n, g) => n + g.item_ids.length, 0);
-  const placedCount = groups.reduce(
-    (n, g) => n + g.item_ids.filter((id) => placed.has(id)).length,
-    0,
-  );
+  const placedCount = groups.reduce((n, g) => n + g.item_ids.filter((id) => placed.has(id)).length, 0);
+  const leftOut = walk?.left_out ?? [];
+  const nothingToWalk = totalItems === 0 && leftOut.length > 0;
 
   return createPortal(
     <div
@@ -169,7 +162,9 @@ export function OrganizeWalkSheet({
           <div className="text-sm text-muted">
             Put-away walk · {placedCount}/{totalItems} placed
           </div>
-          {current ? (
+          {!walk ? (
+            <div className="text-lg font-semibold text-content">{failed ?? "Loading the walk…"}</div>
+          ) : current ? (
             <div className="flex items-center gap-2 text-lg font-semibold text-content truncate">
               <span className="text-muted font-normal text-sm shrink-0">
                 Group {currentIdx + 1} of {groups.length}:
@@ -182,7 +177,7 @@ export function OrganizeWalkSheet({
               </span>
             </div>
           ) : (
-            <div className="text-lg font-semibold text-content">All put away</div>
+            <div className="text-lg font-semibold text-content">{nothingToWalk ? "Nothing to walk yet" : "All put away"}</div>
           )}
         </div>
         <button
@@ -199,15 +194,18 @@ export function OrganizeWalkSheet({
         {done ? (
           <div className="flex flex-col items-center gap-3 py-16 text-center">
             <PartyPopper className="h-10 w-10 text-accent" />
-            <div className="text-xl font-semibold text-content">Everything's in its place.</div>
+            <div className="text-xl font-semibold text-content">
+              {nothingToWalk ? "Nothing is ready to put away." : "Everything's in its place."}
+            </div>
             <p className="text-sm text-muted">
               {totalItems} item{totalItems === 1 ? "" : "s"} across {groups.length} bin
               {groups.length === 1 ? "" : "s"}.
             </p>
+            {leftOut.length > 0 && <LeftOutList leftOut={leftOut} />}
             <button
               type="button"
               onClick={() => {
-                const sid = sessionIdRef.current;
+                const sid = walk?.session_id;
                 if (sid) void api.endPutaway(slug, sid).catch(() => {});
                 onClose();
               }}
@@ -226,8 +224,8 @@ export function OrganizeWalkSheet({
                 </p>
                 <ul className="space-y-2">
                   {current.item_ids.map((id) => {
-                    const item = itemsById.get(id);
                     const isPlaced = placed.has(id);
+                    const qty = qtyOf(id);
                     return (
                       <li key={id}>
                         <button
@@ -247,11 +245,9 @@ export function OrganizeWalkSheet({
                           <span
                             className={`flex-1 truncate text-base ${isPlaced ? "text-muted line-through" : "text-content"}`}
                           >
-                            {item?.suggested_name ?? plan.item_names?.[id] ?? "(item)"}
+                            {nameOf(id)}
                           </span>
-                          {item && item.quantity > 1 && (
-                            <span className="text-sm text-faint shrink-0">×{item.quantity}</span>
-                          )}
+                          {qty > 1 && <span className="text-sm text-faint shrink-0">×{qty}</span>}
                         </button>
                       </li>
                     );
@@ -261,7 +257,7 @@ export function OrganizeWalkSheet({
             )}
 
             {/* The groups still ahead — a glanceable route. */}
-            {groups.length > currentIdx + 1 && (
+            {currentIdx >= 0 && groups.length > currentIdx + 1 && (
               <div className="pt-2 text-xs text-faint">
                 Up next:{" "}
                 {groups
@@ -270,10 +266,31 @@ export function OrganizeWalkSheet({
                   .join(" · ")}
               </div>
             )}
+            {leftOut.length > 0 && <LeftOutList leftOut={leftOut} />}
           </div>
         )}
       </div>
     </div>,
     document.body,
+  );
+}
+
+/** What was accepted and is NOT in this walk, each with its reason: the walk
+ *  says what it left out rather than reporting a narrower job as the whole. */
+function LeftOutList({ leftOut }: { leftOut: PutawayLeftOut[] }) {
+  return (
+    <div
+      className="rounded-lg border border-amber-500/40 bg-amber-50/50 dark:bg-amber-900/10 px-3 py-2 text-left text-xs text-amber-800 dark:text-amber-300"
+      data-testid="walk-left-out"
+    >
+      <div className="font-medium">Not in this walk</div>
+      <ul className="mt-1 space-y-0.5">
+        {leftOut.map((l) => (
+          <li key={`${l.plan_id}:${l.group_id}`}>
+            {l.label}: {l.reason}
+          </li>
+        ))}
+      </ul>
+    </div>
   );
 }

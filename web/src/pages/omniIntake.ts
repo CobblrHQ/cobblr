@@ -11,8 +11,9 @@
 // never mistake a search for an add. Anything not confidently a code or a link
 // stays a SEARCH, because filtering is harmless and a wrong add is not.
 
-export type OmniKind = "upc" | "url" | "urls" | "text";
+export type OmniKind = "upc" | "url" | "urls" | "text" | "cobblr-qr";
 import { clipboardImageFiles } from "../components/pastedImage";
+import { classifyScanPayload } from "../lib/scanPayload";
 
 export interface OmniIntent {
   kind: OmniKind;
@@ -46,6 +47,14 @@ function looksLikeUrl(s: string): boolean {
 export function classifyOmni(raw: string): OmniIntent {
   const s = raw.trim();
   if (!s) return { kind: "text", value: "", action: null };
+
+  // A Cobblr label URL is the place or record it names, never a product page
+  // to scrape: the same rule the camera and the typed field apply
+  // (lib/scanPayload.ts). It goes where the QR goes.
+  const payload = classifyScanPayload(s);
+  if (payload.kind === "cobblr-qr") {
+    return { kind: "cobblr-qr", value: payload.token, action: "Open" };
+  }
 
   const lines = s.split(/\s+/).filter(Boolean);
   const urls = lines.filter(looksLikeUrl);

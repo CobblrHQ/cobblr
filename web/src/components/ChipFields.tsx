@@ -408,6 +408,7 @@ function Chip({
             ))}
           </select>
         ) : (
+          // NUMBER-INPUT-TEXT: a chip commits text by contract (onChange(key, next: string)); the scan confirm and the record write cast it by the field's type.
           <input
             ref={(el) => {
               inputRef.current = el;

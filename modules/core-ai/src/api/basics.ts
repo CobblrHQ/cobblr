@@ -21,7 +21,8 @@ import { getTool, type WorkspaceApi } from "@cobblr/workspace-tools";
 import { bindCommand, deriveCommand, type LearnedCommand, type Operation, writeOf } from "../learned-commands.js";
 import { readQuestionOf, MIN_PEEK_LENGTH, type KindWords } from "../live-answers.js";
 import { countQuestionOf, phraseCountText, phraseMostOf, type KindFields, type CountResult } from "../count-answers.js";
-import { performWrite, performWrites, bulkMessage, type WriteOutcome } from "./chat-ledger.js";
+import { performWrite, performWrites, bulkMessage, touchedBy, type WriteOutcome } from "./chat-ledger.js";
+import { namedRecords } from "@cobblr/platform-contract/record-mentions";
 import { chatWorkspaceApi, ctxOf } from "./chat.js";
 import {
   loadEffectiveRules,
@@ -573,8 +574,11 @@ export async function matchCommand(
   summary?: string;
   lines?: string[];
   note?: string;
-  also?: Array<{ id: string; title: string }>;
+  hint?: string;
+  leftHeading?: string;
+  also?: Array<{ id: string; title: string; kind?: string; why?: string }>;
   to?: { name: string; label: string };
+  sections?: Array<{ key: string; heading: string; lines: Array<{ id: string; title: string; kind?: string; why?: string }>; operations: number; note?: string }>;
 } | null> {
   // A COMPUTED command is checked first: it is the most specific thing that
   // can match, and unlike the others it has to go and look at the workspace
@@ -600,8 +604,13 @@ export async function matchCommand(
           summary: plan.summary,
           ...(plan.lines?.length ? { lines: plan.lines } : {}),
           ...(plan.note ? { note: plan.note } : {}),
+          ...(plan.hint ? { hint: plan.hint } : {}),
+          ...(plan.leftHeading ? { leftHeading: plan.leftHeading } : {}),
           ...(plan.also?.length ? { also: plan.also } : {}),
           ...(plan.to ? { to: plan.to } : {}),
+          // One per destination, with a count of its operations rather than
+          // the operations themselves: the run re-computes and names one by key.
+          ...(plan.sections?.length ? { sections: plan.sections.map((s) => ({ key: s.key, heading: s.heading, lines: s.lines, operations: s.operations.length, ...(s.note ? { note: s.note } : {}) })) } : {}),
         };
       }
     }
@@ -667,8 +676,13 @@ basicsRouter.post(
             summary: hit.summary ?? describeOps(hit.operations),
             // Everything it will touch, one per line: the card lists them.
             ...(hit.lines?.length ? { lines: hit.lines } : {}),
-            // What it found and is leaving alone.
+            // What it found and is leaving alone: the sentence, every record
+            // as its own bullet, and what Enter would do about them.
             ...(hit.note ? { note: hit.note } : {}),
+            ...(hit.leftHeading ? { leftHeading: hit.leftHeading } : {}),
+            ...(hit.also?.length ? { also: hit.also } : {}),
+            ...(hit.hint ? { hint: hit.hint } : {}),
+            ...(hit.sections?.length ? { sections: hit.sections } : {}),
           }
         : null,
     });
@@ -845,6 +859,9 @@ basicsRouter.post(
       .object({
         message: z.string().min(1).max(2000),
         selection_ids: z.array(z.string().max(64)).max(200).optional(),
+        /** One section of a computed plan (its key), when the card offered
+         *  the destinations one at a time. Absent: the whole plan. */
+        section: z.string().min(1).max(120).optional(),
       })
       .safeParse(req.body);
     if (!body.success) return badBody(res, body.error);
@@ -885,13 +902,28 @@ basicsRouter.post(
         res.json({ ok: true, done: 0, failed: 0, message: "Nothing to do: there are no duplicates now." });
         return;
       }
+      // One destination of several: only its operations, re-computed like the
+      // rest, so a section that is no longer there (the page changed, or it
+      // already ran) is refused by name rather than run as something else.
+      let operations = plan.operations;
+      if (body.data.section) {
+        const section = plan.sections?.find((s) => s.key === body.data.section);
+        if (!section) {
+          res.status(409).json({
+            error: { code: "section_gone", message: "That part of the plan is not there any more: the page has changed since it was offered. Nothing was changed." },
+          });
+          return;
+        }
+        operations = section.operations;
+      }
       const uid = sessionUserId(req) ?? "";
-      const outs = await performWrites(wsApiC, db, uid, plan.operations.map(writeOf), {
+      const outs = await performWrites(wsApiC, db, uid, operations.map(writeOf), {
         auto: false,
         orgId: tenantContext(req).org.id,
         prompt: body.data.message,
       });
       res.json({
+        ...(body.data.section ? { section: body.data.section } : {}),
         ok: outs.ok,
         done: outs.count,
         failed: outs.failed.length,
@@ -902,6 +934,8 @@ basicsRouter.post(
         // the ledger records but cannot reverse) went nowhere (2026-09-11).
         undoable: outs.undoable,
         ...(outs.destination ? { destination: outs.destination } : {}),
+        // The records it changed, named, so the result's sentence opens them.
+        ...(outs.touched?.length ? { touched: outs.touched } : {}),
       });
       return;
     }
@@ -946,6 +980,7 @@ basicsRouter.post(
       ledger_ids: done.map((d) => d.ledger_id).filter((id): id is string => !!id),
       undoable: done.every((d) => d.undoable !== false),
       ...(done.find((d) => d.destination)?.destination ? { destination: done.find((d) => d.destination)!.destination } : {}),
+      ...(touchedBy(done).length ? { touched: touchedBy(done) } : {}),
     });
     if (done.length && !wanted.startsWith("shipped:")) {
       await db
@@ -1140,32 +1175,46 @@ basicsRouter.post(
           "GET",
           `/modules/core-search/search?q=${encodeURIComponent(q.name)}`,
         );
-        const hits = ((r.body as { items?: Array<{ title?: string; subtitle?: string }> }).items ?? []).slice(0, 3);
+        const hits = ((r.body as { items?: Array<{ kind?: string; id?: string; title?: string; subtitle?: string }> }).items ?? []).slice(0, 3);
         if (hits.length === 0) {
           res.json({ answer: null });
           return;
         }
         // One hit answers; several is a list, not an answer, so it says how
-        // many rather than picking one.
-        res.json(
+        // many rather than picking one. Either way the names it shows are the
+        // records it found, so the bubble can open them (mentions, as a chat
+        // reply carries them).
+        const found = hits.flatMap((h) => (h.kind && h.id && h.title ? [{ kind: h.kind, id: h.id, label: h.title }] : []));
+        const answer =
           hits.length === 1
             ? { answer: hits[0]!.title ?? q.name, detail: hits[0]!.subtitle ?? "found in your workspace" }
-            : { answer: `${hits.length} things match "${q.name}"`, detail: hits.map((h) => h.title).filter(Boolean).join(", ") },
-        );
+            : { answer: `${hits.length} things match "${q.name}"`, detail: hits.map((h) => h.title).filter(Boolean).join(", ") };
+        const named = namedRecords(`${answer.answer}\n${answer.detail}`, found).named;
+        res.json({ ...answer, ...(named.length ? { mentions: named } : {}) });
         return;
       }
       // low-stock: the module owns the definition of "low", so ask it — and a
       // workspace without inventory has no answer here rather than a zero,
       // which would read as "nothing is low" when nothing is even tracked.
-      const r = await wsApi.request("GET", "/modules/inventory/parts?low=true&limit=50");
-      const items = (r.body as { items?: Array<{ name?: string }> }).items;
+      // `low_stock` is the filter the parts route reads; `low` (what this asked
+      // for until 2026-09-13) is no filter at all, so "what is low" counted
+      // every part in the workspace and named the first three of them.
+      const r = await wsApi.request("GET", "/modules/inventory/parts?low_stock=true&limit=50");
+      const items = (r.body as { items?: Array<{ id?: string; name?: string }> }).items;
       if (!Array.isArray(items)) {
         res.json({ answer: null });
         return;
       }
+      const shown = items.slice(0, 3);
+      const detail = shown.map((i) => i.name).filter(Boolean).join(", ") || "nothing to reorder";
+      // The parts it lists open from the bubble: a name with nothing to press
+      // was the whole complaint (see mentions.ts).
+      const low = shown.flatMap((i) => (i.id && i.name ? [{ kind: "inventory:part", id: i.id, label: i.name }] : []));
+      const named = namedRecords(detail, low).named;
       res.json({
         answer: items.length === 0 ? "Nothing is low" : `${items.length} low on stock`,
-        detail: items.slice(0, 3).map((i) => i.name).filter(Boolean).join(", ") || "nothing to reorder",
+        detail,
+        ...(named.length ? { mentions: named } : {}),
       });
     } catch {
       // A read that fails is not an answer. Say nothing and let the AI have it.

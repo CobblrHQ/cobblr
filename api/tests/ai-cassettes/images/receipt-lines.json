@@ -1,0 +1,6 @@
+{
+  "_fixture": "e2e/fixtures/bench-vision/receipt.png",
+  "image_ahash": "c3030c3c3dffffff",
+  "capability": "classify-image",
+  "reply": "{\"vendor\": \"Hardware Depot\", \"order_ref\": null, \"date\": \"2026-09-01\", \"currency\": \"USD\", \"total\": 23.47, \"items\": [{\"description\": \"HEX BOLT M6x40 10PK\", \"qty\": 2, \"unit_price\": 3.49, \"line_total\": 6.98, \"discount\": null, \"code\": null, \"model\": null, \"weight\": null, \"weight_unit\": null}, {\"description\": \"PLA FILAMENT 1KG BLUE\", \"qty\": 1, \"unit_price\": 14.99, \"line_total\": 14.99, \"discount\": null, \"code\": null, \"model\": null, \"weight\": null, \"weight_unit\": null}, {\"description\": \"SANDPAPER 220 GRIT 5PK\", \"qty\": 1, \"unit_price\": 1.5, \"line_total\": 1.5, \"discount\": null, \"code\": null, \"model\": null, \"weight\": null, \"weight_unit\": null}]}"
+}

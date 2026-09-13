@@ -19,6 +19,7 @@ import { ArrowLeft, Plus, ScanLine, LogOut, LayoutDashboard, LayoutGrid, Chevron
 import ReactMarkdown from "react-markdown";
 import { useAuth } from "../auth/AuthContext";
 import {
+  useRunAction,
   EntityActionsBar,
   EntityThumb,
   usePageTitle,
@@ -326,7 +327,6 @@ function BlockRenderer({
     case "action":
       return (
         <ActionBlock
-          slug={slug}
           actionId={block.action_id}
           label={block.label}
           kind={block.kind}
@@ -362,6 +362,9 @@ function ViewBlock({
     queryKey: ["app-view-data", slug, viewId],
     queryFn: () => api.viewData(slug, viewId, { limit: 100 }),
     enabled: !!viewId,
+    // A block knows its view, not the view's kind; any action re-reads it
+    // (platform-web run-action).
+    meta: { kinds: "*" },
   });
   return (
     <div className="space-y-2">
@@ -421,6 +424,7 @@ function StatBlock({
     // the stat never resolves (shows "…"). 500 is the practical ceiling.
     queryFn: () => api.viewData(slug, viewId, { limit: 500 }),
     enabled: !!viewId,
+    meta: { kinds: "*" },
   });
   const items = data.data?.items ?? [];
   let value: number | null = null;
@@ -499,14 +503,12 @@ function FormBlock({
  *  on the record view's EntityActionsBar. Hidden unless the member
  *  holds the capability; the server enforces it on invoke too. */
 function ActionBlock({
-  slug,
   actionId,
   label,
   kind,
   caps,
   theme,
 }: {
-  slug: string;
   actionId: string;
   label?: string;
   kind?: string;
@@ -515,6 +517,9 @@ function ActionBlock({
 }) {
   const toast = useToast();
   const [busy, setBusy] = useState(false);
+  // Through the one door (platform-web run-action), so the blocks on this
+  // page re-read when the action is done.
+  const runAction = useRunAction();
   if (!canDo(caps, actionId)) return null;
   return (
     <button
@@ -523,7 +528,7 @@ function ActionBlock({
       onClick={async () => {
         setBusy(true);
         try {
-          await api.invokeAction(slug, { actionId, entityKind: kind ?? "", entityId: "" });
+          await runAction({ actionId, entityKind: kind ?? "", entityId: "" });
           toast.success(`${label ?? actionId} ran.`);
         } catch (e) {
           toast.error(e instanceof Error ? e.message : "Action failed.");

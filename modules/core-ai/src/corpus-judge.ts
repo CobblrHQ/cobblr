@@ -33,6 +33,11 @@ export interface Verdict {
   args?: Record<string, unknown>;
   /** Read tools called on the way; ["(unobserved via rig)"] when the path cannot show them. */
   reads: string[];
+  /** The records the answer names as chips (the response's `mentions`, by
+   *  label), when the path can show them. */
+  names?: string[];
+  /** The answer's words, when the path can show them. */
+  text?: string;
 }
 
 export function parseClaim(ai: string): Claim {
@@ -60,23 +65,57 @@ export type Judgement = { ok: boolean; why: string } | null;
 /**
  * null means the claim cannot be hosted here (SKIPPED): an action the
  * workspace lacks, or a no-AI path. Otherwise ok + one line saying why.
+ *
+ * `names`: the records the case says the answer must open, not only say
+ * (a corpus case's `names`). Judged after the road: a right answer that
+ * names "The Hobbit" in plain text, with no chip, is the miss the 2026-09-13
+ * review reported, and it is scored here as one.
  */
-export function judge(ai: string, v: Verdict, knownActions: Set<string>): Judgement {
+export function judge(
+  ai: string,
+  v: Verdict,
+  knownActions: Set<string>,
+  names: readonly string[] = [],
+  says: readonly string[] = [],
+): Judgement {
   // "escort:members|answer", "action:lists:add-item|create:record": either is
   // right. Judged left to right; the first that passes wins, else the first
   // hostable verdict is reported. A read claim's own "a|b" stays inside
   // "read:" (split on "|" only between classes, never inside one).
   const alternatives = splitClaims(ai);
+  let road: Judgement;
   if (alternatives.length > 1) {
     let first: Judgement = null;
+    road = null;
     for (const alt of alternatives) {
       const j = judgeOne(alt, v, knownActions);
-      if (j?.ok) return { ok: true, why: `${j.why} (accepted: ${alt})` };
+      if (j?.ok) {
+        road = { ok: true, why: `${j.why} (accepted: ${alt})` };
+        break;
+      }
       first ??= j;
     }
-    return first;
+    road ??= first;
+  } else {
+    road = judgeOne(ai, v, knownActions);
   }
-  return judgeOne(ai, v, knownActions);
+  if (!road?.ok) return road;
+  let verdict = road;
+  if (names.length) {
+    const have = new Set((v.names ?? []).map((n) => n.toLowerCase()));
+    const missing = names.filter((n) => !have.has(n.toLowerCase()));
+    if (missing.length) return { ok: false, why: `${road.why}, but named in plain text with no chip: ${missing.join(", ")}` };
+    verdict = { ok: true, why: `${road.why}; named as chips: ${names.join(", ")}` };
+  }
+  // What the answer must SAY ("Living room" for a where-question): a right
+  // road with the wrong words is the miss the review reported.
+  if (says.length) {
+    const text = (v.text ?? "").toLowerCase();
+    const unsaid = says.filter((s) => !text.includes(s.toLowerCase()));
+    if (unsaid.length) return { ok: false, why: `${verdict.why}, but the answer does not say: ${unsaid.join(", ")}` };
+    verdict = { ok: true, why: `${verdict.why}; says ${says.join(", ")}` };
+  }
+  return verdict;
 }
 
 /** Split "a|b|c" between CLASSES only: "read:x|y" is one claim with two reads. */

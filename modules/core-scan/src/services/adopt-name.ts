@@ -43,6 +43,16 @@ export interface AdoptNameInput {
 export function shouldAdoptCandidateName(x: AdoptNameInput): boolean {
   if (!x.candName) return false;
 
+  // 0. A row with NO name has nothing to reconcile, and a name from nothing
+  //    is a placeholder. Typed codes that resolved to nothing (a store's own
+  //    label, a number no catalog knows) came back titled "Store Item" and
+  //    "Unidentified Item" with an Add button, because the model, asked to
+  //    route a bare number, made a name up and this adopted it (#2918). The
+  //    identification is the lookup's (a catalog, the decoder, the photo);
+  //    when it found no name, the row stays nameless and the card asks. The
+  //    matchmaker's job here is the ROUTE, which it still gets to make.
+  if (!x.storedName) return false;
+
   // 1. A curated PROVIDER already identified this barcode. Its name is the
   //    identification; the matchmaker only did the routing.
   if (isCuratedBarcodeIdentification(x.idSource, x.hasBarcode, !!x.storedName)) return false;
@@ -51,6 +61,11 @@ export function shouldAdoptCandidateName(x: AdoptNameInput): boolean {
   //    body trim". Without this, a match dropped "2019 Honda Civic Hatchback EX"
   //    back to the terser "2019 Honda Civic" on every re-run.
   if (x.idSource.startsWith("decoder:")) return false;
+
+  // 2b. A SPLIT child's name came from the group photo's read of the whole
+  //     scene, set numbers and all. The matchmaker looked at one crop, or at
+  //     the same group shot again, and its name can only carry less (#2945).
+  if (x.idSource === "vision-split") return false;
 
   // 3. The KEYWORD FALLBACK cannot rename anything. Its candidate name is not a
   //    reconciliation — it is a mechanical trim of the name already on the row
@@ -67,4 +82,18 @@ export function shouldAdoptCandidateName(x: AdoptNameInput): boolean {
   if (SPEC_RE.test(x.storedName ?? "") && !SPEC_RE.test(x.candName)) return false;
 
   return true;
+}
+
+/** The candidates as they may be stored for a row with no name: the route
+ *  and the fields stand, the invented `name` on each does not. The row's
+ *  name is null and the card asks for one; a placeholder left on the
+ *  candidate would surface as the dashboard's sample name, a plan's title,
+ *  the confirm form's prefilled name (#2918). Pure, so the rule is one
+ *  tested decision beside the one above. */
+export function candidatesForNamelessRow<C extends { name?: string | null }>(candidates: C[]): C[] {
+  return candidates.map((c) => {
+    if (!c || typeof c !== "object" || !c.name) return c;
+    const { name: _invented, ...rest } = c;
+    return rest as C;
+  });
 }

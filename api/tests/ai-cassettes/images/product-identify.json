@@ -1,0 +1,6 @@
+{
+  "_fixture": "e2e/fixtures/bench-vision/two-things.png",
+  "image_ahash": "ffff0707071fffff",
+  "capability": "identify-image",
+  "reply": "{\"name\": \"Blue storage tote\", \"observations\": \"A blue plastic storage tote with a lid, beside a smaller box.\", \"category\": \"storage\", \"entity_type\": \"part\", \"confidence\": 0.8}"
+}

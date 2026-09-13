@@ -75,10 +75,15 @@ router.get("/search", (req, res, next) => {
     // throws gets swallowed by entities.list() (returns empty).
     const perKind = await Promise.all(
       candidateIds.map(async (kind) => {
+        // Search finds what was retired too: "where is my old drill" is a
+        // question about something archived, and a search that cannot find
+        // it lies by omission. Lists and views leave retired records out
+        // unless asked; search asks, and ranks them below the live ones.
         const result = await platform().entities.list(orgId, kind, {
           q,
           limit: per_kind,
           filter: tag ? { _tag: tag } : undefined,
+          include_retired: true,
         });
         return result.items.map((item) => ({ ...item, kind }));
       }),
@@ -100,10 +105,13 @@ router.get("/search", (req, res, next) => {
       idx++;
     }
 
+    // Live ones first, whatever kind; retired ones after, still found.
+    const ranked = [...merged.filter((i) => i.retired !== true), ...merged.filter((i) => i.retired === true)];
+
     res.json({
       q,
       kinds_searched: candidateIds.filter((_, i) => perKind[i]!.length > 0),
-      items: merged,
+      items: ranked,
     });
   })().catch(next);
 });

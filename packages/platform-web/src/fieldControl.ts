@@ -74,3 +74,21 @@ export function fieldControl(def: {
       return assertNever(def.type);
   }
 }
+
+/** The stored value a typed string becomes, for a field of this type. The
+ *  same two editors that share `fieldControl` used to turn the text of a
+ *  number input into a value on their own: the detail panel stored
+ *  `Number(text)`, the create modal stored the text. So "Good for (days)"
+ *  typed on a new grocery was the string "10", every reader that checks
+ *  `typeof === "number"` got nothing, and a restock from the shopping list
+ *  dated no lot while the row promised one (2026-09-13). One rule, so a
+ *  number field holds a number whichever door it came through. */
+export function valueFromInput(type: string, text: string): unknown {
+  if (text === "") return null;
+  if (type === "number") {
+    const n = Number(text);
+    return Number.isFinite(n) ? n : null;
+  }
+  if (type === "boolean") return text === "true";
+  return text;
+}

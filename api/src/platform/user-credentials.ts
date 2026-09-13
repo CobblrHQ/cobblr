@@ -17,6 +17,7 @@ import { meta } from "../db/meta.js";
 import { planRouteRows } from "./credential-routing.js";
 import { pickCredential } from "./pick-ai-credential.js";
 import { encryptCreds, decryptCreds } from "../db/crypto.js";
+import { verificationFrom, type ConnectionVerification } from "@cobblr/platform-contract/connection-verification";
 
 export type RouteMode = "my-calls" | "workspace-default";
 export type RouteScope = "sole_member" | "owner" | "all_mine" | "explicit";
@@ -50,6 +51,9 @@ export interface UserCredentialInput {
   /** Per-workspace routing (preferred). When provided, the credential is
    *  'explicit'-scoped and each workspace uses its own mode. */
   routes?: CredentialRoute[];
+  /** What the save's probe said about the key (connection-verification.ts).
+   *  Set by the route that ran the probe, never by a client. */
+  verification?: ConnectionVerification | null;
 }
 
 export interface UserCredentialView {
@@ -82,6 +86,8 @@ export interface UserCredentialView {
   /** Depends on the user's personal edge agent (the edge-bridge provider, or a
    *  URL provider with bridge transit) — drives the live status indicators. */
   uses_edge: boolean;
+  /** What the last probe said about the key; null for a row never checked. */
+  verification: ConnectionVerification | null;
   created_at: Date;
   updated_at: Date;
 }
@@ -180,6 +186,7 @@ export async function addUserCredential(
       route_mode: input.route_mode ?? "my-calls",
       route_scope: scope,
       auto_enable_new: input.auto_enable_new ?? false,
+      ...(input.verification !== undefined ? { verification: (input.verification === null ? null : JSON.stringify(input.verification)) as unknown as Record<string, unknown> | null } : {}),
     })
     .returning("id")
     .executeTakeFirstOrThrow();
@@ -204,6 +211,7 @@ export async function updateUserCredential(
   if (!owned) return false;
   const set: Record<string, unknown> = { updated_at: new Date() };
   if (patch.label !== undefined) set.label = patch.label;
+  if (patch.verification !== undefined) set.verification = patch.verification === null ? null : JSON.stringify(patch.verification);
   if (patch.route_mode !== undefined) set.route_mode = patch.route_mode;
   if (patch.auto_enable_new !== undefined) set.auto_enable_new = patch.auto_enable_new;
   if (patch.credentials !== undefined) {
@@ -227,6 +235,28 @@ export async function updateUserCredential(
   await meta.updateTable("user_credentials").set(set).where("id", "=", credentialId).execute();
   if (routes !== undefined) await setExplicitRoutes(credentialId, userId, routes);
   return true;
+}
+
+/** The stored credentials of a connection the user owns, decrypted, for a
+ *  server-side probe only (the Test button re-checks a key nobody can read
+ *  back). Null when the connection is not theirs. */
+export async function storedUserCredentials(
+  userId: string,
+  credentialId: string,
+): Promise<{ provider_id: string; credentials: Record<string, unknown>; verification: ConnectionVerification | null } | null> {
+  const owned = await meta
+    .selectFrom("user_credentials")
+    .select(["provider_id", "credentials_encrypted", "verification"])
+    .where("id", "=", credentialId)
+    .where("user_id", "=", userId)
+    .executeTakeFirst();
+  if (!owned) return null;
+  const verification = verificationFrom(owned.verification);
+  try {
+    return { provider_id: owned.provider_id, credentials: JSON.parse(decryptCreds(owned.credentials_encrypted)) as Record<string, unknown>, verification };
+  } catch {
+    return { provider_id: owned.provider_id, credentials: {}, verification };
+  }
 }
 
 export async function deleteUserCredential(userId: string, credentialId: string): Promise<boolean> {
@@ -283,6 +313,7 @@ export async function listUserCredentials(
     org_ids: (routesByCred.get(r.id) ?? []).map((x) => x.org_id),
     routes: routesByCred.get(r.id) ?? [],
     share_status: statusByCred.get(r.id) ?? {},
+    verification: verificationFrom(r.verification),
     credential_keys: keysOf(r.credentials_encrypted),
     credential_values: nonSecretValues(r.provider_id, r.credentials_encrypted, isSecret),
     uses_edge: usesEdge(r.provider_id, r.credentials_encrypted),

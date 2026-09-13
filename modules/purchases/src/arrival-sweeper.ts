@@ -39,14 +39,18 @@ export function startArrivalSweeper(): void {
   // A bridge push means the carrier already answered: re-check that number
   // NOW, off-cadence. The bell is trusted, the data is not — the state still
   // comes through the authenticated read path, forced past the is-it-due gate.
+  // The re-check reaches the carrier, so it schedules itself: the bus runs
+  // subscribers inline and the inbound route that rang the bell would
+  // otherwise wait on a network round trip it does not need.
   platform().events.on("core-shipments.tracker.pushed", "purchases", async (payload: unknown) => {
     const p = payload as { orgId?: string; tracking_number?: string };
     if (!p.orgId || !p.tracking_number) return;
-    try {
-      await arrivalTick({ orgId: p.orgId, number: p.tracking_number, force: true });
-    } catch (err) {
-      console.error("[purchases] pushed tracker re-check failed:", (err as Error).message);
-    }
+    const { orgId, tracking_number: number } = p;
+    setImmediate(() => {
+      arrivalTick({ orgId, number, force: true }).catch((err: unknown) => {
+        console.error("[purchases] pushed tracker re-check failed:", (err as Error).message);
+      });
+    });
   });
 }
 

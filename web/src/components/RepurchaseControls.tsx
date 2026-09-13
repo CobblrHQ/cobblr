@@ -1,10 +1,17 @@
 // The three answers to "you already have one of these, and you just scanned
-// another": Replaced the one that ran out / +N, still had some / Old one went
-// bad. ONE implementation, because TWO surfaces show the match: the full
-// TrackedMatchBanner (expanded card, result modal) and the scan inbox card's
-// own condensed line. When each drew its own buttons they drifted within a
-// day: the banner had these three while the card still showed the retired
-// "this buy was" chips and a bare "+1 to it" (reported 2026-09-09).
+// another", in the kind's own words. ONE implementation, because TWO surfaces
+// show the match: the full TrackedMatchBanner (expanded card, result modal)
+// and the scan inbox card's own condensed line. When each drew its own
+// buttons they drifted within a day: the banner had three while the card
+// still showed the retired "this buy was" chips and a bare "+1 to it"
+// (reported 2026-09-09).
+//
+// The WORDS come from what the collection wears (the faces verdict, through
+// repurchaseWords in the contract's kind-label seam), never from here: a
+// second copy of The Hobbit was offered the pantry's three (the 2026-09-13
+// review). Stock is counted and consumed; one of a thing is kept, so it gets
+// "Another copy" and "Same book, replacing the old one"; waste is offered
+// only where the face says the thing goes off.
 //
 // Which answer is primary is decided by what the ledger and the record
 // already know: stock that is past its expiry date makes "went bad" the
@@ -12,9 +19,11 @@
 // re-buy, "replaced", leads.
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { PackagePlus, RefreshCw } from "lucide-react";
-import { useToast } from "@cobblr/platform-web";
+import { useFaces, useToast } from "@cobblr/platform-web";
+import { repurchaseWords } from "@cobblr/platform-contract/kind-label";
 import { api, ApiError, type TrackedMatch } from "../lib/api";
 import { useActiveOrg } from "../auth/ActiveOrgContext";
+import { useKindLabels } from "../lib/useKindLabels";
 import { leadAnswer } from "../lib/repurchaseAnswer";
 
 export type RepurchaseMode = "add-qty" | "replace";
@@ -75,18 +84,24 @@ export function RepurchaseAnswers({
   const { activeSlug } = useActiveOrg();
   const qc = useQueryClient();
   const toast = useToast();
+  // What this collection wears, and what it calls one of its things. Nothing
+  // renders until the verdict is in: the hook answers "every face" while it
+  // loads, which would flash the pantry words under a book.
+  const worn = useFaces(match.kind);
+  const face = worn.verdict ? { stock: worn.on.has("stock"), perishable: worn.on.has("perishable") } : null;
+  const noun = useKindLabels(activeSlug).noun(match.kind);
 
   // What the ledger makes of a purchase right now. A workspace without the
-  // Cadence capability 404s here; `catch` turns that into "no opinion".
+  // Cadence capability 404s here; `catch` turns that into "no opinion". Only
+  // stock has a ledger opinion worth asking for.
   const cadence = useQuery({
     queryKey: ["cadence-state", activeSlug, match.kind, match.id, match.expired],
     queryFn: () => api.cadenceState(activeSlug, match.kind, match.id, { expired: !!match.expired }).catch(() => null),
-    enabled: match.qty != null && match.qty > 0,
+    enabled: match.qty != null && match.qty > 0 && face?.stock === true,
     staleTime: 60_000,
   });
   const cad = cadence.data ?? null;
   const daysLeft = cad?.days_until_runout != null ? Math.round(cad.days_until_runout) : null;
-  const lead = leadAnswer(match, cad?.repurchase_means);
 
   const attach = useMutation({
     mutationFn: (vars: { mode: RepurchaseMode; resolution?: Resolution }) =>
@@ -99,57 +114,64 @@ export function RepurchaseAnswers({
       }),
     onSuccess: (r, vars) => {
       void qc.invalidateQueries({ queryKey: ["scan-inbox", activeSlug] });
+      const now = r.new_qty != null ? ` (now ×${r.new_qty})` : "";
       toast.success(
         vars.mode === "replace"
-          ? `${r.entity_title}: replaced${r.new_qty != null ? ` (now ×${r.new_qty})` : ""}`
-          : `+${quantity} → ${r.entity_title}${r.new_qty != null ? ` (now ×${r.new_qty})` : ""}`,
+          ? `${r.entity_title}: replaced${now}`
+          : face?.stock
+            ? `+${quantity} → ${r.entity_title}${now}`
+            : `${quantity === 1 ? "Another copy" : `${quantity} more copies`} of ${r.entity_title}${now}`,
       );
       onDone?.(r, match, vars.mode);
     },
     onError: (e) => toast.error(e instanceof ApiError ? e.message : String(e)),
   });
 
-  if (match.qty == null || !lead) return null;
-  const busy = attach.isPending;
+  if (match.qty == null || !face) return null;
   const hasSome = match.qty > 0;
+  const words = repurchaseWords(face, noun, quantity, hasSome);
+  // The ledger's lead only stands where its button does.
+  const led = leadAnswer(match, cad?.repurchase_means);
+  const lead = led === "went_bad" && !words.wentBad ? "replaced" : led;
+  if (!lead) return null;
+  const busy = attach.isPending;
   const cls = (primary: boolean) =>
     `inline-flex items-center gap-1 rounded-full px-2.5 py-1 text-xs font-medium disabled:opacity-50 ${primary ? pill.primary : pill.secondary}`;
 
   return (
     <>
-      {hasSome && (
+      {words.replace && (
         <button
           type="button"
           disabled={busy}
-          title="The one you had ran out; this is the new one. The count stays what you scanned, and the ledger learns how long the last one lasted."
+          title={words.replace.title}
           onClick={() => attach.mutate({ mode: "replace", resolution: "consumed" })}
           className={cls(lead === "replaced")}
         >
-          <RefreshCw size={12} /> Replaced the one that ran out
+          <RefreshCw size={12} /> {words.replace.label}
         </button>
       )}
       <button
         type="button"
         disabled={busy}
-        title={hasSome ? "You still have the old one; this goes on top." : undefined}
+        title={words.add.title || undefined}
         onClick={() => attach.mutate({ mode: "add-qty", ...(hasSome ? { resolution: "over_buy" as const } : {}) })}
         className={cls(lead === "add")}
       >
-        <PackagePlus size={12} /> +{quantity}
-        {hasSome ? ", still had some" : " to it"}
+        <PackagePlus size={12} /> {words.add.label}
       </button>
-      {hasSome && (
+      {words.wentBad && (
         <button
           type="button"
           disabled={busy}
-          title="The old one went bad and this replaces it. Recorded as waste, never as consumption."
+          title={words.wentBad.title}
           onClick={() => attach.mutate({ mode: "replace", resolution: "discarded" })}
           className={cls(lead === "went_bad")}
         >
-          Old one went bad
+          {words.wentBad.label}
         </button>
       )}
-      {hasSome && daysLeft != null && daysLeft > 0 && (
+      {words.ledgerLine && hasSome && daysLeft != null && daysLeft > 0 && (
         <span className="self-center text-[11px] text-muted" title="What the cadence ledger expects from your past buys">
           ~{daysLeft} {daysLeft === 1 ? "day" : "days"} of the last one left
         </span>

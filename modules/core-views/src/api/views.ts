@@ -234,9 +234,21 @@ viewsRouter.get(
       // parts but not prices); owner/admin see everything.
       { userId: sessionUser(req)?.id, role: ctx.role },
     );
+    // An empty answer is one of two things, and the page cannot tell them
+    // apart from the rows alone: the collection has nothing yet (a fresh
+    // install opening its cover wall) or the view's own filter excluded
+    // everything it has ("What's on hand" when everything ran out). The first
+    // wants a first-item door, the second the filter named. One cheap probe
+    // without the view's query, only on the empty path, says which.
+    const collectionEmpty =
+      result.items.length === 0
+        ? (await platform().entities.list(ctx.org.id, view.entity_kind, { limit: 1 }, { userId: sessionUser(req)?.id, role: ctx.role })).items
+            .length === 0
+        : false;
     res.json({
       view: { id: view.id, entity_kind: view.entity_kind, view_type: view.view_type },
       ...result,
+      collection_empty: collectionEmpty,
     });
   }),
 );

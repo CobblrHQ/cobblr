@@ -196,7 +196,7 @@ async function compareBands(input: Uint8Array, bands: [Band, Band]): Promise<num
     // The band's OWN box: two units at different heights then line up, and the
     // product fills the comparison instead of the backdrop.
     return sharp(Buffer.from(input), { failOn: "none" })
-      .extract({ left, top, width, height })
+      .extract({ left, top, width, height }) // extract-upright: input is uprightBytes output, see the caller below
       .resize(N, N, { fit: "fill" })
       .removeAlpha()
       .raw()

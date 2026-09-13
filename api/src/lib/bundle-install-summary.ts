@@ -21,6 +21,10 @@ export interface AppliedCounts {
   field_overrides: number;
   catalogs: number;
   auto_enabled_modules: string[];
+  /** Tables this apply created / found already there. Absent on an apply
+   *  from before the install said which (read as "created", the old story). */
+  instances_created?: string[];
+  instances_existing?: string[];
 }
 
 /** A bundle manifest, in the shape this summary reads. */
@@ -40,8 +44,13 @@ export interface BundleInstallSummary {
    * which is the fact a person most needs told.
    */
   kind: "instance" | "skin";
-  /** The instance it created, when it created one. */
+  /** The instance it provides, when it provides one. */
   instance: string | null;
+  /** Whether THIS install created that table, or found it already there.
+   *  A re-install (the "Install & add" on a second capture, a bundle
+   *  installed from Bundles then offered again) added no table, and the
+   *  report says so rather than repeating the plan (#2919). */
+  instance_existed: boolean;
   /** The module its changes landed in, when they landed in exactly one. */
   module: string | null;
   /** Fields added to an existing kind (defs plus overrides - both are fields
@@ -100,6 +109,7 @@ export function bundleInstallSummary(
     bundle: str(manifest.name) ?? "The bundle",
     kind: instance ? "instance" : "skin",
     instance,
+    instance_existed: !!instance && (applied.instances_existing ?? []).includes(instance),
     module,
     fields: applied.field_defs + applied.field_overrides,
     wires: applied.wires,

@@ -1,0 +1,6 @@
+{
+  "_fixture": "e2e/fixtures/review-pack/photos/book.jpg",
+  "image_ahash": "101e3c3c7c7c0800",
+  "capability": "identify-image",
+  "reply": "{\"name\":\"Blank hardcover book\",\"observations\":\"A closed hardcover book with a plain cover lying on a wooden table.\",\"category\":\"Books\",\"entity_type\":\"part\",\"is_receipt\":\"no\",\"confidence\":0.85}"
+}

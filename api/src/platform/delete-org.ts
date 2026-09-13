@@ -4,15 +4,28 @@
 // DELETE /super-admin/workspaces/:id (cleaning up e2e/test detritus is an
 // operator chore — console audit 2026-06-11). AUTHZ IS THE CALLER'S JOB.
 
-import { Client } from "pg";
 import { meta } from "../db/meta.js";
+import { createClient } from "../db/client-error-guard.js";
 import { metaPool } from "../db/meta.js";
 import { env } from "../env.js";
-import { evictTenantPool } from "../db/tenant.js";
+import { evictTenantPool, withTenantDeleting } from "../db/tenant.js";
 import { getSandboxedModuleInfo } from "../sandbox/sandboxed-module-info.js";
 import { dropModuleRole } from "../sandbox/module-role.js";
 
+// How long a delete waits for clients a request still holds on the tenant
+// pool before terminating their backends anyway. Long enough for any request
+// that is answering normally; short enough that one stuck query cannot hold a
+// deletion open. The held request errors through its own query path.
+const DRAIN_MS = Number(process.env.COBBLR_DELETE_DRAIN_MS) || 5_000;
+
 export async function hardDeleteOrg(orgId: string): Promise<void> {
+  // Marked as deleting for the whole run: a request that lands in here gets a
+  // refusal from getTenantDb instead of opening a fresh pool to a database
+  // whose backends are about to be terminated (#2957).
+  await withTenantDeleting(orgId, () => deleteOrg(orgId));
+}
+
+async function deleteOrg(orgId: string): Promise<void> {
   const dbName = await meta
     .selectFrom("orgs")
     .select("db_name")
@@ -32,10 +45,18 @@ export async function hardDeleteOrg(orgId: string): Promise<void> {
     .map((r) => r.module_name)
     .filter((m) => getSandboxedModuleInfo(m) !== null);
 
-  // Close any cached connection pool to the tenant DB BEFORE dropping
-  // it. Otherwise DROP DATABASE WITH (FORCE) kills active connections
-  // and the resulting pg error can take the api process down with it.
-  await evictTenantPool(orgId);
+  // Close the cached connection pool to the tenant DB BEFORE dropping it, so
+  // the api's own connections are gone rather than terminated under it. A
+  // client a request still holds is given DRAIN_MS; past that the terminate
+  // below ends its query, which is the right outcome for a request on a
+  // workspace being deleted, and every client listens for the resulting
+  // 'error' from creation (db/client-error-guard.ts), so it is a log line.
+  const drain = await evictTenantPool(orgId, { drainMs: DRAIN_MS });
+  if (!drain.drained) {
+    console.warn(
+      `[delete-org] org ${orgId}: ${drain.borrowed} client(s) still borrowed after ${DRAIN_MS}ms; terminating their backends`,
+    );
+  }
 
   // Terminate any other connections to the DB (background tasks,
   // hung queries) then DROP. CREATE/DROP DATABASE can't run inside
@@ -71,8 +92,7 @@ export async function hardDeleteOrg(orgId: string): Promise<void> {
   // reconcileOrphanTenantRoles() sweeps anything missed on the next boot.
   if (env.SUPERUSER_DATABASE_URL && /^tenant_[a-z0-9_]+$/.test(dbName.db_name)) {
     const roleName = `${dbName.db_name}_user`;
-    const su = new Client({ connectionString: env.SUPERUSER_DATABASE_URL });
-    su.on("error", (err) => console.error("[delete-org] superuser connection error:", (err as Error).message));
+    const su = createClient({ connectionString: env.SUPERUSER_DATABASE_URL }, "delete-org superuser");
     try {
       await su.connect();
       await su.query(`DROP ROLE IF EXISTS "${roleName}"`);

@@ -26,11 +26,11 @@ import { CredentialFields } from "../components/CredentialFields";
 import { ProviderSetupSteps } from "../components/ProviderSetupSteps";
 import { Link } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Info, Pencil, Play, Plus, Sparkles, Trash2 } from "lucide-react";
+import { Info, Pencil, Plus, Sparkles, Trash2 } from "lucide-react";
 import { Modal, useToast, useConfirm, usePageTitle } from "@cobblr/platform-web";
 import { capabilityLabel } from "../lib/ai-capability-labels";
 import { connectionsNotUsedIn, routesWith } from "../lib/unused-connections";
-import type { ConnRoute, UserConnection } from "../lib/api";
+import type { ConnRoute, ConnectionVerification, UserConnection } from "../lib/api";
 import {
   ApiError,
   api,
@@ -41,6 +41,8 @@ import {
   type WorkspaceAiOffer,
 } from "../lib/api";
 import { useActiveOrg } from "../auth/ActiveOrgContext";
+import { TestConnectionButton, VerificationBadge } from "../components/ConnectionState";
+import { keyRefusedBy, refusalDialog, verificationToast } from "../lib/connection-state";
 import { useAiStatus } from "../components/AiStatusNotice";
 import { PayloadView, usageLine } from "../components/PayloadView";
 import { FEED_SCROLL, FEED_SCROLL_INNER } from "../lib/feed";
@@ -301,12 +303,6 @@ function ProviderRow({
   const toast = useToast();
   const confirm = useConfirm();
 
-  const testM = useMutation({
-    mutationFn: () => api.testAiProvider(activeSlug, provider.id),
-    onSuccess: (r) =>
-      r.ok ? toast.success(r.note ?? "Test passed.") : toast.error(r.error ?? "Test failed."),
-    onError: (e) => toast.error(e instanceof ApiError ? e.message : String(e)),
-  });
   const delM = useMutation({
     mutationFn: () => api.deleteAiProvider(activeSlug, provider.id),
     onSuccess: () => {
@@ -330,7 +326,10 @@ function ProviderRow({
     <div className="border rounded p-3 dark:border-slate-700">
       <div className="flex items-center justify-between">
         <div className="min-w-0">
-          <div className="font-medium truncate">{provider.label}</div>
+          <div className="font-medium truncate flex items-center gap-2">
+            <span className="truncate">{provider.label}</span>
+            <VerificationBadge verification={provider.verification} />
+          </div>
           <div className="text-xs text-muted">
             {def?.label ?? provider.provider_id}
             {!provider.enabled && (
@@ -344,15 +343,7 @@ function ProviderRow({
           </div>
         </div>
         <div className="flex items-center gap-1">
-          <button
-            type="button"
-            onClick={() => testM.mutate()}
-            disabled={testM.isPending}
-            className="p-1.5 text-muted hover:text-content dark:hover:text-slate-200 rounded hover:bg-subtle dark:hover:bg-slate-800"
-            title="Test connection"
-          >
-            <Play className="h-4 w-4" />
-          </button>
+          <TestConnectionButton test={() => api.testAiProvider(activeSlug, provider.id)} invalidate={[["ai-providers", activeSlug]]} />
           <button
             type="button"
             onClick={onEdit}
@@ -407,46 +398,40 @@ function ProviderAddModal({
   const [creds, setCreds] = useState<Record<string, string>>({});
   const [budget, setBudget] = useState<string>("");
 
+  const confirm = useConfirm();
+  // The server tests the key before the connection is presented as ready
+  // (#2895). A key the provider rejects comes back as 409 key_invalid and is
+  // saved only when the person says so, and then as unverified; the toast
+  // reads the verdict rather than saying "added".
   const createM = useMutation({
-    mutationFn: () =>
+    mutationFn: async (confirmUnverified?: boolean) =>
       api.createAiProvider(activeSlug, {
         provider_id: pickedId,
         label: label.trim() || picked?.label || pickedId,
         credentials: creds,
         monthly_budget_cents: budget.trim() === "" ? null : Math.round(Number(budget) * 100),
+        ...(confirmUnverified ? { confirm_unverified: true } : {}),
       }),
-    // Test it immediately, rather than leaving the person to find the unlabelled play
-    // icon on the row. A key is only wrong in ways you cannot see: a real user pasted a
-    // whole curl command in, it saved happily, and the first sign of trouble would have
-    // been a failed scan much later with a provider error nobody can read.
-    onSuccess: async (created) => {
+    onSuccess: (created) => {
       void qc.invalidateQueries({ queryKey: ["ai-providers", activeSlug] });
       onClose();
-      const id = (created as { id?: string } | undefined)?.id;
       // Say which it is. An additional provider arrives OFF (the server decides,
       // so this reads what came back rather than guessing) — otherwise adding
       // one silently repoints every AI call in the workspace and the toast that
       // said "added" was the only notice anybody got.
       const isOn = (created as { enabled?: boolean } | undefined)?.enabled !== false;
-      const addedMsg = isOn
-        ? "Provider added and in use."
-        : "Provider added, switched off. Turn it on when you want the workspace to use it.";
-      if (!id) {
-        toast.success(addedMsg);
+      const t = verificationToast((created as { verification?: ConnectionVerification } | undefined)?.verification, "added");
+      toast[t.kind](isOn ? t.message : `${t.message} It is switched off; turn it on when you want the workspace to use it.`);
+    },
+    onError: async (e) => {
+      const refused = keyRefusedBy(e);
+      if (!refused) {
+        toast.error(e instanceof ApiError ? e.message : String(e));
         return;
       }
-      toast.success(`${addedMsg} Testing the connection...`);
-      try {
-        const r = await api.testAiProvider(activeSlug, id);
-        // The provider IS saved either way; a failed test is a fixable detail, not a
-        // reason to have thrown the credentials away.
-        if (r.ok) toast.success(r.note ?? "Connection works.");
-        else toast.error(`Saved, but the test failed: ${r.error ?? "unknown error"}. Edit it to fix the key.`);
-      } catch (e) {
-        toast.error(`Saved, but the test could not run: ${e instanceof ApiError ? e.message : String(e)}`);
-      }
+      const anyway = await confirm(refusalDialog(refused, false));
+      if (anyway) createM.mutate(true);
     },
-    onError: (e) => toast.error(e instanceof ApiError ? e.message : String(e)),
   });
 
   return (
@@ -455,7 +440,7 @@ function ProviderAddModal({
         className="space-y-3"
         onSubmit={(e) => {
           e.preventDefault();
-          createM.mutate();
+          createM.mutate(false);
         }}
       >
         <div>
@@ -554,20 +539,34 @@ function ProviderEditModal({
       : "",
   );
 
+  const confirm = useConfirm();
+  // A replacement key is tested before it replaces anything: a rejected one
+  // leaves the working key in place unless the person confirms the swap.
   const saveM = useMutation({
-    mutationFn: () =>
+    mutationFn: async (confirmUnverified?: boolean) =>
       api.updateAiProvider(activeSlug, provider.id, {
         label: label.trim() || provider.label,
         credentials: updateCreds ? creds : undefined,
         monthly_budget_cents:
           budget.trim() === "" ? null : Math.round(Number(budget) * 100),
+        ...(confirmUnverified ? { confirm_unverified: true } : {}),
       }),
-    onSuccess: () => {
-      toast.success("Provider updated.");
+    onSuccess: (updated) => {
+      const v = updateCreds ? (updated as { verification?: ConnectionVerification } | undefined)?.verification : undefined;
+      const t = updateCreds ? verificationToast(v, "updated") : { kind: "success" as const, message: "Provider updated." };
+      toast[t.kind](t.message);
       void qc.invalidateQueries({ queryKey: ["ai-providers", activeSlug] });
       onClose();
     },
-    onError: (e) => toast.error(e instanceof ApiError ? e.message : String(e)),
+    onError: async (e) => {
+      const refused = keyRefusedBy(e);
+      if (!refused) {
+        toast.error(e instanceof ApiError ? e.message : String(e));
+        return;
+      }
+      const anyway = await confirm(refusalDialog(refused, true));
+      if (anyway) saveM.mutate(true);
+    },
   });
 
   return (
@@ -576,7 +575,7 @@ function ProviderEditModal({
         className="space-y-3"
         onSubmit={(e) => {
           e.preventDefault();
-          saveM.mutate();
+          saveM.mutate(false);
         }}
       >
         <div>

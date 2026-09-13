@@ -29,6 +29,10 @@ export interface ScanNotesInput {
   rateLimited: boolean;
   /** A short/low-trust barcode: plausible but worth a second look. */
   lowTrust: boolean;
+  /** The identify step could not name the photo and said why (the row's
+   *  coded `identify_failure`, #2916): the note IS the reason, and a reason
+   *  behind a disclosure is a reason nobody reads. */
+  identifyFailed?: boolean;
 }
 
 export interface ScanNotesPlacement {
@@ -38,8 +42,8 @@ export interface ScanNotesPlacement {
   sourceBox: boolean;
 }
 
-export function scanNotesPlacement({ notes, rateLimited, lowTrust }: ScanNotesInput): ScanNotesPlacement {
+export function scanNotesPlacement({ notes, rateLimited, lowTrust, identifyFailed = false }: ScanNotesInput): ScanNotesPlacement {
   if (!notes) return { amber: false, sourceBox: false };
-  const warning = rateLimited || lowTrust;
+  const warning = rateLimited || lowTrust || identifyFailed;
   return { amber: warning, sourceBox: !warning };
 }

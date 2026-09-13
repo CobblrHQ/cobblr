@@ -179,6 +179,9 @@ function humanAction(a: string): string {
     user_created: "joined",
     pairing_created: "linked",
     pairing_deleted: "unlinked",
+    // A boot pass moved the record to the table its fields belong to (the
+    // Groceries base-kind twin, 2026-09-13); the row says so, not "system".
+    moved_by_upgrade: "moved into its own table by the upgrade:",
   };
   if (map[a]) return map[a];
   if (a.endsWith("_created")) return "created";

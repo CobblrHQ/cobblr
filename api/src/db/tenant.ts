@@ -8,13 +8,13 @@
 
 import { Kysely, PostgresDialect } from "kysely";
 import { sweepGate } from "./sweep-gate.js";
-import { Pool } from "pg";
+import type { Pool } from "pg";
 import { env } from "../env.js";
 import { meta } from "./meta.js";
 import { decryptCreds } from "./crypto.js";
 import type { TenantDB } from "./tenant-schema.js";
 import { mayFastClose } from "./pool-release-rule.js";
-import { guardPoolClients } from "./client-error-guard.js";
+import { createPool } from "./client-error-guard.js";
 
 interface CachedTenant {
   pool: Pool;
@@ -68,6 +68,35 @@ const pendingRelease = new Map<string, NodeJS.Timeout>();
 const handouts = new Map<string, number>();
 
 // The fast-close rule lives in pool-release-rule.ts (pure + unit-tested).
+
+// Orgs whose deletion is in progress. A delete closes the cached pool and then
+// terminates every backend of the tenant database before dropping it; a request
+// for the same org landing in that window used to open a NEW pool (the cache
+// entry was already gone) whose first connection met the terminate mid-
+// handshake. getTenantDb refuses the org while this holds, so nothing opens a
+// connection to a database that is about to go away, and the request answers
+// with a sentence instead of a dead socket.
+const deleting = new Set<string>();
+
+export class WorkspaceDeletingError extends Error {
+  readonly code = "workspace_deleting";
+  constructor(orgId: string) {
+    super(`Workspace ${orgId} is being deleted`);
+    this.name = "WorkspaceDeletingError";
+  }
+}
+
+/** Run `fn` with the org marked as deleting: no new tenant pool opens for it
+ *  and the shim's re-acquire refuses too. Cleared when `fn` settles, so a
+ *  delete that failed leaves the workspace reachable again. */
+export async function withTenantDeleting<T>(orgId: string, fn: () => Promise<T>): Promise<T> {
+  deleting.add(orgId);
+  try {
+    return await fn();
+  } finally {
+    deleting.delete(orgId);
+  }
+}
 
 // Upper bound on cached tenant pools. Each pool holds up to `max` connections
 // (5), so total tenant connections stay ≈ MAX_TENANT_POOLS × 5. WITHOUT this the
@@ -125,7 +154,11 @@ async function openTenant(orgId: string): Promise<CachedTenant> {
 
   const creds = JSON.parse(decryptCreds(org.db_credentials_encrypted)) as TenantCredentials;
   const { host, port } = metaHostBits();
-  const pool = new Pool({
+  // createPool: every client of this pool listens for 'error' from creation.
+  // Tenant databases get DROPped during org-delete, with every backend
+  // terminated first; that must be a log line on this pool, never the exit of
+  // the api (the guard file carries the history).
+  const pool = createPool({
     host,
     port,
     database: org.db_name,
@@ -138,20 +171,7 @@ async function openTenant(orgId: string): Promise<CachedTenant> {
     // pool-cap eviction, so bounding per-pool conns is the durable lever. Default
     // 5 (prod); CI sets COBBLR_TENANT_POOL_MAX=3.
     max: Number(process.env.COBBLR_TENANT_POOL_MAX) || 5,
-  });
-  // Without an 'error' listener, a pg-pool idle-client error (e.g.
-  // backend kills a connection during DROP DATABASE on this tenant,
-  // or a transient network blip) becomes an unhandled 'error' event
-  // and Node terminates the process. Tenants get DROPped during
-  // org-delete; this listener is what keeps the api alive across that
-  // path.
-  guardPoolClients(pool, `tenant-pool ${orgId}`);
-  pool.on("error", (err) => {
-    console.error(
-      `[tenant-pool ${orgId}] idle client error:`,
-      (err as Error).message,
-    );
-  });
+  }, `tenant-pool ${orgId}`);
   // The Kysely handed to callers talks to the pool through this shim rather than
   // holding the Pool directly. If the pool it was built on has been ended (an
   // evictor, the LRU cap, or a sweep racing this caller), the shim transparently
@@ -179,6 +199,7 @@ async function openTenant(orgId: string): Promise<CachedTenant> {
 }
 
 export async function getTenantDb(orgId: string): Promise<Kysely<TenantDB>> {
+  if (deleting.has(orgId)) throw new WorkspaceDeletingError(orgId);
   // Stamp BEFORE the await: the grace window must cover from the moment we
   // commit to handing out this pool, not from when the promise resolves.
   lastAccess.set(orgId, Date.now());
@@ -296,10 +317,21 @@ export async function withTenantDbForSweep<T>(
 }
 
 /** For tenant deletion — also useful in tests to reset the pool when
- *  the underlying DB has been dropped/recreated. */
-export async function evictTenantPool(orgId: string): Promise<void> {
+ *  the underlying DB has been dropped/recreated.
+ *
+ *  `pool.end()` resolves only once every borrowed client is released, and it
+ *  waits for that without bound; a request holding a client through a long
+ *  query holds the deletion with it. `drainMs` caps the wait: past it the
+ *  caller proceeds (org-delete terminates the backends next, which errors
+ *  the held query through its own path and releases the client), and
+ *  `drained:false` says so. Without `drainMs` the wait is the old unbounded
+ *  one, which the boot-time sweeps want. */
+export async function evictTenantPool(
+  orgId: string,
+  opts: { drainMs?: number } = {},
+): Promise<{ drained: boolean; borrowed: number }> {
   const entry = cache.get(orgId);
-  if (!entry) return;
+  if (!entry) return { drained: true, borrowed: 0 };
   cache.delete(orgId);
   lastAccess.delete(orgId);
   accessSeq.delete(orgId);
@@ -309,10 +341,26 @@ export async function evictTenantPool(orgId: string): Promise<void> {
     clearTimeout(pending);
     pendingRelease.delete(orgId);
   }
+  let pool: Pool;
   try {
-    const { pool } = await entry;
-    await pool.end();
+    ({ pool } = await entry);
   } catch {
-    // open() failed — nothing to close.
+    return { drained: true, borrowed: 0 }; // open() failed — nothing to close.
   }
+  const ended = pool.end().then(
+    () => true,
+    () => true, // already ending, or a client raced the end — nothing left to wait for
+  );
+  if (opts.drainMs === undefined) {
+    await ended;
+    return { drained: true, borrowed: 0 };
+  }
+  let timer: NodeJS.Timeout | undefined;
+  const bound = new Promise<boolean>((resolve) => {
+    timer = setTimeout(() => resolve(false), opts.drainMs);
+  });
+  const drained = await Promise.race([ended, bound]);
+  clearTimeout(timer);
+  // After end() the idle clients are gone; what is left is borrowed.
+  return { drained, borrowed: drained ? 0 : pool.totalCount };
 }

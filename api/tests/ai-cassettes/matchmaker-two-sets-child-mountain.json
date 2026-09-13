@@ -1,0 +1,9 @@
+{
+  "_about": "The router's answer for the first split child, looking at its own crop: it repeats the number from the name and INVENTS lifecycle built. The group photo said sealed; sealed must win.",
+  "match": "\"name\":\"Brickwright Mountain Explorer 31058\"",
+  "rounds": [
+    {
+      "content": "{\"candidates\":[{\"module\":\"inventory\",\"instance\":\"sets\",\"kind\":\"inventory:part\",\"label\":\"Sets\",\"name\":\"Brickwright Mountain Explorer 31058\",\"confidence\":0.8,\"fields\":{\"set_number\":\"31058\",\"lifecycle\":\"built\",\"theme\":\"Creator\"},\"notes\":\"A Brickwright Creator set, 31058; appears built.\"}]}"
+    }
+  ]
+}

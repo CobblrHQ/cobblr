@@ -1,10 +1,11 @@
 {
   "manifest": {
     "id": "cobblr.community.garden",
+    "base_kind_fields_reason": "Adds species, planting date, sun and a watering schedule to plants kept as plain Assets; written before instances existed, and a plant is an asset the workspace already has.",
     "released_at": "2026-07-02",
     "changelog": "First catalogued release: plants as assets with species, sun exposure, and a repeating watering schedule.",
     "catalog": "extended",
-    "version": "0.1.2",
+    "version": "0.1.3",
     "name": "Garden",
     "description": "Custom assets:asset fields for tracking plants: species, planted date, watering schedule, sun exposure.",
     "author": "Cobblr community",

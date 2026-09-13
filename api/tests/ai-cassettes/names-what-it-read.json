@@ -1,0 +1,7 @@
+{
+  "match": "which shelves do i have",
+  "rounds": [
+    { "tool_calls": [{ "name": "list_records", "args": { "kind": "core-locations:location", "limit": 50 } }] },
+    { "content": "You have Replay Shelf North and Replay Shelf South. Replay Attic is not one of yours." }
+  ]
+}

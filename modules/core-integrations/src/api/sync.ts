@@ -15,7 +15,7 @@ import { tenantDb, tenantContext } from "../db.js";
 import { asyncHandler, badBody, requireRole } from "./util.js";
 import { loadConnectionRef } from "../sync/connection.js";
 import { ReconcileBusyError, runReconcile, planReconcile } from "../sync/engine.js";
-import { ensureSyncScan } from "../sync/worker.js";
+import { DEFAULT_CADENCE_MIN, ensureSyncScan } from "../sync/worker.js";
 import { installedSyncConnectors, resolveSyncConnector } from "../sync/resolve.js";
 
 export const syncRouter = Router({ mergeParams: true });
@@ -352,7 +352,7 @@ syncRouter.put(
     if (!parsed.success) return badBody(res, parsed.error);
     const ctx = tenantContext(req);
     const db = tenantDb(req);
-    const cadence = parsed.data.cadence_min ?? 20;
+    const cadence = parsed.data.cadence_min ?? DEFAULT_CADENCE_MIN;
     const existing = await db
       .selectFrom("core_integrations_sync_state")
       .select(["import_approved_at"])
@@ -436,18 +436,25 @@ syncRouter.post(
     try {
       const result = await runReconcile(db, rt.ref, rt.type, { linkOnMatch: true });
       const now = new Date();
+      // The import IS a reconcile, so the poll's next turn is a cadence away.
+      // It used to be due NOW: the scan tick that followed re-reconciled what
+      // the import had just done, held the sync's lock for it, and a second
+      // import pressed seconds later (or the next test in a suite) was told
+      // "A sync is already running" (#2880). A 2xx from this route means the
+      // connection is free; nothing this route scheduled may contradict that.
+      const nextRunAt = new Date(now.getTime() + DEFAULT_CADENCE_MIN * 60_000);
       await db
         .insertInto("core_integrations_sync_state")
         .values({
           connector_row_id: rt.ref.connectorRowId,
           entity_type: rt.type.key,
           enabled: true,
-          cadence_min: 20,
+          cadence_min: DEFAULT_CADENCE_MIN,
           import_approved_at: now,
           last_run_at: now,
           last_status: "ok",
           last_synced_count: result.total,
-          next_run_at: now,
+          next_run_at: nextRunAt,
         })
         .onConflict((oc) =>
           oc.columns(["connector_row_id", "entity_type"]).doUpdateSet({
@@ -457,7 +464,7 @@ syncRouter.post(
             last_status: "ok",
             last_error: null,
             last_synced_count: result.total,
-            next_run_at: now,
+            next_run_at: sql`${nextRunAt}::timestamptz`,
             updated_at: now,
           }),
         )
@@ -500,9 +507,18 @@ syncRouter.post(
     }
     try {
       const result = await runReconcile(db, rt.ref, rt.type); // live: no name-merge
+      // A manual run is the poll's run: push its next turn a cadence out, for
+      // the same reason the import does (#2880).
       await db
         .updateTable("core_integrations_sync_state")
-        .set({ last_run_at: new Date(), last_status: "ok", last_error: null, last_synced_count: result.total, updated_at: new Date() })
+        .set({
+          last_run_at: new Date(),
+          last_status: "ok",
+          last_error: null,
+          last_synced_count: result.total,
+          next_run_at: sql`now() + make_interval(mins => coalesce(cadence_min, ${DEFAULT_CADENCE_MIN}))`,
+          updated_at: new Date(),
+        })
         .where("connector_row_id", "=", rt.ref.connectorRowId)
         .where("entity_type", "=", rt.type.key)
         .execute();

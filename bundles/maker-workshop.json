@@ -1,8 +1,9 @@
 {
   "manifest": {
     "id": "cobblr.flagship.maker-workshop",
+    "base_kind_fields_reason": "Describes the parts already in plain Inventory (part type, package, value, datasheet) rather than a table of its own; written before instances existed, and its fields belong to the workshop's own stock.",
     "catalog": "disabled",
-    "version": "0.1.2",
+    "version": "0.1.3",
     "name": "Maker Workshop",
     "description": "Inventory + Builds + a parts shopping list, pre-wired into the maker loop: define builds as recipes of tracked parts, build them (which consumes stock), and auto-restock low parts through a shopping list you check off. Showcases the Builds (light BOM) module.",
     "author": "Cobblr",

@@ -1,0 +1,16 @@
+BUILDERS SUPPLY CO
+CONTRACTOR DESK
+
+028841  2X4X8 STUD
+        12 @ 3.98            47.76
+114290  DECK SCREW 5LB
+         1 @ 21.47           21.47
+006612  SANDPAPER 120G
+         4 @ 0.99             3.96
+
+SUB-TOTAL                    73.19
+DISCOUNT                     -8.00
+TAX 8.25%                     6.66
+TOTAL                        71.85
+
+INVOICE 88-2214  04/08/2026

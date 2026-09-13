@@ -75,7 +75,7 @@ export interface PromptOptions {
    *  A model told it may read must not be the same prompt as one that may not. */
   consent?: { read_tools: boolean; write_mode: "off" | "ask" | "auto" };
   /** What the no-AI path would have done with this sentence, if anything. */
-  suggestion?: { template: string; summary: string; operations: number; note?: string };
+  suggestion?: { template: string; summary: string; operations: number; note?: string; leftHeading?: string; also?: Array<{ title: string }> };
 }
 
 /** The consent the user has set for this chat, as a sentence. */

@@ -50,8 +50,9 @@ export async function uprightBytes(
   input: Uint8Array,
 ): Promise<{ bytes: Buffer; meta: Metadata } | null> {
   const raw = Buffer.from(input);
-  const meta0 = await sharp(raw, { failOn: "none" }).metadata();
-  if (!meta0.width || !meta0.height) return null;
+  // Bytes that are not an image at all throw here; the contract is null.
+  const meta0 = await sharp(raw, { failOn: "none" }).metadata().catch(() => null);
+  if (!meta0?.width || !meta0.height) return null;
   if ((meta0.orientation ?? 1) === 1) return { bytes: raw, meta: meta0 };
   const bytes = await sharp(raw, { failOn: "none" }).rotate().toBuffer();
   const meta = await sharp(bytes, { failOn: "none" }).metadata();

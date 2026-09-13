@@ -33,6 +33,11 @@ import { sql } from "kysely";
 import { cropRegion, parseProductRegion } from "./image-ops.js";
 import { seedHistory, pushStep, type CatalogSource } from "./catalog-history.js";
 import { looksLikeReceiptPhoto } from "./receipt-photo.js";
+import { ocrImageText } from "./ocr.js";
+import { noReceiptShape, scoreReceiptShape, type ReceiptShape } from "./receipt-shape.js";
+import { classifyAiFailure } from "@cobblr/platform-contract/ai-refusal";
+import { providerReasonOf } from "@cobblr/platform-contract/provider-reason";
+import { identifyFailureWords, type IdentifyFailure } from "@cobblr/platform-contract/scan-fallback";
 import { hostedIdentify, hostedIdentifyEnabled, toPhotoIdentity, receiptAsIdentity } from "./hosted-identify.js";
 
 /** Re-fetch the catalog image to match a (corrected) name. The card prefers the
@@ -292,6 +297,10 @@ export interface PhotoIdentity {
   /** Those things, named — present when `distinct` >= 2, so the inbox can offer
    *  "split into individuals" and LIST them without a second vision call. */
   individuals: Individual[];
+  /** The model's own answer to "is this a receipt?", asked as a field so the
+   *  verdict is data. Absent on a reply from before the prompt asked (an
+   *  older cached reply, the hosted service), when the prose rules decide. */
+  is_receipt?: "yes" | "no" | "unsure";
 }
 
 export interface Individual {
@@ -378,7 +387,21 @@ export interface IdentifyImageOpts {
   visitorIp?: string | null;
 }
 
-export async function identifyImage({
+/** What an identify produced: an identity, or WHY there is none. The reason
+ *  is a code (the router's refusal, the provider's own reason, an answer that
+ *  could not be read, or a model that saw no single item), so the note under
+ *  the photo can say the one true thing instead of listing every possibility. */
+export type IdentifyOutcome =
+  | { identity: PhotoIdentity; failure?: undefined }
+  | { identity: null; failure: IdentifyFailure };
+
+/** The identity alone, for callers that only want a name (the barcode
+ *  path's last resort, the eval harness). */
+export async function identifyImage(opts: IdentifyImageOpts): Promise<PhotoIdentity | null> {
+  return (await identifyPhoto(opts)).identity;
+}
+
+export async function identifyPhoto({
   orgId,
   imageB64,
   mediaType,
@@ -391,7 +414,7 @@ export async function identifyImage({
   rejectedNames,
   knownCategories,
   visitorIp,
-}: IdentifyImageOpts): Promise<PhotoIdentity | null> {
+}: IdentifyImageOpts): Promise<IdentifyOutcome> {
   // Hosted identify first, when this deployment has it (the try sandbox, or a
   // keyed self-host). Null falls through to the tenant path unchanged, so the
   // hosted service being down is never worse than never having had it.
@@ -399,12 +422,15 @@ export async function identifyImage({
     const hosted = await hostedIdentify({ orgId, imageB64, visitorIp, userId });
     if (hosted?.kind === "item" && hosted.item) {
       const mapped = toPhotoIdentity(hosted.item);
-      if (mapped) return mapped;
+      if (mapped) return { identity: mapped };
     }
-    if (hosted?.kind === "receipt") return receiptAsIdentity();
-    if (hosted?.kind === "person" || hosted?.kind === "unidentifiable") return null;
+    if (hosted?.kind === "receipt") return { identity: receiptAsIdentity() };
+    if (hosted?.kind === "person" || hosted?.kind === "unidentifiable") {
+      return { identity: null, failure: { code: "no_item", reason: `hosted identify: ${hosted.kind}` } };
+    }
   }
   let parsed: Record<string, unknown> | null = null;
+  let raw = "";
   try {
     const r = await platform().ai.invoke({
       orgId,
@@ -430,16 +456,28 @@ export async function identifyImage({
     });
     // OpenAI returns {role, content}; Anthropic returns {text} — tolerate both.
     const res = r.result as { text?: string; content?: string };
-    const raw = res.text ?? res.content ?? "";
+    raw = res.text ?? res.content ?? "";
+  } catch (err) {
+    // The router's refusal or the provider's failure, as the code it carries
+    // (ai-refusal.ts, provider-reason.ts): the note under the photo reads
+    // this, and so does the eval. Logged too, so a vision failure is
+    // diagnosable from the server side.
+    const ai = classifyAiFailure(err, { hadUser: !!userId });
+    const ai_reason = providerReasonOf(err) ?? undefined;
+    const reason = (err as Error)?.message ?? String(err);
+    console.error(`[core-scan] identify failed (${ai}${ai_reason ? `/${ai_reason}` : ""}):`, reason);
+    return { identity: null, failure: { code: "ai_unavailable", ai, ...(ai_reason ? { ai_reason } : {}), reason } };
+  }
+  try {
     const m = raw.match(/\{[\s\S]*\}/);
     parsed = JSON.parse(m ? m[0] : raw);
   } catch (err) {
-    // Surfaced (was silent) so a vision failure is diagnosable, not a mystery
-    // "no vision provider" note. Still returns null — the caller degrades.
-    console.error("[core-scan] identifyImage failed:", (err as Error)?.message ?? err);
-    return null;
+    console.error("[core-scan] identify reply was not JSON:", (err as Error)?.message ?? err);
+    return { identity: null, failure: { code: "no_answer", ai: "no-answer", reason: "reply was not JSON" } };
   }
-  return parseIdentityReply(parsed);
+  const identity = parseIdentityReply(parsed);
+  if (!identity) return { identity: null, failure: { code: "no_item", reason: "no name in the reply" } };
+  return { identity };
 }
 
 /**
@@ -475,6 +513,9 @@ export function extractSerial(text: string): string | null {
 export function parseIdentityReply(parsed: Record<string, unknown> | null): PhotoIdentity | null {
   const str = (v: unknown): string => (typeof v === "string" ? v.trim() : "");
   const p = (parsed ?? {}) as Record<string, unknown>;
+  const isReceiptRaw = typeof p.is_receipt === "boolean" ? String(p.is_receipt) : str(p.is_receipt).toLowerCase();
+  const is_receipt: PhotoIdentity["is_receipt"] =
+    isReceiptRaw === "yes" || isReceiptRaw === "true" ? "yes" : isReceiptRaw === "no" || isReceiptRaw === "false" ? "no" : isReceiptRaw === "unsure" ? "unsure" : undefined;
   const name = tidyTruncatedName(
     str(p.name) ||
     [str(p.product_line), str(p.product_name)].filter(Boolean).join(" ").trim() ||
@@ -482,6 +523,13 @@ export function parseIdentityReply(parsed: Record<string, unknown> | null): Phot
     str(p.title) ||
     "",
   );
+  // A receipt has no name, and the prompt says to leave it empty. That used
+  // to read as "nothing identifiable" and the photo sat unnamed under a
+  // generic note (#2916); it is the receipt verdict, with the model's own
+  // observations kept for the row.
+  if (!name && is_receipt === "yes") {
+    return { ...receiptAsIdentity(), observations: str(p.observations).slice(0, 1500) || receiptAsIdentity().observations, is_receipt };
+  }
   if (!name) return null;
   const rawType = str(p.entity_type) || str(p.type);
   const et: "asset" | "part" | null = rawType === "asset" || rawType === "part" ? rawType : null;
@@ -516,6 +564,7 @@ export function parseIdentityReply(parsed: Record<string, unknown> | null): Phot
     // a sliver or a near-full-frame box instead of the null it was asked for.
     product_photo_box: parseProductRegion({ box: p.product_photo_box }),
     ...normalizeIndividuals(p.items, p.distinct_items),
+    ...(is_receipt ? { is_receipt } : {}),
   };
 }
 
@@ -1094,21 +1143,92 @@ export async function knownCategories(
   }
 }
 
+/** The image's own text, scored for receipt shape (receipt-shape.ts). The
+ *  OCR engine is optional; without it, or on a photo it can read nothing off,
+ *  this is the empty shape and the model decides as before. */
+export async function receiptShapeOf(bytes: Buffer | Uint8Array): Promise<{ shape: ReceiptShape; ocr_ms: number | null }> {
+  const read = await ocrImageText(bytes);
+  if (!read) return { shape: noReceiptShape(), ocr_ms: null };
+  return { shape: scoreReceiptShape(read.text), ocr_ms: read.ms };
+}
+
+/** What the general door does with an image, as one rule the pipeline and
+ *  the eval harness share: the shape check first (a receipt-shaped image
+ *  never reaches the model), then the model's own verdict, then nothing. */
+export type IntakeVerdict =
+  | { verdict: "receipt"; decided_by: "shape" | "model" }
+  | { verdict: "item"; decided_by: "model" }
+  | { verdict: "none"; decided_by: "model" };
+
+export function intakeVerdict(shape: ReceiptShape, outcome: IdentifyOutcome | null): IntakeVerdict {
+  if (shape.verdict === "receipt") return { verdict: "receipt", decided_by: "shape" };
+  if (!outcome?.identity) return { verdict: "none", decided_by: "model" };
+  if (looksLikeReceiptPhoto(outcome.identity, shape.verdict)) return { verdict: "receipt", decided_by: "model" };
+  return { verdict: "item", decided_by: "model" };
+}
+
+/** Say on the row that it is a receipt being read. A FLAG, not just the
+ *  sentence. Between here and the lines landing, the row is a photo with no
+ *  name and a finished enrichment - exactly the shape the card reads as
+ *  "couldn't identify this photo" - so a receipt upload flashed a failure on
+ *  its way to working ("it showed this not-recognized for a moment before it
+ *  morphed into the line items", 2026-08-31). Prose in ai_notes cannot be
+ *  branched on without matching a sentence; this can. The shape verdict rides
+ *  along so a session can say which step decided. */
+async function markReadingReceipt(ctx: PhotoEnrichContext, note: string, decided: "shape" | "model", shape: ReceiptShape): Promise<void> {
+  await patchNote(ctx, note);
+  await ctx.db
+    .updateTable("core_scan_inbox_items")
+    .set({
+      suggested_metadata: sql`coalesce(suggested_metadata, '{}'::jsonb) || ${JSON.stringify({
+        reading_receipt: true,
+        receipt_decided_by: decided,
+        receipt_shape: { verdict: shape.verdict, score: shape.score },
+      })}::jsonb` as never,
+    })
+    .where("id", "=", ctx.itemId)
+    .execute();
+}
+
 export async function enrichPhotoItem(ctx: PhotoEnrichContext): Promise<EnrichOutcome> {
-  // Read the photo bytes via the platform files seam. Prefer the medium
-  // variant — resized JPEG, smaller payload + a cheaper vision call —
-  // falling back to the original if there's no medium.
-  const file =
-    (await platform().files.read(ctx.orgId, ctx.imageFileId, "medium")) ??
-    (await platform().files.read(ctx.orgId, ctx.imageFileId, "original"));
+  // Read the photo bytes via the platform files seam. The medium variant
+  // (a resized JPEG: smaller payload, a cheaper vision call) goes to the
+  // model; the original goes to the OCR engine, whose photograph pass wants
+  // every pixel of print it can get. Either stands in for the other.
+  const original = await platform().files.read(ctx.orgId, ctx.imageFileId, "original");
+  const file = (await platform().files.read(ctx.orgId, ctx.imageFileId, "medium")) ?? original;
   if (!file) {
     await patchNote(ctx, "Photo bytes unavailable — fill in manually.");
     return "no-photo-bytes";
   }
   const imageB64 = Buffer.from(file.bytes).toString("base64");
 
+  // Heuristic first, the model last. A receipt has a shape its own text
+  // gives away (several lines ending in a price, a totals row, a store
+  // header, a date), and the receipt parser's line pass reads that shape
+  // with no model at all. When the image scores as a receipt it goes to
+  // receipt review here, before identify is asked anything: a model asked
+  // "what item is this" about a receipt answers with an item (#2916).
+  //
+  // A person's own answer overrides this. Someone who typed a hint or
+  // answered the first look said what the thing is; the shape check must not
+  // send their item to the receipt parser over their head.
+  const answered = !!ctx.hint || !!ctx.confirmedName || !!ctx.rejectedNames?.length;
+  const { shape } = answered ? { shape: noReceiptShape() } : await receiptShapeOf((original ?? file).bytes);
+  ctx.db = (await platform().tenants.getDb(ctx.orgId)) as unknown as typeof ctx.db;
+  if (intakeVerdict(shape, null).verdict === "receipt") {
+    const s = shape.signals;
+    await markReadingReceipt(
+      ctx,
+      `That is a receipt (${s.priced_items} priced line${s.priced_items === 1 ? "" : "s"}${s.totals_row ? " and a total" : ""}): reading its line items.`,
+      "shape",
+      shape,
+    );
+    return "is-receipt";
+  }
+
   const knownCats = await knownCategories(ctx.db);
-  const identity = await identifyImage({
+  const { identity, failure } = await identifyPhoto({
     orgId: ctx.orgId,
     imageB64,
     mediaType: file.mimeType,
@@ -1116,7 +1236,7 @@ export async function enrichPhotoItem(ctx: PhotoEnrichContext): Promise<EnrichOu
     userId: ctx.userId,
     // An answered first look changes the question, so the cached reply to the
     // unanswered one must not be served.
-    bypassCache: ctx.force || !!ctx.hint || !!ctx.confirmedName || !!ctx.rejectedNames?.length,
+    bypassCache: ctx.force || answered,
     hint: ctx.hint,
     hints: ctx.hints,
     confirmedName: ctx.confirmedName,
@@ -1131,11 +1251,22 @@ export async function enrichPhotoItem(ctx: PhotoEnrichContext): Promise<EnrichOu
   // post-vision write (the same guard matchItem uses).
   ctx.db = (await platform().tenants.getDb(ctx.orgId)) as unknown as typeof ctx.db;
   if (!identity) {
-    // No vision provider, the model/parse failed, or no single item was visible.
-    await patchNote(
-      ctx,
-      "Photo couldn't be auto-identified (no vision provider configured, the model errored, or no single item was visible). Fill in manually.",
-    );
+    // The one true reason, as a sentence from the code (scan-fallback.ts),
+    // and the code itself on the row so the card can offer the remedy: the
+    // connect link, a retry, or a name field.
+    const words = identifyFailureWords(failure);
+    await ctx.db
+      .updateTable("core_scan_inbox_items")
+      .set({
+        ai_notes: words.sentence,
+        ai_suggested_at: new Date(),
+        updated_at: new Date(),
+        suggested_metadata: sql`coalesce(suggested_metadata, '{}'::jsonb) || ${JSON.stringify({
+          identify_failure: { code: failure.code, ...(failure.ai ? { ai: failure.ai } : {}), ...(failure.ai_reason ? { ai_reason: failure.ai_reason } : {}) },
+        })}::jsonb` as never,
+      })
+      .where("id", "=", ctx.itemId)
+      .execute();
     return "not-identified";
   }
 
@@ -1144,21 +1275,8 @@ export async function enrichPhotoItem(ctx: PhotoEnrichContext): Promise<EnrichOu
   // instead, because that is where the line-materialising already lives. Saying
   // so and returning is all this layer should do - a service that reached for the
   // API's orchestration would own two jobs and be testable at neither.
-  if (looksLikeReceiptPhoto(identity)) {
-    await patchNote(ctx, "That looks like a receipt — reading its line items.");
-    // A FLAG, not just the sentence. Between here and the lines landing, the
-    // row is a photo with no name and a finished enrichment - exactly the shape
-    // the card reads as "couldn't identify this photo" - so a receipt upload
-    // flashed a failure on its way to working ("it showed this not-recognized
-    // for a moment before it morphed into the line items", 2026-08-31). Prose
-    // in ai_notes cannot be branched on without matching a sentence; this can.
-    await ctx.db
-      .updateTable("core_scan_inbox_items")
-      .set({
-        suggested_metadata: sql`coalesce(suggested_metadata, '{}'::jsonb) || ${JSON.stringify({ reading_receipt: true })}::jsonb` as never,
-      })
-      .where("id", "=", ctx.itemId)
-      .execute();
+  if (intakeVerdict(shape, { identity }).verdict === "receipt") {
+    await markReadingReceipt(ctx, "That looks like a receipt — reading its line items.", "model", shape);
     return "is-receipt";
   }
 
@@ -1255,8 +1373,9 @@ async function catalogFromScreenshot(
 
   // pad: 0 — the box IS the page's photo rectangle, so the pixels just outside it
   // are the chrome this crop exists to remove.
-  const croppedId = await cropRegion(ctx.orgId, ctx.imageFileId, box, { pad: 0 });
-  if (!croppedId) return false;
+  const cut = await cropRegion(ctx.orgId, ctx.imageFileId, box, { pad: 0 });
+  if (!cut.fileId) return false;
+  const croppedId = cut.fileId;
 
   // Onto the undo stack, so Revert walks back to whatever was showing before,
   // exactly as it does for a hand-picked image. Each apply pushes the image it

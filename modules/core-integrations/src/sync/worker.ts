@@ -15,6 +15,10 @@ import { resolveSyncConnector } from "./resolve.js";
 
 const SCAN_QUEUE = "core-integrations.sync-scan";
 const SCAN_INTERVAL_MS = 2 * 60_000;
+/** How often a live sync polls when nobody set a cadence. The import and
+ *  run routes push next_run_at this far out after their own reconcile, so
+ *  the poll never re-does what a person just did (#2880). */
+export const DEFAULT_CADENCE_MIN = 20;
 
 let registered = false;
 
@@ -61,7 +65,7 @@ export function registerSyncWorker(): void {
           last_status: status,
           last_error: error,
           last_synced_count: count,
-          next_run_at: new Date(Date.now() + (s.cadence_min ?? 20) * 60_000),
+          next_run_at: new Date(Date.now() + (s.cadence_min ?? DEFAULT_CADENCE_MIN) * 60_000),
           updated_at: new Date(),
         })
         .where("connector_row_id", "=", s.connector_row_id)

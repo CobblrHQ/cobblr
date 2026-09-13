@@ -5,6 +5,7 @@ import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { usePlatformWeb } from "./context";
 import { useInvokeEntityAction } from "./use-invoke-action";
+import { ActionOutcome } from "./ActionOutcome";
 import { AskCobbAbout } from "./AskCobbAbout";
 import { HEADER_ACTION_IDS } from "./RecordHeaderChips";
 import type { PlatformAction, PlatformActionBinding } from "./types";
@@ -106,7 +107,7 @@ function ActionButton({
   entityId: string;
   action: PlatformAction;
 }) {
-  const { run, flash, note, pending } = useInvokeEntityAction({ entityKind, entityId });
+  const { run, flash, note, failure, dismissFailure, pending } = useInvokeEntityAction({ entityKind, entityId });
 
   return (
     <>
@@ -130,7 +131,7 @@ function ActionButton({
       >
         {flash === "ok" ? "done" : flash === "err" ? "err" : pending ? "…" : action.label}
       </button>
-      {note && <span className="self-center text-[10px] text-muted dark:text-slate-400">{note}</span>}
+      <ActionOutcome note={note} failure={failure} onDismiss={dismissFailure} />
     </>
   );
 }
@@ -144,7 +145,7 @@ function BindingButton({
   entityId: string;
   binding: PlatformActionBinding;
 }) {
-  const { run, flash, note, pending } = useInvokeEntityAction({ entityKind, entityId });
+  const { run, flash, note, failure, dismissFailure, pending } = useInvokeEntityAction({ entityKind, entityId });
   return (
     <>
       <button
@@ -167,7 +168,7 @@ function BindingButton({
       >
         {flash === "ok" ? "done" : flash === "err" ? "err" : pending ? "…" : binding.label}
       </button>
-      {note && <span className="self-center text-[10px] text-muted dark:text-slate-400">{note}</span>}
+      <ActionOutcome note={note} failure={failure} onDismiss={dismissFailure} />
     </>
   );
 }

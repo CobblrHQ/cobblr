@@ -162,6 +162,13 @@ ENV NODE_ENV=production
 # contact sheet, and unnumbered tiles would leave the model guessing at which
 # photo it picked. ttf-dejavu is ~2 MB and fontconfig is what actually finds it.
 RUN apk add --no-cache fontconfig ttf-dejavu && fc-cache -f
+# The OCR engine behind the scan inbox's receipt-shape check and the receipt
+# door's no-model line tier (modules/core-scan/src/services/ocr.ts). A native
+# binary run as a subprocess, with its English data baked in: the hosted
+# deployment runs the strict egress policy, so language data fetched at
+# runtime would work on staging and fail there. Optional at runtime - the api
+# probes for it once and goes straight to the model without it.
+RUN apk add --no-cache tesseract-ocr tesseract-ocr-data-eng
 
 # Bring over what we need at runtime: built artifacts + the root node_modules.
 # pnpm (nodeLinker: hoisted) hoists EXTERNAL deps here — but NOT the workspace

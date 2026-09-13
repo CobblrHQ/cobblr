@@ -38,7 +38,9 @@ export function prettyModule(name: string): string {
  */
 export function installHeadline(s: BundleInstallSummary): string {
   if (s.kind === "instance" && s.instance) {
-    return `${s.bundle} is set up, with its own ${prettyModule(s.instance)} table.`;
+    return s.instance_existed
+      ? `${s.bundle} was already set up, with its own ${prettyModule(s.instance)} table.`
+      : `${s.bundle} is set up, with its own ${prettyModule(s.instance)} table.`;
   }
   const where = s.module ? prettyModule(s.module) : "what you already have";
   return `${s.bundle} is set up. It adds to ${where} rather than making a table of its own, so there is no new entry in the nav.`;
@@ -54,7 +56,7 @@ export function installChanges(s: BundleInstallSummary): InstallChange[] {
   const out: InstallChange[] = [];
   if (s.kind === "instance" && s.instance) {
     out.push({
-      text: `A ${prettyModule(s.instance)} table`,
+      text: s.instance_existed ? `The ${prettyModule(s.instance)} table you already had` : `A ${prettyModule(s.instance)} table`,
       href: `/instances/${s.instance}`,
       linkLabel: `Open ${prettyModule(s.instance)}`,
     });
@@ -95,12 +97,21 @@ export function installChanges(s: BundleInstallSummary): InstallChange[] {
  */
 export function installToastLine(s: BundleInstallSummary): string | null {
   const bits: string[] = [];
-  if (s.kind === "instance" && s.instance) bits.push(`a ${prettyModule(s.instance)} table`);
+  // What the install DID, never the plan: a table it found already there is
+  // not one it added, and saying so is the whole point of reporting (#2919).
+  if (s.kind === "instance" && s.instance && !s.instance_existed) bits.push(`a ${prettyModule(s.instance)} table`);
   if (s.fields > 0) bits.push(plural(s.fields, "field"));
   if (s.wires > 0) bits.push(plural(s.wires, "automation"));
+  if (s.kind === "instance" && s.instance && s.instance_existed) {
+    return bits.length ? `${s.bundle} was already installed; it added ${joined(bits)}.` : `${s.bundle} was already installed.`;
+  }
   if (!bits.length) return null;
   const where = s.kind === "skin" && s.module ? ` to ${prettyModule(s.module)}` : "";
-  const last = bits.pop()!;
-  const list = bits.length ? `${bits.join(", ")} and ${last}` : last;
-  return `${s.bundle} added ${list}${where}.`;
+  return `${s.bundle} added ${joined(bits)}${where}.`;
+}
+
+function joined(bits: string[]): string {
+  const rest = [...bits];
+  const last = rest.pop()!;
+  return rest.length ? `${rest.join(", ")} and ${last}` : last;
 }

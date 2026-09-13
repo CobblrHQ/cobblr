@@ -16,6 +16,7 @@
 // presets (OpenRouter) register the same machinery with a fixed base URL.
 
 import { platform, type AiCapability, type AiProviderDef } from "@cobblr/platform-contract";
+import { providerError, providerSentence, reasonFromResponse, reasonFromTransportError, redactSecrets, retryAfterSecOf } from "@cobblr/platform-contract/provider-reason";
 import { assertSafeAiEndpoint, pinnedFetch, type PinnedResponse } from "../ssrf.js";
 import { TRANSIT_FIELD, viaBridge, edgeKeyFor, edgeFetch } from "./edge-transit.js";
 import { buildMessages } from "./openai.js";
@@ -180,10 +181,22 @@ export function buildCompatProvider(opts: CompatPresetOpts): AiProviderDef {
       const bridged = viaBridge(ctx.credentials);
       const pin = bridged ? null : await assertSafeAiEndpoint(base, platform().ai.getEndpointPolicy());
       const headers = { "content-type": "application/json", ...extraHeaders, ...authHeadersFor(ctx.credentials) };
-      const once = (path: string, init: { method?: "GET" | "POST"; headers?: Record<string, string>; body?: string }): Promise<PinnedResponse> =>
-        bridged
-          ? edgeFetch(edgeKeyFor(ctx.credentials, ctx.orgId), base, path, init)
-          : pinnedFetch(`${base}${path}`, pin!, init);
+      // Every failure leaves as a ProviderError: the reason the provider gave
+      // (provider-reason.ts), the status, and a message with every credential
+      // value blanked. A call that never got an answer is "unreachable".
+      const secrets = Object.values(ctx.credentials);
+      const failed = (status: number, body: string): never => {
+        throw providerError(id, reasonFromResponse(status, body), redactSecrets(`${id}: ${status} ${body}`, secrets), status, retryAfterSecOf(body));
+      };
+      const once = async (path: string, init: { method?: "GET" | "POST"; headers?: Record<string, string>; body?: string }): Promise<PinnedResponse> => {
+        try {
+          return bridged
+            ? await edgeFetch(edgeKeyFor(ctx.credentials, ctx.orgId), base, path, init)
+            : await pinnedFetch(`${base}${path}`, pin!, init);
+        } catch (err) {
+          throw providerError(id, reasonFromTransportError(err), redactSecrets(`${id}: ${(err as Error)?.message ?? String(err)}`, secrets));
+        }
+      };
       // One seam, so every capability (chat, embed, the image ones) gets the retry
       // rather than whichever call site remembered to ask for it. The body is untouched
       // until after the last attempt, so retrying a streamed response is safe here.
@@ -211,7 +224,7 @@ export function buildCompatProvider(opts: CompatPresetOpts): AiProviderDef {
             headers,
             body: JSON.stringify({ model, input: String(ctx.input.text ?? "") }),
           });
-          if (!res.ok) throw new Error(`${id}: ${res.status} ${await res.text()}`);
+          if (!res.ok) failed(res.status, await res.text());
           const body = (await res.json()) as {
             data: Array<{ embedding: number[] }>;
             usage?: { prompt_tokens?: number };
@@ -310,11 +323,11 @@ export function buildCompatProvider(opts: CompatPresetOpts): AiProviderDef {
           }
           if (!res.ok && toolDefs) {
             const errText = await res.text();
-            if (!looksLikeNoToolSupport(res.status, errText)) throw new Error(`${id}: ${res.status} ${errText}`);
+            if (!looksLikeNoToolSupport(res.status, errText)) failed(res.status, errText);
             delete body.tools;
             res = await call("/chat/completions", { method: "POST", headers, body: JSON.stringify(body) });
           }
-          if (!res.ok) throw new Error(`${id}: ${res.status} ${await res.text()}`);
+          if (!res.ok) failed(res.status, await res.text());
           if (streamText) {
             // A streamed body is SSE frames, not one JSON object. Everything
             // needed was collected on the way past.
@@ -351,6 +364,7 @@ export function buildCompatProvider(opts: CompatPresetOpts): AiProviderDef {
       }
     },
     testConnection: async (credentials) => {
+      const secrets = Object.values(credentials);
       try {
         const base = resolveBase(credentials);
         const headers = { ...extraHeaders, ...authHeadersFor(credentials) };
@@ -361,7 +375,13 @@ export function buildCompatProvider(opts: CompatPresetOpts): AiProviderDef {
           const pin = await assertSafeAiEndpoint(base, platform().ai.getEndpointPolicy());
           res = await pinnedFetch(`${base}/models`, pin, { headers });
         }
-        if (!res.ok) return { ok: false, error: `status ${res.status}` };
+        if (!res.ok) {
+          // The verdict is the provider's reason, said as the sentence a person
+          // acts on; the status and body go nowhere a person reads.
+          const body = await res.text().catch(() => "");
+          const reason = reasonFromResponse(res.status, body);
+          return { ok: false, reason, error: providerSentence(reason, { provider: id, retryAfterSec: retryAfterSecOf(body) }) };
+        }
         const body = (await res.json()) as { data?: Array<{ id: string }> };
         // The full list travels back, not just a preview string. Validating the key IS a
         // model-list request, so the list is already in hand: throwing it away and then
@@ -375,7 +395,8 @@ export function buildCompatProvider(opts: CompatPresetOpts): AiProviderDef {
           detail: models.length ? `serving ${models.length} model(s)` : undefined,
         };
       } catch (err) {
-        return { ok: false, error: (err as Error).message };
+        const reason = reasonFromTransportError(err);
+        return { ok: false, reason, error: providerSentence(reason, { provider: id }), detail: redactSecrets((err as Error)?.message ?? String(err), secrets) };
       }
     },
   };

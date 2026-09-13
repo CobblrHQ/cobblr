@@ -30,6 +30,7 @@ import {
   runningBalances,
   summarizePool,
   capacitySourceField,
+  consumptionUnitOf,
   buildUnitMetadata,
   parseUnitRecord,
   bindingOf,
@@ -178,6 +179,8 @@ export function PartDetailPage({ id, onClose }: { id: string; onClose: () => voi
     queryKey: ["inventory-part", id],
     queryFn: () => api.getPart(id!),
     enabled: !!id,
+    // An action on a record of this kind re-reads the page (platform-web run-action).
+    meta: { kinds: [entityKind] },
   });
 
   const cats = useQuery({ queryKey: ["inventory-categories"], queryFn: () => api.listCategories() });
@@ -988,6 +991,7 @@ function InlineText({
     if (e.target.value !== initial) onCommit(e.target.value);
   }
   return (
+    // NUMBER-INPUT-TEXT: onCommit(v: string) is the contract; every numeric caller wraps it in Number() before the PATCH.
     <input
       type={numeric ? "number" : "text"}
       step={numeric ? "any" : undefined}
@@ -1359,7 +1363,11 @@ function PerUnitConsumptionPanel({
     staleTime: 60_000,
   });
   const capDef = (defs.data?.items ?? []).find((d) => d.name === "capacity" && d.type === "computed");
-  const consumedUnit = capDef?.unit || "";
+  // The unit the remainder is measured in, by the one rule the list uses too
+  // (consumption-unit.ts): the capacity's own, else its source field's ("m"
+  // from Length / skein). Taking capacity.unit alone read "" and the open
+  // skein was minted in skeins (#2883).
+  const consumedUnit = consumptionUnitOf(defs.data?.items ?? []) ?? "";
   const sourceField = capacitySourceField(capDef?.template ?? null);
   const sourceLabel = sourceField
     ? (defs.data?.items ?? []).find((d) => d.name === sourceField)?.display_label ?? sourceField
@@ -1448,7 +1456,9 @@ function PerUnitConsumptionPanel({
     if (unitCapacity == null) throw new Error(`Set a per-${countUnit || "unit"} amount first.`);
     const child = await api.createPart({
       name: `${partName} (open ${countUnit || "unit"})`,
-      unit: consumedUnit || countUnit || "unit",
+      // Never the count's unit: a skein's remainder is metres, and a kind with
+      // no consumption unit gets none rather than a wrong one.
+      unit: consumedUnit || "unit",
       qty: 0,
       archived: true,
       metadata: buildUnitMetadata(partId, unitCapacity),

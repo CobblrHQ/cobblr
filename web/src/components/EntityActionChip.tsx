@@ -17,7 +17,7 @@
 import { useState, type ReactNode } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Loader2 } from "lucide-react";
-import { useInvokeEntityAction, usePlatformWeb } from "@cobblr/platform-web";
+import { ActionOutcome, useInvokeEntityAction, usePlatformWeb } from "@cobblr/platform-web";
 
 export function EntityActionChip({
   entityKind,
@@ -42,11 +42,25 @@ export function EntityActionChip({
     queryFn: () => api.listActions(orgSlug, entityKind),
     staleTime: 60_000,
   });
-  const { run, pending, note } = useInvokeEntityAction({ entityKind, entityId });
+  const { run, pending, note, failure, dismissFailure } = useInvokeEntityAction({ entityKind, entityId });
   const [sent, setSent] = useState(false);
   const binding = (data?.bindings ?? []).find((b) => b.action_id === actionId);
   const action = (data?.items ?? []).find((a) => a.id === actionId && a.user_invokable !== false);
   if (!binding && !action) return null;
+  // A failure is not "done": the words stay, and dismissing them brings the
+  // button back so the person can try again.
+  if (sent && failure) {
+    return (
+      <ActionOutcome
+        note={null}
+        failure={failure}
+        onDismiss={() => {
+          dismissFailure();
+          setSent(false);
+        }}
+      />
+    );
+  }
   if (sent) return <span className="text-xs opacity-80">{note ?? doneLabel}</span>;
   return (
     <button

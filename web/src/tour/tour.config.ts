@@ -9,7 +9,7 @@
 // To add a step: mark an element in the UI with `data-tour="my-thing"`, then add
 // `{ kind: "spotlight", target: '[data-tour="my-thing"]', title, body }` here.
 
-import { setNavMode, setNavTopBar } from "../lib/nav-mode";
+import { NAV_LAYOUTS, setNavLayout, type NavLayout } from "../lib/nav-mode";
 
 export type TourStep =
   | { kind: "chooseLayout"; title: string; body: string }
@@ -23,7 +23,7 @@ export const DASHBOARD_TOUR: TourStep[] = [
   {
     kind: "chooseLayout",
     title: "Welcome to Cobblr",
-    body: "First, how do you want to get around? Try each; you can change it any time.",
+    body: "First, how do you want to get around? Try each; you can change it any time under Your account, Appearance.",
   },
   {
     kind: "spotlight",
@@ -70,32 +70,22 @@ export const DASHBOARD_TOUR: TourStep[] = [
   },
 ];
 
-// The two navigation layouts the welcome step offers. `apply` reskins the whole
-// app live (it flips the same per-device nav prefs the layout toggle uses).
+// The layouts the welcome step offers: all three, with the names, blurbs and
+// pictures Appearance uses (NAV_LAYOUTS), so the tour and the settings page
+// describe one model and a person already on the middle one is shown as
+// selected rather than as neither. The tour used to offer the two ends only.
+// `apply` reskins the whole app live through the same synced layout setter
+// Appearance uses: one write, not two.
 export interface LayoutOption {
-  id: "top" | "side";
+  id: NavLayout;
   label: string;
   desc: string;
   apply: () => void;
 }
 
-export const LAYOUT_OPTIONS: LayoutOption[] = [
-  {
-    id: "top",
-    label: "Top bar",
-    desc: "Your modules run across the top of the screen. Simple and roomy when you have a handful of them.",
-    apply: () => {
-      setNavMode("top");
-      setNavTopBar(true);
-    },
-  },
-  {
-    id: "side",
-    label: "Full sidebar",
-    desc: "Everything lives in a column down the left, with room to keep growing as you add more modules.",
-    apply: () => {
-      setNavMode("side");
-      setNavTopBar(false);
-    },
-  },
-];
+export const LAYOUT_OPTIONS: LayoutOption[] = NAV_LAYOUTS.map((l) => ({
+  id: l.value,
+  label: l.label,
+  desc: l.desc,
+  apply: () => setNavLayout(l.value),
+}));

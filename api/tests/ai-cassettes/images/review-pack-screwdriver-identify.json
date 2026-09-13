@@ -1,0 +1,6 @@
+{
+  "_fixture": "e2e/fixtures/review-pack/photos/screwdriver.jpg",
+  "image_ahash": "3c7e7e7c726e1c00",
+  "capability": "identify-image",
+  "reply": "{\"name\":\"Phillips screwdriver, yellow handle\",\"observations\":\"A single Phillips-head screwdriver with a translucent yellow handle on a dark surface.\",\"category\":\"Hand tools\",\"entity_type\":\"part\",\"is_receipt\":\"no\",\"confidence\":0.85}"
+}

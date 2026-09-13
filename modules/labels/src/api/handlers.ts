@@ -3,7 +3,7 @@
 // / a wire triggers a labels action.
 
 import type { Kysely } from "kysely";
-import { platform, requireActionEntity } from "@cobblr/platform-contract";
+import { platform, requireActionEntity, ActionRefusal } from "@cobblr/platform-contract";
 import type { LabelsDB } from "../db.js";
 import { evaluateAutoflush } from "./autoflush.js";
 import { renameCodeGroup, setGroupOverlay } from "../services/codes.js";
@@ -30,7 +30,7 @@ export function registerLabelsHandlers(): void {
       entity.id,
     );
     if (!ent) {
-      throw new Error(
+      throw new ActionRefusal(
         `labels:print: could not resolve ${entity.kind}:${entity.id}`,
       );
     }
@@ -46,13 +46,18 @@ export function registerLabelsHandlers(): void {
     // error surfaces in the wire run log with the fix spelled out.
     const qrDb = db as unknown as Parameters<typeof getQrLabelBaseUrl>[0];
     // Base resolution mirrors the manual print path: the workspace's custom
-    // label base wins; else the instance's configured public origin (manual
-    // prints use the request origin — a wire has no request, and this env is
-    // the same origin the instance hands out in emails/DMs). Only when BOTH
-    // are absent do we refuse: that instance genuinely has no address a
-    // phone could open, and a printed dud can't be recalled.
+    // label base wins; else the origin of the request that pressed the button
+    // (ctx.origin, what the manual routes read from protocol + host; absent
+    // for a wire or a schedule); else the instance's configured public origin
+    // (the one it hands out in emails/DMs). Only when all are absent do we
+    // refuse: that run genuinely has no address a phone could open, and a
+    // printed dud can't be recalled. The item page's Print label on a
+    // production-shaped instance with no public URL configured refused here
+    // and surfaced as a bare 500 (#2847); a person's own origin is exactly
+    // what the Labels page used for the same item.
     const base =
       (await getQrLabelBaseUrl(qrDb)) ||
+      (ctx.origin ?? "").replace(/\/+$/, "") ||
       (process.env.PUBLIC_BASE_URL || process.env.COBBLR_PUBLIC_URL || "").replace(/\/+$/, "") ||
       // Dev/test instances have a truthful origin even with nothing
       // configured: the box itself. Production does not get this crutch —
@@ -61,8 +66,8 @@ export function registerLabelsHandlers(): void {
         ? `http://localhost:${process.env.API_PORT || 4000}`
         : null);
     if (!base) {
-      throw new Error(
-        "labels:print: no label base URL is set and this instance has no public URL configured, so an automation-printed QR would not scan. Set one under Configuration → Labels → QR codes (or set PUBLIC_BASE_URL), then re-run.",
+      throw new ActionRefusal(
+        "labels:print: no label base URL is set and this instance has no public URL configured, so a QR printed by an automation would not scan. Set one under Configuration → Labels → QR codes (or set PUBLIC_BASE_URL), then re-run.",
       );
     }
     const style = await getQrTokenStyle(qrDb);
@@ -115,8 +120,21 @@ export function registerLabelsHandlers(): void {
     // hand). The platform ignores this unless such a printer is the default, so
     // it is safe to return every time; labels does not know what hardware
     // exists, and does not need to.
+    //
+    // The verdict is the queue, in words, with the count the Labels page will
+    // show: printing is a readiness question the surface answers after this,
+    // never over it (#2884).
+    const queued = ctx.userId
+      ? await db
+          .selectFrom("labels_queue")
+          .select((eb) => eb.fn.countAll<number>().as("n"))
+          .where("user_id", "=", ctx.userId)
+          .executeTakeFirst()
+      : null;
+    const inQueue = Number(queued?.n ?? 1);
     return {
       ok: true,
+      summary: `Queued (${inQueue} in the queue)`,
       queueId: inserted.id,
       description: inserted.description,
       ui: {

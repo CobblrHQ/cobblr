@@ -87,6 +87,9 @@ export interface NavModules {
    *  hardcoded affordances like the scan link on their module being on
    *  — a blank slate shows only what the user has turned on. */
   enabledNames: Set<string>;
+  /** The row keys that are DOORS (navDoorsOf): Locations, the Scan Inbox.
+   *  The grown sidebar files these under tools rather than collections. */
+  doorNames: Set<string>;
   isLoading: boolean;
 }
 
@@ -645,6 +648,7 @@ export function useNavModules(activeSlug: string): NavModules {
   const hiddenNames = new Set(navHidden);
   const overflowNames = new Set(navOverflow);
   const tops = allTops.filter((t) => !hiddenNames.has(t.name));
+  const doorNames = new Set(navDoorsOf(enabled).map((d) => d.key));
 
   return {
     tops,
@@ -654,6 +658,7 @@ export function useNavModules(activeSlug: string): NavModules {
     childrenByParent,
     instanceGroups,
     enabledNames,
+    doorNames,
     isLoading: modules.isLoading || bundles.isLoading,
   };
 }

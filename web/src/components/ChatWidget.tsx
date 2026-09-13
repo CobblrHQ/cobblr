@@ -7,8 +7,11 @@
 import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import ReactMarkdown from "react-markdown";
 import { appliedCards } from "../lib/applied-cards";
-import { linkifyMarkdown, mergeRefs, refsOfResponse, refOfProposal, type ChatEntityRef } from "../lib/entity-chips";
+import { linkifyMarkdown, mergeRefs, refsOfResponse, refOfProposal, refsLeftUnnamed, type ChatEntityRef } from "../lib/entity-chips";
 import { ChatRefChip, ChatRefName, PermanentTag } from "./ChatRefChip";
+import { PlanNote } from "./PlanNote";
+import { PlanSections, sectionsLeft, type SectionRuns } from "./PlanSections";
+import { slimForStore } from "../lib/chat-store";
 import { PlanLines } from "./PlanLines";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { X, Send, Check, Eye, PencilLine, Trash2, Wand2, Cpu, ChevronDown } from "lucide-react";
@@ -94,7 +97,11 @@ interface Msg {
   /** A learned command that fits what was typed, offered for confirmation. The
    *  message rides along because the SERVER re-binds it: the browser never
    *  sends the operations, only what the user said. */
-  command?: { id: string; template: string; operations: number; summary: string; message: string; lines?: string[]; note?: string };
+  command?: NonNullable<AiChatResponse["command"]>;
+  /** Which parts of a plan with several destinations have run, by section
+   *  key, with what each came back with (its sentence, its Undo handles).
+   *  Kept with the conversation, so a reload shows the same half-done card. */
+  sections?: SectionRuns;
   /** The records this message names. Each name renders as a chip that opens
    *  the record (web/src/lib/entity-chips.ts). */
   refs?: ChatEntityRef[];
@@ -466,6 +473,15 @@ export function ChatPanel({ open: railOpen, setOpen }: { open: boolean; setOpen:
   const navigate = useNavigate();
   const detailRoute = useDetailRoute(activeSlug ?? "");
   const listRoute = useListRoute(activeSlug ?? "");
+  // Leaving through a chip closes the panel first; the record's page is the
+  // destination, not a page behind the panel.
+  const goTo = useCallback(
+    (to: string) => {
+      setOpen(false);
+      navigate(to);
+    },
+    [navigate, setOpen],
+  );
   // The chip a named record renders as. Built once per workspace: a new
   // components object per render would remount every chip on every keystroke.
   const mdComponents = useMemo(
@@ -635,10 +651,10 @@ export function ChatPanel({ open: railOpen, setOpen }: { open: boolean; setOpen:
     const key = chatStoreKey(activeSlug);
     if (!key) return;
     try {
-      const slim = messages
-        .filter((m) => m.content && m.content.trim())
-        .slice(-CHAT_STORE_MAX)
-        .map((m) => ({ role: m.role, content: m.content, ...(m.sentWith ? { sentWith: m.sentWith } : {}) }));
+      // Plain data only (web/src/lib/chat-store.ts): the words, the refs (a
+      // chip that opened a book still opens it after a reload), and a plan
+      // card with which of its parts have run. Never a live confirm card.
+      const slim = slimForStore(messages, CHAT_STORE_MAX);
       if (slim.length) localStorage.setItem(key, JSON.stringify(slim));
       else localStorage.removeItem(key);
     } catch {
@@ -768,6 +784,70 @@ export function ChatPanel({ open: railOpen, setOpen }: { open: boolean; setOpen:
   /** Run a learned command the user just confirmed. The server binds the
    *  message against the stored pattern and writes through the same ledger an
    *  AI write uses, so it is recorded and undoable in the usual way. */
+  // One part of a plan with several destinations. Only that part's
+  // operations run (the server re-computes the plan and takes the section by
+  // key), and the card morphs in place: the run's own sentence, past tense,
+  // where the button was, with its own Undo. Nothing is appended.
+  const [runningSection, setRunningSection] = useState<{ idx: number; key: string } | null>(null);
+  const [undoingSection, setUndoingSection] = useState<{ idx: number; key: string } | null>(null);
+  const patchSection = (idx: number, key: string, patch: Partial<SectionRuns[string]> | ((cur: SectionRuns[string] | undefined) => SectionRuns[string])) =>
+    setMessages((prev) => {
+      const copy = [...prev];
+      const at = copy[idx];
+      if (!at) return prev;
+      const cur = at.sections?.[key];
+      const next = typeof patch === "function" ? patch(cur) : { ...(cur ?? { ok: false, message: "", ledgerIds: [], undoable: false }), ...patch };
+      copy[idx] = { ...at, sections: { ...(at.sections ?? {}), [key]: next } };
+      return copy;
+    });
+  async function runSection(i: number, key: string) {
+    const m = messagesRef.current[i];
+    if (!m?.command || busy) return false;
+    setBusy(true);
+    setRunningSection({ idx: i, key });
+    try {
+      const out = await api.runCommand(activeSlug, m.command.id, m.command.message, getChatSelection()?.ids, key);
+      if (out.ok) workspaceChanged();
+      patchSection(i, key, () => ({
+        ok: out.ok,
+        message: out.message,
+        ledgerIds: out.ledger_ids ?? [],
+        undoable: !!out.ledger_ids?.length && out.undoable !== false,
+      }));
+      return out.ok;
+    } catch (e) {
+      patchSection(i, key, () => ({ ok: false, message: e instanceof ApiError ? e.message : "That didn't work.", ledgerIds: [], undoable: false }));
+      return false;
+    } finally {
+      setRunningSection(null);
+      setBusy(false);
+    }
+  }
+  /** The parts that have not run, in order, one request each, so each morphs
+   *  on its own and one that fails stops nothing else. */
+  async function runSectionsLeft(i: number) {
+    const m = messagesRef.current[i];
+    if (!m?.command?.sections) return;
+    for (const s of sectionsLeft(m.command.sections, m.sections)) await runSection(i, s.key);
+  }
+  async function undoSection(i: number, key: string) {
+    const run = messagesRef.current[i]?.sections?.[key];
+    if (!run?.ok || !run.ledgerIds.length || run.undone || busy) return;
+    setUndoingSection({ idx: i, key });
+    try {
+      const outcomes = [];
+      for (const h of [...run.ledgerIds].reverse()) outcomes.push(await undoMut.mutateAsync(h));
+      const ok = outcomes.filter((o) => o.ok).length;
+      if (ok) workspaceChanged();
+      const message = outcomes.length === 1 ? outcomes[0]!.message : ok === outcomes.length ? `Put back all ${ok}.` : `Put back ${ok} of ${outcomes.length}. ${outcomes.find((o) => !o.ok)?.message ?? ""}`;
+      patchSection(i, key, { undone: ok > 0, undoResult: message, undoOk: ok > 0 });
+    } catch (e) {
+      patchSection(i, key, { undoResult: e instanceof ApiError ? e.message : "Couldn't undo that.", undoOk: false });
+    } finally {
+      setUndoingSection(null);
+    }
+  }
+
   async function runCommand(i: number) {
     const m = messages[i];
     if (!m?.command || busy) return;
@@ -784,6 +864,8 @@ export function ChatPanel({ open: railOpen, setOpen }: { open: boolean; setOpen:
           content: (out.ok ? "✓ " : "✗ ") + out.message,
           // Kept so "do that again" and "undo" can point here later.
           ...(out.ok ? { ranCommand: { id: m.command!.id, message: m.command!.message } } : {}),
+          // The records it changed, as chips in the sentence that says so.
+          ...(out.touched?.length ? { refs: mergeRefs(out.touched) } : {}),
           ...(out.ledger_ids?.length ? { resolved: true, ledgerIds: out.ledger_ids, undoable: out.undoable !== false, ...(out.destination ? { destination: out.destination } : {}) } : {}),
         }];
       });
@@ -811,7 +893,7 @@ export function ChatPanel({ open: railOpen, setOpen }: { open: boolean; setOpen:
   /** The answer to what is being typed, when the workspace can answer it
    *  itself. A read is safe to just do, so this is the answer rather than an
    *  offer to go and get it. */
-  const [peek, setPeek] = useState<{ answer: string; detail?: string; from: "page" | "workspace" | "guide" } | null>(null);
+  const [peek, setPeek] = useState<{ answer: string; detail?: string; from: "page" | "workspace" | "guide"; refs?: ChatEntityRef[] } | null>(null);
 
   // EVERYTHING that renders in the list is a reason to be at the bottom, not
   // only a message. The offer bubble and the peek bubble render after the
@@ -890,7 +972,13 @@ export function ChatPanel({ open: railOpen, setOpen }: { open: boolean; setOpen:
           if (!cancelled)
             setPeek(
               r.answer
-                ? { answer: r.answer, ...(r.detail ? { detail: r.detail } : {}), from: r.from === "guide" ? "guide" : "workspace" }
+                ? {
+                    answer: r.answer,
+                    ...(r.detail ? { detail: r.detail } : {}),
+                    from: r.from === "guide" ? "guide" : "workspace",
+                    // The records the bubble names open from it, like a reply's.
+                    ...(r.mentions?.length ? { refs: mergeRefs(r.mentions) } : {}),
+                  }
                 : null,
             );
         })
@@ -1538,11 +1626,15 @@ export function ChatPanel({ open: railOpen, setOpen }: { open: boolean; setOpen:
         workspaceChanged();
       }
       // The executed write carries its change-ledger id — the Undo handle.
+      // And the record it was about: what the result names, and the record
+      // the proposal ran on, so "✓ Done." still shows what it was done to.
+      const refs = r.ok ? mergeRefs(refsOfResponse({ applied: [r] }), [refOfProposal(m.proposal)]) : [];
       setMessages((prev) => [
         ...prev,
         {
           role: "assistant",
           content: (r.ok ? "✓ " : "✗ ") + r.message,
+          ...(refs.length ? { refs } : {}),
           ...(r.ok && r.ledger_id
             ? { resolved: true, ledgerId: r.ledger_id, undoable: r.undoable, entityKind: r.entity?.kind, entityId: r.entity?.id }
             : {}),
@@ -1837,6 +1929,32 @@ export function ChatPanel({ open: railOpen, setOpen }: { open: boolean; setOpen:
                         {linkifyMarkdown(m.content, mergeRefs(m.refs, [refOfProposal(m.proposal)]), detailRoute)}
                       </ReactMarkdown>
                     )}
+                    {/* A card about a record whose words do not say which
+                        ("✓ Done." after adjusting its stock) still shows the
+                        record: the same chip, after the words. Only the refs
+                        the sentence left unnamed, and only ones with a page. */}
+                    {(() => {
+                      if (m.role !== "assistant" || m.proposal?.kind === "delete") return null;
+                      const unnamed = refsLeftUnnamed(m.content, mergeRefs(m.refs, [refOfProposal(m.proposal)]), detailRoute);
+                      if (unnamed.length === 0) return null;
+                      return (
+                        <p className="mt-1 flex flex-wrap gap-1">
+                          {unnamed.map((r) => (
+                            <ChatRefChip
+                              key={`${r.kind} ${r.id}`}
+                              slug={activeSlug ?? ""}
+                              href={detailRoute(r.kind, r.id) ?? undefined}
+                              onGo={(to) => {
+                                setOpen(false);
+                                navigate(to);
+                              }}
+                            >
+                              {r.label}
+                            </ChatRefChip>
+                          ))}
+                        </p>
+                      );
+                    })()}
                   </div>
                   {/* A workspace build running in the background — the longest
                       wait in the product, and the most literal `working`. */}
@@ -1912,15 +2030,43 @@ export function ChatPanel({ open: railOpen, setOpen }: { open: boolean; setOpen:
                   {/* A command this workspace taught itself. No AI was asked;
                       the sentence matched something it already knows how to do,
                       and it still waits to be told to go ahead. */}
-                  {m.command && !m.resolved && (
+                  {/* Several destinations: one section each, each with its own
+                      Do this, Do all at the bottom, and the card stays as the
+                      record of what ran (a cancelled one keeps what did). */}
+                  {m.command && (m.command.sections?.length ?? 0) > 1 && (
                     <div className="mt-2">
                       <div className="text-[11px] text-muted dark:text-slate-400">
                         {m.command.summary} · {m.command.id.startsWith("computed:") ? "worked out from the page, no AI used" : `learned from “${m.command.template}”`}
                       </div>
-                      {m.command.note && (
-                        <div className="text-[11px] text-muted dark:text-slate-400 break-words">{m.command.note}</div>
-                      )}
+                      <PlanSections
+                        sections={m.command.sections!}
+                        runs={m.sections}
+                        mode="card"
+                        slug={activeSlug ?? ""}
+                        routeFor={detailRoute}
+                        onGo={goTo}
+                        busy={busy}
+                        runningKey={runningSection?.idx === i ? runningSection.key : null}
+                        undoingKey={undoingSection?.idx === i ? undoingSection.key : null}
+                        {...(m.resolved
+                          ? {}
+                          : {
+                              onRun: (key: string) => void runSection(i, key),
+                              onRunAll: () => void runSectionsLeft(i),
+                              onCancel: () => cancel(i),
+                            })}
+                        onUndo={(key: string) => void undoSection(i, key)}
+                      />
+                      <PlanNote note={m.command.note} leftHeading={m.command.leftHeading} also={m.command.also} slug={activeSlug ?? ""} routeFor={detailRoute} onGo={goTo} />
+                    </div>
+                  )}
+                  {m.command && !((m.command.sections?.length ?? 0) > 1) && !m.resolved && (
+                    <div className="mt-2">
+                      <div className="text-[11px] text-muted dark:text-slate-400">
+                        {m.command.summary} · {m.command.id.startsWith("computed:") ? "worked out from the page, no AI used" : `learned from “${m.command.template}”`}
+                      </div>
                       {m.command.lines && <PlanLines lines={m.command.lines} />}
+                      <PlanNote note={m.command.note} leftHeading={m.command.leftHeading} also={m.command.also} slug={activeSlug ?? ""} routeFor={detailRoute} onGo={goTo} />
                       <div className="mt-1.5 flex items-center gap-2">
                         <button
                           type="button"
@@ -2057,10 +2203,12 @@ export function ChatPanel({ open: railOpen, setOpen }: { open: boolean; setOpen:
                   <div className="text-sm font-medium text-emerald-800 dark:text-emerald-300 break-words">
                     {suggestion.summary.replace(/\.\s*$/, "")}
                   </div>
-                  {suggestion.note && (
-                    <div className="text-[11px] text-emerald-700/80 dark:text-emerald-400/70 break-words">{suggestion.note}</div>
+                  {(suggestion.sections?.length ?? 0) > 1 ? (
+                    <PlanSections sections={suggestion.sections!} mode="offer" tone="green" slug={activeSlug ?? ""} routeFor={detailRoute} onGo={goTo} />
+                  ) : (
+                    suggestion.lines && <PlanLines lines={suggestion.lines} tone="green" />
                   )}
-                  {suggestion.lines && <PlanLines lines={suggestion.lines} tone="green" />}
+                  <PlanNote note={suggestion.note} leftHeading={suggestion.leftHeading} also={suggestion.also} hint={suggestion.hint} tone="green" slug={activeSlug ?? ""} routeFor={detailRoute} onGo={goTo} />
                   {/* The rule's generic name ("move things into another list") is
                       not a sentence about THIS plan, and the plan above already
                       says everything. A command the workspace was TAUGHT still
@@ -2096,12 +2244,22 @@ export function ChatPanel({ open: railOpen, setOpen }: { open: boolean; setOpen:
                     <div className="prose prose-sm dark:prose-invert max-w-none prose-p:my-1.5 prose-ul:my-1.5 prose-li:my-0.5 break-words text-emerald-800 dark:text-emerald-300 prose-strong:text-emerald-900 dark:prose-strong:text-emerald-200">
                       <ReactMarkdown>{peek.answer}</ReactMarkdown>
                     </div>
+                  ) : peek.refs?.length ? (
+                    // A name the workspace found ("where is my drill") is the
+                    // record, and opens as one; the same chip his replies use.
+                    <div className="text-sm font-medium text-emerald-800 dark:text-emerald-300 [&_p]:my-0">
+                      <ReactMarkdown components={mdComponents}>{linkifyMarkdown(peek.answer, peek.refs, detailRoute)}</ReactMarkdown>
+                    </div>
                   ) : (
                     <div className="text-sm font-medium text-emerald-800 dark:text-emerald-300">{peek.answer}</div>
                   )}
-                  {peek.detail && (
+                  {peek.detail && peek.refs?.length ? (
+                    <div className="text-[11px] text-emerald-700/80 dark:text-emerald-400/70 [&_p]:my-0">
+                      <ReactMarkdown components={mdComponents}>{linkifyMarkdown(peek.detail, peek.refs, detailRoute)}</ReactMarkdown>
+                    </div>
+                  ) : peek.detail ? (
                     <div className="text-[11px] text-emerald-700/80 dark:text-emerald-400/70">{peek.detail}</div>
-                  )}
+                  ) : null}
                   {/* Say which, honestly: the page's own state and a read of
                       your records are different claims, and one of them is not
                       about your data at all. */}

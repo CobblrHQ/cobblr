@@ -6,6 +6,19 @@
 // text belongs in the server log and the AI call log (it still goes there);
 // the bubble gets one sentence that says what happened and what to do.
 
+import { providerSentence, type CredentialDoor, type ProviderReason } from "@cobblr/platform-contract/provider-reason";
+
+/** What the router's refusal carried beside the message, when it did: the
+ *  provider's reason as its adapter read it, which door the credential came
+ *  through, and the wait it asked for. Data first; the prose below is the
+ *  reading for an error that carries none. */
+export interface ProviderFailureDetail {
+  reason?: ProviderReason | null;
+  door?: CredentialDoor;
+  retryAfterSec?: number;
+  provider?: string;
+}
+
 export interface HumanizedError {
   message: string;
   /** Seconds until a retry is worth trying, when the provider said. */
@@ -39,12 +52,30 @@ function providerName(raw: string): string {
  * Anything that is not recognisably a provider error passes through untouched
  * (a TurnError already carries user-facing prose), minus any JSON tail.
  */
-export function humanizeProviderError(error: string): HumanizedError {
+export function humanizeProviderError(error: string, detail?: ProviderFailureDetail): HumanizedError {
   const isProvider = PROVIDER_PREFIX.test(error);
   const raw = error.replace(PROVIDER_PREFIX, "");
-  const who = providerName(raw);
+  const who = detail?.provider ?? providerName(raw);
   const status = raw.match(/\b(\d{3})\b/)?.[1];
-  const retryAfterSec = retryAfterFrom(raw);
+  const retryAfterSec = detail?.retryAfterSec ?? retryAfterFrom(raw);
+  // The reason the provider gave, read off the error: the sentence follows
+  // from it and names the door the key came through. Prose is only read below
+  // for an error that carries no reason (a bare Error from somewhere else).
+  if (detail?.reason) {
+    const message = providerSentence(detail.reason, { provider: who, door: detail.door, retryAfterSec });
+    switch (detail.reason) {
+      case "invalid_key":
+        return { code: "unauthorized", message };
+      case "quota":
+        return { code: "rate_limited", message, retryAfterSec };
+      case "model_unavailable":
+        return { code: "model_missing", message };
+      case "unreachable":
+        return { code: "unavailable", message };
+      case "unknown":
+        break; // the prose may still know a session limit; read on
+    }
+  }
   const quota = /quota|rate.?limit|RESOURCE_EXHAUSTED|too many requests/i.test(raw);
 
   // A Claude subscription run through a bridge does not 429: `claude -p`
@@ -80,9 +111,11 @@ export function humanizeProviderError(error: string): HumanizedError {
     return { code: "unavailable", message: `${who} is unavailable right now (it did not answer, or answered with a server error). Try again shortly. Nothing was changed.` };
   }
   if (isProvider) {
-    // Unknown provider failure: keep the first human line, never a JSON body.
-    const firstLine = raw.split(/[\n[{]/)[0]?.trim().replace(/[:\s]+$/, "") ?? "";
-    return { code: "unknown", message: `${who} could not answer${firstLine ? ` (${firstLine})` : ""}. Try again, or check Configuration → AI. Nothing was changed.` };
+    // Unknown provider failure: the one sentence, never a status and never a
+    // JSON body. "google-ai-studio could not answer (google-ai-studio: 400)"
+    // was this branch quoting the raw line (#2895); the raw line is in the
+    // server log and the AI call log for whoever debugs it.
+    return { code: "unknown", message: providerSentence("unknown", { provider: who, door: detail?.door }) };
   }
   return { message: error.split(/\n\s*[{[]/)[0]?.trim() || error };
 }

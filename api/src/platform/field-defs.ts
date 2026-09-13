@@ -87,6 +87,26 @@ async function kindShape(
  * doesn't shove itself above a kind's core fields. A per-kind override position
  * still moves it anywhere — the override layer is applied by the caller and wins.
  */
+/** The field roles a kind wears in a workspace, read off the same defs the
+ *  record shows (`resolveFieldDefsForKind`: the kind's own, plus trait-scoped
+ *  ones), so a face and the verbs that follow it never come from a field the
+ *  record does not have. The faces and actions resolvers used to read raw rows
+ *  for `[kind, base]`, and Groceries keeps a copy of its food fields on the
+ *  base kind for plain-Inventory food: every inventory instance in that
+ *  workspace inherited `expiry`, turned perishable, and a Home Inventory
+ *  kettle offered Opened, Threw it out and Restock one (#2849). */
+export async function fieldRolesForKind(orgId: string, kind: string): Promise<Set<string>> {
+  try {
+    const defs = await resolveFieldDefsForKind(orgId, kind);
+    return new Set(defs.map((d) => d.field_role).filter((r): r is string => typeof r === "string" && r.length > 0));
+  } catch (err) {
+    // A workspace whose defs cannot be read still gets its native faces and
+    // actions; it just does not get the role-scoped ones, the safe direction.
+    console.error("[field-defs] roles for kind failed:", (err as Error).message);
+    return new Set();
+  }
+}
+
 export async function resolveFieldDefsForKind(
   orgId: string,
   kind: string,

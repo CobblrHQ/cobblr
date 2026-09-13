@@ -1,0 +1,7 @@
+{
+  "_fixture": "e2e/fixtures/review-pack/photos/yarn-skein.jpg",
+  "_note": "What the segmentation call answered on the reviewer's staging run (#2970): four boxes in THOUSANDTHS of the frame, the convention the model uses whatever the prompt asks, and names without the brands. Read as fractions every box was 'too large'; read in the scale written they are four strips.",
+  "image_ahash": "7f27e3f3f3030000",
+  "capability": "split-image",
+  "reply": "{\"items\":[{\"name\":\"Signature 4 Ply ball\",\"brand\":null,\"qty\":1,\"box\":{\"x\":718,\"y\":48,\"w\":282,\"h\":910}},{\"name\":\"Noro ball\",\"brand\":null,\"qty\":1,\"box\":{\"x\":458,\"y\":0,\"w\":275,\"h\":938}},{\"name\":\"Regia ball\",\"brand\":null,\"qty\":1,\"box\":{\"x\":252,\"y\":70,\"w\":234,\"h\":901}},{\"name\":\"Signature 4 Ply ball\",\"brand\":null,\"qty\":1,\"box\":{\"x\":3,\"y\":12,\"w\":266,\"h\":970}}]}"
+}

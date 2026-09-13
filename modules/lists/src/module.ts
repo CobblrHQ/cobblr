@@ -12,13 +12,16 @@ import { defineModule } from "@cobblr/platform-contract";
 
 export default defineModule({
   name: "lists",
-  version: "0.2.10",
+  version: "0.2.12",
   displayName: "Lists",
   description:
     "Lightweight checklists: a list + check-off-able items. Shopping lists, to-do, packing. Other modules can auto-add items via a wire (e.g. 'running low' → shopping list).",
   icon: "list-checks",
   band: "stock",
   autoEnable: false,
+  // A list is something you DO (check things off), not a collection you keep,
+  // so a grown sidebar files it with the tools.
+  navKind: "tool",
 
   schema: {
     tablePrefix: "lists_",

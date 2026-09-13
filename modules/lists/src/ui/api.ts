@@ -37,7 +37,16 @@ export interface ListItem {
   /** What the restock will stamp on the record: bought today, good until a
    *  date when the item declares a shelf life. Absent when checking off adds
    *  to a stocked record without dating it. */
-  will_date?: { on: string; until: string | null } | null;
+  will_date?: WillDate | null;
+}
+
+/** What checking the line off will stamp, and what it will leave alone. */
+export interface WillDate {
+  on: string;
+  until: string | null;
+  /** Stock already on the record, with the date it keeps; the record's
+   *  visible expiry stays the earlier of the two. Absent when it is empty. */
+  on_hand?: { qty: number; until: string | null };
 }
 
 export interface CheckEffect {
@@ -137,11 +146,18 @@ export class ListsApi {
 }
 
 /** "dated today, good until 22 Sep" for the row, or null when nothing is dated. */
-export function willDatePhrase(w: { on: string; until: string | null } | null | undefined, today = new Date().toISOString().slice(0, 10)): string | null {
+export function willDatePhrase(w: WillDate | null | undefined, today = new Date().toISOString().slice(0, 10)): string | null {
   if (!w) return null;
   const on = w.on === today ? "today" : w.on;
-  if (!w.until) return `dated ${on}`;
-  const d = new Date(`${w.until}T00:00:00Z`);
-  const until = Number.isNaN(d.getTime()) ? w.until : d.toLocaleDateString(undefined, { day: "numeric", month: "short", timeZone: "UTC" });
-  return `dated ${on}, good until ${until}`;
+  const fresh = w.until ? `dated ${on}, good until ${shortDate(w.until)}` : `dated ${on}`;
+  // Some already on hand: the record's date stays the earlier one, and the
+  // row says so rather than promising a date the record will not show yet.
+  if (!w.on_hand || !(w.on_hand.qty > 0)) return fresh;
+  const kept = w.on_hand.until ? `dated ${shortDate(w.on_hand.until)}` : "undated";
+  return `${fresh}; ${w.on_hand.qty} already on hand, ${kept}, stays first`;
+}
+
+function shortDate(iso: string): string {
+  const d = new Date(`${iso}T00:00:00Z`);
+  return Number.isNaN(d.getTime()) ? iso : d.toLocaleDateString(undefined, { day: "numeric", month: "short", timeZone: "UTC" });
 }

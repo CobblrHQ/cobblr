@@ -15,15 +15,19 @@
 // from scratch and arriving somewhere worse. The escape stays: if the person
 // clearly meant something the plan does not cover, the model says so.
 
-export function suggestionLine(sug?: { template: string; summary: string; operations: number; note?: string }): string {
+export function suggestionLine(sug?: { template: string; summary: string; operations: number; note?: string; leftHeading?: string; also?: Array<{ title: string }> }): string {
   if (!sug?.template) return "";
   const n = sug.operations;
   // The plan's own limit, when it has one: what it found and is NOT touching.
   // Those records are exactly the ones the person may still mean ("all the
   // other grocery" on a page where one record is filed under Groceries and
   // eight are groceries by judgement), and judgement is the model's part.
-  const limit = sug.note
-    ? ` The plan adds: "${sug.note}" Where it says records say nothing about the word, they may still be what the person ` +
+  // The note is a sentence; the records it counts are named here for the
+  // model (a comma list is fine for a model; a person gets them as bullets).
+  const left = sug.also?.length ? ` ${sug.leftHeading ?? "Left where they are:"} ${sug.also.map((r) => r.title).join(", ")}.` : "";
+  const said = [sug.note, left.trim()].filter(Boolean).join(" ");
+  const limit = said
+    ? ` The plan adds: "${said}" Where it says it could not tell, or that records say nothing about the word, they may still be what the person ` +
       `means: read those records, and if the sentence plainly covers some of them, propose ONE fuller move ` +
       `(platform:move-records, every id, the same destination) as ONE confirm card, and say which you added and why. ` +
       `Leave out what plainly is not meant.`

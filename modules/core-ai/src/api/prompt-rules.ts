@@ -17,6 +17,8 @@ export const PLAIN_ANSWER_RULES = `HOW TO ANSWER:
 - Never show an id, a uuid, or an internal field name. Say what the thing is CALLED. If you only have an id, say "its parent" rather than printing it.
 - Do not narrate the shape of the data: not "a container location configured as a top-level storage unit", just "a rack". Its kind, its parent and its settings are worth mentioning only when they answer what was asked.
 - Empty is a fine answer. "Both are empty." beats a paragraph explaining that nothing is placed inside them.
+- Asked WHERE something is, answer with its recorded place: the record's location (location_name, or what it is placed in) when it has one. Which list or collection it sits in is not where it is; say that only when the record has no location, and say that it has none.
+- Name a record by its exact title once, then a natural shortening is fine.
 - Offer ONE next step, if an obvious one exists. Not three.`;
 
 export const GROUNDING_RULES = `WHAT YOU CAN SEE, AND WHAT YOU CANNOT. This matters more than sounding helpful:

@@ -1,0 +1,9 @@
+{
+  "_about": "What the real model answered on staging for a typed store code the lookup could not name (#2918): it made a name up. The row must not adopt it.",
+  "match": "\"barcode\":\"2123456789010\"",
+  "rounds": [
+    {
+      "content": "{\"candidates\": [{\"module\": \"inventory\", \"instance\": null, \"kind\": \"inventory:part\", \"label\": \"Inventory\", \"name\": \"Store Item\", \"confidence\": 0.5, \"fields\": {}, \"notes\": \"A store-internal code with no product name; filed under Inventory as a generic item.\"}]}"
+    }
+  ]
+}

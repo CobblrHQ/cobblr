@@ -1,0 +1,6 @@
+{
+  "_fixture": "e2e/fixtures/review-pack/receipts/mixed-hardware.png",
+  "image_ahash": "9f0f8f03039f1f9f",
+  "capability": "identify-image",
+  "reply": "{\"name\":\"\",\"observations\":\"A printed store receipt from RIDGE HARDWARE listing 4 purchased items with prices and a total.\",\"category\":\"receipt\",\"entity_type\":null,\"is_receipt\":\"yes\",\"confidence\":0.9}"
+}

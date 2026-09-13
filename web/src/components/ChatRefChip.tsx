@@ -1,12 +1,20 @@
 // How a link in Cobb's reply is drawn. A link to a record's page is a chip
 // (icon, name, opens the record); any other in-app path navigates; anything
 // else opens in a new tab. See web/src/lib/entity-chips.ts.
+//
+// The chip is an ordinary anchor, so the keyboard reaches it and Enter opens
+// it; its accessible name is the record's name and then its kind ("The
+// Hobbit, book"), so a screen reader hears what will open. Before it goes it
+// checks the record is still there: the reply may be minutes old, and a chip
+// for a record deleted since says so rather than landing on an error page.
 
 import { useQuery } from "@tanstack/react-query";
 import type { AnchorHTMLAttributes, ReactNode } from "react";
-import { api } from "../lib/api";
+import { useToast } from "@cobblr/platform-web";
+import { api, ApiError } from "../lib/api";
 import { moduleIcon } from "../lib/module-icon";
 import { recordOfHref } from "../lib/entity-chips";
+import { useKindLabels } from "../lib/useKindLabels";
 
 const CHIP =
   "inline-flex items-center gap-1 rounded-md px-1.5 py-px text-[0.92em] font-medium not-italic no-underline align-[1px] " +
@@ -26,21 +34,43 @@ export function ChatRefChip({
     enabled: !!slug,
     staleTime: 5 * 60_000,
   });
+  const toast = useToast();
+  // The word for ONE of them ("book"), from the collection's own declaration.
+  // An instance kind's display_name is the collection ("Books"), and a screen
+  // reader was hearing "Dune, books" (the rig, 2026-09-13).
+  const labels = useKindLabels(slug);
   const record = recordOfHref(href, kinds.data?.items);
   if (record) {
-    const Icon = moduleIcon(kinds.data?.items.find((k) => k.id === record.kind)?.icon);
+    const kind = kinds.data?.items.find((k) => k.id === record.kind);
+    const Icon = moduleIcon(kind?.icon);
+    const noun = labels.noun(record.kind).toLowerCase();
+    const name = textOf(children);
+    const open = async () => {
+      try {
+        await api.lookupEntity(slug, record.kind, record.id);
+      } catch (err) {
+        if (err instanceof ApiError && (err.status === 404 || err.status === 410)) {
+          toast.info(`${name || `That ${noun}`} is gone: it was deleted after this was written.`);
+          return;
+        }
+        // Any other failure is not the record's absence; the page will say
+        // what it can.
+      }
+      onGo(record.path);
+    };
     return (
       <a
         href={record.path}
         className={`${CHIP} hover:border-cobble-400 dark:hover:border-cobble-500 hover:bg-cobble-100 dark:hover:bg-cobble-900 transition cursor-pointer`}
-        title="Open it"
+        title={`Open this ${noun}`}
         onClick={(e) => {
           e.preventDefault();
-          onGo(record.path);
+          void open();
         }}
       >
-        <Icon size={12} className="shrink-0 opacity-70" />
+        <Icon size={12} className="shrink-0 opacity-70" aria-hidden="true" />
         {children}
+        <span className="sr-only">, {noun}</span>
       </a>
     );
   }
@@ -63,6 +93,15 @@ export function ChatRefChip({
       {children}
     </a>
   );
+}
+
+/** The words inside the chip, for the sentence that says the record is gone. */
+function textOf(node: ReactNode): string {
+  if (node === null || node === undefined || typeof node === "boolean") return "";
+  if (typeof node === "string" || typeof node === "number") return String(node);
+  if (Array.isArray(node)) return node.map(textOf).join("");
+  const props = (node as { props?: { children?: ReactNode } }).props;
+  return props ? textOf(props.children) : "";
 }
 
 /** A record named on a card that has no page to open: still a chip, no link. */

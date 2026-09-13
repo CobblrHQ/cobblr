@@ -70,14 +70,16 @@ function fieldValue(rec: Record<string, unknown>, key: string): unknown {
 async function walkKind(
   api: WorkspaceApi,
   kind: string,
+  opts: { includeRetired?: boolean } = {},
 ): Promise<
   | { ok: true; items: Array<Record<string, unknown>>; total: number; complete: boolean }
   | { ok: false; res: WorkspaceApiResponse }
 > {
   const items: Array<Record<string, unknown>> = [];
   let total = 0;
+  const retired = opts.includeRetired ? "&include_retired=1" : "";
   for (let offset = 0; offset < COUNT_SCAN_MAX; offset += COUNT_PAGE) {
-    const res = await api.request("GET", `/entities/${encodeURIComponent(kind)}?limit=${COUNT_PAGE}&offset=${offset}`);
+    const res = await api.request("GET", `/entities/${encodeURIComponent(kind)}?limit=${COUNT_PAGE}&offset=${offset}${retired}`);
     if (res.status >= 400) return { ok: false, res };
     const body = res.body as { items?: unknown[]; total?: number };
     const page = Array.isArray(body.items) ? (body.items as Array<Record<string, unknown>>) : [];
@@ -90,8 +92,8 @@ async function walkKind(
 
 /** list_records' fallback when the kind's own search found nothing: the same
  *  page shape, matched over every text field, and labelled as such. */
-async function scanByText(api: WorkspaceApi, kind: string, q: string, limit: number): Promise<unknown | null> {
-  const walked = await walkKind(api, kind);
+async function scanByText(api: WorkspaceApi, kind: string, q: string, limit: number, opts: { includeRetired?: boolean } = {}): Promise<unknown | null> {
+  const walked = await walkKind(api, kind, opts);
   if (!walked.ok) return null;
   const hits = walked.items.filter((r) => recordMatchesText(r, q));
   const items = hits.slice(0, limit);
@@ -142,7 +144,13 @@ interface AttentionRow {
   label: string;
   count: number;
   sample?: string[];
-  entries?: Array<{ id: string; title: string }>;
+  entries?: Array<{
+    id: string;
+    title: string;
+    /** The record the entry is about, by the kind the registry names it (so a
+     *  chip can open it) and its bare name. Absent for a capture or a device. */
+    record?: { kind: string; id: string; name: string };
+  }>;
 }
 
 /** The record's name as the CHANGE recorded it. The activity route treats a
@@ -471,18 +479,20 @@ export const WORKSPACE_TOOLS: WorkspaceTool[] = [
       kind: z.string().describe("Entity kind id, e.g. inventory:part (see list_record_kinds)"),
       q: z.string().optional().describe("Text filter: matches the record name first; if nothing matches by name, every text field is searched instead"),
       limit: z.number().optional().describe(`Max results (default 20, max ${LIST_LIMIT_MAX})`),
+      include_retired: z.boolean().optional().describe("Also list archived/retired records (off by default). Set it when asked about something old or retired: \"where is my old drill\""),
     },
     execute: async (api, args) => {
       const kind = String(args.kind ?? "");
       const limit = Math.min(Number(args.limit) || 20, LIST_LIMIT_MAX);
       const q = typeof args.q === "string" && args.q.trim() ? `&q=${encodeURIComponent(args.q.trim())}` : "";
-      const res = await api.request("GET", `/entities/${encodeURIComponent(kind)}?limit=${limit}${q}`);
+      const retired = args.include_retired === true ? "&include_retired=1" : "";
+      const res = await api.request("GET", `/entities/${encodeURIComponent(kind)}?limit=${limit}${q}${retired}`);
       if (res.status >= 400) return toolFail(apiErrorMessage(res, `couldn't list ${kind}`));
       const page = pageWithTruth(res.body, limit) as { items?: unknown[] };
       if (q && Array.isArray(page.items) && page.items.length === 0) {
         // The kind's own search matched nothing by name. Before the model tells
         // the user "you have none", look at every text field ourselves.
-        const scan = await scanByText(api, kind, String(args.q).trim(), limit);
+        const scan = await scanByText(api, kind, String(args.q).trim(), limit, { includeRetired: args.include_retired === true });
         if (scan) return toolOk(scan);
       }
       return toolOk(page);
@@ -497,6 +507,7 @@ export const WORKSPACE_TOOLS: WorkspaceTool[] = [
       kind: z.string().describe("Entity kind id, e.g. inventory:part (see list_record_kinds)"),
       group_by: z.string().optional().describe("Field key to group by (title, or any field key from the kind's fields)"),
       q: z.string().optional().describe("Text filter, matched against EVERY text field of each record (name, brand, notes, custom fields), case-insensitive"),
+      include_retired: z.boolean().optional().describe("Also count archived/retired records (off by default)"),
     },
     execute: async (api, args) => {
       const kind = String(args.kind ?? "");
@@ -504,7 +515,7 @@ export const WORKSPACE_TOOLS: WorkspaceTool[] = [
       const qText = typeof args.q === "string" ? args.q.trim() : "";
       // The text filter is applied HERE, over every field of every record, not
       // by the kind's own search (which may look at the name only).
-      const walked = await walkKind(api, kind);
+      const walked = await walkKind(api, kind, { includeRetired: args.include_retired === true });
       if (!walked.ok) return toolFail(apiErrorMessage(walked.res, `couldn't count ${kind}`));
       const all = qText ? walked.items.filter((r) => recordMatchesText(r, qText)) : walked.items;
       const total = qText ? all.length : walked.total;
@@ -720,11 +731,19 @@ export const WORKSPACE_TOOLS: WorkspaceTool[] = [
     execute: async (api) => {
       const res = await api.request("GET", "/attention");
       if (res.status >= 400) return toolFail(apiErrorMessage(res, "couldn't read what needs attention"));
+      // Each example is the RECORD where the feed knows one (kind, id, its
+      // name, the feed's detail beside it), so an answer built from this can
+      // name it as something to open; the reply's names are matched against
+      // the records the turn read, and a bare title is not a record. Where the
+      // feed names no record (a capture, a printer) the title stands alone.
       const rows = ((res.body as { items?: AttentionRow[] }).items ?? []).map((r) => ({
         kind: r.kind,
         what: r.label,
         count: r.count,
-        examples: (r.entries ?? []).slice(0, 8).map((e) => e.title).concat(r.sample ?? []).slice(0, 8),
+        examples: (r.entries?.length
+          ? r.entries.map((e) => (e.record ? { kind: e.record.kind, id: e.record.id, title: e.record.name, detail: e.title } : e.title))
+          : (r.sample ?? [])
+        ).slice(0, 8),
       }));
       if (rows.length === 0) return toolOk({ items: [], note: "Nothing needs them right now." });
       return toolOk({ items: rows });
