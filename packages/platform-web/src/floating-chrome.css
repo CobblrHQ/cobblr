@@ -1,0 +1,44 @@
+/* The one place `position: fixed` is spelled for chrome and layers.
+ *
+ * FloatingChrome (chrome that floats over the page), OverlayLayer (a surface
+ * that covers the page), PopoverLayer (a transient surface anchored to a
+ * trigger) and BackdropLayer (the click-catcher behind a popover) all take
+ * their positioning from here, and lint:fixed-chrome refuses a bare `fixed`
+ * anywhere else. Imported once by each app's index.css.
+ *
+ * Bottom chrome is a DOCK: every anchor="bottom" piece registers with
+ * bottom-dock.ts, which stacks them in registration order (--fc-bottom on
+ * each) and publishes one --bottom-chrome-height, the sum of what is visible,
+ * on the root; the page's body pays that once as padding. Corner pieces sit
+ * above the dock. A piece that yields (the default) hides while any overlay
+ * is open, and the sum drops to what remains. */
+
+.fc-fixed {
+  position: fixed;
+}
+.fc-top {
+  top: 0;
+  left: 0;
+  right: 0;
+}
+.fc-bottom {
+  left: 0;
+  right: 0;
+  bottom: var(--fc-bottom, 0px);
+}
+/* A corner piece: its own lift above the dock. Horizontal placement is the
+ * piece's (right-4, or left-1/2 -translate-x-1/2 for a centred pill). */
+.fc-corner {
+  bottom: calc(var(--bottom-chrome-height, 0px) + var(--fc-lift, 1rem));
+}
+.fc-overlay {
+  position: fixed;
+  inset: 0;
+}
+.fc-popover {
+  position: fixed;
+}
+.fc-backdrop {
+  position: fixed;
+  inset: 0;
+}

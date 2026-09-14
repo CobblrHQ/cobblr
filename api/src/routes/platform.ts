@@ -1658,6 +1658,13 @@ platformOrgRouter.get(
             // cannot show a confirmation reads this to know what it may run.
             undoable: a.undoable === true,
             internal: a.internal === true,
+            // The BUTTON flag: false means no button on the record's page,
+            // and says nothing about the assistant (placing, tagging and
+            // stock adjustments are all false here and all Cobb's).
+            user_invokable: a.user_invokable !== false,
+            // Fired by an event and nothing else, its record named by the
+            // event: the assistant's readers leave it out (offerableToAssistant).
+            wire_only: a.wire_only === true,
             // Whether a run of it can be put back from the card: the handler
             // registered how. Distinct from `undoable`, which is whether an
             // AI may run it unconfirmed; a guard holds the second to imply
@@ -1747,6 +1754,13 @@ platformOrgRouter.get(
             args_schema: a.args_schema ?? null,
             undoable: a.undoable === true,
             internal: a.internal === true,
+            // The BUTTON flag: false means no button on the record's page,
+            // and says nothing about the assistant (placing, tagging and
+            // stock adjustments are all false here and all Cobb's).
+            user_invokable: a.user_invokable !== false,
+            // Fired by an event and nothing else, its record named by the
+            // event: the assistant's readers leave it out (offerableToAssistant).
+            wire_only: a.wire_only === true,
             // Whether a run of it can be put back from the card: the handler
             // registered how. Distinct from `undoable`, which is whether an
             // AI may run it unconfirmed; a guard holds the second to imply

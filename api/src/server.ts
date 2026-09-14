@@ -10,6 +10,9 @@
 // makes the boot sequence explicit.
 
 import { pendingMigrationSummary } from "./modules/enable.js";
+import { metaPool } from "./db/meta.js";
+import { tenantPoolStats } from "./db/tenant.js";
+import { poolCounts } from "./db/pool-stats.js";
 import { errors5xxRecent, noteResponse } from "./platform/error-rate.js";
 import compression from "compression";
 import cors from "cors";
@@ -180,14 +183,25 @@ export function createApp(): AppHandles {
     // being re-read here rather than tailed from a log that leaves with the
     // container. A failure to compute the first is reported as unknown, not as
     // zero: unknown is not healthy.
+    // The pools, read BEFORE the database is asked anything: when every meta
+    // client is checked out, this is the number that says so, and it must
+    // not itself wait for a client (#3033). The pending-migrations read
+    // below then fails within the pool's connect timeout instead of hanging
+    // this answer, and db_ok says it did.
+    const pools = { meta: poolCounts(metaPool), tenants: tenantPoolStats() };
     let pending: { count: number; modules: string[] } | null;
+    let dbOk = true;
     try {
       pending = await pendingMigrationSummary();
-    } catch {
+    } catch (err) {
       pending = null;
+      dbOk = false;
+      console.error("[healthz] the database did not answer:", (err as Error).message, JSON.stringify(pools));
     }
     res.json({
       ok: true,
+      db_ok: dbOk,
+      pools,
       migrations_pending: pending,
       errors_5xx_5m: errors5xxRecent(),
       service: "cobblr-api",

@@ -15,7 +15,7 @@ import { Check, ChevronDown, ChevronRight, MapPin, Plus, Search, X } from "lucid
 import { api, type Location } from "../lib/api";
 import { useActiveOrg } from "../auth/ActiveOrgContext";
 import { QuickCreateLocation } from "./QuickCreateLocation";
-import { OverlayFlag } from "@cobblr/platform-web";
+import { OverlayLayer, PopoverLayer } from "@cobblr/platform-web";
 
 interface Props {
   value: string | null;
@@ -193,11 +193,9 @@ export function LocationTreePicker({
     rect &&
     createPortal(
       <>
-        <div className="fixed inset-0 z-[60]" onClick={() => setOpen(false)}>
-          <OverlayFlag />
-        </div>
-        <div
-          className="fixed z-[61] flex flex-col overflow-hidden rounded-lg border border-line dark:border-slate-700 bg-surface dark:bg-slate-900 shadow-xl"
+        <OverlayLayer className="z-[60]" onClick={() => setOpen(false)} />
+        <PopoverLayer
+          className="z-[61] flex flex-col overflow-hidden rounded-lg border border-line dark:border-slate-700 bg-surface dark:bg-slate-900 shadow-xl"
           style={{
             top: rect.bottom + 4,
             left: Math.max(8, Math.min(rect.left, window.innerWidth - 296)),
@@ -298,7 +296,7 @@ export function LocationTreePicker({
           >
             <Plus size={14} /> New location…
           </button>
-        </div>
+        </PopoverLayer>
       </>,
       document.body,
     );

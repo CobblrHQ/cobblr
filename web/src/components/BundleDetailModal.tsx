@@ -29,7 +29,7 @@ import {
 } from "../lib/featured-bundles";
 import { diffManifests, type Manifestish } from "../lib/bundle-diff";
 import { recordSetup } from "../lib/setupCards";
-import { downloadBlob, Modal, useToast, useConfirm } from "@cobblr/platform-web";
+import { changeWorkspaceShape, downloadBlob, Modal, useToast, useConfirm } from "@cobblr/platform-web";
 import { installHeadline, installChanges } from "../lib/installSummary";
 import { featureChangeToast } from "../lib/featureChangeToast";
 import type { BundleInstallSummary } from "../lib/api";
@@ -170,10 +170,9 @@ export function BundleDetailModal(props: Props) {
     enabled: open && !!histExternalId && (props.mode === "installed" || isUpdate),
   });
   const revertMut = useMutation({
-    mutationFn: (snapshotId: string) => api.bundleRevert(slug, snapshotId),
+    mutationFn: (snapshotId: string) => changeWorkspaceShape(qc, slug, () => api.bundleRevert(slug, snapshotId)),
     onSuccess: (r) => {
       toast.success(`Restored ${r.bundle.name} v${r.bundle.version}.`);
-      void qc.invalidateQueries();
       onClose();
     },
     onError: (e) =>
@@ -235,14 +234,9 @@ export function BundleDetailModal(props: Props) {
   const uninstall = useMutation({
     // The confirmation above this names the instances and their items it
     // deletes; this is the one caller that asks for the data to go.
-    mutationFn: () => api.uninstallBundle(slug, uninstallId!, { deleteData: true }),
+    mutationFn: () => changeWorkspaceShape(qc, slug, () => api.uninstallBundle(slug, uninstallId!, { deleteData: true })),
     onSuccess: () => {
       toast.success(`Uninstalled.`);
-      void qc.invalidateQueries({ queryKey: ["bundles", slug] });
-      void qc.invalidateQueries({ queryKey: ["bindings", slug] });
-      void qc.invalidateQueries({ queryKey: ["field-defs", slug] });
-      void qc.invalidateQueries({ queryKey: ["instances", slug] });
-      void qc.invalidateQueries({ queryKey: ["entity-kind-overrides", slug] });
       onClose();
     },
     onError: (e: unknown) => {
@@ -252,24 +246,13 @@ export function BundleDetailModal(props: Props) {
 
   const install = useMutation({
     mutationFn: (vars: { manifest: PlatformBundleManifest; confirm: boolean; enabledFeatures?: string[]; takeTheirs?: Array<{ entity_kind: string; name: string }> }) =>
-      api.installBundle(slug, vars.manifest, vars.confirm, vars.enabledFeatures, vars.takeTheirs),
+      changeWorkspaceShape(qc, slug, () => api.installBundle(slug, vars.manifest, vars.confirm, vars.enabledFeatures, vars.takeTheirs)),
     onSuccess: (r) => {
       toast.success(
         isUpdate
           ? `Updated ${r.bundle.name} to v${r.bundle.version}.`
           : `Installed ${r.bundle.name} v${r.bundle.version} — ${r.applied.wires} wire(s), ${r.applied.field_defs} field def(s).`,
       );
-      void qc.invalidateQueries({ queryKey: ["bundles", slug] });
-      void qc.invalidateQueries({ queryKey: ["bindings", slug] });
-      void qc.invalidateQueries({ queryKey: ["field-defs", slug] });
-      // The install may have enabled new modules — refresh the nav so they
-      // appear (and so the "what's next" links land on a populated sidebar).
-      void qc.invalidateQueries({ queryKey: ["org-modules", slug] });
-      // …and may have created module instances (Yarn/Hooks/Designs) — refresh
-      // the instances + their nav overrides so the new entries + item_noun
-      // ("New yarn") show without a full reload.
-      void qc.invalidateQueries({ queryKey: ["instances", slug] });
-      void qc.invalidateQueries({ queryKey: ["entity-kind-overrides", slug] });
       // Persist a "where to start" card to the dashboard so it's re-findable
       // after the user navigates away (the author: "I could never find it again").
       // Skip on an UPDATE — the user already onboarded; re-pinning the card +
@@ -316,16 +299,10 @@ export function BundleDetailModal(props: Props) {
   const saveFeatures = useMutation({
     mutationFn: async () => {
       if (props.mode !== "installed" || !detail.data) throw new Error("bundle not loaded");
-      return api.setBundleFeatures(slug, props.bundle.id, [...selectedFeatures]);
+      return changeWorkspaceShape(qc, slug, () => api.setBundleFeatures(slug, props.bundle.id, [...selectedFeatures]));
     },
     onSuccess: (r) => {
       toast.success(featureChangeToast(r, detail.data?.bundle.manifest.features ?? []));
-      void qc.invalidateQueries({ queryKey: ["bundles", slug] });
-      void qc.invalidateQueries({ queryKey: ["bindings", slug] });
-      void qc.invalidateQueries({ queryKey: ["field-defs", slug] });
-      void qc.invalidateQueries({ queryKey: ["org-modules", slug] });
-      void qc.invalidateQueries({ queryKey: ["instances", slug] });
-      void qc.invalidateQueries({ queryKey: ["entity-kind-overrides", slug] });
       onClose();
     },
     onError: (e: unknown) => toast.error(e instanceof ApiError ? e.message : "Couldn't update features."),
@@ -531,7 +508,7 @@ export function BundleDetailModal(props: Props) {
     const installed = await api.listBundles(slug).catch(() => ({ items: [] }));
     const toRemove = installed.items.filter((b) => bundleNames.includes(b.name));
     for (const b of toRemove) {
-      await api.uninstallBundle(slug, b.id).catch(() => {});
+      await changeWorkspaceShape(qc, slug, () => api.uninstallBundle(slug, b.id)).catch(() => {});
     }
     return true;
   }

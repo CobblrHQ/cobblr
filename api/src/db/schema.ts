@@ -704,6 +704,9 @@ export interface EntityActionsTable {
    *  a wire on an event). */
   user_invokable: Generated<boolean>;
   internal: Generated<boolean>;
+  /** Fired by an event and nothing else; never offered to the assistant.
+   *  Not the button flag above. */
+  wire_only: Generated<boolean>;
   /** Machine-readable arg shape { name: { label, type } } from the action
    *  manifest; null = none. Drives the wire composer's per-arg fields. */
   args_schema: unknown | null;

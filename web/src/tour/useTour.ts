@@ -1,6 +1,7 @@
 // Drives the guided tour: auto-opens ONCE PER PERSON, and only on a workspace
 // that is still empty (the first-run hero state) - an established workspace
-// never spontaneously starts coaching. Replayable any time via startTour()
+// never spontaneously starts coaching, and a no-account sandbox never does
+// either (see the auto-open effect). Replayable any time via startTour()
 // (the account-menu "Take the tour").
 //
 // SEEN-STATE LIVES ON THE ACCOUNT. localStorage is a cache for the first paint,
@@ -20,6 +21,7 @@
 // over without being shown anything.
 
 import { useEffect, useRef, useState } from "react";
+import { isSandboxSession } from "../lib/sandbox-session";
 
 const LEGACY_SEEN_KEY = "cobblr.tour.dashboard.v1";
 const seenKey = (userId: string | null) => `cobblr.tour.dashboard.v1:${userId ?? "anon"}`;
@@ -76,6 +78,12 @@ export function useTour(
     // has already taken it, on the screen where that is most irritating.
     if (seenAt === undefined || seenAt !== null) return;
     if (localSeen(userId)) return;
+    // Never in a sandbox. Its first screen is a filled workspace on purpose
+    // and its account is disposable, so the only way it ever qualified was at
+    // the END: the deleted workspace's reads failing, the dashboard reading
+    // that as empty, and the welcome card opening over a dead page
+    // (2026-09-14). The replay door below stays open there.
+    if (isSandboxSession()) return;
     const id = window.setTimeout(() => setOpen(true), 600);
     return () => window.clearTimeout(id);
   }, [enabled, userId, seenAt]);

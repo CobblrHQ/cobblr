@@ -15,6 +15,12 @@
 //
 // Deliberately narrow: only `fixed inset-0` (a full-screen cover) at overlay depth.
 // A positioned popover or a scrim inside an already-flagged overlay is not this.
+//
+// Since #3016 a full-screen cover is normally an <OverlayLayer> from platform-web,
+// which raises the flag itself (lint:fixed-chrome refuses the bare class). The
+// bare spelling survives only in the files that lint allows, and this lint still
+// judges them. OVERLAY_LAYER_CLASS, the class for a cover that must be another
+// tag, raises nothing: a file using it is judged like a bare `fixed inset-0`.
 
 import { readFileSync, readdirSync, statSync } from "node:fs";
 import { join, dirname, relative } from "node:path";
@@ -70,8 +76,13 @@ for (const root of ROOTS) {
     if (EXEMPT.test(file)) continue;
     if (KNOWN_GAPS.has(relative(ROOT, file))) continue;
     const src = readFileSync(file, "utf8");
-    if (!src.includes("fixed inset-0")) continue;
+    if (!src.includes("fixed inset-0") && !src.includes("OVERLAY_LAYER_CLASS")) continue;
     if (RAISES.test(src)) continue;
+    if (src.includes("OVERLAY_LAYER_CLASS")) {
+      const line = src.slice(0, src.indexOf("OVERLAY_LAYER_CLASS")).split("\n").length;
+      violations.push(`  ${relative(ROOT, file)}:${line}  OVERLAY_LAYER_CLASS without the flag (render <OverlayLayer>, or <OverlayFlag /> inside)`);
+      continue;
+    }
 
     // Find each `fixed inset-0 …` class run and read its z-index.
     for (const m of src.matchAll(/[^"'`]*fixed inset-0[^"'`]*/g)) {

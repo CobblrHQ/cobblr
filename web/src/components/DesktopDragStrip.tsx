@@ -18,6 +18,7 @@
 // connections.
 
 import { useEffect, useState } from "react";
+import { FloatingChrome } from "@cobblr/platform-web";
 
 /** The band the window controls sit in, matching the padding
  *  `html.desktop-app .desktop-titlebar-pad` adds to the sidebar head. */
@@ -61,20 +62,24 @@ export function DesktopDragStrip({ pinned = false, topBar = false }: { pinned?: 
           so the drag region can simply live there permanently. Nothing else is
           needed: the bar covers the full width. */}
       {topBar && (
-        <div
+        <FloatingChrome
+          anchor="top"
+          yields={false}
           aria-hidden
           data-tauri-drag-region
-          className="fixed top-0 inset-x-0 z-50"
+          className="z-50"
           style={{ height: SIDEBAR_BAND_PX }}
         />
       )}
       {/* Over the sidebar head. Live even while scrolled, because a PINNED
           sidebar is sticky and never passes anything under this band. */}
       {!topBar && pinned && (
-        <div
+        <FloatingChrome
+          anchor="top"
+          yields={false}
           aria-hidden
           data-tauri-drag-region
-          className="hidden md:block fixed top-0 left-0 w-56 z-50"
+          className="hidden md:block right-auto w-56 z-50"
           style={{ height: SIDEBAR_BAND_PX }}
         />
       )}
@@ -82,10 +87,12 @@ export function DesktopDragStrip({ pinned = false, topBar = false }: { pinned?: 
           Only while unscrolled. Without a pinned sidebar there is no safe strip
           at all once scrolled, so the whole band goes with it. */}
       {!topBar && atTop && (
-        <div
+        <FloatingChrome
+          anchor="top"
+          yields={false}
           aria-hidden
           data-tauri-drag-region
-          className={`hidden md:block fixed top-0 right-0 z-50 ${pinned ? "left-56" : "left-0"}`}
+          className={`hidden md:block z-50 ${pinned ? "left-56" : "left-0"}`}
           style={{ height: CONTENT_BAND_PX }}
         />
       )}

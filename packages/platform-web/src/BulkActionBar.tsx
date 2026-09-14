@@ -19,6 +19,7 @@
 import type { ReactNode } from "react";
 import { MessageSquare, X } from "lucide-react";
 import { usePlatformWeb } from "./context";
+import { FloatingChrome } from "./FloatingChrome";
 
 interface Props {
   count: number;
@@ -45,7 +46,11 @@ export function BulkActionBar({ count, actions, onClear, onAskCobb }: Props) {
        put the X inside the scrolling region, so on a narrow screen the one
        control that gets you out could scroll off the edge. The count and the X
        are pinned; only the actions between them slide. */
-    <div className="fixed bottom-20 sm:bottom-4 left-1/2 -translate-x-1/2 z-50 flex items-center gap-2 sm:gap-3 px-3 sm:px-4 py-2 rounded-full border border-line dark:border-slate-700 bg-surface dark:bg-slate-900 shadow-lg whitespace-nowrap max-w-[calc(100vw-1.5rem)]">
+    <FloatingChrome
+      anchor="corner"
+      lift="var(--bulk-bar-lift, 5rem)"
+      className="left-1/2 -translate-x-1/2 z-50 sm:[--bulk-bar-lift:1rem] flex items-center gap-2 sm:gap-3 px-3 sm:px-4 py-2 rounded-full border border-line dark:border-slate-700 bg-surface dark:bg-slate-900 shadow-lg whitespace-nowrap max-w-[calc(100vw-1.5rem)]"
+    >
       {/* Just the number on a phone. "2 selected" spends a third of the bar
           saying what the checkboxes above already showed you; the number beside
           the actions is unambiguous. */}
@@ -80,6 +85,6 @@ export function BulkActionBar({ count, actions, onClear, onAskCobb }: Props) {
       >
         <X size={14} />
       </button>
-    </div>
+    </FloatingChrome>
   );
 }

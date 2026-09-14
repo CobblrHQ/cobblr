@@ -13,7 +13,7 @@ import { defineModule } from "@cobblr/platform-contract";
 
 export default defineModule({
   name: "inventory",
-  version: "0.21.24",
+  version: "0.21.25",
   displayName: "Inventory",
   description:
     "Parts, locations, categories, stock tracking, polymorphic allocations. The generalised toolkit you'd otherwise Frankenstein from a spreadsheet.",
@@ -184,7 +184,7 @@ export default defineModule({
         label: "Use one",
         face: "stock",
         description:
-          "Knock a single unit off a part's on-hand qty: the zero-friction 'I took one out' tap. Binary, no number entry (that's Adjust stock). Decrements through the same path as adjust-stock, so it writes the usage ledger and trips 'running low → shopping list' when it crosses the reorder threshold. partId falls back to the targeted entity.",
+          "Knock a single unit off a part's on-hand qty: the zero-friction 'I took one out' tap, for ONE of several. Binary, no number entry (that's Adjust stock). Decrements through the same path as adjust-stock, so it writes the usage ledger and the low-stock automation still fires. Not for marking or tagging a thing as low (that is core-tags:tag-record), and not for the last one (that is Used up).",
         appliesTo: { kinds: ["inventory:part"] },
         invokeHandler: "inventory.use-one",
         userInvokable: true,

@@ -33,6 +33,7 @@ import { isInvoluntaryFold, layoutExpressed, shouldOfferSidebar } from "../lib/n
 import { NavCountBadge } from "./NavCountBadge";
 import { useNavBadges } from "./useNavBadges";
 import { useNavModules, HEADING_PREFIX, NAVGROUP_PREFIX, stripNavStem, navTargetFor, surfaceTops } from "./useNavModules";
+import { PopoverLayer } from "@cobblr/platform-web";
 
 export function ModuleNav({ quiet = false }: {
   /** Another surface is already asking the layout question (the tour's
@@ -372,11 +373,11 @@ function MoreMenu({
         />
       </button>
       {open && pos && createPortal(
-        <div
+        <PopoverLayer
           ref={popoverRef}
           onMouseEnter={stayOpen}
           onMouseLeave={hoverClose}
-          style={{ position: "fixed", left: Math.max(8, pos.left), top: pos.top }}
+          style={{ left: Math.max(8, pos.left), top: pos.top }}
           className="w-64 rounded-xl border border-line dark:border-slate-700 bg-surface dark:bg-slate-900 shadow-lg z-[60] max-h-[70vh] overflow-y-auto"
         >
           <ul className="py-1">
@@ -434,20 +435,20 @@ function MoreMenu({
               </button>
             </li>
           </ul>
-        </div>,
+        </PopoverLayer>,
         document.body,
       )}
       {/* The one-time offer: a small card, not a modal, anchored where the
           fold just happened. Both answers write a layout to the account, so
           the dismissal is the record and nothing new is stored. */}
       {offerSidebar && pos && createPortal(
-        <div
+        <PopoverLayer
           role="dialog"
           aria-label="Switch to the sidebar?"
           data-nav-graduation-offer
           // Right edge on the trigger, like the menu; wider than the menu so
           // the two buttons sit on one line each (they wrapped at w-64).
-          style={{ position: "fixed", left: Math.max(8, pos.left + 256 - 304), top: pos.top + 6 }}
+          style={{ left: Math.max(8, pos.left + 256 - 304), top: pos.top + 6 }}
           className="w-[304px] rounded-xl border border-cobble-300 dark:border-cobble-700 bg-surface dark:bg-slate-900 shadow-lg z-[59] p-3 space-y-2"
         >
           <p className="text-[13px] text-content dark:text-mortar-100 leading-snug">
@@ -474,7 +475,7 @@ function MoreMenu({
           <p className="text-[11px] text-faint dark:text-slate-500 leading-snug">
             Change it anytime in Your account → Appearance.
           </p>
-        </div>,
+        </PopoverLayer>,
         document.body,
       )}
     </div>
@@ -603,11 +604,11 @@ function ModuleGroupChip({
         />
       </button>
       {open && pos && createPortal(
-        <div
+        <PopoverLayer
           ref={popoverRef}
           onMouseEnter={stayOpen}
           onMouseLeave={hoverClose}
-          style={{ position: "fixed", left: pos.left, top: pos.top }}
+          style={{ left: pos.left, top: pos.top }}
           className="w-64 rounded-xl border border-line dark:border-slate-700 bg-surface dark:bg-slate-900 shadow-lg z-[60] overflow-hidden"
         >
           <div className="px-3 py-2 border-b border-line dark:border-slate-700 text-[10px] font-mono uppercase tracking-widest text-muted dark:text-slate-400">
@@ -674,7 +675,7 @@ function ModuleGroupChip({
             Manage categories…
           </button>
           )}
-        </div>,
+        </PopoverLayer>,
         document.body,
       )}
     </div>

@@ -24,6 +24,9 @@
 import { sql, type Kysely } from "kysely";
 import { platform } from "@cobblr/platform-contract";
 import { refreshCatalogImageByName } from "./enrich-photo.js";
+import { startRetrimSweeper } from "./retrim-stored-pictures.js";
+import { startSplitSeriesHealer } from "./split-series-heal.js";
+import { startRerouteSweeper } from "./reroute-keyword-rows.js";
 
 let intervalHandle: ReturnType<typeof setInterval> | null = null;
 const TICK_MS = 20 * 60 * 1000;
@@ -94,6 +97,17 @@ export function startPicturesSweeper(): void {
   intervalHandle = setInterval(safeTick, TICK_MS);
   setTimeout(safeTick, 90_000); // after boot settles, behind the other sweeps
   console.log(`[core-scan] pictures sweeper started — every ${TICK_MS / 60_000} min`);
+  // The pictures already stored: any that reached the store untrimmed are
+  // trimmed where they sit, on their own cadence (a page a minute while
+  // there is a backlog, so an inbox of a hundred heals in minutes), never
+  // on the engine-asking tick above (retrim-stored-pictures.ts).
+  startRetrimSweeper();
+  // The split children that carry the group photo's series heal on their
+  // own cadence too (split-series-heal.ts, #3013).
+  startSplitSeriesHealer();
+  // The rows the keyword tier routed before its rule changed heal too
+  // (reroute-keyword-rows.ts, #3019).
+  startRerouteSweeper();
 }
 
 async function safeTick(): Promise<void> {

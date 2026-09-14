@@ -74,6 +74,10 @@ interface Props {
    *  rendered as an assistant turn, not words typed into the user's box. Write it
    *  in Cobb's voice, using the screen's real vocabulary. */
   cobb?: { opener: string; label?: string };
+  /** No padding around the body: the content brings its own, so it can pin a
+   *  header and a footer of its own to the scrolling edges (a full-screen
+   *  item sheet on a phone). */
+  flush?: boolean;
 }
 
 /** Pick by what the body HOLDS, not by how important the dialog feels.
@@ -98,7 +102,7 @@ const SIZE: Record<NonNullable<Props["size"]>, string> = {
   content: "max-w-4xl",
 };
 
-export function Modal({ open, onClose, title, subtitle, children, size = "md", destructive, dismissOnBackdrop = true, inline = false, chromeless = false, fillHeight = false, cobb, footer }: Props) {
+export function Modal({ open, onClose, title, subtitle, children, size = "md", destructive, dismissOnBackdrop = true, inline = false, chromeless = false, fillHeight = false, cobb, footer, flush = false }: Props) {
   // "Dirty" = the user has entered/changed something inside this modal. Tracked
   // by listening (capture) for input/change events bubbling from any descendant
   // field — so we never have to know in advance whether a modal is a form. Only
@@ -233,7 +237,7 @@ export function Modal({ open, onClose, title, subtitle, children, size = "md", d
             </button>
           </div>
         )}
-        <div className="p-5 flex-1 min-h-0 overflow-y-auto">{children}</div>
+        <div className={(flush ? "" : "p-5 ") + "flex-1 min-h-0 overflow-y-auto"}>{children}</div>
         {footer && (
           <div className="shrink-0 border-t border-line dark:border-slate-700 px-5 py-2.5 bg-surface dark:bg-slate-900">
             {footer}

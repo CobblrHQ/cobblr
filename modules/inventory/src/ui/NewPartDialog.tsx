@@ -22,6 +22,7 @@ import {
   type FieldType,
   type FieldRendererId,
   usePlatformWeb,
+  changeWorkspaceShape,
 } from "@cobblr/platform-web";
 import { useInventory } from "./context";
 import { useFieldPresentation } from "./useFieldPresentation";
@@ -367,7 +368,6 @@ export function NewPartDialog({ onClose, onCreated, seed }: NewPartDialogProps) 
               <CustomFieldInput
                 def={f}
                 value={meta[f.name]}
-                entityKind={entityKind}
                 onChange={(v) => setMeta((m) => ({ ...m, [f.name]: v }))}
               />
             </div>
@@ -480,12 +480,10 @@ function CustomFieldInput({
   def,
   value,
   onChange,
-  entityKind,
 }: {
   def: InvFieldDef;
   value: unknown;
   onChange: (v: unknown) => void;
-  entityKind: string;
 }) {
   const s = value == null ? "" : String(value);
   // The text as typed, beside the typed value the form holds: a number field
@@ -554,7 +552,7 @@ function CustomFieldInput({
   }
 
   if (control === "choice") {
-    return <ChoiceInput def={def} value={s} onChange={onChange} entityKind={entityKind} help={help} />;
+    return <ChoiceInput def={def} value={s} onChange={onChange} help={help} />;
   }
   // Rich text — the same Markdown editor the detail panel uses.
   if (control === "markdown") {
@@ -607,13 +605,11 @@ function ChoiceInput({
   def,
   value,
   onChange,
-  entityKind,
   help,
 }: {
   def: InvFieldDef;
   value: string;
   onChange: (v: unknown) => void;
-  entityKind: string;
   help: ReactNode;
 }) {
   const { api, orgSlug } = useInventory();
@@ -635,8 +631,9 @@ function ChoiceInput({
     setBusy(true);
     setErr(null);
     try {
-      await api.updateFieldDef(def.id, { choices: [...(def.choices ?? []), v] });
-      await qc.invalidateQueries({ queryKey: ["platform-field-defs", orgSlug, entityKind] });
+      // Settled: the select below must list the new choice before it is
+      // selected, or it shows blank for a frame.
+      await changeWorkspaceShape(qc, orgSlug, () => api.updateFieldDef(def.id, { choices: [...(def.choices ?? []), v] }), { settled: true });
       onChange(v);
       setAdding(false);
       setDraft("");

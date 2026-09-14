@@ -25,9 +25,10 @@ import { bearer, sessionUser, tenantContext, tenantDb, type CoreScanDB } from ".
  *  inside one, so a failure rolls the whole import back. */
 type TenantTrx = Transaction<CoreScanDB>;
 import { asyncHandler, requireRole } from "./util.js";
-import { assembleScanMenu, heuristicMatch, type ScanMenuEntry } from "../services/matchmaker.js";
+import { assembleScanMenu, heuristicMatch, perceiveRow, type ScanMenuEntry } from "../services/matchmaker.js";
 import { INTERNAL_API } from "./inbox.js";
 import { assertSafeOutboundUrl } from "../services/enrich.js";
+import { trimCatalogMarginsWithVerdict, type TrimVerdict } from "../services/trim-margins.js";
 import {
   parseCsvImport,
   parseJsonImport,
@@ -281,7 +282,7 @@ async function upsertBatches(
       // would point back at an instance the destination may not reach.
       if (b.document_embedded) {
         try {
-          const fileId = await storeEmbeddedToFile(orgId, b.document_embedded);
+          const { fileId } = await storeEmbeddedToFile(orgId, b.document_embedded, "document");
           await db
             .updateTable("core_scan_batches")
             .set({ source_file_id: fileId })
@@ -302,7 +303,7 @@ async function upsertBatches(
  *  Returns the file id, or throws with a user-facing message. Stores through the
  *  platform files seam (in-process), NOT the HTTP upload route — a fetched photo
  *  is not a user upload, so it must bypass any gate on that route. */
-async function fetchPhotoToFile(orgId: string, url: string): Promise<string> {
+async function fetchPhotoToFile(orgId: string, url: string, role: PhotoRole): Promise<StoredPhoto> {
   // CI/test escape, same convention as the webhook + machine guards: the test
   // suite spins a loopback photo server and CI sets COBBLR_TEST_CALLBACK_HOST.
   const testHost = process.env.COBBLR_TEST_CALLBACK_HOST;
@@ -321,28 +322,52 @@ async function fetchPhotoToFile(orgId: string, url: string): Promise<string> {
   const blob = await res.blob();
   if (blob.size > PHOTO_MAX_BYTES) throw new Error(`photo larger than ${PHOTO_MAX_BYTES / 1024 / 1024}MB cap`);
   const contentType = res.headers.get("content-type") ?? "";
-  const ext = contentType.includes("png") ? "png" : "jpg";
-  const written = await platform().files.write(orgId, new Uint8Array(await blob.arrayBuffer()), {
+  return storePhoto(orgId, new Uint8Array(await blob.arrayBuffer()), blob.type || contentType || "image/jpeg", role);
+}
+
+/** A photo's two roles take two treatments. The IDENTIFY photo is the
+ *  person's own picture of the thing and is stored as it is. The DISPLAY
+ *  picture is a catalog shot, and a catalog shot reaching the store through
+ *  any door gets the margin trim every other catalog shot gets
+ *  (downloadCatalogImage): the import used to store it verbatim, so a row
+ *  mirrored from another workspace kept a product adrift in a white field
+ *  while the same code scanned here was trimmed (#3002). The verdict rides
+ *  back so the row can say what happened. */
+type PhotoRole = "identify" | "display" | "document";
+interface StoredPhoto {
+  fileId: string;
+  /** What the display trim did; null for the roles that are not trimmed. */
+  trim: TrimVerdict | null;
+}
+
+async function storePhoto(orgId: string, bytes: Uint8Array, mimeType: string, role: PhotoRole): Promise<StoredPhoto> {
+  let out = bytes;
+  let mime = mimeType;
+  let trim: TrimVerdict | null = null;
+  if (role === "display") {
+    const t = await trimCatalogMarginsWithVerdict(bytes);
+    trim = t.verdict;
+    if (t.bytes) {
+      out = t.bytes;
+      mime = "image/jpeg";
+    }
+  }
+  const ext = mime.includes("png") ? "png" : mime.includes("webp") ? "webp" : "jpg";
+  const written = await platform().files.write(orgId, out, {
     filename: `import-${Date.now()}.${ext}`,
-    mimeType: blob.type || contentType || "image/jpeg",
+    mimeType: mime,
   });
   if (!written) throw new Error("file store failed");
-  return written.fileId;
+  return { fileId: written.fileId, trim };
 }
 
 /** Store a baked-in (embed-mode) photo: decode its base64 and hand the bytes to
  *  core-files. NO network — this is the offline / LAN-only import path. */
-async function storeEmbeddedToFile(orgId: string, embed: { mime: string; data: string }): Promise<string> {
+async function storeEmbeddedToFile(orgId: string, embed: { mime: string; data: string }, role: PhotoRole): Promise<StoredPhoto> {
   const bytes = Buffer.from(embed.data, "base64");
   if (bytes.byteLength === 0) throw new Error("embedded photo is empty / not valid base64");
   if (bytes.byteLength > PHOTO_MAX_BYTES) throw new Error(`embedded photo larger than ${PHOTO_MAX_BYTES / 1024 / 1024}MB cap`);
-  const ext = embed.mime.includes("png") ? "png" : embed.mime.includes("webp") ? "webp" : "jpg";
-  const written = await platform().files.write(orgId, new Uint8Array(bytes), {
-    filename: `import-${Date.now()}.${ext}`,
-    mimeType: embed.mime,
-  });
-  if (!written) throw new Error("file store failed");
-  return written.fileId;
+  return storePhoto(orgId, new Uint8Array(bytes), embed.mime, role);
 }
 
 /**
@@ -550,12 +575,13 @@ importRouter.post(
               continue; // bytes already here from a previous sync - keep the file
             }
           }
-          const fileId = await withStorageRetry(() =>
-            embed ? storeEmbeddedToFile(ctx.org.id, embed) : fetchPhotoToFile(ctx.org.id, url!),
+          const stored = await withStorageRetry(() =>
+            embed ? storeEmbeddedToFile(ctx.org.id, embed, role) : fetchPhotoToFile(ctx.org.id, url!, role),
           );
           const slot = photoIds.get(i.row) ?? {};
-          slot[role] = fileId;
+          slot[role] = stored.fileId;
           photoIds.set(i.row, slot);
+          if (stored.trim) i.metadata.catalog_image_trim = stored.trim;
           photosFetched++;
         } catch (e) {
           photosFailed++;
@@ -729,12 +755,16 @@ importRouter.post(
         }
       }
       // The rows as WRITTEN, not the import plan: the plan is a different shape
-      // and does not carry what routing reads.
-      let rows: Array<{ id: string; suggested_name: string | null; barcode_text: string | null; suggested_manufacturer: string | null }> = [];
+      // and does not carry what routing reads. Everything the lookup wrote on
+      // the row rides along (perceiveRow, the same builder a live scan's match
+      // reads): the catalog's category is what routes a seasoning to
+      // Groceries, and routing on the name alone sent two of them to Yarn on
+      // the word "Blend" (#3003).
+      let rows: Array<{ id: string; suggested_name: string | null; barcode_text: string | null; suggested_manufacturer: string | null; suggested_sku: string | null; ai_notes: string | null; scan_area: string | null; suggested_metadata: unknown; suggested_candidates: unknown }> = [];
       try {
         rows = (await db
           .selectFrom("core_scan_inbox_items")
-          .select(["id", "suggested_name", "barcode_text", "suggested_manufacturer"])
+          .select(["id", "suggested_name", "barcode_text", "suggested_manufacturer", "suggested_sku", "ai_notes", "scan_area", "suggested_metadata", "suggested_candidates"])
           .where("id", "in", createdIds)
           .execute()) as typeof rows;
       } catch (err) {
@@ -743,16 +773,15 @@ importRouter.post(
       for (const row of rows) {
         const id = row.id;
         let candidates: unknown[] = [];
-        if (menu.length > 0 && row.suggested_name) {
+        // A Cobblr export carried the source's own routing (x_cobblr), restored
+        // at insert: the model's fields, a person's answers, the stamps that
+        // say which is which. The heuristic fills only a row that arrived
+        // bare; it used to route every row and threw all of that away, so a
+        // twin never showed what its source did (#3008).
+        const restored = Array.isArray(row.suggested_candidates) && row.suggested_candidates.length > 0;
+        if (!restored && menu.length > 0 && row.suggested_name) {
           try {
-            candidates = heuristicMatch(
-              {
-                name: row.suggested_name ?? "",
-                ...(row.barcode_text ? { barcode: row.barcode_text } : {}),
-                ...(row.suggested_manufacturer ? { manufacturer: row.suggested_manufacturer } : {}),
-              },
-              menu,
-            );
+            candidates = heuristicMatch(perceiveRow(row), menu);
           } catch (err) {
             console.error("[core-scan] import: routing threw for one row:", (err as Error).message);
           }

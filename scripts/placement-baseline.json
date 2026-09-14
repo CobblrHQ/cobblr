@@ -67,7 +67,6 @@
   "lint:field-type-enum",
   "lint:field-type-sql",
   "lint:fixtures-tracked",
-  "lint:floating-chrome",
   "lint:forgejo-token",
   "lint:generated-artifact-paths",
   "lint:glob-exclude",

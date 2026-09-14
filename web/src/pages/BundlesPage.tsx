@@ -14,7 +14,7 @@ import { type FeaturedBundle } from "../lib/featured-bundles";
 import { useBundleCatalog } from "../lib/useBundleCatalog";
 import { BundleDetailModal } from "../components/BundleDetailModal";
 import { RegistryItemModal, type RegistryItem } from "../components/RegistryItemModal";
-import { downloadBlob, Modal, useConfirm, useToast, usePageTitle } from "@cobblr/platform-web";
+import { changeWorkspaceShape, downloadBlob, Modal, useConfirm, useToast, usePageTitle } from "@cobblr/platform-web";
 import { ConfigHeaderActions } from "../components/ConfigPageHeader";
 
 // Third-party source index URLs (the HACS "add a custom repository" list).
@@ -126,7 +126,7 @@ export function BundlesPage() {
 
   const install = useMutation({
     mutationFn: (manifest: PlatformBundleManifest) =>
-      api.installBundle(slug, manifest),
+      changeWorkspaceShape(qc, slug, () => api.installBundle(slug, manifest)),
     onSuccess: (r) => {
       setErr(null);
       setOk(null);
@@ -134,9 +134,6 @@ export function BundlesPage() {
         `Installed ${r.bundle.name} v${r.bundle.version} — ${r.applied.wires} wire(s), ${r.applied.field_defs} field def(s).`,
       );
       setPaste("");
-      void qc.invalidateQueries({ queryKey: ["bundles", slug] });
-      void qc.invalidateQueries({ queryKey: ["bindings", slug] });
-      void qc.invalidateQueries({ queryKey: ["field-defs", slug] });
     },
     onError: (e: unknown) => {
       setOk(null);
@@ -165,12 +162,9 @@ export function BundlesPage() {
   // Direct remove from an installed-bundle row (was only reachable by opening
   // the detail modal — users couldn't find it).
   const uninstall = useMutation({
-    mutationFn: (id: string) => api.uninstallBundle(slug, id),
+    mutationFn: (id: string) => changeWorkspaceShape(qc, slug, () => api.uninstallBundle(slug, id)),
     onSuccess: () => {
       toast.success("Removed.");
-      void qc.invalidateQueries({ queryKey: ["bundles", slug] });
-      void qc.invalidateQueries({ queryKey: ["field-defs", slug] });
-      void qc.invalidateQueries({ queryKey: ["bindings", slug] });
     },
     onError: (e: unknown) => toast.error(e instanceof ApiError ? e.message : "Couldn't remove."),
   });

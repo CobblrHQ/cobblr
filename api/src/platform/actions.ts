@@ -438,6 +438,7 @@ function rowToActionRecord(row: {
   invoke_handler: string | null;
   user_invokable?: boolean;
   internal?: boolean;
+  wire_only?: boolean;
   args_schema?: unknown;
   version: string;
   position?: number;
@@ -457,6 +458,7 @@ function rowToActionRecord(row: {
     invoke_handler: row.invoke_handler,
     user_invokable: row.user_invokable ?? true,
     internal: row.internal ?? false,
+    wire_only: row.wire_only ?? false,
     args_schema:
       (row.args_schema as EntityActionRecord["args_schema"]) ?? null,
     version: row.version,

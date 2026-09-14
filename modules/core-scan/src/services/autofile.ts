@@ -16,6 +16,12 @@
 // record is worse than doing nothing, because it silently inflates the stock of
 // something you did not buy and there is no error anywhere to notice. Two
 // plausible matches means the item stays pending for a person to settle.
+//
+// And a row the pipeline itself flagged for review is never filed by a sweep,
+// however good its match: the flag exists to hold that commit until a person
+// has looked (the platform contract's readiness rule, scan-triage.ts). The
+// plan lists it under "left for you" with the reason, never as "filed as new"
+// (#2980).
 
 /** What findTracked gives back, narrowed to what the decision needs. */
 export interface TrackedCandidate {
@@ -55,6 +61,9 @@ export interface AutofileItem {
    *  Filing into a table that does not exist yet means installing it first,
    *  and that changes what the workspace is made of. */
   canInstall?: boolean;
+  /** Why the row still needs a person (scanReviewReason), or null when
+   *  nothing is flagged. Set, the row is left for them whatever else matched. */
+  review?: string | null;
 }
 
 /** One line of the plan a person reads before confirming. `name` is the
@@ -76,6 +85,13 @@ export type AutofilePlan =
 export function planItem(item: AutofileItem): AutofilePlan {
   const qty = Math.max(1, Math.trunc(Number(item.quantity ?? 1)));
   const name = item.suggested_name?.trim() || null;
+
+  // Flagged for review: a person looks before anything commits, and the
+  // reason is the line they read. Before the matches on purpose; a decisive
+  // barcode on a row whose crop failed is still a row somebody asked to see.
+  if (item.review) {
+    return { action: "skip", itemId: item.id, name, why: item.review };
+  }
 
   // A barcode is the product saying what it is. One match is decisive.
   if (item.barcodeMatches.length === 1) {

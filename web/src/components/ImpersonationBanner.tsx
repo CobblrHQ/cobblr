@@ -15,7 +15,7 @@ import { createPortal } from "react-dom";
 import { ShieldAlert, Eye, Pencil, X } from "lucide-react";
 import { api } from "../lib/api";
 import { useImpersonation, setImpersonationMode, clearImpersonation } from "../lib/impersonation";
-import { OverlayFlag } from "@cobblr/platform-web";
+import { BackdropLayer, FloatingChrome, OverlayLayer } from "@cobblr/platform-web";
 
 const BAR_H = 36;
 
@@ -92,9 +92,14 @@ export function ImpersonationBanner() {
 
   return createPortal(
     <>
-      <div aria-hidden className={`pointer-events-none fixed inset-0 z-[2000] ring-[3px] ring-inset ${ring}`} />
-      <div
-        className={`fixed top-0 inset-x-0 z-[2001] flex items-center gap-2 px-3 ${accent} text-white text-[13px] font-medium shadow`}
+      {/* The frame draws a ring round the whole window and catches nothing;
+          it is not an overlay (it must not hide the chrome) and not chrome. */}
+      <BackdropLayer aria-hidden className={`pointer-events-none z-[2000] ring-[3px] ring-inset ${ring}`} />
+      <FloatingChrome
+        inPlace
+        anchor="top"
+        yields={false}
+        className={`z-[2001] flex items-center gap-2 px-3 ${accent} text-white text-[13px] font-medium shadow`}
         style={{ height: BAR_H }}
       >
         <ShieldAlert size={15} className="shrink-0" />
@@ -128,14 +133,13 @@ export function ImpersonationBanner() {
         >
           <X size={13} /> Exit
         </button>
-      </div>
+      </FloatingChrome>
 
       {confirmWrite && (
-        <div
-          className="fixed inset-0 z-[2002] flex items-center justify-center bg-black/50 p-4"
+        <OverlayLayer
+          className="z-[2002] flex items-center justify-center bg-black/50 p-4"
           onClick={() => setConfirmWrite(false)}
         >
-          <OverlayFlag />
           <div
             className="w-full max-w-sm rounded-xl bg-white dark:bg-slate-900 p-5 shadow-xl"
             onClick={(e) => e.stopPropagation()}
@@ -163,7 +167,7 @@ export function ImpersonationBanner() {
               </button>
             </div>
           </div>
-        </div>
+        </OverlayLayer>
       )}
     </>,
     document.body,

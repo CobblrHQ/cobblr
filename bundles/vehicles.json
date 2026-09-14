@@ -2,11 +2,11 @@
   "manifest": {
     "id": "cobblr.flagship.vehicles",
     "name": "Vehicles",
-    "version": "0.4.1",
+    "version": "0.4.2",
     "description": "Your vehicles as their own table - make/model/year, VIN, mileage, plate - with service logs (oil, tires, brakes) and next-due dates on your calendar. Replaces a glovebox folder of receipts and a sticky note on the windshield.",
     "author": "Cobblr",
     "released_at": "2026-07-13",
-    "changelog": "Renamed to Vehicles and given its OWN table (an assets instance), not generic Assets with extra columns - its own nav entry, a “New vehicle” button, and only the fields a vehicle needs (VIN, make, model, year, trim, mileage, fuel, color). Service logs come from core-maintenance; scan a VIN and it fills the whole record.",
+    "changelog": "The licence plate is a vehicle's identity, like its VIN: two scans with different plates are never taken for one car, and a typed plate finds the car you already have. Earlier changes below.: Renamed to Vehicles and given its OWN table (an assets instance), not generic Assets with extra columns - its own nav entry, a “New vehicle” button, and only the fields a vehicle needs (VIN, make, model, year, trim, mileage, fuel, color). Service logs come from core-maintenance; scan a VIN and it fills the whole record.",
     "requires": [
       {
         "module": "assets"
@@ -65,7 +65,8 @@
             "name": "license_plate",
             "display_label": "License plate",
             "type": "text",
-            "position": 3
+            "position": 3,
+            "field_role": "identifier"
           },
           {
             "entity_kind": "assets:asset",

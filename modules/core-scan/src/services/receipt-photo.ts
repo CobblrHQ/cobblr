@@ -135,7 +135,7 @@ const INTERNAL_API = `http://127.0.0.1:${process.env.API_PORT ?? 4000}`;
 
 /** The workspace slug, plus a member to attribute the capture to when the
  *  scanning user is not in scope (a detached run). Highest role wins. */
-async function workspaceIdentity(orgId: string): Promise<{ userId: string; slug: string } | null> {
+export async function workspaceIdentity(orgId: string): Promise<{ userId: string; slug: string } | null> {
   const meta = platform().db.meta as unknown as {
     selectFrom: (t: string) => {
       select: (cols: string[]) => {

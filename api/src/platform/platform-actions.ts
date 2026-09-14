@@ -79,7 +79,7 @@ export const PLATFORM_ACTIONS: PlatformActionDecl[] = [
     min_role: "grantable",
     label: "Add a field",
     description:
-      "Add a custom field to one kind of record (e.g. inventory:part), or to a whole class of them with a trait scope (e.g. @physical puts it on everything physical). Types: text (choices makes it a dropdown), number (with a unit), date, boolean, relation (needs ref_kind: the kind it points at). Runs on the workspace, not a record. Check the kind's existing fields with list_record_kinds first. Fields cannot be edited or deleted this way, only added.",
+      "Add ONE custom field to one kind of record (e.g. inventory:part), or to a whole class of them with a trait scope (e.g. @physical puts it on everything physical: 'track a colour on every physical thing' is this action with entity_kind @physical). Types: text (choices makes it a dropdown), number (with a unit), date, boolean, relation (needs ref_kind: the kind it points at). Runs on the workspace, not a record. Check the kind's existing fields with list_record_kinds first. Fields cannot be edited or deleted this way, only added. (A named SET of fields the workspace already defines, like provenance, is platform:set-field-preset; a new field is never a preset.)",
     icon: "list-plus",
     scope: "workspace",
     invoke_handler: "platform.add-field",
@@ -153,7 +153,7 @@ export const PLATFORM_ACTIONS: PlatformActionDecl[] = [
     min_role: "grantable",
     label: "Group fields under a heading",
     description:
-      "Put custom fields under a named heading on a kind's form, creating the heading if it does not exist yet. Name the fields the way they appear on the form; the order you name them is the order they get. Pass rename_to instead of fields to RENAME a heading that is already there. Runs on the workspace, not a record. Fields that apply to a whole class of records cannot be grouped this way, since their layout is not one kind's to set.",
+      "Put custom fields under a named heading on a kind's FORM (the section a record's fields sit under when you open it), creating the heading if it does not exist yet. Name the fields the way they appear on the form; the order you name them is the order they get. Pass rename_to instead of fields to RENAME a heading that is already there ('rename the Buying heading to Purchasing': section Buying, rename_to Purchasing). Runs on the workspace, not a record. Fields that apply to a whole class of records cannot be grouped this way, since their layout is not one kind's to set. (The headings in the SIDEBAR, over the workspace's lists, are core-presentation:group-nav, not this.)",
     icon: "rows-3",
     scope: "workspace",
     invoke_handler: "platform.group-fields",
@@ -400,7 +400,7 @@ export const PLATFORM_ACTIONS: PlatformActionDecl[] = [
     min_role: "grantable",
     label: "Switch a set of fields on or off",
     description:
-      "Switch on a named SET of fields that belong together, in one go, across everything they apply to: 'provenance' puts where each thing came from, when, and what it cost onto every physical thing the workspace tracks, now and in future. Switching it off takes the fields away and KEEPS anything already recorded in them, which comes back if it goes on again. Runs on the workspace, not a record. Ask for the list with get_workspace_setup.",
+      "Switch on a named SET of fields the workspace already defines, in one go, across everything they apply to: 'provenance' puts where each thing came from, when, and what it cost onto every physical thing the workspace tracks, now and in future. Only a set that exists (get_workspace_setup lists them); this never makes a new field, so 'track a colour on everything' is platform:add-field with entity_kind @physical, not a preset called colour. Switching a set off takes the fields away and KEEPS anything already recorded in them, which comes back if it goes on again. Runs on the workspace, not a record.",
     icon: "layers",
     scope: "workspace",
     invoke_handler: "platform.set-field-preset",

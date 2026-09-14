@@ -17,6 +17,7 @@
 import { useQuery } from "@tanstack/react-query";
 import { Link } from "react-router-dom";
 import { Tag } from "lucide-react";
+import { FloatingChrome } from "@cobblr/platform-web";
 import { useLabels } from "./context";
 
 export function BasketWidget({
@@ -58,15 +59,19 @@ export function BasketWidget({
     );
   }
 
+  // A corner piece above the feedback bubble (the same 4.75rem the toasts
+  // keep clear), desktop only: on a phone the queue is a menu row.
   return (
-    <Link
-      to="/labels"
-      className="hidden md:flex fixed bottom-[4.75rem] right-4 z-40 bg-slate-700 text-mortar-50 rounded-full shadow-lg px-4 py-2 items-center gap-2 hover:bg-slate-600 transition"
-      title="Open label queue"
-    >
-      <Tag size={14} />
-      <span className="text-sm font-medium">{total}</span>
-      <span className="text-[10px] font-mono opacity-70">queued</span>
-    </Link>
+    <FloatingChrome anchor="corner" lift="4.75rem" yieldToContent className="hidden md:block right-4 z-40">
+      <Link
+        to="/labels"
+        className="flex bg-slate-700 text-mortar-50 rounded-full shadow-lg px-4 py-2 items-center gap-2 hover:bg-slate-600 transition"
+        title="Open label queue"
+      >
+        <Tag size={14} />
+        <span className="text-sm font-medium">{total}</span>
+        <span className="text-[10px] font-mono opacity-70">queued</span>
+      </Link>
+    </FloatingChrome>
   );
 }

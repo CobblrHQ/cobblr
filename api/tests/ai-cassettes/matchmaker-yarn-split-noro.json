@@ -1,9 +1,9 @@
 {
-  "_about": "The router's answer for the Noro child: a shop the photo cannot support.",
+  "_about": "The router's answer for the Noro child: a colour and a fibre the photo can support, and a shop it cannot.",
   "match": "\"x\":0.458,\"y\":0",
   "rounds": [
     {
-      "content": "{\"candidates\":[{\"module\":\"inventory\",\"instance\":\"yarn\",\"kind\":\"inventory:part\",\"label\":\"Yarn\",\"name\":\"Noro Yarn\",\"confidence\":0.8,\"fields\":{\"vendor\":\"Local yarn shop\"},\"notes\":\"A Noro yarn, likely from a local yarn shop.\"}]}"
+      "content": "{\"candidates\":[{\"module\":\"inventory\",\"instance\":\"yarn\",\"kind\":\"inventory:part\",\"label\":\"Yarn\",\"name\":\"Noro Yarn\",\"confidence\":0.8,\"fields\":{\"color\":\"#2E4A62\",\"fiber\":\"Blend\",\"vendor\":\"Local yarn shop\"},\"notes\":\"A Noro yarn, likely from a local yarn shop.\"}]}"
     }
   ]
 }

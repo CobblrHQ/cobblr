@@ -4,10 +4,14 @@
 // "Unidentified Item" with an Add button (#2918). The server no longer
 // names such a row (adopt-name.ts, guard 0), and this is the card's half:
 // a settled row with no name shows the name field in the title's place,
-// with the reason underneath, and never a one-tap Add. It used to show the
-// field only when the row also had NO candidates, so a nameless row the
-// router had given a table read "Name this barcode:" with nothing to type
-// into and an Inventory pill beside it.
+// with the reason underneath. It used to show the field only when the row
+// also had NO candidates, so a nameless row the router had given a table
+// read "Name this barcode:" with nothing to type into and an Inventory pill
+// beside it.
+//
+// Whether the card may offer a one-tap Add is not decided here any more: the
+// platform contract's readiness rule (scan-triage.ts, isScanReadyToFile) is
+// read by the pill, File and File N alike, and a nameless row fails it first.
 export interface NamelessCardInput {
   status: string;
   suggested_name: string | null;
@@ -20,9 +24,6 @@ export interface NamelessCardInput {
 export interface NamelessCardState {
   /** Show the name field in the title's place. */
   nameField: boolean;
-  /** A one-tap Add may be offered (the confirm route refuses an empty name;
-   *  the card must not offer what the route will refuse). */
-  quickAdd: boolean;
 }
 
 export function namelessCard(item: NamelessCardInput): NamelessCardState {
@@ -31,6 +32,5 @@ export function namelessCard(item: NamelessCardInput): NamelessCardState {
   const settled = !!item.ai_suggested_at;
   return {
     nameField: pending && !named && settled && !item.readingReceipt,
-    quickAdd: pending && named,
   };
 }

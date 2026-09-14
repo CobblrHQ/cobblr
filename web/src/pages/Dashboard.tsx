@@ -31,7 +31,7 @@ import { classifyBundleUpdate, tierAutoApplies, updateMayTeardownCatalogs } from
 import { useDetailRoute } from "../lib/useDetailRoute";
 import { useSetupCards, dismissSetup } from "../lib/setupCards";
 import { bucketEvents, dayKey, relativeDay, upNextWindow } from "../lib/up-next";
-import { EntityThumb,
+import { EntityThumb, changeWorkspaceShape,
   usePageTitle, useToast, useImageSrc,
   useDashboardWidgets, TileCollapseContext, type DashboardWidgetSpec } from "@cobblr/platform-web";
 // Side-effect: registers the host's built-in "at a glance" widgets (machines /
@@ -1095,7 +1095,7 @@ function BundleUpdateRow({
 
   const install = useMutation({
     mutationFn: (_vars: { silent: boolean }) =>
-      api.installBundle(slug, update.manifest, false, update.enabledFeatures),
+      changeWorkspaceShape(qc, slug, () => api.installBundle(slug, update.manifest, false, update.enabledFeatures)),
     onSuccess: (r, vars) => {
       // PATCH auto-apply is silent (no toast) — still auditable via the
       // server-side `bundle_installed` activity entry. MINOR + any manual
@@ -1108,11 +1108,6 @@ function BundleUpdateRow({
         toast.success(
           `Updated ${r.bundle.name} to v${r.bundle.version}` + (bits.length ? `. Added ${bits.join(", ")}.` : "."),
         );
-      }
-      // Mirror BundleDetailModal's post-install refresh — an update can move
-      // field defs / wires / instances, so the same queries must invalidate.
-      for (const key of ["bundles", "bindings", "field-defs", "org-modules", "instances", "entity-kind-overrides"]) {
-        void qc.invalidateQueries({ queryKey: [key, slug] });
       }
       onDone();
     },

@@ -19,7 +19,7 @@
 // inbox's own pipeline) → `entity` (server-derived) → `query` (literal).
 
 import { useEffect, useRef, useState, type FormEvent, type ReactNode } from "react";
-import { Maximize2, Sparkles } from "lucide-react";
+import { Maximize2, Sparkles, X } from "lucide-react";
 import { useQuery } from "@tanstack/react-query";
 import { api, type ImageOption } from "../lib/api";
 import { useActiveOrg } from "../auth/ActiveOrgContext";
@@ -28,6 +28,7 @@ import { imageUrlFrom, payloadFromClipboard, readPastedImage } from "./pastedIma
 import { ImageLightbox } from "./ImageLightbox";
 
 export function ImageSearchPicker({
+  phone = false,
   entity,
   query,
   brand,
@@ -44,6 +45,7 @@ export function ImageSearchPicker({
   onPickBest,
   pickingBest,
   bestUrl,
+  currentUrl,
   bestReason,
   compact = false,
   leading,
@@ -87,6 +89,11 @@ export function ImageSearchPicker({
   onPreview?: (url: string) => void;
   /** Pre-fetched mode only: the caller re-runs its own search for this term. */
   onSearch?: (term: string) => void;
+  /** Held in the hand: the search box appears only when Search is tapped, and
+   *  a tile tap opens the viewer (which offers "Use this image") rather than
+   *  picking on the spot, since a thumb lands on the wrong tile more often
+   *  than a pointer does. */
+  phone?: boolean;
   /** Pre-fetched mode only: the phrase the SERVER actually searched, so the box
    *  shows it here too. Without it the scan inbox's box sat blank — hiding the
    *  one piece of information you need to improve the search, and hiding that a
@@ -106,6 +113,10 @@ export function ImageSearchPicker({
   pickingBest?: boolean;
   /** The URL the AI chose — its tile gets a ring + an "AI pick" badge. */
   bestUrl?: string | null;
+  /** The URL that IS the item's catalog picture right now: its tile gets the
+   *  accent outline, which follows a new pick (the owner, #2982). None when
+   *  the catalog picture is not among these tiles. */
+  currentUrl?: string | null;
   /** One short sentence on WHY, shown under the grid. */
   bestReason?: string | null;
   /** An image pasted straight into the search box. The CALLER uploads it and
@@ -212,6 +223,7 @@ export function ImageSearchPicker({
   /** The button says what pressing it will DO. Typing an address and being
    *  offered "Search" is the whole misunderstanding, in one word. */
   const submitLabel = imageUrlFrom(term) ? "Use" : "Search";
+  const [searchOpen, setSearchOpen] = useState(false);
 
   function tileClick(o: ImageOption) {
     if (onPreview) onPreview(o.url);
@@ -223,19 +235,21 @@ export function ImageSearchPicker({
   // how two surfaces that look alike start behaving differently.
   const tiles = opts.map((o) => {
               const isBest = !!bestUrl && o.url === bestUrl;
+              const isCurrent = !!currentUrl && o.url === currentUrl;
               return (
-              <div key={o.url} className="relative w-20 h-20 shrink-0 group">
+              <div key={o.url} className="relative w-20 h-20 shrink-0 group" data-current={isCurrent ? "" : undefined}>
                 <button
                   type="button"
-                  disabled={busy}
-                  onClick={() => onPick(o.url)}
-                  title={isBest ? `AI's pick — ${o.title} (${o.source})` : `Use this image — ${o.title} (${o.source})`}
-                  aria-label={`Use this image: ${o.title}`}
+                  disabled={busy && !phone}
+                  onClick={() => (phone ? tileClick(o) : onPick(o.url))}
+                  title={`${phone ? `View full size: ${o.title} (${o.source})` : isBest ? `AI's pick: ${o.title} (${o.source})` : `Use this image: ${o.title} (${o.source})`}${isCurrent ? " (the catalog picture now)" : ""}`}
+                  aria-label={phone ? `View full size: ${o.title}` : `Use this image: ${o.title}`}
+                  aria-current={isCurrent ? "true" : undefined}
                   className={`w-full h-full rounded overflow-hidden bg-white transition disabled:opacity-50 ${
                     isBest
                       ? "border-2 border-accent ring-2 ring-accent/40"
                       : "border border-line dark:border-slate-700 hover:border-cobble-400"
-                  }`}
+                  } ${isCurrent ? "outline outline-2 outline-offset-1 outline-accent" : ""}`}
                 >
                   {/* CONTAIN. Every tile here is a candidate you are judging
                       against the others, and a square crop of a product shot
@@ -257,6 +271,10 @@ export function ImageSearchPicker({
                     <Sparkles size={9} /> AI
                   </div>
                 )}
+                {phone && !isBest && (
+                  <span className="absolute left-1 top-1 rounded bg-black/60 px-1 py-0.5 text-[9px] font-mono uppercase tracking-wider text-white">web</span>
+                )}
+                {!phone && (
                 <button
                   type="button"
                   onClick={() => tileClick(o)}
@@ -269,6 +287,7 @@ export function ImageSearchPicker({
                 >
                   <Maximize2 className="w-3 h-3" strokeWidth={2.5} />
                 </button>
+                )}
               </div>
               );
             });
@@ -306,6 +325,101 @@ export function ImageSearchPicker({
   // ── compact: the strip layout ───────────────────────────────────────
   // Same data, same handlers, same tile markup - only the chrome differs.
 
+  if (compact && phone) {
+    // The phone strip. The controls (the web label, Search, Pick best) sit in
+    // a toolbar that never scrolls; Search opens a full-width query row of
+    // its own; only the thumbnails scroll sideways. On the desktop strip the
+    // controls share the tiles' scroll container (sticky), which at 393px
+    // squeezed the query field to 41px and let it resize to 145px once the
+    // strip was scrolled (#2982). Provenance rides the tiles as badges,
+    // since a label outside the scroller cannot line up with tiles that move.
+    const hasOwn = !!leading;
+    return (
+      <div className="min-w-0 space-y-1.5">
+        <div className="flex items-center gap-2">
+          <span className="text-xs font-medium text-content shrink-0">{hasOwn ? "Your photos and the web" : "Pictures on the web"}</span>
+          <span className="flex-1" />
+          {searchable && (
+            <button
+              type="button"
+              onClick={() => setSearchOpen((o) => !o)}
+              aria-expanded={searchOpen}
+              className={"inline-flex min-h-9 shrink-0 items-center rounded-md border px-2.5 text-xs font-medium " + (searchOpen ? "border-accent text-accent" : "border-line dark:border-slate-600 text-muted")}
+            >
+              Search
+            </button>
+          )}
+          {onPickBest && (
+            <button
+              type="button"
+              onClick={onPickBest}
+              disabled={pickingBest || busy}
+              title="Let AI pick the cleanest catalog photo: the product alone, correct colour, no people"
+              className="inline-flex min-h-9 shrink-0 items-center gap-1 rounded-md border border-cobble-300 dark:border-cobble-700 bg-cobble-50 dark:bg-cobble-900/30 px-2.5 text-xs font-medium text-accent disabled:opacity-50"
+            >
+              <Sparkles size={12} className={pickingBest ? "animate-pulse" : ""} />
+              {pickingBest ? "picking…" : "Pick best"}
+            </button>
+          )}
+        </div>
+        {searchable && searchOpen && (
+          <form onSubmit={submit} className="flex items-center gap-1.5">
+            <input
+              autoFocus
+              value={term}
+              onChange={(e) => {
+                setTouched(true);
+                setTerm(e.target.value);
+              }}
+              onPaste={paste}
+              placeholder="search or paste a link…"
+              className="min-h-10 w-full min-w-0 rounded-md border border-line dark:border-slate-600 bg-surface dark:bg-slate-900 px-2.5 text-sm"
+            />
+            <button
+              type="submit"
+              disabled={busy}
+              className="inline-flex min-h-10 shrink-0 items-center rounded-md bg-cobble-600 px-3 text-sm font-medium text-white disabled:opacity-50"
+            >
+              {submitLabel}
+            </button>
+            <button
+              type="button"
+              onClick={() => setSearchOpen(false)}
+              aria-label="Close search"
+              className="inline-flex min-h-10 min-w-10 shrink-0 items-center justify-center rounded-md border border-line dark:border-slate-600 text-faint"
+            >
+              <X size={16} />
+            </button>
+          </form>
+        )}
+        <div ref={portRef} className="min-w-0 overflow-x-auto overflow-y-hidden no-scrollbar pb-1">
+          <div className="flex w-max items-center gap-2">
+            {hasOwn && (
+              <div className="relative flex items-center gap-2">
+                <span className="absolute left-1 top-1 z-10 rounded bg-black/60 px-1 py-0.5 text-[9px] font-mono uppercase tracking-wider text-white">yours</span>
+                {leading}
+              </div>
+            )}
+            {opts.length > 0 && tiles}
+          </div>
+        </div>
+        {loading ? (
+          <div className="text-xs text-faint animate-pulse">finding photo options…</div>
+        ) : opts.length === 0 ? (
+          <div className={`text-xs italic ${throttled ? "text-amber-700 dark:text-amber-300" : "text-faint"}`}>
+            {throttled ? rateLimited : searched ? `nothing found for "${searched}"` : "no web photos yet"}
+          </div>
+        ) : null}
+        {bestReason && (
+          <div className="flex items-start gap-1 text-[11px] text-accent">
+            <Sparkles size={11} className="mt-0.5 shrink-0" />
+            <span className="min-w-0">{bestReason}</span>
+          </div>
+        )}
+        {lightbox}
+      </div>
+    );
+  }
   if (compact) {
     // TWO ROWS THAT SHARE A COLUMN EDGE.
     //
@@ -350,7 +464,16 @@ export function ImageSearchPicker({
               className="sticky left-0 z-10 flex max-w-full items-center gap-2 pr-2 bg-[rgb(253,253,251)] dark:bg-[rgb(37,48,68)]"
             >
             <span className="text-xs font-medium text-content shrink-0">Web</span>
-            {searchable && (
+            {searchable && phone && !searchOpen && (
+              <button
+                type="button"
+                onClick={() => setSearchOpen(true)}
+                className="shrink-0 rounded border border-line dark:border-slate-600 px-2 py-0.5 text-[11px] font-medium text-muted hover:text-content"
+              >
+                Search
+              </button>
+            )}
+            {searchable && (!phone || searchOpen) && (
               <form onSubmit={submit} className="flex min-w-0 flex-1 items-center gap-1">
                 <input
                   value={term}

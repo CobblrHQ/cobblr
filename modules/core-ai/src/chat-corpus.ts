@@ -411,8 +411,10 @@ export const CHAT_CORPUS: CorpusCase[] = [
   ...ph("kitchen", neverOffer, "create:record", [
     "add a jar of turmeric", "new spice: garam masala",
   ]),
-  // "Used up one" is exactly what use-one does.
-  ...ph("kitchen", neverOffer, "action:inventory:adjust-stock|action:inventory:use-one", [
+  // "Used up one" is what use-one does; and on a pantry that dates lots on
+  // arrival a bag IS a lot, and Used up ends the oldest lot as used, which
+  // is the same bag. All three are the answer.
+  ...ph("kitchen", neverOffer, "action:inventory:adjust-stock|action:inventory:use-one|action:inventory:use-up", [
     "used up one bag of rice",
   ]),
   // "half" is not a quantity the record can take; asking is as right as guessing.

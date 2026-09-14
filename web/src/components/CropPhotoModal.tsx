@@ -13,7 +13,7 @@
 // size: the server crops the ORIGINAL at full resolution.
 import { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
-import { OverlayFlag } from "@cobblr/platform-web";
+import { OverlayLayer } from "@cobblr/platform-web";
 import { OverlayCloseButton } from "./OverlayCloseButton";
 import { cropBoxFrom, type CropBox, type Point } from "./cropBox";
 
@@ -78,14 +78,13 @@ export function CropPhotoModal({
   const stop = (e: React.MouseEvent) => e.stopPropagation();
 
   return createPortal(
-    <div
-      className="fixed inset-0 z-[130] bg-black/85 backdrop-blur-sm flex flex-col"
+    <OverlayLayer
+      className="z-[130] bg-black/85 backdrop-blur-sm flex flex-col"
       onClick={onClose}
       role="dialog"
       aria-modal="true"
       aria-label="Crop your photo for the catalog image"
     >
-      <OverlayFlag />
       <OverlayCloseButton onClose={onClose} />
 
       <div className="flex-1 min-h-0 flex items-center justify-center p-4 sm:p-6" onClick={stop}>
@@ -149,7 +148,7 @@ export function CropPhotoModal({
           </button>
         </div>
       </div>
-    </div>,
+    </OverlayLayer>,
     document.body,
   );
 }

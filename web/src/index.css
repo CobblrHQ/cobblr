@@ -1,3 +1,4 @@
+@import "@cobblr/platform-web/floating-chrome.css";
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
@@ -102,6 +103,40 @@
 }
 
 @layer utilities {
+  /* STICKY, AND NEVER UNDER THE APP HEADER.
+   *
+   * The shell's header is `position: fixed` on every width, and it publishes
+   * its live bottom edge as --app-header-bottom on the root (AppLayout: on
+   * resize, on scroll, and as the phone's bar hides and returns). A sticky
+   * element written `sticky top-0` sticks to the VIEWPORT top, which is under
+   * that header: the Scan Inbox's selection toolbar sat there on a phone with
+   * its count and scope actions covered while Confirm stayed reachable, the
+   * wrong half (core #2979). So every sticky element says which of two things
+   * it is, and lint:sticky-under-header refuses a bare `sticky`:
+   *
+   *   sticky-under-header  sticks to the viewport, offset by the header. The
+   *                        page's own bars, headings and the pinned sidebar.
+   *   sticky-in-scroller   sticks inside an overflow container, where the
+   *                        header is not in the picture: a modal's table head,
+   *                        a dropdown's group label. top: 0 is right there.
+   *
+   * The variable falls back to 0 where no app header is mounted (the admin
+   * shell), so the first class is safe everywhere. */
+  .sticky-under-header {
+    position: sticky;
+    /* --sticky-gap: a breath above the element, set at the site with
+     * `[--sticky-gap:1rem]`, never with a top-* of its own. */
+    top: calc(var(--app-header-bottom, 0px) + var(--sticky-gap, 0px));
+  }
+  /* The room a viewport-sticky column has under the header. */
+  .fill-under-header {
+    max-height: calc(100dvh - var(--app-header-bottom, 0px));
+  }
+  .sticky-in-scroller {
+    position: sticky;
+    top: 0;
+  }
+
   /* Horizontal scroll container without the chunky scrollbar — used
    * on the navbar so an overflowing nav can scroll via wheel /
    * trackpad / keyboard without visible UI clutter. */
@@ -213,7 +248,7 @@ html.dark .dark\:text-slate-600 { color: #6B7280; }
    portal, or once the pill relocates into the sidebar) → the stock 1rem. Kept at
    ID specificity so the full-sidebar rule below (more specific) still wins. */
 #cobblr-toasts {
-  bottom: var(--toast-safe-bottom, 1rem);
+  --fc-lift: var(--toast-safe-bottom, 1rem);
 }
 
 /* Full-sidebar mode: ephemeral toasts land in the sidebar's empty middle —

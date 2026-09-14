@@ -5,6 +5,7 @@
 
 import { useEffect, useState } from "react";
 import { ArrowUp } from "lucide-react";
+import { FloatingChrome } from "./FloatingChrome";
 
 interface Props {
   /** Pixel scroll-Y at which the button appears. */
@@ -36,14 +37,17 @@ export function BackToTop({ threshold = 400, target }: Props = {}) {
 
   if (!visible) return null;
   return (
-    <button
+    <FloatingChrome
+      as="button"
+      anchor="corner"
+      lift="1.5rem"
       type="button"
       onClick={scrollTop}
       aria-label="Back to top"
       title="Back to top"
-      className="fixed bottom-6 right-6 z-40 w-11 h-11 rounded-full bg-cobble-600 hover:bg-cobble-700 text-white shadow-lg flex items-center justify-center transition opacity-90 hover:opacity-100"
+      className="right-6 z-40 w-11 h-11 rounded-full bg-cobble-600 hover:bg-cobble-700 text-white shadow-lg flex items-center justify-center transition opacity-90 hover:opacity-100"
     >
       <ArrowUp size={18} />
-    </button>
+    </FloatingChrome>
   );
 }

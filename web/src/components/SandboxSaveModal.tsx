@@ -27,6 +27,7 @@
 import { useEffect, useState } from "react";
 import { Modal } from "@cobblr/platform-web";
 import { api, ApiError } from "../lib/api";
+import { holdSandboxEnd } from "../lib/sandbox-session";
 import { Cloud, Server, Download } from "lucide-react";
 
 interface Paths {
@@ -104,7 +105,9 @@ export function SandboxSaveModal({
     setError(null);
     try {
       const to = email.trim();
-      const res = await api.keepSandbox(to);
+      // Tapped with seconds left, the hour can end while this is in flight.
+      // The end waits for the answer; kept, it never comes.
+      const res = await holdSandboxEnd(api.keepSandbox(to), { keeps: true });
       setKept({ emailed: res.emailed, email: to });
       onKept?.({ email: to, expires_at: res.expires_at, emailed: res.emailed });
     } catch (err) {
@@ -123,7 +126,7 @@ export function SandboxSaveModal({
     setBusy("copy");
     setError(null);
     try {
-      const r = await api.takeSandboxWork(email.trim());
+      const r = await holdSandboxEnd(api.takeSandboxWork(email.trim()));
       setCopied({ emailed: r.emailed, link: r.link, days: r.days });
     } catch (err) {
       setError(

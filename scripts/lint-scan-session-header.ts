@@ -1,6 +1,9 @@
 #!/usr/bin/env tsx
-// The scan session header is ONE row, and its last three controls are always
-// location -> file -> open.
+// The scan session header is ONE row at every width, and its last three
+// controls are always location -> file -> open. It wrapped into three lines
+// on a phone for one day (core #2981, 2026-09-14) and the owner sent it back
+// ("I really need the session header to be one line", #2982): on a phone the
+// identity folds into the name span and truncates before a control wraps.
 //
 // WHY THIS IS A LINT: the header is a flex row that every new session feature
 // adds a control to, and each new control naturally gets appended at the end -
@@ -211,8 +214,9 @@ if (LOCATION !== -1 && FILE_ALL !== -1) {
   if (/overflow-x-auto/.test(hdrTag)) {
     errors.push(
       "the session header row must not scroll - it clips, so it has to FIT. " +
-        "Something new in it means something else stands down (the order number, " +
-        "the location chip and the open arrow already did, below sm). " +
+        "Something new in it means something else stands down (the location chip " +
+        "already did, below sm; the phone's second and third lines are for what " +
+        "identifies the session and the filing trio, not for more controls). " +
         "e2e/mobile-text-not-cut.mjs is the check.",
     );
   } else if (!/\boverflow-hidden\b/.test(hdrTag)) {
@@ -251,11 +255,13 @@ for (const m of headerJsx.matchAll(/className=[{"`][^"`}]*\babsolute\b/g)) {
 
 const barAt = src.indexOf(ANCHOR);
 const headerBar =
-  barAt === -1 ? null : src.slice(barAt, barAt + 600).match(/className="flex w-full items-center[^"]*"/);
+  barAt === -1 ? null : src.slice(barAt, barAt + 900).match(/className="flex [^"]*w-full items-center[^"]*"/);
 if (!headerBar) {
   errors.push(`could not find the session header bar in ${REL} - if its classes changed, update this lint`);
-} else if (headerBar[0].includes("flex-wrap")) {
-  errors.push("the session header bar must not use flex-wrap - it is deliberately a single row");
+} else if (/(^|\s)(max-sm:)?flex-wrap(\s|")/.test(headerBar[0])) {
+  // One clipping row at every width, the phone included (#2982): the name
+  // truncates, a control never wraps. Any flex-wrap on the bar is the drift.
+  errors.push("the session header bar is one line at every width - no flex-wrap, not even under sm; the name truncates instead (#2982)");
 } else if (!headerBar[0].includes("overflow-hidden")) {
   errors.push(
     "the session header bar must keep overflow-hidden - without it a fully-loaded session pushes the page sideways instead of clipping",

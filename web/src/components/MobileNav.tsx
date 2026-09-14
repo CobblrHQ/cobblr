@@ -29,7 +29,7 @@ import { useNavModules, NAVGROUP_PREFIX, navTargetFor, surfaceTops } from "./use
 import { useNavBadges } from "./useNavBadges";
 import { NavCountBadge } from "./NavCountBadge";
 import { CobblestoneMark } from "../CobblestoneMark";
-import { OverlayFlag } from "@cobblr/platform-web";
+import { OverlayLayer } from "@cobblr/platform-web";
 
 /** The marker on a row that belongs to the group heading above it. It replaced
  *  the word "instance" on those rows: a dot under a heading already says
@@ -149,8 +149,7 @@ export function MobileNav() {
 
       {open &&
         createPortal(
-          <div className="md:hidden fixed inset-0 z-[80]">
-            <OverlayFlag />
+          <OverlayLayer className="md:hidden z-[80]">
             {/* No backdrop: the panel below is `absolute inset-0` and opaque, so
                 anything behind it is invisible AND unreachable. One used to sit
                 here claiming "tap to dismiss", which was never true and is the
@@ -445,7 +444,7 @@ export function MobileNav() {
                 </button>
               </div>
             </nav>
-          </div>,
+          </OverlayLayer>,
           document.body,
         )}
     </>

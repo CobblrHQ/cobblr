@@ -24,6 +24,7 @@ import { identifierFieldNames, platform, type ResolvedEntity } from "@cobblr/pla
 import { scanTargetOfRecord } from "./scan-target.js";
 import { isJunkName } from "./enrich.js";
 import { identifierEquals, identifierForms } from "./identifier-equals.js";
+import { sameProduct } from "@cobblr/platform-contract/same-product";
 
 export interface TrackedMatch {
   kind: string;
@@ -312,7 +313,14 @@ export async function identifierFieldsByKind(
 
 export async function findTracked(
   orgId: string,
-  opts: { barcode?: string | null; name?: string | null },
+  opts: {
+    barcode?: string | null;
+    name?: string | null;
+    /** The scan's own identity fields (its top candidate's, as routed or
+     *  inherited): a set number, a model, an ISBN. A record whose identifier
+     *  differs is never a name match, however the words overlap. */
+    fields?: Record<string, unknown> | null;
+  },
 ): Promise<{ barcode_matches: TrackedMatch[]; name_matches: TrackedMatch[] }> {
   const kinds = await kindsForOrg(orgId);
   const expiryByKind = await expiryFieldsByKind(orgId);
@@ -399,6 +407,13 @@ export async function findTracked(
               })
               .map((e) => ({ e, ...nameOverlap(want, e.title) }))
               .filter(({ pass }) => pass)
+              // The identity the two sides already carry outranks the word
+              // overlap that got them here: a record with a different set
+              // number, model or ISBN, or a different model number in its
+              // name, is a different product (same-product.ts, one rule
+              // with the inbox's Combine offer). Two LEGO sets were offered
+              // as one by their shared "building set" (#2977).
+              .filter(({ e }) => sameProduct({ name, fields: opts.fields ?? null }, { name: e.title, fields: e.fields }).verdict !== "different")
               .map(({ e, shared }) => ({ m: toMatch(e, k, "name", expiryByKind.get(e.kind)), shared }));
           } catch {
             return [];

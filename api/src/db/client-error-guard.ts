@@ -38,7 +38,20 @@ import type { ClientConfig, PoolConfig } from "pg";
  * The listener logs and continues. The next query on that client rejects
  * through the caller's ordinary error path, which is where the decision
  * belongs; pg-pool drops a client that errored instead of re-idling it.
+ *
+ * Every pool also carries a connect timeout. pg-pool's default is none: once
+ * every client is checked out and none comes back, every later checkout
+ * waits forever, and so does everything above it. The api did exactly that
+ * on the dev rig for sixteen minutes (#3033): the database healthy, the
+ * event loop alive, /healthz and /me never answering, and not one log line,
+ * because nothing ever failed. With the timeout a starved checkout FAILS
+ * with pg's own "timeout exceeded when trying to connect", which is a 5xx
+ * the error rate counts and a line that names the cause. The wait a pool
+ * can hide is bounded by COBBLR_POOL_CONNECT_TIMEOUT_MS (default 10 s); a
+ * caller that knows better passes its own.
  */
+
+export const POOL_CONNECT_TIMEOUT_MS = Number(process.env.COBBLR_POOL_CONNECT_TIMEOUT_MS) || 10_000;
 
 type ClientClass = new (config?: ClientConfig) => Client;
 
@@ -62,7 +75,7 @@ function bornGuarded(label: string, Base: ClientClass): ClientClass {
 /** The one way to open a pool. `label` names it in the log line. */
 export function createPool(config: PoolConfig, label: string): Pool {
   const Base = (config.Client as ClientClass | undefined) ?? Client;
-  const pool = new Pool({ ...config, Client: bornGuarded(label, Base) });
+  const pool = new Pool({ connectionTimeoutMillis: POOL_CONNECT_TIMEOUT_MS, ...config, Client: bornGuarded(label, Base) });
   // pg-pool re-emits an idle client's error on the pool and, being an
   // EventEmitter, throws if nobody listens there either. The client's own
   // listener already logged it; this one only keeps the pool's emit harmless.

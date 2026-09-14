@@ -1330,6 +1330,16 @@ const EntityAction = z.object({
   // does not ask for it, and the chat refuses a model that names one. A
   // guard holds that every action reached only as an undo step says this.
   internal: z.boolean().default(false),
+  // Fired by an EVENT and nothing else: its record is named by the event's
+  // payload (a task by linkedTaskId, an inbox row by the scan), so asked in
+  // words there is nothing to act on. Not offered to the assistant, on the
+  // rail or in list_actions. This is NOT `userInvokable: false`, which only
+  // says "no button on the record's page" and is set on plenty of actions
+  // the assistant runs every day (placing a thing in a bin, tagging it,
+  // adjusting stock); reading that flag as wire-only took twelve of those
+  // off the rail (2026-09-14). An action that says this has no phrasings
+  // (a guard holds it), and an event-subject action with none says this.
+  wireOnly: z.boolean().default(false),
   // Can running this by mistake be put right again, INSIDE the workspace?
   //
   // This is what decides whether an AI connection that cannot show a
@@ -3114,6 +3124,10 @@ export interface EntityActionRecord {
   user_invokable: boolean;
   /** The way back for another action, and nothing else: run from Undo only. */
   internal: boolean;
+  /** Fired by an event and nothing else; its record comes from the event.
+   *  Never offered to the assistant. Distinct from user_invokable, the
+   *  button flag. */
+  wire_only: boolean;
   /** Disclosure: the face this verb belongs to, or null for the base. */
   face: string | null;
   /** Where the module declared it, 0-based. The strip lists a record's own

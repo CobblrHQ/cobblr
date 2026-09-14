@@ -258,9 +258,9 @@ interface UnitVocabularyRow {
 }
 
 /** A scan-inbox row, as the core-scan list route returns it. Only the fields
- *  worth telling a model about — `needs_review` and `waiting_days` are derived
- *  server-side from the shared triage predicate, so the model is told the same
- *  thing the Scan page shows the user. */
+ *  worth telling a model about — `needs_review`, `review_reason` and
+ *  `waiting_days` are derived server-side from the shared triage predicate,
+ *  so the model is told the same thing the Scan page shows the user. */
 interface ScanInboxRow {
   id?: string;
   suggested_name?: string | null;
@@ -272,6 +272,7 @@ interface ScanInboxRow {
   scan_area?: string | null;
   scan_batch_id?: string | null;
   needs_review?: boolean;
+  review_reason?: string | null;
   waiting_days?: number | null;
   target_kind?: string | null;
   target_location_id?: string | null;
@@ -303,7 +304,9 @@ function summarizeScanItem(
     captured_as: it.source_kind ?? "scan",
     ...(it.barcode_text ? { barcode: it.barcode_text } : {}),
     ...(typeof it.waiting_days === "number" ? { waiting_days: it.waiting_days } : {}),
-    ...(it.needs_review ? { needs_review: true } : {}),
+    // The reason rides with the flag: "needs review" alone sends the user
+    // back to the page to find out why, and the card already says.
+    ...(it.needs_review ? { needs_review: true, ...(it.review_reason ? { review_reason: it.review_reason } : {}) } : {}),
     ...(it.ai_notes ? { notes: it.ai_notes } : {}),
     ...(target ? { would_become: target } : {}),
     has_destination: !!(it.target_location_id || it.target_container_id),
@@ -405,6 +408,9 @@ export const ESCORT_DESTINATIONS: EscortDestination[] = [
     ],
   },
 ];
+
+/** The relationship list_related reports a placement under: a thing points at the container it is in. */
+const PLACED_IN = "placed_in";
 
 export const WORKSPACE_TOOLS: WorkspaceTool[] = [
   {
@@ -587,7 +593,7 @@ export const WORKSPACE_TOOLS: WorkspaceTool[] = [
   {
     name: "list_related",
     description:
-      "List the records LINKED to one record (its pairings): which project a part belongs to, what's stored in a location, what a build consumed. Returns each link's relationship kind, direction, and the other record's kind + id (fetch it with get_record). Call with just kind + id first to discover what relationships exist.",
+      "List the records LINKED to one record: which project a part belongs to, what is inside a location, bin or box (placed_in), what a build consumed. Returns each link's relationship kind, direction, and the other record's kind + id + title (fetch the rest with get_record). Call with just kind + id first to discover what relationships exist.",
     mode: "read",
     params: {
       kind: z.string().describe("The record's entity kind id"),
@@ -632,11 +638,44 @@ export const WORKSPACE_TOOLS: WorkspaceTool[] = [
           pairing_id: p.id,
         }));
       };
+      // Placement is the platform's "what is inside what", its own table and
+      // not a pairing. A tool that promises what is stored in a location and
+      // reads pairings alone answers "empty" for every bin a person filled by
+      // placing things in it, which is how they fill bins.
+      const wantsPlacement = !rel || rel === `&relationship_kind=${encodeURIComponent(PLACED_IN)}`;
+      type Placed = { kind: string; id: string; title?: string };
+      const placedRow = (side: "out" | "in", e: Placed) => ({
+        relationship: PLACED_IN,
+        direction: side,
+        kind: e.kind,
+        id: e.id,
+        ...(typeof e.title === "string" && e.title ? { title: e.title } : {}),
+      });
+      const contents = async () => {
+        const res = await api.request(
+          "GET",
+          `/modules/core-placement/contents?container_kind=${encodeURIComponent(kind)}&container_id=${encodeURIComponent(id)}`,
+        );
+        // A workspace without placement has nothing inside anything.
+        if (res.status >= 400) return [];
+        return ((res.body?.items as Placed[] | undefined) ?? []).map((e) => placedRow("in", e));
+      };
+      const containerOf = async () => {
+        const res = await api.request(
+          "GET",
+          `/modules/core-placement/of?containee_kind=${encodeURIComponent(kind)}&containee_id=${encodeURIComponent(id)}`,
+        );
+        if (res.status >= 400) return [];
+        const c = res.body?.container as Placed | null | undefined;
+        return c ? [placedRow("out", c)] : [];
+      };
       try {
         const items = (
           await Promise.all([
             dir !== "in" ? fetchSide("out") : Promise.resolve([]),
             dir !== "out" ? fetchSide("in") : Promise.resolve([]),
+            wantsPlacement && dir !== "in" ? containerOf() : Promise.resolve([]),
+            wantsPlacement && dir !== "out" ? contents() : Promise.resolve([]),
           ])
         ).flat();
         return toolOk({ items });
@@ -667,15 +706,17 @@ export const WORKSPACE_TOOLS: WorkspaceTool[] = [
               scope?: string;
               args_schema?: Record<string, { label?: string; type?: string }> | null;
               undoable?: boolean;
+              user_invokable?: boolean;
+              internal?: boolean;
+              wire_only?: boolean;
               examples?: string[];
             }>
           | undefined) ?? [];
       const kind = typeof args.kind === "string" && args.kind.trim() ? args.kind.trim() : null;
       // When filtering by a record's kind, still surface workspace-level config
       // actions — they're not record-scoped but the user may want one from here.
-      const picked = kind
-        ? items.filter((a) => a.scope === "workspace" || (a.matched_kinds ?? []).includes(kind))
-        : items;
+      // A wire-only action is never offered (offerableToAssistant).
+      const picked = items.filter(offerableToAssistant).filter((a) => !kind || a.scope === "workspace" || (a.matched_kinds ?? []).includes(kind));
       // Project to what a caller needs to actually RUN one. `args` is the
       // decisive field: an action listed without its arguments is an action
       // that cannot be invoked, and the honest-looking conclusion is "I have no
@@ -1301,6 +1342,24 @@ export const WORKSPACE_TOOLS: WorkspaceTool[] = [
     },
   },
 ];
+
+/** Whether the assistant may OFFER an action: a person could ask for it.
+ *  A wire-only action (`wireOnly: true` in its manifest: fired by an event,
+ *  its record named by the event, "asked without one there is no task to
+ *  mark") is not one, and listing it had the model reaching for
+ *  projects:mark-task-done on "mark the birdhouse task done" with no task
+ *  to name, three runs out of three (2026-09-14). Neither is an internal
+ *  action, the way back for another. The prompt's rail and list_actions
+ *  both go through here, so they cannot disagree.
+ *
+ *  NOT `user_invokable`: that is the button flag ("no button on the
+ *  record's page") and is false on plenty of actions the assistant runs
+ *  every day (placing a thing in a bin, tagging it, adjusting stock).
+ *  Reading it as wire-only took twelve of those off the rail for one
+ *  build (#2995, 2026-09-14). */
+export function offerableToAssistant(a: { wire_only?: boolean; internal?: boolean; user_invokable?: boolean }): boolean {
+  return a.wire_only !== true && a.internal !== true;
+}
 
 export function getTool(name: string): WorkspaceTool | undefined {
   return WORKSPACE_TOOLS.find((t) => t.name === name);

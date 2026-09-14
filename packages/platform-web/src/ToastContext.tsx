@@ -16,6 +16,7 @@ import {
   type ReactNode,
 } from "react";
 import { createPortal } from "react-dom";
+import { FloatingChrome } from "./FloatingChrome";
 import { CheckCircle2, Info, AlertTriangle, X } from "lucide-react";
 
 type Kind = "info" | "success" | "error" | "action";
@@ -123,11 +124,13 @@ function ToastStack({ toasts, dismiss }: { toasts: Toast[]; dismiss: (id: number
   // overlay-portal rule fixes) — the "token minted/copied" toast came out
   // blurred. Body-portal + z-[100] lifts toasts above any modal.
   return createPortal(
-    // Default bottom-right. The app raises `bottom` (to clear the Feedback pill)
-    // and, in full-sidebar mode, repositions the stack onto the rail — both via
-    // #cobblr-toasts rules in the app CSS, kept at ID specificity so the
-    // sidebar rule wins. Not an inline style here: inline would beat those.
-    <div id="cobblr-toasts" className="fixed right-4 bottom-4 z-[100] flex flex-col gap-2 max-w-[calc(100vw-2rem)] w-80 pointer-events-none">
+    // A corner piece that never yields: transient feedback SHOULD show over an
+    // open modal ("Filed it" fired from inside Ask Cobb). Default bottom-right,
+    // above the bottom dock. The app raises `--fc-lift` (to clear the Feedback
+    // pill) and, in full-sidebar mode, repositions the stack onto the rail,
+    // both via #cobblr-toasts rules in the app CSS at ID specificity, which is
+    // why the primitive positions by class and never by inline style.
+    <FloatingChrome inPlace anchor="corner" yields={false} id="cobblr-toasts" className="right-4 z-[100] flex flex-col gap-2 max-w-[calc(100vw-2rem)] w-80 pointer-events-none">
       {hiddenCount > 0 && (
         <button
           type="button"
@@ -141,7 +144,7 @@ function ToastStack({ toasts, dismiss }: { toasts: Toast[]; dismiss: (id: number
       {visible.map((t) => (
         <ToastCard key={t.id} toast={t} dismiss={dismiss} />
       ))}
-    </div>,
+    </FloatingChrome>,
     document.body,
   );
 }

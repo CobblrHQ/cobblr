@@ -8,7 +8,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Plus, X } from "lucide-react";
 import { useInventory } from "./context";
 import { InventoryApiError, type InvFieldDef } from "./api";
-import { usePageTitle } from "@cobblr/platform-web";
+import { changeWorkspaceShape, usePageTitle } from "@cobblr/platform-web";
 
 export function SettingsPage() {
   usePageTitle("Inventory settings");
@@ -172,16 +172,15 @@ function FieldsCard() {
 }
 
 function FieldRow({ def }: { def: InvFieldDef }) {
-  const { api, orgSlug, entityKind } = useInventory();
+  const { api, orgSlug } = useInventory();
   const qc = useQueryClient();
   const [draft, setDraft] = useState("");
   const [error, setError] = useState<string | null>(null);
   const hasChoices = (def.choices?.length ?? 0) > 0;
 
   const save = useMutation({
-    mutationFn: (choices: string[]) => api.updateFieldDef(def.id, { choices }),
+    mutationFn: (choices: string[]) => changeWorkspaceShape(qc, orgSlug, () => api.updateFieldDef(def.id, { choices })),
     onSuccess: () => {
-      void qc.invalidateQueries({ queryKey: ["platform-field-defs", orgSlug, entityKind] });
       setDraft("");
       setError(null);
     },
@@ -192,9 +191,8 @@ function FieldRow({ def }: { def: InvFieldDef }) {
   // read-only. Type changes stay in the field builder - they have data
   // consequences this row can't explain.
   const rename = useMutation({
-    mutationFn: (display_label: string) => api.updateFieldDef(def.id, { display_label }),
+    mutationFn: (display_label: string) => changeWorkspaceShape(qc, orgSlug, () => api.updateFieldDef(def.id, { display_label })),
     onSuccess: () => {
-      void qc.invalidateQueries({ queryKey: ["platform-field-defs", orgSlug, entityKind] });
       setError(null);
     },
     onError: (e: unknown) => setError(e instanceof InventoryApiError ? e.message : "Couldn't rename"),

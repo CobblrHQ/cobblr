@@ -4,6 +4,7 @@
 //
 // Modules will compose this onto their own routers in later phases.
 
+import { sandboxIsOver } from "../platform/sandbox-over.js";
 import type { NextFunction, Request, Response } from "express";
 import type { Kysely } from "kysely";
 import { sql } from "kysely";
@@ -126,6 +127,8 @@ export async function withTenant(
       "o.slug as org_slug",
       "o.db_credentials_encrypted",
       "o.plan",
+      "o.sandbox",
+      "o.trial_expires_at",
       "m.role",
     ])
     .where("m.user_id", "=", req.session.id)
@@ -134,6 +137,19 @@ export async function withTenant(
 
   if (!row) {
     res.status(404).json({ error: { code: "org_not_found", message: "Org not found" } });
+    return;
+  }
+  // A no-account sandbox past its hour is over, whether or not the reaper has
+  // swept it yet (it runs every few minutes). Until this check, the session
+  // kept working for that whole window: the page showed "your hour is up, this
+  // sandbox was deleted" over a dashboard that still answered, the visitor
+  // could keep adding things to a database about to be dropped, and once it
+  // WAS dropped every read failed in a different way. One answer, from here on
+  // every tenant route: 410, with the code the web turns into the ending.
+  if (sandboxIsOver(row)) {
+    res.status(410).json({
+      error: { code: "sandbox_expired", message: "This sandbox's hour is up. Nothing in it is kept." },
+    });
     return;
   }
   // Operator-disabled workspace: every tenant-scoped call is refused (the

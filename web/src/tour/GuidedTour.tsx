@@ -11,7 +11,7 @@ import { useNavLayout } from "../lib/nav-mode";
 import { useTheme } from "../theme/ThemeContext";
 import { LayoutPreview } from "../components/LayoutPreview";
 import { LAYOUT_OPTIONS, type TourStep } from "./tour.config";
-import { OverlayFlag } from "@cobblr/platform-web";
+import { OverlayLayer } from "@cobblr/platform-web";
 
 const PAD = 8; // breathing room around the spotlit element
 const GAP = 14; // spotlight-to-card gap
@@ -109,7 +109,9 @@ export function GuidedTour({ steps, onClose }: { steps: TourStep[]; onClose: () 
   const spotAt = steps.slice(0, i + 1).filter((s) => s.kind === "spotlight").length;
 
   const surface = "bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 text-slate-900 dark:text-slate-100";
-  const card = `fixed z-[210] w-[320px] max-w-[calc(100vw-24px)] rounded-2xl ${surface} shadow-2xl p-4`;
+  // The cards sit inside the overlay layer, which covers the viewport, so
+  // absolute here is the viewport too.
+  const card = `absolute z-[210] w-[320px] max-w-[calc(100vw-24px)] rounded-2xl ${surface} shadow-2xl p-4`;
   const pri = "inline-flex items-center gap-1.5 rounded-lg bg-blue-500 hover:bg-blue-400 text-white text-sm font-semibold px-4 py-2 transition";
   const ghost = "inline-flex items-center gap-1.5 rounded-lg bg-slate-100 hover:bg-slate-200 text-slate-700 dark:bg-slate-800 dark:hover:bg-slate-700 dark:text-slate-100 text-sm font-semibold px-4 py-2 transition";
   const skip = "text-slate-400 hover:text-slate-600 dark:text-slate-500 dark:hover:text-slate-300 text-xs px-1 py-1.5 transition";
@@ -131,8 +133,7 @@ export function GuidedTour({ steps, onClose }: { steps: TourStep[]; onClose: () 
     : null;
 
   return createPortal(
-    <div className="fixed inset-0 z-[200]" role="dialog" aria-modal data-tour-card>
-      <OverlayFlag />
+    <OverlayLayer className="z-[200]" role="dialog" aria-modal data-tour-card>
       {step.kind !== "spotlight" && (
         <div className="absolute inset-0" style={{ background: step.kind === "chooseLayout" ? "rgba(6,10,20,0.4)" : SCRIM }} />
       )}
@@ -144,7 +145,7 @@ export function GuidedTour({ steps, onClose }: { steps: TourStep[]; onClose: () 
       )}
 
       {step.kind === "chooseLayout" && (
-        <div ref={cardRef} className={`fixed z-[210] left-1/2 -translate-x-1/2 bottom-[6%] w-[500px] max-w-[calc(100vw-24px)] rounded-2xl ${surface} shadow-2xl p-5`}>
+        <div ref={cardRef} className={`absolute z-[210] left-1/2 -translate-x-1/2 bottom-[6%] w-[500px] max-w-[calc(100vw-24px)] rounded-2xl ${surface} shadow-2xl p-5`}>
           {/* Live theme toggle — flips the whole app AND this card (they share the
               app's dark class), same set-your-preference spirit as the layout chooser. */}
           <button
@@ -205,7 +206,7 @@ export function GuidedTour({ steps, onClose }: { steps: TourStep[]; onClose: () 
       )}
 
       {step.kind === "done" && (
-        <div ref={cardRef} className={`fixed z-[210] left-1/2 top-[44%] -translate-x-1/2 -translate-y-1/2 w-[380px] max-w-[calc(100vw-24px)] rounded-2xl ${surface} shadow-2xl p-5 text-center`}>
+        <div ref={cardRef} className={`absolute z-[210] left-1/2 top-[44%] -translate-x-1/2 -translate-y-1/2 w-[380px] max-w-[calc(100vw-24px)] rounded-2xl ${surface} shadow-2xl p-5 text-center`}>
           <div className={kicker}>Cobblr</div>
           <h3 className="text-lg font-bold">{step.title}</h3>
           <p className={`text-sm mt-1.5 ${muted}`}>{step.body}</p>
@@ -215,7 +216,7 @@ export function GuidedTour({ steps, onClose }: { steps: TourStep[]; onClose: () 
           </div>
         </div>
       )}
-    </div>,
+    </OverlayLayer>,
     document.body,
   );
 }

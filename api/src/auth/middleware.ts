@@ -8,6 +8,7 @@
 import type { NextFunction, Request, Response } from "express";
 import { meta } from "../db/meta.js";
 import { verifySession } from "./jwt.js";
+import { errors as joseErrors } from "jose";
 import { resolveApiToken } from "./api-tokens.js";
 import { tokenScopeAllows } from "./scopes.js";
 import { runWithActor } from "../lib/request-context.js";
@@ -139,6 +140,10 @@ const MCP_READ_PATHS: Array<string | RegExp> = [
   "/registered-actions",
   /^\/entities\//,
   "/pairings",
+  // what is inside a container and where a thing is: list_related reads both
+  // beside the pairings, so a relayed "what's in Bin 7" sees the bin's contents
+  "/modules/core-placement/contents",
+  "/modules/core-placement/of",
   // what needs me / what happened / what is coming
   "/attention",
   "/activity",
@@ -388,8 +393,20 @@ export async function requireAuth(
       () => next(),
     );
   } catch (err) {
-    res.status(401).json({
-      error: { code: "unauthenticated", message: (err as Error).message },
+    // A token that does not verify is 401. A lookup that could not run is
+    // not: when the meta pool had nothing to give, this answered 401
+    // "timeout exceeded when trying to connect" and a starving api read as
+    // every session expiring at once (#3033). That is a 503, counted as an
+    // error and named in the log, never a logout.
+    if (err instanceof joseErrors.JOSEError) {
+      res.status(401).json({
+        error: { code: "unauthenticated", message: err.message },
+      });
+      return;
+    }
+    console.error("[auth] the session could not be checked:", (err as Error).message);
+    res.status(503).json({
+      error: { code: "auth_unavailable", message: "Could not check your session right now; try again in a moment." },
     });
   }
 }

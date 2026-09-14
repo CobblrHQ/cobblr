@@ -9,6 +9,7 @@
 
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import { createPortal } from "react-dom";
+import { PopoverLayer } from "@cobblr/platform-web";
 
 interface Props {
   /** The button. Gets the open state so it can show a pressed style. */
@@ -141,14 +142,14 @@ export function HeaderMenu({
       {open &&
         pos &&
         createPortal(
-          <div
+          <PopoverLayer
             data-header-menu
             role="menu"
             style={{ top: pos.top, left: pos.left, width: pos.width, maxHeight: pos.maxHeight }}
-            className="fixed z-[70] overflow-y-auto overscroll-contain rounded-lg border border-line dark:border-slate-700 bg-surface dark:bg-slate-900 shadow-xl py-1.5 text-sm"
+            className="z-[70] overflow-y-auto overscroll-contain rounded-lg border border-line dark:border-slate-700 bg-surface dark:bg-slate-900 shadow-xl py-1.5 text-sm"
           >
             {children({ close: () => setOpen(false) })}
-          </div>,
+          </PopoverLayer>,
           document.body,
         )}
     </span>

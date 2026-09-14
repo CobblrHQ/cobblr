@@ -48,6 +48,28 @@ export interface SplitInherited {
   fields: Record<string, string | number | boolean>;
   /** The group observation's sentence(s) about this piece, or null. */
   observation: string | null;
+  /** Which of the parent's whole-photo keys (series, category, entity_type)
+   *  this piece kept, and what corroborated each: its own name, the
+   *  sentence about it, or a fact the group observation states. Absent on
+   *  a child split before the judgement existed. */
+  meta_kept?: Partial<Record<InheritedMetaKey, InheritedMetaWhy>>;
+}
+
+/** The parent's whole-photo keys the split used to copy onto every piece
+ *  verbatim: the vision's series for the frame landed on a Holiday frame
+ *  beside a Wicked set, and the inbox then said both were Wicked (#3013). */
+export type InheritedMetaKey = "series" | "category" | "entity_type";
+export const INHERITED_META_KEYS: readonly InheritedMetaKey[] = ["series", "category", "entity_type"];
+export type InheritedMetaWhy = "name" | "observation" | "group";
+
+export interface InheritedMeta {
+  /** The keys this piece keeps, with the values. */
+  kept: Partial<Record<InheritedMetaKey, string>>;
+  /** What corroborated each kept key. */
+  why: Partial<Record<InheritedMetaKey, InheritedMetaWhy>>;
+  /** The keys this piece does not keep, with the parent's values: kept on
+   *  the child as `split_dropped` so nothing is lost, only not claimed. */
+  dropped: Partial<Record<InheritedMetaKey, string>>;
 }
 
 const STOP = new Set(["the", "and", "with", "set", "sets", "box", "boxed", "building", "kit", "pack", "item", "items", "edition", "limited", "retail"]);
@@ -157,6 +179,47 @@ export function inheritedFields(
   return out;
 }
 
+/**
+ * Which of the parent's whole-photo keys THIS piece may claim. A series is
+ * a fact about one thing: the piece keeps it only when its own name or the
+ * sentence about it names the series ("Brickwright Wicked 75684" does,
+ * "Holiday Picture Frame 40702" does not), never because the group photo
+ * as a whole was read as that series. A category or a noun hint is kept
+ * when the piece's name or its own sentence carries it, or when the group
+ * observation states it. In every case a value a sibling's name carries is
+ * the sibling's and not this piece's (the same rule as inheritedFields).
+ * Anything else is a guess about the group and is not the piece's.
+ */
+export function inheritedMeta(
+  piece: { name: string },
+  siblings: string[],
+  parentMeta: Partial<Record<InheritedMetaKey, unknown>> | null | undefined,
+  ownObservation: string | null,
+  groupObservation: string | null,
+): InheritedMeta {
+  const out: InheritedMeta = { kept: {}, why: {}, dropped: {} };
+  for (const key of INHERITED_META_KEYS) {
+    const raw = parentMeta?.[key];
+    if (typeof raw !== "string" || !raw.trim()) continue;
+    const value = raw.trim();
+    let why: InheritedMetaWhy | null = null;
+    if (mentions(piece.name, value)) why = "name";
+    // A sibling whose name carries it owns it: one sentence can describe
+    // both boxes, and "the top box is Wicked" in the frame's sentence is
+    // about the set, not the frame.
+    else if (siblings.some((s) => mentions(s, value))) why = null;
+    else if (ownObservation && mentions(ownObservation, value)) why = "observation";
+    else if (key !== "series" && groupObservation && mentions(groupObservation, value)) why = "group";
+    if (why) {
+      out.kept[key] = value;
+      out.why[key] = why;
+    } else {
+      out.dropped[key] = value;
+    }
+  }
+  return out;
+}
+
 /** The sentences of the group observation about this piece: those that
  *  carry a token of its name no sibling's name carries. Null when none does. */
 export function observationFor(piece: { name: string }, siblings: string[], observation: string | null): string | null {
@@ -230,9 +293,9 @@ export function applySplitInheritance(
 export function splitReviewWords(review: "crop-failed" | "crop-unreadable" | null): string {
   switch (review) {
     case "crop-failed":
-      return "Its crop could not be cut, so this is identified from the group photo; check it.";
+      return "Identified from the group photo: its crop could not be cut. Check it.";
     case "crop-unreadable":
-      return "Its crop could not be read, so this is identified from the group photo; check it.";
+      return "Identified from the group photo: its crop could not be read. Check it.";
     default:
       return "";
   }

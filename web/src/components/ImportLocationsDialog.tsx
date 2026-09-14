@@ -115,7 +115,7 @@ export function ImportLocationsDialog({ slug, onClose }: { slug: string; onClose
             )}
             <div className="border border-line dark:border-slate-700 rounded max-h-72 overflow-y-auto">
               <table className="w-full text-xs">
-                <thead className="text-faint text-[10px] uppercase tracking-wide sticky top-0 bg-subtle dark:bg-slate-800">
+                <thead className="text-faint text-[10px] uppercase tracking-wide sticky-in-scroller bg-subtle dark:bg-slate-800">
                   <tr><th className="text-left px-2 py-1">Action</th><th className="text-left px-2 py-1">Name</th><th className="text-left px-2 py-1">Kind</th><th className="text-left px-2 py-1">Parent</th></tr>
                 </thead>
                 <tbody className="divide-y divide-line dark:divide-slate-800">

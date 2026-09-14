@@ -36,6 +36,8 @@ import { deepPathAfterWorkspace } from "./lib/deep-path";
 import { AuthPage, MagicConsumePage, IdentityCallbackPage } from "./pages/AuthPage";
 import { PairPage } from "./pages/PairPage";
 import { SandboxLanding } from "./pages/SandboxLanding";
+import { SandboxEnded } from "./pages/SandboxEnded";
+import { useSandboxEnded } from "./lib/sandbox-session";
 import { StartAppPage } from "./pages/StartAppPage";
 import { FeedbackWidget } from "./components/FeedbackWidget";
 import { Dashboard } from "./pages/Dashboard";
@@ -378,6 +380,11 @@ function PortalSlugRedirect() {
 
 function WorkspaceRoutes({ urlHandle }: { urlHandle: string }) {
   const { user } = useAuth();
+  // A no-account sandbox past its hour is not a workspace with a notice on
+  // it; it is gone. The whole shell goes with it: no cached dashboard, no
+  // strip, no tour, no modal, nothing left to press but the doors out.
+  const sandboxOver = useSandboxEnded();
+  if (sandboxOver) return <SandboxEnded />;
   if (!user) return <AuthPage />;
   // Force-password-reset gate: if the admin minted this account with
   // a temp password, the user must pick a new one before anything

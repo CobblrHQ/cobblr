@@ -1,6 +1,6 @@
 {
   "name": "@cobblr/platform-web",
-  "version": "0.12.11",
+  "version": "0.12.12",
   "private": true,
   "type": "module",
   "main": "src/index.ts",
@@ -9,7 +9,8 @@
     ".": {
       "types": "./src/index.ts",
       "import": "./src/index.ts"
-    }
+    },
+    "./floating-chrome.css": "./src/floating-chrome.css"
   },
   "scripts": {
     "typecheck": "tsc --noEmit"

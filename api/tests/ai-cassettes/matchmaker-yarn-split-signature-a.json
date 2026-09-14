@@ -1,9 +1,9 @@
 {
-  "_about": "The router's answer for the first Signature 4 Ply child, as it answered on staging (#2970): a shop the photo cannot support, and 3 DK.",
+  "_about": "The router's answer for the first Signature 4 Ply child, as it answered on the reviewer's retest (#2970 reopened): a shop the photo cannot support, a fibre, and 4 Aran on a ball whose name says 4 Ply.",
   "match": "\"x\":0.718,\"y\":0.048",
   "rounds": [
     {
-      "content": "{\"candidates\":[{\"module\":\"inventory\",\"instance\":\"yarn\",\"kind\":\"inventory:part\",\"label\":\"Yarn\",\"name\":\"West Yorkshire Spinners Signature 4 Ply Yarn\",\"confidence\":0.8,\"fields\":{\"fiber\":\"Wool\",\"weight_class\":\"3 – DK\",\"vendor\":\"Local yarn shop\"},\"notes\":\"A 4 ply wool yarn from a local yarn shop.\"}]}"
+      "content": "{\"candidates\":[{\"module\":\"inventory\",\"instance\":\"yarn\",\"kind\":\"inventory:part\",\"label\":\"Yarn\",\"name\":\"West Yorkshire Spinners Signature 4 Ply Yarn\",\"confidence\":0.8,\"fields\":{\"color\":\"#E0E0E0\",\"fiber\":\"Blend\",\"weight_class\":\"4 – Aran\",\"vendor\":\"Local yarn shop\"},\"notes\":\"A 4 ply wool blend from a local yarn shop, aran weight.\"}]}"
     }
   ]
 }

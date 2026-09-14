@@ -152,7 +152,7 @@ export function ImportDialog({ onClose }: { onClose: (importedCount: number) => 
             )}
             <div className="rounded-md border border-line dark:border-slate-700 max-h-[280px] overflow-y-auto">
               <table className="w-full text-xs">
-                <thead className="bg-mortar-100 dark:bg-slate-800 sticky top-0">
+                <thead className="bg-mortar-100 dark:bg-slate-800 sticky-in-scroller">
                   <tr className="text-[10px] font-mono uppercase tracking-widest text-muted dark:text-slate-400">
                     <th className="px-2 py-1.5 text-left">#</th>
                     <th className="px-2 py-1.5 text-left">Name</th>

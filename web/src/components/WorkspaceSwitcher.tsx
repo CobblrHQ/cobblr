@@ -32,7 +32,7 @@ import { ApiError, api, type OrgMembership } from "../lib/api";
 import { useAuth } from "../auth/AuthContext";
 import { useActiveOrg } from "../auth/ActiveOrgContext";
 import { displaySlug, slugifyHandle } from "../lib/workspaceSlug";
-import { Modal, useToast } from "@cobblr/platform-web";
+import { Modal, useToast, PopoverLayer } from "@cobblr/platform-web";
 import { MembersModal } from "./MembersModal";
 
 export function WorkspaceSwitcher({ inline = false }: { inline?: boolean } = {}) {
@@ -233,9 +233,9 @@ export function WorkspaceSwitcher({ inline = false }: { inline?: boolean } = {})
         </div>
       )}
       {open && !inline && pos && createPortal(
-        <div
+        <PopoverLayer
           ref={menuRef}
-          style={{ position: "fixed", top: pos.top, left: pos.left }}
+          style={{ top: pos.top, left: pos.left }}
           className="w-72 max-w-[calc(100vw-1rem)] rounded-xl border border-line dark:border-slate-700 bg-surface dark:bg-slate-900 shadow-lg z-[100] overflow-hidden"
         >
           <ul className="max-h-80 overflow-y-auto">
@@ -287,7 +287,7 @@ export function WorkspaceSwitcher({ inline = false }: { inline?: boolean } = {})
             <Plus size={13} />
             Create new workspace
           </button>
-        </div>,
+        </PopoverLayer>,
         document.body,
       )}
       <CreateWorkspaceModal

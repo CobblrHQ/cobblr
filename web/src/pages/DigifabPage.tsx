@@ -11,7 +11,7 @@ import { Plus, Trash2, Wifi, Printer, RefreshCw, Send, ListChecks, Boxes, X, Lis
 import { ApiError, api, type DigifabConnection, type DigifabJob, type DigifabFleet, type BambuMode, type DigifabLibraryItem, type DigifabHistory, type DigifabRun, type DigifabFailureConfig, type DigifabDetector, type DigifabDetectorCatalogEntry } from "../lib/api";
 import { useActiveOrg } from "../auth/ActiveOrgContext";
 import { PrintUpdatesPanel } from "./PrintUpdatesPanel";
-import { Modal, useToast, useConfirm, usePageTitle, useImageSrc } from "@cobblr/platform-web";
+import { changeWorkspaceShape, Modal, useToast, useConfirm, usePageTitle, useImageSrc } from "@cobblr/platform-web";
 import { Combobox } from "../components/Combobox";
 import { CreateConnectionModal, FleetView, PrintDetailModal, Lightbox, LIBRARY_DRAG_MIME, fetchAllMachines } from "../features/digifab/fleet";
 
@@ -63,10 +63,9 @@ export function DigifabPage({
   });
   const digifabEnabled = modules.data?.items.find((m) => m.name === "digifab")?.enabled;
   const enableDigifab = useMutation({
-    mutationFn: () => api.enableModule(activeSlug, "digifab"),
+    mutationFn: () => changeWorkspaceShape(qc, activeSlug, () => api.enableModule(activeSlug, "digifab")),
     onSuccess: () => {
       toast.success("Digital Fabrication enabled");
-      void qc.invalidateQueries({ queryKey: ["org-modules", activeSlug] });
     },
     onError: (e) => toast.error(e instanceof ApiError ? e.message : String(e)),
   });

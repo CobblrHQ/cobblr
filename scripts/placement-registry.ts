@@ -89,7 +89,7 @@ export const PLACEMENT: PlacementRow[] = [
     dir: "web/src/components/",
     exemplar: "web/src/components/EntityAttachments.tsx",
     why: "This layer is module-agnostic: it may not name a module's entity kind, because doing so silently excludes every module added later.",
-    lints: ["lint:component-kinds", "lint:hooks-after-return", "lint:no-emdash", "lint:ui-jargon", "lint:authed-image-src", "lint:noun-pluralisation", "lint:dark-mode-ember", "lint:dark-mode-tints", "lint:number-input-commits-a-number", "lint:action-outcome-shown", "lint:actions-run-through-one-door"],
+    lints: ["lint:component-kinds", "lint:hooks-after-return", "lint:no-emdash", "lint:ui-jargon", "lint:authed-image-src", "lint:noun-pluralisation", "lint:dark-mode-ember", "lint:dark-mode-tints", "lint:number-input-commits-a-number", "lint:action-outcome-shown", "lint:actions-run-through-one-door", "lint:shape-changes-run-through-one-door", "lint:sticky-under-header", "lint:fixed-chrome"],
     notes: [
       "If it names one module's kind, it is not generic — it belongs beside that module's page (see page-level-module-ui).",
     ],
@@ -101,7 +101,7 @@ export const PLACEMENT: PlacementRow[] = [
     dir: "web/src/pages/",
     exemplar: "web/src/pages/NewBinSheet.tsx",
     why: "Naming your own module's kind on its own page is fine, so page-level UIs are exempt from the generic-component rule.",
-    lints: ["lint:hooks-after-return", "lint:no-emdash", "lint:ui-jargon", "lint:jsx-comment-text", "lint:authed-image-src", "lint:noun-pluralisation"],
+    lints: ["lint:hooks-after-return", "lint:no-emdash", "lint:ui-jargon", "lint:jsx-comment-text", "lint:authed-image-src", "lint:noun-pluralisation", "lint:scan-card-copy"],
   },
   {
     id: "module-ui",
@@ -130,7 +130,7 @@ export const PLACEMENT: PlacementRow[] = [
     dir: "api/src/platform/",
     exemplar: "api/src/platform/exclusive.ts",
     why: "A capability two modules would otherwise each hand-roll belongs in the kernel, declared on the platform contract so modules reach it without importing each other.",
-    lints: ["lint:isolation", "lint:background-loops", "lint:credential-slot-kind", "lint:pg-clients-born-guarded"],
+    lints: ["lint:isolation", "lint:background-loops", "lint:credential-slot-kind", "lint:pg-clients-born-guarded", "lint:contract-sibling-imports"],
     notes: [
       "Declare it on `packages/platform-contract/src/index.ts` and wire it in `api/src/index.ts`; both halves or modules cannot see it.",
       "Import the db handle lazily inside the function — an eager import drags cobblr_meta into every unit test that imports an adopting file.",
@@ -208,7 +208,7 @@ export const PLACEMENT: PlacementRow[] = [
     dir: "modules/<name>/src/api/ or api/src/routes/",
     exemplar: "modules/core-scan/src/api/inbox.ts",
     why: "Express matches in registration order: a literal path declared after a parameter route on the same prefix is never reached, and the client gets a 400 that nothing reports (the session theme was dead this way for weeks).",
-    lints: ["lint:route-shadowing", "lint:announce-routes-home", "lint:api-client-reachable"],
+    lints: ["lint:route-shadowing", "lint:announce-routes-home", "lint:api-client-reachable", "lint:scan-triage-columns"],
     notes: [
       "Register literal paths (/inbox/session-theme) ABOVE parameter paths (/inbox/:id) in the same router.",
       "A route's client method in web/src/lib/api.ts is not a feature until something on screen calls it: lint:api-client-reachable refuses a method with no caller (the catalog crop sat reachable-by-curl-only for a month).",
@@ -252,7 +252,7 @@ export const PLACEMENT: PlacementRow[] = [
     dir: ".forgejo/workflows/",
     exemplar: ".forgejo/workflows/ci.yml",
     why: "Forgejo keeps no job logs and parses each job on its own: a step that ships no log is unreadable after the fact, a label nobody carries never runs, and a YAML anchor across jobs invalidates the whole file.",
-    lints: ["lint:ci-sink", "lint:ci-runner-labels", "lint:ci-lanes", "lint:workflow-yaml", "lint:latest-monotonic", "lint:ci-pr-any-base", "lint:forgejo-pagination", "lint:main-runs-complete"],
+    lints: ["lint:ci-sink", "lint:ci-runner-labels", "lint:ci-lanes", "lint:workflow-yaml", "lint:latest-monotonic", "lint:ci-pr-any-base", "lint:forgejo-pagination", "lint:main-runs-complete", "lint:catalog-replay"],
     notes: [
       "The `test` and `test-full` jobs are one job in two places; edit the gate, copy its env+steps over the tracker.",
       "No YAML anchors or merge keys across jobs: Forgejo's job parser splits first and resolves second.",
@@ -282,7 +282,7 @@ export const PLACEMENT: PlacementRow[] = [
     dir: "api/tests/",
     exemplar: "api/tests/core-scan.test.ts",
     why: "One suite, 389 files, 4 minutes: a test that does not say what it covers runs on every change, and one that says it wrong never runs on the change that breaks it.",
-    lints: ["lint:test-affects", "lint:test-durations", "lint:test-budget-covers-signup"],
+    lints: ["lint:test-affects", "lint:test-durations", "lint:test-budget-covers-signup", "lint:wall-clock-assertions"],
     notes: [
       "First line: `// affects: <module>, <module>` or `always` or `kernel`. `node scripts/test-affects.mjs --infer <file>` proposes one from the routes the test hits.",
       "Test the consequence you fear, not the mechanism you built; name it after what it costs when wrong (CLAUDE.md 14.1a).",
@@ -334,7 +334,7 @@ export const PLACEMENT: PlacementRow[] = [
     dir: "web/src/lib/featured-bundles.ts",
     exemplar: "bundles/computers.json",
     why: "featured-bundles.ts is the ONE source; bundles/*.json is GENERATED from it. Editing the json directly is the drift this pair already suffered once, and lint:bundles-synced now catches it.",
-    lints: ["lint:bundles-synced", "lint:bundle-schema", "lint:bundle-content", "lint:bundle-quality", "lint:bundle-id-noun", "lint:bundle-keyword-collisions", "lint:versions", "lint:platform-owned-roles", "lint:bundle-fields-on-own-kinds"],
+    lints: ["lint:bundles-synced", "lint:bundle-schema", "lint:bundle-content", "lint:bundle-quality", "lint:bundle-id-noun", "lint:bundle-keyword-collisions", "lint:versions", "lint:platform-owned-roles", "lint:bundle-fields-on-own-kinds", "lint:identifier-fields-declared"],
     notes: [
       "Author the entry in web/src/lib/featured-bundles.ts, then run `npx tsx scripts/sync-bundles.ts` to regenerate bundles/<slug>.json. Never hand-edit the json.",
       "Then `npx tsx scripts/lint-bundle-content.ts --write` to record it in bundles/bundle-versions.lock.json, or lint:bundle-content fails on a new bundle.",

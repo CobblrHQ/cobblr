@@ -11,6 +11,7 @@
 // confirm in the triage queue).
 
 import type { Kysely } from "kysely";
+import { asPackaging, packagingFromProse, type Packaging } from "@cobblr/platform-contract/scan-tools";
 import { platform } from "@cobblr/platform-contract";
 import { tidyTruncatedName } from "./item-name.js";
 import type { CoreScanDB } from "../db.js";
@@ -301,6 +302,9 @@ export interface PhotoIdentity {
    *  verdict is data. Absent on a reply from before the prompt asked (an
    *  older cached reply, the hosted service), when the prose rules decide. */
   is_receipt?: "yes" | "no" | "unsure";
+  /** What the pass saw of the packaging (#3006): the key when the reply
+   *  carries it, else read off the observations' prose. */
+  packaging?: Packaging;
 }
 
 export interface Individual {
@@ -565,6 +569,7 @@ export function parseIdentityReply(parsed: Record<string, unknown> | null): Phot
     product_photo_box: parseProductRegion({ box: p.product_photo_box }),
     ...normalizeIndividuals(p.items, p.distinct_items),
     ...(is_receipt ? { is_receipt } : {}),
+    packaging: asPackaging((p as { packaging?: unknown }).packaging) ?? packagingFromProse(str(p.observations)),
   };
 }
 
@@ -612,6 +617,10 @@ export function identityOverlay(
   if (opts.hint) set.user_hint = opts.hint;
 
   const keep: string[] = [];
+  // The pass's own verdicts as data, for the inbox's tool rule (#3006): is
+  // this a receipt, and what did it see of the packaging.
+  if (identity.is_receipt) set.photo_is_receipt = identity.is_receipt;
+  if (identity.packaging) set.packaging = identity.packaging;
   if (identity.observations) {
     // The observation rides the SAME vision read as the name, so the split offer
     // lands in this one write instead of trailing a second call by seconds.
@@ -658,6 +667,9 @@ export interface PhotoObservation {
    *  This is what lets the inbox offer "split into individuals" with the actual
    *  list, without paying for a second vision call to find out what they are. */
   individuals: Array<{ name: string; brand: string | null; qty: number }>;
+  /** What the pass saw of the packaging, as the one key the inbox's tool rule
+   *  reads (#3006); read off the prose when the reply predates the key. */
+  packaging: Packaging;
 }
 
 export async function observeScanPhoto(
@@ -682,7 +694,7 @@ export async function observeScanPhoto(
         prompt:
           "Describe ONLY what is physically present in this photo. Reply with JSON " +
           "only, no prose outside it:\n" +
-          '{"observations": string, "distinct_items": integer, "items": [{"name": string, "brand": string|null, "qty": integer}]}\n\n' +
+          '{"observations": string, "distinct_items": integer, "items": [{"name": string, "brand": string|null, "qty": integer}], "packaging": "none"|"box"|"sealed"|"opened"|"unknown"}\n\n' +
           '"observations": 2-3 short factual sentences: how many retail units are ' +
           "visible (one loose unit, a sealed multipack of N, a shelf of several); " +
           "the packaging state; any label text you can read (QTY, pack size, " +
@@ -696,7 +708,14 @@ export async function observeScanPhoto(
           "a frog humidifier is 2. Most photos are 1.\n" +
           '"items": ONLY when distinct_items >= 2 — one entry per DIFFERENT thing, ' +
           "each named as specifically as the photo allows, with how many of that one " +
-          "are visible. Otherwise [].",
+          "are visible. Otherwise [].\n" +
+          // The packaging state is already asked for as prose above; as one
+          // key it is data the inbox reads to offer the box tools only when a
+          // box is in the picture (#3006). One key, no other text changes.
+          '"packaging": "none" when the item is bare (no packaging in frame), ' +
+          '"box" when it sits in or on its retail box, carton or blister, "sealed" ' +
+          'when that packaging is unopened, "opened" when it has been opened, ' +
+          '"unknown" when you cannot tell.',
       },
       source: { kind: "core-scan:photo-observe", id: sourceId ?? "" },
     });
@@ -722,6 +741,7 @@ export function parseObservation(raw: string): PhotoObservation {
     text: text.slice(0, 1500),
     distinct: 1,
     individuals: [],
+    packaging: packagingFromProse(text),
   });
   // Models like to wrap JSON in ```json fences.
   const body = raw.replace(/^```(?:json)?/i, "").replace(/```$/, "").trim();
@@ -738,10 +758,15 @@ export function parseObservation(raw: string): PhotoObservation {
     observations?: unknown;
     distinct_items?: unknown;
     items?: unknown;
+    packaging?: unknown;
   };
   const text = typeof o.observations === "string" ? o.observations.trim() : "";
   if (!text) return flat(raw);
-  return { text: text.slice(0, 1500), ...normalizeIndividuals(o.items, o.distinct_items) };
+  return {
+    text: text.slice(0, 1500),
+    ...normalizeIndividuals(o.items, o.distinct_items),
+    packaging: asPackaging(o.packaging) ?? packagingFromProse(text),
+  };
 }
 
 /**

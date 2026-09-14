@@ -25,8 +25,7 @@
 // lock. Where a claim is available, the claim is the real guard and this is
 // contention control on top of it.
 
-import { sql, type Kysely } from "kysely";
-import type { MetaDB } from "../db/schema.js";
+import type { Client } from "pg";
 import { lockKeyFor, withAdvisoryLock } from "./advisory-lock.js";
 
 export { lockKeyFor, withAdvisoryLock } from "./advisory-lock.js";
@@ -36,23 +35,42 @@ export { lockKeyFor, withAdvisoryLock } from "./advisory-lock.js";
  *
  * Returns true when this process ran it, false when someone else held it. A
  * skipped tick is the normal, correct outcome — never an error.
+ *
+ * The lock lives on a connection of its OWN, opened for the tick and closed
+ * after it, never a client borrowed from the meta pool. A session lock has to
+ * stay on one connection for as long as the work runs, and the work of a
+ * sweep is minutes of fetches and tenant rounds; borrowed from the pool, that
+ * was one request's worth of capacity spent for the whole sweep, and a sweep
+ * that hung spent it forever. Six such jobs and a pool of ten is how the api
+ * hung on the dev rig with nothing in the log (#3033). The work itself uses
+ * the pool through `meta` like any request, and gives each client back per
+ * statement.
  */
 export async function runExclusive(name: string, work: () => Promise<void>): Promise<boolean> {
-  // The meta handle is imported HERE, not at module load. Any file that adopts
+  // The db modules are imported HERE, not at module load. Any file that adopts
   // this seam would otherwise gain an eager database import, and a unit test
   // that imports such a file in isolation dies on connection setup before it
   // reaches its subject — which is exactly what happened to
   // db-upgrade-status-quiet the moment this seam was added to that file.
-  const { meta } = await import("../db/meta.js");
+  const { env } = await import("../env.js");
+  const { createClient } = await import("../db/client-error-guard.js");
   const key = lockKeyFor(name);
-  return withAdvisoryLock<Kysely<MetaDB>>({
-    connect: (fn) => meta.connection().execute(fn),
+  return withAdvisoryLock<Client>({
+    connect: async (fn) => {
+      const client = createClient({ connectionString: env.DATABASE_URL }, `advisory-lock ${name}`);
+      await client.connect();
+      try {
+        return await fn(client);
+      } finally {
+        await client.end().catch(() => {});
+      }
+    },
     tryLock: async (conn) => {
-      const got = await sql<{ locked: boolean }>`select pg_try_advisory_lock(${key}) as locked`.execute(conn);
+      const got = await conn.query<{ locked: boolean }>("select pg_try_advisory_lock($1) as locked", [key.toString()]);
       return got.rows[0]?.locked ?? false;
     },
     unlock: async (conn) => {
-      await sql`select pg_advisory_unlock(${key})`.execute(conn);
+      await conn.query("select pg_advisory_unlock($1)", [key.toString()]);
     },
     work,
   });

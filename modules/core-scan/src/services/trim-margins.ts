@@ -106,14 +106,49 @@ export function planTrim(
   return { left: content.left, top: content.top, width: content.width, height: content.height, margin };
 }
 
+/** What the trim decided and why, stamped on the item so the next "the
+ *  picture is not trimmed" report can be read off the row instead of
+ *  reproduced (#3002). `from`/`to` are pixel sizes; `content` is the box the
+ *  border detector found in the source. */
+export interface TrimVerdict {
+  status: "trimmed" | "declined" | "failed";
+  /** Why it declined or failed; absent when it trimmed. */
+  reason?: "filled-already" | "ate-the-picture" | "undecodable" | "no-content";
+  from?: { width: number; height: number };
+  to?: { width: number; height: number };
+  content?: { left: number; top: number; width: number; height: number };
+}
+
+export interface TrimOutcome {
+  /** The new bytes, or null when the image is better left exactly as it is. */
+  bytes: Uint8Array | null;
+  verdict: TrimVerdict;
+}
+
+/** Why planTrim said no, for the verdict. Mirrors planTrim's own order. */
+export function trimRefusal(
+  src: { width: number; height: number },
+  content: { left: number; top: number; width: number; height: number },
+): NonNullable<TrimVerdict["reason"]> {
+  if (content.width <= 0 || content.height <= 0) return "no-content";
+  if (content.width / src.width < MIN_REMAINING_SIDE || content.height / src.height < MIN_REMAINING_SIDE) return "ate-the-picture";
+  return "filled-already";
+}
+
 /** Flatten transparency onto white and trim dead space. Returns the new bytes,
  *  or null when the image is better left exactly as it is. */
 export async function trimCatalogMargins(input: Uint8Array): Promise<Uint8Array | null> {
+  return (await trimCatalogMarginsWithVerdict(input)).bytes;
+}
+
+/** The same trim, saying what it did. */
+export async function trimCatalogMarginsWithVerdict(input: Uint8Array): Promise<TrimOutcome> {
   try {
     const up = await uprightBytes(input);
-    if (!up) return null;
+    if (!up) return { bytes: null, verdict: { status: "failed", reason: "undecodable" } };
     const { bytes: base, meta } = up;
-    if (!meta.width || !meta.height) return null;
+    if (!meta.width || !meta.height) return { bytes: null, verdict: { status: "failed", reason: "undecodable" } };
+    const from = { width: meta.width, height: meta.height };
 
     // FLATTEN FIRST, and measure the flattened image. A transparent PNG's
     // pixels under the alpha are usually black, so measuring before flattening
@@ -126,18 +161,16 @@ export async function trimCatalogMargins(input: Uint8Array): Promise<Uint8Array 
     const probe = await sharp(flat, { failOn: "none" })
       .trim({ threshold: 12 })
       .toBuffer({ resolveWithObject: true });
-    const plan = planTrim(
-      { width: meta.width, height: meta.height },
-      {
-        left: -(probe.info.trimOffsetLeft ?? 0),
-        top: -(probe.info.trimOffsetTop ?? 0),
-        width: probe.info.width,
-        height: probe.info.height,
-      },
-    );
+    const content = {
+      left: -(probe.info.trimOffsetLeft ?? 0),
+      top: -(probe.info.trimOffsetTop ?? 0),
+      width: probe.info.width,
+      height: probe.info.height,
+    };
+    const plan = planTrim(from, content);
 
     // Nothing to fix: no transparency to lose and no space worth reclaiming.
-    if (!plan && !meta.hasAlpha) return null;
+    if (!plan && !meta.hasAlpha) return { bytes: null, verdict: { status: "declined", reason: trimRefusal(from, content), from, content } };
 
     let pipeline = sharp(flat, { failOn: "none" });
     if (plan) {
@@ -155,9 +188,14 @@ export async function trimCatalogMargins(input: Uint8Array): Promise<Uint8Array 
           background: bg,
         });
     }
-    return new Uint8Array(await pipeline.jpeg({ quality: 90 }).toBuffer());
+    const out = new Uint8Array(await pipeline.jpeg({ quality: 90 }).toBuffer());
+    const to = plan
+      ? { width: plan.width + 2 * plan.margin, height: plan.height + 2 * plan.margin }
+      : from;
+    return { bytes: out, verdict: { status: "trimmed", from, to, content } };
   } catch {
-    return null; // a decode failure must never cost the item its picture
+    // a decode failure must never cost the item its picture
+    return { bytes: null, verdict: { status: "failed", reason: "undecodable" } };
   }
 }
 

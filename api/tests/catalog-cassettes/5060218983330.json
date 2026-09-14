@@ -1,0 +1,17 @@
+{
+  "outcome": "hit",
+  "hit": {
+    "source": "openfoodfacts",
+    "title": "Apricot Jasmine Tea",
+    "brand": null,
+    "model": null,
+    "description": null,
+    "category": "Teas",
+    "image_url": null,
+    "raw": {
+      "code": "5060218983330",
+      "product_name": "Apricot Jasmine Tea",
+      "categories": "Teas"
+    }
+  }
+}

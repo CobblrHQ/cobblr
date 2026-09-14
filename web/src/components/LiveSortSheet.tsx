@@ -21,7 +21,7 @@ import {
   SkipForward,
   X,
 } from "lucide-react";
-import { useToast, OverlayFlag } from "@cobblr/platform-web";
+import { useToast, OverlayLayer } from "@cobblr/platform-web";
 import { api, ApiError, type LiveSortEntry } from "../lib/api";
 import { qrTokenFromUrl } from "@cobblr/platform-contract/qr-token";
 import { useBarcodeWedge } from "../lib/useBarcodeWedge";
@@ -341,11 +341,10 @@ export function LiveSortSheet({ slug, onClose }: { slug: string; onClose: () => 
   const sortedCount = tape.length;
 
   return createPortal(
-    <div
-      className="fixed inset-0 z-[70] bg-surface dark:bg-slate-950 flex flex-col"
+    <OverlayLayer
+      className="z-[70] bg-surface dark:bg-slate-950 flex flex-col"
       data-testid="live-sort-sheet"
     >
-      <OverlayFlag />
       {/* Header */}
       {/* The heading and the actions competed for a phone's width and the
           heading lost, wrapping to roughly one word per line (reported 2026-08-05).
@@ -649,7 +648,7 @@ export function LiveSortSheet({ slug, onClose }: { slug: string; onClose: () => 
             .join(" · ")}
         </div>
       )}
-    </div>,
+    </OverlayLayer>,
     document.body,
   );
 }

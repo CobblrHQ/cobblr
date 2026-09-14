@@ -31,19 +31,21 @@ export type ProviderErrorReason = "invalid_key" | "quota" | "model_unavailable" 
 function providerErrorWords(reason: ProviderErrorReason | undefined): { hint: string; chip: string; retry: boolean } | null {
   switch (reason) {
     case "invalid_key":
-      return { hint: "The AI's key is not valid, so this was matched by keywords. Replace the key on its connection.", chip: "Matched by keywords: the AI's key is not valid.", retry: false };
+      return { hint: "Matched by keywords: the AI's key is not valid. Replace it.", chip: "Matched by keywords: the AI's key is not valid.", retry: false };
     case "quota":
-      return { hint: "The AI refused this for its usage limit, so this was matched by keywords. Retry with AI later.", chip: "Matched by keywords: the AI's usage limit.", retry: true };
+      return { hint: "Matched by keywords: the AI hit its usage limit. Retry later.", chip: "Matched by keywords: the AI's usage limit.", retry: true };
     case "model_unavailable":
-      return { hint: "The AI does not serve the model its connection names, so this was matched by keywords. Pick another model on the connection.", chip: "Matched by keywords: the AI's model is not available.", retry: false };
+      return { hint: "Matched by keywords: the AI's model is not available.", chip: "Matched by keywords: the AI's model is not available.", retry: false };
     case "unreachable":
-      return { hint: "The AI could not be reached, so this was matched by keywords. Retry with AI.", chip: "Matched by keywords: the AI could not be reached.", retry: true };
+      return { hint: "Matched by keywords: the AI could not be reached. Retry with AI.", chip: "Matched by keywords: the AI could not be reached.", retry: true };
     default:
       return null;
   }
 }
 
-/** The sentence the server writes into the routing note. */
+/** The sentence the server writes into the routing note. One plain sentence
+ *  a phone card can show whole (scan-copy.ts, CARD_SENTENCE_MAX); the
+ *  remedy is the card's own button. */
 export function fallbackHint(why: AiFallback, reason?: ProviderErrorReason): string {
   const own = why === "provider-error" ? providerErrorWords(reason) : null;
   if (own) return own.hint;
@@ -51,15 +53,30 @@ export function fallbackHint(why: AiFallback, reason?: ProviderErrorReason): str
     case "no-provider":
       return "Connect an AI provider for a sharper name and filled-in fields.";
     case "background":
-      return "Routed without your personal AI (this step ran in the background). Retry with AI to use it.";
+      return "Routed without your personal AI. Retry with AI to use it.";
     case "not-entitled":
-      return "The AI allowance for this workspace is used up for now, so this was matched by keywords.";
+      return "Matched by keywords: the AI allowance is used up for now.";
     case "provider-error":
-      return "The AI errored on this one, so it was matched by keywords. Retry with AI.";
+      return "Matched by keywords: the AI errored. Retry with AI.";
     case "no-answer":
-      return "The AI did not answer in time, so this was matched by keywords. Retry with AI.";
+      return "Matched by keywords: the AI did not answer in time. Retry with AI.";
   }
 }
+
+/** Every sentence fallbackHint has ever written. A row keeps the prose it
+ *  was written with, and the routing note's stripper must recognise all of
+ *  them so a re-run cannot stack an old sentence under a new one
+ *  (routing-note.ts). A wording change ADDS here and never removes. */
+export const RETIRED_FALLBACK_HINTS: readonly string[] = [
+  "The AI's key is not valid, so this was matched by keywords. Replace the key on its connection.",
+  "The AI refused this for its usage limit, so this was matched by keywords. Retry with AI later.",
+  "The AI does not serve the model its connection names, so this was matched by keywords. Pick another model on the connection.",
+  "The AI could not be reached, so this was matched by keywords. Retry with AI.",
+  "Routed without your personal AI (this step ran in the background). Retry with AI to use it.",
+  "The AI allowance for this workspace is used up for now, so this was matched by keywords.",
+  "The AI errored on this one, so it was matched by keywords. Retry with AI.",
+  "The AI did not answer in time, so this was matched by keywords. Retry with AI.",
+];
 
 /** The card's one line beside the keyword match, and whether a retry helps. */
 export function fallbackChip(why: AiFallback, reason?: ProviderErrorReason): { text: string; retry: boolean; connect: boolean } {
@@ -106,38 +123,40 @@ export interface IdentifyFailure {
   reason?: string;
 }
 
-/** The note the server writes under a photo it could not name, whether a
- *  retry would help, and whether connecting a provider is the remedy. */
-export function identifyFailureWords(f: IdentifyFailure): { sentence: string; retry: boolean; connect: boolean } {
+/** The note the server writes under a photo it could not name, the why for
+ *  its title, whether a retry would help, and whether connecting a provider
+ *  is the remedy. The sentence is one line a phone card can show whole; the
+ *  remedy rides in `detail`. */
+export function identifyFailureWords(f: IdentifyFailure): { sentence: string; detail: string; retry: boolean; connect: boolean } {
   if (f.code === "no_item") {
-    return { sentence: "The AI saw no single item to name in this photo. Name it yourself, or read it as a receipt if that is what it is.", retry: false, connect: false };
+    return { sentence: "The AI saw no single item to name in this photo.", detail: "Name it yourself, or read it as a receipt if that is what it is.", retry: false, connect: false };
   }
   if (f.code === "no_answer") {
-    return { sentence: "Couldn't identify this photo: the AI's answer could not be read. Identify it again.", retry: true, connect: false };
+    return { sentence: "Couldn't identify this photo: the AI's answer could not be read.", detail: "Identify it again.", retry: true, connect: false };
   }
   switch (f.ai) {
     case "no-provider":
-      return { sentence: "Couldn't identify this photo: no AI provider is connected. Connect one (Configuration → AI, or your own under Account), or name it yourself.", retry: false, connect: true };
+      return { sentence: "Couldn't identify this photo: no AI provider is connected.", detail: "Connect one under Configuration, AI, or your own under Account, or name it yourself.", retry: false, connect: true };
     case "background":
-      return { sentence: "Couldn't identify this photo: this step ran without your personal AI. Identify it again to use it.", retry: true, connect: false };
+      return { sentence: "Couldn't identify this photo: it ran without your personal AI.", detail: "Identify it again to use it.", retry: true, connect: false };
     case "not-entitled":
-      return { sentence: "Couldn't identify this photo: the AI allowance for this workspace is used up for now. Identify it again later, or name it yourself.", retry: true, connect: false };
+      return { sentence: "Couldn't identify this photo: the AI allowance is used up for now.", detail: "Identify it again later, or name it yourself.", retry: true, connect: false };
     case "provider-error":
       switch (f.ai_reason) {
         case "invalid_key":
-          return { sentence: "Couldn't identify this photo: the AI's key is not valid. Replace the key on its connection, then identify it again.", retry: false, connect: true };
+          return { sentence: "Couldn't identify this photo: the AI's key is not valid.", detail: "Replace the key on its connection, then identify it again.", retry: false, connect: true };
         case "quota":
-          return { sentence: "Couldn't identify this photo: the AI refused for its usage limit. Identify it again later.", retry: true, connect: false };
+          return { sentence: "Couldn't identify this photo: the AI hit its usage limit.", detail: "Identify it again later.", retry: true, connect: false };
         case "model_unavailable":
-          return { sentence: "Couldn't identify this photo: the AI does not serve the model its connection names. Pick another model, then identify it again.", retry: false, connect: true };
+          return { sentence: "Couldn't identify this photo: the AI's model is not available.", detail: "Pick another model on the connection, then identify it again.", retry: false, connect: true };
         case "unreachable":
-          return { sentence: "Couldn't identify this photo: the AI could not be reached. Identify it again.", retry: true, connect: false };
+          return { sentence: "Couldn't identify this photo: the AI could not be reached.", detail: "Identify it again.", retry: true, connect: false };
         default:
-          return { sentence: "Couldn't identify this photo: the AI errored. Identify it again.", retry: true, connect: false };
+          return { sentence: "Couldn't identify this photo: the AI errored.", detail: "Identify it again.", retry: true, connect: false };
       }
     case "no-answer":
-      return { sentence: "Couldn't identify this photo: the AI did not answer in time. Identify it again.", retry: true, connect: false };
+      return { sentence: "Couldn't identify this photo: the AI did not answer in time.", detail: "Identify it again.", retry: true, connect: false };
     default:
-      return { sentence: "Couldn't identify this photo. Identify it again, or name it yourself.", retry: true, connect: false };
+      return { sentence: "Couldn't identify this photo.", detail: "Identify it again, or name it yourself.", retry: true, connect: false };
   }
 }

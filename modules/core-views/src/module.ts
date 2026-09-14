@@ -87,7 +87,7 @@ export default defineModule({
         undoable: true,
         label: "Save a view",
         description:
-          "Save a new view of one kind of record (a table, a list, a kanban board, a calendar or a gantt timeline), optionally pinned to the dashboard. Runs on the workspace, not a record. The view is shared with the whole workspace. Check what already exists with get_workspace_setup before adding another.",
+          "Save a new view of one kind of record (a table, a list, a kanban board, a calendar or a gantt timeline), optionally pinned to the dashboard. Runs on the workspace, not a record. The view is shared with the whole workspace. Check what already exists with get_workspace_setup before adding another. 'Save this as a board' means the screen the person is on (CURRENT VIEW: its kind, its filter): run it with a name taken from that screen ('Idle machines') rather than asking what to call it; they can rename it after.",
         icon: "layout-dashboard",
         scope: "workspace",
         invokeHandler: "core-views.save-view",

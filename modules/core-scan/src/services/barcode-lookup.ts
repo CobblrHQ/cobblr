@@ -17,7 +17,9 @@
 // retail/craft coverage but can return junk or wrong listings) > Open Products
 // Facts (food/household-leaning, almost no craft coverage).
 
+import { STORE_CODE_NOTE } from "@cobblr/platform-contract/scan-copy";
 import { preferredFactsName, primaryBrand } from "./catalog-normalize.js";
+import { replayMiss, writeCatalogCassette } from "./catalog-replay.js";
 
 export interface BarcodeHit {
   source: "upcitemdb" | "openproductsfacts" | "go-upc" | string;
@@ -563,6 +565,16 @@ export function isStoreCode(code: string): boolean {
   return hasStoreCodePrefix(code) && gtinChecksumOk(code.trim());
 }
 
+/** What a store's own label is stamped with the moment it is inserted:
+ *  the verdict is known from the prefix alone, so the row never spends a
+ *  second reading "Identifying..." on any surface (#3017). Null for any
+ *  other code, which the lookup answers later. The enrich pass re-stamps
+ *  the same on a re-run. */
+export function storeCodeInsertStamps(code: string | null | undefined): { ai_notes: string; ai_confidence: string; ai_suggested_at: Date; code_type: "store-code" } | null {
+  if (!code || !isStoreCode(code)) return null;
+  return { ai_notes: STORE_CODE_NOTE, ai_confidence: "0", ai_suggested_at: new Date(), code_type: "store-code" };
+}
+
 export function looksLikeProductBarcode(code: string): boolean {
   const c = code.trim().toUpperCase();
   // A valid GTIN that is a shop's own label is still not a PRODUCT code: no
@@ -594,6 +606,10 @@ export async function lookupBarcode(upc: string): Promise<BarcodeOutcome> {
   // Never ask a product database about something that cannot be a product code.
   // A miss is the honest answer, and it costs no quota to give.
   if (!looksLikeProductBarcode(norm)) return { outcome: "miss" };
+  // A replay dir answers from its cassettes and never from the network
+  // (catalog-replay.ts): a test's catalog is a fixture, not a service.
+  const replayed = replayMiss(norm);
+  if (replayed) return normalizeOutcome(replayed);
   const existing = inflightLookups.get(norm);
   if (existing) return existing;
   // Normalise HERE, not in the adapters. Five provider tiers return a hit and
@@ -605,6 +621,10 @@ export async function lookupBarcode(upc: string): Promise<BarcodeOutcome> {
   // cleaning by existing.
   const p = doLookupBarcode(norm)
     .then(normalizeOutcome)
+    .then((outcome) => {
+      writeCatalogCassette(norm, outcome);
+      return outcome;
+    })
     .finally(() => inflightLookups.delete(norm));
   inflightLookups.set(norm, p);
   return p;

@@ -130,6 +130,14 @@ export function splitClaims(ai: string): string[] {
   return out;
 }
 
+/** What the model did, said the way a person reads it. */
+function gotWord(picked: string | null): string {
+  if (picked === null) return "words";
+  if (picked.startsWith("(escort:")) return `an escort to ${picked.slice(8, -1)}`;
+  if (/^\((create|update|delete)_records?\)$/.test(picked)) return `a record ${picked.slice(1, -1).replace(/_records?$/, "")}`;
+  return `the action ${picked}`;
+}
+
 function judgeOne(ai: string, v: Verdict, knownActions: Set<string>): Judgement {
   const c = parseClaim(ai);
   switch (c.cls) {
@@ -143,12 +151,21 @@ function judgeOne(ai: string, v: Verdict, knownActions: Set<string>): Judgement 
       }
       return { ok: true, why: Object.keys(c.args).length ? "action and arguments" : "action" };
     }
-    case "create":
-      return { ok: v.picked === "(create_record)" || v.picked === "(create_records)", why: `got ${v.picked ?? "words"}` };
-    case "update":
-      return { ok: v.picked === "(update_record)", why: `got ${v.picked ?? "words"}` };
-    case "delete":
-      return { ok: v.picked === "(delete_record)", why: `got ${v.picked ?? "words"}` };
+    // A record write is wanted; the why says what came instead in the same
+    // words a person reads: "wanted a record update, got the action
+    // projects:mark-task-done" and never "got X (got X)".
+    case "create": {
+      const ok = v.picked === "(create_record)" || v.picked === "(create_records)";
+      return { ok, why: ok ? "created the record" : `wanted a record create, got ${gotWord(v.picked)}` };
+    }
+    case "update": {
+      const ok = v.picked === "(update_record)";
+      return { ok, why: ok ? "updated the record" : `wanted a record update, got ${gotWord(v.picked)}` };
+    }
+    case "delete": {
+      const ok = v.picked === "(delete_record)";
+      return { ok, why: ok ? "deleted the record" : `wanted a record delete, got ${gotWord(v.picked)}` };
+    }
     case "read": {
       if (v.picked !== null) return { ok: false, why: `proposed ${v.picked} instead of answering` };
       if (v.reads[0] === "(unobserved via rig)") return { ok: true, why: "answered in words (reads unobserved)" };

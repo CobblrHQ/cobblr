@@ -1,7 +1,7 @@
 {
   "manifest": {
     "id": "cobblr.flagship.groceries",
-    "version": "0.11.0",
+    "version": "0.11.1",
     "scan_keywords": [
       "chips",
       "snack",
@@ -153,10 +153,15 @@
       "pizza",
       "ice cream",
       "frozen peas",
-      "ready meal"
+      "ready meal",
+      "seasoning",
+      "seasonings",
+      "herb",
+      "herbs",
+      "marinade"
     ],
-    "released_at": "2026-09-12",
-    "changelog": "The Groceries fields now live on the Groceries table only. An early install also put a copy of them on plain Inventory, which made every inventory table look perishable; food that was still filed in plain Inventory moves into Groceries on the next start, each move noted in the activity log, and the copy is removed. The installed Groceries table now routes with every word the bundle declares, so a scanned drink or snack lands here first instead of in plain Inventory. Groceries opens on What's on hand, the pantry board, rather than the table, and remembers the view you pick. Checking an item off the shopping list dates the fresh stock: bought today, good until today plus its shelf life, instead of inheriting the last lot's dates. The saved views that promise an order (Re-buy soonest, How often you re-buy, Use it or lose it) now deliver it on the table itself, soonest first. Checking an item off the shopping list now adds exactly what you bought, once: the restock and purchase wires were declared twice and both fired. The shopping row says what checking it off will do. Scanning a grocery now suggests this bundle. The scanner would pick it and then quietly file the item under plain Inventory instead, because a bundle's suggestion has to be corroborated by the item's own text and nothing called Tomatoes Roma or Croissant contains the word grocery. The bundle now says what its items are called. Marks the expiry date as an expiry field, so re-buying something that already went off is recorded as waste rather than as something you used up. Fixes the status dots on the What's on hand view, which never showed anything about expiry. Adds a What's on hand app: a vending-machine view of the kitchen with a quantity badge and a status dot per item, plus a use-it-or-lose-it list sorted by expiry. Answers what do we actually have without opening the fridge. Earlier changes are in the bundle's history.",
+    "released_at": "2026-09-14",
+    "changelog": "A seasoning, a herb or a marinade scanned from the food catalog files here: the bundle now declares those words, so a garlic seasoning blend no longer lands in a craft table because its name ends in Blend. The Groceries fields now live on the Groceries table only. An early install also put a copy of them on plain Inventory, which made every inventory table look perishable; food that was still filed in plain Inventory moves into Groceries on the next start, each move noted in the activity log, and the copy is removed. The installed Groceries table now routes with every word the bundle declares, so a scanned drink or snack lands here first instead of in plain Inventory. Groceries opens on What's on hand, the pantry board, rather than the table, and remembers the view you pick. Checking an item off the shopping list dates the fresh stock: bought today, good until today plus its shelf life, instead of inheriting the last lot's dates. The saved views that promise an order (Re-buy soonest, How often you re-buy, Use it or lose it) now deliver it on the table itself, soonest first. Checking an item off the shopping list now adds exactly what you bought, once: the restock and purchase wires were declared twice and both fired. The shopping row says what checking it off will do. Scanning a grocery now suggests this bundle. The scanner would pick it and then quietly file the item under plain Inventory instead, because a bundle's suggestion has to be corroborated by the item's own text and nothing called Tomatoes Roma or Croissant contains the word grocery. The bundle now says what its items are called. Marks the expiry date as an expiry field, so re-buying something that already went off is recorded as waste rather than as something you used up. Earlier changes are in the bundle's history.",
     "name": "Groceries",
     "description": "Turn inventory + lists into a kitchen system: track food with expiry + storage fields, an auto grocery list on low-stock/expiry, restock on check-off.",
     "author": "Cobblr",

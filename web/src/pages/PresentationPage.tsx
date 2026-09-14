@@ -9,7 +9,7 @@
 import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Eye, EyeOff, Pencil, RotateCcw, SlidersHorizontal } from "lucide-react";
-import { Modal, useToast, useConfirm, usePageTitle } from "@cobblr/platform-web";
+import { Modal, changeWorkspaceShape, useChangeWorkspaceShape, useToast, useConfirm, usePageTitle } from "@cobblr/platform-web";
 import {
   ApiError,
   api,
@@ -56,10 +56,9 @@ export function PresentationPage() {
 
   const reset = useMutation({
     mutationFn: (o: EntityKindOverride) =>
-      api.deleteOverride(activeSlug, o.target_kind, o.target_id),
+      changeWorkspaceShape(qc, activeSlug, () => api.deleteOverride(activeSlug, o.target_kind, o.target_id)),
     onSuccess: () => {
       toast.success("Reset to default.");
-      void qc.invalidateQueries({ queryKey: ["entity-kind-overrides", activeSlug] });
     },
     onError: (e) => toast.error(e instanceof ApiError ? e.message : String(e)),
   });
@@ -196,20 +195,14 @@ export function PresentationPage() {
         <PresentationEditModal
           override={editing}
           onClose={() => setEditing(null)}
-          onSaved={() => {
-            void qc.invalidateQueries({ queryKey: ["entity-kind-overrides", activeSlug] });
-            setEditing(null);
-          }}
+          onSaved={() => setEditing(null)}
         />
       )}
       {addingFor && (
         <PresentationCreateModal
           target={addingFor}
           onClose={() => setAddingFor(null)}
-          onSaved={() => {
-            void qc.invalidateQueries({ queryKey: ["entity-kind-overrides", activeSlug] });
-            setAddingFor(null);
-          }}
+          onSaved={() => setAddingFor(null)}
         />
       )}
     </div>
@@ -320,6 +313,7 @@ function PresentationCreateModal({
   onSaved: () => void;
 }) {
   const { activeSlug } = useActiveOrg();
+  const changeShape = useChangeWorkspaceShape();
   const [label, setLabel] = useState(target.defaultLabel);
   const [plural, setPlural] = useState("");
   const [icon, setIcon] = useState("");
@@ -348,7 +342,7 @@ function PresentationCreateModal({
         item_noun_plural: itemNounPlural.trim() || null,
         faces: Object.keys(faces).length ? faces : null,
       };
-      return api.upsertOverride(activeSlug, {
+      return changeShape(() => api.upsertOverride(activeSlug, {
         target_kind: target.target_kind,
         target_id: target.target_id,
         display_label: label.trim() || null,
@@ -357,7 +351,7 @@ function PresentationCreateModal({
         hidden,
         nav_order: navOrder === "" ? null : Number(navOrder),
         config,
-      });
+      }));
     },
     onSuccess: () => {
       toast.success("Override saved.");
@@ -432,6 +426,7 @@ function PresentationEditModal({
   onSaved: () => void;
 }) {
   const { activeSlug } = useActiveOrg();
+  const changeShape = useChangeWorkspaceShape();
   const [label, setLabel] = useState(override.display_label ?? "");
   const [plural, setPlural] = useState(override.display_label_plural ?? "");
   const [icon, setIcon] = useState(override.icon ?? "");
@@ -473,7 +468,7 @@ function PresentationEditModal({
         item_noun_plural: itemNounPlural.trim() || null,
         faces: Object.keys(faces).length ? faces : null,
       };
-      return api.upsertOverride(activeSlug, {
+      return changeShape(() => api.upsertOverride(activeSlug, {
         target_kind: override.target_kind,
         target_id: override.target_id,
         display_label: label.trim() || null,
@@ -482,7 +477,7 @@ function PresentationEditModal({
         hidden,
         nav_order: navOrder === "" ? null : Number(navOrder),
         config,
-      });
+      }));
     },
     onSuccess: () => {
       toast.success("Override saved.");

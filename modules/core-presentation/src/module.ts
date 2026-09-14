@@ -47,7 +47,7 @@ export default defineModule({
       id: "core-presentation:group-nav",
       label: "Group nav sections",
       description:
-        'Put existing nav sections under one heading, creating the heading if it does not exist. Pass `heading` (what the group is called) and `sections` (a comma-separated list of the section names as they appear in the nav, e.g. "Spices, Tea"). A section belongs to one heading at a time, so this moves it out of any other.',
+        'Put existing SIDEBAR sections (the workspace\'s lists, as they appear in the navigation) under one navigation heading, creating the heading if it does not exist. Pass `heading` (what the group is called) and `sections` (a comma-separated list of the section names as they appear in the nav, e.g. "Spices, Tea"). A section belongs to one heading at a time, so this moves it out of any other. This is the sidebar only: a heading over a kind\'s FIELDS on its form (grouping or renaming one) is platform:group-fields, not this.',
       examples: [
         "group spices and tea under Kitchen",
         "put those two lists under one heading",

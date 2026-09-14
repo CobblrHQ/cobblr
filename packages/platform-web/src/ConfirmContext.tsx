@@ -18,7 +18,7 @@ import {
   type ReactNode,
 } from "react";
 import { createPortal } from "react-dom";
-import { OverlayFlag } from "./overlay-open";
+import { OverlayLayer } from "./fixed-layers";
 
 interface ConfirmOptions {
   title?: string;
@@ -85,13 +85,12 @@ export function ConfirmProvider({ children }: { children: ReactNode }) {
     <Ctx.Provider value={confirm}>
       {children}
       {pending && createPortal(
-        <div
-          className="fixed inset-0 z-[60] bg-slate-900/50 backdrop-blur-sm flex items-center justify-center p-4"
+        <OverlayLayer
+          className="z-[60] bg-slate-900/50 backdrop-blur-sm flex items-center justify-center p-4"
           onClick={() => close(false)}
           role="dialog"
           aria-modal="true"
         >
-          <OverlayFlag />
           <div
             className="bg-surface dark:bg-slate-900 rounded-xl shadow-2xl border border-line dark:border-slate-700 max-w-sm w-full p-5"
             onClick={(e) => e.stopPropagation()}
@@ -125,7 +124,7 @@ export function ConfirmProvider({ children }: { children: ReactNode }) {
               </button>
             </div>
           </div>
-        </div>,
+        </OverlayLayer>,
         document.body,
       )}
     </Ctx.Provider>

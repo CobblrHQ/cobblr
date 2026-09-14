@@ -52,17 +52,13 @@ const MACHINE_STATES = [
 import { useActiveOrg } from "../auth/ActiveOrgContext";
 import { useFieldPresentation } from "../lib/useFieldPresentation";
 import { ContentsPanel } from "../components/ContentsPanel";
-import { CustomFieldsPanel,
-  EntityActionsBar, FaceSection, RecordFaces,
-  useAskCobbAboutSelection,
-  Modal,
-  useToast,
-  useConfirm, usePageTitle, usePageWidth } from "@cobblr/platform-web";
+import { CustomFieldsPanel, EntityActionsBar, FaceSection, RecordFaces, useAskCobbAboutSelection, Modal, useToast, useConfirm, usePageTitle, usePageWidth, BackdropLayer } from "@cobblr/platform-web";
 import {
   BulkActionBar,
   EntityThumb,
   EntityTile,
   ViewModeToggle,
+  changeWorkspaceShape,
   useViewMode,
 } from "@cobblr/platform-web";
 import { EntityAttachments } from "../components/EntityAttachments";
@@ -432,7 +428,7 @@ export function MachinesPage({
             </button>
             {stateMenuOpen && (
               <>
-                <div className="fixed inset-0 z-10" onClick={() => setStateMenuOpen(false)} />
+                <BackdropLayer className="z-10" onClick={() => setStateMenuOpen(false)} />
                 <div className="absolute z-20 mt-1 left-0 min-w-44 max-h-72 overflow-y-auto rounded-lg border border-line dark:border-slate-700 bg-surface dark:bg-slate-900 shadow-lg p-2 space-y-0.5">
                   <div className="flex items-center justify-between text-[10px] font-mono uppercase tracking-widest text-faint px-1 mb-1">
                     <span>show states</span>
@@ -1618,12 +1614,9 @@ function NewMachineModal({
 
   // One-click turn-on for the Print Manager (digifab) when it's off.
   const enableDigifab = useMutation({
-    mutationFn: () => api.enableModule(activeSlug, "digifab"),
+    mutationFn: () => changeWorkspaceShape(qc, activeSlug, () => api.enableModule(activeSlug, "digifab")),
     onSuccess: () => {
       toast.success("Print Manager enabled.");
-      for (const k of ["org-modules", "modules", "nav-modules"]) {
-        void qc.invalidateQueries({ queryKey: [k, activeSlug] });
-      }
     },
     onError: (e: unknown) => toast.error(e instanceof ApiError ? e.message : "Couldn't enable."),
   });

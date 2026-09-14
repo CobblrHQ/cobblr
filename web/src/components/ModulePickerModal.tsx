@@ -15,7 +15,7 @@ import { useEffect, useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { CheckCircle2, Circle, GripVertical, Lock } from "lucide-react";
 import { ApiError, api, type OrgModuleListItem } from "../lib/api";
-import { Modal, useToast, useConfirm } from "@cobblr/platform-web";
+import { changeWorkspaceShape, Modal, useToast, useConfirm } from "@cobblr/platform-web";
 import { useActiveOrg } from "../auth/ActiveOrgContext";
 import { applyNavOrder, readNavOrder, writeNavOrder } from "../lib/nav-order";
 
@@ -149,22 +149,18 @@ export function ModulePickerModal({ open, onClose, scopeToParent, inline, chrome
     : userParents.filter((m) => !LAUNCH_FEATURED.has(m.name) && !WORKSHOP_PACK.has(m.name));
 
   const enable = useMutation({
-    mutationFn: (name: string) => api.enableModule(activeSlug, name),
+    mutationFn: (name: string) => changeWorkspaceShape(qc, activeSlug, () => api.enableModule(activeSlug, name)),
     onSuccess: (_r, name) => {
       toast.success(`Enabled ${name}.`);
-      void qc.invalidateQueries({ queryKey: ["org-modules", activeSlug] });
-      void qc.invalidateQueries({ queryKey: ["platform-field-defs"] });
     },
     onError: (e: unknown) => {
       toast.error(e instanceof ApiError ? e.message : "Couldn't enable.");
     },
   });
   const disable = useMutation({
-    mutationFn: (name: string) => api.disableModule(activeSlug, name),
+    mutationFn: (name: string) => changeWorkspaceShape(qc, activeSlug, () => api.disableModule(activeSlug, name)),
     onSuccess: (_r, name) => {
       toast.success(`Disabled ${name}.`);
-      void qc.invalidateQueries({ queryKey: ["org-modules", activeSlug] });
-      void qc.invalidateQueries({ queryKey: ["platform-field-defs"] });
     },
     onError: (e: unknown) => {
       toast.error(e instanceof ApiError ? e.message : "Couldn't disable.");

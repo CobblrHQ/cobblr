@@ -86,6 +86,8 @@ export const IDENTIFY_OWNED_KEYS = [
   "photo_distinct",
   "photo_individuals",
   "photo_observed_for",
+  "photo_is_receipt",
+  "packaging",
   // The photo cross-check gate: a barcode hit WITH a scan photo shows as
   // "checking…" at a damped confidence until the cross-check confirms or corrects
   // it, so a collided/reused UPC never flashes a confident wrong product. Owned by

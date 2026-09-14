@@ -19,7 +19,7 @@ import { Fragment, useEffect, useState } from "react";
 import { OverlayCloseButton } from "./OverlayCloseButton";
 import { createPortal } from "react-dom";
 
-import { useImageSrc, OverlayFlag } from "@cobblr/platform-web";
+import { useImageSrc, OverlayLayer } from "@cobblr/platform-web";
 import { api } from "../lib/api";
 import { payloadFromClipboard, readPastedImage, type PastedImage } from "./pastedImage";
 
@@ -116,6 +116,7 @@ export function ImageLightbox({
   action,
   onItemError,
   onPasteImage,
+  tools,
 }: {
   items: LightboxItem[];
   /** Index into `items` of the image on screen. */
@@ -145,6 +146,15 @@ export function ImageLightbox({
    *  it, make it the catalog photo) because only it knows what the image is
    *  for. Without this, paste did nothing at all here. */
   onPasteImage?: (pasted: PastedImage) => void;
+  /** Secondary verbs that act on the picture being looked at (rotate, crop,
+   *  revert). `label` returns null to hide one for the current item. On a
+   *  phone these live here rather than as caption links under a thumbnail:
+   *  the viewer is where the picture is big enough to judge. */
+  tools?: Array<{
+    label: string | ((item: LightboxItem) => string | null);
+    busy?: boolean;
+    onAction: (item: LightboxItem) => void;
+  }>;
 }) {
   const many = items.length > 1;
   const current = items[index];
@@ -181,14 +191,13 @@ export function ImageLightbox({
   const stop = (e: React.MouseEvent) => e.stopPropagation();
 
   return createPortal(
-    <div
-      className="fixed inset-0 z-[130] bg-black/85 backdrop-blur-sm flex flex-col"
+    <OverlayLayer
+      className="z-[130] bg-black/85 backdrop-blur-sm flex flex-col"
       onClick={onClose}
       role="dialog"
       aria-modal="true"
       aria-label={`Image ${index + 1} of ${items.length}`}
     >
-      <OverlayFlag />
       <OverlayCloseButton onClose={onClose} />
 
       {/* Main image. Fit-to-screen, or natural-size + scroll when zoomed. */}
@@ -251,6 +260,21 @@ export function ImageLightbox({
             >
               Close
             </button>
+            {tools?.map((t, i) => {
+              const label = typeof t.label === "function" ? t.label(current) : t.label;
+              if (!label) return null;
+              return (
+                <button
+                  key={i}
+                  type="button"
+                  disabled={t.busy}
+                  onClick={() => t.onAction(current)}
+                  className="rounded-md border border-white/20 px-3 py-1.5 text-sm text-white/80 hover:bg-white/10 disabled:opacity-50"
+                >
+                  {t.busy ? "…" : label}
+                </button>
+              );
+            })}
             {action &&
               (() => {
                 const label = typeof action.label === "function" ? action.label(current) : action.label;
@@ -305,7 +329,7 @@ export function ImageLightbox({
           </div>
         )}
       </div>
-    </div>,
+    </OverlayLayer>,
     document.body,
   );
 }

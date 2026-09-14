@@ -17,7 +17,13 @@ import { leadPhoto } from "../lib/scanPhoto";
 import { CaptureSheetShell, QtyStepper } from "./ScanCaptureDrawer";
 import { TrackedMatchBanner } from "../components/TrackedMatchBanner";
 import { EntityActionChip } from "../components/EntityActionChip";
-import { AiOffMissHint, useAiStatus } from "./ScanPage";
+import { useAiStatus } from "./ScanPage";
+import { AiOffMissHint } from "./ScanInboxCard";
+import { Link } from "react-router-dom";
+import { needsScanReview, scanReviewReason } from "@cobblr/platform-contract/scan-triage";
+import { STORE_CODE_TITLE } from "@cobblr/platform-contract/scan-copy";
+import { itemEnriching } from "./scan-status";
+import { ScanNameItInline } from "../components/ScanNameItInline";
 
 export interface CameraScanTarget {
   into: string | null;
@@ -138,6 +144,18 @@ export function ScanResultModal({
   // "checking…" state flips to confirmed/corrected in-place (same 180s bound).
   const stillEnriching =
     !!item && (!enrichedFully || photoCheckPending) && withinEnrichWindow;
+  // What the sheet SAYS comes from the row's own state, never from a timer:
+  // in flight only while the row genuinely has a lookup or identify running
+  // (the same rule the inbox's spinner reads), flagged with the same reason
+  // the card shows, or settled. A store's own code arrives with its verdict
+  // stamped, so the sheet says so on the first paint; "Identifying..." was
+  // a state this sheet invented for three minutes over a code nothing would
+  // ever look up (#3017).
+  const inFlight = !!item && itemEnriching(item);
+  const flagged = !!item && !inFlight && needsScanReview(item);
+  const reviewReason = item && flagged ? scanReviewReason(item) : null;
+  const storeCode = (item?.suggested_metadata as { code_type?: string } | null)?.code_type === "store-code";
+  const needsName = !!item && !inFlight && !item.suggested_name;
   const live = useQuery({
     queryKey: ["scan-item-live", activeSlug, item?.id],
     queryFn: () => api.getScanItem(activeSlug, item!.id),
@@ -353,17 +371,19 @@ export function ScanResultModal({
               // this bounds the whole sheet's height by construction, which is
               // what makes "no scroll" a property of the layout instead of a
               // property of whichever product you happened to scan.
-              <div className="font-medium text-content dark:text-mortar-100 line-clamp-3" title={item?.suggested_name ?? undefined}>
+              <div className="font-medium text-content dark:text-mortar-100 line-clamp-3" title={item?.suggested_name ?? (storeCode ? STORE_CODE_TITLE : undefined)}>
                 {item?.suggested_name ?? (
-                  stillEnriching ? (
-                    <span className="text-faint italic animate-pulse">Identifying…</span>
+                  inFlight ? (
+                    <span className="text-faint italic animate-pulse" data-state="in-flight">Identifying…</span>
+                  ) : reviewReason ? (
+                    <span className="text-amber-700 dark:text-amber-400 text-sm font-normal" data-state="needs-review">{reviewReason}</span>
                   ) : (
-                    <span className="text-faint italic">No catalog match</span>
+                    <span className="text-faint italic" data-state="settled">No catalog match</span>
                   )
                 )}
               </div>
             )}
-            {!looking && item && !item.suggested_name && (
+            {!looking && item && !item.suggested_name && !storeCode && !inFlight && (
               <AiOffMissHint status={aiStatus} />
             )}
             {photoCheckPending && (
@@ -387,6 +407,21 @@ export function ScanResultModal({
             )}
           </div>
         </div>
+
+        {/* A row that needs a name can be named right here, the same PATCH
+            the card uses; or left pending (Save & next) and reviewed in the
+            inbox. Never a fabricated name, never a filing to clear the state. */}
+        {needsName && (
+          <div data-testid="sheet-name-it" onClick={(e) => e.stopPropagation()}>
+            <ScanNameItInline slug={activeSlug} itemId={item!.id} onNamed={(row) => setItem(row)} />
+            <Link
+              to={`/w/${activeSlug}/scan${item!.scan_batch_id ? `?batch=${item!.scan_batch_id}` : ""}`}
+              className="mt-1 inline-block text-[11px] text-muted underline decoration-dotted underline-offset-2"
+            >
+              Review it in the inbox
+            </Link>
+          </div>
+        )}
 
         {/* The photo STRIP (the mock's gallery row): every picture this item
             has - the resolved catalog art, the scan-moment frame, any shots

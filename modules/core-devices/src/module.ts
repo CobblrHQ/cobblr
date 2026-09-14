@@ -57,6 +57,7 @@ export default defineModule({
         // linked entity. Scoping by kind/trait here would be false precision.
         appliesTo: { any: true },
         invokeHandler: "core-devices.apply-to-linked-entity",
+        wireOnly: true,
         userInvokable: false,
       },
       {

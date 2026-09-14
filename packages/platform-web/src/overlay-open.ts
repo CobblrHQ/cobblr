@@ -14,8 +14,8 @@
 import { useLayoutEffect } from "react";
 
 /** Put this on any FLOATING chrome that out-stacks overlays, so it yields while
- *  one is open. `lint:floating-chrome` fails CI on high-z bottom-anchored
- *  chrome that skips it. */
+ *  one is open. FloatingChrome mixes it in by default; lint:fixed-chrome
+ *  refuses a bare `fixed` outside this package, so no chrome misses it. */
 export const HIDE_WHEN_OVERLAY_OPEN = "[[data-overlay-open]_&]:hidden";
 
 let openOverlays = 0;

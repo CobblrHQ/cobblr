@@ -15,7 +15,7 @@ import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { useNavigate } from "react-router-dom";
 import { Trash2, X } from "lucide-react";
 import { ApiError, api, type PlatformFieldDef } from "../lib/api";
-import { useToast, useConfirm } from "@cobblr/platform-web";
+import { changeWorkspaceShape, useToast, useConfirm } from "@cobblr/platform-web";
 import { ChoicesInput } from "./ChoicesInput";
 
 interface Props {
@@ -47,25 +47,25 @@ export function FieldDefDetail({ onClose, slug, fieldDef, scopeLabel }: Props) {
 
   const saveChoices = useMutation({
     mutationFn: () =>
-      api.updateFieldDef(slug, fieldDef!.id, {
-        // null clears the dropdown back to a plain text box.
-        choices: choices.length ? choices : null,
-      }),
+      changeWorkspaceShape(qc, slug, () =>
+        api.updateFieldDef(slug, fieldDef!.id, {
+          // null clears the dropdown back to a plain text box.
+          choices: choices.length ? choices : null,
+        }),
+      ),
     onSuccess: () => {
       toast.success(
         choices.length ? "Choices updated." : "Dropdown removed — it's a plain text box now.",
       );
-      void qc.invalidateQueries({ queryKey: ["field-defs", slug] });
     },
     onError: (e: unknown) =>
       toast.error(e instanceof ApiError ? e.message : "Couldn't save choices."),
   });
 
   const remove = useMutation({
-    mutationFn: () => api.deleteFieldDef(slug, fieldDef!.id),
+    mutationFn: () => changeWorkspaceShape(qc, slug, () => api.deleteFieldDef(slug, fieldDef!.id)),
     onSuccess: () => {
       toast.success(`Field "${fieldDef!.name}" deleted.`);
-      void qc.invalidateQueries({ queryKey: ["field-defs", slug] });
       onClose();
     },
     onError: (e: unknown) => {

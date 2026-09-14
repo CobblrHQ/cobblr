@@ -102,6 +102,7 @@ export default defineModule({
           "Re-evaluate a mobile item's away_since from the update delta: stamp on first drift from home, preserve the age across unrelated edits, clear on return / when set to fixed. Wire-driven; not user-invoked.",
         appliesTo: { kinds: MOBILITY_KINDS.map((k) => k.kind) },
         invokeHandler: "core-mobility.recompute-away",
+        wireOnly: true,
         userInvokable: false,
       },
       {

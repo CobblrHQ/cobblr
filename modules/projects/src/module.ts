@@ -156,6 +156,7 @@ export default defineModule({
         invokeHandler: "projects.set-dep-satisfied",
         // Wire-only — fired by the stock-changed wire, not a button.
         // Clicking it manually on an arbitrary entity is meaningless.
+        wireOnly: true,
         userInvokable: false,
       },
       {
@@ -178,6 +179,7 @@ export default defineModule({
         // NO-PHRASING: acts on the task named by the event; asked without one there is no task to mark
         id: "projects:mark-task-done",
         undoable: true,
+        wireOnly: true,
         label: "Mark linked task done",
         description:
           "Set the task named by the event's linkedTaskId to done (e.g. when a linked print completes)",

@@ -21,7 +21,7 @@ import { Activity, Cable, CheckCircle2, ChevronRight, Plug, User, XCircle } from
 import { api } from "../lib/api";
 import { DriverPackages } from "../features/edge/DriverPackages";
 import { useActiveOrg } from "../auth/ActiveOrgContext";
-import { usePageTitle, useToast } from "@cobblr/platform-web";
+import { changeWorkspaceShape, usePageTitle, useToast } from "@cobblr/platform-web";
 import { EdgeBridgeInstall } from "../components/EdgeBridgeInstall";
 import { DesktopAppCard, useDesktopApp } from "../components/DesktopAppCard";
 
@@ -52,11 +52,9 @@ export function EdgeBridgesPage({ embedded = false }: { embedded?: boolean } = {
     staleTime: 30_000,
   });
   const enableMut = useMutation({
-    mutationFn: (name: string) => api.enableModule(slug, name),
+    mutationFn: (name: string) => changeWorkspaceShape(qc, slug, () => api.enableModule(slug, name)),
     onSuccess: () => {
       toast.success("Enabled - it can use your bridge now.");
-      void qc.invalidateQueries({ queryKey: ["edge-consumers", slug] });
-      void qc.invalidateQueries({ queryKey: ["org-modules", slug] });
     },
     onError: (e) => toast.error(e instanceof Error ? e.message : "Couldn't enable it"),
   });

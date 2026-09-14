@@ -20,6 +20,7 @@
 // body limits sane.
 
 import { rememberPickedImage } from "../services/picked-images.js";
+import { applyUserFieldPatch, candidateKind, candidatesWithUserFields } from "../services/user-fields.js";
 import { isMachineReadCode } from "../services/barcode-source.js";
 import { randomUUID } from "node:crypto";
 import { buildCadenceEvents } from "../cadence-events.js";
@@ -60,11 +61,14 @@ import { displayed as displayedNote, cardNote, withoutRoutingSentences } from ".
 import {
   matchesScanFacet,
   needsScanReview,
+  scanReviewReason,
   scanWaitingDays,
   SCAN_TRIAGE_FACETS,
+  SCAN_TRIAGE_COLUMNS,
   type ScanTriageFacet,
   type ScanTriageRow,
 } from "@cobblr/platform-contract/scan-triage";
+import { scanToolRelevance, type ScanToolHints } from "@cobblr/platform-contract/scan-tools";
 import { bearer, sessionUser, tenantContext, tenantDb } from "../db.js";
 import { liveTablesOf, withResolvedOffers, type LiveTable } from "../services/resolve-offers.js";
 import { resolveNativeIdentity } from "../native-identity.js";
@@ -109,8 +113,7 @@ import {
   runMatchmaker,
   reconcileSeriesSecondaries,
   type MatchCandidate,
-  type ScanMenuEntry,
-} from "../services/matchmaker.js";
+  type ScanMenuEntry, perceiveRow } from "../services/matchmaker.js";
 import { candidatesForNamelessRow, isCuratedBarcodeIdentification, shouldAdoptCandidateName } from "../services/adopt-name.js";
 import { guardReplayCandidates } from "../services/replay-guard.js";
 import { lookupBookIsbn } from "../services/book-lookup.js";
@@ -127,8 +130,23 @@ import { claimGlanceAnswer, readContextFor, readGlanceEnabled, writeGlanceEnable
 import { normalizeBarcode, barcodeFromHint } from "../services/barcode-correction.js";
 import { findBinContents, findTracked } from "../services/entity-match.js";
 import { cropRegion, cropRefusalWords, detectSplitItems, rotateImage } from "../services/image-ops.js";
-import { pairPieces, inheritedFields, observationFor, unreadableObservation, applySplitInheritance, splitReviewWords, type SplitInherited } from "../services/split-inherit.js";
-import { stripUnsupportedPurchaseFields, siblingDisagreements, blankFields, siblingReviewWords } from "../services/field-provenance.js";
+import { auditSplitSeries, healSplitSeriesWorkspace } from "../services/split-series-heal.js";
+import { auditReroute, rerouteWorkspace } from "../services/reroute-keyword-rows.js";
+import { storeCodeInsertStamps } from "../services/barcode-lookup.js";
+import { pairPieces, inheritedFields, inheritedMeta, observationFor, unreadableObservation, applySplitInheritance, splitReviewWords, type SplitInherited } from "../services/split-inherit.js";
+import { stripUnsupportedPurchaseFields, siblingDisagreements, blankFields, siblingReviewWords, provenanceStamps } from "../services/field-provenance.js";
+import {
+  FIELD_PROVENANCE_KEY,
+  acquisitionSourceConflict,
+  fieldProvenanceOf,
+  isAcquiredFromField,
+  purchaseEvidenceOf,
+  scanSourceConflict,
+  type FieldProvenance,
+  type FieldProvenanceMap,
+  type SourceConflict,
+} from "@cobblr/platform-contract/acquisition-source";
+import { applyNameFacts, nameFactWords } from "../services/name-facts.js";
 import { extractLocation, type LocationLite } from "../services/note-location.js";
 import { suggestLocationForItem } from "../services/suggest-location.js";
 import { normaliseCategory } from "@cobblr/platform-contract/category-reconcile";
@@ -167,8 +185,13 @@ export async function runBounded(tasks: Array<() => Promise<void>>, width: numbe
 
 // ─────────────────────────── GET /inbox/stats ──────────────────────
 // Cheap counts for the put-away front door (dashboard card + scan-page
-// strip): how many pending captures exist, and how many of those still have
-// no home (no target location/container). One SQL, no rows.
+// strip): how many pending captures exist, how many of those still have no
+// home (no target location/container), and how many are ready to put away.
+// The first two are one SQL, no rows. Ready is the contract's `ready` facet
+// (a home AND nothing flagged for review), the same predicate the inbox's
+// triage filter and the assistant's list read, so the dashboard cannot count
+// a row the header shows under the warning (#2980); it reads the light
+// triage columns of the rows with a home and never their photos or notes.
 
 inboxRouter.get(
   "/inbox/stats",
@@ -184,14 +207,16 @@ inboxRouter.get(
             sql`case when target_location_id is null and target_container_id is null then 1 end`,
           )
           .as("unfiled"),
-        // READY: already has a home (target_location_id set), still uncommitted
-        // — the "all set, just put them away" count.
-        eb.fn
-          .count<number>(sql`case when target_location_id is not null then 1 end`)
-          .as("ready"),
       ])
       .where("status", "=", "pending")
       .executeTakeFirstOrThrow();
+    const homed = await db
+      .selectFrom("core_scan_inbox_items")
+      .select([...SCAN_TRIAGE_COLUMNS])
+      .where("status", "=", "pending")
+      .where((eb) => eb.or([eb("target_location_id", "is not", null), eb("target_container_id", "is not", null)]))
+      .execute();
+    const ready = homed.filter((r) => matchesScanFacet(r, "ready")).length;
     // Receipt sessions whose read failed: no rows of their own, so the item
     // counts above cannot see them; the dashboard and the header count do.
     const failedReads = await db
@@ -202,8 +227,106 @@ inboxRouter.get(
     res.json({
       pending: Number(row.pending),
       unfiled: Number(row.unfiled),
-      ready: Number(row.ready),
+      ready,
       failed_reads: Number(failedReads?.n ?? 0),
+    });
+  }),
+);
+
+// ─────────────────── GET /inbox/reroute-audit ──────────────────────
+// How many pending rows the keyword tier routed before its rule changed
+// would move under the rule now, and to where (reroute-keyword-rows.ts,
+// #3019): the read-only count before the heal, which is the POST below
+// and the background cadence. Writes nothing.
+
+// AI-REACH: exempt — an operator's read-only count before a heal; the assistant reads rows through list_scan_inbox
+inboxRouter.get(
+  "/inbox/reroute-audit",
+  asyncHandler(async (req, res) => {
+    if (!requireRole(req, res, "owner", "admin", "member")) return;
+    res.json(await auditReroute(tenantContext(req).org.id));
+  }),
+);
+
+// AI-REACH: exempt — an operator's explicit heal of routes stored before the rule; the old list is kept under reroute_prior
+inboxRouter.post(
+  "/inbox/reroute",
+  asyncHandler(async (req, res) => {
+    if (!requireRole(req, res, "owner", "admin")) return;
+    res.json(await rerouteWorkspace(tenantContext(req).org.id, 1000));
+  }),
+);
+
+// ─────────────────── GET /inbox/split-series-audit ─────────────────
+// How many pending split children of this workspace carry the group
+// photo's series without naming it (split-series-heal.ts, #3013): the
+// read-only count before the heal, which is the separate POST below and
+// the background cadence. Writes nothing.
+
+// AI-REACH: exempt — an operator's read-only count before a heal; the assistant reads rows through list_scan_inbox
+inboxRouter.get(
+  "/inbox/split-series-audit",
+  asyncHandler(async (req, res) => {
+    if (!requireRole(req, res, "owner", "admin", "member")) return;
+    res.json(await auditSplitSeries(tenantContext(req).org.id));
+  }),
+);
+
+// AI-REACH: exempt — an operator's explicit heal of rows the split wrote before the rule; non-destructive, the value moves to split_dropped
+inboxRouter.post(
+  "/inbox/split-series-heal",
+  asyncHandler(async (req, res) => {
+    if (!requireRole(req, res, "owner", "admin")) return;
+    const done = await healSplitSeriesWorkspace(tenantContext(req).org.id, 1000);
+    res.json(done);
+  }),
+);
+
+// ─────────────────── GET /inbox/source-conflicts ───────────────────
+// How many rows of this workspace say they were acquired somewhere their
+// purchase evidence contradicts, and which (acquisition-source.ts, #3008).
+// READ-ONLY, deliberately: the count is the step before any remediation,
+// which is a separate decision, never a side effect of asking. Judged by
+// the same derived check the served row carries, over the rows of one
+// status (pending unless asked), capped like the triage facets and honest
+// about the cap.
+
+const SourceConflictsQuery = z.object({
+  status: z.enum(["pending", "resolved", "discarded"]).default("pending"),
+});
+
+// AI-REACH: a read-only count for the operator before a remediation; the assistant sees each row's own conflict on list_scan_inbox (source_conflict rides on every served row)
+inboxRouter.get(
+  "/inbox/source-conflicts",
+  asyncHandler(async (req, res) => {
+    if (!requireRole(req, res, "owner", "admin", "member")) return;
+    const q = SourceConflictsQuery.safeParse(req.query);
+    if (!q.success) return badBody(res, q.error);
+    const db = tenantDb(req);
+    const rows = await db
+      .selectFrom("core_scan_inbox_items")
+      .select(["id", ...SCAN_TRIAGE_COLUMNS])
+      .where("status", "=", q.data.status)
+      .orderBy("created_at", "desc")
+      .limit(TRIAGE_SCAN_CAP + 1)
+      .execute();
+    const capped = rows.length > TRIAGE_SCAN_CAP;
+    const scanned = capped ? rows.slice(0, TRIAGE_SCAN_CAP) : rows;
+    const items = scanned
+      .map((r) => ({ row: r, conflict: scanSourceConflict(r) }))
+      .filter((x): x is { row: (typeof scanned)[number]; conflict: SourceConflict } => x.conflict !== null)
+      .map(({ row, conflict }) => ({
+        id: row.id,
+        suggested_name: row.suggested_name,
+        ...conflict,
+        provenance: fieldProvenanceOf(row.suggested_metadata)[conflict.field] ?? null,
+      }));
+    res.json({
+      status: q.data.status,
+      scanned: scanned.length,
+      ...(capped ? { capped_at: TRIAGE_SCAN_CAP } : {}),
+      count: items.length,
+      items,
     });
   }),
 );
@@ -470,6 +593,10 @@ inboxRouter.post(
     }
 
     noteScanCaptured(ctx.org.id, session.id, body.source_kind);
+    // A store's own label is known from its prefix: its verdict, its reason
+    // and its "done" stamp go on at insert, so the scanner's sheet reads the
+    // row's state on the first paint instead of "Identifying..." (#3017).
+    const storeStamps = storeCodeInsertStamps(body.barcode);
     const inserted = await db
       .insertInto("core_scan_inbox_items")
       .values({
@@ -483,6 +610,14 @@ inboxRouter.post(
         target_container_kind: body.target_container_kind ?? null,
         target_container_id: body.target_container_id ?? null,
         created_by_user_id: session.id,
+        ...(storeStamps
+          ? {
+              ai_notes: storeStamps.ai_notes,
+              ai_confidence: storeStamps.ai_confidence,
+              ai_suggested_at: storeStamps.ai_suggested_at,
+              suggested_metadata: JSON.stringify({ code_type: storeStamps.code_type }) as never,
+            }
+          : {}),
       })
       .returningAll()
       .executeTakeFirstOrThrow();
@@ -602,7 +737,10 @@ inboxRouter.post(
         userId: sessionUser(req)?.id ?? null,
       });
     }
-    res.status(201).json(fresh);
+    // Served like every other row: the scanner's sheet reads this response
+    // first and the row's state must be on it (review_reason, tool_hints),
+    // not only on the poll that follows (#3017).
+    res.status(201).json(await served(req, fresh));
   }),
 );
 
@@ -1745,6 +1883,14 @@ const PatchBody = z.object({
   // the one you want; the scanner and the dashboard then carry the item to the
   // phone, instead of you finding it again in a long inbox.
   photo_wanted: z.boolean().optional(),
+  // Values the person typed against the destination's fields, kept on the
+  // row without filing it (services/user-fields.ts). null clears one. Each
+  // is stamped as the person's in field_provenance, so no pass and no
+  // re-run outranks it (acquisition-source.ts, #3008).
+  fields: z.record(z.string().min(1).max(80), z.union([z.string().max(2000), z.number(), z.boolean(), z.null()])).optional(),
+  // The table the fields were typed for ("yarn:item"). Absent: the top
+  // candidate's table at the time of the write.
+  fields_kind: z.string().max(120).optional(),
 });
 
 // AI-REACH: a step of the guided scan/put-away flow, driven from the scanner screen with a camera in hand; the assistant reaches the inbox through list_scan_inbox and the plan through get_putaway_plan
@@ -1761,7 +1907,13 @@ inboxRouter.patch(
     if (!parsed.success) return badBody(res, parsed.error);
     const patch: Record<string, unknown> = { updated_at: new Date() };
     if (parsed.data.quantity !== undefined) patch.quantity = parsed.data.quantity;
-    if (parsed.data.name !== undefined) patch.suggested_name = parsed.data.name;
+    if (parsed.data.name !== undefined) {
+      patch.suggested_name = parsed.data.name;
+      // A person's name is not an identification at some confidence: the
+      // lookup's score (a store code's 0) must not follow the row around as
+      // "Identified at 0% confidence" once they have said what it is (#3017).
+      patch.ai_confidence = null;
+    }
     if (parsed.data.target_location_id !== undefined) patch.target_location_id = parsed.data.target_location_id;
     const db = tenantDb(req);
     // Metadata-riders (box_state / reviewed): merge into suggested_metadata
@@ -1770,14 +1922,29 @@ inboxRouter.patch(
       parsed.data.box_state !== undefined ||
       parsed.data.reviewed !== undefined ||
       parsed.data.keep_grouped !== undefined ||
-      parsed.data.photo_wanted !== undefined
+      parsed.data.photo_wanted !== undefined ||
+      parsed.data.fields !== undefined
     ) {
       const cur = await db
         .selectFrom("core_scan_inbox_items")
-        .select("suggested_metadata")
+        .select(["suggested_metadata", "suggested_candidates"])
         .where("id", "=", id)
         .executeTakeFirst();
-      const meta = ((cur?.suggested_metadata ?? {}) as Record<string, unknown>) ?? {};
+      let meta = ((cur?.suggested_metadata ?? {}) as Record<string, unknown>) ?? {};
+      if (parsed.data.fields !== undefined) {
+        const kind = parsed.data.fields_kind ?? candidateKind(storedCandidateList(cur?.suggested_candidates)[0]);
+        meta = applyUserFieldPatch(meta, parsed.data.fields, kind);
+        // Who put it there: the person. A cleared value drops the stamp
+        // too, so the field reads as whatever the pipeline says again.
+        const stamps: FieldProvenanceMap = { ...fieldProvenanceOf(meta) };
+        const at = new Date().toISOString();
+        for (const [name, v] of Object.entries(parsed.data.fields)) {
+          if (v === null || v === "") delete stamps[name];
+          else stamps[name] = { by: "person", from: "card", at, ...(stamps[name]?.role ? { role: stamps[name]!.role } : {}) };
+        }
+        if (Object.keys(stamps).length) meta[FIELD_PROVENANCE_KEY] = stamps;
+        else delete meta[FIELD_PROVENANCE_KEY];
+      }
       if (parsed.data.box_state !== undefined) {
         if (parsed.data.box_state === null) delete meta.box_state;
         else meta.box_state = parsed.data.box_state;
@@ -1814,7 +1981,6 @@ inboxRouter.patch(
       res.status(404).json({ error: { code: "not_found", message: "inbox item not found" } });
       return;
     }
-
     // An inline rename of a barcode item ALSO propagates to the Barcode
     // Intelligence DB — the resolver's name was wrong and the human's is truth,
     // so the next scan of this UPC (any workspace) gets the fix. Mirrors the
@@ -2100,6 +2266,8 @@ inboxRouter.post(
     // claimed it (see receipt-record.ts).
     const recordedReceipt = receiptRecord(meta as ReceiptLineMeta);
     let provenancePatch: Record<string, string | number> = {};
+    /** The role behind each key of the patch, for the provenance stamps. */
+    const provenanceRoles: Record<string, string> = {};
     try {
       // The receipt's facts, keyed by MEANING (receipt-facts.ts owns that
       // translation), landed on whatever this workspace named its fields. A
@@ -2108,7 +2276,9 @@ inboxRouter.post(
       const facts = receiptFacts(meta as ReceiptMeta);
       if (Object.keys(facts).length > 0) {
         const roled = await platform().entities.roledFieldsFor(ctx.org.id, effectiveKindId);
-        provenancePatch = roledFactsPatch(mapRoledFacts(facts, roled));
+        const mapped = mapRoledFacts(facts, roled);
+        provenancePatch = roledFactsPatch(mapped);
+        for (const m of mapped) if (m.key in provenancePatch) provenanceRoles[m.key] = m.role;
       }
     } catch {
       /* advisory — a confirm must never fail over provenance */
@@ -2127,16 +2297,47 @@ inboxRouter.post(
     // them BY DEFAULT, whichever surface confirms (the seeded form, the
     // camera's one-tap chip, the bare API). Anything the user supplied
     // (extras.metadata) wins per-key.
-    const candidates =
-      (row.suggested_candidates as Array<{
+    // The person's typed values ride the top candidate here too, so a
+    // one-tap Add, the sweep, the assistant and the bare API file them
+    // without the caller sending extras (services/user-fields.ts).
+    const candidates = candidatesWithUserFields(
+      storedCandidateList(row.suggested_candidates) as Array<{
         instance?: string | null;
         module?: string;
         fields?: Record<string, unknown>;
-      }> | null) ?? [];
+      }>,
+      row.suggested_metadata,
+    );
     const matchedCandidate = parsed.data.instance
       ? candidates.find((c) => c.instance === parsed.data.instance)
       : (candidates.find((c) => !c.instance && c.module === target.module) ?? candidates[0]);
-    const candidateFields = matchedCandidate?.fields ?? {};
+    // Who put each purchase-source value there (acquisition-source.ts, #3008).
+    // A route's guess that contradicts the purchase evidence is not written,
+    // whether or not the receipt's own value can land (a closed choice list
+    // may refuse it; the record under `receipt` still says what it was). The
+    // guess is kept on the stamp as `replaced`, so the record shows the
+    // contradiction rather than losing it. A person's answer beats both.
+    const rowStamps = fieldProvenanceOf(meta);
+    const evidence = purchaseEvidenceOf(meta);
+    const candidateFields: Record<string, unknown> = { ...(matchedCandidate?.fields ?? {}) };
+    // The person's own values are on the merged candidate already; they are
+    // told apart by their stamp, and they land above the receipt's facts.
+    const personValues = Object.fromEntries(Object.entries(candidateFields).filter(([k]) => rowStamps[k]?.by === "person"));
+    const entityStamps: FieldProvenanceMap = { ...rowStamps };
+    for (const [k, v] of Object.entries(candidateFields)) {
+      const stamp = rowStamps[k];
+      const isFrom = stamp?.role ? isAcquiredFromField({ name: k, field_role: stamp.role }) : isAcquiredFromField({ name: k });
+      if (!isFrom || stamp?.by === "person") continue;
+      const c = acquisitionSourceConflict(k, v, evidence);
+      if (!c) continue;
+      delete candidateFields[k];
+      const role = stamp?.role ?? provenanceRoles[k];
+      entityStamps[k] = { by: "evidence", from: c.from, ...(role ? { role } : {}), replaced: c.value };
+    }
+    for (const k of Object.keys(provenancePatch)) {
+      if (entityStamps[k]?.by === "person") continue;
+      entityStamps[k] = { by: "evidence", from: evidence.from ?? "receipt", ...(provenanceRoles[k] ? { role: provenanceRoles[k] } : {}), ...(entityStamps[k]?.replaced ? { replaced: entityStamps[k]!.replaced } : {}) };
+    }
     // HOW it must be kept, which is not WHERE it is. Derived from the scan's own
     // category, the only signal with real coverage: on a 221-item scan set, 73%
     // carried a category while under 2% carried any storage prose, and Open Food
@@ -2182,6 +2383,15 @@ inboxRouter.post(
         ([, v]) => v !== "" && v !== null && v !== undefined,
       ),
     );
+    const at = new Date().toISOString();
+    for (const k of Object.keys(typedMetadata)) {
+      const was = matchedCandidate?.fields?.[k] ?? provenancePatch[k];
+      // Untouched on the form (the value the route or the receipt put there
+      // came back as typed) keeps its stamp; a change is the person's.
+      if (was !== undefined && String(was) === String(typedMetadata[k])) continue;
+      entityStamps[k] = { by: "person", from: "confirm", at, ...(rowStamps[k]?.role ? { role: rowStamps[k]!.role } : {}) };
+    }
+
     // A decoder-mapped value (a VIN, decoded to candidateFields.serial_number by
     // applyDecoderFill) must reach the NATIVE serial_number/model column the field
     // actually reads — not only the metadata blob candidateFields spreads into
@@ -2227,11 +2437,8 @@ inboxRouter.post(
         // batch_code). Generic: the kernel doesn't know the vendor — it
         // just carries whatever `fields` the resolver stamped. Matchmaker
         // candidate + user-typed values still win per-key below.
-        // Machine-derived, so it sits BELOW the matchmaker's candidate and well
-        // below anything the user typed.
-        ...provenancePatch,
         // Everything the receipt parse established, whether or not a field
-        // claimed it. provenancePatch above promotes what has a ROLE; this
+        // claimed it. provenancePatch below promotes what has a ROLE; this
         // keeps the rest, because a workspace with no acquired-on field was
         // losing the receipt's date outright and dating a perishable by the
         // day it happened to be scanned (2026-08-22).
@@ -2241,7 +2448,15 @@ inboxRouter.post(
         ...(derivedStorage ? { storage_requirement: derivedStorage } : {}),
         ...expiryPatch,
         ...candidateFields,
+        // The receipt's facts over the route's guesses: evidence over an
+        // inference. It sat below the candidate once, on the theory that a
+        // machine-derived value should defer to the model, and the model's
+        // "Facebook Marketplace" won over the receipt's "eBay" (#3008).
+        ...provenancePatch,
+        ...personValues,
         ...typedMetadata,
+        // Who put each of these there, kept on the record (#3008).
+        ...(Object.keys(entityStamps).length ? { [FIELD_PROVENANCE_KEY]: entityStamps } : {}),
       },
       ...startingCount(scanTarget, qty),
       // Empty box → do NOT file the entity at the scan location: that's where
@@ -3054,7 +3269,7 @@ async function served<T extends ScanTriageRow & {
   suggested_candidates?: unknown;
   suggested_metadata?: unknown;
 }>(req: Request, row: T): Promise<T & { needs_review: boolean; waiting_days: number | null }> {
-  return withTitle(withResolvedOffers(row, await liveTablesFor(req)));
+  return withTitle(withResolvedOffers(row, await liveTablesFor(req)), await containerKindsFor(req));
 }
 
 async function servedAll<T extends ScanTriageRow & {
@@ -3064,7 +3279,8 @@ async function servedAll<T extends ScanTriageRow & {
   suggested_metadata?: unknown;
 }>(req: Request, rows: T[]): Promise<Array<T & { needs_review: boolean; waiting_days: number | null }>> {
   const live = await liveTablesFor(req);
-  return rows.map((r) => withTitle(withResolvedOffers(r, live)));
+  const containers = await containerKindsFor(req);
+  return rows.map((r) => withTitle(withResolvedOffers(r, live), containers));
 }
 
 /** The workspace's tables, read once per request however many rows it serves. */
@@ -3074,31 +3290,68 @@ async function liveTablesFor(req: Request): Promise<LiveTable[]> {
   return holder.__liveTables;
 }
 
+/** The kinds this workspace declares as containers (the containment trait),
+ *  read once per request: what makes "Turn into a bin" likely for a row
+ *  routed to one of them (#3006). Best-effort; a registry that cannot be
+ *  read leaves the name rule to decide. */
+async function containerKindsFor(req: Request): Promise<Set<string>> {
+  const holder = req as Request & { __containerKinds?: Promise<Set<string>> };
+  holder.__containerKinds ??= (async () => {
+    const out = new Set<string>();
+    try {
+      const recs = await platform().entities.listKindsForOrg(tenantContext(req).org.id);
+      for (const rec of recs) {
+        if (traitAxisValue(rec.traits as Record<string, unknown> | null, "containment") !== "container") continue;
+        out.add(rec.id.includes(":") ? rec.id : `${rec.module_name}:${rec.id}`);
+      }
+    } catch {
+      /* the name rule still answers */
+    }
+    return out;
+  })();
+  return holder.__containerKinds;
+}
+
 function withTitle<T extends ScanTriageRow & {
   suggested_name: string | null;
   suggested_manufacturer?: string | null;
   suggested_candidates?: unknown;
   suggested_metadata?: unknown;
-}>(row: T): T & { needs_review: boolean; waiting_days: number | null } {
+}>(row: T, containerKinds: ReadonlySet<string> = new Set()): T & { needs_review: boolean; waiting_days: number | null } {
   const titled = colouredTitleFor({
     suggested_name: row.suggested_name,
     suggested_manufacturer: row.suggested_manufacturer ?? null,
     suggested_candidates: row.suggested_candidates,
     suggested_metadata: (row.suggested_metadata ?? {}) as Record<string, unknown>,
   });
-  const base = titled ? { ...row, suggested_name: titled } : row;
-  return withTriage(withDisplayCategory(base));
+  const withUser = { ...row, suggested_candidates: candidatesWithUserFields(storedCandidateList(row.suggested_candidates), row.suggested_metadata) };
+  const base = titled ? { ...withUser, suggested_name: titled } : withUser;
+  return withTriage(withDisplayCategory(base), containerKinds);
 }
 
 /** The queue facets, composed onto the row on the way out (same reason as the
  *  title above: derived, never stored). Without them every caller re-derives
  *  "does this need me" from raw metadata — which is how the flags ended up
  *  existing only inside the Scan page, invisible to the API and to Cobb. */
-function withTriage<T extends ScanTriageRow>(row: T): T & { needs_review: boolean; waiting_days: number | null } {
+function withTriage<T extends ScanTriageRow>(
+  row: T,
+  containerKinds: ReadonlySet<string> = new Set(),
+): T & { needs_review: boolean; review_reason: string | null; source_conflict: SourceConflict | null; waiting_days: number | null; tool_hints: ScanToolHints } {
+  const r = row as T & { source_kind?: string | null; barcode_text?: string | null; image_file_id?: string | null; ai_suggested_at?: string | Date | null; target_container_id?: string | null };
   return {
     ...row,
     needs_review: needsScanReview(row),
+    // The words behind the flag, so whoever reads the row (the assistant, a
+    // test) sees the same reason the card and the File preview show.
+    review_reason: scanReviewReason(row),
+    // Where the row says it was acquired against what its purchase evidence
+    // says, when the two disagree: the value, the evidence and the seller,
+    // beside the reason (acquisition-source.ts, #3008). Never resolved here.
+    source_conflict: scanSourceConflict(row),
     waiting_days: scanWaitingDays(row),
+    // Which item tools this row could need, with the reason each is folded:
+    // one rule (scan-tools.ts) the desktop rail and the phone screen read.
+    tool_hints: scanToolRelevance(r, { containerKinds, openBox: !!r.target_container_id }),
   };
 }
 
@@ -4616,7 +4869,7 @@ inboxRouter.get(
     const ctx = tenantContext(req);
     const row = await db
       .selectFrom("core_scan_inbox_items")
-      .select(["barcode_text", "suggested_name", "status", "target_entity_id"])
+      .select(["barcode_text", "suggested_name", "status", "target_entity_id", "suggested_candidates"])
       .where("id", "=", id ?? "")
       .executeTakeFirst();
     if (!row) {
@@ -4626,6 +4879,7 @@ inboxRouter.get(
     const matches = await findTracked(ctx.org.id, {
       barcode: row.barcode_text,
       name: row.suggested_name,
+      fields: topCandidateFields(row.suggested_candidates),
     });
     res.json(matches);
   }),
@@ -5142,12 +5396,14 @@ inboxRouter.post(
       // plate photo adds license_plate + color to a car the VIN scan created,
       // without touching the make/model/year it already knows.
       const scanMeta = (row.suggested_metadata ?? {}) as Record<string, unknown>;
-      const candidates =
-        (row.suggested_candidates as Array<{
+      const candidates = candidatesWithUserFields(
+        storedCandidateList(row.suggested_candidates) as Array<{
           instance?: string | null;
           module?: string;
           fields?: Record<string, unknown>;
-        }> | null) ?? [];
+        }>,
+        row.suggested_metadata,
+      );
       const [candMod] = baseKind.split(":");
       const cand = instance
         ? candidates.find((c) => c.instance === instance)
@@ -5805,12 +6061,17 @@ inboxRouter.post(
       const cropState: "ok" | "failed" | "none" = !it.box ? "none" : cut?.fileId ? "ok" : "failed";
       const cropReason = it.box && cut?.fileId == null ? (cut && cut.fileId === null ? cut.reason : "no-source") : null;
       cropReport.push(cropState === "ok" ? "ok" : cropState === "failed" ? `failed (${cropReason})` : "no box");
+      const ownObservation = observationFor(it, siblings, observation);
+      // The parent's whole-photo keys, judged per piece (split-inherit.ts,
+      // #3013): the group's series lands only on the piece that names it.
+      const meta = inheritedMeta(it, siblings, parentMeta, ownObservation, observation);
       const inherited: SplitInherited = {
         from: row.id,
         name: it.name,
         brand: it.brand,
         fields: inheritedFields(it, siblings, parentFields, observation),
-        observation: observationFor(it, siblings, observation),
+        observation: ownObservation,
+        ...(Object.keys(meta.why).length ? { meta_kept: meta.why } : {}),
       };
       const keepsGroupShot = cropState !== "ok";
       const note =
@@ -5845,9 +6106,8 @@ inboxRouter.post(
             ...(cropReason ? { crop_reason: cropReason } : {}),
             ...(it.boxed_as && it.boxed_as !== it.name ? { split_boxed_as: it.boxed_as } : {}),
             split_inherited: inherited,
-            ...(parentMeta.category ? { category: parentMeta.category } : {}),
-            ...(parentMeta.entity_type ? { entity_type: parentMeta.entity_type } : {}),
-            ...(parentMeta.series ? { series: parentMeta.series } : {}),
+            ...meta.kept,
+            ...(Object.keys(meta.dropped).length ? { split_dropped: meta.dropped } : {}),
             // A child on the group shot has already been looked at: the
             // group observation is its observation (keyed to the same image,
             // so the match does not pay to look again), and the sentence
@@ -6181,6 +6441,7 @@ inboxRouter.post(
         matches = (await findTracked(ctx.org.id, {
           barcode: row.barcode_text,
           name: row.suggested_name,
+          fields: topCandidateFields(candidatesWithUserFields(storedCandidateList(row.suggested_candidates), row.suggested_metadata)),
         })) as never;
       } catch {
         // A matcher that fails must not turn into "nothing matched", which
@@ -6188,7 +6449,7 @@ inboxRouter.post(
         plans.push({ action: "skip", itemId: row.id, name: row.suggested_name, why: "could not check what you already have" });
         continue;
       }
-      const cand = (row.suggested_candidates as Array<Record<string, unknown>> | null)?.[0] ?? null;
+      const cand = (candidatesWithUserFields(storedCandidateList(row.suggested_candidates), row.suggested_metadata) as Array<Record<string, unknown>>)[0] ?? null;
       plans.push(
         planItem({
           id: row.id,
@@ -6198,6 +6459,7 @@ inboxRouter.post(
           barcodeMatches: matches.barcode_matches,
           nameMatches: matches.name_matches,
           canInstall,
+          review: scanReviewReason(row),
         }),
       );
     }
@@ -6841,6 +7103,12 @@ function applyPaintColorFill(color: string, candidates: MatchCandidate[], menu: 
  *
  *  jsonb reaches us as a parsed array under `pg`, but a `JSON.stringify`'d write
  *  read straight back can arrive as a string, so accept both. */
+/** The identity a stored row carries: its top candidate's fields, or null. */
+function topCandidateFields(raw: unknown): Record<string, unknown> | null {
+  const top = storedCandidateList(raw)[0] as { fields?: Record<string, unknown> } | undefined;
+  return top?.fields ?? null;
+}
+
 export function storedCandidateList(raw: unknown): unknown[] {
   if (Array.isArray(raw)) return raw;
   if (typeof raw === "string") {
@@ -6974,6 +7242,8 @@ async function matchItem(opts: MatchItemOpts): Promise<unknown[] | null> {
       entity_type?: "asset" | "part";
       description?: string;
       photo_observations?: string;
+      /** What the observation saw of the packaging (#3006), with the fields below. */
+      packaging?: string;
       /** How many DISTINCT things the observation pass saw (units of one thing
        *  don't count — that's a quantity). >= 2 is what makes the inbox offer a
        *  split, and it costs nothing: the observe call already counted them. */
@@ -7016,6 +7286,9 @@ async function matchItem(opts: MatchItemOpts): Promise<unknown[] | null> {
     let photoDistinct = observationIsCurrent ? (meta.photo_distinct ?? null) : null;
     let photoIndividuals = observationIsCurrent ? (meta.photo_individuals ?? null) : null;
     let photoObservedFor = observationIsCurrent ? observedFor : null;
+    // What the observation saw of the packaging: the one key the inbox's tool
+    // rule reads (#3006). Kept with the observation it came from.
+    let photoPackaging: string | null = observationIsCurrent ? (meta.packaging ?? null) : null;
     // A REPLAY never makes this call. Observing a photo is a vision pass, and a
     // replay re-derives from what the row already holds rather than looking
     // again — so when the stored observation is missing, or describes a photo
@@ -7037,6 +7310,7 @@ async function matchItem(opts: MatchItemOpts): Promise<unknown[] | null> {
         photoDistinct = obs.distinct;
         photoIndividuals = obs.individuals;
         photoObservedFor = row.image_file_id;
+        photoPackaging = obs.packaging;
       }
     }
 
@@ -7048,21 +7322,9 @@ async function matchItem(opts: MatchItemOpts): Promise<unknown[] | null> {
     const menu = withProposedCategories(baseMenu, await batchProposedCategories(db, row.scan_batch_id, opts.itemId));
     const candidates = await runMatchmaker(
       opts.orgId,
-      {
-        name: row.suggested_name ?? "",
-        manufacturer: row.suggested_manufacturer,
-        category: meta.category ?? null,
-        description: meta.description ?? null,
-        entityType: meta.entity_type ?? null,
-        barcode: row.barcode_text,
-        sku: row.suggested_sku,
-        notes: row.ai_notes,
-        scanArea: row.scan_area,
-        // The full lookup metadata — pack sizes, weights, colours the
-        // catalog/web search surfaced.
-        metadata: row.suggested_metadata ?? null,
-        photoObservations,
-      },
+      // Everything the lookup wrote on the row (perceiveRow): the name, the
+      // catalog's category, the description, the raw blob the fields read.
+      perceiveRow(row, { photoObservations }),
       menu,
       opts.itemId, // links the AI-log row to this scan
       opts.userId,
@@ -7083,8 +7345,9 @@ async function matchItem(opts: MatchItemOpts): Promise<unknown[] | null> {
     // gets the VIN that exists, not the one the scanner hallucinated.
     applyDecoderFill(row.suggested_metadata, candidates, menu, row.barcode_text);
     // A receipt KNOWS its provenance; the model only guesses at it. Written
-    // after the model so the till's facts win (see receipt-candidate-facts.ts).
-    applyReceiptFacts(row.suggested_metadata as Record<string, unknown> | null, candidates, menu);
+    // after the model so the till's facts win (see receipt-candidate-facts.ts),
+    // and stamped as evidence so a re-run can tell them from a guess (#3008).
+    const evidenceStamps = applyReceiptFacts(row.suggested_metadata as Record<string, unknown> | null, candidates, menu);
     // A split child KNOWS what the group photo read about it (its set number,
     // that the box is sealed); the model, looking at one crop, only guesses.
     // Written after the model so the group's facts win (split-inherit.ts).
@@ -7094,6 +7357,11 @@ async function matchItem(opts: MatchItemOpts): Promise<unknown[] | null> {
     // and it goes (field-provenance.ts); the router's note stays.
     const strippedPurchase = stripUnsupportedPurchaseFields(row, candidates);
     if (strippedPurchase.length) console.log(`[core-scan] ${opts.itemId}: purchase fields with no purchase evidence dropped: ${strippedPurchase.join(", ")}`);
+    // A fact the name states is not the model's to guess: "4 Ply" on a
+    // yarn IS its weight, derived here on every table that offers the
+    // scale, over whatever the model put there (name-facts.ts).
+    const nameFacts = applyNameFacts(row.suggested_name, candidates, menu);
+    if (nameFacts.length) console.log(`[core-scan] ${opts.itemId}: from the name: ${nameFacts.map((f) => `${f.field}=${f.value}${f.was ? ` (was ${f.was})` : ""}`).join(", ")}`);
     // Split children that share a name are one product in one picture; a
     // field the router answered two ways across them is blank on all of them.
     let disagreed = meta.split_inherited ? await reconcileSplitSiblings(db, opts.itemId, meta.split_inherited.from, row.suggested_name, meta, candidates) : [];
@@ -7106,6 +7374,19 @@ async function matchItem(opts: MatchItemOpts): Promise<unknown[] | null> {
     // saying tea and filing it where nobody looks for tea.
     const retargeted = retargetByCategory(candidates, menu);
     if (retargeted) console.log(`[core-scan] ${retargeted} candidate(s) re-routed to the list their category named`);
+    // What a person typed for a field of this row is not on these candidates
+    // and never is: it rides in user_fields and is merged over the top route
+    // on every read (services/user-fields.ts), so no pass above, and no
+    // re-run, outranks it. Who put each purchase-source value there, for the
+    // record the row keeps (field-provenance.ts, #3008).
+    const topEntry = candidates[0] ? menu.find((e) => e.module === (candidates[0] as { module?: string }).module && (e.instance ?? null) === ((candidates[0] as { instance?: string | null }).instance ?? null)) : undefined;
+    const fieldProvenance = provenanceStamps({
+      meta: row.suggested_metadata as Record<string, unknown> | null,
+      candidates,
+      evidence: evidenceStamps,
+      tableFields: topEntry?.fields,
+      priorFields: (storedCandidateList(row.suggested_candidates)[0] as { fields?: Record<string, unknown> } | undefined)?.fields ?? null,
+    });
 
     // THE REPLAY INVARIANT, checked rather than merely intended: a replay may
     // only add or refine. It re-derives from the row's own stored knowledge, so
@@ -7173,6 +7454,7 @@ async function matchItem(opts: MatchItemOpts): Promise<unknown[] | null> {
     const tracked = await findTracked(opts.orgId, {
       barcode: row.barcode_text,
       name: adoptName ? candName : row.suggested_name,
+      fields: (top as { fields?: Record<string, unknown> } | undefined)?.fields ?? null,
     }).catch(() => null);
     const bestTracked =
       tracked?.barcode_matches[0] ?? tracked?.name_matches[0] ?? null;
@@ -7213,6 +7495,7 @@ async function matchItem(opts: MatchItemOpts): Promise<unknown[] | null> {
             : null,
           ...(photoObservations ? { photo_observations: photoObservations } : {}),
           ...(photoObservedFor ? { photo_observed_for: photoObservedFor } : {}),
+          ...(photoPackaging ? { packaging: photoPackaging } : {}),
           // The multi-item signal, from the observation call we already paid for.
           // Only stamped when it's actually a group — a lone item writes nothing,
           // so the common case adds no bytes and the UI's check stays a truthy read.
@@ -7241,17 +7524,29 @@ async function matchItem(opts: MatchItemOpts): Promise<unknown[] | null> {
           matched_at: new Date().toISOString(),
           ...(splitReview ? { low_trust: true, split_review: splitReview } : {}),
           ...(disagreed.length ? { low_trust: true, split_disagreed: disagreed } : {}),
+          ...(nameFacts.length ? { name_facts: nameFacts } : {}),
+          // The whole map, re-derived: `||` replaces the key, which is what
+          // lets a stamp for a field the route no longer fills go away.
+          [FIELD_PROVENANCE_KEY]: fieldProvenance,
         })}::jsonb` as never,
         // The routing's sentence joins the lookup's verdict; it never replaces
         // it (routing-note.ts, cardNote). A store's own label, never looked
         // up, must not read "The AI errored on this one" (#2907).
+        // The row's confidence is how sure the pipeline is of WHAT this is.
+        // A model's route carries that; a heuristic route's score (0.3 for
+        // the fallback table, up to 0.6 by keyword hits) says how sure the
+        // code is of the TABLE, and stamping it here read every no-AI receipt
+        // line as "identified at 38% confidence", flagged for review, so a
+        // workspace with no AI could never file a receipt in bulk once the
+        // flag gated the sweep (#2980). A heuristic route leaves the
+        // confidence the lookup wrote, or none.
         ...(top && typeof top === "object" && "notes" in top && (top as { notes?: string }).notes && !barcodeIdentified
           ? {
-              ai_notes: cardNote(lookupVerdictOf(row), [splitReviewWords(splitReview), siblingReviewWords(disagreed), (top as { notes: string }).notes].filter(Boolean).join(" ")),
-              ...(nameless ? {} : { ai_confidence: String((top as { confidence: number }).confidence) }),
+              ai_notes: cardNote(lookupVerdictOf(row), [splitReviewWords(splitReview), siblingReviewWords(disagreed), nameFactWords(nameFacts), (top as { notes: string }).notes].filter(Boolean).join(" ")),
+              ...(nameless || (top as { heuristic?: boolean }).heuristic ? {} : { ai_confidence: String((top as { confidence: number }).confidence) }),
             }
-          : splitReview || disagreed.length
-            ? { ai_notes: cardNote(lookupVerdictOf(row), [splitReviewWords(splitReview), siblingReviewWords(disagreed)].filter(Boolean).join(" ")) }
+          : splitReview || disagreed.length || nameFacts.length
+            ? { ai_notes: cardNote(lookupVerdictOf(row), [splitReviewWords(splitReview), siblingReviewWords(disagreed), nameFactWords(nameFacts)].filter(Boolean).join(" ")) }
             : {}),
         // Stamp the canonical "matchmaker has run" marker. Without it a note that
         // matched NOTHING (e.g. "3d printer" on a blank workspace) left the web's

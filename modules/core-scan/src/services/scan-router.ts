@@ -8,6 +8,7 @@
 // the type-specific lookups enrich dispatches to.
 
 import { gtinChecksumOk, hasStoreCodePrefix, isStoreCode, type BarcodeHit } from "./barcode-lookup.js";
+import { hitCassette, replayMiss, writeCatalogCassette } from "./catalog-replay.js";
 
 export type ScanCodeType = "upc" | "isbn" | "asin" | "fnsku" | "url" | "store-code" | "unknown";
 
@@ -85,6 +86,16 @@ export function isbnFieldsFromOpenLibrary(
 export async function resolveIsbn(isbn: string): Promise<BarcodeHit | null> {
   const clean = isbn.replace(/[^0-9X]/gi, "").toUpperCase();
   if (!clean) return null;
+  // A replay dir answers from its cassette and never from the network
+  // (catalog-replay.ts); a recording session asks live and writes one.
+  const replayed = replayMiss(clean);
+  if (replayed) return replayed.outcome === "hit" ? replayed.hit : null;
+  const live = await resolveIsbnLive(clean);
+  writeCatalogCassette(clean, hitCassette(live));
+  return live;
+}
+
+async function resolveIsbnLive(clean: string): Promise<BarcodeHit | null> {
   const res = await fetch(
     `https://openlibrary.org/api/books?bibkeys=ISBN:${clean}&format=json&jscmd=data`,
     { headers: { accept: "application/json" }, signal: AbortSignal.timeout(8000) },
@@ -144,6 +155,14 @@ export interface OpenLibraryBook {
 export async function resolveAsin(asin: string): Promise<BarcodeHit | null> {
   const a = asin.trim().toUpperCase();
   if (!/^[A-Z0-9]{10}$/.test(a)) return null;
+  const replayed = replayMiss(a);
+  if (replayed) return replayed.outcome === "hit" ? replayed.hit : null;
+  const live = await resolveAsinLive(a);
+  writeCatalogCassette(a, hitCassette(live));
+  return live;
+}
+
+async function resolveAsinLive(a: string): Promise<BarcodeHit | null> {
   const res = await fetch(`https://www.amazon.com/dp/${a}`, {
     headers: {
       // A real browser UA — datacenter UAs get an instant block page.

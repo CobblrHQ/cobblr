@@ -13,6 +13,7 @@ export { RecordHeaderChips } from "./RecordHeaderChips";
 export { RecordFaces, FaceSection, useFaces, useFaceOn } from "./faces";
 export { useInvokeEntityAction } from "./use-invoke-action";
 export { runAction, useRunAction, refreshAfterAction, queryShowsKinds, affectedKindsOf, type ActionBody, type ActionRun, type ActionAffected, type KindMeta } from "./run-action";
+export { changeWorkspaceShape, useChangeWorkspaceShape, afterWorkspaceShapeChange, queryFollowsWorkspaceShape, type ShapeMeta, type ChangeShapeOptions } from "./workspace-shape";
 export { ActionOutcome } from "./ActionOutcome";
 export { summariseParts, summaryLine, type TileSummary } from "./tileSummary";
 export { EntityChip } from "./EntityChip";
@@ -231,6 +232,9 @@ export { HIDE_WHEN_OVERLAY_OPEN, OverlayFlag, useOverlayOpenFlag } from "./overl
 export { downloadBlob } from "./download-blob";
 export { withPngDpi, readPngDpi, isPng, crc32, dpiToPixelsPerMetre } from "./png-dpi";
 export { YIELDING_CLASS, useYieldToContent, pressableBeneath, samplePoints } from "./yield-to-content";
+export { FloatingChrome, type FloatingChromeProps, type FloatingAnchor } from "./FloatingChrome";
+export { registerBottomChrome, stackBottomChrome, layoutDockNow, BOTTOM_CHROME_HEIGHT_VAR } from "./bottom-dock";
+export { OverlayLayer, PopoverLayer, BackdropLayer, OVERLAY_LAYER_CLASS, POPOVER_LAYER_CLASS, BACKDROP_LAYER_CLASS, type LayerProps } from "./fixed-layers";
 export { LiveSurfaceProvider, useOverLiveSurface } from "./live-surface";
 export { describeUnreadableBody } from "./unreadableBody";
 

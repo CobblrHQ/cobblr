@@ -13,9 +13,9 @@
 // it its authenticated callApi, the bench hands it its own client, and there
 // is exactly one prompt.
 
-import {
-  resolveCreatePath,
+import { resolveCreatePath,
   type KindRec,
+  offerableToAssistant,
 } from "@cobblr/workspace-tools";
 import { renderKindLines, anyHiddenFields, HIDDEN_FIELDS_RULE } from "./kind-lines.js";
 import { renderEntityActions, renderWorkspaceActions, RAIL_LOOKUP_NOTE, type RailMode } from "./action-rail.js";
@@ -142,7 +142,11 @@ export async function buildSystemPrompt(
   }
 
   const reg = await w.get("/registered-actions");
-  const allActions =
+  // Only what a person could ask for: a wire-only action (fired by an event)
+  // and an internal one (the way back for another) are not on the rail
+  // (offerableToAssistant, the same rule list_actions applies). The button
+  // flag says nothing here.
+  const allActions = (
     (reg.body.items as
       | Array<{
           id: string;
@@ -152,8 +156,12 @@ export async function buildSystemPrompt(
           matched_kinds?: string[];
           args_schema?: Record<string, { label?: string; type?: string }> | null;
           examples?: string[];
+          user_invokable?: boolean;
+          internal?: boolean;
+          wire_only?: boolean;
         }>
-      | undefined) ?? [];
+      | undefined) ?? []
+  ).filter(offerableToAssistant);
   // With tools, the model can call list_actions for an action's description,
   // arguments and phrasings, so the prompt carries an INDEX (id + label) and
   // spends its tokens elsewhere. Without tools there is nothing to call, so

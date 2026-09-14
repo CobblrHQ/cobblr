@@ -15,6 +15,7 @@ import { decryptCreds } from "./crypto.js";
 import type { TenantDB } from "./tenant-schema.js";
 import { mayFastClose } from "./pool-release-rule.js";
 import { createPool } from "./client-error-guard.js";
+import { poolCounts, type PoolCounts } from "./pool-stats.js";
 
 interface CachedTenant {
   pool: Pool;
@@ -26,6 +27,24 @@ interface CachedTenant {
 // each constructing a Pool — otherwise the second cache.set() overwrites
 // the first, orphaning its connections (a slow leak under load).
 const cache = new Map<string, Promise<CachedTenant>>();
+
+// The pools that have actually opened, by org, for the counts /healthz and
+// the pool watch report (#3033). The cache above holds promises; this holds
+// what resolved, and an entry leaves when its pool is ended.
+const livePools = new Map<string, Pool>();
+
+/** Every open tenant pool's counts, summed, and how many are open. */
+export function tenantPoolStats(): PoolCounts & { open: number } {
+  const out = { open: 0, total: 0, idle: 0, waiting: 0 };
+  for (const pool of livePools.values()) {
+    const c = poolCounts(pool);
+    out.open++;
+    out.total += c.total;
+    out.idle += c.idle;
+    out.waiting += c.waiting;
+  }
+  return out;
+}
 
 // Last time getTenantDb handed out this org's Kysely. A background sweep
 // (recurrence scheduler / maintenance / scan-inbox calling releaseIdleDb)
@@ -195,6 +214,7 @@ async function openTenant(orgId: string): Promise<CachedTenant> {
     // both. Cast because it is not a full pg.Pool.
     dialect: new PostgresDialect({ pool: shim as unknown as Pool }),
   });
+  livePools.set(orgId, pool);
   return { pool, db };
 }
 
@@ -278,6 +298,7 @@ export async function releaseIdleTenantPool(orgId: string, ifSeqIs?: number): Pr
     return;
   }
   cache.delete(orgId);
+  livePools.delete(orgId);
   lastAccess.delete(orgId);
   accessSeq.delete(orgId);
   handouts.delete(orgId);
@@ -333,6 +354,7 @@ export async function evictTenantPool(
   const entry = cache.get(orgId);
   if (!entry) return { drained: true, borrowed: 0 };
   cache.delete(orgId);
+  livePools.delete(orgId);
   lastAccess.delete(orgId);
   accessSeq.delete(orgId);
   handouts.delete(orgId);

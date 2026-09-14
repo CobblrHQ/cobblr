@@ -14,7 +14,7 @@ import { slugifyFieldName } from "../lib/field-key";
 import { fieldFormReadiness } from "../lib/field-form";
 import { useActiveOrg } from "../auth/ActiveOrgContext";
 import { FieldDefDetail } from "../components/FieldDefDetail";
-import { FieldRenderer, UnitInput, useToast, usePageTitle } from "@cobblr/platform-web";
+import { FieldRenderer, UnitInput, changeWorkspaceShape, useToast, usePageTitle } from "@cobblr/platform-web";
 
 // `relation` is deliberately absent: user-authored relation fields (picking a
 // ref_kind in this UI) are a follow-on; today relation defs are contributed by
@@ -117,14 +117,14 @@ export function FieldsPage({ embedded = false }: { embedded?: boolean } = {}) {
     setBusyPreset(preset.key);
     try {
       if (preset.status === "on") {
-        const r = await api.removeFieldPreset(slug, preset.key);
+        const r = await changeWorkspaceShape(qc, slug, () => api.removeFieldPreset(slug, preset.key));
         toast.success(
           r.removed.length
             ? `${preset.label} off. ${r.removed.length} field${r.removed.length === 1 ? "" : "s"} removed; anything already recorded stays on the items.`
             : `${preset.label} was already off.`,
         );
       } else {
-        const r = await api.applyFieldPreset(slug, preset.key);
+        const r = await changeWorkspaceShape(qc, slug, () => api.applyFieldPreset(slug, preset.key));
         toast.success(
           r.created.length
             ? `${preset.label} on. Added ${r.created.length} field${r.created.length === 1 ? "" : "s"} to ${preset.hint.toLowerCase().replace(/\.$/, "")}.`
@@ -148,8 +148,6 @@ export function FieldsPage({ embedded = false }: { embedded?: boolean } = {}) {
           }
         }
       }
-      await qc.invalidateQueries({ queryKey: ["field-presets", slug] });
-      await qc.invalidateQueries({ queryKey: ["field-defs", slug] });
     } catch (e) {
       toast.error(e instanceof Error ? e.message : "Could not change that.");
     } finally {
@@ -159,7 +157,7 @@ export function FieldsPage({ embedded = false }: { embedded?: boolean } = {}) {
 
   const create = useMutation({
     mutationFn: () =>
-      api.createFieldDef(slug, {
+      changeWorkspaceShape(qc, slug, () => api.createFieldDef(slug, {
         // In scope mode the server DERIVES entity_kind from the predicate (the
         // canonical sentinel), so the two can never disagree.
         entity_kind: mode === "scope" ? "" : entityKind,
@@ -177,7 +175,7 @@ export function FieldsPage({ embedded = false }: { embedded?: boolean } = {}) {
         // type, so don't send an empty array and trip it.
         choices: type === "text" && choices.length ? choices : undefined,
         field_role: fieldRole ? (fieldRole as PlatformFieldDef["field_role"]) : undefined,
-      }),
+      })),
     onSuccess: (created) => {
       toast.success(
         created.scope_label
@@ -187,7 +185,6 @@ export function FieldsPage({ embedded = false }: { embedded?: boolean } = {}) {
       // Shadowing a trait-scoped field is legal and easy to do by accident -
       // the server says what just changed hands, so say it here too.
       if (created.warning) toast.info(created.warning);
-      void qc.invalidateQueries({ queryKey: ["field-defs", slug] });
       setEntityKind("");
       setScopeTraits([]);
       setName("");

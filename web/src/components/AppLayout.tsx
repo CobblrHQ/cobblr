@@ -51,7 +51,7 @@ import { GuidedTour } from "../tour/GuidedTour";
 import { useTour } from "../tour/useTour";
 import { DASHBOARD_TOUR } from "../tour/tour.config";
 import { useTheme } from "../theme/ThemeContext";
-import { useToast } from "@cobblr/platform-web";
+import { FloatingChrome, useToast } from "@cobblr/platform-web";
 import { readOpenOn, readOpenTab, restoresOn, writeOpenOn, writeOpenTab } from "../lib/panel-memory";
 
 export function AppLayout({ activeSlug }: { activeSlug: string }) {
@@ -165,14 +165,29 @@ export function AppLayout({ activeSlug }: { activeSlug: string }) {
     const ro = new ResizeObserver(update);
     ro.observe(el);
     window.addEventListener("scroll", update, { passive: true });
+    // The bar slides over 200ms, and the scroll frame that started the slide
+    // measured it where it WAS: the variable read 0 while the bar sat fully
+    // in view after an upward flick, and 45 while it was hidden. Everything
+    // sticky-under-header offsets by this number, so it is measured again
+    // when the slide lands.
+    el.addEventListener("transitionend", update);
     return () => {
       if (queued) cancelAnimationFrame(queued);
       ro.disconnect();
       window.removeEventListener("scroll", update);
       window.removeEventListener("scroll", onScroll);
+      el.removeEventListener("transitionend", update);
       document.documentElement.style.removeProperty("--app-header-bottom");
     };
   }, [trackHideTop]);
+  // And the destination is known the moment the bar is told to move: hidden
+  // means 0, shown means its height. Set at once so a sticky bar under it
+  // moves with it rather than 200ms behind.
+  useEffect(() => {
+    const el = headerRef.current;
+    if (!el || window.innerWidth >= 768) return;
+    document.documentElement.style.setProperty("--app-header-bottom", `${barHidden ? 0 : el.offsetHeight}px`);
+  }, [barHidden]);
   const { activeOrg } = useActiveOrg();
   const qc = useQueryClient();
   // Managed-app mode: no workspace switching, no platform nav — just the app.
@@ -494,9 +509,18 @@ export function AppLayout({ activeSlug }: { activeSlug: string }) {
           top edge — a third grid child would steal the 1fr row and
           stretch the header. A thin branded edge over the (still neutral +
           readable) functional header; the Cobblr mark stays. */}
-      <header
+      {/* The shell's own top chrome: in place (its spacer and its measurement
+          live beside it in the grid) and it never yields, since every overlay
+          sits above it anyway. In the full sidebar it is static at md+ (the
+          md:static utility outranks the primitive's position, being later in
+          the stylesheet). */}
+      <FloatingChrome
+        as="header"
+        anchor="top"
+        inPlace
+        yields={false}
         ref={headerRef}
-        className={`${fullSide ? "md:hidden md:static " : ""}fixed inset-x-0 top-0 z-30 border-b backdrop-blur overflow-x-clip max-md:transition-transform max-md:duration-200 motion-reduce:transition-none ${
+        className={`${fullSide ? "md:hidden md:static " : ""}z-30 border-b backdrop-blur overflow-x-clip max-md:transition-transform max-md:duration-200 motion-reduce:transition-none ${
           barHidden ? "max-md:-translate-y-full" : ""
         } ${envBanner ? envBanner.header : DEFAULT_HEADER}`}
         // paddingTop: the iOS status-bar safe area. In standalone (home-screen)
@@ -647,7 +671,7 @@ export function AppLayout({ activeSlug }: { activeSlug: string }) {
             <MobileNav />
           </div>
         </div>
-      </header>
+      </FloatingChrome>
       {/* Holds the fixed bar's place on mobile, so the banners and the page do
           not start underneath it. Its height is MEASURED rather than assumed —
           the bar grows with the env chip, a skin's accent edge and the status-bar
@@ -681,16 +705,18 @@ export function AppLayout({ activeSlug }: { activeSlug: string }) {
           its width on wide screens so the centered content shifts LEFT into its
           margin and the two coexist — no overlap, no compression (xl+ has room). */}
       <div className="min-w-0 flex items-stretch">
-        {/* Pinned sidebar: an in-flow skinny column. Sticks to the viewport
-            top as the page scrolls (the header itself scrolls away), owns its
-            own scrollbar when the nav outgrows the screen. Desktop-only —
-            mobile keeps the hamburger regardless of mode. */}
+        {/* Pinned sidebar: an in-flow skinny column. Sticks under the fixed
+            header as the page scrolls, owns its own scrollbar when the nav
+            outgrows the screen. Desktop-only: mobile keeps the hamburger
+            regardless of mode. */}
         {navMode === "side" && !navAutoHide && (
           <aside className="hidden md:block w-56 shrink-0 border-r border-line dark:border-slate-800 bg-surface/60 dark:bg-slate-900/60">
-            {/* The sticky inner wrapper caps at the viewport (max-h-dvh) and
-                scrolls internally, so it works under ANY header height —
-                banners included — without measuring anything. */}
-            <div className={"sticky top-0 flex flex-col overflow-hidden " + (fullSide ? "h-dvh" : "max-h-dvh")}>
+            {/* The sticky inner wrapper starts under the fixed header (the
+                shell's --app-header-bottom, 0 in sidebar-only mode where there
+                is no bar) and caps at the room left below it, scrolling
+                internally. It used to start at the viewport top, so once the
+                page scrolled the column's first rows sat under the bar. */}
+            <div className={"sticky-under-header flex flex-col overflow-hidden " + (fullSide ? "h-dvh" : "fill-under-header")}>
               <SidebarNav head={sidebarHead} foot={sidebarFoot} controls={sidebarControls} />
             </div>
           </aside>
@@ -703,12 +729,12 @@ export function AppLayout({ activeSlug }: { activeSlug: string }) {
             must never eat clicks meant for the header/content beneath it.
             The strip + panel re-enable their own pointer events. */}
         {navMode === "side" && navAutoHide && (
-          <div className="hidden md:block fixed bottom-0 left-0 z-40 group/snav pointer-events-none" style={{ top: hideTop }}>
+          <FloatingChrome anchor="top" inPlace yields={false} className="hidden md:block right-auto bottom-0 z-40 group/snav pointer-events-none" style={{ top: hideTop }}>
             <div className="pointer-events-auto absolute inset-y-0 left-0 w-2.5 border-l-2 border-line dark:border-slate-700 group-hover/snav:border-accent transition" />
             <aside className="pointer-events-auto h-full w-56 flex flex-col overflow-hidden -translate-x-full group-hover/snav:translate-x-0 focus-within:translate-x-0 transition-transform duration-150 border-r border-line dark:border-slate-700 bg-surface dark:bg-slate-900 group-hover/snav:shadow-xl focus-within:shadow-xl">
               <SidebarNav head={sidebarHead} foot={sidebarFoot} controls={sidebarControls} />
             </aside>
-          </div>
+          </FloatingChrome>
         )}
       <main className={`flex-1 min-w-0 transition-[padding] duration-200 ${chatOpen ? "xl:pr-[456px]" : ""}`}>
         {/* pb clears the mobile bottom action bar; md+ has no bar. */}
@@ -716,7 +742,11 @@ export function AppLayout({ activeSlug }: { activeSlug: string }) {
             with usePageWidth("wide") — see index.css. A wide TABLE is
             unreadable in a 6xl column and fine at full width; prose is the
             other way round, which is why this is opt-in per page. */}
-        <div className="page-shell w-full px-5 py-6 pb-20 md:pb-6">
+        {/* 8px of gutter on a phone, 20px from sm. No guidance asks for more:
+            the platform margins (16pt, 16dp) are readability defaults for
+            text, and the text keeps its inset inside each card; a card runs
+            near the edge the way a plain list row does (the owner, #2982). */}
+        <div className="page-shell w-full px-2 sm:px-5 py-6 pb-20 md:pb-6">
           {/* Per-page boundary: a crash in one page shows a fallback but
               keeps the nav/chrome, and keying on pathname resets it when
               you navigate away. Also catches lazy-chunk load errors that

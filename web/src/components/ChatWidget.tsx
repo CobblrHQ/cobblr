@@ -12,6 +12,7 @@ import { ChatRefChip, ChatRefName, PermanentTag } from "./ChatRefChip";
 import { PlanNote } from "./PlanNote";
 import { PlanSections, sectionsLeft, type SectionRuns } from "./PlanSections";
 import { slimForStore } from "../lib/chat-store";
+import { growToContent } from "../lib/useAutoGrowTextarea";
 import { PlanLines } from "./PlanLines";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { X, Send, Check, Eye, PencilLine, Trash2, Wand2, Cpu, ChevronDown } from "lucide-react";
@@ -40,6 +41,7 @@ import {
 import { useDetailRoute, useListRoute } from "../lib/useDetailRoute";
 import { useAiStatus, AiOffNotice, aiStatusLine } from "./AiStatusNotice";
 import { RailTabContent, openRail, useRailActiveTab, useRailTab } from "./SideRail";
+import { PopoverLayer } from "@cobblr/platform-web";
 
 // Shown only if the basic-mode endpoint itself is unreachable (network error) —
 // the server otherwise always returns a reply (its own no-match nudge).
@@ -232,10 +234,10 @@ function ModelChip({
       {open &&
         at &&
         createPortal(
-          <div
+          <PopoverLayer
             data-model-menu
             role="menu"
-            style={{ position: "fixed", top: at.top, right: at.right }}
+            style={{ top: at.top, right: at.right }}
             className="z-[70] min-w-[15rem] max-w-[min(20rem,calc(100vw-1rem))] rounded-lg border border-line dark:border-slate-700 bg-white dark:bg-slate-900 shadow-lg py-1 text-[12px]"
           >
             {menu.groups.map((g) => (
@@ -286,7 +288,7 @@ function ModelChip({
                 </button>
               </div>
             )}
-          </div>,
+          </PopoverLayer>,
           document.body,
         )}
     </>
@@ -614,8 +616,7 @@ export function ChatPanel({ open: railOpen, setOpen }: { open: boolean; setOpen:
   useLayoutEffect(() => {
     const el = taRef.current;
     if (!el) return;
-    el.style.height = "auto";
-    el.style.height = `${Math.min(el.scrollHeight, 200)}px`;
+    growToContent(el, 200);
     if (caretToEndRef.current) {
       caretToEndRef.current = false;
       el.setSelectionRange(el.value.length, el.value.length);

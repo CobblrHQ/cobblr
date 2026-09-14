@@ -23,7 +23,7 @@ import {
   Square,
   SquareCheck,
 } from "lucide-react";
-import { downloadBlob, useToast, usePageTitle } from "@cobblr/platform-web";
+import { downloadBlob, useChangeWorkspaceShape, useToast, usePageTitle } from "@cobblr/platform-web";
 import {
   ApiError,
   api,
@@ -172,10 +172,11 @@ export function BundleComposerPage() {
     toast.success("Bundle JSON copied.");
   }
 
+  const changeShape = useChangeWorkspaceShape();
   const install = useMutation({
     mutationFn: () => {
       if (!finalManifest) throw new ApiError(400, "no_manifest", "Nothing to install");
-      return api.installBundle(activeSlug, finalManifest);
+      return changeShape(() => api.installBundle(activeSlug, finalManifest));
     },
     onSuccess: () => toast.success("Bundle installed in this workspace."),
     onError: (e: unknown) =>

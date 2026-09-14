@@ -223,6 +223,7 @@ export const CAPABILITIES: Capability[] = [
     scope: [
       "web/src/pages/ScanCameraPage.tsx",
       "web/src/pages/ScanPage.tsx",
+      "web/src/pages/ScanInboxCard.tsx",
       "web/src/pages/omniIntake.ts",
       "web/src/pages/ScanResultModal.tsx",
       "web/src/pages/ScanCaptureDrawer.tsx",
@@ -243,6 +244,7 @@ export const CAPABILITIES: Capability[] = [
     scope: [
       "web/src/components/TrackedMatchBanner.tsx",
       "web/src/pages/ScanPage.tsx",
+      "web/src/pages/ScanInboxCard.tsx",
       "web/src/pages/ScanResultModal.tsx",
       "web/src/pages/ScanCaptureDrawer.tsx",
     ],
@@ -261,6 +263,7 @@ export const CAPABILITIES: Capability[] = [
       "web/src/components/TrackedMatchBanner.tsx",
       "web/src/components/RepurchaseControls.tsx",
       "web/src/pages/ScanPage.tsx",
+      "web/src/pages/ScanInboxCard.tsx",
       "web/src/pages/ScanResultModal.tsx",
     ],
     detect: /Move it to \{|Use this scan|listMismatch\(|pictureOffer\(/,
@@ -275,7 +278,7 @@ export const CAPABILITIES: Capability[] = [
       "that under a tile the library had just filled (2026-09-07)",
     component: "ImageSearchPicker",
     required: ["throttled"],
-    scope: ["web/src/pages/ScanPage.tsx"],
+    scope: ["web/src/pages/ScanInboxCard.tsx"],
   },
   {
     kind: "owns",
@@ -296,6 +299,7 @@ export const CAPABILITIES: Capability[] = [
       "web/src/components/ImageSearchPicker.tsx",
       "web/src/pages/omniIntake.ts",
       "web/src/pages/ScanPage.tsx",
+      "web/src/pages/ScanInboxCard.tsx",
     ],
     detect: /clipboardData\s*[?.]*\.\s*(items|files)\b/,
     use: "clipboardImageFiles(e.clipboardData) from pastedImage.ts, or readPastedImage(payloadFromClipboard(...)) when an address counts too",
@@ -587,6 +591,7 @@ export const CAPABILITIES: Capability[] = [
     owner: "packages/platform-contract/src/scan-triage.ts",
     scope: [
       "web/src/pages/ScanPage.tsx",
+      "web/src/pages/ScanInboxCard.tsx",
       "web/src/pages/scanFileAll.ts",
       "web/src/pages/scan-status.ts",
       "modules/core-scan/src/api/inbox.ts",
@@ -699,6 +704,7 @@ export const CAPABILITIES: Capability[] = [
     why: 'the scan flow had six names for it, and the chip said "No filing location" on desktop but "Set location" on a phone (2026-08-01)',
     scope: [
       "web/src/pages/ScanPage.tsx",
+      "web/src/pages/ScanInboxCard.tsx",
       "web/src/pages/sessionCategory.ts",
       "web/src/pages/scanFileAll.ts",
       "web/src/components/SessionLocationModal.tsx",

@@ -8,7 +8,7 @@
 // The plan is three piles the person reads before anything is written:
 //   Added to what you have  - a single barcode or name match, "+2 to Cucumbers"
 //   Filed as new            - nothing like it yet, into the table it names
-//   Left for you            - ambiguous or nameless, with the reason
+//   Left for you            - ambiguous, nameless or flagged for review, with the reason
 // Confirm sends exactly the first two piles' ids and what was shown for each;
 // the route acts only on those, and skips one whose plan changed since the
 // look. The 10 to 20 second write shows as work, not a hang, and the result
@@ -59,11 +59,13 @@ function Pile({
         type="button"
         onClick={onToggle}
         aria-expanded={open}
-        className="w-full flex items-center gap-2 px-3 py-2 text-left"
+        className="w-full flex flex-wrap items-center gap-x-2 gap-y-0.5 px-3 py-2 text-left"
       >
         <span className={`text-xs font-medium ${color}`}>{title}</span>
         <span className="text-xs text-muted">{lines.length}</span>
-        <span className="flex-1 text-[11px] text-faint truncate">{hint}</span>
+        {/* The explanation wraps under the heading on a phone; it was clipped
+            beside it with room to spare below (#2982). */}
+        <span className="order-last basis-full text-[11px] text-faint sm:order-none sm:basis-auto sm:flex-1 sm:truncate">{hint}</span>
         <ChevronDown size={14} className={`shrink-0 text-faint transition ${open ? "rotate-180" : ""}`} />
       </button>
       {open && lines.length > 0 && (
@@ -71,9 +73,12 @@ function Pile({
           {lines.map((p) => {
             const l = lineFor(p);
             return (
-              <li key={p.itemId} className="px-3 py-1.5 text-sm flex items-baseline gap-2">
-                <span className="text-content dark:text-mortar-100 truncate min-w-0">{l.name}</span>
-                <span className="text-xs text-muted truncate min-w-0 flex-1">{l.detail}</span>
+              <li key={p.itemId} className="px-3 py-1.5 text-sm flex flex-col gap-0.5 sm:flex-row sm:items-baseline sm:gap-2">
+                {/* On a phone the name wraps and the quantity, destination and
+                    reason take a second line: "×2 into Yarn · not…" is not a
+                    plan a person can confirm (#2982). */}
+                <span className="text-content dark:text-mortar-100 min-w-0 sm:truncate">{l.name}</span>
+                <span className="text-xs text-muted min-w-0 sm:flex-1 sm:truncate">{l.detail}</span>
                 {trailing?.(p)}
               </li>
             );
@@ -257,7 +262,7 @@ export function FileEverythingSheet({
           )}
           <Pile
             title="Left for you"
-            hint="ambiguous or unnamed: untouched, with the reason"
+            hint="ambiguous, unnamed or flagged for review: untouched, with the reason"
             lines={piles.skip}
             open={openPiles.skip}
             onToggle={() => setOpenPiles((o) => ({ ...o, skip: !o.skip }))}
@@ -278,10 +283,10 @@ export function FileEverythingSheet({
                 const l = lineFor(p);
                 const isUndone = undone.has(p.itemId);
                 return (
-                  <li key={p.itemId} className={`px-3 py-1.5 text-sm flex items-baseline gap-2 ${isUndone ? "opacity-50" : ""}`}>
+                  <li key={p.itemId} className={`px-3 py-1.5 text-sm flex flex-wrap items-baseline gap-x-2 gap-y-0.5 ${isUndone ? "opacity-50" : ""}`}>
                     <CheckCircle2 size={13} className={`shrink-0 self-center ${isUndone ? "text-faint" : "text-emerald-500"}`} />
-                    <span className="text-content dark:text-mortar-100 truncate min-w-0">{l.name}</span>
-                    <span className="text-xs text-muted truncate min-w-0 flex-1">{isUndone ? "back in the inbox" : l.detail}</span>
+                    <span className="text-content dark:text-mortar-100 min-w-0 sm:truncate">{l.name}</span>
+                    <span className="basis-full text-xs text-muted min-w-0 sm:basis-auto sm:flex-1 sm:truncate">{isUndone ? "back in the inbox" : l.detail}</span>
                     {!isUndone && (
                       <button
                         type="button"

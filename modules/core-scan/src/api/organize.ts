@@ -28,6 +28,7 @@ import { BundleInstaller, fileThroughConfirm, type FilingOutcome } from "../serv
 import { liveTablesOf, withResolvedOffers } from "../services/resolve-offers.js";
 import { INTERNAL_API } from "./inbox.js";
 import { isJunkName } from "../services/enrich.js";
+import { needsScanReview, SCAN_TRIAGE_COLUMNS } from "@cobblr/platform-contract/scan-triage";
 import { LengthUnitResolver, inboxLongestMm } from "../services/organize-dims.js";
 import {
   gatherEntitiesByRefs,
@@ -206,12 +207,9 @@ organizeRouter.post(
       .selectFrom("core_scan_inbox_items")
       .select([
         "id",
-        "status",
-        "suggested_name",
+        // Everything the review predicate reads (scan-triage.ts).
+        ...SCAN_TRIAGE_COLUMNS,
         "suggested_manufacturer",
-        "suggested_metadata",
-        "target_location_id",
-        "target_container_id",
         "quantity",
         // For the plan's own thumbnails - see planItemPhotos.
         "image_file_id",
@@ -245,7 +243,11 @@ organizeRouter.post(
     }
 
     // Split the pile: plannable / already filed (human decision stands) /
-    // needs review (unidentified — identify first, organize second).
+    // needs review (identify first, organize second). "Needs review" is the
+    // contract's predicate, the one the inbox header counts under the
+    // warning: a row whose crop failed or whose twins disagree is not
+    // planned a home any more than a nameless one is (#2980). A junk name
+    // ("Unknown Item") is nameless for the same purpose.
     const plannable: OrganizeInputItem[] = [];
     const alreadyFiled: string[] = [];
     const needsReview: string[] = [];
@@ -255,7 +257,7 @@ organizeRouter.post(
         alreadyFiled.push(r.id);
         continue;
       }
-      if (!r.suggested_name || isJunkName(r.suggested_name)) {
+      if (!r.suggested_name || isJunkName(r.suggested_name) || needsScanReview(r)) {
         needsReview.push(r.id);
         continue;
       }

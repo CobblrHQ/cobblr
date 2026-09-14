@@ -8,8 +8,7 @@
 // which a Cobblr bug found on a self-hosted instance reaches the project.
 
 import { useState, useRef, useEffect } from "react";
-import { HIDE_WHEN_OVERLAY_OPEN, YIELDING_CLASS, useYieldToContent } from "@cobblr/platform-web";
-import { createPortal } from "react-dom";
+import { FloatingChrome } from "@cobblr/platform-web";
 import { Modal, useToast } from "@cobblr/platform-web";
 import { BookOpen, Copy, ExternalLink, Github, ImagePlus, MessageCircle, MessageSquare, Users, X, ChevronRight } from "lucide-react";
 import { api, type CommunityLink } from "../lib/api";
@@ -40,8 +39,6 @@ interface Pick {
 export function FeedbackWidget({ asRow = false }: { asRow?: boolean } = {}) {
   // Get out of the way of anything pressable underneath (yield-to-content.ts):
   // fixed chrome does not move, and the page under it does.
-  const bubbleRef = useRef<HTMLButtonElement>(null);
-  const coveringContent = useYieldToContent(bubbleRef);
 
   const [open, setOpen] = useState(false);
   const [type, setType] = useState<FType>("bug");
@@ -295,24 +292,22 @@ export function FeedbackWidget({ asRow = false }: { asRow?: boolean } = {}) {
           Feedback
         </button>
       ) : (
-        /* Portaled to <body> so an ancestor's backdrop-blur / transform can't trap
-           or blur this fixed button (the navbar uses backdrop-blur). z above the
-           modal backdrop (z-50) so feedback stays reachable while a form is open —
-           exactly what the user asked for. */
-        createPortal(
-          <button
-            type="button"
-            onClick={() => setOpen(true)}
-            title="Send feedback"
-            aria-label="Send feedback"
-            ref={bubbleRef}
-            className={"fixed bottom-4 right-4 z-[55] " + HIDE_WHEN_OVERLAY_OPEN + (coveringContent ? " " + YIELDING_CLASS : "") + " flex items-center gap-1.5 rounded-full bg-cobble-600 hover:bg-cobble-700 text-white shadow-lg px-3 py-2.5 text-xs font-medium transition"}
-          >
-            <MessageSquare size={15} />
-            <span className="hidden sm:inline">Feedback</span>
-          </button>,
-          document.body,
-        )
+        /* A corner piece: above the bottom dock, out of the way of an open
+           overlay and of anything pressable it would cover. z above the modal
+           backdrop (z-50) so feedback stays reachable while a form is open. */
+        <FloatingChrome
+          as="button"
+          anchor="corner"
+          yieldToContent
+          type="button"
+          onClick={() => setOpen(true)}
+          title="Send feedback"
+          aria-label="Send feedback"
+          className="right-4 z-[55] flex items-center gap-1.5 rounded-full bg-cobble-600 hover:bg-cobble-700 text-white shadow-lg px-3 py-2.5 text-xs font-medium transition"
+        >
+          <MessageSquare size={15} />
+          <span className="hidden sm:inline">Feedback</span>
+        </FloatingChrome>
       )}
 
       <Modal open={open} onClose={close} title="Send feedback" size="md">

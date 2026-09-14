@@ -7,7 +7,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import QRCode from "qrcode";
 import { Bluetooth, Check, ChevronDown, Download, Hash, Minus, Monitor, Pencil, Plus, Printer, RotateCcw, RotateCw, Send, Settings2, Trash2, Wifi, Zap } from "lucide-react";
 import { useNavigate } from "react-router-dom";
-import { usePageTitle, useToast, Modal } from "@cobblr/platform-web";
+import { usePageTitle, useToast, Modal, BACKDROP_LAYER_CLASS } from "@cobblr/platform-web";
 import { useLabels } from "./context";
 import { BrowsePanel } from "./BrowsePanel";
 import { CodesPanel } from "./CodesPanel";
@@ -929,7 +929,7 @@ export function QueuePage() {
           // needs no "forget" (PM220S stays saved). See §defaultPrinter above.
           <div className="relative">
             {targetMenuOpen && (
-              <button aria-hidden tabIndex={-1} className="fixed inset-0 z-10 cursor-default" onClick={() => setTargetMenuOpen(false)} />
+              <button aria-hidden tabIndex={-1} className={BACKDROP_LAYER_CLASS + " z-10 cursor-default"} onClick={() => setTargetMenuOpen(false)} />
             )}
             <button
               onClick={() => setTargetMenuOpen((v) => !v)}

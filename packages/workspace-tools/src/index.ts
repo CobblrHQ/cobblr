@@ -29,4 +29,5 @@ export {
   type KindRec,
 } from "./kinds.js";
 export { jsonSchemaOf } from "./schema.js";
+export { offerableToAssistant } from "./tools.js";
 export { pageWithTruth } from "./tools.js";

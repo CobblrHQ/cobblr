@@ -85,16 +85,21 @@ export type AgentLoopEvent =
   | { kind: "applied"; name: string; summary: string }
   | { kind: "text-delta"; text: string };
 
+/** What the loop says when the rounds run out: one final call, no tools. */
+export const ROUND_CAP_NUDGE = "(You've used the maximum number of tool rounds. Answer the user now with what you've learned: no more tool calls.)";
+
 export type AgentLoopOutcome =
   | { kind: "reply"; text: string; applied: AppliedWrite[] }
   | { kind: "writes"; calls: ToolCall[]; text: string; applied: AppliedWrite[] };
 
-const DEFAULT_MAX_ROUNDS = 5;
+/** Exported for the bench: it runs the same loop shape against the same
+ *  reads, so its cap and clamp are these and not a copy. */
+export const DEFAULT_MAX_ROUNDS = 5;
 // 4000 held about nine of fourteen seeded machines; a real record carries
 // more text than a seed. 12000 chars is roughly 3k tokens against a system
 // prompt that already costs ~15k, and a list is trimmed by whole records
 // with the truth first either way (clampJson).
-const DEFAULT_MAX_RESULT_CHARS = 12000;
+export const DEFAULT_MAX_RESULT_CHARS = 12000;
 
 /**
  * Fit a tool result into the model's budget WITHOUT lying about what it holds.
@@ -345,7 +350,7 @@ export async function runAgentLoop(turns: ChatTurn[], deps: AgentLoopDeps): Prom
   transcript.push({
     role: "user",
     content:
-      "(You've used the maximum number of tool rounds. Answer the user now with what you've learned: no more tool calls.)",
+      ROUND_CAP_NUDGE,
   });
   const last = await deps.callModel(transcript);
   const said = stripStageDirections(scrubIds(last.content ?? "", seenNames)).trim();

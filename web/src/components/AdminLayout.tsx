@@ -88,7 +88,7 @@ export function AdminLayout() {
           the whole map visible at once, and matches the workspace shell's own
           sidebar so the operator console stops feeling like a different app. */}
       <aside className="hidden md:block w-56 shrink-0 border-r border-line dark:border-slate-800 bg-surface dark:bg-slate-900">
-        <div className="sticky top-0 max-h-dvh flex flex-col overflow-hidden">
+        <div className="sticky-under-header fill-under-header flex flex-col overflow-hidden">
         <div className="px-4 py-3 border-b border-line dark:border-slate-800">
           <div className="flex items-center gap-2 min-w-0">
             <ShieldCheck size={18} className="text-cobble-600 dark:text-cobble-300 shrink-0" />
@@ -155,7 +155,7 @@ export function AdminLayout() {
       {/* Phone: no rail. One scrolling row of sections under a compact bar,
           which is what a phone can actually carry. */}
       <div className="flex-1 min-w-0 flex flex-col">
-        <header className="md:hidden sticky top-0 z-30 bg-surface dark:bg-slate-900 border-b-2 border-cobble-500 dark:border-b dark:border-slate-700">
+        <header className="md:hidden sticky-under-header z-30 bg-surface dark:bg-slate-900 border-b-2 border-cobble-500 dark:border-b dark:border-slate-700">
           <div className="px-4 py-2.5 flex items-center gap-2 min-w-0">
             <ShieldCheck size={16} className="text-cobble-600 dark:text-cobble-300 shrink-0" />
             <span className="font-display font-extrabold tracking-tight text-sm">Cobblr</span>

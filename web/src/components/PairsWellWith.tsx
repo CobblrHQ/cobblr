@@ -9,7 +9,7 @@
 // there's nothing to recommend.
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useToast } from "@cobblr/platform-web";
+import { changeWorkspaceShape, useToast } from "@cobblr/platform-web";
 import { Link2, Plus } from "lucide-react";
 import { api } from "../lib/api";
 import { FEATURED_BUNDLES, type FeaturedBundle } from "../lib/featured-bundles";
@@ -30,10 +30,9 @@ export function PairsWellWith({ module, orgSlug }: { module: string; orgSlug: st
   });
 
   const install = useMutation({
-    mutationFn: (b: FeaturedBundle) => api.installBundle(orgSlug, b.manifest),
+    mutationFn: (b: FeaturedBundle) => changeWorkspaceShape(qc, orgSlug, () => api.installBundle(orgSlug, b.manifest)),
     onSuccess: (_r, b) => {
       toast.success(`${b.manifest.name} installed`);
-      void qc.invalidateQueries({ queryKey: ["bundles", orgSlug] });
     },
     onError: (e) => toast.error(e instanceof Error ? e.message : String(e)),
   });

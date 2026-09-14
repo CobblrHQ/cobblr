@@ -1,0 +1,29 @@
+{
+  "outcome": "hit",
+  "hit": {
+    "source": "openlibrary",
+    "title": "The Hobbit",
+    "brand": "Mariner Books",
+    "model": "054792822X",
+    "description": null,
+    "category": "Books",
+    "image_url": "https://covers.openlibrary.org/b/id/12003329-M.jpg",
+    "raw": {
+      "openlibrary": {
+        "key": "/books/OL33891995M",
+        "url": "http://openlibrary.org/books/OL33891995M/The_Hobbit",
+        "authors": "J.R.R. Tolkien",
+        "isbn": "054792822X",
+        "publish_date": "2012"
+      }
+    },
+    "fields": {
+      "isbn": "054792822X",
+      "title": "The Hobbit",
+      "author": "J.R.R. Tolkien",
+      "year": 2012,
+      "publisher": "Mariner Books"
+    },
+    "decoder_id": "isbn"
+  }
+}

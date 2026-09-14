@@ -717,7 +717,7 @@ export const FEATURED_BUNDLES: FeaturedBundle[] = [
       "Track the fridge/pantry with expiry + storage, and auto-build a shopping list when something runs low or is about to expire. Check an item off → it restocks.",
     manifest: {
       id: "cobblr.flagship.groceries",
-      version: "0.11.0",
+      version: "0.11.1",
       // What its items are actually CALLED. A bundle's suggestion has to be
       // corroborated by the capture's own text before it is trusted, and a
       // category whose members never share its name can never corroborate:
@@ -883,10 +883,15 @@ export const FEATURED_BUNDLES: FeaturedBundle[] = [
         "ice cream",
         "frozen peas",
         "ready meal",
+        "seasoning",
+        "seasonings",
+        "herb",
+        "herbs",
+        "marinade",
       ],
-      released_at: "2026-09-12",
+      released_at: "2026-09-14",
       changelog:
-        "The Groceries fields now live on the Groceries table only. An early install also put a copy of them on plain Inventory, which made every inventory table look perishable; food that was still filed in plain Inventory moves into Groceries on the next start, each move noted in the activity log, and the copy is removed. The installed Groceries table now routes with every word the bundle declares, so a scanned drink or snack lands here first instead of in plain Inventory. Groceries opens on What's on hand, the pantry board, rather than the table, and remembers the view you pick. Checking an item off the shopping list dates the fresh stock: bought today, good until today plus its shelf life, instead of inheriting the last lot's dates. The saved views that promise an order (Re-buy soonest, How often you re-buy, Use it or lose it) now deliver it on the table itself, soonest first. Checking an item off the shopping list now adds exactly what you bought, once: the restock and purchase wires were declared twice and both fired. The shopping row says what checking it off will do. Scanning a grocery now suggests this bundle. The scanner would pick it and then quietly file the item under plain Inventory instead, because a bundle's suggestion has to be corroborated by the item's own text and nothing called Tomatoes Roma or Croissant contains the word grocery. The bundle now says what its items are called. Marks the expiry date as an expiry field, so re-buying something that already went off is recorded as waste rather than as something you used up. Fixes the status dots on the What's on hand view, which never showed anything about expiry. Adds a What's on hand app: a vending-machine view of the kitchen with a quantity badge and a status dot per item, plus a use-it-or-lose-it list sorted by expiry. Answers what do we actually have without opening the fridge. Earlier changes are in the bundle's history.",
+        "A seasoning, a herb or a marinade scanned from the food catalog files here: the bundle now declares those words, so a garlic seasoning blend no longer lands in a craft table because its name ends in Blend. The Groceries fields now live on the Groceries table only. An early install also put a copy of them on plain Inventory, which made every inventory table look perishable; food that was still filed in plain Inventory moves into Groceries on the next start, each move noted in the activity log, and the copy is removed. The installed Groceries table now routes with every word the bundle declares, so a scanned drink or snack lands here first instead of in plain Inventory. Groceries opens on What's on hand, the pantry board, rather than the table, and remembers the view you pick. Checking an item off the shopping list dates the fresh stock: bought today, good until today plus its shelf life, instead of inheriting the last lot's dates. The saved views that promise an order (Re-buy soonest, How often you re-buy, Use it or lose it) now deliver it on the table itself, soonest first. Checking an item off the shopping list now adds exactly what you bought, once: the restock and purchase wires were declared twice and both fired. The shopping row says what checking it off will do. Scanning a grocery now suggests this bundle. The scanner would pick it and then quietly file the item under plain Inventory instead, because a bundle's suggestion has to be corroborated by the item's own text and nothing called Tomatoes Roma or Croissant contains the word grocery. The bundle now says what its items are called. Marks the expiry date as an expiry field, so re-buying something that already went off is recorded as waste rather than as something you used up. Earlier changes are in the bundle's history.",
       name: "Groceries",
       description:
         "Turn inventory + lists into a kitchen system: track food with expiry + storage fields, an auto grocery list on low-stock/expiry, restock on check-off.",
@@ -1345,14 +1350,14 @@ export const FEATURED_BUNDLES: FeaturedBundle[] = [
     ],
     manifest: {
       id: "cobblr.community.lego",
-      version: "0.5.2",
+      version: "0.5.3",
       name: "Lego",
       description:
         "Lego as its own tables. Sets you own (sealed / built / disassembled) with optional Bricks bins, a Rebrickable catalog link, and a one-tap Disassemble that spawns the parts and opens the sorting planner.",
       author: "Cobblr community",
       released_at: "2026-07-11",
       changelog:
-        "Lego is now its OWN tables, not a skin over generic inventory. Installing it gives you a Sets table (each set sealed, built, or disassembled) with set number, theme, year, piece count and minifig count: the generic warranty/serial/supplier clutter is hidden. Turn on the checkboxes you want: track individual Bricks in bins, link to the Rebrickable catalog so sets and parts match real data, disassemble a built set into its parts and sort them into bins, print QR labels, or add by scanning.",
+        "The set number is the set's identity: two scans with different set numbers are never offered as one product, and a scanned or typed set number finds the set you already have. Earlier changes below.: Lego is now its OWN tables, not a skin over generic inventory. Installing it gives you a Sets table (each set sealed, built, or disassembled) with set number, theme, year, piece count and minifig count: the generic warranty/serial/supplier clutter is hidden. Turn on the checkboxes you want: track individual Bricks in bins, link to the Rebrickable catalog so sets and parts match real data, disassemble a built set into its parts and sort them into bins, print QR labels, or add by scanning.",
       requires: [{ module: "inventory" }],
       // The always-on BASE: a Sets table (the noun everyone with Lego has). The
       // Bricks/bins world, the Rebrickable link, and Disassemble are opt-in
@@ -1369,7 +1374,7 @@ export const FEATURED_BUNDLES: FeaturedBundle[] = [
           qty_unit: "each",
           field_defs: [
             { entity_kind: "inventory:part", name: "lifecycle", display_label: "State", type: "text", position: 1, choices: ["sealed", "built", "disassembled"], help: "Where this set is: still sealed in the box, built, or taken apart into bricks." },
-            { entity_kind: "inventory:part", name: "set_number", display_label: "Set number", type: "text", position: 2, help: "The number printed on the box (e.g. 75192)." },
+            { entity_kind: "inventory:part", name: "set_number", display_label: "Set number", type: "text", position: 2, field_role: "identifier", help: "The number printed on the box (e.g. 75192)." },
             { entity_kind: "inventory:part", name: "theme", display_label: "Theme", type: "text", position: 3, help: "Star Wars, City, Technic, Botanicals…" },
             { entity_kind: "inventory:part", name: "year", display_label: "Release year", type: "number", position: 4, help: "The year the set was released." },
             { entity_kind: "inventory:part", name: "piece_count", display_label: "Pieces", type: "number", position: 5, help: "How many pieces the set has, from the box." },
@@ -3427,11 +3432,11 @@ export const FEATURED_BUNDLES: FeaturedBundle[] = [
     manifest: {
       "id": "cobblr.flagship.vehicles",
       "name": "Vehicles",
-      "version": "0.4.1",
+      "version": "0.4.2",
       "description": "Your vehicles as their own table - make/model/year, VIN, mileage, plate - with service logs (oil, tires, brakes) and next-due dates on your calendar. Replaces a glovebox folder of receipts and a sticky note on the windshield.",
       "author": "Cobblr",
       "released_at": "2026-07-13",
-      "changelog": "Renamed to Vehicles and given its OWN table (an assets instance), not generic Assets with extra columns - its own nav entry, a “New vehicle” button, and only the fields a vehicle needs (VIN, make, model, year, trim, mileage, fuel, color). Service logs come from core-maintenance; scan a VIN and it fills the whole record.",
+      "changelog": "The licence plate is a vehicle's identity, like its VIN: two scans with different plates are never taken for one car, and a typed plate finds the car you already have. Earlier changes below.: Renamed to Vehicles and given its OWN table (an assets instance), not generic Assets with extra columns - its own nav entry, a “New vehicle” button, and only the fields a vehicle needs (VIN, make, model, year, trim, mileage, fuel, color). Service logs come from core-maintenance; scan a VIN and it fills the whole record.",
       "requires": [
         {
           "module": "assets"
@@ -3490,7 +3495,8 @@ export const FEATURED_BUNDLES: FeaturedBundle[] = [
               "name": "license_plate",
               "display_label": "License plate",
               "type": "text",
-              "position": 3
+              "position": 3,
+              "field_role": "identifier"
             },
             {
               "entity_kind": "assets:asset",

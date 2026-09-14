@@ -12,7 +12,8 @@ import { setSubscriberDelayForTests } from "../platform/events.js";
 import { registerHandler } from "../platform/actions.js";
 import { ActionRefusal } from "@cobblr/platform-contract";
 import { meta, metaPool } from "../db/meta.js";
-import { getTenantDb } from "../db/tenant.js";
+import { getTenantDb, tenantPoolStats } from "../db/tenant.js";
+import { poolCounts } from "../db/pool-stats.js";
 import { sql } from "kysely";
 
 export const testSupportRouter = Router();
@@ -188,6 +189,39 @@ testSupportRouter.post("/test-support/terminate-tenant-backends", async (req, re
       [org.db_name],
     );
     res.json({ terminated: r.rows.filter((row) => row.ok).length });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// The pools' counts with NO database round trip, so a test can watch a pool
+// starve without joining the queue it is watching (#3033).
+testSupportRouter.get("/test-support/pool-stats", (_req, res) => {
+  res.json({ meta: poolCounts(metaPool), tenants: tenantPoolStats() });
+});
+
+// Check out EVERY meta client and hold them for `ms`, the shape of the dev
+// rig's hang (#3033), so a test can prove what the api does while the meta
+// pool has nothing to give: the counts say so, and a request waits no longer
+// than the pool's connect timeout. Capped at 5 s and answered once the
+// clients are held; they go back on their own. Test-only, mounted under the
+// same flag. The api CI runs is shared by the suite's forks, so the suite's
+// hold (1.5 s) stays shorter than the pool's connect timeout and every other
+// request merely waits; a throwaway api proves the timeout itself with a
+// hold longer than it. Capped at 15 s either way.
+testSupportRouter.post("/test-support/starve-meta", async (req, res, next) => {
+  try {
+    const { ms } = (req.body ?? {}) as { ms?: number };
+    if (typeof ms !== "number" || ms < 0 || ms > 15_000) {
+      res.status(400).json({ error: { code: "bad_body", message: "ms (0..15000) required" } });
+      return;
+    }
+    const max = metaPool.options.max ?? 10;
+    const clients = await Promise.all(Array.from({ length: max }, () => metaPool.connect()));
+    setTimeout(() => {
+      for (const c of clients) c.release();
+    }, ms).unref();
+    res.json({ held: clients.length, ms });
   } catch (err) {
     next(err);
   }

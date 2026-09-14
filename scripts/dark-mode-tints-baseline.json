@@ -104,6 +104,6 @@
   "web/src/pages/ScanCaptureDrawer.tsx::\"w-full h-[124px] rounded-xl border border-white/15 bg-white/5 overflow-hidden grid place-items-center\"",
   "web/src/pages/ScanCaptureDrawer.tsx::\"w-full inline-flex items-center gap-1.5 rounded-lg border border-white/20 bg-white/10 px-2.5 py-2 text-white text-[13px] disabled:opacity-70\"",
   "web/src/pages/ScanCaptureDrawer.tsx::\"w-full rounded-lg border border-white/20 bg-white/10 px-2.5 py-2 text-white text-[13.5px] focus:outline-none focus:border-cobble-400\"",
-  "web/src/pages/ScanPage.tsx::\"flex-1 min-w-0 rounded border border-white/20 bg-white/10 px-2 py-1 text-xs text-white placeholder:text-white/40 focus:outline-none focus:border-white/40\"",
+  "web/src/pages/ScanInboxCard.tsx::\"flex-1 min-w-0 rounded border border-white/20 bg-white/10 px-2 py-1 text-xs text-white placeholder:text-white/40 focus:outline-none focus:border-white/40\"",
   "web/src/pages/ScanRulesPage.tsx::\"text-xs text-cobble-600 hover:underline\""
 ]

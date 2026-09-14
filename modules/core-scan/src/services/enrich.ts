@@ -10,6 +10,7 @@
 // this finish detached.
 
 import net from "node:net";
+import { recordImage, replayImage } from "./catalog-replay.js";
 import { lookup as dnsLookup } from "node:dns/promises";
 import { pinnedRedirectingFetch } from "@cobblr/platform-net";
 import { isPrivateIp } from "@cobblr/platform-contract/private-ip";
@@ -24,7 +25,7 @@ import { classifyScanCode, resolveIsbn, resolveAsin, isbnFieldsForHit, ISBN_DECO
 import { crossCheckScanPhoto, identifyImage, parsePackSize, refreshCatalogImageByName } from "./enrich-photo.js";
 import { identityMeta, mergeMeta } from "./metadata.js";
 import { looksNonEnglish } from "./catalog-normalize.js";
-import { trimCatalogMargins } from "./trim-margins.js";
+import { trimCatalogMarginsWithVerdict } from "./trim-margins.js";
 import { cropToUnit } from "./unit-crop.js";
 import { cropToFirstUnit } from "./unit-profile.js";
 import type { UnitSide } from "./rank-photo.js";
@@ -73,6 +74,45 @@ function stampFetchedAt(raw: Record<string, unknown> | null | undefined): Record
   return { ...(raw ?? {}), __fetched_at: Date.now() };
 }
 
+/** A decoded hit's bag (an ISBN's author, year, isbn) rides in the cache
+ *  inside `raw`, the one jsonb both caches already carry, under a reserved
+ *  key beside `__fetched_at`. It used to be dropped: a cached book came back
+ *  with its title and no bag, so every later scan of it re-asked Open
+ *  Library live for the author, and lost it whenever that call was throttled
+ *  (#2992). A cached hit is now as rich as the live one. */
+export function withDecoded(raw: Record<string, unknown> | null | undefined, hit: Pick<BarcodeHit, "fields" | "decoder_id"> | null): Record<string, unknown> {
+  const base = { ...(raw ?? {}) };
+  delete base.__decoded;
+  return hit?.fields && hit.decoder_id ? { ...base, __decoded: { decoder_id: hit.decoder_id, fields: hit.fields } } : base;
+}
+
+export function decodedOf(raw: Record<string, unknown> | null | undefined): Pick<BarcodeHit, "fields" | "decoder_id"> {
+  const d = (raw as { __decoded?: { decoder_id?: unknown; fields?: unknown } } | null)?.__decoded;
+  if (!d || typeof d.decoder_id !== "string" || !d.fields || typeof d.fields !== "object") return {};
+  return { decoder_id: d.decoder_id, fields: d.fields as Record<string, string | number> };
+}
+
+/** Both caches, one write: a hit worth keeping is worth keeping everywhere. */
+async function cacheHit(ctx: EnrichContext, hit: BarcodeHit): Promise<void> {
+  const value: BarcodeCacheValue = {
+    found: true,
+    source: hit.source,
+    title: hit.title ?? null,
+    brand: hit.brand ?? null,
+    model: hit.model ?? null,
+    description: hit.description ?? null,
+    category: hit.category ?? null,
+    image_url: hit.image_url ?? null,
+    raw: stampFetchedAt(withDecoded(hit.raw, hit)),
+  };
+  await writeTenantCache(ctx, value).catch((err) =>
+    console.error("[core-scan] tenant cache write failed:", (err as Error).message),
+  );
+  await platform()
+    .sharedCache.put(BARCODE_NS, ctx.upc, value)
+    .catch((err) => console.error("[core-scan] shared cache write failed:", (err as Error).message));
+}
+
 /** Detached: re-consult the box resolver for a stale cached hit; on a changed
  *  answer, refresh both caches and — when the item still shows the stale name —
  *  the item itself (the same lazy-fill pattern the enrich overrun uses). */
@@ -89,7 +129,7 @@ async function revalidateStaleHit(ctx: EnrichContext, staleTitle: string | null)
     description: fresh.description ?? null,
     category: fresh.category ?? null,
     image_url: fresh.image_url ?? null,
-    raw: stampFetchedAt(fresh.raw),
+    raw: stampFetchedAt(withDecoded(fresh.raw, fresh)),
   };
   await writeTenantCache(ctx, value).catch(() => {});
   await platform().sharedCache.put(BARCODE_NS, ctx.upc, value).catch(() => {});
@@ -309,6 +349,10 @@ export async function guardedImageFetch(
   url: string,
   init: { headers?: Record<string, string>; signal?: AbortSignal },
 ): Promise<Response> {
+  // A replay dir answers from its recorded pictures and never from the
+  // network (catalog-replay.ts): a test's catalog is a fixture.
+  const replayed = replayImage(url);
+  if (replayed) return replayed;
   // The shared pinnedRedirectingFetch owns the redirect + pin loop; the image
   // policy (block private, always) is resolveSafeOutboundPin. GET only, so no
   // method/body handling. The final Agent is left for undici's idle reaper since
@@ -320,7 +364,7 @@ export async function guardedImageFetch(
     ...(init.signal ? { signal: init.signal } : {}),
     validate: (u) => resolveSafeOutboundPin(u),
   });
-  return response as unknown as Response;
+  return recordImage(url, response as unknown as Response);
 }
 
 interface EnrichContext {
@@ -379,10 +423,11 @@ interface EnrichContext {
   hints?: string[];
 }
 
-/** What the card says for a store's own label. Exported so the route test can
- *  assert the consequence by the words the person reads. */
-export const STORE_CODE_NOTE =
-  "This is a store's own label (a deli, produce or in-store code that only that shop can read), so there is nothing to look up. Name it and it files like a typed item.";
+/** What the card says for a store's own label: the contract's sentence
+ *  (scan-copy.ts), re-exported so the route test can assert the consequence
+ *  by the words the person reads. */
+export { STORE_CODE_NOTE } from "@cobblr/platform-contract/scan-copy";
+import { STORE_CODE_NOTE as STORE_CODE_WORDS } from "@cobblr/platform-contract/scan-copy";
 
 export async function enrichBarcodeItem(ctx: EnrichContext): Promise<void> {
   // If the user hand-picked a catalog image, NO enrichment path may overwrite it —
@@ -505,7 +550,7 @@ export async function enrichBarcodeItem(ctx: EnrichContext): Promise<void> {
       .updateTable("core_scan_inbox_items")
       .set({
         ai_confidence: "0",
-        ai_notes: STORE_CODE_NOTE,
+        ai_notes: STORE_CODE_WORDS,
         // The card reads code_type to say WHAT this is in the name slot, in
         // place of "couldn't identify": the classification is the server's,
         // and the web must not carry a second copy of the prefix table.
@@ -589,6 +634,7 @@ export async function enrichBarcodeItem(ctx: EnrichContext): Promise<void> {
       category: cacheVal.category,
       image_url: cacheVal.image_url,
       raw: cacheVal.raw,
+      ...decodedOf(cacheVal.raw),
     };
     // Stale-while-revalidate: serve instantly, re-check a day-old (or legacy
     // unstamped) entry in the background so corrections propagate everywhere.
@@ -623,7 +669,7 @@ export async function enrichBarcodeItem(ctx: EnrichContext): Promise<void> {
         description: hit?.description ?? null,
         category: hit?.category ?? null,
         image_url: hit?.image_url ?? null,
-        raw: stampFetchedAt(hit?.raw),
+        raw: stampFetchedAt(withDecoded(hit?.raw, hit)),
       };
       await writeTenantCache(ctx, value).catch((err) =>
         console.error("[core-scan] tenant cache write failed:", (err as Error).message),
@@ -635,14 +681,18 @@ export async function enrichBarcodeItem(ctx: EnrichContext): Promise<void> {
         .catch((err) => console.error("[core-scan] shared cache write failed:", (err as Error).message));
     }
     // ISBN-13 not in any resolver tier (incl. the OL mirror) → the live Open
-    // Library API as a last resort before web search.
+    // Library API as a last resort before web search. A book it finds is
+    // cached like any other hit (over the miss the chain just wrote), so the
+    // next scan of it asks nobody.
     if (codeClass.type === "isbn" && !hit && !rateLimited) {
       hit = await resolveIsbn(codeClass.code).catch(() => null);
+      if (hit) await cacheHit(ctx, hit);
     }
   } else if (codeClass.type === "isbn") {
     // An ISBN-10 (manual entry — a scanned book is the ISBN-13 EAN handled above).
     // The live Open Library API; a miss falls through to web search.
     hit = await resolveIsbn(codeClass.code).catch(() => null);
+    if (hit) await cacheHit(ctx, hit);
   } else if (codeClass.type === "asin") {
     // A real Amazon ASIN → best-effort product-page title. Amazon often blocks
     // automation, so a miss falls through to web search (which finds the listing).
@@ -920,6 +970,13 @@ export async function enrichBarcodeItem(ctx: EnrichContext): Promise<void> {
   // There and Back Again" over blank Author / Year / ISBN fields (2026-09-12).
   const isbnFields = codeClass.type === "isbn" && hit.title ? await isbnFieldsForHit(codeClass.code, hit) : null;
   const decodedTitle = typeof isbnFields?.title === "string" ? isbnFields.title : null;
+  // A bag fetched live for a hit that arrived without one (a product-catalog
+  // or cached hit) is kept with the hit, so the next scan of this book does
+  // not ask Open Library again and cannot lose the author to a throttle.
+  if (isbnFields && !hit.fields && typeof isbnFields.author === "string") {
+    hit = { ...hit, fields: isbnFields, decoder_id: hit.decoder_id ?? ISBN_DECODER_ID };
+    await cacheHit(ctx, hit);
+  }
 
   await ctx.db
     .updateTable("core_scan_inbox_items")
@@ -1503,7 +1560,8 @@ export async function downloadCatalogImage(
       // width and colour wherever they sit in the frame.
       const single =
         (opts.unitSide ? await cropToUnit(raw, opts.unitSide) : await cropToFirstUnit(raw)) ?? raw;
-      const trimmed = (await trimCatalogMargins(single)) ?? single;
+      const trim = await trimCatalogMarginsWithVerdict(single);
+      const trimmed = trim.bytes ?? single;
       const written = await platform().files.write(ctx.orgId, trimmed, {
         filename,
         mimeType: trimmed === raw ? blob.type || "image/jpeg" : "image/jpeg",
@@ -1517,7 +1575,9 @@ export async function downloadCatalogImage(
           // throttled-pictures sweep kept re-asking six rows that already had
           // pictures every twenty minutes - and that steady trickle is exactly
           // what keeps a search engine's block in place (2026-09-06).
-          suggested_metadata: sql`coalesce(suggested_metadata, '{}'::jsonb) - 'catalog_image_status'`,
+          // What the trim did rides on the row (catalog_image_trim), so a
+          // picture that arrives untrimmed can be read, not reproduced (#3002).
+          suggested_metadata: sql`(coalesce(suggested_metadata, '{}'::jsonb) - 'catalog_image_status') || ${JSON.stringify({ catalog_image_trim: trim.verdict })}::jsonb`,
           updated_at: new Date(),
         })
         .where("id", "=", ctx.itemId)

@@ -37,6 +37,7 @@ import { GrowModal } from "./GrowModal";
 import { PairPhoneButton } from "./PairPhoneButton";
 import { api, isFocused, setFocused, type CommunityLink } from "../lib/api";
 import { useMyEdgeBridge } from "../lib/useMyEdgeBridge";
+import { PopoverLayer } from "@cobblr/platform-web";
 
 /** Account-menu row showing the personal edge bridge's live status — only for
  *  users who actually run one. Same emerald/slate "online/offline" dot as the
@@ -154,10 +155,10 @@ export function UserMenu({ themed, inline = false }: { themed: boolean; inline?:
     return (
       <div className="w-full">
         {open && pos && createPortal(
-          <div
+          <PopoverLayer
             ref={menuRef}
             role="menu"
-            style={{ position: "fixed", left: pos.left, bottom: pos.bottom }}
+            style={{ left: pos.left, bottom: pos.bottom }}
             className="w-60 max-h-[70vh] overflow-y-auto bg-surface dark:bg-slate-800 border border-line dark:border-slate-700 rounded-lg shadow-xl py-1 z-[100]"
           >
           {/* Identity header */}
@@ -322,7 +323,7 @@ export function UserMenu({ themed, inline = false }: { themed: boolean; inline?:
           >
             <LogOut size={14} className="text-faint dark:text-slate-400" /> Sign out
           </button>
-          </div>,
+          </PopoverLayer>,
           document.body,
         )}
         {/* The collapsed row is the person's name and a chevron, nothing else:
@@ -366,10 +367,10 @@ export function UserMenu({ themed, inline = false }: { themed: boolean; inline?:
       </button>
 
       {open && !inline && pos && createPortal(
-        <div
+        <PopoverLayer
           ref={menuRef}
           role="menu"
-          style={{ position: "fixed", top: pos.top, bottom: pos.bottom, right: pos.right }}
+          style={{ top: pos.top, bottom: pos.bottom, right: pos.right }}
           className="w-56 max-w-[calc(100vw-1rem)] bg-surface dark:bg-slate-800 border border-line dark:border-slate-700 rounded-lg shadow-lg py-1 z-[100]"
         >
           {/* Identity header */}
@@ -534,7 +535,7 @@ export function UserMenu({ themed, inline = false }: { themed: boolean; inline?:
           >
             <LogOut size={14} className="text-faint dark:text-slate-400" /> Sign out
           </button>
-        </div>,
+        </PopoverLayer>,
         document.body,
       )}
       {appMode && <GrowModal open={growOpen} onClose={() => setGrowOpen(false)} />}

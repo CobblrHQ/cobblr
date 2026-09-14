@@ -120,7 +120,11 @@ function main() {
       }
     },
   }).then(async (results) => {
-    const failed = results.filter((r) => r.code !== 0);
+    // Under --record the baseline check is what the record satisfies, so a
+    // stale baseline must not refuse the run that refreshes it: six unrecorded
+    // lints once locked the two against each other, and no run could pass or
+    // record (2026-09-14). It is re-checked against the written file below.
+    const failed = results.filter((r) => r.code !== 0 && !(record && r.name === "lint:lint-durations"));
     const cpu = results.reduce((s, r) => s + r.ms, 0);
     const wall = Date.now() - started;
     const slowest = results
@@ -135,8 +139,14 @@ function main() {
         `(${(cpu / 1000).toFixed(1)}s serial) — slowest: ${slowest}`,
     );
 
-    if (failed.length) {
-      console.error(`\n[lints] ✗ ${failed.length} failing: ${failed.map((f) => f.name).join(", ")}`);
+    // Under --record the one lint that may fail is the one this run exists to
+    // satisfy: lint:lint-durations says the snapshot is stale, and the snapshot
+    // is what is about to be written. Refusing to record because it is stale
+    // was a deadlock: the sixth unrecorded lint could never be recorded by the
+    // documented command (2026-09-14).
+    const blocking = record ? failed.filter((f) => f.name !== "lint:lint-durations") : failed;
+    if (blocking.length) {
+      console.error(`\n[lints] ✗ ${blocking.length} failing: ${blocking.map((f) => f.name).join(", ")}`);
       process.exit(1);
     }
 
@@ -214,6 +224,13 @@ function main() {
       };
       writeFileSync(SNAPSHOT, JSON.stringify(doc, null, 2) + "\n");
       console.log(`[lints] recorded ${results.length} quiet baselines to scripts/lint-durations.json`);
+      if (scripts["lint:lint-durations"]) {
+        const [again] = await runParallel([{ name: "lint:lint-durations", cmd: scripts["lint:lint-durations"], cwd: ROOT }], { concurrency: 1 });
+        if (again.code !== 0) {
+          console.error(`[lints] ✗ lint:lint-durations still fails against the file just recorded`);
+          process.exit(1);
+        }
+      }
     }
 
     console.log(`[lints] ✓ all ${results.length} pass`);

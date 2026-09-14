@@ -1,9 +1,9 @@
 {
-  "_about": "The router's answer for the second Signature 4 Ply child, the same product in the same picture, at 4 Aran: one picture cannot say two weights.",
+  "_about": "The router's answer for the second Signature 4 Ply child, the same product in the same picture: a colorway and nothing else. One picture, one answer: the fibre its twin got is no answer for either.",
   "match": "\"x\":0.003,\"y\":0.012",
   "rounds": [
     {
-      "content": "{\"candidates\":[{\"module\":\"inventory\",\"instance\":\"yarn\",\"kind\":\"inventory:part\",\"label\":\"Yarn\",\"name\":\"West Yorkshire Spinners Signature 4 Ply Yarn\",\"confidence\":0.8,\"fields\":{\"fiber\":\"Wool\",\"vendor\":\"Local yarn shop\",\"weight_class\":\"4 – Aran\"},\"notes\":\"A 4 ply wool yarn, worsted weight, from a local yarn shop.\"}]}"
+      "content": "{\"candidates\":[{\"module\":\"inventory\",\"instance\":\"yarn\",\"kind\":\"inventory:part\",\"label\":\"Yarn\",\"name\":\"West Yorkshire Spinners Signature 4 Ply Yarn\",\"confidence\":0.8,\"fields\":{\"colorway\":\"Signature 4 Ply\"},\"notes\":\"A West Yorkshire Spinners 4 ply.\"}]}"
     }
   ]
 }

@@ -2,7 +2,10 @@
 // call so the AuthProvider can update it without rewiring the client.
 // Everything goes through `request<T>` so error shape stays uniform.
 
+import { markSandboxEnded } from "./sandbox-session";
 import type { AiFallback } from "@cobblr/platform-contract/scan-fallback";
+import type { ScanToolHints } from "@cobblr/platform-contract/scan-tools";
+import type { SourceConflict } from "@cobblr/platform-contract/acquisition-source";
 import type { ReceiptReadFailure } from "@cobblr/platform-contract/scan-session";
 import { getImpersonationToken } from "./impersonation";
 import type { ResolveOutcome as RegistryResolveOutcome } from "@cobblr/platform-contract/resolvables";
@@ -157,6 +160,9 @@ async function request<T>(
     // could have corrected it. Take the reason from wherever it actually is.
     const reason =
       err?.message ?? (typeof body.message === "string" && body.message.trim() ? body.message : null);
+    // The server saying the sandbox's hour is up ends it for the whole app,
+    // whichever request heard it first; the workspace shell becomes the ending.
+    if (res.status === 410 && err?.code === "sandbox_expired") markSandboxEnded();
     throw new ApiError(res.status, err?.code ?? "unknown", reason ?? `HTTP ${res.status}`, err?.details);
   }
   return parsed as T;
@@ -3163,6 +3169,13 @@ export const api = {
       /** "I will photograph this myself." Survives an AI re-run — only the
        *  person, or the photo arriving, clears it. */
       photo_wanted?: boolean;
+      /** Values typed against the destination's fields, kept on the row
+       *  without filing it; null clears one. The served row carries them
+       *  merged over the top candidate's fields. */
+      fields?: Record<string, string | number | boolean | null>;
+      /** The table the fields were typed for ("yarn:item"); absent means the
+       *  top candidate's table at the time of the write. */
+      fields_kind?: string;
     },
   ) => request<ScanInboxItem>("PATCH", `/orgs/${slug}/modules/core-scan/inbox/${id}`, body),
   /** Guided Organize: propose a grouped put-away plan — for a selection of
@@ -5559,6 +5572,13 @@ export interface ScanInboxItem {
   suggested_candidates: ScanCandidate[];
   ai_notes: string | null;
   ai_confidence: string | null;
+  /** Which item tools this row could need, with the reason each is folded
+   *  (the contract's scan-tools rule, served on every row; #3006). */
+  tool_hints?: ScanToolHints;
+  /** Where the row says it was acquired against what its purchase evidence
+   *  says, when the two disagree (acquisition-source.ts, #3008). Null when
+   *  nothing to compare or the two agree. */
+  source_conflict?: SourceConflict | null;
   ai_suggested_at: string | null;
   target_module: string | null;
   target_kind: string | null;

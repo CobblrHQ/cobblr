@@ -1,13 +1,17 @@
 // The strip at the foot of the page that says what kind of workspace this is.
 //
-// Three states, one component:
+// Two states, one component:
 //   sandbox  "You have 41 minutes left" and the one button that stops that
 //            being true. Quiet until the last stretch, then present.
 //   trial    "Yours until 12 Oct." For a workspace kept from a sandbox, whose
 //            owner has no real door yet, it also carries the two: send the
 //            sign-in link again, or choose a password right here.
-//   ended    the sandbox's hour is up and it was deleted; the two real doors
-//            lead, and another sandbox follows.
+//
+// A sandbox's END is not a state of this strip. It was, once: "Your hour is
+// up, and this sandbox was deleted" under a dashboard that kept painting its
+// cache, with the first-run tour opening on top (2026-09-14). The hour's end
+// is terminal, so the strip only SAYS it is over (markSandboxEnded), and the
+// workspace shell is replaced by SandboxEnded, whole.
 //
 // This was SandboxBar, and it rendered nothing once the workspace was kept:
 // the localStorage key it counted down from was cleared and nothing replaced
@@ -16,19 +20,18 @@
 // saying what had happened or for how long. And an ordinary account trial
 // never had a line at all. The kind now comes from the server
 // (GET /orgs/:slug/trial); the localStorage hint the landing page writes is
-// kept only so a sandbox paints on the first frame, and so a sandbox that has
-// already been deleted can still show its ending.
+// kept only so a sandbox paints on the first frame.
 //
-// Portaled to <body>, per the house rule: the header's backdrop-blur creates a
-// containing block that traps a position:fixed child, so a bar rendered inside
-// the layout tree would be clipped or mispositioned rather than pinned to the
-// viewport. Because it IS fixed it would sit OVER the last rows of every list,
-// so it measures itself and pays for its own space.
-import { useCallback, useEffect, useLayoutEffect, useState } from "react";
-import { createPortal } from "react-dom";
+// A bottom-anchored FloatingChrome: it joins the bottom dock, which stacks it
+// with any other bar at the foot, makes the page pay for the stack once as
+// body padding, and publishes the sum (--bottom-chrome-height) for the corner
+// pieces above it. It yields while any overlay is open, the way every piece of
+// chrome does by default; it once sat over the camera's shutter (#3012).
+import { useCallback, useEffect, useState } from "react";
+import { FloatingChrome } from "@cobblr/platform-web";
 import { api } from "../lib/api";
 import { useAuth } from "../auth/AuthContext";
-import { sandboxExpiry, clearSandboxExpiry } from "../lib/sandbox-session";
+import { sandboxExpiry, clearSandboxExpiry, markSandboxEnded } from "../lib/sandbox-session";
 import { SandboxSaveModal } from "./SandboxSaveModal";
 
 /** Below this, the sandbox bar is always visible. Above it, only the small chip is. */
@@ -61,26 +64,8 @@ export function untilDate(ts: number, now: number = Date.now()): string {
   return d.toLocaleDateString(undefined, { day: "numeric", month: "short", ...(sameYear ? {} : { year: "numeric" }) });
 }
 
-/** Reserve exactly the bar's own height at the foot of the page. Measured
- *  rather than guessed: it is one line on a desktop and two or three on a
- *  phone, and any constant would be wrong on most of them. */
-function useReserveSpace(el: HTMLElement | null): void {
-  useLayoutEffect(() => {
-    if (!el) return;
-    const apply = () => {
-      document.body.style.paddingBottom = `${el.getBoundingClientRect().height}px`;
-    };
-    apply();
-    const ro = new ResizeObserver(apply);
-    ro.observe(el);
-    return () => {
-      ro.disconnect();
-      document.body.style.paddingBottom = "";
-    };
-  }, [el]);
-}
-
-const BAR = "fixed bottom-0 inset-x-0 z-40 border-t px-4 py-2 text-sm flex flex-wrap items-center gap-x-3 gap-y-2 justify-center ";
+// Over the base page, under every overlay.
+const BAR = "z-40 border-t px-4 py-2 text-sm flex flex-wrap items-center gap-x-3 gap-y-2 justify-center ";
 const QUIET = "bg-surface dark:bg-slate-900 border-line dark:border-slate-700";
 const LOUD = "bg-ember-50 dark:bg-ember-950/40 border-ember-300 dark:border-ember-800";
 const PRIMARY = "rounded-md bg-cobble-600 hover:bg-cobble-700 text-white font-medium px-3 py-1 transition";
@@ -96,17 +81,15 @@ export function WorkspaceStateBar({ slug }: { slug: string }) {
   const [now, setNow] = useState(() => Date.now());
   const [modal, setModal] = useState<null | "save" | "password">(null);
   const [resend, setResend] = useState<null | "sending" | "sent" | "failed">(null);
-  const [bar, setBar] = useState<HTMLDivElement | null>(null);
-  // The two doors out, for the ended state. Public endpoint: it describes the
-  // deployment, not the (by then dead) session.
-  const [paths, setPaths] = useState<{ cloud_url: string | null; selfhost_url: string | null } | null>(null);
   const { refreshMe } = useAuth();
-  useReserveSpace(bar);
 
   const load = useCallback(async () => {
     if (!slug) return;
     try {
       const t = await api.workspaceTrial(slug);
+      // The hint was written for a sandbox; a workspace the server says is
+      // not one any more (kept from another tab, say) must not end on it.
+      if (t.kind !== "sandbox") clearSandboxExpiry();
       setState(
         t.kind === "none"
           ? null
@@ -118,8 +101,9 @@ export function WorkspaceStateBar({ slug }: { slug: string }) {
             },
       );
     } catch {
-      // A deleted sandbox answers 404 here; the hint it left behind still says
-      // when it ended, which is the one thing worth showing.
+      // An expired sandbox answers 410 here, which the api client has already
+      // turned into the ending; a deleted one answers 404, and the hint it
+      // left behind says when it ended.
     }
   }, [slug]);
   useEffect(() => {
@@ -134,13 +118,15 @@ export function WorkspaceStateBar({ slug }: { slug: string }) {
     return () => clearInterval(t);
   }, [state?.kind]);
 
+  // The strip's own clock reaching zero is the third teller of the end (the
+  // hint and the server are the others); the shell above replaces everything,
+  // this strip included, so there is no ended branch to draw here.
   const over = state?.kind === "sandbox" && state.expiresAt != null && state.expiresAt - now <= 0;
   useEffect(() => {
-    if (!over) return;
-    void api.sandboxPaths().then(setPaths).catch(() => setPaths(null));
+    if (over) markSandboxEnded();
   }, [over]);
 
-  if (state == null) return null;
+  if (state == null || over) return null;
 
   // ── trial ────────────────────────────────────────────────────────────────
   // One modal element, rendered at the same place in the tree whichever
@@ -174,9 +160,9 @@ export function WorkspaceStateBar({ slug }: { slug: string }) {
   if (state.kind === "trial") {
     const ended = state.expiresAt != null && state.expiresAt <= now;
     const until = state.expiresAt == null ? null : untilDate(state.expiresAt, now);
-    return createPortal(
+    return (
       <>
-        <div ref={setBar} className={BAR + QUIET} data-testid="workspace-state">
+        <FloatingChrome anchor="bottom" className={BAR + QUIET} data-testid="workspace-state">
           <span className="text-muted">
             {ended ? `Your trial ended ${until}.` : until ? `Yours until ${until}.` : "Yours."}
             {!ended && state.linkOpen && state.email && (
@@ -208,68 +194,55 @@ export function WorkspaceStateBar({ slug }: { slug: string }) {
               </button>
             </>
           )}
-        </div>
+        </FloatingChrome>
         {modalEl}
-      </>,
-      document.body,
-    );
-  }
-
-  // ── sandbox, ended ───────────────────────────────────────────────────────
-  //
-  // This used to be "This sandbox has ended. Start another", which is the wrong
-  // offer at the only moment it gets made: somebody has just spent an hour
-  // building something and the single thing on offer is to do the demo again.
-  // The work cannot be rescued here (expiry hard-deletes the workspace and
-  // drops its database, so offering recovery would be a lie) but the person is
-  // as decided as they will ever be, and the honest next step is the product.
-  if (over) {
-    return createPortal(
-      <div ref={setBar} className={BAR.replace("py-2 ", "py-2.5 ") + LOUD} data-testid="workspace-state">
-        <span className="text-ember-700 dark:text-ember-300 font-medium">
-          Your hour is up, and this sandbox was deleted.
-        </span>
-        {paths?.cloud_url && (
-          <a href={paths.cloud_url} target="_blank" rel="noreferrer" className={PRIMARY}>
-            Get your own, hosted
-          </a>
-        )}
-        {paths?.selfhost_url && (
-          <a href={paths.selfhost_url} target="_blank" rel="noreferrer" className={SECONDARY}>
-            Run it yourself
-          </a>
-        )}
-        <a href="/api/v1/try" className="text-muted underline">
-          or start another sandbox
-        </a>
-      </div>,
-      document.body,
+      </>
     );
   }
 
   // ── sandbox, live ────────────────────────────────────────────────────────
+  //
+  // Two shapes, as the file's rule says: quiet until the last stretch, then
+  // present. Above URGENT_MS the strip is ONE line (the chip): the time and
+  // one small door, since Keep and Take open the same modal anyway. On a phone
+  // that is ~48px instead of the three rows the full bar wraps to, which was
+  // half the screen's foot for the whole hour (#3012). Under URGENT_MS the
+  // full bar, with both doors named.
   const left = (state.expiresAt ?? now) - now;
   const urgent = left <= URGENT_MS;
 
-  return createPortal(
+  return (
     <>
-      <div ref={setBar} className={BAR + (urgent ? LOUD : QUIET)} data-testid="workspace-state">
-        <span className={urgent ? "text-ember-700 dark:text-ember-300 font-medium" : "text-muted"}>
+      <FloatingChrome
+        anchor="bottom"
+        className={BAR + (urgent ? LOUD : QUIET + " flex-nowrap whitespace-nowrap")}
+        data-testid="workspace-state"
+        data-strip={urgent ? "full" : "chip"}
+      >
+        <span className={urgent ? "text-ember-700 dark:text-ember-300 font-medium" : "text-muted truncate"}>
           {urgent ? "Nearly done: " : "This is a sandbox. "}
           {human(left)} left.
         </span>
-        {/* One door, not two. These used to open different things and each hid
-            the other, so whichever you pressed first was the only one you knew
-            about. They are two answers to one question, so they share a modal. */}
-        <button type="button" onClick={() => setModal("save")} className={PRIMARY}>
-          Keep this workspace
-        </button>
-        <button type="button" onClick={() => setModal("save")} className={SECONDARY}>
-          Take your work
-        </button>
-      </div>
+        {urgent ? (
+          <>
+            {/* One door, not two. These used to open different things and each
+                hid the other, so whichever you pressed first was the only one
+                you knew about. They are two answers to one question, so they
+                share a modal. */}
+            <button type="button" onClick={() => setModal("save")} className={PRIMARY}>
+              Keep this workspace
+            </button>
+            <button type="button" onClick={() => setModal("save")} className={SECONDARY}>
+              Take your work
+            </button>
+          </>
+        ) : (
+          <button type="button" onClick={() => setModal("save")} className={PRIMARY + " shrink-0"}>
+            Keep it
+          </button>
+        )}
+      </FloatingChrome>
       {modalEl}
-    </>,
-    document.body,
+    </>
   );
 }

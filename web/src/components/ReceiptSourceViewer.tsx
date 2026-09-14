@@ -11,7 +11,7 @@ import { useEffect, useState } from "react";
 import { OverlayCloseButton } from "./OverlayCloseButton";
 import { createPortal } from "react-dom";
 
-import { useImageSrc, OverlayFlag } from "@cobblr/platform-web";
+import { useImageSrc, OverlayLayer } from "@cobblr/platform-web";
 import { api } from "../lib/api";
 
 type Rendered =
@@ -122,14 +122,13 @@ export function ReceiptSourceViewer({
   }, [blobUrl]);
 
   return createPortal(
-    <div
-      className="fixed inset-0 z-[130] bg-black/85 backdrop-blur-sm flex flex-col"
+    <OverlayLayer
+      className="z-[130] bg-black/85 backdrop-blur-sm flex flex-col"
       onClick={onClose}
       role="dialog"
       aria-modal="true"
       aria-label="Original receipt"
     >
-      <OverlayFlag />
       <OverlayCloseButton onClose={onClose} />
       {(() => {
         const rows = receiptMoneyRows(receiptMoney);
@@ -188,7 +187,7 @@ export function ReceiptSourceViewer({
           </pre>
         )}
       </div>
-    </div>,
+    </OverlayLayer>,
     document.body,
   );
 }

@@ -6,6 +6,7 @@
 import { useEffect, useState } from "react";
 import { MousePointer2 } from "lucide-react";
 import type { DrivePresence } from "../hooks/useBrowserDrive";
+import { BackdropLayer } from "@cobblr/platform-web";
 
 export function DrivePresenceOverlay({ presence }: { presence: DrivePresence | null }) {
   const [pos, setPos] = useState<{ x: number; y: number } | null>(null);
@@ -40,7 +41,7 @@ export function DrivePresenceOverlay({ presence }: { presence: DrivePresence | n
 
   if (!visible || !pos) return null;
   return (
-    <div className="pointer-events-none fixed inset-0 z-[1100]" aria-hidden>
+    <BackdropLayer className="pointer-events-none z-[1100]" aria-hidden>
       <div className="absolute transition-all duration-300 ease-out" style={{ left: pos.x, top: pos.y }}>
         {presence?.ripple && (
           <span className="absolute -left-3 -top-3 h-8 w-8 rounded-full bg-cobble-400/50 animate-ping" />
@@ -52,6 +53,6 @@ export function DrivePresenceOverlay({ presence }: { presence: DrivePresence | n
           </span>
         )}
       </div>
-    </div>
+    </BackdropLayer>
   );
 }

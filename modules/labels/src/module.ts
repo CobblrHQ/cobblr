@@ -9,7 +9,7 @@ import { defineModule } from "@cobblr/platform-contract";
 
 export default defineModule({
   name: "labels",
-  version: "0.25.12",
+  version: "0.25.13",
   displayName: "Labels",
   description:
     "QR codes, label templates, per-user print queue, scan-to-navigate/scan-to-action tokens. Polymorphic, any module's entity can have a label.",
@@ -71,7 +71,8 @@ export default defineModule({
         id: "labels:print",
         examples: ["print a label for this", "sticker it"],
         label: "Print label",
-        description: "Queue a printable label for this entity",
+        description:
+          "Queue a printable label for this entity. For everything in a place ('labels for everything in Bin 7'): list_related on the place once, then invoke this once per record it holds; do not keep listing.",
         icon: "tag",
         // Default: only physical entities — you can attach a QR
         // sticker to a part, a machine, an asset, a location. You

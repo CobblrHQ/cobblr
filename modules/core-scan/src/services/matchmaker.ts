@@ -45,6 +45,10 @@ interface MenuField {
    *  decode fill this field by declared role, not English name. Not sent to the
    *  model (routing/extraction is unaffected); consumed by the decode-fill pass. */
   decode_role?: string;
+  /** The MEANING the table declared for this field, when it declared one.
+   *  Not sent to the model; read by the passes that land a receipt's facts
+   *  and check them (receipt-candidate-facts.ts, acquisition-source.ts). */
+  field_role?: string;
 }
 
 /** One routable destination in the workspace (a table). The fit rule's
@@ -112,6 +116,42 @@ export interface PerceivedItem {
   /** Vision read of the user's OWN photo of the scanned item — what is
    *  physically present. Outranks listing-derived assumptions. */
   photoObservations?: string | null;
+}
+
+/** The columns a routing decision is made from: what a live scan's match and
+ *  a bulk import's route both read off the inbox row. */
+export interface PerceivableRow {
+  suggested_name: string | null;
+  suggested_manufacturer?: string | null;
+  barcode_text?: string | null;
+  suggested_sku?: string | null;
+  ai_notes?: string | null;
+  scan_area?: string | null;
+  suggested_metadata?: unknown;
+}
+
+/** What the router is told about a row: everything the lookup wrote on it.
+ *  The name, and with it the CATEGORY the catalog stated, its description,
+ *  its entity type and the raw blob the fields read from. A bulk import
+ *  used to route on the name alone, so a seasoning whose row already said
+ *  "Condiments" (and one whose row said "Groceries" outright) was routed as
+ *  if the catalog had said nothing, and the route disagreed with the one a
+ *  live scan of the same code would get (#3003). One builder, two callers. */
+export function perceiveRow(row: PerceivableRow, extra: { photoObservations?: string | null } = {}): PerceivedItem {
+  const meta = (row.suggested_metadata ?? {}) as { category?: string | null; description?: string | null; entity_type?: "asset" | "part" | null } & Record<string, unknown>;
+  return {
+    name: row.suggested_name ?? "",
+    manufacturer: row.suggested_manufacturer ?? null,
+    category: meta.category ?? null,
+    description: meta.description ?? null,
+    entityType: meta.entity_type ?? null,
+    barcode: row.barcode_text ?? null,
+    sku: row.suggested_sku ?? null,
+    notes: row.ai_notes ?? null,
+    scanArea: row.scan_area ?? null,
+    metadata: (row.suggested_metadata as Record<string, unknown> | null) ?? null,
+    photoObservations: extra.photoObservations ?? null,
+  };
 }
 
 /** A ranked routing suggestion with field-fill. */
@@ -419,6 +459,7 @@ export async function assembleScanMenu(
             ...(d.help ? { help: d.help } : {}),
             ...(d.choices && d.choices.length ? { choices: d.choices } : {}),
             ...(d.decode_role ? { decode_role: d.decode_role } : {}),
+            ...(d.field_role ? { field_role: d.field_role } : {}),
           }));
         // The table's GROUPING AXIS, declared — never guessed from a field named
         // "category". Its existing choices ARE the workspace's taxonomy: it grows
@@ -736,6 +777,7 @@ export function pickFallbackEntry(
 // read the same evidence (table-fit.ts); these names stay exported from here
 // for the bench and the tests.
 export { makeLexicalScorer, GENERIC_NOUNS, rankFits, bestFit, type LexicalEvidence } from "@cobblr/platform-contract/table-fit";
+import { contradictedByCategory, orderFits } from "@cobblr/platform-contract/table-fit";
 
 export function heuristicMatch(
   item: PerceivedItem,
@@ -747,13 +789,25 @@ export function heuristicMatch(
   if (menu.length === 0) return [];
   const { hay, scoreEntry } = makeLexicalScorer(item);
 
-  const scored = menu
+  const all = menu
     .map((entry) => ({ entry, ...scoreEntry(entry) }))
     // Only confident routes: a noun / head-noun match or ≥2 keywords. A lone
     // incidental keyword or choice-word graze no longer force-fits an item into
     // the wrong bundle; when nothing qualifies the fallback+category below takes it.
-    .filter((s) => s.plausible)
-    .sort((a, b) => b.score - a.score)
+    .filter((s) => s.plausible);
+  // The catalog's category naming a table is the strongest thing the router
+  // holds, and it forbids as well as ranks: when the category says Groceries,
+  // a table the item's NAME never named (no noun, nothing at the head; only a
+  // keyword or a choice grazed) may not be offered at all. Two seasonings
+  // were filed into Yarn on the fibre choice "Blend" while their catalog
+  // said food (#3003); food is not fibre, and a route the category
+  // contradicts is not a second opinion, it is a wrong one.
+  const fits = all.map((s) => ({ table: s.entry, evidence: s }));
+  const scored = all
+    .filter((_, i) => !contradictedByCategory(fits[i]!, fits))
+    // The ONE order the no-AI move plan ranks by too (orderFits): what the
+    // name calls the thing, then what the catalog said it is, then the score.
+    .sort((a, b) => orderFits({ table: a.entry, evidence: a }, { table: b.entry, evidence: b }))
     .slice(0, 2);
 
   const qm = hay.match(/(\d+)\s*(skein|ball|spool|roll|pack|box|bottle|can|bag|unit|pcs|piece|x|×)/);
@@ -816,7 +870,9 @@ export function heuristicMatch(
       ...(Number.isInteger(quantity) && quantity! > 0 && quantity! <= 10_000 ? { quantity } : {}),
       ...(cat ? { category: cat.value, ...(cat.isNew ? { category_is_new: true } : {}) } : {}),
       ...(entry.bundle_external_id ? { bundle_external_id: entry.bundle_external_id } : {}),
-      ...(i === 0 ? { notes: `Matched by keywords. ${fallbackHint(why, reason)}` } : {}),
+      // The hint already says "matched by keywords" where that is the case;
+      // the no-provider sentence does not, and keeps its lead.
+      ...(i === 0 ? { notes: /^Matched by keywords/.test(fallbackHint(why, reason)) ? fallbackHint(why, reason) : `Matched by keywords. ${fallbackHint(why, reason)}` } : {}),
     };
   });
 }
@@ -926,8 +982,8 @@ export const MATCHMAKER_SYSTEM =
     "3. On the FIRST candidate, add `notes` ONLY when something genuinely " +
     "needed reconciling or inferring — a disagreement between the title, " +
     "attributes, and/or photo_observations; a field you inferred rather than " +
-    "read; or an unconfirmed pack/count. Then write ONE short, natural " +
-    "sentence, information-only (no filler, praise, or hedging). For a clean, " +
+    "read; or an unconfirmed pack/count. Then write ONE plain sentence of " +
+    "twelve words or fewer, no parentheses, information-only (no filler, praise, or hedging). For a clean, " +
     "unambiguous match where nothing needed reconciling, OMIT `notes` entirely " +
     "— do not narrate an obvious agreement. Be careful with counts: a 'Pack of N' in a " +
     "retailer-style TITLE describes that retailer's LISTING, not " +
@@ -1264,6 +1320,8 @@ function modelEvidence(item: PerceivedItem, primary: MatchCandidate, entry: Scan
     nounHit: a.nounHit || b.nounHit,
     plausible: a.plausible || b.plausible,
     nameHits: [...new Set([...a.nameHits, ...b.nameHits])],
+    headNamed: a.headNamed || b.headNamed,
+    categoryNames: a.categoryNames || b.categoryNames,
     fields: { ...b.fields, ...a.fields },
   };
 }

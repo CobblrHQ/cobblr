@@ -2,5 +2,5 @@
   "_fixture": "e2e/fixtures/review-pack/photos/flashlight.jpg",
   "image_ahash": "fff9e1e123073fbf",
   "capability": "identify-image",
-  "reply": "{\"name\":\"LED flashlight, silver and black\",\"observations\":\"A handheld LED flashlight with a silver body and black grip, lens facing left.\",\"category\":\"Tools\",\"entity_type\":\"part\",\"is_receipt\":\"no\",\"confidence\":0.85}"
+  "reply": "{\"name\":\"LED flashlight, silver and black\",\"observations\":\"A handheld LED flashlight with a silver body and black grip, lens facing left.\",\"category\":\"Tools\",\"entity_type\":\"part\",\"is_receipt\":\"no\",\"confidence\":0.85,\"packaging\":\"none\"}"
 }

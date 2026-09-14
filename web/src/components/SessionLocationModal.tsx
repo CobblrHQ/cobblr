@@ -35,8 +35,8 @@ export function placementCopy(
         ? `Set the location for the whole session, then file as ${category}.`
         : "Set the location for the whole session."
       : category
-      ? `Pick a location and all ${count} are filed as ${category}.`
-      : `Pick a location and all ${count} are filed.`;
+      ? `Pick a location and the ${count} ready ${count === 1 ? "item is" : "items are"} filed into it as ${category}. Anything still needing review stays here.`
+      : `Pick a location and the ${count} ready ${count === 1 ? "item is" : "items are"} filed into it. Anything still needing review stays here.`;
   return { title, subtitle };
 }
 
@@ -53,6 +53,10 @@ interface Props {
   onPick: (locationId: string) => void;
   /** Only offered in `file` mode - a deliberate "I will place these later". */
   onFileWithoutLocation?: () => void;
+  /** `file` mode: open the plan-first filer for this session instead (what
+   *  is added to things you have, what is new, what is left). On a phone
+   *  this is the session's door to the plan; the row has no button for it. */
+  onReviewPlan?: () => void;
   onClose: () => void;
 }
 
@@ -64,6 +68,7 @@ export function SessionLocationModal({
   currentLocationId,
   onPick,
   onFileWithoutLocation,
+  onReviewPlan,
   onClose,
 }: Props) {
   if (!open) return null;
@@ -85,6 +90,16 @@ export function SessionLocationModal({
             className="text-[11px] text-faint hover:text-content dark:hover:text-mortar-100 underline decoration-dotted"
           >
             File without a location
+          </button>
+        )}
+        {mode === "file" && onReviewPlan && (
+          <button
+            type="button"
+            onClick={onReviewPlan}
+            className="text-[11px] text-faint hover:text-content dark:hover:text-mortar-100 underline decoration-dotted"
+            title="Shows a plan first: what gets added to things you already have, what is filed as new, what is left for you. Nothing is written until you confirm."
+          >
+            Review the plan first
           </button>
         )}
         <button

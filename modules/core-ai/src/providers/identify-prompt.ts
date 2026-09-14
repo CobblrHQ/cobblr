@@ -127,6 +127,13 @@ export const IDENTIFY_PROMPT =
   'listing of a thing, and "unsure" when you cannot tell. A receipt PRINTER, a ' +
   'roll of receipt paper, or a product with a price tag on it is "no". When it ' +
   'is "yes", still fill in "observations" and leave "name" empty.\n\n' +
+  // The packaging state is already in the observations as prose; as one key
+  // it is data the inbox reads to offer the box tools only when a box is in
+  // the picture (#3006). One key, no other prompt text changes.
+  'Also report "packaging": "none" when the item is bare (no packaging in ' +
+  'frame), "box" when it sits in or on its retail box, carton or blister, ' +
+  '"sealed" when that packaging is unopened, "opened" when it has been opened, ' +
+  '"unknown" when you cannot tell.\n\n' +
   'Reply with ONLY a JSON object: {"name": <string>, "brand": <string|null>, ' +
   '"color": <the item\'s colour in plain English, else null>, ' +
   '"category": <string|null>, "entity_type": "asset"|"part"|null, ' +
@@ -137,6 +144,7 @@ export const IDENTIFY_PROMPT =
   '"product_photo_box": {"x": <0..1>, "y": <0..1>, "w": <0..1>, "h": <0..1>}|null, ' +
   '"items": [{"name": <string>, "brand": <string|null>, "qty": <integer>}], ' +
   '"is_receipt": "yes"|"no"|"unsure", ' +
+  '"packaging": "none"|"box"|"sealed"|"opened"|"unknown", ' +
   '"confidence": <0..1, how sure you are>}. If the photo is unclear, empty, or ' +
   "not an identifiable object, reply name \"\" and confidence 0.";
 

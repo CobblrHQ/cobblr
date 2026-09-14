@@ -30,8 +30,7 @@ import { useQuery, useQueryClient, useMutation } from "@tanstack/react-query";
 import { useNavigate } from "react-router-dom";
 import { ChevronDown, Bot } from "lucide-react";
 import { api } from "../lib/api";
-import { HIDE_WHEN_SIDE_PANEL_OPEN } from "./SidePanel";
-import { YIELDING_CLASS, useYieldToContent } from "@cobblr/platform-web";
+import { HIDE_WHEN_OVERLAY_OPEN, FloatingChrome, PopoverLayer } from "@cobblr/platform-web";
 import {
   useToast, usePrintProgress, useBridgeLive, BridgePrinterCard, allowLocalAccess,
   isLocalBridgePrinter, readLocalBridgeStatus, setPrinterStatus,
@@ -174,8 +173,6 @@ function OfferPrompt({
 }) {
   // Get out of the way of anything pressable underneath (yield-to-content.ts):
   // fixed chrome does not move, and the page under it does.
-  const floatRef = useRef<HTMLDivElement>(null);
-  const coveringContent = useYieldToContent(floatRef);
   const card = (
     <div className="w-[236px] rounded-xl border border-cobble-300 dark:border-cobble-700 bg-surface dark:bg-slate-900 shadow-xl p-3 space-y-2.5">
       <div className="flex items-start gap-2">
@@ -202,7 +199,7 @@ function OfferPrompt({
       </div>
     </div>
   );
-  if (mode === "floating") return <div ref={floatRef} data-testid="live-floating" className={`fixed bottom-4 right-4 ${LIVE_Z} ` + HIDE_WHEN_SIDE_PANEL_OPEN + (coveringContent ? " " + YIELDING_CLASS : "")}>{card}</div>;
+  if (mode === "floating") return <FloatingChrome anchor="corner" yieldToContent data-testid="live-floating" className={`right-4 ${LIVE_Z}`}>{card}</FloatingChrome>;
   return (
     <div className="relative">
       <div className="absolute left-full bottom-1 ml-1.5 z-[60]">{card}</div>
@@ -642,9 +639,9 @@ export function LiveBox({ mode, slug }: { mode: "sidebar" | "floating"; slug: st
         </div>
         {open && flyoutPos &&
           createPortal(
-            <div className={`fixed ${LIVE_Z} ${HIDE_WHEN_SIDE_PANEL_OPEN}`} style={{ left: flyoutPos.left, bottom: flyoutPos.bottom }}>
+            <PopoverLayer className={`${LIVE_Z} ${HIDE_WHEN_OVERLAY_OPEN}`} style={{ left: flyoutPos.left, bottom: flyoutPos.bottom }}>
               <Panel controls={controls} states={states} onToggle={fire} segmentState={segmentState} badgeFor={badgeFor} detailFor={detailFor} onClose={() => setOpen(false)} />
-            </div>,
+            </PopoverLayer>,
             document.body,
           )}
       </div>
@@ -654,7 +651,7 @@ export function LiveBox({ mode, slug }: { mode: "sidebar" | "floating"; slug: st
   // floating (mobile + top-bar mode): a single outlined pill that morphs to a panel
   // whose collapse strip is at the bottom (same corner).
   return (
-    <div data-testid="live-floating" className={`fixed bottom-4 right-4 ${LIVE_Z} flex flex-col items-end ` + HIDE_WHEN_SIDE_PANEL_OPEN}>
+    <FloatingChrome anchor="corner" data-testid="live-floating" className={`right-4 ${LIVE_Z} flex flex-col items-end`}>
       {open ? (
         <Panel controls={controls} states={states} onToggle={fire} segmentState={segmentState} badgeFor={badgeFor} detailFor={detailFor} footerAtBottom onClose={() => setOpen(false)} />
       ) : (
@@ -680,6 +677,6 @@ export function LiveBox({ mode, slug }: { mode: "sidebar" | "floating"; slug: st
           )}
         </button>
       )}
-    </div>
+    </FloatingChrome>
   );
 }

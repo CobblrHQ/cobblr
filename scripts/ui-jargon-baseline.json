@@ -21,7 +21,7 @@
   "web/src/pages/LocationsPage.tsx::{node.kind}",
   "web/src/pages/PortalConfigPage.tsx::({v.entity_kind})",
   "web/src/pages/QrTokensPage.tsx::{t.entity_kind}",
-  "web/src/pages/ScanPage.tsx::No AI to read this {idNoun} yet (<Link to={`/w/${activeSlug}/ai`} className=\"underline hover:text-content\" onClick={(e) => e.stopPropagation()}>set it up</Link>) - or name it:",
+  "web/src/pages/ScanInboxCard.tsx::No AI to read this {idNoun} yet (<Link to={`/w/${activeSlug}/ai`} className=\"underline hover:text-content\" onClick={(e) => e.stopPropagation()}>set it up</Link>) - or name it:",
   "web/src/pages/ScanRulesPage.tsx::<code className=\"text-faint\">{result.entity_kind}</code>",
   "web/src/pages/SurfacesPage.tsx::{v.name} ({v.entity_kind})"
 ]

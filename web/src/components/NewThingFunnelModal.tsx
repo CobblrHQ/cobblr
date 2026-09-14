@@ -11,7 +11,7 @@
 import { useEffect, useState, type FormEvent } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Boxes } from "lucide-react";
-import { Modal, useToast } from "@cobblr/platform-web";
+import { changeWorkspaceShape, Modal, useToast } from "@cobblr/platform-web";
 import { ApiError, api, type OrgModuleListItem } from "../lib/api";
 import { useActiveOrg } from "../auth/ActiveOrgContext";
 
@@ -192,7 +192,7 @@ export function NewThingFunnelModal({
   }
 
   const create = useMutation({
-    mutationFn: async () => {
+    mutationFn: () => changeWorkspaceShape(qc, activeSlug, async () => {
       if (!pickedModule) throw new Error("module not picked");
       // A not-yet-enabled kind is enabled here, idempotently, as part of the
       // same Create - the modal resolves its own precondition (same move as
@@ -221,17 +221,13 @@ export function NewThingFunnelModal({
         });
       }
       return inst;
-    },
+    }),
     onSuccess: (inst) => {
       toast.success(
         placement === "menu"
           ? `Created '${inst.display_name}' in the navbar menu.`
           : `Created '${inst.display_name}'.`,
       );
-      void qc.invalidateQueries({ queryKey: ["instances", activeSlug] });
-      void qc.invalidateQueries({ queryKey: ["entity-kind-overrides", activeSlug] });
-      void qc.invalidateQueries({ queryKey: ["nav-headings", activeSlug] });
-      void qc.invalidateQueries({ queryKey: ["org-modules", activeSlug] });
       reset();
       onClose();
     },

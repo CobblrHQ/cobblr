@@ -137,10 +137,6 @@
   },
   {
     "file": "web/src/components/AppLayout.tsx",
-    "text": "Hide the top bar — everything moves into the sidebar Show the top bar again"
-  },
-  {
-    "file": "web/src/components/AppLayout.tsx",
     "text": "You are on the environment — not production. Click: fire a sample toast."
   },
   {
@@ -210,10 +206,6 @@
   {
     "file": "web/src/components/GlobalScanWedge.tsx",
     "text": "Scanned a label — auto-jump is off."
-  },
-  {
-    "file": "web/src/components/ImageSearchPicker.tsx",
-    "text": "AI's pick — ( ) Use this image — ( )"
   },
   {
     "file": "web/src/components/ImportLocationsDialog.tsx",
@@ -448,12 +440,20 @@
     "text": "Couldn't read — that's a bug on our side, not your data."
   },
   {
-    "file": "web/src/pages/ScanPage.tsx",
-    "text": "— review below"
+    "file": "web/src/pages/ScanInboxCard.tsx",
+    "text": ": — tap to edit"
+  },
+  {
+    "file": "web/src/pages/ScanInboxCard.tsx",
+    "text": "Lookup updated: Re-ran — still no match. Fill it in manually."
+  },
+  {
+    "file": "web/src/pages/ScanInboxCard.tsx",
+    "text": "Renamed to \"\" — fix reported to the barcode DB."
   },
   {
     "file": "web/src/pages/ScanPage.tsx",
-    "text": ": — tap to edit"
+    "text": "— review below"
   },
   {
     "file": "web/src/pages/ScanPage.tsx",
@@ -473,23 +473,11 @@
   },
   {
     "file": "web/src/pages/ScanPage.tsx",
-    "text": "Lookup updated: Re-ran — still no match. Fill it in manually."
-  },
-  {
-    "file": "web/src/pages/ScanPage.tsx",
     "text": "photos added as one batch — AI is identifying them"
   },
   {
     "file": "web/src/pages/ScanPage.tsx",
-    "text": "Renamed to \"\" — fix reported to the barcode DB."
-  },
-  {
-    "file": "web/src/pages/ScanPage.tsx",
     "text": "Sent back to the inbox — the created entry was removed. Sent back to the inbox."
-  },
-  {
-    "file": "web/src/pages/ScanPage.tsx",
-    "text": "Tagged as \" \" — applied when you confirm each."
   },
   {
     "file": "web/src/pages/ScanPage.tsx",

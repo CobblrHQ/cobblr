@@ -189,7 +189,7 @@ export function SearchPage() {
 
       {grouped.map(([kind, items]) => (
         <section key={kind} className="space-y-2">
-          <h2 className="text-sm font-medium text-content dark:text-slate-300 sticky top-0 bg-subtle dark:bg-slate-950 py-1 flex items-center gap-2">
+          <h2 className="text-sm font-semibold text-content dark:text-slate-300 sticky-under-header bg-subtle dark:bg-slate-950 py-1 flex items-center gap-2">
             <span className="text-[10px] uppercase tracking-wider text-faint">
               {labels.collection(kind)}
             </span>

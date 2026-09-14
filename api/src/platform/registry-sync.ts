@@ -46,6 +46,7 @@ export async function syncManifestRegistries(): Promise<{
     invoke_handler: string | null;
     user_invokable: boolean;
     internal: boolean;
+    wire_only: boolean;
     args_schema: unknown;
     undoable: boolean;
     examples: string[];
@@ -120,6 +121,7 @@ export async function syncManifestRegistries(): Promise<{
         invoke_handler: a.invokeHandler ?? null,
         user_invokable: userInvokable,
         internal: a.internal ?? false,
+        wire_only: a.wireOnly ?? false,
         args_schema: a.argsSchema ?? null,
         undoable: a.undoable ?? false,
         examples: a.examples ?? [],
@@ -148,6 +150,7 @@ export async function syncManifestRegistries(): Promise<{
       invoke_handler: a.invoke_handler,
       user_invokable: a.user_invokable,
       internal: false,
+      wire_only: false,
       args_schema: a.args_schema,
       undoable: a.undoable ?? false,
       examples: a.examples ?? [],
@@ -280,6 +283,7 @@ export async function syncManifestRegistries(): Promise<{
           position: a.position,
           face: a.face,
           internal: a.internal,
+          wire_only: a.wire_only,
         })
         .onConflict((b) =>
           b.column("id").doUpdateSet({
@@ -298,6 +302,7 @@ export async function syncManifestRegistries(): Promise<{
             position: a.position,
             face: a.face,
             internal: a.internal,
+            wire_only: a.wire_only,
             version: a.version,
           }),
         )

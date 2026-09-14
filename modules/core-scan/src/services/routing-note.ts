@@ -14,7 +14,7 @@
 // the parser together is what lets that be trusted.
 
 import { categoryDisplay } from "@cobblr/platform-contract/category-reconcile";
-import { fallbackHint, type AiFallback, type ProviderErrorReason } from "@cobblr/platform-contract/scan-fallback";
+import { fallbackHint, RETIRED_FALLBACK_HINTS, type AiFallback, type ProviderErrorReason } from "@cobblr/platform-contract/scan-fallback";
 
 // ── The card's note, from the step that actually decided ─────────────────────
 //
@@ -32,7 +32,9 @@ import { fallbackHint, type AiFallback, type ProviderErrorReason } from "@cobblr
 
 const FALLBACKS: AiFallback[] = ["no-provider", "background", "not-entitled", "provider-error", "no-answer"];
 const REASONS: Array<ProviderErrorReason | undefined> = [undefined, "invalid_key", "quota", "model_unavailable", "unreachable", "unknown"];
-const KNOWN_ROUTING_SENTENCES = [...new Set(FALLBACKS.flatMap((why) => REASONS.map((r) => fallbackHint(why, r))))];
+// The retired wordings first: an old sentence may contain a new, shorter one
+// as a substring, and the longer must go before the shorter can be looked for.
+const KNOWN_ROUTING_SENTENCES = [...new Set([...RETIRED_FALLBACK_HINTS, ...FALLBACKS.flatMap((why) => REASONS.map((r) => fallbackHint(why, r)))])];
 
 /** `note` with every known routing (fallback) sentence removed, so what is
  *  left is the lookup's own words, or nothing. */

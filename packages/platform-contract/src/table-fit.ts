@@ -79,6 +79,17 @@ export interface LexicalEvidence {
    *  evidence the no-AI plan needs; a word earlier in the name, or a graze
    *  in a catalog blob, is not. */
   nameHits: string[];
+  /** The table's own word IS the item's head noun ("…Garlic Seasoning
+   *  Blend" heads "seasoning", and the Spice Rack declares it), or a
+   *  declared phrase is in the name: what the thing is CALLED. Ahead of a
+   *  word beside the head ("garlic", a flavour) and of the category. */
+  headNamed: boolean;
+  /** The lookup's CATEGORY names this table: its head noun is the table's
+   *  noun, its label, or one of its declared words ("Groceries" for the
+   *  Groceries table, "Condiments" for a table that declares condiment).
+   *  The strongest statement a catalog makes about what kind of thing this
+   *  is, and the one a keyword on the name may not overrule. */
+  categoryNames: boolean;
   fields: Record<string, string | number | boolean>;
 }
 
@@ -89,7 +100,14 @@ export interface LexicalEvidence {
  *  whose item noun is one of these (Lego "set", a generic "item") must carry
  *  scan_keywords to be routable; the noun alone would claim every "sheet set"
  *  and every "3-piece". Stemmed, lowercase. */
-export const GENERIC_NOUNS = new Set(["set", "item", "thing", "unit", "piece", "pack", "record", "entry", "object", "product"]);
+export const GENERIC_NOUNS = new Set([
+  "set", "item", "thing", "unit", "piece", "pack", "record", "entry", "object", "product",
+  // A word that says how something is put together, not what it is: a
+  // seasoning blend, a coffee blend, a trail mix, a repair kit, a value
+  // bundle. A yarn table's fibre choice "Blend" claimed two seasonings
+  // because their names ended in it (#3003).
+  "blend", "mix", "kit", "bundle", "combo", "assortment", "variety", "collection",
+]);
 
 export function makeLexicalScorer(item: FitItem): {
   hay: string;
@@ -171,13 +189,16 @@ export function makeLexicalScorer(item: FitItem): {
   // noun let a filament table's color choice "White" claim a light switch.
   const COLOR_TAIL = new Set(["white", "black", "red", "blue", "green", "yellow", "gray", "grey", "silver", "gold", "brown", "beige", "ivory", "clear", "orange", "purple", "pink", "tan", "almond"]);
   const nameTokens = nameCore.split(/[^a-z0-9]+/).filter((t) => t.length >= 3 && !/^\d+$/.test(t));
-  // Pop size/pack TAIL tokens, trailing colors, and anything digit-bearing
-  // ("20lb", "4pk") — the head noun is the thing itself, never its packaging
-  // arithmetic or its finish.
+  // Pop size/pack TAIL tokens, trailing colors, anything digit-bearing
+  // ("20lb", "4pk"), and a GENERIC noun ("…Seasoning Blend", "…Trail Mix",
+  // "…Repair Kit": the thing is the seasoning, the trail, the repair, not the
+  // way it is packaged or put together) — the head noun is the thing itself,
+  // never its packaging arithmetic, its finish, or its assembly.
   while (
     nameTokens.length > 1 &&
     (TAIL.has(nameTokens[nameTokens.length - 1]!) ||
       COLOR_TAIL.has(nameTokens[nameTokens.length - 1]!) ||
+      GENERIC_NOUNS.has(stem(nameTokens[nameTokens.length - 1]!)) ||
       /\d/.test(nameTokens[nameTokens.length - 1]!))
   ) nameTokens.pop();
   // A color can never BE the head noun (a name that is only color words has no
@@ -227,6 +248,12 @@ export function makeLexicalScorer(item: FitItem): {
   const catHeadStem = catTokens.length ? stem(catTokens[catTokens.length - 1]!) : "";
   const hitsCategoryHead = (phrase: string): boolean =>
     !!catHeadStem && phrase.toLowerCase().split(/[^a-z0-9]+/).some((w) => w.length >= 3 && stem(w) === catHeadStem);
+  // The category's head noun IS a table's own name. "Groceries" from the food
+  // catalog names the Groceries table whatever its item noun is (the generic
+  // "item", which scores nothing on purpose), the way "Books" names a
+  // Bookshelf. A generic word cannot name a table this way either.
+  const categoryNamesLabel = (label: string): boolean =>
+    !!catHeadStem && !GENERIC_NOUNS.has(catHeadStem) && hitsCategoryHead(label);
   const nameHas = (phrase: string): boolean => {
     const p = phrase.toLowerCase();
     if (/\s/.test(p.trim())) return nameCore.includes(p);
@@ -252,6 +279,8 @@ export function makeLexicalScorer(item: FitItem): {
     let strong = false;
     let nounHit = false;
     let keywordHits = 0;
+    let headNamed = false;
+    let categoryNames = false;
     const nameHits: string[] = [];
     const fields: Record<string, string | number | boolean> = {};
     // The table's OWN noun/keywords route it (a "yarn" table for a "...yarn"),
@@ -281,7 +310,19 @@ export function makeLexicalScorer(item: FitItem): {
       // route to a table whose noun is "item" — a generic noun says nothing
       // about what a thing IS, whichever field it matched.
       if (nameHas(entry.noun) || categoryIs(entry.noun)) strong = true;
+      if (hitsHead(entry.noun)) headNamed = true;
+      if (hitsCategoryHead(entry.noun)) categoryNames = true;
       if (hitsNearHead(entry.noun)) nameHits.push(entry.noun);
+    }
+    // The category naming the TABLE ITSELF, by its label: the catalog saying
+    // which table this is. Real evidence (strong, so the table is plausible
+    // on it alone) but no score: the ORDER (orderFits) is where it counts,
+    // ahead of a keyword or a choice grazing the name and behind a table
+    // the name calls by its word, so a narrower table the name names
+    // (Spices for a seasoning) is not outscored by the aisle it sits in.
+    if (entry.label && categoryNamesLabel(entry.label)) {
+      strong = true;
+      categoryNames = true;
     }
     // Multi-word keywords match as FULL PHRASES only — "paper towel" must
     // not claim every "towel" via its words (bath towels are linens, not
@@ -304,6 +345,8 @@ export function makeLexicalScorer(item: FitItem): {
         // way a real Lego capture carries "lego" + "building set" from its
         // catalog category.)
         if (hitsHead(term) || hitsCategoryHead(term) || (/\s/.test(term.trim()) && nameHas(term))) strong = true;
+        if (hitsHead(term) || (/\s/.test(term.trim()) && nameHas(term))) headNamed = true;
+        if (hitsCategoryHead(term)) categoryNames = true;
         if (hitsNearHead(term)) nameHits.push(term);
       }
     }
@@ -340,13 +383,20 @@ export function makeLexicalScorer(item: FitItem): {
         for (const ch of f.choices) {
           if (ch && (f.name === entry.category_field?.name ? axisHit(ch) : choiceHitAttr(ch))) {
             score += 1; // a fill hint, no longer a 3-point routing vote
-            if (hitsHead(ch)) strong = true; // the choice names the thing itself
+            // The choice names the thing itself ("…Nike Hoodie" and a
+            // garment_type "Hoodie"). Not when the word is a generic one: a
+            // fibre choice "Blend" at the head of "…Seasoning Blend" says how
+            // the seasoning is made, not that it is a yarn (#3003).
+            if (hitsHead(ch) && !GENERIC_NOUNS.has(headStem)) {
+              strong = true;
+              headNamed = true;
+            }
             if (!(f.name in fields)) fields[f.name] = ch; // extract the matched choice
           }
         }
       }
     }
-    return { score, keywordHits, fields, strong, nounHit, nameHits, plausible: strong || keywordHits >= 2 };
+    return { score, keywordHits, fields, strong, nounHit, nameHits, headNamed, categoryNames, plausible: strong || keywordHits >= 2 };
   };
   return { hay, scoreEntry };
 }
@@ -378,14 +428,64 @@ export function rankFits<T extends FitTable>(item: FitItem, tables: T[], gate: "
   const fits = tables
     .map((table) => ({ table, evidence: scoreEntry(table) }))
     .filter(({ evidence }) => evidence.plausible || (gate === "named" && evidence.nameHits.length > 0));
-  const breadth = (t: FitTable): number => (t.scan_keywords?.length ?? 0) + t.fields.reduce((n, f) => n + (f.choices?.length ?? 0), 0);
-  return fits.sort(
-    (a, b) =>
-      b.evidence.score - a.evidence.score ||
-      Number(b.evidence.strong) - Number(a.evidence.strong) ||
-      Number(!!a.table.is_fallback) - Number(!!b.table.is_fallback) ||
-      breadth(a.table) - breadth(b.table),
+  return fits.filter((f) => !contradictedByCategory(f, fits)).sort(orderFits);
+}
+
+/** How many words a table declares: a specific table says less and means more. */
+export function tableBreadth(t: FitTable): number {
+  return (t.scan_keywords?.length ?? 0) + t.fields.reduce((n, f) => n + (f.choices?.length ?? 0), 0);
+}
+
+/** The table's own word is what the item is CALLED: its noun, or a declared
+ *  word at the head of the name. The first thing the order reads. */
+export function nameNames(e: LexicalEvidence): boolean {
+  return e.nameHits.length > 0;
+}
+
+/** The one ORDER both the scan floor and the no-AI move plan rank by, so
+ *  "what outranks what" cannot drift between them (#3003):
+ *
+ *  1. a table whose word IS the item's head noun ("…Garlic Seasoning Blend"
+ *     heads "seasoning") before one whose word sits beside it ("garlic");
+ *  2. then a table the NAME calls by a word at or beside its head before
+ *     one it does not;
+ *  3. then a table the lookup's CATEGORY names ("Groceries" from the food
+ *     catalog names the Groceries table) before one it does not, so what the
+ *     catalog said the thing is outranks what its name merely grazed (a
+ *     fibre choice, a pair of incidental keywords);
+ *  4. then the score, then real evidence before corroboration, a module's
+ *     catch-all last, and the NARROWER table first (Spices over Groceries
+ *     for a seasoning both declare: a specific table says less and means
+ *     more). */
+export function orderFits<T extends FitTable>(a: RankedFit<T>, b: RankedFit<T>): number {
+  return (
+    Number(b.evidence.headNamed) - Number(a.evidence.headNamed) ||
+    Number(nameNames(b.evidence)) - Number(nameNames(a.evidence)) ||
+    Number(b.evidence.categoryNames) - Number(a.evidence.categoryNames) ||
+    b.evidence.score - a.evidence.score ||
+    Number(b.evidence.strong) - Number(a.evidence.strong) ||
+    // The more of the name a table's word covers, the better it names it:
+    // "paper towels" verbatim beats "towel" alone for a roll of paper towels.
+    longestNameHit(b.evidence) - longestNameHit(a.evidence) ||
+    Number(!!a.table.is_fallback) - Number(!!b.table.is_fallback) ||
+    tableBreadth(a.table) - tableBreadth(b.table)
   );
+}
+
+/** Words in the longest table word found at the head of the name. */
+function longestNameHit(e: LexicalEvidence): number {
+  return e.nameHits.reduce((n, h) => Math.max(n, h.trim().split(/\s+/).length), 0);
+}
+
+/** A route the category contradicts: some table is named by the category,
+ *  and this one is neither that table nor one the name calls by its word
+ *  (only a keyword pair or a field choice grazed it). Food is not fibre: two
+ *  seasonings were offered Yarn on the fibre choice "Blend" while their
+ *  catalog said food (#3003). Such a fit is not a second opinion, it is a
+ *  wrong one, and the caller drops it. */
+export function contradictedByCategory<T extends FitTable>(fit: RankedFit<T>, all: readonly RankedFit<T>[]): boolean {
+  if (fit.evidence.categoryNames || nameNames(fit.evidence) || fit.evidence.nounHit) return false;
+  return all.some((o) => o !== fit && o.evidence.categoryNames);
 }
 
 /** The table an item fits best, or null when it fits none. */

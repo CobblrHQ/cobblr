@@ -24,8 +24,8 @@
     "hash": "96a601d633487d407e9053e23a8ba83be8cc55eaa43b2e6e58d55bfd8a6edc75"
   },
   "cobblr.community.lego": {
-    "version": "0.5.2",
-    "hash": "cd02deedc8d0fce6c2c961d0f056280f7e9bd29129b6008fcde228bb699daaed"
+    "version": "0.5.3",
+    "hash": "2e0bcd1e62fc39107166b922f6578b8efad4d4de25e3c225c9bba2546c19fb6c"
   },
   "cobblr.community.lending-library": {
     "version": "0.1.1",
@@ -72,8 +72,8 @@
     "hash": "24ca0447bad1d722cdd18aceb900cc1593de21513e082185d69b05a952306852"
   },
   "cobblr.flagship.groceries": {
-    "version": "0.11.0",
-    "hash": "afd68ad875ce8285f909489bcad73a432365841359ba5bcad562898a779431ff"
+    "version": "0.11.1",
+    "hash": "dfae1c0b7e98251af4ad6b3afb799b9f9f33a3b2a848921f37df6c90fd2a56fe"
   },
   "cobblr.flagship.grocery-spend": {
     "version": "0.1.2",
@@ -120,8 +120,8 @@
     "hash": "78c06b07b620fcf64bc3de90ed8463386a959200d02fa50f4f366ddc2fa428cd"
   },
   "cobblr.flagship.vehicles": {
-    "version": "0.4.1",
-    "hash": "38730f13129ed104d3b225fce7770607780df8139d96bd123cb68e6d19a64bd5"
+    "version": "0.4.2",
+    "hash": "fe43d71525f8d61c811f401defd0e6f75aa6e23bf9720807de9df8b8468bb482"
   },
   "cobblr.flagship.wardrobe": {
     "version": "0.1.2",

@@ -5,6 +5,7 @@
 // case wrong deserves a test, not a page component.
 
 import type { ScanInboxItem } from "./api";
+import { sameProduct } from "@cobblr/platform-contract/same-product";
 
 const COMBINE_STOP = new Set([
   "the", "and", "for", "with", "ultra", "soft", "pack", "count", "new", "size", "per", "each",
@@ -45,31 +46,15 @@ export function isTitledMedia(it: ScanInboxItem): boolean {
   );
 }
 
-/** Unit-ish tokens ("75mm", "10pk", "120v") are measurements, not identity —
- *  they must neither count as model numbers nor veto anything. */
-const UNIT_TOKEN = /^\d+(pk|ct|pcs?|oz|ml|lb|kg|mm|cm|in|ft|gal|qt|ah|mah|[wvagl])$/;
+/** The model-number reader lives with the rest of "the same product" in the
+ *  platform contract, shared with the server's "you already have" finder and
+ *  the filing check; re-exported so the tests keep reading it from here. */
+export { modelNumberTokens } from "@cobblr/platform-contract/same-product";
 
-/** Tokens that read as MODEL NUMBERS: letters+digits interleaved ("F27T350FHN",
- *  "S23A300B", "MSB1G"), or a single-letter prefix on a run of digits ("D6733",
- *  "A1234") - the catalogue-code shape used by Royal Doulton, Hummel, Lego and
- *  most part numbering. A model number IS the product's identity: two names
- *  whose model numbers disagree are different products no matter how many
- *  generic words ("inch", "monitor", "character jug") they share.
- *
- *  Requiring TWO letters made a single-letter code invisible, so nine different
- *  character jugs (D6733, D6527, D6691…) sailed past the veto written for
- *  exactly this (reported 2026-08-02). The digit floor is what keeps the looser
- *  shape honest - "3d", "x10" and "a4" stay words, not identities.
- *  Exported for tests. */
-export function modelNumberTokens(s: string | null | undefined): Set<string> {
-  const out = new Set<string>();
-  for (const w of (s ?? "").toLowerCase().replace(/[^a-z0-9\s]/g, " ").split(/\s+/)) {
-    if (w.length < 4 || UNIT_TOKEN.test(w)) continue;
-    const letters = (w.match(/[a-z]/g) ?? []).length;
-    const digits = (w.match(/[0-9]/g) ?? []).length;
-    if ((letters >= 2 && digits >= 1) || (letters >= 1 && digits >= 3)) out.add(w);
-  }
-  return out;
+/** The identity a scan already carries: its top candidate's fields (a set
+ *  number, an ISBN, a model), which the router filled or the split inherited. */
+function identityFields(it: ScanInboxItem): Record<string, unknown> | null {
+  return (it.suggested_candidates?.[0]?.fields as Record<string, unknown> | undefined) ?? null;
 }
 
 /**
@@ -152,15 +137,21 @@ export function combinable(
   const codeB = catalogBarcode(b);
   if (codeA && codeB && codeA === codeB) return true; // identity — no name guessing needed
 
-  // DIFFERENT MODEL NUMBERS = DIFFERENT PRODUCTS. Two 27"/23" monitors shared
-  // "inch" + "monitor" and cleared the word bar while their model numbers
-  // (F27T350FHN vs S23A300B) disagreed in plain sight. When BOTH names carry
-  // model-number tokens and NONE match, no amount of generic-word overlap (or
-  // the multipack exception) may combine them — only an identical catalog
-  // barcode above outranks this.
-  const modelsA = modelNumberTokens(a.suggested_name);
-  const modelsB = modelNumberTokens(b.suggested_name);
-  if (modelsA.size && modelsB.size && ![...modelsA].some((m) => modelsB.has(m))) return false;
+  // THE IDENTITY THE ROWS ALREADY CARRY DECIDES BEFORE ANY WORD RULE. Two
+  // LEGO sets, 40702 and 75684, were offered as one product: the name rule
+  // dropped their pure-digit numbers and nobody read the candidates'
+  // set_number (#2977). Two 27"/23" monitors shared "inch" + "monitor" while
+  // their model numbers (F27T350FHN vs S23A300B) disagreed in plain sight.
+  // A differing identifier field, or differing model numbers in the names,
+  // is two products, whatever else overlaps (and the multipack exception
+  // below cannot revive it); an agreeing identifier is one product. Only an
+  // identical catalog barcode above outranks this (same-product.ts).
+  const decisive = sameProduct(
+    { name: a.suggested_name, fields: identityFields(a) },
+    { name: b.suggested_name, fields: identityFields(b) },
+  );
+  if (decisive.verdict === "different") return false;
+  if (decisive.verdict === "same") return true;
 
   if (codeA && codeB) {
     const packA = packSize(a);

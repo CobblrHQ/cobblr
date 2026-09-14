@@ -16,7 +16,7 @@ import { defineModule } from "@cobblr/platform-contract";
 
 export default defineModule({
   name: "core-scan",
-  version: "0.47.53",
+  version: "0.47.65",
   displayName: "Scan",
   description:
     "Scan a barcode or take a photo of a thing; end up with a draft inventory row, pre-filled with the resolved name + brand + catalog photo. One tap to commit.",
@@ -160,6 +160,7 @@ export default defineModule({
         appliesTo: { any: true },
         invokeHandler: "core-scan.identify-photo",
         // Wire-only — the autonomous-sort binding fires it, not a button.
+        wireOnly: true,
         userInvokable: false,
       },
       {
@@ -174,6 +175,7 @@ export default defineModule({
         invokeHandler: "core-scan.rank-catalog-photo",
         // Wire-only. The per-item equivalent is the ✨ Pick best button, which
         // goes through POST /inbox/:id/rank-photo-ai (a press IS the consent).
+        wireOnly: true,
         userInvokable: false,
       },
       {

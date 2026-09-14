@@ -18,14 +18,7 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { ArrowLeft, Plus, ScanLine, LogOut, LayoutDashboard, LayoutGrid, ChevronDown } from "lucide-react";
 import ReactMarkdown from "react-markdown";
 import { useAuth } from "../auth/AuthContext";
-import {
-  useRunAction,
-  EntityActionsBar,
-  EntityThumb,
-  usePageTitle,
-  useToast,
-  OverlayFlag,
-} from "@cobblr/platform-web";
+import { useRunAction, EntityActionsBar, EntityThumb, usePageTitle, useToast, OverlayLayer, BackdropLayer } from "@cobblr/platform-web";
 import { NewPartDialog, InventoryProvider } from "@cobblr/inventory/ui";
 import { api, getToken, type AppBlock, type AppTheme } from "../lib/api";
 // Per-surface theme → CSS variables. Shared with the member portal so the
@@ -150,8 +143,7 @@ export function AppPlayerPage() {
     const isAdmin = caps.data?.role === "owner" || caps.data?.role === "admin";
     const ff = fontFaceCss(theme);
     return createPortal(
-      <div className="fixed inset-0 z-50 overflow-y-auto" style={themeWrapperStyle(theme)}>
-        <OverlayFlag />
+      <OverlayLayer className="z-50 overflow-y-auto" style={themeWrapperStyle(theme)}>
         {ff && <style>{ff}</style>}
         <div className="min-h-full max-w-3xl mx-auto px-5 py-7 sm:py-9 space-y-6">
           <div className="flex items-start justify-between gap-4 border-b pb-3" style={{ borderColor: "var(--app-border)" }}>
@@ -185,7 +177,7 @@ export function AppPlayerPage() {
           </div>
           {blocksEl}
         </div>
-      </div>,
+      </OverlayLayer>,
       document.body,
     );
   }
@@ -246,7 +238,7 @@ function AppSwitcher({ slug, currentSlug, theme }: { slug: string; currentSlug: 
       </button>
       {open && (
         <>
-          <div className="fixed inset-0 z-0" onClick={() => setOpen(false)} />
+          <BackdropLayer className="z-0" onClick={() => setOpen(false)} />
           <div className={menuClass} style={menuStyle}>
             {others.map((a) => (
               <Link

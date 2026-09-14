@@ -26,6 +26,7 @@ import {
   toggleNavOverflow,
   writeNavOrder,
 } from "../lib/nav-order";
+import { PopoverLayer } from "@cobblr/platform-web";
 
 export function NavCustomizeMenu() {
   const { activeSlug } = useActiveOrg();
@@ -109,9 +110,9 @@ export function NavCustomizeMenu() {
       {open &&
         pos &&
         createPortal(
-          <div
+          <PopoverLayer
             data-nav-customize-pop
-            style={{ position: "fixed", top: pos.top, left: pos.left }}
+            style={{ top: pos.top, left: pos.left }}
             className="z-50 w-64 rounded-xl border border-line dark:border-slate-700 bg-surface dark:bg-slate-900 shadow-2xl p-2"
           >
             <div className="flex items-baseline justify-between px-2 py-1">
@@ -248,7 +249,7 @@ export function NavCustomizeMenu() {
                 </ul>
               </>
             )}
-          </div>,
+          </PopoverLayer>,
           document.body,
         )}
     </>

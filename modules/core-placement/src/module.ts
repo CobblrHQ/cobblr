@@ -77,7 +77,7 @@ export default defineModule({
         undoable: true,
         label: "Remove from container",
         description:
-          "Take the targeted record out of whatever container it's in. A no-op if it isn't placed anywhere.",
+          "Take the targeted record out of whatever container it's in. A no-op if it isn't placed anywhere. When two records share a name ('take the CubePro out of the Garage' with two CubePros), the one IN the place named is the one meant: list_related on the place, then run this on that record rather than asking which.",
         appliesTo: { traits: ["containable"] },
         invokeHandler: "core-placement.remove",
         userInvokable: false,

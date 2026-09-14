@@ -31,6 +31,8 @@ import { loadAllModules } from "./modules/loader.js";
 import { loadAllSandboxedModules } from "./sandbox/loader.js";
 import { syncTenantMigrations, reconcileDefaultModules } from "./modules/enable.js";
 import { startDeliverySweeper } from "./platform/delivery-sweeper.js";
+import { startPoolWatch, poolCounts } from "./db/pool-stats.js";
+import { tenantPoolStats } from "./db/tenant.js";
 import { mountModules } from "./modules/mount.js";
 import { registerBuiltinResolvables } from "./platform/resolvable-providers.js";
 import { registerResolvable, resolveValue } from "./platform/resolvables.js";
@@ -1203,6 +1205,10 @@ async function boot() {
   // nobody has set a window (one indexed "any pending?" read per tick).
   startDeliverySweeper();
   startBundleUpdateSweeper();
+  // A pool whose callers are waiting says so in the log while it is
+  // happening, once per stretch (#3033).
+  startPoolWatch("meta-pool", () => poolCounts(metaPool));
+  startPoolWatch("tenant-pools", () => tenantPoolStats());
 
   // Put back scan names a Replay truncated before 2026-08-12 (a cache miss
   // degraded to the keyword heuristic, whose candidate name then overwrote the

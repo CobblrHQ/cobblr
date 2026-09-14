@@ -23,7 +23,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { photoOrder } from "../lib/scanPhoto";
 import { Link, useNavigate } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useToast } from "@cobblr/platform-web";
+import { changeWorkspaceShape, useToast } from "@cobblr/platform-web";
 import { Search, Camera, Sparkles, ArrowRight, Loader2, Boxes, Wand2, Plus, ChevronDown, ChevronUp, ScanLine, X } from "lucide-react";
 import { api } from "../lib/api";
 import { useBundleCatalog, type CatalogBundle } from "../lib/useBundleCatalog";
@@ -351,9 +351,8 @@ export function WhatToDoPanel({
 
   // ── actions ─────────────────────────────────────────────────────────────
   const enableModuleMut = useMutation({
-    mutationFn: (name: string) => api.enableModule(slug, name),
+    mutationFn: (name: string) => changeWorkspaceShape(qc, slug, () => api.enableModule(slug, name)),
     onSuccess: (_r, name) => {
-      void qc.invalidateQueries();
       const m = (modulesQ.data?.items ?? []).find((x) => x.name === name);
       toast.success(`Added ${m?.displayName ?? name}.`);
       navigate(`/${name}`);
@@ -429,7 +428,7 @@ export function WhatToDoPanel({
   // Col 3 for a multi-instance kind: create a new CATEGORY (a named instance) and
   // drop the user in to add items — the kind → category → item model.
   const createInstanceMut = useMutation({
-    mutationFn: async ({ module_name, name }: { module_name: string; name: string }) => {
+    mutationFn: ({ module_name, name }: { module_name: string; name: string }) => changeWorkspaceShape(qc, slug, async () => {
       // The kind must be enabled before it can host an instance. On a fresh
       // workspace it isn't yet — enable it first (idempotent), then create.
       if (!(modulesQ.data?.items ?? []).find((m) => m.name === module_name)?.enabled) {
@@ -454,9 +453,8 @@ export function WhatToDoPanel({
         }
       } catch { /* nav grouping is a nicety — never fail the create over it */ }
       return inst;
-    },
+    }),
     onSuccess: (inst) => {
-      void qc.invalidateQueries();
       setCategoryName("");
       toast.success(`Created ${inst.display_name}.`);
       navigate(`/instances/${inst.instance_name}`);
@@ -466,9 +464,8 @@ export function WhatToDoPanel({
   // Captive setup: install the recipe and drop the user straight into it (no
   // modal) — that's the "and you're in" end of the funnel.
   const setupRecipeMut = useMutation({
-    mutationFn: (b: CatalogBundle) => api.installBundle(slug, b.manifest, true),
+    mutationFn: (b: CatalogBundle) => changeWorkspaceShape(qc, slug, () => api.installBundle(slug, b.manifest, true)),
     onSuccess: (_r, b) => {
-      void qc.invalidateQueries();
       toast.success(`Set up ${b.manifest.name}.`);
       const dest = b.next_steps?.[0]?.path ?? "/dashboard";
       navigate(dest === "/dashboard" ? dest : `${dest}${dest.includes("?") ? "&" : "?"}created=${encodeURIComponent(b.manifest.name)}`);

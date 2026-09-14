@@ -13,6 +13,8 @@
 // carried separately. Dropping the instance (or sending the wrong kind) sends
 // an item to the module's default table instead of the chosen instance.
 
+import { isScanReadyToFile } from "@cobblr/platform-contract/scan-triage";
+
 export interface ScanCandidateLike {
   module: string;
   /** The candidate's own kind label — may be instance-scoped ("bookshelf:item").
@@ -31,6 +33,9 @@ export interface ScanItemLike {
   status: string;
   suggested_name?: string | null;
   suggested_candidates?: ScanCandidateLike[] | null;
+  /** Read by the readiness rule: a low score is a reason to look, not to file. */
+  ai_confidence?: number | string | null;
+  ai_notes?: string | null;
   quantity?: number | null;
   target_location_id?: string | null;
   /** Where the system thinks it goes - from where siblings live, or from how
@@ -104,19 +109,16 @@ export function baseKind(module: string): string {
   return module === "assets" ? "asset" : module === "machines" ? "machine" : "part";
 }
 
-/** A pending item is "ready to file" when it has a name AND a confident
- *  destination (a top candidate). Items still needing a manual look are
- *  excluded so "File all" never guesses; resolved items are already filed.
- *
- *  A keyword-basis route is NOT confident: it is a no-AI guess held up only by
- *  corroborating keyword hits — the tier that once filed a storage tote into
- *  Vehicles because a marketing description grazed "car(ds)"/"mak(ing)e". The
- *  card renders those tentative, and File all must match what the card offers:
- *  a route the card won't one-tap is not one a bulk sweep may commit. Noun and
- *  fallback bases stay filable (a no-AI workspace still files cleanly). */
+/** A pending item is "ready to file" when it has a name, a confident
+ *  destination (a top candidate that is not a keyword guess) and nothing
+ *  flagged for review. THE rule is the platform contract's (scan-triage.ts,
+ *  isScanReadyToFile); this is the page's door to it, kept so the callers
+ *  here read one name. It used to be a second copy that ignored the review
+ *  flag, so File all committed rows the header counted under the warning
+ *  (#2980). Noun and fallback bases stay filable (a no-AI workspace still
+ *  files cleanly). */
 export function isReadyToFile(it: ScanItemLike): boolean {
-  const top = it.suggested_candidates?.[0];
-  return it.status === "pending" && !!it.suggested_name && !!top && top.basis !== "keywords";
+  return isScanReadyToFile(it);
 }
 
 /** Ids of the items "File all" will commit, in order. */

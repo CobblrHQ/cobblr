@@ -8,7 +8,7 @@
 
 import { useMemo } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { api } from "./api";
+import { api, ApiError } from "./api";
 import { isSandboxSession } from "./sandbox-session";
 
 /** One limit=1 read per enabled domain module + each named instance; cached.
@@ -16,8 +16,18 @@ import { isSandboxSession } from "./sandbox-session";
  *  data in instances — without them a populated workspace read as empty and
  *  the first-run hero never went away. */
 export async function probeWorkspaceItemCount(slug: string, enabled: Set<string>): Promise<number> {
+  // A module whose items route is missing (404) or not there for a default
+  // instance (501) genuinely holds nothing to count. A workspace that cannot
+  // be read at all (the session is dead, the workspace is gone, an expired
+  // sandbox answers 410) is NOT empty; reading it as empty opened the
+  // first-run tour on top of a deleted sandbox's stale dashboard
+  // (2026-09-14). Those reject, so the probe never reads "ready and empty".
   const wrap = (path: string) =>
-    api.request<{ items: unknown[] }>("GET", `/orgs/${slug}${path}`).then((r) => r.items.length).catch(() => 0);
+    api.request<{ items: unknown[] }>("GET", `/orgs/${slug}${path}`).then((r) => r.items.length).catch((err) => {
+      const status = err instanceof ApiError ? err.status : 0;
+      if (status === 404 || status === 501) return 0;
+      throw err;
+    });
   const probes: Array<Promise<number>> = [];
   if (enabled.has("inventory")) probes.push(wrap("/modules/inventory/parts?limit=1"));
   if (enabled.has("machines")) probes.push(wrap("/modules/machines/machines?limit=1"));
