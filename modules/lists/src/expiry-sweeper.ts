@@ -17,38 +17,25 @@ import { platform, expiryState, expiryPhrase } from "@cobblr/platform-contract";
 import { expiryStages } from "./expiry-stages.js";
 import { expiryDigest, type ExpiryLine } from "./expiry-card.js";
 
-let intervalHandle: ReturnType<typeof setInterval> | null = null;
-
 const TICK_MS = 60 * 60 * 1000; // 1 hour
+export const EXPIRY_PASS = "lists.expiry-sweep";
 const EXPIRY_SOON_DAYS = 5;
 
 export function startExpirySweeper(): void {
-  if (intervalHandle) clearInterval(intervalHandle);
-  intervalHandle = setInterval(safeTick, TICK_MS);
-  setTimeout(safeTick, 35_000); // first pass after boot settles
-  console.log(`[lists] expiry sweeper started — every ${TICK_MS / 60_000} min, threshold ${EXPIRY_SOON_DAYS}d`);
+  // The walk is the kernel's (platform().sweeps, #3036): this registers the
+  // per-workspace visit and its cadence and owns no timer, so the pass shares
+  // one walk and one connection budget with every other pass.
+  platform().sweeps.register({
+    name: EXPIRY_PASS,
+    everyMs: TICK_MS,
+    module: "lists",
+    visit: ({ orgId, db }) => visitWorkspace(orgId, db),
+  });
+  console.log(`[lists] expiry sweeper registered — every ${TICK_MS / 60_000} min, threshold ${EXPIRY_SOON_DAYS}d`);
 }
 
-export function stopExpirySweeper(): void {
-  if (intervalHandle) {
-    clearInterval(intervalHandle);
-    intervalHandle = null;
-    console.log("[lists] expiry sweeper stopped");
-  }
-}
-
-async function safeTick(): Promise<void> {
-  try {
-      // One process only: every api runs this loop, and more than one api
-      // runs against a single database (the canary channel; a rolling deploy).
-      // Unguarded, each tick's notifications and writes happen twice.
-    await platform().exclusive.run("lists.expiry-sweep", async () => {
-      await expiryTick();
-    });
-  } catch (err) {
-    console.error("[lists] expiry sweep failed:", (err as Error).stack ?? (err as Error).message);
-  }
-}
+/** Nothing to stop: the kernel's walk owns the timer. Kept for the module's shutdown hook. */
+export function stopExpirySweeper(): void {}
 
 interface ExpiringRow {
   id: string;
@@ -56,39 +43,12 @@ interface ExpiringRow {
   expires_on: string; // 'YYYY-MM-DD'
 }
 
-/** One sweep. Exported so tests/CLI can fire it deterministically. */
-export async function expiryTick(opts: { orgId?: string } = {}): Promise<{ scanned: number; alerted: number }> {
-  const meta = platform().db.meta as unknown as Kysely<{
-    orgs: { id: string };
-    org_modules: { org_id: string; module_name: string };
-  }>;
-  // Orgs with lists enabled (lists owns the ledger + the shopping list). We
-  // DON'T also join on inventory: the kernel date-field query no-ops for an org
-  // without inventory or without any expires_on, so lists needn't name another
-  // module here. (Audit burn-down — was an `org_modules ... "inventory"` join.)
-  let orgsQ = meta
-    .selectFrom("orgs")
-    .innerJoin("org_modules as m_lists", (j) => j.onRef("m_lists.org_id", "=", "orgs.id").on("m_lists.module_name", "=", "lists"))
-    .select(["orgs.id"]);
-  if (opts.orgId) orgsQ = orgsQ.where("orgs.id", "=", opts.orgId);
-
-  let orgs: { id: string }[];
-  try {
-    orgs = await orgsQ.execute();
-  } catch (err) {
-    console.warn("[lists] expiry sweep skipped — meta read failed:", (err as Error).message);
-    return { scanned: 0, alerted: 0 };
-  }
-
+/** One workspace, the pool already open: the pass's visit. `org` and `raw`
+ *  keep their names so the body reads as it did when it was the loop's. */
+async function visitWorkspace(orgId: string, raw: unknown): Promise<{ scanned: number; alerted: number } | void> {
+  const org = { id: orgId };
   let scanned = 0;
   let alerted = 0;
-
-  for (const org of orgs) {
-    try {
-      // withDb releases the org's pool the moment this closure returns —
-      // a getDb + releaseIdleDb pair can't release its own pool inside the
-      // grace window, which held one pool per tenant and exhausted Postgres.
-      await platform().tenants.withDb(org.id, async (raw) => {
     const tdb = raw as Kysely<unknown>;
     // Parts expiring within the window, via the kernel date-field query — no raw
     // inventory_parts read, no inventory table name here. queryDateField no-ops
@@ -295,14 +255,5 @@ export async function expiryTick(opts: { orgId?: string } = {}): Promise<{ scann
         }
       }
     }
-      });
-    } catch (err) {
-      // Per-org isolation: one gone/unprovisioned tenant must not abort the
-      // sweep for everyone else (CLAUDE.md §8.1).
-      console.warn(`[lists] expiry sweep skipped org ${org.id}:`, (err as Error).message);
-    }
-  }
-
-  if (alerted > 0) console.log(`[lists] expiry sweep: scanned ${scanned}, alerted ${alerted}`);
   return { scanned, alerted };
 }

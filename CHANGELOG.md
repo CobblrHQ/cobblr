@@ -2,6 +2,29 @@
 
 User-facing changes, newest first. Dates are release dates.
 
+## 2026-09-15
+
+### Features
+- Photos you already took are one tap from the home screen. An "Add photos" tile sits beside the scan shortcut on the dashboard (and a "Photos" button beside "Scan" on a new workspace's first screen). It opens the same picker the scan inbox has, so you can pick several at once; they land in the inbox as one new session with identification already running, and the page opens on that session. On Android and desktop, long-pressing the installed app's icon offers "Add photos" too.
+- On a desk the scan inbox's cards are as tall as what they have to say: the tools sit in one row beside the title instead of a rail down the side, and a row that still needs you asks its one question with the answers a tap can give, instead of a paragraph and a percentage.
+- A scan inbox row has one name, yours when you gave it one: typing in a card's box is never interrupted by the row refreshing underneath, the desktop card's title edits in place with a tap, and a re-run of the AI offers its read beside your name instead of replacing it.
+- On a phone the scan inbox starts with its items: the put-away strip, a series offer and each session's header are one line each, the page runs closer to the screen's edges, a card offers a better table beside its filing pair, and the picture strip outlines the catalog picture.
+- On a phone the scan item screen grows a dropdown's choices from the form ("New category…"), an empty picture slot is a tap that opens your camera roll, and the pinned footer sits on the screen's foot in the installed app instead of a band above it.
+- Typing a model number now looks it up. Type "PB287Q" into the dashboard's box (or the scanner's) and the inbox row gets the web lookup, the product's name and picture, then the match, the same way a scanned barcode does; a typed product code takes the catalog. The card under "what you've added" opens the row it made and shows its progress while it fills in. Tapping a box on a phone no longer zooms the page.
+
+### Improvements
+- A split child shows its crop and the group photo it was cut from. The "Your photos" strip on an item cut out of a group photo now shows its own crop and the group shot (badged "group"), with a "Crop again" button beside the group shot to cut it differently. The column is never drawn empty: a row with no picture of its own has no "Your photos" column on a phone or a desk.
+- The community entry in the account menu and under Send feedback now reads "Discord Community", and every community place is named the same way on every surface: the account menu, the feedback widget and a server that predates the list all read one table.
+
+### Fixes
+- Pending items routed without AI before a routing rule improved are re-checked against the new rule and moved when it says so, instead of keeping the old table beside items scanned after the change. Anything you typed on, picked a table for, or marked as looking fine is never moved, and the old route stays on the item.
+- "Remove Tea from the category choices, it is no longer a valid option" now takes that one choice off the dropdown and leaves the rest, and "add Aran to the yarn weight choices" adds one, without Cobb needing to know the whole list. The same ask used to come back as a refusal drawn as a finished step, followed by directions to the settings page: a change the workspace refuses is now said as a refusal, and Cobb tries again or asks.
+- Splitting a photo of several things no longer gives every piece the series the whole photo was read as. A Wicked set beside a Holiday picture frame used to make both "part of the Wicked series"; now a piece keeps the group's series, category or kind only when the piece itself names it, the series offer never counts an item whose own theme says otherwise, and pieces split before this heal on their own with the value kept aside on the row rather than deleted.
+- Background housekeeping no longer crowds out the database at startup. Every periodic pass that visits each workspace (expiry checks, arrival reminders, picture and routing heals, the printer pump's discovery) now runs on one shared walk with one connection budget, its first round spread over its cadence instead of everything firing minutes after boot. On an instance with hundreds of workspaces this is the difference between hundreds of refused connections an hour and none, and the printer pump no longer opens every workspace's database every fifteen seconds to find no printer.
+- The api no longer hangs in silence when it runs out of database connections. A request that cannot get a connection within ten seconds now fails with a clear error instead of waiting forever, the health endpoint reports each connection pool's numbers, the log says when connections are starving, and the hourly maintenance jobs stop holding a request's connection for the length of their run.
+- A destination picked on a scan inbox card no longer vanishes when the next thing is scanned into the same session: the session group kept its key on its newest item, so every arrival rebuilt the group and reset every card in it.
+- The camera scanner no longer says "Identifying..." over a store's own code while the inbox says it needs a name. A store code is known the moment it is scanned: the result sheet reads "A store's own code, nothing to look up. Name it to file it." on its first paint, offers a name field right there, a way to the inbox, and Save & next as before, and the inbox card stops offering to retry an AI that was never asked. Every sentence a scan card shows is now one short line, with the longer explanation in the tooltip.
+
 ## 2026-09-14
 
 ### Features

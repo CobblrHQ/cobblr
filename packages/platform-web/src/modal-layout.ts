@@ -14,8 +14,12 @@
 // the browser toolbars were retracted), so a vh-sized overlay is taller than
 // the screen and its bottom row is unreachable. lint:no-vh-overlays enforces it.
 
-/** The panel's own sizing classes. */
-export function modalPanelLayout(overLive: boolean, fillHeight: boolean): string {
+/** The panel's own sizing classes. `stickyFooter`: the body pins a footer
+ *  of its own to the scrolling edge and pads the home indicator itself, so
+ *  the panel must not pad it too. Counted twice, the footer of the phone's
+ *  item screen sat 68px above the foot of the installed app (34px of panel
+ *  padding under 34px of footer padding, #2982); once is the footer's. */
+export function modalPanelLayout(overLive: boolean, fillHeight: boolean, stickyFooter = false): string {
   if (overLive) {
     // A centred card at EVERY width, so the live surface stays visible around it.
     return (
@@ -35,8 +39,9 @@ export function modalPanelLayout(overLive: boolean, fillHeight: boolean): string
     // page behind it.
     "overscroll-contain " +
     // The home indicator sits over the sheet's last few points, so pad the
-    // footer up off it (0 in a browser / on desktop).
-    "pb-[env(safe-area-inset-bottom)] sm:pb-0 " +
+    // footer up off it (0 in a browser / on desktop), unless the body's own
+    // sticky footer already does.
+    (stickyFooter ? "" : "pb-[env(safe-area-inset-bottom)] sm:pb-0 ") +
     (fillHeight ? "sm:min-h-[calc(100dvh-4rem)] " : "")
   );
 }

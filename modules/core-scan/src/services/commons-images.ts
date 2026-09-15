@@ -15,6 +15,7 @@
 // out: its v1 name search answers 503 as often as 200, and its v2 search
 // ignores `search_terms` and pages the whole database.
 import type { DdgImageResult } from "./ddg-images.js";
+import { readWebCassette, replayingWeb, writeWebCassette } from "./web-replay.js";
 
 const ENDPOINT = "https://commons.wikimedia.org/w/api.php";
 const USER_AGENT = "Cobblr/1.0 (+https://cobblr.xyz; catalog picture lookup)";
@@ -96,6 +97,15 @@ const MIN_NAME_SHARE = 1 / 3;
  *  Asks for more than `limit` and keeps the titled ones, because the filter
  *  above is what makes the answer usable. */
 export async function searchCommonsImages(name: string, limit = 12): Promise<DdgImageResult[]> {
+  const recorded = readWebCassette<DdgImageResult[]>("library", name);
+  if (recorded) return recorded.slice(0, limit);
+  if (replayingWeb()) return [];
+  const live = await searchCommonsImagesLive(name, limit);
+  writeWebCassette("library", name, live);
+  return live;
+}
+
+async function searchCommonsImagesLive(name: string, limit: number): Promise<DdgImageResult[]> {
   const params = new URLSearchParams({
     action: "query",
     generator: "search",

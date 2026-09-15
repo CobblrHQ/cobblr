@@ -307,7 +307,11 @@
     "lint:scan-card-copy": "tsx scripts/lint-scan-card-copy.ts",
     "lint:contract-sibling-imports": "tsx scripts/lint-contract-sibling-imports.ts",
     "lint:fixed-chrome": "tsx scripts/lint-fixed-chrome.ts",
-    "lint:wall-clock-assertions": "tsx scripts/lint-wall-clock-assertions.ts"
+    "lint:wall-clock-assertions": "tsx scripts/lint-wall-clock-assertions.ts",
+    "lint:tenant-sweep-registered": "tsx scripts/lint-tenant-sweep-registered.ts",
+    "lint:scan-door-intake": "tsx scripts/lint-scan-door-intake.ts",
+    "lint:phone-input-font": "tsx scripts/lint-phone-input-font.ts",
+    "lint:row-pictures-resolved": "tsx scripts/lint-row-pictures-resolved.ts"
   },
   "devDependencies": {
     "jsdom": "^30.0.1",

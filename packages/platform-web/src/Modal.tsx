@@ -78,6 +78,9 @@ interface Props {
    *  header and a footer of its own to the scrolling edges (a full-screen
    *  item sheet on a phone). */
   flush?: boolean;
+  /** The body pins a footer that pads the home indicator itself; the panel
+   *  then must not (modal-layout.ts). */
+  stickyFooter?: boolean;
 }
 
 /** Pick by what the body HOLDS, not by how important the dialog feels.
@@ -102,7 +105,7 @@ const SIZE: Record<NonNullable<Props["size"]>, string> = {
   content: "max-w-4xl",
 };
 
-export function Modal({ open, onClose, title, subtitle, children, size = "md", destructive, dismissOnBackdrop = true, inline = false, chromeless = false, fillHeight = false, cobb, footer, flush = false }: Props) {
+export function Modal({ open, onClose, title, subtitle, children, size = "md", destructive, dismissOnBackdrop = true, inline = false, chromeless = false, fillHeight = false, cobb, footer, flush = false, stickyFooter = false }: Props) {
   // "Dirty" = the user has entered/changed something inside this modal. Tracked
   // by listening (capture) for input/change events bubbling from any descendant
   // field — so we never have to know in advance whether a modal is a form. Only
@@ -164,7 +167,7 @@ export function Modal({ open, onClose, title, subtitle, children, size = "md", d
           // room there is and pushed action rows under the Live pill (the operator,
           // 2026-08-01). From sm up it's the familiar centred card again.
           "bg-surface dark:bg-slate-900 shadow-2xl border w-full flex flex-col " +
-          modalPanelLayout(overLive, fillHeight) +
+          modalPanelLayout(overLive, fillHeight, stickyFooter) +
           SIZE[size] +
           " " +
           (destructive

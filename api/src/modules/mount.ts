@@ -33,6 +33,13 @@ const primaryRouters = new Map<string, Router>();
 let appRef: Application | null = null;
 
 
+/** Does this module answer /instances/:name/items at all? A caller in this
+ *  process (the attention feed) asks here rather than over loopback, where
+ *  the answer is a 501 per instance per poll. */
+export function hasPrimaryRouter(moduleName: string): boolean {
+  return primaryRouters.has(moduleName);
+}
+
 /** Middleware for /orgs/:slug/instances/:name/items — dispatches to the
  *  resolved module's primary router (req.instanceModule is set by
  *  resolveInstance). The module CRUD reads req.instance and scopes every

@@ -13,6 +13,7 @@
 import { useState, type ReactNode } from "react";
 import { Camera, ChevronDown, Pencil, ReceiptText, RefreshCw, RotateCcw, Scissors, Sparkles, Undo2, X } from "lucide-react";
 import type { ScanInboxItem } from "../lib/api";
+import { displayName } from "@cobblr/platform-contract/display-identity";
 import { ScanItemSheetHeader, ScanItemSheetFooter, type ScanItemSheetNav } from "./ScanItemSheet";
 
 export interface ScanItemScreenAction {
@@ -64,6 +65,9 @@ export interface ScanItemScreenProps {
   } | null;
   /** "Use photo's name: X", when the photo read a different product off the label. */
   photoName: { name: string; busy: boolean; onApply: () => void } | null;
+  /** The model's newest read of the name, offered beside the person's own
+   *  (never shown in its place, #2982). */
+  modelName?: { name: string; busy: boolean; onApply: () => void } | null;
   multi: { distinct: number; names: string[]; onSplit: () => void; onKeep: () => void; busy: boolean } | null;
   pictures: {
     yours: string | null;
@@ -73,6 +77,10 @@ export interface ScanItemScreenProps {
     onOpenCatalog: () => void;
     onCapture: () => void;
     onRetake: (() => void) | null;
+    /** A file picked from an empty slot: the catalog picture, or the
+     *  person's own photo, the routes the strip's Photo button uses. */
+    onPickCatalog?: (file: File) => void;
+    onPickYours?: (file: File) => void;
     onYoursBroken: () => void;
     onCatalogBroken: () => void;
   };
@@ -210,13 +218,49 @@ function Section({ title, children, aside }: { title: string; children: ReactNod
   );
 }
 
-function Picture({ src, caption, empty, onOpen, onBroken }: { src: string | null; caption: string; empty: string; onOpen: () => void; onBroken: () => void }) {
+function Picture({
+  src,
+  caption,
+  empty,
+  onOpen,
+  onBroken,
+  onPick,
+}: {
+  src: string | null;
+  caption: string;
+  empty: string;
+  onOpen: () => void;
+  onBroken: () => void;
+  /** An empty slot is a tap target: the OS picker (camera roll, or the
+   *  camera as its second choice), and the file lands where the slot says
+   *  (#2982). */
+  onPick?: (file: File) => void;
+}) {
   return (
     <figure className="min-w-0">
       {src ? (
         <button type="button" onClick={onOpen} className="block w-full overflow-hidden rounded-xl border border-line dark:border-slate-700 bg-black/90" title="View full size">
           <img src={src} alt={caption} className="h-40 w-full object-contain" onError={onBroken} />
         </button>
+      ) : onPick ? (
+        <label
+          data-testid="empty-picture"
+          className="flex h-40 cursor-pointer flex-col items-center justify-center gap-1 rounded-xl border border-dashed border-line dark:border-slate-700 text-sm text-faint active:bg-mortar-50 dark:active:bg-slate-800"
+        >
+          <span>{empty}</span>
+          <span className="text-xs text-accent">Tap to add one</span>
+          <input
+            type="file"
+            accept="image/*"
+            className="sr-only"
+            aria-label={`Add ${caption.toLowerCase()}`}
+            onChange={(e) => {
+              const f = e.target.files?.[0];
+              e.target.value = "";
+              if (f) onPick(f);
+            }}
+          />
+        </label>
       ) : (
         <div className="flex h-40 items-center justify-center rounded-xl border border-dashed border-line dark:border-slate-700 text-sm text-faint">{empty}</div>
       )}
@@ -232,8 +276,8 @@ export function ScanItemScreen(p: ScanItemScreenProps) {
       <ScanItemSheetHeader nav={p.nav} />
       <div className="space-y-6 px-4 pb-4 pt-3">
         <section className="space-y-1.5">
-          <h2 className={"text-xl font-semibold leading-tight " + (item.suggested_name ? "text-content dark:text-mortar-100" : "text-muted dark:text-slate-400")}>
-            {item.suggested_name ?? "Name this item"}
+          <h2 className={"text-xl font-semibold leading-tight " + (displayName(item) ? "text-content dark:text-mortar-100" : "text-muted dark:text-slate-400")}>
+            {displayName(item) ?? "Name this item"}
           </h2>
           <div className="flex flex-wrap items-center gap-x-2 gap-y-0.5 text-[11px] font-mono text-faint dark:text-slate-500">
             {p.barcode.editing ? (
@@ -297,6 +341,14 @@ export function ScanItemScreen(p: ScanItemScreenProps) {
               <Sparkles size={12} /> Use the photo's name: "{p.photoName.name}"
             </button>
           )}
+          {p.modelName && (
+            <div data-testid="model-name" className="text-xs text-muted dark:text-slate-400">
+              AI read &ldquo;{p.modelName.name}&rdquo;{" "}
+              <button type="button" disabled={p.modelName.busy} onClick={p.modelName.onApply} className="min-h-6 font-medium underline underline-offset-2">
+                Use it
+              </button>
+            </div>
+          )}
           {p.slots.nameIt}
           {p.slots.tracked}
           {p.multi && (
@@ -342,8 +394,9 @@ export function ScanItemScreen(p: ScanItemScreenProps) {
               empty="No picture"
               onOpen={p.pictures.onOpenCatalog}
               onBroken={p.pictures.onCatalogBroken}
+              onPick={p.pictures.onPickCatalog}
             />
-            <Picture src={p.pictures.yours} caption="Your photo" empty="No photo yet" onOpen={p.pictures.onOpenYours} onBroken={p.pictures.onYoursBroken} />
+            <Picture src={p.pictures.yours} caption="Your photo" empty="No photo yet" onOpen={p.pictures.onOpenYours} onBroken={p.pictures.onYoursBroken} onPick={p.pictures.onPickYours} />
           </div>
           {p.slots.strip}
         </Section>

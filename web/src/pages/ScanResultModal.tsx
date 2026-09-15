@@ -7,6 +7,7 @@
 // triage still works; this just lets you set qty / commit on the spot.
 
 import { useEffect, useState } from "react";
+import { leadYours, rowPictures, scanFileUrl, yourPictures } from "../lib/rowPictures";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Camera, Check, CheckCircle, Loader2, MapPin, Plus, Printer, ScanLine, Trash2 } from "lucide-react";
 import { useImageSrc, useToast } from "@cobblr/platform-web";
@@ -314,13 +315,13 @@ export function ScanResultModal({
   // External catalog_image_url can 404/hotlink-block (the broken-? the author hit)
   // — onError marks that URL broken and we drop to the next rung; the live
   // poll above may then land the server-cached catalog_image_file_id.
-  const ownPhotoUrl = item?.image_file_id
-    ? `/api/v1/orgs/${activeSlug}/modules/core-files/files/${item.image_file_id}/raw?variant=med`
-    : null;
+  // The row's pictures, resolved once (lib/rowPictures.ts, #3046): the pair's
+  // yours slot and the strip's own tiles read this list.
+  const resolved = rowPictures(activeSlug, item ?? { image_file_id: null, catalog_image_file_id: null, catalog_image_url: null });
+  const yoursPicture = leadYours(resolved.pictures);
+  const ownPhotoUrl = yoursPicture ? resolved.src(yoursPicture) : null;
   const catalogRungs = [
-    item?.catalog_image_file_id
-      ? `/api/v1/orgs/${activeSlug}/modules/core-files/files/${item.catalog_image_file_id}/raw?variant=med`
-      : null,
+    item?.catalog_image_file_id ? scanFileUrl(activeSlug, item.catalog_image_file_id) : null,
     item?.catalog_image_url ?? null,
   ];
   // ONE answer to "which photo leads", shared with the strip below (and every
@@ -443,7 +444,7 @@ export function ScanResultModal({
           )}
             {item?.catalog_image_file_id && (
               <StripTile
-                src={`/api/v1/orgs/${activeSlug}/modules/core-files/files/${item?.catalog_image_file_id}/raw?variant=thumb`}
+                src={scanFileUrl(activeSlug, item.catalog_image_file_id, "thumb")}
                 active={lead.role === "catalog"}
                 checking={lead.pending}
                 label={
@@ -461,25 +462,22 @@ export function ScanResultModal({
                 label={lead.pending ? "Catalog photo - being checked against your photo" : "Catalog photo"}
               />
             )}
-            {item?.image_file_id && (
+            {/* The row's own pictures from the one resolver: the lead one
+                (your photo, or a split child's crop), then the group shot and
+                the added photos, each a tap from being the display photo. */}
+            {yourPictures(resolved.pictures).map((p) => (
               <StripTile
-                src={`/api/v1/orgs/${activeSlug}/modules/core-files/files/${item.image_file_id}/raw?variant=thumb`}
-                active={lead.role === "yours"}
+                key={p.key}
+                src={resolved.src(p, "thumb") ?? ""}
+                active={p === yoursPicture ? lead.role === "yours" : p.current}
                 label={
-                  lead.role === "yours"
-                    ? "Your scan photo - showing now"
-                    : "Your scan photo - tap to make it the display photo"
+                  p === yoursPicture
+                    ? lead.role === "yours"
+                      ? "Your scan photo - showing now"
+                      : "Your scan photo - tap to make it the display photo"
+                    : `${p.caption} - tap to make it the display photo`
                 }
-                onTap={() => makeDisplay.mutate(item.image_file_id!)}
-                busy={makeDisplay.isPending}
-              />
-            )}
-            {((item?.suggested_metadata as { extra_photos?: string[] } | null)?.extra_photos ?? []).map((f) => (
-              <StripTile
-                key={f}
-                src={`/api/v1/orgs/${activeSlug}/modules/core-files/files/${f}/raw?variant=thumb`}
-                label="Added photo - tap to make it the display photo"
-                onTap={() => makeDisplay.mutate(f)}
+                onTap={() => makeDisplay.mutate(p.fileId!)}
                 busy={makeDisplay.isPending}
               />
             ))}

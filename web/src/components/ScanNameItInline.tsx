@@ -32,7 +32,7 @@ export function ScanNameItInline({ slug, itemId, onNamed, autoFocus }: { slug: s
         placeholder="What is this? e.g. blue worsted yarn"
         aria-label="Name this item"
         autoFocus={autoFocus}
-        className="input !py-1 !text-xs flex-1"
+        className="input !py-1 text-xs flex-1"
         onKeyDown={(e) => {
           if (e.key === "Enter" && name.trim()) mut.mutate();
         }}

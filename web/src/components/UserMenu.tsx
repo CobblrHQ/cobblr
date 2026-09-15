@@ -35,7 +35,8 @@ import { useThemeToggle } from "../theme/useThemeToggle";
 import { UpdateBadge } from "./UpdateBadge";
 import { GrowModal } from "./GrowModal";
 import { PairPhoneButton } from "./PairPhoneButton";
-import { api, isFocused, setFocused, type CommunityLink } from "../lib/api";
+import { api, isFocused, setFocused } from "../lib/api";
+import { communityLinksFor } from "../lib/community-links";
 import { useMyEdgeBridge } from "../lib/useMyEdgeBridge";
 import { PopoverLayer } from "@cobblr/platform-web";
 
@@ -259,9 +260,9 @@ export function UserMenu({ themed, inline = false }: { themed: boolean; inline?:
           )}
           {/* Every community place this deployment offers, not just Discord —
               the server owns the list (api/src/platform/community.ts). An older
-              server sends only discord_invite_url, which communityFor() folds
+              server sends only discord_invite_url, which communityLinksFor() folds
               back into a chat entry. */}
-          {communityFor(user).map((l) => (
+          {communityLinksFor(user).map((l) => (
             <a
               key={l.id}
               href={l.url}
@@ -471,9 +472,9 @@ export function UserMenu({ themed, inline = false }: { themed: boolean; inline?:
           )}
           {/* Every community place this deployment offers, not just Discord —
               the server owns the list (api/src/platform/community.ts). An older
-              server sends only discord_invite_url, which communityFor() folds
+              server sends only discord_invite_url, which communityLinksFor() folds
               back into a chat entry. */}
-          {communityFor(user).map((l) => (
+          {communityLinksFor(user).map((l) => (
             <a
               key={l.id}
               href={l.url}
@@ -551,25 +552,3 @@ function SuperAdminChip() {
   );
 }
 
-/** The community places to offer, tolerating a server that predates the list.
- *
- *  An older api sends only `discord_invite_url`; folding it back into a chat
- *  entry means a mid-upgrade deployment keeps the link it already had rather
- *  than showing nothing. */
-function communityFor(user: {
-  community_links?: CommunityLink[] | null;
-  discord_invite_url?: string | null;
-}): CommunityLink[] {
-  if (user.community_links?.length) return user.community_links;
-  if (user.discord_invite_url) {
-    return [
-      {
-        id: "chat",
-        label: "Community on Discord",
-        url: user.discord_invite_url,
-        blurb: "Ask a question and get an answer the same day.",
-      },
-    ];
-  }
-  return [];
-}

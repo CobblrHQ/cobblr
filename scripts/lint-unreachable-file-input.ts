@@ -16,8 +16,15 @@
  *
  * The check is deliberately literal - a ref attached to `type="file"` needs a
  * `.click()` on it somewhere in the same file - because that is exactly the
- * shape that failed, and a file input opened from another module would be an
- * odd thing to write.
+ * shape that failed.
+ *
+ * The one file input that IS opened from another file is a shared picker: a
+ * `forwardRef` component whose forwarded `ref` lands on the input (the scan
+ * inbox and the dashboard's Photos tile render one `ScanPickerInput`). The
+ * component file cannot open it, so the rule moves to the doors: every render
+ * of such a component must pass a `ref={x}` and call `x.current?.click()` in
+ * that same file. A render with no ref, or a ref nobody clicks, is the same
+ * dead markup one hop away.
  */
 import { readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
@@ -34,11 +41,55 @@ function* walk(dir: string): Generator<string> {
 }
 
 const failures: string[] = [];
+const files = [...walk(join(ROOT, "web/src")), ...walk(join(ROOT, "packages"))];
 
-for (const file of [...walk(join(ROOT, "web/src")), ...walk(join(ROOT, "packages"))]) {
+// A forwardRef component whose forwarded ref is the file input: its doors are
+// its renders, checked below. `const Name = forwardRef<HTMLInputElement, …>(
+// function Name(props, ref) { … <input type="file" ref={ref} /> … })`.
+const pickerComponents = new Map<string, string>();
+for (const file of files) {
   const src = readFileSync(file, "utf8");
+  if (!src.includes('type="file"') || !src.includes("forwardRef")) continue;
+  for (const m of src.matchAll(/(?:const|let)\s+(\w+)\s*=\s*forwardRef<\s*HTMLInputElement\b[\s\S]*?\(\s*function\s+\w*\s*\(([\s\S]*?)\)\s*\{/g)) {
+    const name = m[1]!;
+    // The forwarded ref is the second parameter; the first is usually a
+    // destructured props object, so strip braces before splitting on commas.
+    const ref = (m[2] ?? "").replace(/\{[^}]*\}/g, "props").split(",").map((p) => p.trim()).filter(Boolean)[1];
+    if (!ref) continue;
+    const onFileInput = new RegExp(
+      `<input\\b[^>]*ref=\\{${ref}\\}[^>]*type="file"|<input\\b[^>]*type="file"[^>]*ref=\\{${ref}\\}`,
+      "s",
+    );
+    if (onFileInput.test(src)) pickerComponents.set(name, file);
+  }
+}
+
+for (const file of files) {
+  const src = readFileSync(file, "utf8");
+  for (const [name, home] of pickerComponents) {
+    // A test renders the picker to press it; it is not a door.
+    if (file === home || /\.test\.tsx$/.test(file)) continue;
+    for (const m of src.matchAll(new RegExp(`<${name}\\b([^>]*)>`, "gs"))) {
+      const attrs = m[1] ?? "";
+      const ref = attrs.match(/\bref=\{(\w+)\}/)?.[1];
+      const line = src.slice(0, m.index ?? 0).split("\n").length;
+      if (!ref) {
+        failures.push(
+          `${file.replace(ROOT, "")}:${line} — <${name}> is rendered with no ref.\n` +
+            `    Its file input opens only through a forwarded ref; pass ref={x} and call x.current?.click() from a button.`,
+        );
+      } else if (!new RegExp(`${ref}\\.current\\??\\.click\\(\\)`).test(src)) {
+        failures.push(
+          `${file.replace(ROOT, "")}:${line} — <${name} ref={${ref}}> is never opened.\n` +
+            `    Nothing calls ${ref}.current?.click(), so the picker is hidden markup a user cannot reach.`,
+        );
+      }
+    }
+  }
   if (!src.includes('type="file"')) continue;
+  const forwarded = new Set([...pickerComponents].filter(([, home]) => home === file).map(() => "ref"));
   for (const ref of new Set([...src.matchAll(/ref=\{(\w+)\}/g)].map((m) => m[1]!))) {
+    if (forwarded.has(ref)) continue;
     const onFileInput = new RegExp(
       `<input\\b[^>]*ref=\\{${ref}\\}[^>]*type="file"|<input\\b[^>]*type="file"[^>]*ref=\\{${ref}\\}`,
       "s",

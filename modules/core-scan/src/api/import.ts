@@ -27,6 +27,7 @@ type TenantTrx = Transaction<CoreScanDB>;
 import { asyncHandler, requireRole } from "./util.js";
 import { assembleScanMenu, heuristicMatch, perceiveRow, type ScanMenuEntry } from "../services/matchmaker.js";
 import { INTERNAL_API } from "./inbox.js";
+import { intakeRow } from "../services/intake.js";
 import { assertSafeOutboundUrl } from "../services/enrich.js";
 import { trimCatalogMarginsWithVerdict, type TrimVerdict } from "../services/trim-margins.js";
 import {
@@ -672,9 +673,19 @@ importRouter.post(
             await trx.updateTable("core_scan_inbox_items").set(values).where("id", "=", p.existingId).execute();
             createdIds.push(p.existingId);
           } else {
-            const ins = await trx
-              .insertInto("core_scan_inbox_items")
-              .values({
+            // The one intake (services/intake.ts, #3049). An imported row
+            // arrives with its answers from the source instance, so its plan
+            // runs no pass and announces nothing; the insert still goes
+            // through the one door every row does.
+            const ins = await intakeRow({
+              db: trx,
+              orgId: ctx.org.id,
+              orgSlug: ctx.org.slug,
+              userId: user?.id ?? null,
+              token: null,
+              baseUrl: INTERNAL_API,
+              door: "import",
+              values: {
                 ...values,
                 created_by_user_id: user?.id ?? null,
                 // Sessions group by TIME, so stamping import-time here would
@@ -682,10 +693,9 @@ importRouter.post(
                 ...(i.x_created_at && !Number.isNaN(Date.parse(i.x_created_at))
                   ? { created_at: new Date(i.x_created_at) }
                   : {}),
-              })
-              .returning("id")
-              .executeTakeFirstOrThrow();
-            createdIds.push(ins.id);
+              },
+            });
+            createdIds.push(ins.row.id);
           }
         }
 

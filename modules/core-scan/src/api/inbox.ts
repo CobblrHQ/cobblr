@@ -75,6 +75,7 @@ import { resolveNativeIdentity } from "../native-identity.js";
 import { asyncHandler, badBody, requireRole } from "./util.js";
 import { noteScanCaptured } from "../services/activation.js";
 import { downloadCatalogImage, enrichBarcodeItem, isJunkName, STORE_CODE_NOTE } from "../services/enrich.js";
+import { intakeRow, pictureSearchAfterMatch, registerMatchRunners, rowShape, typedIdentifier } from "../services/intake.js";
 import { committedImagePath, commitThumbPath, itemPhotos } from "../services/committed-image.js";
 import { clampEntityName } from "../services/item-name.js";
 import { addedPhotoIntent } from "../services/crosscheck-policy.js";
@@ -147,6 +148,8 @@ import {
   type SourceConflict,
 } from "@cobblr/platform-contract/acquisition-source";
 import { applyNameFacts, nameFactWords } from "../services/name-facts.js";
+import { applyPersonName, withPersonName } from "../services/user-name.js";
+import { displayName } from "@cobblr/platform-contract/display-identity";
 import { extractLocation, type LocationLite } from "../services/note-location.js";
 import { suggestLocationForItem } from "../services/suggest-location.js";
 import { normaliseCategory } from "@cobblr/platform-contract/category-reconcile";
@@ -155,6 +158,16 @@ import { receiptRecord, type ReceiptLineMeta } from "../services/receipt-record.
 import { runReceiptBackfill } from "../services/receipt-backfill.js";
 
 export const inboxRouter = Router({ mergeParams: true });
+
+// The intake plan's match passes (services/intake.ts) live here, beside the
+// matchmaker's request-side half; registered at load so every door's plan
+// can reach them without an import cycle. A fresh row is matched with force
+// (nothing to skip yet); the barcode race and the photo wire are matched
+// once their identify has landed.
+registerMatchRunners({
+  match: (o) => matchItem({ ...o, force: true }),
+  matchWhenEnriched: (o) => autoMatchWhenEnriched(o),
+});
 
 // Internal self-call base for the create/enrich loopbacks below. These calls
 // re-issue through our OWN api (to inherit requireAuth + withTenant + role
@@ -597,9 +610,21 @@ inboxRouter.post(
     // and its "done" stamp go on at insert, so the scanner's sheet reads the
     // row's state on the first paint instead of "Identifying..." (#3017).
     const storeStamps = storeCodeInsertStamps(body.barcode);
-    const inserted = await db
-      .insertInto("core_scan_inbox_items")
-      .values({
+    const token = bearer(req);
+    // The one intake (services/intake.ts, #3049): the insert, the shape's
+    // passes in their order (the catalog chain raced inline for a barcode
+    // within the budget, the photo wire, the match once a name exists), and
+    // the received event. This door adds nothing to the plan.
+    const admitted = await intakeRow({
+      db,
+      orgId: ctx.org.id,
+      orgSlug: ctx.org.slug,
+      userId: session.id,
+      token,
+      baseUrl: (req.headers["x-cobblr-base-url"] as string | undefined) ?? INTERNAL_API,
+      visitorIp: req.ip ?? null,
+      door: "scan",
+      values: {
         source_kind: body.source_kind,
         barcode_text: body.barcode ?? null,
         source_url: body.source_url ?? null,
@@ -618,94 +643,12 @@ inboxRouter.post(
               suggested_metadata: JSON.stringify({ code_type: storeStamps.code_type }) as never,
             }
           : {}),
-      })
-      .returningAll()
-      .executeTakeFirstOrThrow();
-
-    void platform().events.emit("core-scan.scan.received", {
-      orgId: ctx.org.id,
-      visitor_ip: req.ip ?? null,
-      itemId: inserted.id,
-      barcode: inserted.barcode_text,
-      sourceKind: inserted.source_kind,
+      },
+      // Race inline enrichment against the budget. Whichever lands first
+      // wins the response; the other keeps running detached.
+      inlineBudgetMs: body.enrich_ms ?? 12_000,
     });
-
-    // Race inline enrichment against the budget. Whichever lands
-    // first wins the response; the other keeps running detached.
-    const budget = body.enrich_ms ?? 12_000;
-    const token = bearer(req);
-    if (body.barcode && token) {
-      const baseUrl =
-        (req.headers["x-cobblr-base-url"] as string | undefined) ?? INTERNAL_API;
-      const enrichTask = enrichBarcodeItem({
-        db,
-        orgId: ctx.org.id,
-        itemId: inserted.id,
-        orgSlug: ctx.org.slug,
-        bearer: token,
-        baseUrl,
-        upc: body.barcode,
-        // The person, so their own connection serves every AI call this
-        // lookup makes; without it the step ran as nobody and a "just me"
-        // connection served nothing (#2846).
-        userId: sessionUser(req)?.id ?? null,
-      })
-        .catch((err) =>
-          console.error("[core-scan] enrich threw:", (err as Error).message),
-        )
-        .then(() =>
-          platform().events.emit("core-scan.scan.enriched", {
-            orgId: ctx.org.id,
-            itemId: inserted.id,
-          }),
-        );
-
-      const timed = new Promise<"timeout">((resolve) =>
-        setTimeout(() => resolve("timeout"), budget),
-      );
-      const raced = await Promise.race([enrichTask, timed]);
-
-      // The lookup outran its budget. It is still going and will fill this in,
-      // but the row we are about to return would otherwise carry a null note —
-      // indistinguishable from "nobody looked", which is what a scan on a slow
-      // connection looks like today.
-      //
-      // Conditional on ai_notes still being null, so a result that lands in the
-      // gap between here and the read-back is never clobbered by this.
-      if (raced === "timeout") {
-        await db
-          .updateTable("core_scan_inbox_items")
-          .set({ ai_notes: "Still looking this up. It will fill in shortly." })
-          .where("id", "=", inserted.id)
-          .where("ai_notes", "is", null)
-          .execute()
-          .catch((err) => console.error("[core-scan] timeout note failed:", (err as Error).message));
-      }
-      // Read back the (possibly-enriched) row to return current state.
-    } else if (body.source_kind === "url" && body.source_url && token) {
-      // URL intake (incl. bulk paste): enrich DETACHED via the same pipeline —
-      // classifyScanCode routes a URL to the vendor resolver, then web search.
-      // Detached (not raced) so pasting many URLs stays snappy; the inbox poll
-      // swaps in each result as it lands.
-      const baseUrl = (req.headers["x-cobblr-base-url"] as string | undefined) ?? INTERNAL_API;
-      void enrichBarcodeItem({
-        db,
-        orgId: ctx.org.id,
-        itemId: inserted.id,
-        orgSlug: ctx.org.slug,
-        bearer: token,
-        baseUrl,
-        upc: body.source_url,
-        userId: sessionUser(req)?.id ?? null,
-      })
-        .catch((err) => console.error("[core-scan] url enrich threw:", (err as Error).message))
-        .then(() => platform().events.emit("core-scan.scan.enriched", { orgId: ctx.org.id, itemId: inserted.id }));
-    }
-    // Photo-only scans (no barcode) are identified by the autonomous
-    // photo-sort WIRE (core-scan.scan.received → core-scan:identify-photo,
-    // seeded on enable) — fired detached via the emit above, so intake
-    // stays instant and the user can edit / disable it on /wires.
-
+    const inserted = admitted.row;
     // Re-acquire the tenant DB for the read-back. A slow inline enrichment
     // (go-upc's website fetch, the web-search/vision floor) leaves the pool
     // idle long enough that the idle reaper (`releaseIdleTenantPool`) can
@@ -719,24 +662,6 @@ inboxRouter.post(
       .where("id", "=", inserted.id)
       .executeTakeFirstOrThrow();
 
-    // Intake owns the matchmaker: schedule it ONCE, detached, server-side —
-    // it waits for enrichment (barcode overrun or the photo wire) and then
-    // routes + fills fields. No webapp needs to be open; page loads never
-    // re-trigger it (matched_at stamp + in-flight guard).
-    if (token) {
-      autoMatchWhenEnriched({
-        orgId: ctx.org.id,
-        orgSlug: ctx.org.slug,
-        token,
-        baseUrl: (req.headers["x-cobblr-base-url"] as string | undefined) ?? INTERNAL_API,
-        itemId: inserted.id,
-        // The scanning person rides into the detached match, so the model
-        // routes through their own connection. Without this every fresh scan
-        // was routed by keywords under a working "just me" connection and the
-        // card said "the AI didn't answer" for a question never asked (#2846).
-        userId: sessionUser(req)?.id ?? null,
-      });
-    }
     // Served like every other row: the scanner's sheet reads this response
     // first and the row's state must be on it (review_reason, tool_hints),
     // not only on the poll that follows (#3017).
@@ -804,10 +729,27 @@ inboxRouter.post(
     }
 
     noteScanCaptured(ctx.org.id, session.id, "note");
-    const inserted = await db
-      .insertInto("core_scan_inbox_items")
-      .values({
+    // What was typed decides the shape (services/intake.ts, #3049): a product
+    // code takes the catalog chain like a scanned one, a model or part
+    // number ("PB287Q") goes to the web before the match, and a phrase goes
+    // straight to the matchmaker with a picture search after. The door
+    // stamps a typed product code as the row's barcode so every reader of
+    // the row (the tracked-match finder, the card) sees it as one.
+    const typed = typedIdentifier(itemName);
+    const token = bearer(req);
+    const admitted = await intakeRow({
+      db,
+      orgId: ctx.org.id,
+      orgSlug: ctx.org.slug,
+      userId: session.id,
+      token,
+      baseUrl: (req.headers["x-cobblr-base-url"] as string | undefined) ?? INTERNAL_API,
+      visitorIp: req.ip ?? null,
+      door: "note",
+      values: {
         source_kind: "note",
+        ...(typed?.kind === "code" && !/^https?:\/\//i.test(typed.code) ? { barcode_text: typed.code } : {}),
+        ...(typed?.kind === "code" && /^https?:\/\//i.test(typed.code) ? { source_url: typed.code } : {}),
         // The cleaned item phrase is the provisional name; the FULL raw text
         // stays as the matchmaker's description so no extraction context is lost.
         suggested_name: itemName.slice(0, 300),
@@ -816,33 +758,11 @@ inboxRouter.post(
         scan_area: scanArea,
         target_location_id: locationId,
         created_by_user_id: session.id,
-      })
-      .returningAll()
-      .executeTakeFirstOrThrow();
-
-    void platform().events.emit("core-scan.scan.received", {
-      orgId: ctx.org.id,
-      visitor_ip: req.ip ?? null,
-      itemId: inserted.id,
-      barcode: null,
-      sourceKind: "note",
+      },
     });
-
-    // No enrichment to wait for — route immediately, detached. The web polls
-    // /inbox for the candidates (same passive "AI is reading…" pulse as a scan).
-    const token = bearer(req);
-    if (token) {
-      const baseUrl = (req.headers["x-cobblr-base-url"] as string | undefined) ?? INTERNAL_API;
-      void matchItem({
-        orgId: ctx.org.id, userId: sessionUser(req)?.id ?? null,
-        orgSlug: ctx.org.slug,
-        token,
-        baseUrl,
-        itemId: inserted.id,
-        force: true,
-      }).catch((err) => console.error("[core-scan] note match threw:", (err as Error).message));
-    }
-    res.status(201).json(inserted);
+    // Served like every other row (#3017): the dashboard's card reads this
+    // response first and shows the row's progress from it.
+    res.status(201).json(await served(req, admitted.row as never));
   }),
 );
 
@@ -910,9 +830,20 @@ async function materializeReceiptLines(opts: {
   };
   const rows: Array<{ id: string }> = [];
   for (const line of opts.receipt.items) {
-    const inserted = await opts.db
-      .insertInto("core_scan_inbox_items")
-      .values({
+    // The one intake (services/intake.ts, #3049): a receipt line's plan is
+    // the match, then the picture searched with the category the match
+    // settled on. No picture at insert: a bare noun plus the shop's name
+    // answers with the shop's packaged catalogue, a tin of cherry tomatoes
+    // for fresh Roma tomatoes (2026-09-06).
+    const admitted = await intakeRow({
+      db: opts.db,
+      orgId: opts.orgId,
+      orgSlug: opts.orgSlug,
+      userId: opts.userId,
+      token: opts.token,
+      baseUrl: opts.baseUrl,
+      door: "receipt",
+      values: {
         source_kind: "receipt",
         scan_batch_id: opts.batchId,
         suggested_name: line.description.slice(0, 300),
@@ -948,46 +879,9 @@ async function materializeReceiptLines(opts: {
           ...(line.discount ? { line_discount: line.discount, line_net: lineNet(line) } : {}),
         }) as never,
         created_by_user_id: opts.userId,
-      })
-      .returningAll()
-      .executeTakeFirstOrThrow();
-    rows.push(inserted);
-    void platform().events.emit("core-scan.scan.received", {
-      orgId: opts.orgId,
-      itemId: inserted.id,
-      barcode: null,
-      sourceKind: "receipt",
+      },
     });
-    // A receipt line has its NAME from the moment it exists, so it can go
-    // looking for a picture straight away. Nothing did: the catalog-photo pick
-    // is wired to scan.ENRICHED, which a receipt line never emits (that event
-    // means "a name exists now", and for a photo scan it arrives after the
-    // vision pass; for these it was true at insert and simply never announced).
-    // So a receipt turned into four rows with no pictures at all.
-    //
-    // The shop rides along to RANK the results, not to search them: a receipt
-    // says "Croissant" and never who made it, and searching "Lidl Croissant"
-    // drags the pool into that shop's packaged own-brand catalogue, which
-    // fetched a tin of cherry tomatoes for a line of fresh Roma tomatoes.
-    // No picture at insert. A receipt line has no category until it is
-    // matched, and searching a bare noun plus the shop's name answers with the
-    // shop's packaged catalogue - a tin of cherry tomatoes for fresh Roma
-    // tomatoes (2026-09-06). matchItem fetches the picture once routing has
-    // said what the thing is; the tile fills a few seconds later and right.
-  }
-  // Route each line against the menu, detached — no enrichment to wait for.
-  if (opts.token) {
-    for (const row of rows) {
-      void matchItem({
-        orgId: opts.orgId,
-        userId: opts.userId,
-        orgSlug: opts.orgSlug,
-        token: opts.token,
-        baseUrl: opts.baseUrl,
-        itemId: row.id,
-        force: false,
-      }).catch((err) => console.error("[core-scan] receipt match threw:", (err as Error).message));
-    }
+    rows.push({ id: admitted.row.id });
   }
   return rows;
 }
@@ -1923,7 +1817,8 @@ inboxRouter.patch(
       parsed.data.reviewed !== undefined ||
       parsed.data.keep_grouped !== undefined ||
       parsed.data.photo_wanted !== undefined ||
-      parsed.data.fields !== undefined
+      parsed.data.fields !== undefined ||
+      parsed.data.name !== undefined
     ) {
       const cur = await db
         .selectFrom("core_scan_inbox_items")
@@ -1945,6 +1840,11 @@ inboxRouter.patch(
         if (Object.keys(stamps).length) meta[FIELD_PROVENANCE_KEY] = stamps;
         else delete meta[FIELD_PROVENANCE_KEY];
       }
+      // The name is a field (#2982): the person's is kept on the row and
+      // stamped person, so the re-run that rewrites the column never shows
+      // over it (services/user-name.ts; every reader resolves through the
+      // contract's displayName).
+      if (parsed.data.name !== undefined) meta = applyPersonName(meta, parsed.data.name);
       if (parsed.data.box_state !== undefined) {
         if (parsed.data.box_state === null) delete meta.box_state;
         else meta.box_state = parsed.data.box_state;
@@ -2406,7 +2306,7 @@ inboxRouter.post(
     const body: Record<string, unknown> = {
       // Entity names cap at 160 (the modules' own create schemas); a catalog
       // title just gets cut there - a long name must never fail the commit.
-      name: clampEntityName(parsed.data.name ?? row.suggested_name ?? "Untitled"),
+      name: clampEntityName(parsed.data.name ?? displayName(row) ?? "Untitled"),
       manufacturer: row.suggested_manufacturer ?? undefined,
       // A serial/service tag (vision-read) OR a decoder-mapped value (a VIN) →
       // the destination table's NATIVE serial_number field (inventory/assets/
@@ -2799,7 +2699,7 @@ inboxRouter.post(
     // anyone reaching for the (operator-only) green button. Fire-and-forget;
     // inert unless the resolver + a correction token are configured.
     if (row.barcode_text) {
-      const committedName = String(body.name ?? row.suggested_name ?? "").trim();
+      const committedName = String(body.name ?? displayName(row) ?? "").trim();
       const renamed = meaningfullyChanged(row.suggested_name, committedName);
       if (committedName) {
         void reportBarcodeCorrection({
@@ -3268,8 +3168,9 @@ async function served<T extends ScanTriageRow & {
   suggested_manufacturer?: string | null;
   suggested_candidates?: unknown;
   suggested_metadata?: unknown;
-}>(req: Request, row: T): Promise<T & { needs_review: boolean; waiting_days: number | null }> {
-  return withTitle(withResolvedOffers(row, await liveTablesFor(req)), await containerKindsFor(req));
+}>(req: Request, row: T): Promise<T & { needs_review: boolean; waiting_days: number | null; group_image_file_id: string | null }> {
+  const [withGroup] = await withGroupImages(req, [row]);
+  return withTitle(withResolvedOffers(withGroup!, await liveTablesFor(req)), await containerKindsFor(req));
 }
 
 async function servedAll<T extends ScanTriageRow & {
@@ -3277,10 +3178,43 @@ async function servedAll<T extends ScanTriageRow & {
   suggested_manufacturer?: string | null;
   suggested_candidates?: unknown;
   suggested_metadata?: unknown;
-}>(req: Request, rows: T[]): Promise<Array<T & { needs_review: boolean; waiting_days: number | null }>> {
+}>(req: Request, rows: T[]): Promise<Array<T & { needs_review: boolean; waiting_days: number | null; group_image_file_id: string | null }>> {
   const live = await liveTablesFor(req);
   const containers = await containerKindsFor(req);
-  return rows.map((r) => withTitle(withResolvedOffers(r, live), containers));
+  return (await withGroupImages(req, rows)).map((r) => withTitle(withResolvedOffers(r, live), containers));
+}
+
+/** A split child's group shot, served on the child as `group_image_file_id`
+ *  (the parent's own photo), so the pictures resolver (the contract's
+ *  scan-pictures) can list it beside the child's crop without any surface
+ *  fetching the parent (#3046). One read for however many rows; a row that
+ *  is not a split child, or whose parent is gone, carries null. */
+async function withGroupImages<T extends { suggested_metadata?: unknown }>(
+  req: Request,
+  rows: T[],
+): Promise<Array<T & { group_image_file_id: string | null }>> {
+  const parentOf = (r: T): string | null => {
+    const from = (r.suggested_metadata as { split_from?: unknown } | null)?.split_from;
+    return typeof from === "string" && from ? from : null;
+  };
+  const parents = [...new Set(rows.map(parentOf).filter((id): id is string => !!id))];
+  const images = new Map<string, string | null>();
+  if (parents.length) {
+    try {
+      const found = await tenantDb(req)
+        .selectFrom("core_scan_inbox_items")
+        .select(["id", "image_file_id"])
+        .where("id", "in", parents)
+        .execute();
+      for (const p of found) images.set(p.id, p.image_file_id);
+    } catch (err) {
+      console.error("[core-scan] group images read failed:", (err as Error).message);
+    }
+  }
+  return rows.map((r) => {
+    const parent = parentOf(r);
+    return { ...r, group_image_file_id: parent ? (images.get(parent) ?? null) : null };
+  });
 }
 
 /** The workspace's tables, read once per request however many rows it serves. */
@@ -3325,7 +3259,10 @@ function withTitle<T extends ScanTriageRow & {
     suggested_metadata: (row.suggested_metadata ?? {}) as Record<string, unknown>,
   });
   const withUser = { ...row, suggested_candidates: candidatesWithUserFields(storedCandidateList(row.suggested_candidates), row.suggested_metadata) };
-  const base = titled ? { ...withUser, suggested_name: titled } : withUser;
+  // A name a person gave is theirs, whole: no colour suffix, and the
+  // column a re-run wrote sits beside it as `replaced` (#2982).
+  const named = withPersonName(withUser);
+  const base = named !== withUser ? named : titled ? { ...withUser, suggested_name: titled } : withUser;
   return withTriage(withDisplayCategory(base), containerKinds);
 }
 
@@ -3431,7 +3368,7 @@ async function appendScanHistory(
   db: ReturnType<typeof tenantDb>,
   id: string,
   entry: {
-    action: "rerun" | "replay" | "rerun-hint" | "wrong" | "enrich" | "confirm" | "combine" | "attached" | "split" | "unsplit" | "unconfirm" | "undo-rerun" | "barcode" | "confirm-guess" | "reject-guess";
+    action: "rerun" | "replay" | "rerun-hint" | "wrong" | "enrich" | "confirm" | "combine" | "attached" | "split" | "unsplit" | "unconfirm" | "undo-rerun" | "barcode" | "confirm-guess" | "reject-guess" | "crop-again";
     note?: string | null;
   },
 ): Promise<void> {
@@ -3684,7 +3621,7 @@ inboxRouter.post(
       looksLikeReceiptPhoto({
         observations: typeof storedMeta.photo_observations === "string" ? storedMeta.photo_observations : "",
         category: typeof storedMeta.category === "string" ? storedMeta.category : null,
-        name: row.suggested_name,
+        name: displayName(row),
       })
     ) {
       const routed = await routeScannedReceiptPhoto({
@@ -3717,11 +3654,11 @@ inboxRouter.post(
         // receipt line isn't stuck imageless AND un-rerunnable (reported 2026-07-24: the
         // ↺ button is enabled for name-only items, but the server still rejected).
         // Detached like the photo path; the run ends by stamping finalized_at.
-        if (!row.suggested_name) {
+        if (!displayName(row)) {
           res.status(400).json({ error: { code: "no_input", message: "item has no barcode, photo, or name to look up" } });
           return;
         }
-        const nameQuery = [row.suggested_name, effectiveHint].filter(Boolean).join(" ").trim();
+        const nameQuery = [displayName(row), effectiveHint].filter(Boolean).join(" ").trim();
         const nameBrand = row.suggested_manufacturer;
         await db
           .updateTable("core_scan_inbox_items")
@@ -3799,7 +3736,7 @@ inboxRouter.post(
               pre_rerun: {
                 at: new Date().toISOString(),
                 kind: rerun?.no_ai ? "replay" : "rerun",
-                name: row.suggested_name,
+                name: displayName(row),
                 manufacturer: row.suggested_manufacturer,
                 sku: row.suggested_sku,
                 candidates: row.suggested_candidates ?? [],
@@ -4404,6 +4341,9 @@ const CatalogImageBody = z.union([
       w: z.number().min(0.02).max(1),
       h: z.number().min(0.02).max(1),
     }),
+    /** "group": cut the split child's GROUP shot again into its own picture
+     *  (#3046). Absent: cut the row's own photo into its catalog picture. */
+    source: z.enum(["own", "group"]).optional(),
   }),
 ]);
 
@@ -4611,6 +4551,38 @@ inboxRouter.post(
     // untouched, so the identify photo (and anything already pointing at it)
     // is unaffected.
     if ("crop" in parsed.data) {
+      // "Crop again" on a split child (#3046): the source is the GROUP shot
+      // (the parent's photo) and the cut becomes the child's OWN picture, the
+      // way the split first cut it; the catalog picture is untouched.
+      if (parsed.data.source === "group") {
+        const from = (row.suggested_metadata as { split_from?: string } | null)?.split_from;
+        const parent = from
+          ? await db.selectFrom("core_scan_inbox_items").select("image_file_id").where("id", "=", from).executeTakeFirst()
+          : null;
+        if (!parent?.image_file_id) {
+          res.status(400).json({ error: { code: "no_group_photo", message: "This item was not cut from a group photo, or that photo is gone." } });
+          return;
+        }
+        const cut = await cropRegion(ctx.org.id, parent.image_file_id, parsed.data.crop);
+        if (cut.fileId === null) {
+          res.status(422).json({
+            error: { code: "crop_failed", message: `That photo couldn't be cropped (${cropRefusalWords(cut.reason)}). Try a different region.`, reason: cut.reason },
+          });
+          return;
+        }
+        await db
+          .updateTable("core_scan_inbox_items")
+          .set({
+            image_file_id: cut.fileId,
+            suggested_metadata: mergeMeta({ crop: "ok", split_region: parsed.data.crop, crop_by: "person" }, ["crop_reason"]) as never,
+            updated_at: new Date(),
+          })
+          .where("id", "=", row.id)
+          .execute();
+        await appendScanHistory(db, row.id, { action: "crop-again", note: "cut again from the group photo" });
+        res.json(await served(req, await fresh()));
+        return;
+      }
       if (!row.image_file_id) {
         res.status(400).json({ error: { code: "no_photo", message: "This item has no photo of yours to crop." } });
         return;
@@ -6080,9 +6052,20 @@ inboxRouter.post(
           : cropState === "failed"
             ? `Split from a group photo; its crop could not be cut (${cropRefusalWords(cropReason ?? "no-source")}), so it keeps the group shot. Pick a catalog photo for this one.`
             : "Split from a group photo. It keeps the group shot; pick a catalog photo for this one.";
-      const child = await db
-        .insertInto("core_scan_inbox_items")
-        .values({
+      // The one intake (services/intake.ts, #3049): a split child's plan is
+      // its own product photo searched by its own name (matchItem only
+      // refetches art when it RENAMES an item, and a child keeps the name
+      // the split gave it), then the match.
+      const admitted = await intakeRow({
+        db,
+        orgId: ctx.org.id,
+        orgSlug: ctx.org.slug,
+        userId,
+        token,
+        baseUrl: (req.headers["x-cobblr-base-url"] as string | undefined) ?? INTERNAL_API,
+        visitorIp: req.ip ?? null,
+        door: "split",
+        values: {
           source_kind: "photo",
           barcode_text: null,
           source_url: null,
@@ -6116,42 +6099,10 @@ inboxRouter.post(
               ? { photo_observations: inherited.observation ?? observation, photo_observed_for: row.image_file_id }
               : {}),
           }) as never,
-        } as never)
-        .returningAll()
-        .executeTakeFirstOrThrow();
-      children.push(child);
-      // Give each individual its OWN product photo, searched by its own name.
-      // matchItem only refetches art when it RENAMES an item, and a split child
-      // keeps the name we just gave it — so without this, every child inherits the
-      // group shot (or a crop of it) and never earns real catalog art. This is the
-      // "find an internet image for each one" half of a split, and it's what makes
-      // the children look like records rather than fragments.
-      void refreshCatalogImageByName(
-        ctx.org.id,
-        (child as { id: string }).id,
-        it.name,
-        it.brand,
-      ).catch((err) =>
-        console.error("[core-scan] split-child catalog image failed:", (err as Error).message),
-      );
-      void platform().events.emit("core-scan.scan.received", {
-        orgId: ctx.org.id,
-        visitor_ip: req.ip ?? null,
-        itemId: (child as { id: string }).id,
-        barcode: null,
-        sourceKind: "photo",
+        } as never,
       });
-      if (token) {
-        const baseUrl = (req.headers["x-cobblr-base-url"] as string | undefined) ?? INTERNAL_API;
-        void matchItem({
-          orgId: ctx.org.id, userId: sessionUser(req)?.id ?? null,
-          orgSlug: ctx.org.slug,
-          token,
-          baseUrl,
-          itemId: (child as { id: string }).id,
-          force: true,
-        }).catch((err) => console.error("[core-scan] split-child match threw:", (err as Error).message));
-      }
+      const child = admitted.row;
+      children.push(child);
     }
     // Parent resolves (restorable) — its photo stays for the audit trail.
     // The note it had is kept beside the split's own, so an undo can put it
@@ -6421,7 +6372,8 @@ inboxRouter.post(
     // filing into it, here as on every other reader (resolve-offers.ts): the
     // plan must not promise "Create Yarn" over a Yarn that exists.
     const liveNow = await liveTablesFor(req);
-    const rows = (more ? fetched.slice(0, PAGE) : fetched).map((r) => withResolvedOffers(r, liveNow));
+    // The person's name is the name here as on the card (#2982).
+    const rows = (more ? fetched.slice(0, PAGE) : fetched).map((r) => withPersonName(withResolvedOffers(r, liveNow)));
 
     // Match every row FIRST, so the plan is computed against one consistent
     // picture. Doing it row-by-row while also writing would let an earlier
@@ -7650,8 +7602,11 @@ async function matchItem(opts: MatchItemOpts): Promise<unknown[] | null> {
     // is known, the search can be told "fresh produce" and the ranking can
     // refuse a tin (see refreshCatalogImageByName). Not awaited - the match is
     // settled; the tile fills when the search does.
-    const receiptLine = row.source_kind === "receipt" && !row.catalog_image_file_id && !row.catalog_image_url;
-    if (adoptName || receiptLine) {
+    // The row's plan says whether its picture waits for the match (a receipt
+    // line, a typed phrase or identifier: the category sharpens the search);
+    // a row admitted before the plan reads by its columns (services/intake.ts).
+    const pictureNow = pictureSearchAfterMatch(rowShape(row)) && !row.catalog_image_file_id && !row.catalog_image_url;
+    if (adoptName || pictureNow) {
       const nameForCover = adoptName ? candName : row.suggested_name ?? "";
       const category =
         (candidates[0] as { category?: string } | undefined)?.category ??

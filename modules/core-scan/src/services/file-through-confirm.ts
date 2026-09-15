@@ -14,6 +14,8 @@
 // that skins a module's default table makes no instance, and filing with the
 // candidate's routing token would ask for one that was never created.
 
+import { displayName } from "@cobblr/platform-contract/display-identity";
+
 export interface FilingCandidate {
   module?: string;
   kind?: string;
@@ -26,6 +28,8 @@ export interface FilingCandidate {
 export interface FilingRow {
   id: string;
   suggested_name: string | null;
+  /** Carries a person's own name, which files over the column (#2982). */
+  suggested_metadata?: unknown;
   quantity: number | null;
   suggested_candidates: unknown;
 }
@@ -83,7 +87,7 @@ export function topCandidate(row: FilingRow): FilingCandidate | null {
 
 /** Why an item cannot be filed right now, or null when it can. */
 export function filingBlocker(row: FilingRow): string | null {
-  if (!row.suggested_name) return "needs a name";
+  if (!displayName(row)) return "needs a name";
   const cand = topCandidate(row);
   if (!cand || !cand.module || !cand.kind) return "needs a table to file into";
   return null;
@@ -97,13 +101,13 @@ export async function fileThroughConfirm(
   overrides: { quantity?: number } = {},
 ): Promise<FilingOutcome> {
   const blocker = filingBlocker(row);
-  if (blocker) return { ok: false, item_id: row.id, name: row.suggested_name, reason: blocker };
+  if (blocker) return { ok: false, item_id: row.id, name: displayName(row), reason: blocker };
   const cand = topCandidate(row)!;
   let instance = cand.instance ?? undefined;
   const bundleId = cand.bundle_external_id ?? null;
   if (bundleId) {
     const got = await installer.instanceFor(bundleId, cand.label ?? bundleId);
-    if (!got.ok) return { ok: false, item_id: row.id, name: row.suggested_name, reason: got.reason };
+    if (!got.ok) return { ok: false, item_id: row.id, name: displayName(row), reason: got.reason };
     instance = got.instance ?? undefined;
   }
   try {
@@ -114,7 +118,7 @@ export async function fileThroughConfirm(
         target_module: cand.module,
         target_kind: cand.kind,
         ...(instance ? { instance } : {}),
-        name: row.suggested_name,
+        name: displayName(row),
         quantity: overrides.quantity ?? row.quantity ?? undefined,
         extras: cand.fields ?? {},
         ...(locationId ? { location_id: locationId } : {}),
@@ -128,14 +132,14 @@ export async function fileThroughConfirm(
       } catch {
         /* the status is the message */
       }
-      return { ok: false, item_id: row.id, name: row.suggested_name, reason: msg };
+      return { ok: false, item_id: row.id, name: displayName(row), reason: msg };
     }
     const body = (await r.json()) as { created?: { id?: string; kind?: string } | null; item?: { target_entity_id?: string | null; target_kind?: string | null; target_module?: string | null } };
     const entityId = body.created?.id ?? body.item?.target_entity_id ?? null;
     const tk = body.item?.target_kind ?? null;
     const entityKind = body.created?.kind ?? (tk ? (tk.includes(":") ? tk : body.item?.target_module ? `${body.item.target_module}:${tk}` : tk) : null);
-    return { ok: true, item_id: row.id, name: row.suggested_name ?? "", entity_id: entityId, entity_kind: entityKind };
+    return { ok: true, item_id: row.id, name: displayName(row) ?? "", entity_id: entityId, entity_kind: entityKind };
   } catch (err) {
-    return { ok: false, item_id: row.id, name: row.suggested_name, reason: (err as Error).message };
+    return { ok: false, item_id: row.id, name: displayName(row), reason: (err as Error).message };
   }
 }

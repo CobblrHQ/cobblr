@@ -11,6 +11,7 @@
 // natural throttle for the LLM half; this half is best-effort).
 
 import { isJunkName } from "./enrich.js";
+import { readWebCassette, replayingWeb, writeWebCassette } from "./web-replay.js";
 import { formFactorFromObservation } from "./form-factor.js";
 
 /** The identities the engine is asked with. The wall is scored per
@@ -602,12 +603,20 @@ export function withoutWords(query: string, words: string | null | undefined): s
 }
 
 export async function searchImages(query: string, limit = 8): Promise<DdgImageResult[]> {
+  // A recorded answer under a replay dir, never the network (web-replay.ts).
+  const recorded = readWebCassette<DdgImageResult[]>("images", query);
+  if (recorded) return recorded.slice(0, limit);
+  if (replayingWeb()) return [];
   const ATTEMPTS = 3;
   for (let i = 0; i < ATTEMPTS; i++) {
     const out = await imageSearchOnce(query, limit);
-    if (out.length > 0) return out;
+    if (out.length > 0) {
+      writeWebCassette("images", query, out);
+      return out;
+    }
     if (i < ATTEMPTS - 1) await new Promise((r) => setTimeout(r, 450 * (i + 1)));
   }
+  writeWebCassette("images", query, []);
   return [];
 }
 
@@ -660,12 +669,19 @@ async function textSearchOnce(query: string, limit: number): Promise<DdgTextResu
  * anti-bot flakiness the image endpoint has.
  */
 export async function searchText(query: string, limit = 10): Promise<DdgTextResult[]> {
+  const recorded = readWebCassette<DdgTextResult[]>("text", query);
+  if (recorded) return recorded.slice(0, limit);
+  if (replayingWeb()) return [];
   const ATTEMPTS = 3;
   for (let i = 0; i < ATTEMPTS; i++) {
     const out = await textSearchOnce(query, limit);
-    if (out.length > 0) return out;
+    if (out.length > 0) {
+      writeWebCassette("text", query, out);
+      return out;
+    }
     if (i < ATTEMPTS - 1) await new Promise((r) => setTimeout(r, 450 * (i + 1)));
   }
+  writeWebCassette("text", query, []);
   return [];
 }
 

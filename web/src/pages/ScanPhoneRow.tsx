@@ -8,6 +8,7 @@
 // ("Details"). The tools a person reaches for on a phone sit on the card
 // itself: the camera, Re-run AI with its live running state, and an
 // overflow for the rest. The card's brain (InboxCard) computes everything.
+import { displayName } from "@cobblr/platform-contract/display-identity";
 import { useEffect, useState } from "react";
 import { createPortal } from "react-dom";
 import { Camera, CheckCircle, ChevronDown, ChevronRight, Download, Loader2, MoreHorizontal, RotateCcw, ScanLine, Scissors } from "lucide-react";
@@ -37,10 +38,21 @@ export interface ScanPhoneRowProps {
   subtitle: string;
   /** Amber, one line: the pipeline's warning or the review reason. */
   warning: string | null;
+  /** The one question the row asks, with the answers a tap can give
+   *  (contract: scanReviewQuestions); shown instead of the warning. */
+  question?: {
+    prompt: string;
+    because: string;
+    busy: boolean;
+    choices: Array<{ value: string; source: string; onPick: () => void }>;
+    onType: (() => void) | null;
+  } | null;
   /** The pulse while the AI works. */
   working: string | null;
   /** The last AI run's failure, in words, with Retry beside it. */
-  failure: string | null;
+  /** The failure line, with the way back the contract names: retry the
+   *  lookup, connect a provider, or nothing to press. */
+  failure: { text: string; recovery: "retry" | "connect" | null; connectHref?: string } | null;
   /** The quantity, with its editing flow. */
   quantity: { value: number; busy: boolean; onChange: (n: number) => void };
   /** A few of the destination table's own fields, as compact tokens in the
@@ -79,7 +91,8 @@ export function ScanPhoneRow(p: ScanPhoneRowProps) {
   const { item } = p;
   const [pickOpen, setPickOpen] = useState(false);
   const [moreOpen, setMoreOpen] = useState(false);
-  const nameless = !item.suggested_name;
+  const name = displayName(item);
+  const nameless = !name;
   const stop = (e: React.SyntheticEvent) => e.stopPropagation();
   // The right column's budget at 393px: the card's 24px of padding and a
   // 64px photo column with a 12px gap leave 293px; the quantity control
@@ -126,7 +139,7 @@ export function ScanPhoneRow(p: ScanPhoneRowProps) {
             Details <ChevronRight size={14} />
           </button>
           <span data-name className={"mr-2 text-[15px] " + (nameless ? "text-muted dark:text-slate-400" : "font-medium text-content dark:text-mortar-100")}>
-            {item.suggested_name ?? (p.working ? "Reading…" : "Name this item")}
+            {name ?? (p.working ? "Reading…" : "Name this item")}
           </span>
           {p.subtitle && <span className="mr-2 font-mono text-[11px] text-faint dark:text-slate-500">{p.subtitle}</span>}
           {p.chips.map((c) => (
@@ -142,18 +155,55 @@ export function ScanPhoneRow(p: ScanPhoneRowProps) {
           ))}
         </div>
         {p.working && <div className="text-[11px] text-accent animate-pulse">{p.working}</div>}
-        {p.warning && <div className="line-clamp-2 text-[11px] text-amber-600 dark:text-amber-400">{p.warning}</div>}
-        {p.failure && (
-          <div className="flex items-center gap-2 text-[11px] text-amber-700 dark:text-amber-400" onClick={stop}>
-            <span className="line-clamp-2 min-w-0">{p.failure}</span>
-            {p.rerun.can && (
-              <button type="button" onClick={p.rerun.onRun} disabled={p.rerun.running} className="shrink-0 rounded border border-amber-400/60 px-2 py-0.5 font-medium disabled:opacity-50">
-                Retry
-              </button>
+        {p.question && (
+          <div className="text-[11px] leading-5 text-amber-700 dark:text-amber-400" title={p.question.because} data-testid="review-questions">
+            <span className="mr-1 font-medium">{p.question.prompt}{p.question.choices.length ? ":" : ":"}</span>
+            {p.question.choices.length ? (
+              p.question.choices.map((c, i) => (
+                <span key={c.value}>
+                  {i > 0 && <span className="mx-1 text-faint">or</span>}
+                  <button
+                    type="button"
+                    disabled={p.question!.busy}
+                    onClick={c.onPick}
+                    className="min-h-7 rounded-md border border-amber-400/60 bg-amber-50 dark:bg-amber-900/20 px-2 font-medium text-amber-800 dark:text-amber-200 disabled:opacity-50"
+                    title={c.source}
+                  >
+                    {c.value}
+                  </button>
+                </span>
+              ))
+            ) : (
+              <>
+                <span className="text-faint">{p.question.because}. </span>
+                {p.question.onType && (
+                  <button type="button" onClick={p.question.onType} className="underline decoration-dotted underline-offset-2">
+                    Type it
+                  </button>
+                )}
+              </>
             )}
           </div>
         )}
-        {p.tracked && <div className="line-clamp-1 text-[11px] text-moss-700 dark:text-moss-400">{p.tracked}</div>}
+        {p.warning && <div className="line-clamp-2 text-[11px] text-amber-600 dark:text-amber-400">{p.warning}</div>}
+        {p.failure && (
+          <div className="flex items-center gap-2 text-[11px] text-amber-700 dark:text-amber-400" onClick={stop}>
+            <span className="line-clamp-2 min-w-0">{p.failure.text}</span>
+            {p.failure.recovery === "retry" && p.rerun.can && (
+              <button type="button" onClick={p.rerun.onRun} disabled={p.rerun.running} className="shrink-0 rounded border border-amber-400/60 px-2 py-0.5 font-medium">
+                Retry
+              </button>
+            )}
+            {p.failure.recovery === "connect" && p.failure.connectHref && (
+              <a href={p.failure.connectHref} className="shrink-0 rounded border border-amber-400/60 px-2 py-0.5 font-medium">
+                Connect
+              </a>
+            )}
+          </div>
+        )}
+        {p.tracked && (
+          <div className={"line-clamp-1 text-[11px] " + (/^Possible match/.test(p.tracked) ? "text-amber-700 dark:text-amber-400" : "text-moss-700 dark:text-moss-400")}>{p.tracked}</div>
+        )}
         {p.multi && (
           <div className="flex items-center gap-1.5 text-[11px]" onClick={stop}>
             <span className="text-content dark:text-mortar-100">{p.multi.distinct} things in this photo</span>
@@ -194,7 +244,7 @@ export function ScanPhoneRow(p: ScanPhoneRowProps) {
               <MoreHorizontal size={14} />
             </button>
           )}
-          {moreOpen && <PhoneActionSheet title={item.suggested_name ?? "This item"} actions={p.more} onClose={() => setMoreOpen(false)} />}
+          {moreOpen && <PhoneActionSheet title={name ?? "This item"} actions={p.more} onClose={() => setMoreOpen(false)} />}
           </span>
         </div>
         {p.commit && (

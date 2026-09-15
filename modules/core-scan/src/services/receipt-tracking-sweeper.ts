@@ -20,15 +20,19 @@ import { sql, type Kysely } from "kysely";
 import { platform } from "@cobblr/platform-contract";
 import { arrivedEverywhere, parcelAudience } from "@cobblr/platform-contract";
 
-let intervalHandle: ReturnType<typeof setInterval> | null = null;
-
 const TICK_MS = 60 * 60 * 1000; // hourly; the capability's cadence is what makes it sparse
+export const RECEIPT_TRACKING_PASS = "core-scan.receipt-tracking-sweep";
 
 export function startReceiptTrackingSweeper(): void {
-  if (intervalHandle) clearInterval(intervalHandle);
-  intervalHandle = setInterval(safeTick, TICK_MS);
-  setTimeout(safeTick, 50_000); // after boot settles, and after purchases' sweep
-  console.log(`[core-scan] receipt tracking sweeper started — every ${TICK_MS / 60_000} min`);
+  // The walk is the kernel's (platform().sweeps, #3036): this registers the
+  // per-workspace visit and its cadence and owns no timer.
+  platform().sweeps.register({
+    name: RECEIPT_TRACKING_PASS,
+    everyMs: TICK_MS,
+    module: "core-scan",
+    visit: ({ orgId, db, now }) => visitWorkspace(orgId, db as Kysely<unknown>, now, {}),
+  });
+  console.log(`[core-scan] receipt tracking sweeper registered — every ${TICK_MS / 60_000} min`);
 
   // A bridge push means the carrier already answered: re-check that number NOW,
   // off-cadence, instead of letting the news wait for the next polling window.
@@ -47,19 +51,6 @@ export function startReceiptTrackingSweeper(): void {
       });
     });
   });
-}
-
-async function safeTick(): Promise<void> {
-  try {
-      // One process only: every api runs this loop, and more than one api
-      // runs against a single database (the canary channel; a rolling deploy).
-      // Unguarded, each tick's notifications and writes happen twice.
-    await platform().exclusive.run("core-scan.receipt-tracking-sweep", async () => {
-      await receiptTrackingTick();
-    });
-  } catch (err) {
-    console.error("[core-scan] receipt tracking sweep failed:", (err as Error).stack ?? (err as Error).message);
-  }
 }
 
 interface TrackedRow {
@@ -138,38 +129,45 @@ export function subjectOf(row: { vendor: string | null; label: string | null }):
   return label || "A parcel you are tracking";
 }
 
-/** One sweep. Exported so a test or a CLI can fire it deterministically. */
+/** One sweep. Exported so a test or a CLI can fire it deterministically. A
+ *  forced re-check of one parcel (`number`, `force`) visits that workspace
+ *  directly rather than through the pass's walk: it is not a walk, and the
+ *  walk's lock may be held by the hourly round at that moment. */
 export async function receiptTrackingTick(
   opts: { orgId?: string; now?: Date; number?: string; force?: boolean } = {},
 ): Promise<{ checked: number; notified: number }> {
   const now = opts.now ?? new Date();
+  if (opts.orgId && (opts.number || opts.force)) {
+    const orgId = opts.orgId;
+    return platform().tenants.withDb(orgId, (raw) => visitWorkspace(orgId, raw as Kysely<unknown>, now, opts));
+  }
+  const run = await platform().sweeps.run(RECEIPT_TRACKING_PASS, { orgIds: opts.orgId ? [opts.orgId] : undefined, now });
   let checked = 0;
   let notified = 0;
-
-  const meta = platform().db.meta as unknown as Kysely<{
-    orgs: { id: string };
-    org_modules: { org_id: string; module_name: string };
-  }>;
-  let orgsQ = meta
-    .selectFrom("orgs")
-    .innerJoin("org_modules as m", (j) =>
-      j.onRef("m.org_id", "=", "orgs.id").on("m.module_name", "=", "core-scan"),
-    )
-    .select(["orgs.id"]);
-  if (opts.orgId) orgsQ = orgsQ.where("orgs.id", "=", opts.orgId);
-
-  let orgs: { id: string }[];
-  try {
-    orgs = await orgsQ.execute();
-  } catch (err) {
-    console.warn("[core-scan] tracking sweep skipped — meta read failed:", (err as Error).message);
-    return { checked: 0, notified: 0 };
+  for (const { result } of run.results) {
+    const r = result as { checked?: number; notified?: number } | void;
+    checked += r?.checked ?? 0;
+    notified += r?.notified ?? 0;
   }
+  if (checked || notified) {
+    console.log(`[core-scan] receipt tracking: ${checked} checked, ${notified} announced`);
+  }
+  return { checked, notified };
+}
 
-  for (const { id: orgId } of orgs) {
-    try {
-      await platform().tenants.withDb(orgId, async (raw) => {
-        const tdb = raw as Kysely<unknown>;
+/** One workspace: every receipt still waiting is checked with its carrier
+ *  or its date, and an arrival is announced once. */
+async function visitWorkspace(
+  orgId: string,
+  tdb: Kysely<unknown>,
+  now: Date,
+  opts: { number?: string; force?: boolean },
+): Promise<{ checked: number; notified: number }> {
+  let checked = 0;
+  let notified = 0;
+  {
+    {
+      {
         // Only receipts still WAITING to be filed. Once every line has been
         // confirmed or discarded the inbox is done with it, and the order (if
         // one was made) carries the tracking from there.
@@ -218,7 +216,7 @@ export async function receiptTrackingTick(
           rows = ((await tdb.executeQuery(q)) as { rows: TrackedRow[] }).rows;
         } catch (err) {
           // A workspace whose core-scan migrations have not caught up yet.
-          if ((err as Error).message.includes("does not exist")) return;
+          if ((err as Error).message.includes("does not exist")) return { checked, notified };
           throw err;
         }
 
@@ -345,15 +343,8 @@ export async function receiptTrackingTick(
             console.warn(`[core-scan] tracking check failed for receipt ${row.id}:`, (err as Error).message);
           }
         }
-      });
-    } catch (err) {
-      // One workspace's failure never stops the rest.
-      console.warn(`[core-scan] tracking sweep failed for org ${orgId}:`, (err as Error).message);
+      }
     }
-  }
-
-  if (checked || notified) {
-    console.log(`[core-scan] receipt tracking: ${checked} checked, ${notified} announced`);
   }
   return { checked, notified };
 }

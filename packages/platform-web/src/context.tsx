@@ -9,6 +9,10 @@ import type { PlatformWebApi } from "./types";
 interface PlatformWebCtx {
   api: PlatformWebApi;
   orgSlug: string;
+  /** The viewer's role in the workspace ("owner" | "admin" | "member" | …),
+   *  when the host knows it; shared UI hides a configuration write (a new
+   *  dropdown choice) from a viewer the server would refuse. */
+  role?: string | null;
   /** True when the active workspace is a LOCKED managed vertical app
    *  ("Cobblr for Yarn"). Lets shared/module UI trim platform-only chrome
    *  (e.g. the QR-label option) without importing the host's org context. */
@@ -51,6 +55,7 @@ export function useFlowHost(): FlowHostCtx {
 export function PlatformWebProvider({
   api,
   orgSlug,
+  role = null,
   appMode = false,
   flows,
   cobbIcon,
@@ -58,6 +63,7 @@ export function PlatformWebProvider({
 }: {
   api: PlatformWebApi;
   orgSlug: string;
+  role?: string | null;
   appMode?: boolean;
   cobbIcon?: ComponentType<{ size?: number; title?: string }>;
   /** id → flow component. Omit to disable flows (openFlow becomes a no-op). */
@@ -75,7 +81,7 @@ export function PlatformWebProvider({
   );
   const Active = active && flows ? flows[active.flow] : null;
   return (
-    <Ctx.Provider value={{ api, orgSlug, appMode, cobbIcon }}>
+    <Ctx.Provider value={{ api, orgSlug, role, appMode, cobbIcon }}>
       <FlowCtx.Provider value={{ openFlow }}>
         {children}
         {active && Active && <Active args={active.args} onClose={() => setActive(null)} />}

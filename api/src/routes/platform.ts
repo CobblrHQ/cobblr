@@ -377,6 +377,20 @@ const InvokeBody = z.object({
   args: z.record(z.unknown()).optional(),
 });
 
+/** The door has one slot called entityKind, for the record an action runs
+ *  on, and the field actions take an argument of the same name for the kind
+ *  whose field they change. A workspace action arrived with the kind in the
+ *  slot and none in its args, and refused ("entity_kind and field are
+ *  required", from "remove tea category from inventory"). A workspace action
+ *  has no record, so a kind in that slot can only mean the argument; it is
+ *  folded in when the args do not name one. */
+function argsOf(body: z.infer<typeof InvokeBody>, isWorkspaceAction: boolean): Record<string, unknown> | undefined {
+  if (isWorkspaceAction && body.entityKind && !body.entityId && body.args?.entity_kind === undefined) {
+    return { ...(body.args ?? {}), entity_kind: body.entityKind };
+  }
+  return body.args;
+}
+
 // POST /:slug/actions/plan — what an action WOULD touch, before anyone runs
 // it: the list a confirm card shows. Same body and same gate as invoke; it
 // writes nothing. An action with no planner answers { plan: null } and its
@@ -397,6 +411,7 @@ platformOrgRouter.post(
       }
       if (!(await requireCapability(req, res, parsed.data.actionId))) return;
       const isWorkspaceAction = (await getActionScope(parsed.data.actionId)) === "workspace";
+      const args = argsOf(parsed.data, isWorkspaceAction);
       const plan = await planFor(parsed.data.actionId, {
         orgId: req.tenant!.org.id,
         userId: req.session!.id,
@@ -406,7 +421,7 @@ platformOrgRouter.post(
           : {}),
         event: {
           name: null,
-          payload: parsed.data.args ?? {},
+          payload: args ?? {},
           actor: {
             user_id: req.session!.id,
             display_name: req.session!.display_name,
@@ -417,7 +432,7 @@ platformOrgRouter.post(
           timestamp: new Date().toISOString(),
           trigger_type: "user-invoked",
         },
-        args: parsed.data.args ?? {},
+        args: args ?? {},
       });
       // { plan } or { plan: null, error }: the reason travels, so the caller
       // can hand it to the model instead of falling back to a bare label.
@@ -524,6 +539,7 @@ platformOrgRouter.post(
       // "Unknown action" below.)
       const isWorkspaceAction =
         (await getActionScope(parsed.data.actionId)) === "workspace";
+      const args = argsOf(parsed.data, isWorkspaceAction);
       if (
         !isWorkspaceAction &&
         (!parsed.data.entityKind || !parsed.data.entityId)
@@ -592,7 +608,7 @@ platformOrgRouter.post(
             ...entityFields,
             _title: ent?.title ?? "",
             event: {
-              ...(parsed.data.args ?? {}),
+              ...(args ?? {}),
               name: null,
               actor,
               timestamp: firedAt,
@@ -624,13 +640,13 @@ platformOrgRouter.post(
             },
         event: {
           name: null, // user-invoked has no event name
-          payload: parsed.data.args ?? {},
+          payload: args ?? {},
           actor,
           timestamp: firedAt,
           trigger_type: "user-invoked",
         },
         rendered,
-        args: parsed.data.args,
+        args,
         // Deprecated compat aliases (absent for workspace-scoped actions).
         entityKind: isWorkspaceAction ? undefined : parsed.data.entityKind,
         entityId: isWorkspaceAction ? undefined : parsed.data.entityId,
@@ -1482,6 +1498,10 @@ platformOrgRouter.post(
   withTenant,
   async (req, res, next) => {
     try {
+      // Defining fields is workspace configuration: the same bar as the
+      // Configuration screen that edits them (owner or admin), like every
+      // sibling write here (#2982).
+      if (!requireRole(req, res, "owner", "admin")) return;
       const parsed = FieldDefCreate.safeParse(req.body);
       if (!parsed.success) {
         res.status(400).json({
@@ -1526,6 +1546,15 @@ platformOrgRouter.patch(
         });
         return;
       }
+      // Two bars on one route (#2982). Growing a dropdown's CHOICES is a
+      // member's write: the record forms' "+ add new…", the scan confirm's
+      // category growth and the scan form's "New category…" all go through
+      // it. Changing the field's STRUCTURE (label, type, role, required) is
+      // configuration: owner or admin, the bar of the screen that edits it
+      // and of every sibling write here. This route used to check only that
+      // the caller was signed in.
+      const choicesOnly = Object.keys(parsed.data).every((k) => k === "choices");
+      if (!(choicesOnly ? requireRole(req, res, "owner", "admin", "member") : requireRole(req, res, "owner", "admin"))) return;
       const result = await updateFieldDef(req.tenant!.org.id, id, parsed.data);
       if (!result.ok) {
         res.status(result.code === "not_found" ? 404 : 400).json({
@@ -1552,6 +1581,10 @@ platformOrgRouter.delete(
   withTenant,
   async (req, res, next) => {
     try {
+      // Defining fields is workspace configuration: the same bar as the
+      // Configuration screen that edits them (owner or admin), like every
+      // sibling write here (#2982).
+      if (!requireRole(req, res, "owner", "admin")) return;
       const id = req.params.id;
       if (!id) {
         res.status(400).json({ error: { code: "missing_id", message: "id required" } });

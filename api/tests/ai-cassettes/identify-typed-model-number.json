@@ -1,0 +1,9 @@
+{
+  "_about": "The identify of a model number a person typed (#3049): the model, handed the search engine's titles for PB287Q, names the monitor. Written from the real product; the titles come from the web cassette under api/tests/catalog-cassettes/web/text/.",
+  "match": "identifier (a model or part number): pb287q",
+  "rounds": [
+    {
+      "content": "{\"name\": \"ASUS PB287Q 28-inch 4K UHD Monitor\", \"brand\": \"ASUS\", \"sku\": \"PB287Q\", \"category\": \"monitor\", \"entity_type\": \"asset\", \"series\": null, \"confidence\": 0.92}"
+    }
+  ]
+}

@@ -26,7 +26,7 @@
 // contention control on top of it.
 
 import type { Client } from "pg";
-import { lockKeyFor, withAdvisoryLock } from "./advisory-lock.js";
+import { lockKeyFor } from "./advisory-lock.js";
 
 export { lockKeyFor, withAdvisoryLock } from "./advisory-lock.js";
 
@@ -47,6 +47,22 @@ export { lockKeyFor, withAdvisoryLock } from "./advisory-lock.js";
  * statement.
  */
 export async function runExclusive(name: string, work: () => Promise<void>): Promise<boolean> {
+  const held = await tryHoldExclusive(name);
+  if (!held) return false;
+  try {
+    await work();
+  } finally {
+    await held.release();
+  }
+  return true;
+}
+
+/** The lock as a HANDLE: taken now on its own connection, released by the
+ *  caller. For a holder that runs several jobs' work interleaved (the tenant
+ *  sweeps walk the workspaces once for every pass that is due, and must hold
+ *  every one of those passes' locks for the length of the walk). Null when
+ *  another process holds it. Release closes the connection either way. */
+export async function tryHoldExclusive(name: string): Promise<{ release: () => Promise<void> } | null> {
   // The db modules are imported HERE, not at module load. Any file that adopts
   // this seam would otherwise gain an eager database import, and a unit test
   // that imports such a file in isolation dies on connection setup before it
@@ -54,24 +70,28 @@ export async function runExclusive(name: string, work: () => Promise<void>): Pro
   // db-upgrade-status-quiet the moment this seam was added to that file.
   const { env } = await import("../env.js");
   const { createClient } = await import("../db/client-error-guard.js");
-  const key = lockKeyFor(name);
-  return withAdvisoryLock<Client>({
-    connect: async (fn) => {
-      const client = createClient({ connectionString: env.DATABASE_URL }, `advisory-lock ${name}`);
-      await client.connect();
+  const key = lockKeyFor(name).toString();
+  const client: Client = createClient({ connectionString: env.DATABASE_URL }, `advisory-lock ${name}`);
+  await client.connect();
+  let locked = false;
+  try {
+    const got = await client.query<{ locked: boolean }>("select pg_try_advisory_lock($1) as locked", [key]);
+    locked = got.rows[0]?.locked ?? false;
+  } catch (err) {
+    await client.end().catch(() => {});
+    throw err;
+  }
+  if (!locked) {
+    await client.end().catch(() => {});
+    return null;
+  }
+  return {
+    release: async () => {
       try {
-        return await fn(client);
+        await client.query("select pg_advisory_unlock($1)", [key]);
       } finally {
         await client.end().catch(() => {});
       }
     },
-    tryLock: async (conn) => {
-      const got = await conn.query<{ locked: boolean }>("select pg_try_advisory_lock($1) as locked", [key.toString()]);
-      return got.rows[0]?.locked ?? false;
-    },
-    unlock: async (conn) => {
-      await conn.query("select pg_advisory_unlock($1)", [key.toString()]);
-    },
-    work,
-  });
+  };
 }

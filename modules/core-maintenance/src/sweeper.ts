@@ -19,49 +19,27 @@
 import { Kysely, sql } from "kysely";
 import { platform } from "@cobblr/platform-contract";
 
-let intervalHandle: ReturnType<typeof setInterval> | null = null;
-
 const TICK_MS = 60 * 60 * 1000; // 1 hour
+export const MAINTENANCE_PASS = "core-maintenance.sweep";
 const DUE_SOON_DAYS = 7;
 
 export function startMaintenanceSweeper(): void {
-  if (intervalHandle) clearInterval(intervalHandle);
-  intervalHandle = setInterval(safeTick, TICK_MS);
-  // First sweep on boot — after a small delay so the platform has
-  // finished wiring up modules + the queue.
-  setTimeout(safeTick, 30_000);
+  // The walk is the kernel's (platform().sweeps, #3036): this registers the
+  // per-workspace visit and its cadence and owns no timer, so the pass shares
+  // one walk and one connection budget with every other pass.
+  platform().sweeps.register({
+    name: MAINTENANCE_PASS,
+    everyMs: TICK_MS,
+    module: "core-maintenance",
+    visit: ({ orgId, db }) => visitWorkspace(orgId, db),
+  });
   console.log(
-    `[core-maintenance] due-soon sweeper started — every ${TICK_MS / 60_000} min, threshold ${DUE_SOON_DAYS}d`,
+    `[core-maintenance] due-soon sweeper registered — every ${TICK_MS / 60_000} min, threshold ${DUE_SOON_DAYS}d`,
   );
 }
 
-export function stopMaintenanceSweeper(): void {
-  if (intervalHandle) {
-    clearInterval(intervalHandle);
-    intervalHandle = null;
-    console.log("[core-maintenance] sweeper stopped");
-  }
-}
-
-async function safeTick(): Promise<void> {
-  try {
-      // One process only: every api runs this loop, and more than one api
-      // runs against a single database (the canary channel; a rolling deploy).
-      // Unguarded, each tick's notifications and writes happen twice.
-    await platform().exclusive.run("core-maintenance.sweep", async () => {
-      await tick();
-    });
-  } catch (err) {
-    console.error(
-      "[core-maintenance] sweeper tick failed:",
-      (err as Error).stack ?? (err as Error).message,
-    );
-  }
-}
-
-interface OrgRow {
-  id: string;
-}
+/** Nothing to stop: the kernel's walk owns the timer. Kept for the module's shutdown hook. */
+export function stopMaintenanceSweeper(): void {}
 
 interface DueRow {
   id: string;
@@ -78,46 +56,31 @@ export async function tick(opts: { orgId?: string } = {}): Promise<{
   scanned: number;
   notified: number;
 }> {
-  const meta = platform().db.meta as unknown as Kysely<{
-    orgs: { id: string };
-    org_modules: { org_id: string; module_name: string };
-  }>;
-  // Only sweep orgs that have core-maintenance enabled — orgs that
-  // never installed the module don't have `core_maintenance_entries`
-  // and would throw "relation does not exist" on every tick. Presence
-  // of an org_modules row is the enabled signal (no enabled flag —
-  // disable deletes the row).
-  let orgsQ = meta
-    .selectFrom("orgs")
-    .innerJoin("org_modules", "org_modules.org_id", "orgs.id")
-    .select(["orgs.id"])
-    .where("org_modules.module_name", "=", "core-maintenance");
-  if (opts.orgId) orgsQ = orgsQ.where("orgs.id", "=", opts.orgId);
-  let orgs: OrgRow[];
-  try {
-    orgs = (await orgsQ.execute()) as OrgRow[];
-  } catch (err) {
-    // Connection pool exhaustion during heavy migrations on dev
-    // envs with many tenant DBs. Bail this tick; the next one will
-    // try again once pressure clears.
-    console.warn(
-      "[core-maintenance] sweeper skipped — meta read failed:",
-      (err as Error).message,
-    );
-    return { scanned: 0, notified: 0 };
-  }
-
+  const run = await platform().sweeps.run(MAINTENANCE_PASS, { orgIds: opts.orgId ? [opts.orgId] : undefined });
   let scanned = 0;
   let notified = 0;
+  for (const { result } of run.results) {
+    const r = result as Partial<{ scanned: number; notified: number }> | void;
+    scanned += r?.scanned ?? 0;
+    notified += r?.notified ?? 0;
+  }
+  if (notified > 0) {
+    console.log(
+      `[core-maintenance] sweeper: scanned ${scanned}, notified ${notified} entries`,
+    );
+  }
+  return { scanned, notified };
+}
 
-  for (const org of orgs) {
-    try {
-      // withDb releases the org's pool as soon as this closure returns. A
-      // bare getDb + releaseIdleDb pair could never release its own pool
-      // (the sweep's access sat inside the release grace window), so this
-      // sweep held one pool per tenant and exhausted Postgres on boxes
-      // with many tenants.
-      await platform().tenants.withDb(org.id, async (raw) => {
+/** One workspace, the pool already open: the pass's visit. `org` and `raw`
+ *  keep their names so the body reads as it did when it was the loop's. */
+async function visitWorkspace(orgId: string, raw: unknown): Promise<{ scanned: number; notified: number } | void> {
+  const org = { id: orgId };
+  let scanned = 0;
+  let notified = 0;
+  {
+    {
+      {
     const tdb = raw as Kysely<unknown>;
     let due: DueRow[];
     try {
@@ -262,21 +225,8 @@ export async function tick(opts: { orgId?: string } = {}): Promise<{
         }
       }
     }
-      });
-    } catch (err) {
-      // Per-org isolation: a gone/unprovisioned tenant or one bad org must
-      // not abort the sweep for everyone else (CLAUDE.md §8.1).
-      console.warn(
-        `[core-maintenance] sweep skipped org ${org.id}:`,
-        (err as Error).message,
-      );
+      }
     }
-  }
-
-  if (notified > 0) {
-    console.log(
-      `[core-maintenance] sweeper: scanned ${scanned}, notified ${notified} entries`,
-    );
   }
   return { scanned, notified };
 }

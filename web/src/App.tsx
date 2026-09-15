@@ -489,6 +489,7 @@ function ActiveOrgScopedRoutes() {
   return (
     <PlatformWebProvider
       orgSlug={activeSlug}
+      role={role ?? null}
       appMode={!!appMode}
       flows={WORKSPACE_FLOWS}
       // The app owns what Cobb looks like; the package owns the button that

@@ -89,7 +89,7 @@ export const PLACEMENT: PlacementRow[] = [
     dir: "web/src/components/",
     exemplar: "web/src/components/EntityAttachments.tsx",
     why: "This layer is module-agnostic: it may not name a module's entity kind, because doing so silently excludes every module added later.",
-    lints: ["lint:component-kinds", "lint:hooks-after-return", "lint:no-emdash", "lint:ui-jargon", "lint:authed-image-src", "lint:noun-pluralisation", "lint:dark-mode-ember", "lint:dark-mode-tints", "lint:number-input-commits-a-number", "lint:action-outcome-shown", "lint:actions-run-through-one-door", "lint:shape-changes-run-through-one-door", "lint:sticky-under-header", "lint:fixed-chrome"],
+    lints: ["lint:component-kinds", "lint:hooks-after-return", "lint:no-emdash", "lint:ui-jargon", "lint:authed-image-src", "lint:noun-pluralisation", "lint:dark-mode-ember", "lint:dark-mode-tints", "lint:number-input-commits-a-number", "lint:action-outcome-shown", "lint:actions-run-through-one-door", "lint:shape-changes-run-through-one-door", "lint:sticky-under-header", "lint:fixed-chrome", "lint:phone-input-font", "lint:row-pictures-resolved"],
     notes: [
       "If it names one module's kind, it is not generic — it belongs beside that module's page (see page-level-module-ui).",
     ],
@@ -171,7 +171,7 @@ export const PLACEMENT: PlacementRow[] = [
     dir: "modules/<name>/src/ or api/src/platform/",
     exemplar: "api/src/platform/delivery-sweeper.ts",
     why: "Every api process starts these and more than one api runs against a single database, so an unguarded loop does its work twice on real data.",
-    lints: ["lint:background-loops", "lint:hook-timeouts", "lint:dispatch-not-per-row"],
+    lints: ["lint:background-loops", "lint:hook-timeouts", "lint:dispatch-not-per-row", "lint:tenant-sweep-registered"],
     notes: [
       "Take `platform().exclusive.run(name, work)` (modules) or `runExclusive` (kernel), claim what you act on, or annotate `// SINGLE-PROCESS-SAFE: <why>`.",
       "Prefer the queue (`platform().queue`) when the work is per-item: it claims rows with `for update skip locked` and is safe by construction.",
@@ -208,7 +208,7 @@ export const PLACEMENT: PlacementRow[] = [
     dir: "modules/<name>/src/api/ or api/src/routes/",
     exemplar: "modules/core-scan/src/api/inbox.ts",
     why: "Express matches in registration order: a literal path declared after a parameter route on the same prefix is never reached, and the client gets a 400 that nothing reports (the session theme was dead this way for weeks).",
-    lints: ["lint:route-shadowing", "lint:announce-routes-home", "lint:api-client-reachable", "lint:scan-triage-columns"],
+    lints: ["lint:route-shadowing", "lint:announce-routes-home", "lint:api-client-reachable", "lint:scan-triage-columns", "lint:scan-door-intake"],
     notes: [
       "Register literal paths (/inbox/session-theme) ABOVE parameter paths (/inbox/:id) in the same router.",
       "A route's client method in web/src/lib/api.ts is not a feature until something on screen calls it: lint:api-client-reachable refuses a method with no caller (the catalog crop sat reachable-by-curl-only for a month).",

@@ -21,6 +21,7 @@
 // debounced so mashing + doesn't stack requests.
 
 import { useEffect, useRef, useState, type ReactNode } from "react";
+import { leadYours, rowPictures, scanFileUrl, yourPictures } from "../lib/rowPictures";
 import { Link } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Camera, Check, ChevronDown, Loader2, MapPin, Minus, Plus, RefreshCw, Trash2, Undo2, X } from "lucide-react";
@@ -569,15 +570,16 @@ function ExpandedSheet({
   onDelete: () => void;
   deleteBusy: boolean;
 }) {
-  const meta = (it.suggested_metadata ?? {}) as { extra_photos?: string[] };
-  const extras = Array.isArray(meta.extra_photos) ? meta.extra_photos : [];
-  const fileUrl = (id: string) => `/api/v1/orgs/${slug}/modules/core-files/files/${id}/raw?variant=thumb`;
+  // The row's pictures, resolved once (lib/rowPictures.ts, #3046).
+  const resolved = rowPictures(slug, it);
+  const yours = leadYours(resolved.pictures);
+  const extras = yourPictures(resolved.pictures).filter((p) => p !== yours);
   // Same rule as the thumbnail above — these two used to disagree with each
   // other (the cover never consulted catalog_image_file_id at all).
   const cover = useImageSrc(
     leadPhoto(it, {
-      catalog: [it.catalog_image_file_id ? fileUrl(it.catalog_image_file_id) : null, it.catalog_image_url ?? null],
-      yours: it.image_file_id ? fileUrl(it.image_file_id) : null,
+      catalog: [it.catalog_image_file_id ? scanFileUrl(slug, it.catalog_image_file_id, "thumb") : null, it.catalog_image_url ?? null],
+      yours: yours ? resolved.src(yours, "thumb") : null,
     }).src,
   );
   const dest = it.suggested_candidates?.[0]?.label ?? null;
@@ -610,14 +612,14 @@ function ExpandedSheet({
         {/* Gallery: cover first, then the extras. Tap one to make it the cover;
             ✕ removes it. */}
         <div className="flex items-center gap-1.5 mt-2">
-          {it.image_file_id && <GalleryTile slug={slug} fileId={it.image_file_id} primary />}
-          {extras.map((f) => (
+          {yours?.fileId && <GalleryTile slug={slug} fileId={yours.fileId} primary />}
+          {extras.map((p) => (
             <GalleryTile
-              key={f}
+              key={p.key}
               slug={slug}
-              fileId={f}
-              onMakeCover={() => onPhoto("primary", f)}
-              onRemove={() => onPhoto("remove", f)}
+              fileId={p.fileId!}
+              onMakeCover={() => onPhoto("primary", p.fileId!)}
+              onRemove={p.role === "extra" ? () => onPhoto("remove", p.fileId!) : undefined}
               busy={photoBusy}
             />
           ))}

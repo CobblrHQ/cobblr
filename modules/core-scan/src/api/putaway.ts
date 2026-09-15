@@ -51,6 +51,7 @@ import {
 } from "../services/putaway-route.js";
 import { walkQueue, type QueueGroup, type LeftOut, type QueuePlan } from "../services/putaway-queue.js";
 import { filingBlocker } from "../services/file-through-confirm.js";
+import { displayName } from "@cobblr/platform-contract/display-identity";
 
 export const putawayRouter: Router = Router({ mergeParams: true });
 
@@ -149,7 +150,7 @@ async function assembleWalk(
   if (inboxIds.length > 0) {
     const rows = await db
       .selectFrom("core_scan_inbox_items")
-      .select(["id", "status", "placed_at", "suggested_name", "quantity", "barcode_text", "suggested_candidates"])
+      .select(["id", "status", "placed_at", "suggested_name", "quantity", "barcode_text", "suggested_candidates", "suggested_metadata"])
       .where("id", "in", inboxIds)
       .execute();
     const byId = new Map(rows.map((r) => [r.id, r]));
@@ -161,7 +162,8 @@ async function assembleWalk(
       }
       if (r.placed_at) placed.add(id);
       if (r.status !== "resolved") unfiled.set(id, filingBlocker(r) ?? "still in the inbox");
-      if (r.suggested_name) names[id] = r.suggested_name;
+      const name = displayName(r);
+      if (name) names[id] = name;
       if (r.quantity && Number(r.quantity) > 1) quantities[id] = Number(r.quantity);
       if (r.barcode_text) barcodes[id] = r.barcode_text;
     }

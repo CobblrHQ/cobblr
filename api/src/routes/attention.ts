@@ -18,6 +18,7 @@ import { requireAuth } from "../auth/middleware.js";
 import { withTenant } from "../middleware/tenant.js";
 import { facesForKind } from "../platform/faces.js";
 import { resolveKind } from "../platform/entities.js";
+import { hasPrimaryRouter } from "../modules/mount.js";
 import { viewQuery } from "@cobblr/platform-contract";
 import { dueState, todayFrom } from "../lib/due-day.js";
 
@@ -28,6 +29,15 @@ const DUE_RE = /(renew|expir|due|refill|return|service|maintain|deadline)/i;
 const WINDOW_DAYS = 30;
 const INSTANCE_CAP = 15;
 const ITEM_CAP = 200;
+
+/** The instances whose items this feed reads: domain modules only, and only
+ *  those that answer an items request. A module with no primary router
+ *  (`lists`, `digifab`, the hosted overlay) has a default instance like any
+ *  other, and asking it is a 501 over loopback per instance per poll, which
+ *  the error counter read as failures (#3044). Decided here, in process. */
+export function instancesToAsk<T extends { module_name: string }>(rows: T[], answersItems: (moduleName: string) => boolean): T[] {
+  return rows.filter((i) => !i.module_name.startsWith("core-") && answersItems(i.module_name));
+}
 
 interface AttentionEntry {
   id: string;
@@ -118,9 +128,7 @@ attentionRouter.get("/", requireAuth, withTenant, async (req, res, next) => {
     const instances = await j<{
       items: Array<{ module_name: string; instance_name: string; display_name: string; is_default: boolean }>;
     }>(`/orgs/${slug}/instances`, token);
-    const domain = (instances?.items ?? [])
-      .filter((i) => !i.module_name.startsWith("core-"))
-      .slice(0, INSTANCE_CAP);
+    const domain = instancesToAsk(instances?.items ?? [], hasPrimaryRouter).slice(0, INSTANCE_CAP);
 
     const now = Date.now();
     // By DAY, the way the schedule beside this feed reads a date, and on the

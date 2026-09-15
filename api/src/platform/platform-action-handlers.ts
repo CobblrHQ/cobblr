@@ -119,6 +119,38 @@ function fieldsBackWhereTheyWere(entityKind: string, before: Array<{ field: stri
   return steps;
 }
 
+/** A dropdown's choices changed one at a time, the way a person says it:
+ *  "remove Tea from the category choices", "add Aran to the yarn weights".
+ *  `choices` REPLACES the list and asks the caller to know all of it, which
+ *  the model did not: it ran the action with no list at all. add_choices and
+ *  remove_choices work from what is there. Matching is by name, case aside;
+ *  order is kept, a new choice goes at the end, one already there is not
+ *  doubled, and a choice that is not there to remove is refused by name with
+ *  the list, so the next sentence can be right. */
+function choicesEdited(
+  current: string[] | null,
+  args: Record<string, unknown>,
+  fieldLabel: string,
+): { choices: string[] } | { error: string } | undefined {
+  const add = splitNames(str(args.add_choices));
+  const remove = splitNames(str(args.remove_choices));
+  if (add.length === 0 && remove.length === 0) return undefined;
+  if (str(args.choices) || args.choices === null) {
+    return { error: "pass either choices (the whole list) or add_choices / remove_choices, not both" };
+  }
+  const same = (a: string, b: string) => a.trim().toLowerCase() === b.trim().toLowerCase();
+  let next = [...(current ?? [])];
+  for (const gone of remove) {
+    if (!next.some((c) => same(c, gone))) {
+      const have = next.length ? next.join(", ") : "none";
+      return { error: `"${gone}" is not one of the choices of "${fieldLabel}" (${have})` };
+    }
+    next = next.filter((c) => !same(c, gone));
+  }
+  for (const more of add) if (!next.some((c) => same(c, more))) next.push(more);
+  return { choices: next };
+}
+
 function str(v: unknown): string {
   return typeof v === "string" ? v.trim() : "";
 }
@@ -297,8 +329,12 @@ export function registerPlatformActionHandlers(): void {
       // how an edit is undone, and the way to say "clear it" without a
       // second action.
       const label = args.display_label === null ? null : str(args.display_label) || undefined;
-      const choices =
-        args.choices === null
+      const before = await readFieldOverride(ctx.orgId, entityKind, native.name);
+      const edited = choicesEdited(before.choices, args, native.label);
+      if (edited && "error" in edited) return { ok: false, error: edited.error };
+      const choices = edited
+        ? edited.choices
+        : args.choices === null
           ? null
           : str(args.choices)
             ? str(args.choices)
@@ -309,7 +345,6 @@ export function registerPlatformActionHandlers(): void {
       if (label === undefined && hidden === undefined && choices === undefined) {
         return { ok: false, error: `"${native.label}" is built in. You can rename it, hide it, or set its choices` };
       }
-      const before = await readFieldOverride(ctx.orgId, entityKind, native.name);
       await upsertNativeFieldOverride(ctx.orgId, entityKind, native.name, {
         displayLabel: label,
         hidden,
@@ -360,7 +395,10 @@ export function registerPlatformActionHandlers(): void {
     if (typeof args.required === "boolean") patch.required = args.required;
     if (args.unit === null) patch.unit = null;
     else if (str(args.unit)) patch.unit = str(args.unit);
-    if (args.choices === null) patch.choices = null;
+    const edited = choicesEdited(before.choices, args, found.label);
+    if (edited && "error" in edited) return { ok: false, error: edited.error };
+    if (edited) patch.choices = edited.choices;
+    else if (args.choices === null) patch.choices = null;
     else if (str(args.choices)) {
       patch.choices = str(args.choices)
         .split(",")
@@ -377,7 +415,7 @@ export function registerPlatformActionHandlers(): void {
       }
       return {
         ok: false,
-        error: "nothing to change — pass a new display_label, required, choices, unit, or hidden",
+        error: "nothing to change — pass a new display_label, required, choices, add_choices, remove_choices, unit, or hidden",
       };
     }
     const result = await updateFieldDef(ctx.orgId, found.id, patch);

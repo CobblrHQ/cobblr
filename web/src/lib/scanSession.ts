@@ -94,3 +94,17 @@ export async function resolveSessionBatch(
   writeScanSession(slug, { batchId, areaId: s?.areaId ?? null, count: 1, at: now }, origin);
   return batchId;
 }
+
+/** The React key of a batch-less "gap" session in the inbox list: the burst's
+ *  OLDEST item. A burst grows at its newest end (the next scan lands on top),
+ *  so a key taken from the newest item changed on every arrival, and a
+ *  changed key remounts the whole group: every card in the session lost its
+ *  local state (a destination pick, an open picker) the moment somebody
+ *  scanned the next thing (#3021). The oldest item only leaves when a person
+ *  files or discards it. `itemsNewestFirst` is the burst as the list holds
+ *  it, newest first. */
+export function gapSessionKey(itemsNewestFirst: ReadonlyArray<{ id: string }>): string {
+  const oldest = itemsNewestFirst[itemsNewestFirst.length - 1];
+  return `gap:${oldest?.id ?? ""}`;
+}
+

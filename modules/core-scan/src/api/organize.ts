@@ -26,6 +26,7 @@ import { asyncHandler, badBody, requireRole } from "./util.js";
 import { roleSatisfies } from "@cobblr/platform-contract/org-roles";
 import { BundleInstaller, fileThroughConfirm, type FilingOutcome } from "../services/file-through-confirm.js";
 import { liveTablesOf, withResolvedOffers } from "../services/resolve-offers.js";
+import { withPersonName } from "../services/user-name.js";
 import { INTERNAL_API } from "./inbox.js";
 import { isJunkName } from "../services/enrich.js";
 import { needsScanReview, SCAN_TRIAGE_COLUMNS } from "@cobblr/platform-contract/scan-triage";
@@ -708,10 +709,10 @@ organizeRouter.post(
           const rows = (
             await db
               .selectFrom("core_scan_inbox_items")
-              .select(["id", "suggested_name", "quantity", "suggested_candidates"])
+              .select(["id", "suggested_name", "quantity", "suggested_candidates", "suggested_metadata"])
               .where("id", "in", stampedIds)
               .execute()
-          ).map((r) => withResolvedOffers(r, liveNow));
+          ).map((r) => withPersonName(withResolvedOffers(r, liveNow)));
           for (const id of stampedIds) {
             const r = rows.find((x) => x.id === id);
             if (!r) continue;

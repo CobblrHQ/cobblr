@@ -26,29 +26,22 @@ import { platform } from "@cobblr/platform-contract";
 export const SPLIT_SERIES_PER_TICK = 50;
 const TICK_MS = 20 * 60 * 1000;
 const DRAIN_MS = 60 * 1000;
-let intervalHandle: ReturnType<typeof setInterval> | null = null;
-let drainHandle: ReturnType<typeof setTimeout> | null = null;
+export const SPLIT_SERIES_PASS = "core-scan.split-series-heal";
 
+/** The walk is the kernel's (platform().sweeps, #3036): this registers the
+ *  per-workspace visit and its cadence. */
 export function startSplitSeriesHealer(): void {
-  if (intervalHandle) clearInterval(intervalHandle);
-  intervalHandle = setInterval(safeTick, TICK_MS);
-  setTimeout(safeTick, 120_000);
-  console.log(`[core-scan] split-series healer started — every ${TICK_MS / 60_000} min, a page a minute while there is a backlog`);
-}
-
-async function safeTick(): Promise<void> {
-  try {
-    let backlog = false;
-    await platform().exclusive.run("core-scan.split-series-heal", async () => {
-      backlog = (await splitSeriesTick()).backlog;
-    });
-    if (backlog) {
-      if (drainHandle) clearTimeout(drainHandle);
-      drainHandle = setTimeout(safeTick, DRAIN_MS);
-    }
-  } catch (err) {
-    console.error("[core-scan] split-series heal failed:", (err as Error).stack ?? (err as Error).message);
-  }
+  platform().sweeps.register({
+    name: SPLIT_SERIES_PASS,
+    everyMs: TICK_MS,
+    drainMs: DRAIN_MS,
+    module: "core-scan",
+    visit: async ({ orgId }) => {
+      const done = await healSplitSeriesWorkspace(orgId);
+      return { visited: done.visited, healed: done.healed, backlog: done.visited >= SPLIT_SERIES_PER_TICK };
+    },
+  });
+  console.log(`[core-scan] split-series healer registered — every ${TICK_MS / 60_000} min, a page a minute while there is a backlog`);
 }
 
 export interface SplitChildRow {
@@ -170,36 +163,3 @@ export async function healSplitSeriesWorkspace(orgId: string, limit = SPLIT_SERI
   return { visited: rows.length, healed: healed.length, items: healed };
 }
 
-export async function splitSeriesTick(opts: { orgId?: string } = {}): Promise<{ visited: number; healed: number; backlog: boolean }> {
-  const meta = platform().db.meta as unknown as Kysely<{
-    orgs: { id: string };
-    org_modules: { org_id: string; module_name: string };
-  }>;
-  let orgsQ = meta
-    .selectFrom("orgs")
-    .innerJoin("org_modules as m", (j) => j.onRef("m.org_id", "=", "orgs.id").on("m.module_name", "=", "core-scan"))
-    .select(["orgs.id"]);
-  if (opts.orgId) orgsQ = orgsQ.where("orgs.id", "=", opts.orgId);
-  let orgs: { id: string }[];
-  try {
-    orgs = await orgsQ.execute();
-  } catch (err) {
-    console.warn("[core-scan] split-series heal skipped — meta read failed:", (err as Error).message);
-    return { visited: 0, healed: 0, backlog: false };
-  }
-  let visited = 0;
-  let healed = 0;
-  let backlog = false;
-  for (const { id: orgId } of orgs) {
-    try {
-      const done = await healSplitSeriesWorkspace(orgId);
-      visited += done.visited;
-      healed += done.healed;
-      if (done.visited >= SPLIT_SERIES_PER_TICK) backlog = true;
-    } catch (err) {
-      console.warn(`[core-scan] split-series heal skipped org ${orgId}:`, (err as Error).message);
-    }
-  }
-  if (visited > 0) console.log(`[core-scan] split-series heal: ${healed} of ${visited} split child(ren) had the group's series moved to split_dropped${backlog ? "; more waiting, next page in a minute" : ""}`);
-  return { visited, healed, backlog };
-}

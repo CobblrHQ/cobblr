@@ -12,7 +12,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { catalogChosen } from "../lib/scanPhoto";
 import { useEffect, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { CheckCircle2, ExternalLink, MapPin, X } from "lucide-react";
+import { CheckCircle2, HelpCircle, ExternalLink, MapPin, X } from "lucide-react";
 import { useToast } from "@cobblr/platform-web";
 import { api, ApiError, type ScanInboxItem, type TrackedMatch } from "../lib/api";
 import { useActiveOrg } from "../auth/ActiveOrgContext";
@@ -58,25 +58,66 @@ export function TrackedMatchLine({
   onCompare: () => void;
 }) {
   const { match, where } = useBestTrackedMatch(item.id);
+  // A match by NAME is a proposal, not an identity: two records may or may
+  // not be one printer, and the screenshot alone cannot say (#3009). So the
+  // closed card says "Possible match" in the asking colour, leads with
+  // Compare, and holds back the answers that assume it IS the same thing
+  // (+N still had some, move it here, use this picture) for the open card,
+  // where the comparison is. A barcode or identifier match keeps its check.
+  const stamped = (item.suggested_metadata as { tracked_match?: { matched_by?: string } } | null)?.tracked_match?.matched_by;
+  const by = match?.matched_by ?? stamped ?? null;
+  const exact = by === "barcode" || by === "identifier";
+  const possible = !exact;
   return (
-    <div className="mt-1.5 space-y-1 text-xs" onClick={(e) => e.stopPropagation()}>
+    <div className="mt-1.5 space-y-1 text-xs" onClick={(e) => e.stopPropagation()} data-match={possible ? "possible" : "exact"}>
       <div className="flex min-w-0 items-start gap-1.5">
-        <CheckCircle2 size={13} className="shrink-0 mt-0.5 text-emerald-600 dark:text-emerald-400" />
+        {possible ? (
+          <HelpCircle size={13} className="shrink-0 mt-0.5 text-amber-600 dark:text-amber-400" />
+        ) : (
+          <CheckCircle2 size={13} className="shrink-0 mt-0.5 text-emerald-600 dark:text-emerald-400" />
+        )}
         <div className="min-w-0">
-          <MatchTitle match={match} where={where} title={match?.title ?? fallbackTitle} />
+          {possible ? (
+            <>
+              <span className="font-medium text-content dark:text-mortar-100">
+                Possible match: <span className="break-words">{match?.title ?? fallbackTitle}</span>
+              </span>
+              {match?.subtitle && <span className="text-muted"> · {match.subtitle}</span>}
+              {where && <span className="text-muted"> · 📍{where}</span>}
+              <span className="text-[11px] text-faint"> · matched by name</span>
+            </>
+          ) : (
+            <>
+              <MatchTitle match={match} where={where} title={match?.title ?? fallbackTitle} />
+              <span className="text-[11px] text-faint"> · {by === "identifier" ? `same ${match?.matched_label || "identifier"}` : "same barcode"}</span>
+            </>
+          )}
         </div>
       </div>
-      {match && <TrackedMatchNudges item={item} match={match} />}
+      {match && !possible && <TrackedMatchNudges item={item} match={match} />}
       <div className="flex flex-wrap items-center gap-1.5">
-        {match && <RepurchaseAnswers itemId={item.id} match={match} quantity={quantity} />}
-        <button
-          type="button"
-          onClick={onCompare}
-          title="Open the card: see what this scan would fill in, or file it as something new"
-          className="inline-flex items-center rounded-full px-2 py-1 text-[11px] text-muted hover:text-content underline decoration-dotted underline-offset-2"
-        >
-          Compare &amp; merge
-        </button>
+        {possible ? (
+          <button
+            type="button"
+            onClick={onCompare}
+            title="Open the card and see the two side by side: what this scan would fill in, or file it as something new. Nothing is combined until you say so."
+            className="inline-flex items-center rounded-full border border-amber-400/70 dark:border-amber-700 px-2 py-0.5 text-[11px] font-medium text-amber-700 dark:text-amber-300 hover:bg-amber-50 dark:hover:bg-amber-900/30"
+          >
+            Compare
+          </button>
+        ) : (
+          <>
+            {match && <RepurchaseAnswers itemId={item.id} match={match} quantity={quantity} />}
+            <button
+              type="button"
+              onClick={onCompare}
+              title="Open the card: see what this scan would fill in, or file it as something new"
+              className="inline-flex items-center rounded-full px-2 py-1 text-[11px] text-muted hover:text-content underline decoration-dotted underline-offset-2"
+            >
+              Compare &amp; merge
+            </button>
+          </>
+        )}
       </div>
     </div>
   );
@@ -213,9 +254,11 @@ export function TrackedMatchBanner({
             ))}
           </dl>
           <p className="text-[11px] text-muted mt-1.5">
+            {/* This is the one offer that changes a record you own (#3009):
+                say which, what it writes, and what becomes of this row. */}
             {catalogChosen(item)
-              ? "Only fields it's missing are filled, and the picture you picked becomes its photo."
-              : "Only fields it's missing are filled - nothing gets overwritten."}
+              ? `Writes these onto ${best.title}, only where it is empty, and the picture you picked becomes its photo; this row is then filed as that record.`
+              : `Writes these onto ${best.title}, only where it is empty; nothing there is overwritten, and this row is then filed as that record.`}
           </p>
         </div>
       )}
@@ -226,9 +269,10 @@ export function TrackedMatchBanner({
             type="button"
             disabled={busy}
             onClick={() => attach.mutate({ m: best, mode: "merge-fields" })}
+            title={`Writes the fields above onto ${best.title}, the record you already have, only where it is empty; this row is then filed as that record.`}
             className="inline-flex items-center gap-1 rounded-full bg-emerald-600 hover:bg-emerald-700 text-white px-2.5 py-1 text-xs font-medium disabled:opacity-50"
           >
-            <CheckCircle2 size={12} /> Yes - merge these in
+            <CheckCircle2 size={12} /> Yes, fill it in from this scan
           </button>
         )}
         {/* Not suppressed by a mergeable scan. Buying MORE of something and

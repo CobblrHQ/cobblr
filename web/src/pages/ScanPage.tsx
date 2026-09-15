@@ -1,7 +1,7 @@
 // /scan — the inbox review queue, photo-inbox-grade.
 import { createPortal } from "react-dom";
 import { FileEverythingSheet } from "../components/FileEverythingSheet";
-import { UploadKindSheet } from "../components/UploadKindSheet";
+import { ScanPickerInput, useScanIntake } from "../components/ScanPhotoPicker";
 import { SessionReadVerdict } from "../components/SessionReadVerdict";
 //
 // Layout (the author's spec):
@@ -46,7 +46,7 @@ import { BinAdjustModal } from "../components/BinAdjustModal";
 import { HeaderMenu, MenuHead, MenuItem, MenuNote, MenuSep } from "../components/HeaderMenu";
 import { DuplicateRecordsSheet } from "./DuplicateRecordsSheet";
 import { ReceiptAddressChip } from "../components/ReceiptAddressChip";
-import { classifyFiles, classifyOmni, clipboardImages, omniPlaceholder } from "./omniIntake";
+import { classifyOmni, clipboardImages, omniPlaceholder } from "./omniIntake";
 import { } from "./scanNameEdit";
 import { useAiStatus, AiOffNotice } from "../components/AiStatusNotice";
 export { useAiStatus, AiOffNotice } from "../components/AiStatusNotice";
@@ -72,6 +72,7 @@ import {
 } from "../lib/api";
 import { classifyScanPayload } from "../lib/scanPayload";
 import { isScanStale, needsScanReview } from "@cobblr/platform-contract/scan-triage";
+import { displayName } from "@cobblr/platform-contract/display-identity";
 import { sessionVerdict, type SessionVerdict } from "@cobblr/platform-contract/scan-session";
 import { itemEnriching } from "./scan-status";
 import { attachBodyFor, confirmBodyFor, duplicateSummary, isReadyToFile, placementPreview } from "./scanFileAll";
@@ -88,7 +89,7 @@ import {
 } from "./sessionCategory";
 import { usePublishChatContext } from "../lib/chat-context";
 import { useBarcodeWedge } from "../lib/useBarcodeWedge";
-import { resolveSessionBatch, clearScanSession, readScanSession, isSessionFresh, SESSION_GAP_MS } from "../lib/scanSession";
+import { resolveSessionBatch, clearScanSession, readScanSession, isSessionFresh, SESSION_GAP_MS, gapSessionKey } from "../lib/scanSession";
 import { tabBrowserId } from "../hooks/useBrowserDrive";
 import { useActiveOrg } from "../auth/ActiveOrgContext";
 import { } from "../lib/useFieldPresentation";
@@ -533,114 +534,15 @@ export function ScanPage() {
   const [exportOpen, setExportOpen] = useState(false);
   const fileRef = useRef<HTMLInputElement>(null);
   const receiptRef = useRef<HTMLInputElement>(null);
-  const [uploading, setUploading] = useState(false);
-  // Progress across a multi-photo selection ({done,total}); null when idle or a
-  // single photo (which needs no counter). Drives the "adding 3/8…" button label.
-  const [uploadProgress, setUploadProgress] = useState<{ done: number; total: number } | null>(null);
-
-  // Upload one OR many photos as a single batch — every photo in a multi-select
-  // gets the SAME scan_batch_id, so the inbox groups them as one session (the
-  // session-group logic keys on scan_batch_id). We resolve that batch ONCE up
-  // front rather than per-file, so N photos never scatter into N sessions or
-  // race to mint N batches. Each photo reveals in the inbox the moment it lands
-  // (per-file invalidate); the AI identification runs server-side in the
-  // background exactly as for a single photo.
-  async function uploadPhotos(files: File[]) {
-    if (files.length === 0) return;
-    const multi = files.length > 1;
-    setUploading(true);
-    if (multi) setUploadProgress({ done: 0, total: files.length });
-    try {
-      // "inbox": a photo added at the desk is not part of the shelf-walk the
-      // camera is in the middle of. Sharing the camera's session key put a TV
-      // uploaded from the inbox into a session of two teas scanned minutes
-      // earlier (reported 2026-08-30). Uploads still cluster with each other.
-      const sessionBatch =
-        batchId ??
-        (await resolveSessionBatch(
-          activeSlug,
-          () => api.createScanBatch(activeSlug).then((b) => b.id).catch(() => null),
-          Date.now(),
-          "inbox",
-        )) ??
-        undefined;
-      let ok = 0;
-      for (const file of files) {
-        try {
-          const rec = await api.uploadFile(activeSlug, file);
-          await api.scanBarcode(activeSlug, {
-            source_kind: "photo",
-            image_file_id: rec.id,
-            scan_batch_id: sessionBatch,
-          });
-          ok++;
-          // Reveal each as it lands, so a long selection fills in progressively.
-          void qc.invalidateQueries({ queryKey: ["scan-inbox", activeSlug] });
-        } catch (e) {
-          toast.error(`${file.name}: ${e instanceof ApiError ? e.message : String(e)}`);
-        }
-        if (multi) setUploadProgress({ done: ok, total: files.length });
-      }
-      if (ok === 1) toast.success("Photo added - AI is identifying it");
-      else if (ok > 1) toast.success(`${ok} photos added as one batch — AI is identifying them`);
-    } finally {
-      setUploading(false);
-      setUploadProgress(null);
-      if (fileRef.current) fileRef.current.value = "";
-    }
-  }
-
-  // A receipt PDF/photo → core-ai pulls out the line items → one inbox row
-  // per item, each triaged into a part below like any other scan.
-  async function importReceiptFile(fileId: string, force: boolean) {
-    const out = await api.scanReceipt(activeSlug, fileId, { origin: "upload", force });
-    if (out.duplicate) {
-      const ex = out.existing;
-      // Already imported this exact receipt (same vendor + order #). Offer to
-      // import it anyway rather than silently duplicating every line.
-      toast.action(
-        `You already imported this receipt${ex.order_ref ? ` (#${ex.order_ref})` : ""}${ex.vendor ? ` from ${ex.vendor}` : ""} — ${ex.item_count} item${ex.item_count === 1 ? "" : "s"} already in your inbox.`,
-        {
-          actionLabel: "Import anyway",
-          duration: 10000,
-          onAction: () => void importReceiptFile(fileId, true),
-        },
-      );
-      return;
-    }
-    const n = out.receipt.item_count;
-    const from = out.receipt.vendor ? ` from ${out.receipt.vendor}` : "";
-    const found = `${force ? "Imported" : "Found"} ${n} item${n === 1 ? "" : "s"}${from}`;
-    // Lines that do not add up to what was charged are the dangerous kind of
-    // nearly-right: each one looks plausible on its own. Say both numbers and
-    // let the reader judge, rather than a cheerful count that hides a dropped
-    // line or a coupon that never got applied.
-    if (out.receipt.lines_reconcile === false && out.receipt.total != null) {
-      toast.info(
-        `${found}, but they add up to ${out.receipt.lines_total.toFixed(2)} and the receipt says ` +
-          `${out.receipt.total.toFixed(2)}. Check for a discount, or a line that did not come through.`,
-        { duration: 12000 },
-      );
-    } else {
-      toast.success(`${found} — review below`);
-    }
-    void qc.invalidateQueries({ queryKey: ["scan-inbox", activeSlug] });
-  }
-
-  // A receipt PDF/photo → core-ai pulls out the line items → one inbox row
-  // per item, each triaged into a part below like any other scan.
-  async function uploadReceipt(file: File) {
-    setUploading(true);
-    try {
-      const rec = await api.uploadFile(activeSlug, file);
-      await importReceiptFile(rec.id, false);
-    } catch (e) {
-      toast.error(e instanceof ApiError ? e.message : String(e));
-    } finally {
-      setUploading(false);
-      if (receiptRef.current) receiptRef.current.value = "";
-    }
-  }
+  // The intake behind every door on this page (the button, a drop, a paste,
+  // the explicit receipt door) is the ONE the dashboard's Photos tile uses
+  // too: components/ScanPhotoPicker.tsx. Here uploads join the standing
+  // upload session, or the `?batch=` this page is scoped to.
+  const aiStatus = useAiStatus();
+  const intake = useScanIntake(activeSlug, { session: "inbox", batchId: params.get("batch"), identifyAvailable: aiStatus?.identify_available });
+  // ?pick=photos: the PWA shortcut's door (components/AddPhotosTile.tsx).
+  const pickPhotos = params.get("pick") === "photos";
+  const { uploading, uploadProgress, takeFiles, uploadReceipt, importReceiptFile } = intake;
 
   // ?reimport_file=<id> — arrived from the "import this copy anyway" link in a
   // duplicate-receipt email. Confirm once (a toast action), never auto-import,
@@ -698,7 +600,6 @@ export function ScanPage() {
     },
   });
 
-  const aiStatus = useAiStatus();
   // Flatten the pages, deduped by id — a poll-refetch of page 1 can surface new
   // scans that overlap a later page's stored cursor.
   const items = useMemo(() => {
@@ -833,7 +734,7 @@ export function ScanPage() {
     onSuccess: (fresh) => {
       void qc.invalidateQueries({ queryKey: ["scan-inbox", activeSlug] });
       const qty = Number(fresh.quantity) || 1;
-      toast.success(`Combined into one — ${fresh.suggested_name ?? "item"}${qty > 1 ? ` ×${qty}` : ""}`);
+      toast.success(`Combined into one — ${displayName(fresh) ?? "item"}${qty > 1 ? ` ×${qty}` : ""}`);
     },
     onError: (e) => toast.error(e instanceof ApiError ? e.message : String(e)),
   });
@@ -880,7 +781,7 @@ export function ScanPage() {
             keep {label}
             {keepsPhoto ? " (your photo)" : ""}
           </div>
-          <div className="truncate text-sm text-content dark:text-mortar-100">{item.suggested_name ?? "(unnamed)"}</div>
+          <div className="truncate text-sm text-content dark:text-mortar-100">{displayName(item) ?? "(unnamed)"}</div>
         </button>
       );
       return (
@@ -895,8 +796,8 @@ export function ScanPage() {
               <span className="text-muted">
                 {" "}Which listing to keep?{" "}
                 {isUnique
-                  ? "Combines their details into one, keeps the scanned barcode."
-                  : `Merges to ×${totalQty}, keeps the scanned barcode.`}
+                  ? "One row here with both sets of details and the scanned barcode; the other row goes to Recently deleted. Nothing already filed changes."
+                  : `One row here, ×${totalQty}, with the scanned barcode; the other row goes to Recently deleted. Nothing already filed changes.`}
               </span>
             </div>
             <button
@@ -933,17 +834,24 @@ export function ScanPage() {
           </span>
           <span className="text-muted">
             {" — "}
-            {cluster.items.map((c) => c.suggested_name).filter(Boolean).join(" · ")}.{" "}
-            {isUnique ? "Combine their details into one?" : `Combine into one (×${totalQty})?`}
+            {cluster.items.map((c) => displayName(c)).filter(Boolean).join(" · ")}.{" "}
+            {/* Say what the tap DOES, not only that it combines (#3009): one
+                pending row here, the rest to Recently deleted, nothing
+                already filed touched. "Merge" is kept for the open card's
+                write into a record you own. */}
+            {isUnique
+              ? `One row here with all their details? The other${cluster.items.length > 2 ? "s go" : " goes"} to Recently deleted; nothing already filed changes.`
+              : `One row here, ×${totalQty}? The other${cluster.items.length > 2 ? "s go" : " goes"} to Recently deleted; nothing already filed changes.`}
           </span>
         </div>
         <button
           type="button"
           disabled={combineMut.isPending}
           onClick={() => combineMut.mutate({ ids, ...(isUnique ? {} : { keepId: keep.id }) })}
+          title={`Combines these ${cluster.items.length} pending rows into one row in this inbox${isUnique ? " with all their details" : ` at ×${totalQty}`}. The other ${cluster.items.length > 2 ? "rows go" : "row goes"} to Recently deleted, where it can be restored. Nothing already filed changes.`}
           className="shrink-0 rounded bg-amber-600 hover:bg-amber-700 text-white px-3 py-1.5 text-sm font-medium disabled:opacity-50"
         >
-          {isUnique ? "Combine details" : "Combine"}
+          {isUnique ? "Combine into one row" : "Combine rows"}
         </button>
         <button
           type="button"
@@ -1030,6 +938,10 @@ export function ScanPage() {
       if (Number.isFinite(u) && u > g.lastTouched) g.lastTouched = u;
       if (!g.area && it.scan_area) g.area = it.scan_area;
     }
+    // A gap session is keyed by its OLDEST item once the burst is known: keyed
+    // by the newest, the key moved on every new scan and the whole group
+    // remounted, dropping every card's pick (#3021, scanSession.ts).
+    for (const g of groups) if (!g.isBatch) g.key = gapSessionKey(g.items);
     // The verdict, once the lines are counted; a session in the list whose
     // read failed or is in flight has no lines of its own and is its own group.
     for (const g of groups) {
@@ -1099,6 +1011,23 @@ export function ScanPage() {
     const t = setTimeout(() => setHighlightId(null), 2600);
     return () => clearTimeout(t);
   }, [highlightId, sessionGroups, collapsedSessions]);
+  // A link to ONE row (the dashboard's captured-item card, #3049): open its
+  // sheet (the item screen on a phone, the card on a desk) and mark it in the
+  // list, then drop the param so a later poll does not reopen it.
+  const linkedItem = params.get("item");
+  useEffect(() => {
+    if (!linkedItem || !items.some((i) => i.id === linkedItem)) return;
+    setGalleryFocusId(linkedItem);
+    setHighlightId(linkedItem);
+    setParams(
+      (p) => {
+        const n = new URLSearchParams(p);
+        n.delete("item");
+        return n;
+      },
+      { replace: true },
+    );
+  }, [linkedItem, items, setParams]);
   // Camera "Done" lands on /scan#s-<batchId> — the FULL grouped inbox (all
   // sessions as sections, newest first), with the just-scanned session scrolled
   // to. This replaced landing on ?batch, which scoped the inbox to one session
@@ -1332,7 +1261,7 @@ export function ScanPage() {
       return { id };
     },
     onSuccess: (item) => {
-      toast.success(`Scanned: ${item.suggested_name ?? `Barcode ${item.barcode_text}`}`);
+      toast.success(`Scanned: ${displayName(item) ?? `Barcode ${item.barcode_text}`}`);
     },
     onError: (e) => toast.error(e instanceof ApiError ? e.message : String(e)),
     onSettled: async (_data, _err, _code, ctx) => {
@@ -1544,25 +1473,6 @@ export function ScanPage() {
   // upload button or a drop that fires twice would cost the same duplicate, and
   // one of those is exactly how a receipt turned into two inbox sessions
   // seconds apart (reported 2026-08-19).
-  const lastTakeRef = useRef<{ key: string; at: number }>({ key: "", at: 0 });
-  // Images the one upload door was handed and has not routed yet. They go in
-  // as photos and the intake's identify verdict sends a receipt to the receipt
-  // parser itself; UploadKindSheet asks "a photo, or a receipt?" only for a
-  // workspace with no AI that can look at an image (#2882, undoing #2845's
-  // ask-every-time).
-  const [askKindFor, setAskKindFor] = useState<File[]>([]);
-  const takeFiles = (files: File[]) => {
-    const intent = classifyFiles(files);
-    if (!intent) return;
-    // Name + size + mtime identifies a file well enough for a window this
-    // short, and a second later the same file is a deliberate re-add.
-    const key = files.map((f) => `${f.name}:${f.size}:${f.lastModified}`).join("|");
-    const now = Date.now();
-    if (key === lastTakeRef.current.key && now - lastTakeRef.current.at < 1000) return;
-    lastTakeRef.current = { key, at: now };
-    if (intent.kind === "photos") setAskKindFor(intent.files);
-    else void uploadReceipt(intent.file);
-  };
   const [dropHot, setDropHot] = useState(false);
   const onOmniDrop = (e: React.DragEvent) => {
     e.preventDefault();
@@ -1965,7 +1875,7 @@ export function ScanPage() {
     let skipped = 0;
     for (const id of selected) {
       const it = byId.get(id);
-      if (!it || !it.suggested_name) {
+      if (!it || !displayName(it)) {
         skipped++;
         continue;
       }
@@ -1974,7 +1884,7 @@ export function ScanPage() {
           target_module: entry.module,
           target_kind: entry.kind.includes(":") ? entry.kind.split(":")[1] : entry.kind,
           instance: entry.instance ?? undefined,
-          name: it.suggested_name,
+          name: displayName(it) ?? undefined,
           quantity: it.quantity ?? undefined,
           location_id: it.target_location_id ?? undefined,
         });
@@ -2037,14 +1947,14 @@ export function ScanPage() {
       const it = byId.get(id);
       if (!it) continue;
       const cand = it.suggested_candidates?.[0] as { kind?: string; module?: string } | undefined;
-      const better = betterDestination(it.suggested_name ?? "", cand?.kind ?? null, tables, cand?.module ?? null);
+      const better = betterDestination(displayName(it) ?? "", cand?.kind ?? null, tables, cand?.module ?? null);
       if (!better) continue;
       const entry = (menu ?? []).find((m) => (m.instance ?? m.module) === better.instance_name);
       if (!entry) continue;
       const label = better.display_name ?? better.instance_name;
       const cur = misrouted.get(label) ?? { label, entry, ids: [], names: [] };
       cur.ids.push(id);
-      cur.names.push(it.suggested_name ?? "one scan");
+      cur.names.push(displayName(it) ?? "one scan");
       misrouted.set(label, cur);
     }
     if (misrouted.size > 0) {
@@ -2691,21 +2601,11 @@ className="ml-1.5 sm:ml-0 rounded px-1 py-0.5 text-[12.5px] hover:bg-subtle dark
             neither - an export to import - stays an explicit menu item,
             grouped with Export, because it is not a pic or a receipt and
             pretending otherwise would make this control mean nothing. */}
-        <input
-          ref={fileRef}
-          type="file"
-          accept="image/*,application/pdf,.csv,text/csv"
-          multiple
-          className="hidden"
-          onChange={(e) => {
-            const fs = Array.from(e.target.files ?? []);
-            if (!fs.length) return;
-            // The same intake as a drop or a paste (takeFiles): this input
-            // kept its own routing and sent every image to the photo
-            // pipeline while the drop path had learned better (#2845).
-            takeFiles(fs);
-          }}
-        />
+        {/* The same intake as a drop or a paste (takeFiles): this input kept
+            its own routing once and sent every image to the photo pipeline
+            while the drop path had learned better (#2845). One picker, shared
+            with the dashboard's Photos tile (#3042). */}
+        <ScanPickerInput ref={fileRef} onFiles={takeFiles} />
         <input
           ref={receiptRef}
           type="file"
@@ -3033,13 +2933,7 @@ className="ml-1.5 sm:ml-0 rounded px-1 py-0.5 text-[12.5px] hover:bg-subtle dark
         />
       )}
 
-      <UploadKindSheet
-        files={askKindFor}
-        identifyAvailable={aiStatus?.identify_available}
-        onPhotos={(files) => void uploadPhotos(files)}
-        onReceipt={(file) => void uploadReceipt(file)}
-        onClose={() => setAskKindFor([])}
-      />
+      {intake.sheet}
       {fileEverything && (
         <FileEverythingSheet
           slug={activeSlug}
@@ -3278,6 +3172,27 @@ className="ml-1.5 sm:ml-0 rounded px-1 py-0.5 text-[12.5px] hover:bg-subtle dark
             </div>
           </div>
         ))}
+        {/* The PWA's "Add photos" shortcut (and any link with ?pick=photos)
+            lands here with the picker held out as one tap: a browser opens a
+            file dialog only on a gesture, so the door is a button, not an
+            auto-open (#3042). */}
+        {pickPhotos && (
+          <div className="flex items-center justify-between gap-3 rounded-lg border border-cobble-400 dark:border-cobble-600 bg-cobble-50 dark:bg-cobble-900/30 px-3 py-2.5" data-testid="pick-photos-callout">
+            <span className="text-sm text-content dark:text-mortar-100">Add photos from this device: they land here as one session and get identified.</span>
+            <button
+              type="button"
+              onClick={() => {
+                const next = new URLSearchParams(params);
+                next.delete("pick");
+                setParams(next, { replace: true });
+                fileRef.current?.click();
+              }}
+              className="inline-flex shrink-0 items-center gap-1.5 rounded-lg bg-cobble-600 hover:bg-cobble-700 text-white px-3 py-1.5 text-sm font-medium"
+            >
+              <ImagePlus size={14} /> Add photos
+            </button>
+          </div>
+        )}
         <SeriesBanner slug={activeSlug} items={visibleItems.filter((i) => i.status === "pending")} />
         {(() => {
           // Each card, with the combine offer injected just above the first item
@@ -4296,14 +4211,14 @@ className="ml-1.5 sm:ml-0 rounded px-1 py-0.5 text-[12.5px] hover:bg-subtle dark
                       <div className="pt-0.5">
                         <button
                           type="button"
-                          title="Two bursts that are really one job? Fold this session into the previous (older) one. You can undo it."
+                          title="Two bursts that are really one job? Moves these rows into the previous (older) session. Only which session they sit in changes: nothing is combined and nothing filed changes. You can undo it."
                           onClick={() =>
                             void mergeBatches.mutateAsync({ from: g.batchId!, into: mergeInto, itemIds: groupIds })
                           }
                           disabled={mergeBatches.isPending}
                           className="text-xs text-faint hover:text-accent disabled:opacity-50"
                         >
-                          Merge into the previous session
+                          Move into the previous session
                         </button>
                       </div>
                     )}
@@ -4394,7 +4309,7 @@ className="ml-1.5 sm:ml-0 rounded px-1 py-0.5 text-[12.5px] hover:bg-subtle dark
           const prev = at > 0 ? queue[at - 1] : undefined;
           const next = at >= 0 && at < queue.length - 1 ? queue[at + 1] : undefined;
           return (
-            <Modal open onClose={() => setGalleryFocusId(null)} size="lg" fillHeight flush>
+            <Modal open onClose={() => setGalleryFocusId(null)} size="lg" fillHeight flush stickyFooter>
               <InboxCard
                 key={focus.id}
                 item={focus}
@@ -4436,9 +4351,9 @@ className="ml-1.5 sm:ml-0 rounded px-1 py-0.5 text-[12.5px] hover:bg-subtle dark
                 >
                   <div className="min-w-0 flex-1">
                     <div className="text-sm text-muted truncate">
-                      {d.suggested_name ?? d.barcode_text ?? "Unknown scan"}
+                      {displayName(d) ?? d.barcode_text ?? "Unknown scan"}
                     </div>
-                    {d.barcode_text && d.suggested_name && (
+                    {d.barcode_text && displayName(d) && (
                       <div className="text-[10px] font-mono text-faint truncate">{d.barcode_text}</div>
                     )}
                     {!!(d.suggested_metadata as { split_undone_at?: string } | null)?.split_undone_at && (
@@ -4502,7 +4417,7 @@ className="ml-1.5 sm:ml-0 rounded px-1 py-0.5 text-[12.5px] hover:bg-subtle dark
                     {grp.items.map((d) => (
                       <div key={d.id} className="flex items-center gap-2 px-3 py-1.5 pl-6">
                         <div className="min-w-0 flex-1">
-                          <div className="text-sm text-muted truncate">{d.suggested_name ?? d.barcode_text ?? "Unknown scan"}</div>
+                          <div className="text-sm text-muted truncate">{displayName(d) ?? d.barcode_text ?? "Unknown scan"}</div>
                           {splitPieces(d) ? (
                             <div className="text-[10px] font-mono text-faint truncate">✂ split into {splitPieces(d)} items</div>
                           ) : (
@@ -4539,7 +4454,7 @@ className="ml-1.5 sm:ml-0 rounded px-1 py-0.5 text-[12.5px] hover:bg-subtle dark
                     >
                       <div className="min-w-0 flex-1">
                         <div className="text-sm text-muted truncate">
-                          {grp.items[0].suggested_name ?? grp.items[0].barcode_text ?? "Unknown scan"}
+                          {displayName(grp.items[0]) ?? grp.items[0].barcode_text ?? "Unknown scan"}
                         </div>
                         {splitPieces(grp.items[0]) ? (
                           <div className="text-[10px] font-mono text-faint truncate">✂ split into {splitPieces(grp.items[0])} items</div>
@@ -4641,7 +4556,7 @@ className="ml-1.5 sm:ml-0 rounded px-1 py-0.5 text-[12.5px] hover:bg-subtle dark
       {exportOpen && (
         <ExportInboxModal
           slug={activeSlug}
-          items={items.map((i) => ({ id: i.id, name: i.suggested_name ?? "" }))}
+          items={items.map((i) => ({ id: i.id, name: displayName(i) ?? "" }))}
           preselectedIds={[...selected]}
           onClose={() => setExportOpen(false)}
         />
@@ -4802,7 +4717,7 @@ function SessionTheme({ slug, batchId, itemCount }: { slug: string; batchId: str
             share a kind, which is a smaller claim and the one worth making. */}
         {t.tag ? (
           <>
-            These {itemCount} look related. Tag them all <strong>"{t.tag}"</strong>.
+            These {itemCount} look related. Tag each of them <strong>"{t.tag}"</strong>? A tag on each row; nothing is combined.
             {t.category ? (
               <span className="text-muted">
                 {" "}
@@ -4814,7 +4729,7 @@ function SessionTheme({ slug, batchId, itemCount }: { slug: string; batchId: str
         ) : t.category ? (
           <>
             {t.category.item_ids.length === itemCount ? `All ${itemCount}` : `${t.category.item_ids.length} of these ${itemCount}`} look like{" "}
-            <strong>"{t.category.value}"</strong>. Add that category?
+            <strong>"{t.category.value}"</strong>. Add that category to each? A field on each row; nothing is combined.
           </>
         ) : null}
       </div>
@@ -4824,7 +4739,7 @@ function SessionTheme({ slug, batchId, itemCount }: { slug: string; batchId: str
         onClick={() => apply.mutate()}
         className="shrink-0 rounded bg-cobble-600 hover:bg-cobble-700 text-white px-3 py-1.5 text-sm font-medium disabled:opacity-50"
       >
-        {apply.isPending ? "Applying…" : "Apply"}
+        {apply.isPending ? "Applying…" : t.tag ? "Tag them" : "Add the category"}
       </button>
       <button type="button" onClick={() => setDismissed(true)} className="shrink-0 text-faint hover:text-content p-1" title="Dismiss">
         <X size={14} />

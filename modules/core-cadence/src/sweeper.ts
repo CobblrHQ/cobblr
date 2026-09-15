@@ -21,30 +21,22 @@ import { Kysely } from "kysely";
 import { platform, sourceIdKey } from "@cobblr/platform-contract";
 import { cadenceState, reorderSuggested, buyLessSuggested, type CadenceEvent } from "./model.js";
 
-let intervalHandle: ReturnType<typeof setInterval> | null = null;
-
 const TICK_MS = 60 * 60 * 1000; // hourly: run-out is a days-scale signal
+export const CADENCE_PASS = "core-cadence.sweep";
 /** Don't repeat the same signal for the same record inside this window. */
 const REPEAT_AFTER_MS = 24 * 60 * 60 * 1000;
 
 export function startCadenceSweeper(): void {
-  if (intervalHandle) clearInterval(intervalHandle);
-  intervalHandle = setInterval(safeTick, TICK_MS);
-  setTimeout(safeTick, 40_000); // after boot settles
-  console.log(`[core-cadence] sweeper started — every ${TICK_MS / 60_000} min`);
-}
-
-async function safeTick(): Promise<void> {
-  try {
-      // One process only: every api runs this loop, and more than one api
-      // runs against a single database (the canary channel; a rolling deploy).
-      // Unguarded, each tick's notifications and writes happen twice.
-    await platform().exclusive.run("core-cadence.sweep", async () => {
-      await cadenceTick();
-    });
-  } catch (err) {
-    console.error("[core-cadence] sweep failed:", err);
-  }
+  // The walk is the kernel's (platform().sweeps, #3036): this registers the
+  // per-workspace visit and its cadence and owns no timer, so the pass shares
+  // one walk and one connection budget with every other pass.
+  platform().sweeps.register({
+    name: CADENCE_PASS,
+    everyMs: TICK_MS,
+    module: "core-cadence",
+    visit: ({ orgId, db }) => visitWorkspace(orgId, db),
+  });
+  console.log(`[core-cadence] sweeper registered — every ${TICK_MS / 60_000} min`);
 }
 
 interface SweepDB {
@@ -65,39 +57,33 @@ interface SweepDB {
 }
 
 /** Exported for tests + a manual poke; `orgId` limits the sweep to one workspace. */
+
 export async function cadenceTick(
   opts: { orgId?: string } = {},
 ): Promise<{ scanned: number; emitted: number }> {
-  const meta = platform().db.meta as unknown as Kysely<{
-    orgs: { id: string };
-    org_modules: { org_id: string; module_name: string };
-  }>;
-
-  let orgsQ = meta
-    .selectFrom("orgs")
-    .innerJoin("org_modules as m", (j) =>
-      j.onRef("m.org_id", "=", "orgs.id").on("m.module_name", "=", "core-cadence"),
-    )
-    .select(["orgs.id"]);
-  if (opts.orgId) orgsQ = orgsQ.where("orgs.id", "=", opts.orgId);
-
-  let orgs: { id: string }[];
-  try {
-    orgs = await orgsQ.execute();
-  } catch {
-    return { scanned: 0, emitted: 0 }; // pre-migration boot: nothing to do
-  }
-
+  const run = await platform().sweeps.run(CADENCE_PASS, { orgIds: opts.orgId ? [opts.orgId] : undefined });
   let scanned = 0;
   let emitted = 0;
+  for (const { result } of run.results) {
+    const r = result as Partial<{ scanned: number; emitted: number }> | void;
+    scanned += r?.scanned ?? 0;
+    emitted += r?.emitted ?? 0;
+  }
+  return { scanned, emitted };
+}
 
-  for (const org of orgs) {
-    // One workspace's failure must never abort the sweep for the rest.
-    try {
+/** One workspace, the pool already open: the pass's visit. `org` and `raw`
+ *  keep their names so the body reads as it did when it was the loop's. */
+async function visitWorkspace(orgId: string, raw: unknown): Promise<{ scanned: number; emitted: number }> {
+  const org = { id: orgId };
+  let scanned = 0;
+  let emitted = 0;
+  {
+    {
       // Resolved once per org, and OUTSIDE the tenant closure: membership lives
       // in cobblr_meta, so fetching it per signal would be a query per record.
       const memberIds = await platform().notifications.orgMemberIds(org.id);
-      await platform().tenants.withDb(org.id, async (raw) => {
+      {
         const tdb = raw as Kysely<SweepDB>;
 
         // Every record that has any history. Cheap: the ledger is small relative
@@ -284,11 +270,8 @@ export async function cadenceTick(
             }
           }
         }
-      });
-    } catch (err) {
-      console.error(`[core-cadence] org ${org.id} sweep failed:`, err);
+      }
     }
   }
-
   return { scanned, emitted };
 }

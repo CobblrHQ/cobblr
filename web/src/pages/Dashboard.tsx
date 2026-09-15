@@ -63,6 +63,7 @@ import {
 } from "../lib/api";
 import { useWorkspaceContentProbe } from "../lib/workspaceContent";
 import { ParcelsInFlight } from "../components/ParcelsInFlight";
+import { AddPhotosTile } from "../components/AddPhotosTile";
 
 /** Homepage quick-links: big tap targets for the destinations this workspace
  *  actually uses (Scan Inbox, each instance like "Yarn", the domain modules),
@@ -89,6 +90,11 @@ function QuickLinks({ slug }: { slug: string }) {
       to: m.name.startsWith(INSTANCE_PREFIX) ? `/${m.name.slice(INSTANCE_PREFIX.length)}` : `/${m.name}`,
     }));
   if (dests.length === 0) return null;
+  // The scan inbox's picker, beside the scan shortcut: photos taken earlier
+  // reach the inbox in two taps from here (#3042). A door, not a page, and
+  // there whenever the workspace has a scan inbox, whether or not the scan
+  // entry made the eight tiles (a busy workspace folds it into "more").
+  const hasScan = nav.tops.some((m) => m.name === "scan" && !(m as { hidden?: boolean }).hidden);
   return (
     // md:hidden - this exists for PHONES, where the nav hides behind the
     // hamburger and these are the only visible doors. On desktop the top nav
@@ -100,6 +106,7 @@ function QuickLinks({ slug }: { slug: string }) {
         Jump to
       </div>
       <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
+        {hasScan && <AddPhotosTile slug={slug} />}
         {dests.map((d) => (
           <Link
             key={d.key}

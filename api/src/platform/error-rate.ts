@@ -19,9 +19,14 @@ const CAP = 10_000;
 const stamps: number[] = [];
 
 /** Call once per finished response. Health probes never count: a probe that
- *  failed would otherwise feed its own number. */
+ *  failed would otherwise feed its own number. Neither does a 501: every 501
+ *  this api sends is a declared answer ("this module has no items route",
+ *  "this driver cannot pause"), not a failure, and the dashboard's attention
+ *  feed asks its own modules over loopback once a minute, three of which
+ *  said so, which read as 15 errors in five minutes and tripped the alert
+ *  and deploy-gap's health gate on every visit (#3044). */
 export function noteResponse(status: number, path: string, now: number = Date.now()): void {
-  if (status < 500) return;
+  if (status < 500 || status === 501) return;
   if (path.startsWith("/api/v1/healthz")) return;
   stamps.push(now);
   if (stamps.length > CAP) stamps.splice(0, stamps.length - CAP);

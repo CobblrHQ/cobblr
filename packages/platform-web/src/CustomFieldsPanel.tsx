@@ -700,10 +700,14 @@ function ChoiceRow({
   note?: string | null;
   onCommitNote?: (v: unknown) => void;
 }) {
-  const { api, orgSlug } = usePlatformWeb();
+  const { api, orgSlug, role } = usePlatformWeb();
   const qc = useQueryClient();
   const current = value == null ? "" : String(value);
   const [pendingNew, setPendingNew] = useState<string | null>(null);
+  // Growing a dropdown's choices is a member's write (the server's bar); a
+  // guest sees no entry. An unknown role (a host that passes none) is left
+  // to the server.
+  const canDefine = !role || role === "owner" || role === "admin" || role === "member";
   const append = useMutation({
     mutationFn: (newVal: string) =>
       api.appendFieldDefChoice
@@ -777,7 +781,7 @@ function ChoiceRow({
           {current && !def.choices!.includes(current) && (
             <option value={current}>{current} (legacy)</option>
           )}
-          {api.appendFieldDefChoice && (
+          {api.appendFieldDefChoice && canDefine && (
             <option value={ADD_NEW}>+ add new…</option>
           )}
         </select>

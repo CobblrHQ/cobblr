@@ -213,6 +213,7 @@ export function SeriesBanner({ slug, items }: { slug: string; items: ScanInboxIt
             type="button"
             disabled={apply.isPending}
             onClick={() => apply.mutate({ series: g.series, ids: g.untagged.map((i) => i.id) })}
+            title={`Adds the series tag "${g.series}" to each of these rows, applied when each is filed. Nothing is combined and nothing filed changes.`}
             className="shrink-0 rounded bg-cobble-600 hover:bg-cobble-700 text-white px-3 py-1.5 max-sm:px-2.5 max-sm:py-1 text-sm max-sm:text-xs font-medium disabled:opacity-50"
           >
             {apply.isPending ? "Tagging…" : <><span className="hidden sm:inline">Tag series</span><span className="sm:hidden">Tag</span></>}

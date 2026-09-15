@@ -19,9 +19,8 @@ import { sql, type Kysely } from "kysely";
 import { platform, parcelAudience } from "@cobblr/platform-contract";
 import { arrivedEverywhere } from "@cobblr/platform-contract";
 
-let intervalHandle: ReturnType<typeof setInterval> | null = null;
-
 const TICK_MS = 60 * 60 * 1000; // hourly; the decision below is what makes it daily-ish
+export const ARRIVAL_PASS = "purchases.arrival-sweep";
 /** Days after the first unanswered ask before one final nudge. */
 const NUDGE_AFTER_DAYS = 3;
 /** Never a third ask. Someone who ignored two is not served by a third. */
@@ -31,10 +30,16 @@ const MAX_ASKS = 2;
 const STALE_AFTER_DAYS = 30;
 
 export function startArrivalSweeper(): void {
-  if (intervalHandle) clearInterval(intervalHandle);
-  intervalHandle = setInterval(safeTick, TICK_MS);
-  setTimeout(safeTick, 40_000); // after boot settles
-  console.log(`[purchases] arrival sweeper started — every ${TICK_MS / 60_000} min`);
+  // The walk is the kernel's (platform().sweeps, #3036): this registers the
+  // per-workspace visit and its cadence and owns no timer, so the pass shares
+  // one walk and one connection budget with every other pass.
+  platform().sweeps.register({
+    name: ARRIVAL_PASS,
+    everyMs: TICK_MS,
+    module: "purchases",
+    visit: ({ orgId, db, now }) => visitWorkspace(orgId, db, now, {}),
+  });
+  console.log(`[purchases] arrival sweeper registered — every ${TICK_MS / 60_000} min`);
 
   // A bridge push means the carrier already answered: re-check that number
   // NOW, off-cadence. The bell is trusted, the data is not — the state still
@@ -52,19 +57,6 @@ export function startArrivalSweeper(): void {
       });
     });
   });
-}
-
-async function safeTick(): Promise<void> {
-  try {
-      // One process only: every api runs this loop, and more than one api
-      // runs against a single database (the canary channel; a rolling deploy).
-      // Unguarded, each tick's notifications and writes happen twice.
-    await platform().exclusive.run("purchases.arrival-sweep", async () => {
-      await arrivalTick();
-    });
-  } catch (err) {
-    console.error("[purchases] arrival sweep failed:", (err as Error).stack ?? (err as Error).message);
-  }
 }
 
 /** What we know about an order's ask history when deciding whether to ask. */
@@ -218,38 +210,45 @@ export function askStateFromRow(row: DueRow, today: string): AskState {
   };
 }
 
-/** One sweep. Exported so tests and a CLI can fire it deterministically. */
+/** One sweep. Exported so tests and a CLI can fire it deterministically. A
+ *  forced re-check of one parcel (`number`, `force`) visits that workspace
+ *  directly rather than through the pass's walk: it is not a walk, and the
+ *  walk's lock may be held by the hourly round at that moment. */
 export async function arrivalTick(
   opts: { orgId?: string; now?: Date; number?: string; force?: boolean } = {},
 ): Promise<{ due: number; asked: number }> {
   const now = opts.now ?? new Date();
-  const meta = platform().db.meta as unknown as Kysely<{
-    orgs: { id: string };
-    org_modules: { org_id: string; module_name: string };
-  }>;
-
-  let orgsQ = meta
-    .selectFrom("orgs")
-    .innerJoin("org_modules as m", (j) =>
-      j.onRef("m.org_id", "=", "orgs.id").on("m.module_name", "=", "purchases"),
-    )
-    .select(["orgs.id"]);
-  if (opts.orgId) orgsQ = orgsQ.where("orgs.id", "=", opts.orgId);
-
-  let orgs: { id: string }[];
-  try {
-    orgs = await orgsQ.execute();
-  } catch (err) {
-    console.warn("[purchases] arrival sweep skipped — meta read failed:", (err as Error).message);
-    return { due: 0, asked: 0 };
+  if (opts.orgId && (opts.number || opts.force)) {
+    const orgId = opts.orgId;
+    const r = await platform().tenants.withDb(orgId, (raw) => visitWorkspace(orgId, raw, now, opts));
+    return r ?? { due: 0, asked: 0 };
   }
-
+  const run = await platform().sweeps.run(ARRIVAL_PASS, { orgIds: opts.orgId ? [opts.orgId] : undefined, now });
   let due = 0;
   let asked = 0;
+  for (const { result } of run.results) {
+    const r = result as Partial<{ due: number; asked: number }> | void;
+    due += r?.due ?? 0;
+    asked += r?.asked ?? 0;
+  }
+  if (asked > 0) console.log(`[purchases] arrival sweep: ${due} due, asked about ${asked}`);
+  return { due, asked };
+}
 
-  for (const org of orgs) {
-    try {
-      await platform().tenants.withDb(org.id, async (raw) => {
+/** One workspace, the pool already open: the pass's visit. `org` and `raw`
+ *  keep their names so the body reads as it did when it was the loop's. */
+async function visitWorkspace(
+  orgId: string,
+  raw: unknown,
+  now: Date,
+  opts: { number?: string; force?: boolean },
+): Promise<{ due: number; asked: number } | void> {
+  const org = { id: orgId };
+  let due = 0;
+  let asked = 0;
+  {
+    {
+      {
         const tdb = raw as Kysely<unknown>;
 
         // Orders past their ETA that nothing has closed. The left join carries
@@ -496,13 +495,8 @@ export async function arrivalTick(
 
           asked += 1;
         }
-      });
-    } catch (err) {
-      // Per-org isolation: one broken tenant never stops the rest.
-      console.warn(`[purchases] arrival sweep skipped org ${org.id}:`, (err as Error).message);
+      }
     }
   }
-
-  if (asked > 0) console.log(`[purchases] arrival sweep: ${due} due, asked about ${asked}`);
   return { due, asked };
 }

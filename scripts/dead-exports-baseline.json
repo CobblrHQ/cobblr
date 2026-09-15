@@ -70,11 +70,6 @@
     "reason": "baselined 2026-07-30 \u2014 pre-existing dead/half-wired export; remove or wire up, never grow."
   },
   {
-    "file": "modules/digifab/src/bambu-pump.ts",
-    "name": "stopBambuPump",
-    "reason": "baselined 2026-07-30 \u2014 pre-existing dead/half-wired export; remove or wire up, never grow."
-  },
-  {
     "file": "modules/digifab/src/drivers/mock.ts",
     "name": "mockFactory",
     "reason": "baselined 2026-07-30 \u2014 pre-existing dead/half-wired export; remove or wire up, never grow."

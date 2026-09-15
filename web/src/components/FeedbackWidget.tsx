@@ -12,6 +12,7 @@ import { FloatingChrome } from "@cobblr/platform-web";
 import { Modal, useToast } from "@cobblr/platform-web";
 import { BookOpen, Copy, ExternalLink, Github, ImagePlus, MessageCircle, MessageSquare, Users, X, ChevronRight } from "lucide-react";
 import { api, type CommunityLink } from "../lib/api";
+import { communityLinksFor } from "../lib/community-links";
 import { environmentBlock, newIssueUrl, reportBody, type ReportInput, type ServerDiagnostics } from "../lib/bug-report";
 import { useAuth } from "../auth/AuthContext";
 import { resolveHandle } from "../auth/ActiveOrgContext";
@@ -480,14 +481,7 @@ export function FeedbackWidget({ asRow = false }: { asRow?: boolean } = {}) {
  *  report you just typed, so it SUBMITS this. These are places you go with a
  *  question, and they take nothing with them. */
 function CommunityLinks({ user }: { user?: { community_links?: CommunityLink[]; discord_invite_url?: string | null } | null }) {
-  // An older server sends only discord_invite_url. Synthesising the chat entry
-  // from it keeps a mid-upgrade deployment from losing the link it had.
-  const links: CommunityLink[] =
-    user?.community_links?.length
-      ? user.community_links
-      : user?.discord_invite_url
-        ? [{ id: "chat", label: "Discord", url: user.discord_invite_url, blurb: "Ask a question and get an answer the same day." }]
-        : [];
+  const links = communityLinksFor(user);
   if (links.length === 0) return null;
 
   const icon: Record<CommunityLink["id"], typeof MessageCircle> = {

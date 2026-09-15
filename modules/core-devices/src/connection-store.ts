@@ -56,6 +56,14 @@ async function db(orgId: string): Promise<Kysely<CoreDevicesDB>> {
   return (await platform().tenants.getDb(orgId)) as Kysely<CoreDevicesDB>;
 }
 
+/** A connection was created, changed or removed in this workspace. A consumer
+ *  that watches connections (digifab's pump) keeps the set of workspaces
+ *  worth watching from this, instead of reading every workspace's table on
+ *  a timer (#3034). Fire-and-forget: the write does not wait on watchers. */
+function changed(orgId: string, id: string, type: string, change: "created" | "updated" | "removed"): void {
+  void platform().events.emit("core-devices.connection.changed", { orgId, connectionId: id, type, change });
+}
+
 export const connectionStore: DeviceConnectionStore = {
   async list(orgId) {
     const rows = await (await db(orgId))
@@ -111,6 +119,7 @@ export const connectionStore: DeviceConnectionStore = {
       })
       .returning(PUBLIC_COLS)
       .executeTakeFirstOrThrow();
+    changed(orgId, String(row.id), String(row.type), "created");
     return toPublic(row as unknown as Record<string, unknown>);
   },
 
@@ -146,6 +155,7 @@ export const connectionStore: DeviceConnectionStore = {
       .where("id", "=", id)
       .returning(PUBLIC_COLS)
       .executeTakeFirst();
+    if (row) changed(orgId, String(row.id), String(row.type), "updated");
     return row ? toPublic(row as unknown as Record<string, unknown>) : null;
   },
 
@@ -153,8 +163,9 @@ export const connectionStore: DeviceConnectionStore = {
     const r = await (await db(orgId))
       .deleteFrom("core_devices_connections")
       .where("id", "=", id)
-      .returning(["id"])
+      .returning(["id", "type"])
       .executeTakeFirst();
+    if (r) changed(orgId, String(r.id), String(r.type), "removed");
     return !!r;
   },
 

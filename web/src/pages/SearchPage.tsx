@@ -98,7 +98,7 @@ export function SearchPage() {
             value={q}
             onChange={(e) => setParam("q", e.target.value || null)}
             placeholder="search…"
-            className="input !py-1 !pl-7 !text-xs !w-56"
+            className="input !py-1 !pl-7 text-xs !w-56"
             autoFocus
           />
         </div>
@@ -161,7 +161,7 @@ export function SearchPage() {
           value={tag ?? ""}
           onChange={(e) => setParam("tag", e.target.value || null)}
           placeholder="filter by tag name…"
-          className="input !py-1 !text-xs !w-48"
+          className="input !py-1 text-xs !w-48"
         />
       </div>
 

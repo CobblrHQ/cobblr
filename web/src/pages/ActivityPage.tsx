@@ -61,7 +61,7 @@ export function ActivityPage() {
             value={entityFilter}
             onChange={(e) => setEntityFilter(e.target.value)}
             placeholder="part / wire / bundle / …"
-            className="input !w-44 !py-1 !text-xs"
+            className="input !w-44 !py-1 text-xs"
           />
         </label>
       </div>

@@ -4675,6 +4675,86 @@ export interface PlatformExclusive {
   run(name: string, work: () => Promise<void>): Promise<boolean>;
 }
 
+// ── Cross-tenant sweeps: one walk of the workspaces, one budget ─────────────
+//
+// Every self-healing or periodic pass used to walk all workspaces on its own
+// timer with its own pool discipline; six of them started within minutes of
+// boot on a box with 352 workspaces against a 100-connection Postgres and
+// refused 811 connections in six hours (#3036). A pass registers here
+// instead: the kernel walks the workspaces ONCE for every pass that is due,
+// opens a workspace's pool at most once per visit, evicts it on the way out,
+// bounds how many are open at a time, and spreads each pass's first visit
+// over its cadence so nothing storms at boot.
+
+/** What one visit of one pass reports. */
+export interface TenantSweepVisitResult {
+  /** This workspace still had a full page waiting: visit it again after
+   *  `drainMs` rather than the full cadence. */
+  backlog?: boolean;
+  /** Stop this pass's walk here for this round (an engine said no; the rest
+   *  of the round would be the burst again): no further workspace is
+   *  started for it; visits already in flight under the budget finish.
+   *  Other passes continue. */
+  stop?: boolean;
+  /** Anything the pass wants counted; `run()` hands every visit's value
+   *  back, so a test or an admin door can total it. */
+  [key: string]: unknown;
+}
+
+export interface TenantSweepPass {
+  /** Unique across the process: `<module>.<pass>`. Also the advisory-lock
+   *  name, so two api processes never walk the same pass at once. */
+  name: string;
+  /** How often each workspace is visited. */
+  everyMs: number;
+  /** While a visit reported a backlog, the next round comes after this
+   *  instead of `everyMs` (a page a minute while there is work). */
+  drainMs?: number;
+  /** The first round comes this long after the scheduler starts instead of
+   *  at a random point inside `everyMs`; for a pass whose first visit cannot
+   *  wait a cadence (a boot-time discovery). */
+  firstAfterMs?: number;
+  /** Only workspaces with this module enabled. */
+  module?: string;
+  /** A meta-side gate: given the workspaces in scope, the ones worth opening
+   *  a pool for this round, or null for all of them. Answering from what the
+   *  process already knows costs zero tenant connections on a round with
+   *  nothing to do (#3034). */
+  candidates?: (orgIds: string[]) => Promise<string[] | null>;
+  /** One workspace, its db open (a Kysely instance, cast to the module's
+   *  schema). Throwing fails this visit only; the walk continues. */
+  visit: (ctx: TenantSweepVisit) => Promise<TenantSweepVisitResult | void>;
+}
+
+export interface TenantSweepVisit {
+  orgId: string;
+  db: unknown;
+  now: Date;
+}
+
+export interface TenantSweepRunResult {
+  /** Workspaces visited by this pass. */
+  visited: number;
+  /** Visits that threw (logged), and workspaces whose pool could not open. */
+  failed: number;
+  /** Any visit reported a backlog. */
+  backlog: boolean;
+  /** The pass stopped its walk early. */
+  stopped: boolean;
+  /** Every visit's value, in visit order. */
+  results: Array<{ orgId: string; result: TenantSweepVisitResult | void }>;
+  /** Another api process held the pass's lock; nothing ran. */
+  skipped: boolean;
+}
+
+export interface PlatformSweeps {
+  /** Register a pass. Idempotent by name (a re-registration replaces). */
+  register(pass: TenantSweepPass): void;
+  /** Run one pass now, over every workspace in its scope or the ones given,
+   *  under its lock: the door for tests and admin routes. */
+  run(name: string, opts?: { orgIds?: string[]; now?: Date }): Promise<TenantSweepRunResult>;
+}
+
 /** Server-side access to stored file bytes, brokered so a module never
  *  imports core-files or touches its on-disk layout. core-files
  *  registers the reader at boot; everyone else just calls read(). */
@@ -5141,6 +5221,7 @@ export interface Platform {
   calendar: PlatformCalendar;
   queue: PlatformQueue;
   exclusive: PlatformExclusive;
+  sweeps: PlatformSweeps;
   sharedCache: PlatformSharedCache;
   notifications: PlatformNotifications;
   integrations: PlatformIntegrations;

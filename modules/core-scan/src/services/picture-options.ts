@@ -32,6 +32,7 @@ import {
 } from "./ddg-images.js";
 import { mergeOptionPools, searchCommonsImages as librarySearch } from "./commons-images.js";
 import { webSearchEnabled } from "./barcode-lookup.js";
+import { replayingWeb } from "./web-replay.js";
 
 export interface PictureOptionsAsk {
   /** The engine's phrase: name plus brand or shop plus any hints. */
@@ -87,8 +88,11 @@ function withSearchSlot<T>(fn: () => Promise<T>): Promise<T> {
  *  test can flip it. */
 const NONE: PictureSources = { engine: async () => [], library: async () => [] };
 const REAL: PictureSources = { engine: (q, n) => withSearchSlot(() => engineSearch(q, n)), library: librarySearch };
+// Replaying (web-replay.ts) reads cassettes and never the network, so the
+// web-search switch has nothing to protect there.
+const REPLAY: PictureSources = { engine: engineSearch, library: librarySearch };
 function liveSources(): PictureSources {
-  return webSearchEnabled() ? REAL : NONE;
+  return replayingWeb() ? REPLAY : webSearchEnabled() ? REAL : NONE;
 }
 
 export async function pictureOptions(ask: PictureOptionsAsk, sources: PictureSources = liveSources()): Promise<PictureOptions> {

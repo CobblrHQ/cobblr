@@ -11,10 +11,12 @@
 // SENDING this, not somewhere to go. Only the tracker's base URL comes from
 // here; the button composes the rest.
 
+import { COMMUNITY_LINK_BLURBS, COMMUNITY_LINK_LABELS, type CommunityLinkId } from "@cobblr/platform-contract/community-links";
+
 /** One place to take a question, in the order they should be offered. */
 export interface CommunityLink {
   /** Stable id, so the UI can pick an icon without matching on the label. */
-  id: "chat" | "forum" | "issues" | "docs";
+  id: CommunityLinkId;
   label: string;
   url: string;
   /** One short line: what you would go there FOR. Two links with no
@@ -54,35 +56,18 @@ function safe(url: string): string {
  *  where an answer stays findable. Issues last, because filing one is work and
  *  most questions are not bugs. */
 export function communityLinks(): CommunityLink[] {
+  // The label and the blurb come from the platform contract, where the web's
+  // fallback for an older server reads the same words (#3039).
+  const place = (id: CommunityLinkId, url: string): CommunityLink => ({ id, label: COMMUNITY_LINK_LABELS[id], url, blurb: COMMUNITY_LINK_BLURBS[id] });
   const defs: CommunityLink[] = [
-    {
-      id: "chat",
-      label: "Discord",
-      // COBBLR_-prefixed first, bare name kept because deployments already set it.
-      url: firstUrl("COBBLR_DISCORD_INVITE_URL", "DISCORD_INVITE_URL"),
-      blurb: "Ask a question and get an answer the same day.",
-    },
-    {
-      id: "forum",
-      label: "Community forum",
-      url: firstUrl("COBBLR_FORUM_URL"),
-      blurb: "Longer questions, and answers that stay findable.",
-    },
-    {
-      id: "issues",
-      label: "Issue tracker",
-      // Self-hosters can point this at their own fork. Unset means this
-      // deployment does not offer a tracker, which is a real answer: a
-      // self-hoster with no fork should not be sent to a stranger's repo.
-      url: firstUrl("COBBLR_ISSUES_URL"),
-      blurb: "Report a bug or track one you already filed.",
-    },
-    {
-      id: "docs",
-      label: "Documentation",
-      url: firstUrl("COBBLR_DOCS_URL"),
-      blurb: "How a feature is meant to work.",
-    },
+    // COBBLR_-prefixed first, bare name kept because deployments already set it.
+    place("chat", firstUrl("COBBLR_DISCORD_INVITE_URL", "DISCORD_INVITE_URL")),
+    place("forum", firstUrl("COBBLR_FORUM_URL")),
+    // Self-hosters can point this at their own fork. Unset means this
+    // deployment does not offer a tracker, which is a real answer: a
+    // self-hoster with no fork should not be sent to a stranger's repo.
+    place("issues", firstUrl("COBBLR_ISSUES_URL")),
+    place("docs", firstUrl("COBBLR_DOCS_URL")),
   ];
   return defs.map((d) => ({ ...d, url: safe(d.url) })).filter((d) => d.url);
 }

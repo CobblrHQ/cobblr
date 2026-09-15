@@ -321,12 +321,12 @@ export function WireComposer({
                   value={c.path}
                   onChange={(e) => setConditions((cs) => cs.map((x, j) => (j === i ? { ...x, path: e.target.value } : x)))}
                   placeholder="event.newQty"
-                  className="input !py-1 !text-xs font-mono flex-1"
+                  className="input !py-1 text-xs font-mono flex-1"
                 />
                 <select
                   value={c.op}
                   onChange={(e) => setConditions((cs) => cs.map((x, j) => (j === i ? { ...x, op: e.target.value } : x)))}
-                  className="input !py-1 !text-xs !w-auto"
+                  className="input !py-1 text-xs !w-auto"
                 >
                   {COND_OPS.map((o) => (
                     <option key={o} value={o}>{o}</option>
@@ -337,7 +337,7 @@ export function WireComposer({
                     value={c.value}
                     onChange={(e) => setConditions((cs) => cs.map((x, j) => (j === i ? { ...x, value: e.target.value } : x)))}
                     placeholder="5"
-                    className="input !py-1 !text-xs font-mono flex-1"
+                    className="input !py-1 text-xs font-mono flex-1"
                   />
                 )}
                 <button

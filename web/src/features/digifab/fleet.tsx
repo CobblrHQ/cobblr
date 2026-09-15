@@ -1848,7 +1848,7 @@ function ControlsPanel({ slug, connId, deviceId, name, telemetry, lanActive }: {
                                 value={nums[c.id] ?? (tm && tm.target != null ? String(Math.round(tm.target)) : "")}
                                 onChange={(e) => setNums((nv) => ({ ...nv, [c.id]: e.target.value }))}
                                 placeholder={c.unit}
-                                className="input !py-0.5 !text-xs !w-16"
+                                className="input !py-0.5 text-xs !w-16"
                               />
                               <button type="button" onClick={() => doRun(c, { value: Number(nums[c.id] ?? (tm?.target ?? 0)) || 0 })} disabled={run.isPending} className={btn}>Set</button>
                             </div>
@@ -2861,7 +2861,7 @@ export function MachineDigifabPanel({
                 setConnId(e.target.value);
                 setDeviceId("");
               }}
-              className="input !py-1 !text-xs !w-auto"
+              className="input !py-1 text-xs !w-auto"
             >
               <option value="">choose…</option>
               {connections.map((c) => (
@@ -2884,7 +2884,7 @@ export function MachineDigifabPanel({
             return (
               <label className="block">
                 <span className="block text-[10px] font-mono uppercase tracking-widest text-faint mb-1">Printer</span>
-                <select value={deviceId} onChange={(e) => setDeviceId(e.target.value)} className="input !py-1 !text-xs !w-auto">
+                <select value={deviceId} onChange={(e) => setDeviceId(e.target.value)} className="input !py-1 text-xs !w-auto">
                   <option value="">choose…</option>
                   {devs.map((d) => (<option key={d.id} value={d.id}>{d.name}</option>))}
                 </select>

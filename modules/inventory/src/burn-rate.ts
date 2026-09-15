@@ -21,23 +21,23 @@ const WINDOW_DAYS = 90; // trailing history considered
 const LEAD_DAYS = 5; // warn this many days before predicted-out
 const MIN_EVENTS = 2; // need at least this many consume events to trust a rate
 const DAY = 86_400_000;
-
-let intervalHandle: ReturnType<typeof setInterval> | null = null;
+export const BURN_RATE_PASS = "inventory.burn-rate-sweep";
 
 export function startBurnRateSweeper(): void {
-  if (intervalHandle) clearInterval(intervalHandle);
-  intervalHandle = setInterval(safeTick, TICK_MS);
-  setTimeout(safeTick, 45_000); // first pass once boot settles
-  console.log(`[inventory] burn-rate sweeper started — hourly, ${WINDOW_DAYS}d window, ${LEAD_DAYS}d lead`);
+  // The walk is the kernel's (platform().sweeps, #3036): this registers the
+  // per-workspace visit and its cadence and owns no timer, so the pass shares
+  // one walk and one connection budget with every other pass.
+  platform().sweeps.register({
+    name: BURN_RATE_PASS,
+    everyMs: TICK_MS,
+    module: "inventory",
+    visit: ({ orgId, db, now }) => visitWorkspace(orgId, db, now),
+  });
+  console.log(`[inventory] burn-rate sweeper registered — hourly, ${WINDOW_DAYS}d window, ${LEAD_DAYS}d lead`);
 }
 
-export function stopBurnRateSweeper(): void {
-  if (intervalHandle) {
-    clearInterval(intervalHandle);
-    intervalHandle = null;
-    console.log("[inventory] burn-rate sweeper stopped");
-  }
-}
+/** Nothing to stop: the kernel's walk owns the timer. Kept for the module's shutdown hook. */
+export function stopBurnRateSweeper(): void {}
 
 export interface ConsumptionAgg {
   /** total units consumed in the window (a positive number) */
@@ -68,48 +68,28 @@ export function predictOut(
   return { ratePerDay, predictedOutAt: new Date(now.getTime() + daysLeft * DAY) };
 }
 
-async function safeTick(): Promise<void> {
-  try {
-      // One process only: every api runs this loop, and more than one api
-      // runs against a single database (the canary channel; a rolling deploy).
-      // Unguarded, each tick's notifications and writes happen twice.
-    await platform().exclusive.run("inventory.burn-rate-sweep", async () => {
-      await burnTick();
-    });
-  } catch (err) {
-    console.error("[inventory] burn-rate tick failed:", (err as Error).message);
-  }
-}
-
 async function burnTick(orgId?: string): Promise<{ scanned: number; warned: number }> {
-  const meta = platform().db.meta as unknown as Kysely<{
-    orgs: { id: string };
-    org_modules: { org_id: string; module_name: string };
-  }>;
-  let orgsQ = meta
-    .selectFrom("orgs")
-    .innerJoin("org_modules as m", (j) => j.onRef("m.org_id", "=", "orgs.id").on("m.module_name", "=", "inventory"))
-    .select(["orgs.id"]);
-  if (orgId) orgsQ = orgsQ.where("orgs.id", "=", orgId);
-  let orgs: { id: string }[];
-  try {
-    orgs = await orgsQ.execute();
-  } catch (err) {
-    console.warn("[inventory] burn sweep skipped — meta read failed:", (err as Error).message);
-    return { scanned: 0, warned: 0 };
-  }
-
+  const run = await platform().sweeps.run(BURN_RATE_PASS, { orgIds: orgId ? [orgId] : undefined });
   let scanned = 0;
   let warned = 0;
-  const now = new Date();
-  const cutoff = new Date(now.getTime() - WINDOW_DAYS * DAY);
+  for (const { result } of run.results) {
+    const r = result as Partial<{ scanned: number; warned: number }> | void;
+    scanned += r?.scanned ?? 0;
+    warned += r?.warned ?? 0;
+  }
+  return { scanned, warned };
+}
 
-  for (const org of orgs) {
-    try {
-      // withDb releases the org's pool the moment this closure returns — a
-      // getDb + releaseIdleDb pair can't release its own pool inside the
-      // grace window, which held one pool per tenant and exhausted Postgres.
-      await platform().tenants.withDb(org.id, async (raw) => {
+/** One workspace, the pool already open: the pass's visit. `org` and `raw`
+ *  keep their names so the body reads as it did when it was the loop's. */
+async function visitWorkspace(orgId: string, raw: unknown, now: Date): Promise<{ scanned: number; warned: number } | void> {
+  const org = { id: orgId };
+  let scanned = 0;
+  let warned = 0;
+  const cutoff = new Date(now.getTime() - WINDOW_DAYS * DAY);
+  {
+    {
+      {
       const db = raw as Kysely<InventoryDB>;
       // One aggregate query: consume totals per part over the window.
       const aggs = await db
@@ -193,9 +173,7 @@ async function burnTick(orgId?: string): Promise<{ scanned: number; warned: numb
           .where("id", "=", a.part_id)
           .execute();
       }
-      });
-    } catch (err) {
-      console.error(`[inventory] burn sweep for org ${org.id} failed:`, (err as Error).message);
+      }
     }
   }
   return { scanned, warned };

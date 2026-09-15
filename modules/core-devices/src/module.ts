@@ -43,6 +43,9 @@ export default defineModule({
       "core-devices.device.counted",
       // The actuator ack (moved here from digifab.command.sent).
       "core-devices.command.sent",
+      // A connection created, changed or removed: what a consumer that
+      // watches connections keeps its watch-list from (#3034).
+      "core-devices.connection.changed",
     ],
     api: [],
     actions: [

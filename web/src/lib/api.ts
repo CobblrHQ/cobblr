@@ -3,6 +3,7 @@
 // Everything goes through `request<T>` so error shape stays uniform.
 
 import { markSandboxEnded } from "./sandbox-session";
+import type { CommunityLinkId } from "@cobblr/platform-contract/community-links";
 import type { AiFallback } from "@cobblr/platform-contract/scan-fallback";
 import type { ScanToolHints } from "@cobblr/platform-contract/scan-tools";
 import type { SourceConflict } from "@cobblr/platform-contract/acquisition-source";
@@ -169,7 +170,7 @@ async function request<T>(
 }
 
 export interface CommunityLink {
-  id: "chat" | "forum" | "issues" | "docs";
+  id: CommunityLinkId;
   label: string;
   url: string;
   blurb: string;
@@ -3888,9 +3889,13 @@ export const api = {
     slug: string,
     id: string,
     box: { x: number; y: number; w: number; h: number },
+    /** `source: "group"`: cut a split child's group shot again into its own
+     *  picture (#3046); absent, the row's own photo into its catalog picture. */
+    opts: { source?: "own" | "group" } = {},
   ) =>
     request<ScanInboxItem>("POST", `/orgs/${slug}/modules/core-scan/inbox/${id}/catalog-image`, {
       crop: box,
+      ...(opts.source ? { source: opts.source } : {}),
     }),
   /** Rotate the item's own photo (writes a new file; the old one is kept). */
   rotateScanPhoto: (slug: string, id: string, deg: 90 | 180 | 270) =>
@@ -5563,6 +5568,9 @@ export interface ScanInboxItem {
   source_url: string | null;
   image_file_id: string | null;
   catalog_image_file_id: string | null;
+  /** A split child's group shot (the parent's own photo), served on the child
+   *  so the pictures resolver lists it beside the crop (#3046). */
+  group_image_file_id?: string | null;
   catalog_image_url: string | null;
   suggested_name: string | null;
   suggested_manufacturer: string | null;

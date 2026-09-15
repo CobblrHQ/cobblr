@@ -260,9 +260,11 @@ export function register(): void {
           // (2026-08-19). A handful of small files per call is nothing next to
           // the model call this is standing in for.
           const cassettes = loadCassettes(dir);
+          if (process.env.COBBLR_AI_REPLAY_DEBUG) console.log(`[ai:replay] ask: ${JSON.stringify(ask.slice(0, 200))}`);
           const cassette =
             cassettes.find((c) => c.match !== "*" && ask.includes(c.match.toLowerCase())) ??
             cassettes.find((c) => c.match === "*");
+          if (process.env.COBBLR_AI_REPLAY_DEBUG) console.log(`[ai:replay] chose: ${cassette?.file ?? "(none)"} round ${roundIndex(turns)}`);
           if (!cassette) {
             // Say what IS there. "No cassette matches" with an empty directory
             // is a different problem from one with the wrong `match`.

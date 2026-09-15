@@ -35,69 +35,28 @@ export const RETRIM_PER_TICK = 24;
 const TICK_MS = 20 * 60 * 1000;
 /** Between passes while a workspace still had a full page. */
 const DRAIN_MS = 60 * 1000;
-let intervalHandle: ReturnType<typeof setInterval> | null = null;
-let drainHandle: ReturnType<typeof setTimeout> | null = null;
+export const RETRIM_PASS = "core-scan.retrim-sweep";
 
+/** The walk is the kernel's (platform().sweeps, #3036): this registers the
+ *  per-workspace visit and its cadence; a full page reports a backlog and
+ *  the next round comes after DRAIN_MS instead. */
 export function startRetrimSweeper(): void {
-  if (intervalHandle) clearInterval(intervalHandle);
-  intervalHandle = setInterval(safeRetrimTick, TICK_MS);
-  setTimeout(safeRetrimTick, 90_000); // after boot settles
-  console.log(`[core-scan] retrim sweeper started — every ${TICK_MS / 60_000} min, a page a minute while there is a backlog`);
-}
-
-async function safeRetrimTick(): Promise<void> {
-  try {
-    let backlog = false;
-    await platform().exclusive.run("core-scan.retrim-sweep", async () => {
-      backlog = (await retrimTick()).backlog;
-    });
-    if (backlog) {
-      if (drainHandle) clearTimeout(drainHandle);
-      drainHandle = setTimeout(safeRetrimTick, DRAIN_MS);
-    }
-  } catch (err) {
-    console.error("[core-scan] retrim sweep failed:", (err as Error).stack ?? (err as Error).message);
-  }
+  platform().sweeps.register({
+    name: RETRIM_PASS,
+    everyMs: TICK_MS,
+    drainMs: DRAIN_MS,
+    module: "core-scan",
+    visit: async ({ orgId }) => {
+      const done = await retrimWorkspace(orgId);
+      return { ...done, backlog: done.visited >= RETRIM_PER_TICK };
+    },
+  });
+  console.log(`[core-scan] retrim sweeper registered — every ${TICK_MS / 60_000} min, a page a minute while there is a backlog`);
 }
 
 interface UntrimmedRow {
   id: string;
   catalog_image_file_id: string;
-}
-
-export async function retrimTick(opts: { orgId?: string } = {}): Promise<{ visited: number; trimmed: number; backlog: boolean }> {
-  const meta = platform().db.meta as unknown as Kysely<{
-    orgs: { id: string };
-    org_modules: { org_id: string; module_name: string };
-  }>;
-  let orgsQ = meta
-    .selectFrom("orgs")
-    .innerJoin("org_modules as m", (j) => j.onRef("m.org_id", "=", "orgs.id").on("m.module_name", "=", "core-scan"))
-    .select(["orgs.id"]);
-  if (opts.orgId) orgsQ = orgsQ.where("orgs.id", "=", opts.orgId);
-  let orgs: { id: string }[];
-  try {
-    orgs = await orgsQ.execute();
-  } catch (err) {
-    console.warn("[core-scan] retrim sweep skipped — meta read failed:", (err as Error).message);
-    return { visited: 0, trimmed: 0, backlog: false };
-  }
-  let visited = 0;
-  let trimmed = 0;
-  let backlog = false;
-  for (const { id: orgId } of orgs) {
-    try {
-      const done = await retrimWorkspace(orgId);
-      visited += done.visited;
-      trimmed += done.trimmed;
-      // A full page means more is waiting behind it.
-      if (done.visited >= RETRIM_PER_TICK) backlog = true;
-    } catch (err) {
-      console.warn(`[core-scan] retrim sweep skipped org ${orgId}:`, (err as Error).message);
-    }
-  }
-  if (visited > 0) console.log(`[core-scan] retrim sweep: ${trimmed} of ${visited} stored picture(s) trimmed in place${backlog ? "; more waiting, next page in a minute" : ""}`);
-  return { visited, trimmed, backlog };
 }
 
 /** One workspace: the next few pending rows whose picture has no verdict. */

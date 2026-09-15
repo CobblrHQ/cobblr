@@ -67,9 +67,8 @@ export default defineModule({
 
   lifecycle: {
     onBoot: async () => {
-      // Daily retention sweep for the view-log table, driven via
-      // core-queue. Registers the worker handler and seeds a first
-      // job per workspace if none is pending. Idempotent.
+      // Daily retention sweep for the view-log table, a pass on the
+      // kernel's tenant walk. Idempotent.
       const { startRetentionWorker } = await import("./api/retention.js");
       await startRetentionWorker();
     },

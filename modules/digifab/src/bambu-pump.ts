@@ -100,8 +100,46 @@ const clients = new Map<string, PumpClient>();
 let intervalHandle: ReturnType<typeof setInterval> | null = null;
 let lanHandle: ReturnType<typeof setInterval> | null = null;
 
+// The workspaces worth watching: the ones that had a Bambu connection the
+// last time anyone looked. The reconcile (60 s) and the LAN poll (15 s)
+// iterate THIS set, never every workspace with digifab enabled: on a rig
+// with 21 such workspaces and no printers anywhere, that was 21 tenant
+// pools opened every 15 s to read an empty table (#3034). The set is filled
+// by one discovery pass on the kernel's tenant walk (prompt after boot,
+// then rarely) and by core-devices' connection.changed event the moment a
+// connection is created or edited; a workspace whose connections are gone
+// leaves the set at the next reconcile.
+const watched = new Set<string>();
+export const BAMBU_DISCOVER_PASS = "digifab.bambu-discover";
+const DISCOVER_MS = 6 * 60 * 60 * 1000;
+
+/** The workspaces the pump currently watches (tests). */
+export function watchedBambuWorkspaces(): string[] {
+  return [...watched];
+}
+
+/** Does this workspace have an enabled Bambu connection? Read through the
+ *  store on the walk's open pool; the answer keeps or drops the workspace. */
+async function discover(orgId: string): Promise<{ bambu: number }> {
+  const conns = (await platform().devices.connections().list(orgId)).filter((c) => c.type === "bambu" && c.enabled);
+  if (conns.length) watched.add(orgId);
+  else watched.delete(orgId);
+  return { bambu: conns.length };
+}
+
 export function startBambuPump(): void {
   if (intervalHandle) return;
+  platform().sweeps.register({
+    name: BAMBU_DISCOVER_PASS,
+    everyMs: DISCOVER_MS,
+    firstAfterMs: BOOT_DELAY_MS,
+    module: "digifab",
+    visit: ({ orgId }) => discover(orgId),
+  });
+  platform().events.on("core-devices.connection.changed", "digifab", async (payload: unknown) => {
+    const p = payload as { orgId?: string; type?: string };
+    if (p.orgId && p.type === "bambu") watched.add(p.orgId);
+  });
   // SINGLE-PROCESS-SAFE: each api holds its OWN MQTT subscriptions and its own
   // LAN reads — telemetry has to be watched per process, and the status write
   // is last-writer-wins on the same numbers. What must NOT double is the
@@ -110,9 +148,14 @@ export function startBambuPump(): void {
   // printer still post once. That was found the hard way — a workspace's
   // printer posted its progress to Discord twice, every time (2026-08-29).
   intervalHandle = setInterval(safeReconcile, RECONCILE_MS);
-  setTimeout(safeReconcile, BOOT_DELAY_MS); // let the platform finish wiring first
   lanHandle = setInterval(() => void pollLanTelemetry().catch(() => {}), LAN_POLL_MS);
-  console.log(`[digifab] bambu cloud pump started — reconcile every ${RECONCILE_MS / 1000}s, LAN poll every ${LAN_POLL_MS / 1000}s`);
+  console.log(`[digifab] bambu cloud pump started — reconcile every ${RECONCILE_MS / 1000}s, LAN poll every ${LAN_POLL_MS / 1000}s, over the workspaces the discovery pass found`);
+}
+
+/** One reconcile and one LAN poll, now, over the watch-list (tests). */
+export async function runBambuPumpTickForTests(): Promise<void> {
+  await reconcile();
+  await pollLanTelemetry();
 }
 
 export function stopBambuPump(): void {
@@ -120,6 +163,7 @@ export function stopBambuPump(): void {
   if (lanHandle) clearInterval(lanHandle);
   intervalHandle = null;
   lanHandle = null;
+  watched.clear();
   for (const [connId] of clients) closeClient(connId);
 }
 
@@ -179,31 +223,21 @@ interface CloudCreds {
 }
 
 async function reconcile(): Promise<void> {
-  const meta = platform().db.meta as unknown as Kysely<{
-    orgs: { id: string };
-    org_modules: { org_id: string; module_name: string };
-  }>;
-  let orgs: { id: string }[];
-  try {
-    orgs = await meta
-      .selectFrom("orgs")
-      .innerJoin("org_modules", "org_modules.org_id", "orgs.id")
-      .select(["orgs.id"])
-      .where("org_modules.module_name", "=", "digifab")
-      .execute();
-  } catch (err) {
-    console.warn("[digifab] bambu pump — meta read failed:", (err as Error).message);
-    return;
-  }
-
+  // The watch-list, never every workspace with digifab enabled (#3034).
+  const watchedOrgs = [...watched].map((id) => ({ id }));
   const wanted = new Set<string>();
   const store = platform().devices.connections();
-  for (const org of orgs) {
+  for (const org of watchedOrgs) {
     let conns;
     try {
-      conns = (await store.list(org.id)).filter(
-        (c) => c.type === "bambu" && c.enabled && (c.config as { mode?: string }).mode === "cloud",
-      );
+      const all = (await store.list(org.id)).filter((c) => c.type === "bambu" && c.enabled);
+      if (all.length === 0) {
+        // Its Bambu connections are gone: stop watching, and let the pool go.
+        watched.delete(org.id);
+        void platform().tenants.releaseIdleDb(org.id).catch(() => {});
+        continue;
+      }
+      conns = all.filter((c) => (c.config as { mode?: string }).mode === "cloud");
     } catch {
       continue;
     }
@@ -246,23 +280,10 @@ async function reconcile(): Promise<void> {
 // it's the LAN-first source (cloud, if connected, is the fallback). Same report
 // payload as cloud, so the fleet/detail render identically.
 async function pollLanTelemetry(): Promise<void> {
-  const meta = platform().db.meta as unknown as Kysely<{
-    orgs: { id: string };
-    org_modules: { org_id: string; module_name: string };
-  }>;
-  let orgs: { id: string }[];
-  try {
-    orgs = await meta
-      .selectFrom("orgs")
-      .innerJoin("org_modules", "org_modules.org_id", "orgs.id")
-      .select(["orgs.id"])
-      .where("org_modules.module_name", "=", "digifab")
-      .execute();
-  } catch {
-    return;
-  }
+  // The watch-list, never every workspace with digifab enabled (#3034).
+  const watchedOrgs = [...watched].map((id) => ({ id }));
   const store = platform().devices.connections();
-  for (const org of orgs) {
+  for (const org of watchedOrgs) {
     let touched = false;
     try {
       const conns = (await store.list(org.id)).filter((c) => c.type === "bambu" && c.enabled);

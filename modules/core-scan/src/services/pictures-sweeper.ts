@@ -16,10 +16,14 @@
 // hours (it may be that the shop's photos were not indexed yet, or the
 // engine was in a mood and answered with nothing rather than a refusal). A
 // row older than a week is left alone - by then the person has filed it or
-// moved on. Serial and spaced through the ladder's own gate, so the sweep
-// cannot itself be the burst; bounded per tick so a workspace with a stuck
-// receipt costs eighteen asks an hour, which the engine tolerates and which
-// clears a receipt in under an hour once the wall lifts.
+// moved on. Spaced through the ladder's own gate, so the sweep cannot itself
+// be the burst; bounded per tick so a workspace with a stuck receipt costs
+// eighteen asks an hour, which the engine tolerates and which clears a
+// receipt in under an hour once the wall lifts.
+//
+// The walk is the kernel's (platform().sweeps, #3036): this file registers
+// the per-workspace visit and its cadence and owns no timer, so the pictures
+// pass shares one walk and one connection budget with every other pass.
 
 import { sql, type Kysely } from "kysely";
 import { platform } from "@cobblr/platform-contract";
@@ -28,8 +32,8 @@ import { startRetrimSweeper } from "./retrim-stored-pictures.js";
 import { startSplitSeriesHealer } from "./split-series-heal.js";
 import { startRerouteSweeper } from "./reroute-keyword-rows.js";
 
-let intervalHandle: ReturnType<typeof setInterval> | null = null;
 const TICK_MS = 20 * 60 * 1000;
+export const PICTURES_PASS = "core-scan.throttled-pictures-sweep";
 /** After the engine refuses, leave it alone for this long. A refused ask
  *  every twenty minutes is the trickle that keeps a block in place. */
 export const BACKOFF_MS = 60 * 60 * 1000;
@@ -93,10 +97,13 @@ export function pickUnpictured(rows: readonly UnpicturedRow[], now: Date, engine
 }
 
 export function startPicturesSweeper(): void {
-  if (intervalHandle) clearInterval(intervalHandle);
-  intervalHandle = setInterval(safeTick, TICK_MS);
-  setTimeout(safeTick, 90_000); // after boot settles, behind the other sweeps
-  console.log(`[core-scan] pictures sweeper started — every ${TICK_MS / 60_000} min`);
+  platform().sweeps.register({
+    name: PICTURES_PASS,
+    everyMs: TICK_MS,
+    module: "core-scan",
+    visit: ({ orgId, db, now }) => visitWorkspace(orgId, db as Kysely<unknown>, now),
+  });
+  console.log(`[core-scan] pictures sweeper registered — every ${TICK_MS / 60_000} min`);
   // The pictures already stored: any that reached the store untrimmed are
   // trimmed where they sit, on their own cadence (a page a minute while
   // there is a backlog, so an inbox of a hundred heals in minutes), never
@@ -110,91 +117,53 @@ export function startPicturesSweeper(): void {
   startRerouteSweeper();
 }
 
-async function safeTick(): Promise<void> {
-  try {
-    await platform().exclusive.run("core-scan.throttled-pictures-sweep", async () => {
-      await picturesTick();
-    });
-  } catch (err) {
-    console.error("[core-scan] pictures sweep failed:", (err as Error).stack ?? (err as Error).message);
-  }
-}
-
-export async function picturesTick(opts: { orgId?: string; now?: Date } = {}): Promise<{ asked: number; refused: boolean }> {
-  const now = opts.now ?? new Date();
-  let asked = 0;
+/** One workspace: the next few unpictured rows are asked for again. A
+ *  refusal from the engine stops the pass for this round (`stop`) and
+ *  backs it off for an hour. */
+async function visitWorkspace(orgId: string, tdb: Kysely<unknown>, now: Date): Promise<{ asked: number; refused: boolean; stop?: boolean }> {
   const backedOff = inBackoff(now, backoffUntil);
   if (backedOff) console.log(`[core-scan] pictures sweep: engine backing off until ${new Date(backoffUntil).toISOString()}; refused rows wait`);
-  const meta = platform().db.meta as unknown as Kysely<{
-    orgs: { id: string };
-    org_modules: { org_id: string; module_name: string };
-  }>;
-  let orgsQ = meta
-    .selectFrom("orgs")
-    .innerJoin("org_modules as m", (j) => j.onRef("m.org_id", "=", "orgs.id").on("m.module_name", "=", "core-scan"))
-    .select(["orgs.id"]);
-  if (opts.orgId) orgsQ = orgsQ.where("orgs.id", "=", opts.orgId);
-  let orgs: { id: string }[];
-  try {
-    orgs = await orgsQ.execute();
-  } catch (err) {
-    console.warn("[core-scan] pictures sweep skipped — meta read failed:", (err as Error).message);
-    return { asked: 0, refused: false };
-  }
+  // The filter is in SQL so a workspace with a big inbox pays for its
+  // unpictured rows, not for all of them; the six-hour rule is applied
+  // in pickUnpictured on the rows that come back.
+  const q = sql<UnpicturedRow>`
+    select id, suggested_name, suggested_manufacturer, status, created_at,
+           catalog_image_file_id, catalog_image_url,
+           suggested_metadata, suggested_candidates
+    from core_scan_inbox_items
+    where status = 'pending'
+      and catalog_image_file_id is null
+      and catalog_image_url is null
+      and coalesce(suggested_metadata->>'catalog_image_user_set', 'false') <> 'true'
+      and coalesce(suggested_name, '') <> ''
+      and created_at > now() - interval '7 days'
+    order by created_at asc
+    limit ${PER_TICK * 4}
+  `.compile(tdb);
+  const rows = (await tdb.executeQuery(q)).rows;
+  const picked = pickUnpictured(rows, now, backedOff);
+  let asked = 0;
   let refused = false;
-
-  for (const { id: orgId } of orgs) {
-    let picked: UnpicturedRow[] = [];
+  for (const r of picked) {
+    const meta = r.suggested_metadata ?? {};
+    const cand = r.suggested_candidates?.[0];
+    const category = cand?.category ?? (cand?.fields?.food_category as string | undefined) ?? null;
+    const soldBy = typeof meta.receipt_vendor === "string" ? meta.receipt_vendor : null;
     try {
-      await platform().tenants.withDb(orgId, async (raw) => {
-        const tdb = raw as Kysely<unknown>;
-        // The filter is in SQL so a workspace with a big inbox pays for its
-        // unpictured rows, not for all of them; the six-hour rule is applied
-        // in pickUnpictured on the rows that come back.
-        const q = sql<UnpicturedRow>`
-          select id, suggested_name, suggested_manufacturer, status, created_at,
-                 catalog_image_file_id, catalog_image_url,
-                 suggested_metadata, suggested_candidates
-          from core_scan_inbox_items
-          where status = 'pending'
-            and catalog_image_file_id is null
-            and catalog_image_url is null
-            and coalesce(suggested_metadata->>'catalog_image_user_set', 'false') <> 'true'
-            and coalesce(suggested_name, '') <> ''
-            and created_at > now() - interval '7 days'
-          order by created_at asc
-          limit ${PER_TICK * 4}
-        `.compile(tdb);
-        const rows = (await tdb.executeQuery(q)).rows;
-        picked = pickUnpictured(rows, now, backedOff);
-      });
-    } catch (err) {
-      console.warn(`[core-scan] pictures sweep skipped org ${orgId}:`, (err as Error).message);
-      continue;
-    }
-    for (const r of picked) {
-      const meta = r.suggested_metadata ?? {};
-      const cand = r.suggested_candidates?.[0];
-      const category = cand?.category ?? (cand?.fields?.food_category as string | undefined) ?? null;
-      const soldBy = typeof meta.receipt_vendor === "string" ? meta.receipt_vendor : null;
-      try {
-        // `retrying: true` - the sweep is the retry; the function must not
-        // schedule another of its own on top of it.
-        const outcome = await refreshCatalogImageByName(orgId, r.id, r.suggested_name!, r.suggested_manufacturer, soldBy, category, true);
-        asked++;
-        if (outcome === "throttled") {
-          // The engine said no. The rest of this tick would be the burst all
-          // over again; stop here and give it an hour.
-          refused = true;
-          backoffUntil = now.getTime() + BACKOFF_MS;
-          break;
-        }
-      } catch (err) {
-        console.warn(`[core-scan] pictures sweep retry failed for ${r.id}:`, (err as Error).message);
+      // `retrying: true` - the sweep is the retry; the function must not
+      // schedule another of its own on top of it.
+      const outcome = await refreshCatalogImageByName(orgId, r.id, r.suggested_name!, r.suggested_manufacturer, soldBy, category, true);
+      asked++;
+      if (outcome === "throttled") {
+        // The engine said no. The rest of this round would be the burst all
+        // over again; stop here and give it an hour.
+        refused = true;
+        backoffUntil = now.getTime() + BACKOFF_MS;
+        break;
       }
+    } catch (err) {
+      console.warn(`[core-scan] pictures sweep retry failed for ${r.id}:`, (err as Error).message);
     }
-    if (refused) break;
   }
-  if (asked > 0) console.log(`[core-scan] pictures sweep asked for ${asked} row(s)${refused ? "; refused, backing off for an hour" : ""}`);
-  return { asked, refused };
+  return { asked, refused, stop: refused };
 }

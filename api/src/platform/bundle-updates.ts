@@ -30,7 +30,7 @@ import {
   type BundleUpdateTier,
 } from "@cobblr/platform-contract/bundle-update-tier";
 import { listFlagshipManifests } from "../lib/flagship-bundles.js";
-import { runExclusive } from "./exclusive.js";
+import { registerTenantSweep, runTenantSweep } from "./tenant-sweeps.js";
 
 export interface InstalledBundle {
   org_id: string;
@@ -86,83 +86,108 @@ function serverCatalog(): CatalogEntry[] {
     .filter((c) => c.id && c.version);
 }
 
-/** Apply every planned update across workspaces. Per-workspace try/catch;
- *  one failure never blocks the rest. */
+export const BUNDLE_UPDATES_PASS = "kernel.bundle-updates";
+
+/** Apply every planned update across workspaces: one round of the pass, now
+ *  (boot, and tests). Per-workspace try/catch; one failure never blocks the
+ *  rest. The walk holds the pass's lock, so more than one api against one
+ *  database (canary, a rolling deploy) never applies the same update at once;
+ *  the loser reports nothing planned and comes round again next hour. */
 export async function reconcileBundleUpdates(): Promise<{ planned: number; applied: number; skipped: number }> {
-  // More than one api runs against one database (canary, a rolling deploy).
-  // Two of them applying the same update at once is two installs racing one
-  // row, so only one process does a sweep at a time; the loser reports
-  // nothing planned and comes round again next hour.
-  let out = { planned: 0, applied: 0, skipped: 0 };
-  await runExclusive("bundle-updates", async () => {
-    out = await reconcileBundleUpdatesInner();
-  });
-  return out;
-}
-
-async function reconcileBundleUpdatesInner(): Promise<{ planned: number; applied: number; skipped: number }> {
-  const { meta } = await import("../db/meta.js");
-  const { validateBundle, applyValidatedBundle } = await import("../routes/bundles.js");
-  const { evictTenantPool } = await import("../db/tenant.js");
-
-  const rows = await meta
-    .selectFrom("bundles")
-    .select(["org_id", "external_id", "version", "manifest", "enabled_features"])
-    .where("install_status", "=", "active")
-    .execute();
-  const plan = planBundleUpdates(
-    rows.map((r) => ({ ...r, enabled_features: (r.enabled_features as string[] | null) ?? [] })),
-    serverCatalog(),
-  );
+  registerBundleUpdatesPass();
+  const run = await runTenantSweep(BUNDLE_UPDATES_PASS);
   let applied = 0;
   let skipped = 0;
-  const byOrg = new Map<string, PlannedUpdate[]>();
-  for (const p of plan) byOrg.set(p.orgId, [...(byOrg.get(p.orgId) ?? []), p]);
+  for (const { result } of run.results) {
+    const r = result as { applied?: number; skipped?: number } | void;
+    applied += r?.applied ?? 0;
+    skipped += r?.skipped ?? 0;
+  }
+  return { planned: lastPlan.planned, applied, skipped };
+}
 
-  for (const [orgId, updates] of byOrg) {
+// The plan of the current round, made once on the meta side in `candidates`
+// and read per workspace in `visit`. A pass's candidates run before any of
+// its visits in a round, so the map is whole when the first visit reads it.
+let lastPlan: { planned: number; byOrg: Map<string, PlannedUpdate[]> } = { planned: 0, byOrg: new Map() };
+let registered = false;
+
+function registerBundleUpdatesPass(): void {
+  if (registered) return;
+  registered = true;
+  registerTenantSweep({
+    name: BUNDLE_UPDATES_PASS,
+    everyMs: HOUR,
+    // Cheap on the happy path: one meta query lists every installed bundle
+    // across workspaces, the plan is pure and in memory, and only a
+    // workspace with something to apply is visited (a tenant pool opens for
+    // it, and the walk evicts it on the way out).
+    candidates: async () => {
+      const { meta } = await import("../db/meta.js");
+      const rows = await meta
+        .selectFrom("bundles")
+        .select(["org_id", "external_id", "version", "manifest", "enabled_features"])
+        .where("install_status", "=", "active")
+        .execute();
+      const plan = planBundleUpdates(
+        rows.map((r) => ({ ...r, enabled_features: (r.enabled_features as string[] | null) ?? [] })),
+        serverCatalog(),
+      );
+      const byOrg = new Map<string, PlannedUpdate[]>();
+      for (const u of plan) byOrg.set(u.orgId, [...(byOrg.get(u.orgId) ?? []), u]);
+      lastPlan = { planned: plan.length, byOrg };
+      return [...byOrg.keys()];
+    },
+    visit: async ({ orgId }) => applyPlannedUpdates(orgId, lastPlan.byOrg.get(orgId) ?? []),
+  });
+}
+
+/** One workspace: the same gates the dashboard row applied before it
+ *  pressed anything, then the install route's own apply, attributed to the
+ *  workspace's owner with auth_method "system". */
+async function applyPlannedUpdates(orgId: string, updates: PlannedUpdate[]): Promise<{ applied: number; skipped: number }> {
+  const { meta } = await import("../db/meta.js");
+  const { validateBundle, applyValidatedBundle } = await import("../routes/bundles.js");
+  let applied = 0;
+  let skipped = 0;
+  const owner = await meta
+    .selectFrom("org_memberships")
+    .innerJoin("users", "users.id", "org_memberships.user_id")
+    .select(["users.id as id", "users.display_name as display_name"])
+    .where("org_memberships.org_id", "=", orgId)
+    .where("org_memberships.role", "=", "owner")
+    .orderBy("org_memberships.joined_at", "asc")
+    .executeTakeFirst();
+  if (!owner) return { applied: 0, skipped: updates.length };
+  for (const u of updates) {
     try {
-      const owner = await meta
-        .selectFrom("org_memberships")
-        .innerJoin("users", "users.id", "org_memberships.user_id")
-        .select(["users.id as id", "users.display_name as display_name"])
-        .where("org_memberships.org_id", "=", orgId)
-        .where("org_memberships.role", "=", "owner")
-        .orderBy("org_memberships.joined_at", "asc")
-        .executeTakeFirst();
-      if (!owner) { skipped += updates.length; continue; }
-      for (const u of updates) {
-        try {
-          // The same gates the dashboard row applied before it pressed anything.
-          const v = await validateBundle(orgId, u.manifest, { autoEnable: false, enabledFeatures: u.enabledFeatures });
-          const blocked =
-            !v.valid ||
-            v.errors.some((e) => e.code === "needs_enable" || e.code === "field_def_collision") ||
-            (v.preview?.upgrade_conflicts?.length ?? 0) > 0;
-          if (blocked) { skipped++; continue; }
-          await applyValidatedBundle(orgId, { id: owner.id, display_name: owner.display_name ?? null, auth_method: "system" }, v);
-          applied++;
-          console.log(`[bundle-updates] org ${orgId}: ${u.externalId} ${u.from} → ${u.to} (${u.tier})`);
-        } catch (err) {
-          skipped++;
-          console.error(`[bundle-updates] org ${orgId}: ${u.externalId} failed:`, (err as Error).message);
-        }
+      const v = await validateBundle(orgId, u.manifest, { autoEnable: false, enabledFeatures: u.enabledFeatures });
+      const blocked =
+        !v.valid ||
+        v.errors.some((e) => e.code === "needs_enable" || e.code === "field_def_collision") ||
+        (v.preview?.upgrade_conflicts?.length ?? 0) > 0;
+      if (blocked) {
+        skipped++;
+        continue;
       }
-    } finally {
-      await evictTenantPool(orgId).catch(() => {});
+      await applyValidatedBundle(orgId, { id: owner.id, display_name: owner.display_name ?? null, auth_method: "system" }, v);
+      applied++;
+      console.log(`[bundle-updates] org ${orgId}: ${u.externalId} ${u.from} → ${u.to} (${u.tier})`);
+    } catch (err) {
+      skipped++;
+      console.error(`[bundle-updates] org ${orgId}: ${u.externalId} failed:`, (err as Error).message);
     }
   }
-  return { planned: plan.length, applied, skipped };
+  return { applied, skipped };
 }
 
 const HOUR = 60 * 60 * 1000;
 
-/** Boot runs it once; this keeps it running, so a catalog that moved with a
- *  deploy reaches every workspace within the hour, not when somebody looks. */
+/** Boot runs it once; the pass keeps it running on the kernel's tenant
+ *  walk, hourly, with its first round spread over the hour rather than on
+ *  the exact hour after boot (#3033's prime suspect, #3036), so a catalog
+ *  that moved with a deploy reaches every workspace within the hour, not
+ *  when somebody looks. */
 export function startBundleUpdateSweeper(): void {
-  // SINGLE-PROCESS-SAFE: the tick runs through runExclusive("bundle-updates"), so
-  // two api processes never apply the same update at once.
-  const tick = () => {
-    reconcileBundleUpdates().catch((err) => console.error("[bundle-updates] sweep failed:", (err as Error).message));
-  };
-  setInterval(tick, HOUR).unref();
+  registerBundleUpdatesPass();
 }

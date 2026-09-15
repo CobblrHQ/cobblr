@@ -482,7 +482,7 @@ export function MachinesPage({
             onChange={(e) => {
               if (e.target.value) navigate(`/machines?lens=${encodeURIComponent(e.target.value)}`);
             }}
-            className="input !py-1 !text-xs !w-auto"
+            className="input !py-1 text-xs !w-auto"
             title="Focus the table on one machine type's fields"
           >
             <option value="">lens…</option>
@@ -500,7 +500,7 @@ export function MachinesPage({
             value={query}
             onChange={(e) => setQuery(e.target.value)}
             placeholder="search…"
-            className="input !py-1 !pl-7 !text-xs !w-48"
+            className="input !py-1 !pl-7 text-xs !w-48"
           />
         </div>
         <ViewModeToggle mode={viewMode} onChange={setViewMode} />
@@ -1875,7 +1875,7 @@ function NewMachineModal({
                   {bambuConns.length > 1 && (
                     <label className="block">
                       <span className={lblCls}>Bambu account</span>
-                      <select value={acctId} onChange={(e) => { setAcctId(e.target.value); setBambuDevId(""); }} className="input !py-1 !text-xs">
+                      <select value={acctId} onChange={(e) => { setAcctId(e.target.value); setBambuDevId(""); }} className="input !py-1 text-xs">
                         {bambuConns.map((c) => <option key={c.id} value={c.id}>{c.label}</option>)}
                       </select>
                     </label>
@@ -1916,7 +1916,7 @@ function NewMachineModal({
                   {directDevices.length > 1 && (
                     <label className="block">
                       <span className={lblCls}>Which printer is this?</span>
-                      <select value={directDeviceId} onChange={(e) => { setDirectDeviceId(e.target.value); const d = directDevices.find((x) => x.id === e.target.value); if (d) setName((n) => n.trim() || d.name); }} className="input !py-1 !text-xs">
+                      <select value={directDeviceId} onChange={(e) => { setDirectDeviceId(e.target.value); const d = directDevices.find((x) => x.id === e.target.value); if (d) setName((n) => n.trim() || d.name); }} className="input !py-1 text-xs">
                         {directDevices.map((d) => <option key={d.id} value={d.id}>{d.name}</option>)}
                       </select>
                     </label>
@@ -1947,7 +1947,7 @@ function NewMachineModal({
                 <div className="flex flex-wrap items-end gap-2">
                   <label className="block">
                     <span className={lblCls}>Manager</span>
-                    <select value={mgrConnId} onChange={(e) => { setMgrConnId(e.target.value); setMgrDeviceId(""); }} className="input !py-1 !text-xs !w-auto">
+                    <select value={mgrConnId} onChange={(e) => { setMgrConnId(e.target.value); setMgrDeviceId(""); }} className="input !py-1 text-xs !w-auto">
                       <option value="">choose…</option>
                       {connections.map((c) => <option key={c.id} value={c.id}>{c.label}</option>)}
                     </select>
@@ -1955,7 +1955,7 @@ function NewMachineModal({
                   {mgrConnId && (
                     <label className="block">
                       <span className={lblCls}>Printer</span>
-                      <select value={mgrDeviceId} onChange={(e) => setMgrDeviceId(e.target.value)} className="input !py-1 !text-xs !w-auto" disabled={mgrDevices.isLoading}>
+                      <select value={mgrDeviceId} onChange={(e) => setMgrDeviceId(e.target.value)} className="input !py-1 text-xs !w-auto" disabled={mgrDevices.isLoading}>
                         <option value="">{mgrDevices.isLoading ? "loading…" : "choose…"}</option>
                         {(mgrDevices.data?.items ?? []).map((d) => <option key={d.id} value={d.id}>{d.name}</option>)}
                       </select>

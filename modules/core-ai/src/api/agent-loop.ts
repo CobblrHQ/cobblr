@@ -161,6 +161,18 @@ export function clampJson(value: unknown, maxChars: number): string {
   return `${head}${cut}}`;
 }
 
+/** executeWrite's contract is "the ledger row summary, or null to propose";
+ *  a refusal from the workspace rides the same channel as `ok: false` with
+ *  the handler's sentence in `message` (chat-ledger.performWrite). */
+function refused(result: unknown): boolean {
+  return !!result && typeof result === "object" && (result as { ok?: unknown }).ok === false;
+}
+function refusalOf(result: unknown): string {
+  const r = result as { message?: unknown; error?: unknown };
+  const said = typeof r.message === "string" ? r.message : typeof r.error === "string" ? r.error : "";
+  return said.trim() || "the workspace declined that write";
+}
+
 export async function runAgentLoop(turns: ChatTurn[], deps: AgentLoopDeps): Promise<AgentLoopOutcome> {
   const maxRounds = deps.maxRounds ?? DEFAULT_MAX_ROUNDS;
   const maxChars = deps.maxResultChars ?? DEFAULT_MAX_RESULT_CHARS;
@@ -322,6 +334,16 @@ export async function runAgentLoop(turns: ChatTurn[], deps: AgentLoopDeps): Prom
           continue;
         }
         if (result !== null) {
+          // A write the workspace REFUSED comes back as a result too - the
+          // action handler's own sentence, ok:false - and it is not a write
+          // that happened. Recorded as applied, the panel drew "entity_kind
+          // and field are required" as a finished step. It goes back to the
+          // model as a failed tool result, like a write that threw.
+          if (refused(result)) {
+            emit({ kind: "tool-result", name: call.name, ok: false, summary: refusalOf(result).slice(0, 160) });
+            turnResults.push({ call, text: clampJson({ ok: false, error: refusalOf(result) }, maxChars) });
+            continue;
+          }
           applied.push({ call, result });
           emit({ kind: "applied", name: call.name, summary: clampJson(result, 160) });
           turnResults.push({ call, text: clampJson(result, maxChars) });

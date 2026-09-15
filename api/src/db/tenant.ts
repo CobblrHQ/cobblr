@@ -337,6 +337,31 @@ export async function withTenantDbForSweep<T>(
   });
 }
 
+/** The tenant sweeps' release, at the end of a visit: the pool is closed
+ *  when nothing is borrowed and nobody waits, whoever touched it during the
+ *  visit (a pass calling withDb inside its own visit bumps the access seq,
+ *  which would make the idle-guarded release above defer for the grace
+ *  window and leave one pool lingering per workspace walked). A request
+ *  that was handed this workspace's Kysely during the visit and queries
+ *  after the close goes through the shim, which re-acquires the live pool.
+ *  A pool with a borrowed client is left to the grace-deferred path. */
+export async function releaseSweepPool(orgId: string): Promise<void> {
+  const entry = cache.get(orgId);
+  if (!entry) return;
+  let pool: Pool;
+  try {
+    ({ pool } = await entry);
+  } catch {
+    return;
+  }
+  if (cache.get(orgId) !== entry) return;
+  if (pool.totalCount !== pool.idleCount || pool.waitingCount > 0) {
+    await releaseIdleTenantPool(orgId);
+    return;
+  }
+  await evictTenantPool(orgId);
+}
+
 /** For tenant deletion — also useful in tests to reset the pool when
  *  the underlying DB has been dropped/recreated.
  *

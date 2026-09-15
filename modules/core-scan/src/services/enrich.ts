@@ -193,7 +193,7 @@ function provenanceLabel(hit: BarcodeHit): string {
  *  rather than hoping each write site remembers (the identify boundary is
  *  handled at its own parser). A reply cut off mid-name otherwise lands on the
  *  card with an unclosed bracket. */
-function withBrandPrefix(name: string | null, brand: string | null): string | null {
+export function withBrandPrefix(name: string | null, brand: string | null): string | null {
   const n = tidyTruncatedName(name);
   const b = (brand ?? "").trim();
   if (!n || !b) return name;

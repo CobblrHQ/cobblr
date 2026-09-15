@@ -171,7 +171,7 @@ export function RecordsPage({
             value={query}
             onChange={(e) => setQuery(e.target.value)}
             placeholder="search…"
-            className="input !py-1 !pl-7 !text-xs !w-48"
+            className="input !py-1 !pl-7 text-xs !w-48"
           />
         </div>
         {missingCovers > 0 && (

@@ -43,29 +43,22 @@ export const REROUTE_PER_TICK = 50;
 const TICK_MS = 20 * 60 * 1000;
 const DRAIN_MS = 60 * 1000;
 const INTERNAL_API = `http://127.0.0.1:${process.env.API_PORT ?? 4000}`;
-let intervalHandle: ReturnType<typeof setInterval> | null = null;
-let drainHandle: ReturnType<typeof setTimeout> | null = null;
+export const REROUTE_PASS = "core-scan.reroute-keyword-rows";
 
+/** The walk is the kernel's (platform().sweeps, #3036): this registers the
+ *  per-workspace visit and its cadence. */
 export function startRerouteSweeper(): void {
-  if (intervalHandle) clearInterval(intervalHandle);
-  intervalHandle = setInterval(safeTick, TICK_MS);
-  setTimeout(safeTick, 150_000);
-  console.log(`[core-scan] keyword re-route sweeper started — every ${TICK_MS / 60_000} min, a page a minute while there is a backlog`);
-}
-
-async function safeTick(): Promise<void> {
-  try {
-    let backlog = false;
-    await platform().exclusive.run("core-scan.reroute-keyword-rows", async () => {
-      backlog = (await rerouteTick()).backlog;
-    });
-    if (backlog) {
-      if (drainHandle) clearTimeout(drainHandle);
-      drainHandle = setTimeout(safeTick, DRAIN_MS);
-    }
-  } catch (err) {
-    console.error("[core-scan] keyword re-route failed:", (err as Error).stack ?? (err as Error).message);
-  }
+  platform().sweeps.register({
+    name: REROUTE_PASS,
+    everyMs: TICK_MS,
+    drainMs: DRAIN_MS,
+    module: "core-scan",
+    visit: async ({ orgId }) => {
+      const done = await rerouteWorkspace(orgId);
+      return { visited: done.visited, rerouted: done.rerouted, backlog: done.visited >= REROUTE_PER_TICK };
+    },
+  });
+  console.log(`[core-scan] keyword re-route sweeper registered — every ${TICK_MS / 60_000} min, a page a minute while there is a backlog`);
 }
 
 export interface RerouteRow {
@@ -254,36 +247,3 @@ export async function rerouteWorkspace(orgId: string, limit = REROUTE_PER_TICK):
   return { visited: rows.length, rerouted: items.length, items };
 }
 
-export async function rerouteTick(opts: { orgId?: string } = {}): Promise<{ visited: number; rerouted: number; backlog: boolean }> {
-  const meta = platform().db.meta as unknown as Kysely<{
-    orgs: { id: string };
-    org_modules: { org_id: string; module_name: string };
-  }>;
-  let orgsQ = meta
-    .selectFrom("orgs")
-    .innerJoin("org_modules as m", (j) => j.onRef("m.org_id", "=", "orgs.id").on("m.module_name", "=", "core-scan"))
-    .select(["orgs.id"]);
-  if (opts.orgId) orgsQ = orgsQ.where("orgs.id", "=", opts.orgId);
-  let orgs: { id: string }[];
-  try {
-    orgs = await orgsQ.execute();
-  } catch (err) {
-    console.warn("[core-scan] keyword re-route skipped — meta read failed:", (err as Error).message);
-    return { visited: 0, rerouted: 0, backlog: false };
-  }
-  let visited = 0;
-  let rerouted = 0;
-  let backlog = false;
-  for (const { id: orgId } of orgs) {
-    try {
-      const done = await rerouteWorkspace(orgId);
-      visited += done.visited;
-      rerouted += done.rerouted;
-      if (done.visited >= REROUTE_PER_TICK) backlog = true;
-    } catch (err) {
-      console.warn(`[core-scan] keyword re-route skipped org ${orgId}:`, (err as Error).message);
-    }
-  }
-  if (visited > 0) console.log(`[core-scan] keyword re-route: ${rerouted} of ${visited} pre-rule keyword route(s) moved${backlog ? "; more waiting, next page in a minute" : ""}`);
-  return { visited, rerouted, backlog };
-}

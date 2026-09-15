@@ -36,6 +36,8 @@ import { FirstScanCard } from "./FirstScanCard";
 import { isSandboxSession } from "../lib/sandbox-session";
 import { DEMO_BARCODE } from "../lib/demo-barcode";
 import { useIsTouch } from "../lib/useIsTouch";
+import { AddPhotosTile } from "./AddPhotosTile";
+import { itemEnriching } from "../pages/scan-status";
 
 function firstSentence(s: string): string {
   const m = s.match(/^.*?[.!?](\s|$)/);
@@ -78,7 +80,7 @@ function NameIt({ slug, itemId }: { slug: string; itemId: string }) {
         value={name}
         onChange={(e) => setName(e.target.value)}
         placeholder="What is this? e.g. blue worsted yarn"
-        className="input !py-1 !text-xs flex-1"
+        className="input !py-1 text-xs flex-1"
         onKeyDown={(e) => { if (e.key === "Enter" && name.trim()) mut.mutate(); }}
       />
       <button
@@ -691,14 +693,26 @@ export function WhatToDoPanel({
                   const done = !!it.ai_suggested_at || stale;
                   const needsName = done && !c && !it.suggested_name && !!it.ai_suggested_at;
                   const name = c?.name || it.suggested_name || (needsName ? "Couldn’t identify it" : "Captured item");
+                  // The row's own progress, by the inbox's one rule (#3049): the
+                  // card used to say "looks like Inventory" the moment the match
+                  // landed while the identify and the picture were still running.
+                  const enriching = itemEnriching(it);
                   const removing = discardMut.isPending && discardMut.variables === it.id;
                   const filing = confirmMut.isPending && confirmMut.variables?.id === it.id;
                   const making = !!c?.bundle_external_id && materializeMut.isPending && materializeMut.variables === c.bundle_external_id;
                   const ctaCls = "shrink-0 inline-flex items-center gap-1 rounded-md text-xs font-medium px-2.5 py-1 transition disabled:opacity-50";
                   return (
-                    <li key={it.id} className="rounded-lg border border-line dark:border-slate-800 bg-surface dark:bg-slate-900 px-3 py-2">
+                    <li key={it.id} data-testid="captured-item" className="rounded-lg border border-line dark:border-slate-800 bg-surface dark:bg-slate-900 px-3 py-2">
                       <div className="flex items-center gap-2">
-                        <span className="flex-1 min-w-0 truncate text-sm font-medium text-content dark:text-mortar-100">{name}</span>
+                        {/* The way in: the row itself, on the inbox (the item
+                            screen on a phone, the card on a desk). */}
+                        <Link
+                          to={`/scan?item=${it.id}`}
+                          data-testid="captured-item-link"
+                          className="flex-1 min-w-0 truncate text-sm font-medium text-content dark:text-mortar-100 hover:text-accent transition"
+                        >
+                          {name}
+                        </Link>
                         <button type="button" disabled={removing} onClick={() => discardMut.mutate(it.id)} title="Remove" className="shrink-0 rounded p-1 text-faint hover:text-content dark:hover:text-mortar-100 hover:bg-subtle dark:hover:bg-slate-800 transition disabled:opacity-50">
                           {removing ? <Loader2 size={12} className="animate-spin" /> : <X size={12} />}
                         </button>
@@ -708,7 +722,12 @@ export function WhatToDoPanel({
                       ) : (
                         <div className="mt-1.5 flex items-center gap-2">
                           <span className="flex-1 min-w-0 truncate text-xs text-faint dark:text-slate-400">
-                            {c ? <>looks like <span className="text-accent">{c.label}</span></>
+                            {enriching ? (
+                              <span className="inline-flex items-center gap-1" data-testid="captured-item-progress">
+                                <Loader2 size={11} className="animate-spin" />
+                                {c ? <>looks like <span className="text-accent">{c.label}</span>, still filling in…</> : it.suggested_name ? "looking it up…" : "finding a home…"}
+                              </span>
+                            ) : c ? <>looks like <span className="text-accent">{c.label}</span></>
                               : done ? "no match — save it as a general item"
                               : <span className="inline-flex items-center gap-1"><Loader2 size={11} className="animate-spin" /> finding a home…</span>}
                           </span>
@@ -852,7 +871,7 @@ export function WhatToDoPanel({
                   value={categoryName}
                   onChange={(e) => setCategoryName(e.target.value)}
                   placeholder={kindVocab ? `e.g. ${kindVocab.categoryEg.split(",")[0]?.trim() ?? kindVocab.categoryEg}` : "Name this category"}
-                  className="input !pl-8 !py-1.5 !text-sm"
+                  className="input !pl-8 !py-1.5 text-sm"
                   onKeyDown={(e) => { if (e.key === "Enter" && categoryName.trim()) createInstanceMut.mutate({ module_name: selectedModuleObj.name, name: categoryName.trim() }); }}
                 />
               </div>
@@ -890,7 +909,7 @@ export function WhatToDoPanel({
               value={addText}
               onChange={(e) => setAddText(e.target.value)}
               placeholder={`e.g. ${itemPlaceholder}`}
-              className="input !pl-8 !py-1.5 !text-sm"
+              className="input !pl-8 !py-1.5 text-sm"
               onKeyDown={(e) => { if (e.key === "Enter" && addText.trim()) noteMut.mutate(addText.trim()); }}
             />
           </div>
@@ -903,6 +922,13 @@ export function WhatToDoPanel({
             >
               {noteMut.isPending ? <Loader2 size={14} className="animate-spin" /> : <Plus size={14} />} Add it
             </button>
+            {/* Photos already taken: the scan inbox's picker, right here
+                beside the camera (#3042). One tap, the same intake. */}
+            <AddPhotosTile
+              slug={slug}
+              className="shrink-0 inline-flex items-center gap-1.5 rounded-lg border border-line dark:border-slate-700 bg-surface dark:bg-slate-900 px-3 py-1.5 text-sm font-medium text-content dark:text-mortar-100 hover:border-cobble-300 dark:hover:border-cobble-700 transition disabled:opacity-60"
+              compact
+            />
             {isTouch ? (
               <Link data-tour="capture-scan" to="/scan/camera" title="Scan a barcode or snap a photo" className="inline-flex items-center gap-1.5 rounded-lg border border-line dark:border-slate-700 bg-surface dark:bg-slate-900 px-3 py-1.5 text-sm font-medium text-content dark:text-mortar-100 hover:border-cobble-300 dark:hover:border-cobble-700 transition">
                 <Camera size={15} /> Scan
@@ -1002,7 +1028,7 @@ export function WhatToDoPanel({
                 value={browseQ}
                 onChange={(e) => setBrowseQ(e.target.value)}
                 placeholder="Search bundles and modules…"
-                className="input !pl-8 !py-1.5 !text-sm"
+                className="input !pl-8 !py-1.5 text-sm"
                 onKeyDown={(e) => {
                   // Enter takes the first tile in section order, so the top-left
                   // result is always what a blind Enter selects.

@@ -132,7 +132,7 @@ export function ConfigSidebarBody() {
           }}
           placeholder="Search settings…"
           aria-label="Search settings"
-          className="input !pl-7 !py-1 !text-xs w-full"
+          className="input !pl-7 !py-1 text-xs w-full"
         />
       </div>
       {query && filtered.length === 0 && (
@@ -249,7 +249,7 @@ function MobileConfigJump() {
         aria-label="Jump to a setting"
         value={all.find((d) => location.pathname.startsWith(d.to))?.to ?? ""}
         onChange={(e) => e.target.value && navigate(e.target.value)}
-        className="input !py-1 !text-xs flex-1 min-w-0"
+        className="input !py-1 text-xs flex-1 min-w-0"
       >
         <option value="">Jump to…</option>
         {CONFIG_SECTION_ORDER.map((id) => {

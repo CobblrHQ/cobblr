@@ -329,7 +329,7 @@ export function PurchasesPage() {
         <select
           value={statusFilter}
           onChange={(e) => setStatusFilter(e.target.value as Order["status"] | "")}
-          className="input !py-1 !text-xs !w-24 lg:!w-32 shrink-0"
+          className="input !py-1 text-xs !w-24 lg:!w-32 shrink-0"
         >
           <option value="">All statuses</option>
           {STATUSES.map((s) => (
@@ -343,7 +343,7 @@ export function PurchasesPage() {
             value={query}
             onChange={(e) => setQuery(e.target.value)}
             placeholder="vendor / order# / notes…"
-            className="input !py-1 !pl-7 !text-xs !w-full"
+            className="input !py-1 !pl-7 text-xs !w-full"
           />
         </div>
         {/* Receipt intake belongs WITH the other header controls, not on a line

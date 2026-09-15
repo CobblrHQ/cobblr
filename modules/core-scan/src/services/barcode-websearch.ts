@@ -16,6 +16,7 @@
 //      name stands.
 
 import { platform } from "@cobblr/platform-contract";
+import { replayingWeb } from "./web-replay.js";
 import { searchText, imageQuery, type DdgImageResult } from "./ddg-images.js";
 import { pictureOptions } from "./picture-options.js";
 import { webSearchEnabled } from "./barcode-lookup.js";
@@ -246,15 +247,21 @@ export function gs1Country(upc: string): string | null {
   return null;
 }
 
+function label(kind: "barcode" | "identifier", code: string): string {
+  return kind === "identifier" ? code : `UPC ${code}`;
+}
+
 export async function llmIdentify(
   orgId: string,
   upc: string,
   titles: string[],
   hint?: string | null,
   userId?: string | null,
+  kind: "barcode" | "identifier" = "barcode",
 ): Promise<LlmIdentity | null> {
+  const what = kind === "identifier" ? "a model, part or serial number printed on it" : "its barcode (UPC/EAN)";
   const system =
-    "You identify ONE retail product from its barcode (UPC/EAN) and any " +
+    `You identify ONE retail product from ${what} and any ` +
     "web-search result titles provided. PREFER the titles when present — they " +
     "come from retailer and barcode-database pages, and agreement across them " +
     "is a strong signal. When the titles describe DIFFERENT products, identify " +
@@ -287,7 +294,7 @@ export async function llmIdentify(
     'guess>, "confidence": <0..1 — your genuine certainty>}.';
   const titleBlock = titles.length
     ? `Search result titles:\n` + titles.map((t, i) => `${i + 1}. ${t}`).join("\n")
-    : "(no web-search titles were available — identify from the barcode only if you are confident)";
+    : `(no web-search titles were available — identify from the ${kind === "identifier" ? "identifier" : "barcode"} only if you are confident)`;
   // A free, deterministic country hint from the GS1 prefix — useful mainly when
   // titles are thin (the model can lean on "registered in the Czech Republic" to
   // place a maker). It is a WEAK signal (registration country ≠ origin), so frame
@@ -299,7 +306,7 @@ export async function llmIdentify(
   // The user's correction note (from the "This is wrong" button) is the strongest
   // signal there is — a human looking at the physical item. Lead with it.
   const hintBlock = hint && hint.trim() ? `\nUSER CORRECTION (authoritative — a person is looking at the item): ${hint.trim()}\n` : "";
-  const user = `UPC: ${upc}${countryHint}${hintBlock}\n\n${titleBlock}`;
+  const user = `${kind === "identifier" ? "Identifier (a model or part number)" : "UPC"}: ${upc}${kind === "identifier" ? "" : countryHint}${hintBlock}\n\n${titleBlock}`;
 
   const call = platform()
     .ai.invoke({
@@ -350,10 +357,18 @@ export async function resolveBarcodeViaWebSearch(
   upc: string,
   hint?: string | null,
   userId?: string | null,
+  opts: {
+    /** What the code IS, for the model's framing and the evidence sentence:
+     *  a scanned barcode (the default) or an identifier a person typed, a
+     *  model or part number (#3049). */
+    kind?: "barcode" | "identifier";
+  } = {},
 ): Promise<WebSearchProduct | null> {
+  const kind = opts.kind ?? "barcode";
   // Self-host privacy: the DuckDuckGo + LLM web-search fallback is a third-party
   // call, gated by the master switch and its own toggle (COBBLR_SCAN_WEBSEARCH).
-  if (!webSearchEnabled()) return null;
+  // A replay session reads cassettes and sends nothing (web-replay.ts).
+  if (!webSearchEnabled() && !replayingWeb()) return null;
   const code = upc.trim();
   if (!code) return null;
 
@@ -388,7 +403,7 @@ export async function resolveBarcodeViaWebSearch(
 
   // Stage 2 — folded identify+classify via core-ai. Reached even with zero
   // titles; the heuristic floor only applies when titles actually existed.
-  const llm = await llmIdentify(orgId, code, rawTitles.slice(0, 12), hint, userId);
+  const llm = await llmIdentify(orgId, code, rawTitles.slice(0, 12), hint, userId, kind);
 
   const name = llm?.name ?? heuristic?.title ?? null;
   if (!name) return null; // genuinely nothing — caller falls to "fill in manually"
@@ -445,11 +460,13 @@ export async function resolveBarcodeViaWebSearch(
     method: llm ? "llm" : "heuristic",
     corroborated,
     evidence: !corroborated
-      ? `Nothing on the web corroborates UPC ${code} — a bare barcode reads as a phone number to a search engine, so the results are unrelated. Treat this name as a guess.`
+      ? kind === "identifier"
+        ? `Nothing on the web agrees on what ${code} is. Treat this name as a guess.`
+        : `Nothing on the web corroborates UPC ${code} — a bare barcode reads as a phone number to a search engine, so the results are unrelated. Treat this name as a guess.`
       : llm
-        ? titled.length
-          ? `Identified from a web search of UPC ${code} (${titled.length} results), AI-confirmed.`
-          : `Identified from UPC ${code} by AI product knowledge (no web results on this host).`
-        : `Identified from a web search of UPC ${code} (${titled.length} results), title heuristic.`,
+        ? titled.length + textTitles.length
+          ? `Identified from a web search of ${label(kind, code)} (${titled.length + textTitles.length} results), AI-confirmed.`
+          : `Identified from ${label(kind, code)} by AI product knowledge (no web results on this host).`
+        : `Identified from a web search of ${label(kind, code)} (${titled.length + textTitles.length} results), title heuristic.`,
   };
 }

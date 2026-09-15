@@ -916,7 +916,7 @@ export function BuildPage() {
                     onChange={(e) => setRefineText(e.target.value)}
                     onKeyDown={(e) => { if (e.key === "Enter") void refine(); }}
                     placeholder='e.g. "also add a price column" or "drop the label wire"'
-                    className="input !py-1.5 !text-sm flex-1"
+                    className="input !py-1.5 text-sm flex-1"
                   />
                   <button
                     type="button"
@@ -962,7 +962,7 @@ export function BuildPage() {
                     onChange={(e) => setRefineText(e.target.value)}
                     onKeyDown={(e) => { if (e.key === "Enter") void refine(); }}
                     placeholder='e.g. "add a scan block" or "make the intro friendlier"'
-                    className="input !py-1.5 !text-sm flex-1"
+                    className="input !py-1.5 text-sm flex-1"
                   />
                   <button
                     type="button"

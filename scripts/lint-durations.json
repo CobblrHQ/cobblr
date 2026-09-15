@@ -1,6 +1,6 @@
 {
   "recorded": "2026-09-14",
-  "source": "CI run 21205, typecheck job, an idle runner (median 0.49s; scripts-typecheck 16.6s, node-resolves 11.9s) + 7 lints added by hand from a CI run (2026-09-14)",
+  "source": "CI run 21205, typecheck job, an idle runner (median 0.49s; scripts-typecheck 16.6s, node-resolves 11.9s) + 7 lints added by hand from a CI run (2026-09-14); lint:scan-door-intake and lint:phone-input-font added by hand from CI run 22222 (2026-09-15); lint:row-pictures-resolved added by hand from its first CI run (2026-09-15)",
   "note": "Quiet per-lint wall time in ms. Refresh: node scripts/run-lints.mjs --record on an idle machine (refused when the run is contended). Read by scripts/lib/lint-budget.mjs.",
   "ms": {
     "lint:action-args-declared": 487,
@@ -259,6 +259,10 @@
     "lint:workspace-deps": 514,
     "lint:workspace-types": 414,
     "lint:workspace-vocab": 691,
-    "lint:write-guards": 387
+    "lint:write-guards": 387,
+    "lint:tenant-sweep-registered": 522,
+    "lint:scan-door-intake": 701,
+    "lint:phone-input-font": 543,
+    "lint:row-pictures-resolved": 589
   }
 }

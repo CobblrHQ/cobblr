@@ -1,0 +1,9 @@
+{
+  "_about": "The matchmaker for the monitor a typed model number was identified as (#3049): routes it to Inventory with its model filled.",
+  "match": "\"name\":\"asus pb287q 28-inch 4k uhd monitor\"",
+  "rounds": [
+    {
+      "content": "{\"candidates\": [{\"module\": \"inventory\", \"instance\": null, \"kind\": \"inventory:part\", \"label\": \"Inventory\", \"name\": \"ASUS PB287Q 28-inch 4K UHD Monitor\", \"confidence\": 0.9, \"fields\": {\"manufacturer\": \"ASUS\", \"model\": \"PB287Q\"}, \"notes\": \"A 28-inch 4K monitor; filed under Inventory.\"}]}"
+    }
+  ]
+}

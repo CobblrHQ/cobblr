@@ -31,6 +31,7 @@ import { loadAllModules } from "./modules/loader.js";
 import { loadAllSandboxedModules } from "./sandbox/loader.js";
 import { syncTenantMigrations, reconcileDefaultModules } from "./modules/enable.js";
 import { startDeliverySweeper } from "./platform/delivery-sweeper.js";
+import { tenantSweeps, startTenantSweeps } from "./platform/tenant-sweeps.js";
 import { startPoolWatch, poolCounts } from "./db/pool-stats.js";
 import { tenantPoolStats } from "./db/tenant.js";
 import { mountModules } from "./modules/mount.js";
@@ -326,6 +327,7 @@ async function boot() {
       hasPendingJob: queue.hasPendingJob,
     },
     exclusive: { run: runExclusive },
+    sweeps: tenantSweeps,
     sharedCache: {
       get: sharedCache.get,
       put: sharedCache.put,
@@ -1356,6 +1358,10 @@ async function boot() {
   const server = app.listen(env.API_PORT, () => {
     console.log(`[cobblr-api] listening on :${env.API_PORT} (${env.NODE_ENV})`);
   });
+  // The cross-tenant passes, once the api is serving: one walk per round with
+  // one budget, each pass's first round spread over its cadence (#3036).
+  // COBBLR_SWEEP_START_AFTER_MS keeps the first round clear of boot.
+  startTenantSweeps({ startAfterMs: Number(process.env.COBBLR_SWEEP_START_AFTER_MS) || 60_000 });
 
   // TEST-ONLY: fill the pre-provisioned org pool AFTER listen (so /healthz is
   // fast) and in the background — CI polls /test-support/pool-status before

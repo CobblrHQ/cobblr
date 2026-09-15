@@ -262,6 +262,7 @@ export const CHAT_CORPUS: CorpusCase[] = [
   ...ph("workspace", neverOffer, "action:platform:edit-field", [
     "hide the manufacturer field on parts", "make Purchase Date required",
     "add Aran to the yarn weight choices",
+    "remove tea category from inventory, it is no longer a valid option",
   ]),
   ...ph("workspace", neverOffer, "action:platform:group-fields", [
     "put purchase date and supplier under Buying on parts",

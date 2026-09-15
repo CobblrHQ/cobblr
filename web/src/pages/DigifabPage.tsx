@@ -824,7 +824,7 @@ function FailureDetectionPanel({ slug }: { slug: string }) {
                   </label>
                   <div className="flex items-center gap-2">
                     <span className={lbl}>Detector</span>
-                    <select value={c.backend} onChange={(e) => save.mutate({ backend: e.target.value as DigifabFailureConfig["backend"] })} className="input !py-0.5 !text-xs !w-auto">
+                    <select value={c.backend} onChange={(e) => save.mutate({ backend: e.target.value as DigifabFailureConfig["backend"] })} className="input !py-0.5 text-xs !w-auto">
                       <option value="auto">Auto - local model when available, else vision AI</option>
                       {/* "Local model only" is not offered until a bridge-side
                           model actually ships - edge-only mode would sit and
@@ -847,7 +847,7 @@ function FailureDetectionPanel({ slug }: { slug: string }) {
                   )}
                   <div className="flex items-center gap-2">
                     <span className={lbl}>Check every</span>
-                    <select value={c.sample_interval_sec} onChange={(e) => save.mutate({ sample_interval_sec: Number(e.target.value) })} className="input !py-0.5 !text-xs !w-auto">
+                    <select value={c.sample_interval_sec} onChange={(e) => save.mutate({ sample_interval_sec: Number(e.target.value) })} className="input !py-0.5 text-xs !w-auto">
                       <option value={15}>15s</option><option value={30}>30s</option><option value={60}>60s</option><option value={120}>2 min</option>
                     </select>
                   </div>
@@ -874,7 +874,7 @@ function ExternalDetectorConfig({ slug, cfg, save }: { slug: string; cfg: Digifa
     <div className="space-y-1.5">
       <div className="flex items-center gap-2 flex-wrap">
         <span className={detLbl}>Service</span>
-        <select value={cfg.detector_id ?? ""} onChange={(e) => save({ detector_id: e.target.value || null })} className="input !py-0.5 !text-xs !w-auto">
+        <select value={cfg.detector_id ?? ""} onChange={(e) => save({ detector_id: e.target.value || null })} className="input !py-0.5 text-xs !w-auto">
           <option value=""> - pick a detector - </option>
           {detectors.map((d) => (
             <option key={d.id} value={d.id}>{d.label} · {d.key}{d.enabled ? "" : " (off)"}</option>
@@ -1035,20 +1035,20 @@ function DetectorCard({ slug, det, cat, onChanged }: { slug: string; det: Digifa
                 const camMissing = !!r.cam && !cams.some((c) => c.id === r.cam);
                 return (
                   <div key={i} className="flex items-center gap-1.5">
-                    <select value={r.ref} onChange={(e) => setRows((rs) => rs.map((x, j) => (j === i ? { ...x, ref: e.target.value } : x)))} className="input !py-1 !text-xs flex-1">
+                    <select value={r.ref} onChange={(e) => setRows((rs) => rs.map((x, j) => (j === i ? { ...x, ref: e.target.value } : x)))} className="input !py-1 text-xs flex-1">
                       <option value=""> - pick a machine - </option>
                       {refMissing && <option value={r.ref}>{r.ref}</option>}
                       {deviceOpts.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
                     </select>
                     <span className="text-faint">→</span>
                     {cams.length > 0 || r.cam ? (
-                      <select value={r.cam} onChange={(e) => setRows((rs) => rs.map((x, j) => (j === i ? { ...x, cam: e.target.value } : x)))} className="input !py-1 !text-xs flex-1">
+                      <select value={r.cam} onChange={(e) => setRows((rs) => rs.map((x, j) => (j === i ? { ...x, cam: e.target.value } : x)))} className="input !py-1 text-xs flex-1">
                         <option value=""> - pick a camera - </option>
                         {camMissing && <option value={r.cam}>{r.cam}</option>}
                         {cams.map((c) => <option key={c.id} value={c.id}>{(c.name ? `${c.name} (${c.id})` : c.id) + (c.online === false ? " · offline" : "")}</option>)}
                       </select>
                     ) : (
-                      <input value={r.cam} onChange={(e) => setRows((rs) => rs.map((x, j) => (j === i ? { ...x, cam: e.target.value } : x)))} placeholder="camera id" className="input !py-1 !text-xs flex-1" />
+                      <input value={r.cam} onChange={(e) => setRows((rs) => rs.map((x, j) => (j === i ? { ...x, cam: e.target.value } : x)))} placeholder="camera id" className="input !py-1 text-xs flex-1" />
                     )}
                     <button type="button" onClick={() => setRows((rs) => rs.filter((_, j) => j !== i))} className="text-ember-600 dark:text-ember-500"><X size={13} /></button>
                   </div>
@@ -1128,7 +1128,7 @@ function PrinterRegister({ slug, detId, fleet, onDone }: { slug: string; detId: 
             <div className="space-y-1.5">
               <div className="flex items-center gap-1.5">
                 <span className={detLbl}>From a machine</span>
-                <select value={connId} onChange={(e) => { setConnId(e.target.value); setDeviceId(""); }} className="input !py-1 !text-xs flex-1">
+                <select value={connId} onChange={(e) => { setConnId(e.target.value); setDeviceId(""); }} className="input !py-1 text-xs flex-1">
                   <option value=""> - a Cobblr machine to mirror - </option>
                   {mappable.map((c) => <option key={c.connection_id} value={c.connection_id}>{c.label} ({c.type})</option>)}
                 </select>
@@ -1143,7 +1143,7 @@ function PrinterRegister({ slug, detId, fleet, onDone }: { slug: string; detId: 
               {needsDevice && (
                 <div className="flex items-center gap-1.5">
                   <span className={detLbl}>Printer</span>
-                  <select value={deviceId} onChange={(e) => setDeviceId(e.target.value)} className="input !py-1 !text-xs flex-1">
+                  <select value={deviceId} onChange={(e) => setDeviceId(e.target.value)} className="input !py-1 text-xs flex-1">
                     <option value=""> - which printer (needs stored LAN creds) - </option>
                     {(selectedConn?.devices ?? []).map((dv) => <option key={dv.id} value={dv.id}>{dv.name} ({dv.id})</option>)}
                   </select>
@@ -1222,7 +1222,7 @@ function PrintHistorySection({ slug }: { slug: string }) {
         <div className="mt-2 space-y-3">
           <div className="flex items-center gap-2">
             <span className="text-[11px] text-faint">Last</span>
-            <select value={days} onChange={(e) => setDays(Number(e.target.value))} className="input !py-0.5 !text-xs !w-auto">
+            <select value={days} onChange={(e) => setDays(Number(e.target.value))} className="input !py-0.5 text-xs !w-auto">
               <option value={7}>7 days</option><option value={30}>30 days</option><option value={90}>90 days</option>
             </select>
           </div>
