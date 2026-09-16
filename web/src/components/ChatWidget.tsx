@@ -11,7 +11,7 @@ import { linkifyMarkdown, mergeRefs, refsOfResponse, refOfProposal, refsLeftUnna
 import { ChatRefChip, ChatRefName, PermanentTag } from "./ChatRefChip";
 import { PlanNote } from "./PlanNote";
 import { PlanSections, sectionsLeft, type SectionRuns } from "./PlanSections";
-import { slimForStore } from "../lib/chat-store";
+import { historyToSend, slimForStore } from "../lib/chat-store";
 import { growToContent } from "../lib/useAutoGrowTextarea";
 import { PlanLines } from "./PlanLines";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
@@ -1188,7 +1188,7 @@ export function ChatPanel({ open: railOpen, setOpen }: { open: boolean; setOpen:
       // check in the mount effect).
       const started = await api.aiChatStart(
         activeSlug,
-        next.map((m) => ({ role: m.role, content: m.content })),
+        historyToSend(next),
         getChatPageContext() ?? undefined,
         getChatSelection() ?? undefined,
       );

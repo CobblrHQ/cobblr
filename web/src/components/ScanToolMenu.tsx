@@ -9,6 +9,7 @@
 // nothing unrequested is read first. A desktop has the room for the fold; the
 // phone item screen drops `no` and folds `possible` from the same hints.
 import { useState, type ReactNode } from "react";
+import { scanToolsFold } from "@cobblr/platform-contract/scan-triage";
 import { ChevronDown, MapPin, ReceiptText, Scissors } from "lucide-react";
 import { SCAN_TOOLS, type ScanTool, type ScanToolHints } from "@cobblr/platform-contract/scan-tools";
 import { MenuHead, MenuItem, MenuSep } from "./HeaderMenu";
@@ -50,6 +51,9 @@ export function ScanToolMenu(p: ScanToolMenuProps) {
   };
   const inline = SCAN_TOOLS.filter((t) => available[t] && hintOf(t).relevance === "likely");
   const folded = SCAN_TOOLS.filter((t) => available[t] && hintOf(t).relevance !== "likely");
+  // The fold's words from the contract, so the desk and the phone count the
+  // same tools in the same words (#3075).
+  const foldLabel = scanToolsFold(p.hints, folded).label;
 
   const render = (t: ScanTool, reason: string | null) => {
     switch (t) {
@@ -131,7 +135,7 @@ export function ScanToolMenu(p: ScanToolMenuProps) {
           >
             <ChevronDown size={13} className={`shrink-0 transition-transform ${moreOpen ? "rotate-180" : ""}`} />
             <span>
-              More tools <span className="text-[11px]">({folded.length} unlikely for this one)</span>
+              More tools{foldLabel && <span className="text-[11px]">({foldLabel})</span>}
             </span>
           </button>
           {moreOpen && folded.map((t) => render(t, hintOf(t).reason || null))}

@@ -11,6 +11,7 @@
 // confirm in the triage queue).
 
 import type { Kysely } from "kysely";
+import { titleVariantsOf, type TitleVariants } from "@cobblr/platform-contract/display-identity";
 import { asPackaging, packagingFromProse, type Packaging } from "@cobblr/platform-contract/scan-tools";
 import { platform } from "@cobblr/platform-contract";
 import { tidyTruncatedName } from "./item-name.js";
@@ -272,6 +273,11 @@ export interface PhotoIdentity {
   /** A known series/franchise this titled work belongs to (Harry Potter,
    *  Little House on the Prairie), or null. Used to group + tag siblings. */
   series: string | null;
+  /** A titled work's title as printed, its translation and its
+   *  transliteration, kept apart (the contract's TitleVariants, #3061); null
+   *  for anything that is not a titled work in another language. Only what
+   *  the model actually gave: a missing part stays missing. */
+  title_variants?: TitleVariants | null;
   confidence: number;
   /** A UPC/EAN the vision model read off the package (digits only), or null.
    *  OCR'd — lower trust than a hardware scan, so it's captured as AI-read. */
@@ -544,6 +550,7 @@ export function parseIdentityReply(parsed: Record<string, unknown> | null): Phot
     color: str(p.color) || null,
     entityType: et,
     series: str(p.series) || str(p.franchise) || null,
+    title_variants: titleVariantsOf({ title_variants: p.title_variants }),
     // A richer-shape reply with no confidence field WAS confident enough to
     // describe the item — don't read that as a 0.5 maybe.
     confidence: clamp01(typeof p.confidence === "number" ? p.confidence : str(p.name) ? 0.5 : 0.75),
@@ -607,6 +614,7 @@ export function identityOverlay(
     entity_type: identity.entityType,
   };
   if (identity.series) set.series = identity.series;
+  if (identity.title_variants) set.title_variants = identity.title_variants;
   // A serial/service tag read off the label → carried to the destination table's
   // native serial_number field on commit (see inbox.ts commit).
   if (identity.serial_number) set.serial_number = identity.serial_number;

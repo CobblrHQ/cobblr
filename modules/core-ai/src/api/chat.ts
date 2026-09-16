@@ -14,6 +14,7 @@ import { providerReasonOf } from "@cobblr/platform-contract/provider-reason";
 import { missingActionArgs, reconcileActionArgs } from "./action-args-guard.js";
 import { groundingNudgeFor } from "./groundless-answer.js";
 import { movedNotCreated } from "./move-not-create.js";
+import { answeredNotProposed } from "./answer-dont-propose.js";
 import { misreportedWrites } from "./reported-truthfully.js";
 import { chatModelMenu } from "./chat-model-menu.js";
 import { describedInsteadOfActing } from "./act-dont-describe.js";
@@ -21,7 +22,7 @@ import { escortCoveredByAction, resolveActionId, ESCORT_COVERAGE } from "./act-d
 import { buildSystemPrompt, situationalSuffix, type PromptWorkspace, type PromptOptions } from "./system-prompt.js";
 import { GROUNDING_RULES, PLAIN_ANSWER_RULES, TOOL_USE_RULES } from "./prompt-rules.js";
 import { z } from "zod";
-import { platform } from "@cobblr/platform-contract";
+import { CHAT_HISTORY_MESSAGES, platform } from "@cobblr/platform-contract";
 import { matchCommand } from "./basics.js";
 import { replyDespiteRefusal, withPlanCard } from "./plan-card.js";
 import { tenantContext, sessionUserId, sessionDisplayName, tenantDb } from "../db.js";
@@ -554,7 +555,14 @@ function parseMove(raw: string): Move | null {
 }
 
 const ChatBody = z.object({
-  messages: z.array(z.object({ role: z.enum(["user", "assistant"]), content: z.string() })).min(1).max(40),
+  // The newest part of the conversation is what is read; a client that
+  // sends more than that is trimmed, never refused. Refusing it was a red
+  // "Bad request body" on every send once a conversation passed forty
+  // messages (#3087).
+  messages: z
+    .array(z.object({ role: z.enum(["user", "assistant"]), content: z.string() }))
+    .min(1)
+    .transform((m) => m.slice(-CHAT_HISTORY_MESSAGES)),
   // What the user is looking at right now (route + a one-line view summary the
   // page publishes). BOUNDED so a client can't stuff the prompt. See
   // web/src/lib/chat-context.ts.
@@ -714,6 +722,10 @@ async function answerTurn(
       },
       isWrite: (name) => WRITE_NAMES.has(name),
       validateWrite: async (call, seenNames) => {
+        // Asked how much of something there is and about to make one. A
+        // question is answered, never proposed. See answer-dont-propose.ts.
+        const asked = answeredNotProposed(askedFor, call);
+        if (asked) return asked;
         // Asked to MOVE something and about to create a second copy of a
         // record it has just been shown. Caught here, before the write, so
         // nothing has to be undone. See move-not-create.ts.

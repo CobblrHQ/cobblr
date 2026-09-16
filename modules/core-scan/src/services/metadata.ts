@@ -40,6 +40,7 @@ export const IDENTIFY_OWNED_KEYS = [
   "description",
   "entity_type",
   "series",
+  "title_variants",
   "serial_number",
   "barcode_source",
   "fields",

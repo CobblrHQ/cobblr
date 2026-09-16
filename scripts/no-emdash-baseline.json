@@ -453,10 +453,6 @@
   },
   {
     "file": "web/src/pages/ScanPage.tsx",
-    "text": "— review below"
-  },
-  {
-    "file": "web/src/pages/ScanPage.tsx",
     "text": "Combined into one —"
   },
   {
@@ -473,15 +469,7 @@
   },
   {
     "file": "web/src/pages/ScanPage.tsx",
-    "text": "photos added as one batch — AI is identifying them"
-  },
-  {
-    "file": "web/src/pages/ScanPage.tsx",
     "text": "Sent back to the inbox — the created entry was removed. Sent back to the inbox."
-  },
-  {
-    "file": "web/src/pages/ScanPage.tsx",
-    "text": "You already imported this receipt — item already in your inbox."
   },
   {
     "file": "web/src/pages/SurfacesPage.tsx",

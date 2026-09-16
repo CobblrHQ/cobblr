@@ -1,0 +1,22 @@
+{
+  "match": "remove tea category from inventory",
+  "rounds": [
+    {
+      "tool_calls": [
+        {
+          "name": "invoke_action",
+          "args": { "action_id": "platform:edit-field", "args": { "field": "category", "remove_choices": ["Tea"] } }
+        }
+      ]
+    },
+    {
+      "tool_calls": [
+        {
+          "name": "invoke_action",
+          "args": { "action_id": "platform:edit-field", "args": { "entity_kind": "inventory:part", "field": "category", "remove_choices": ["Tea"] } }
+        }
+      ]
+    },
+    { "content": "Tea is off the Category list." }
+  ]
+}

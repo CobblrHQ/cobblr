@@ -56,6 +56,8 @@ export interface SessionUser {
    *  mutating workspace requests while this is set — the client redirect is
    *  UX, THIS is the enforcement (audit L-MUSTRESET). */
   must_reset_password: boolean;
+  /** The account's title format (the contract's TitleFormat), or null. */
+  title_pref?: string | null;
 }
 
 // H1 Tier B — server-side clamp for capability-scoped app tokens. The
@@ -298,7 +300,7 @@ export async function requireAuth(
     }
     const user = await meta
       .selectFrom("users")
-      .select(["id", "email", "display_name", "active", "tokens_valid_from", "must_reset_password"])
+      .select(["id", "email", "display_name", "active", "tokens_valid_from", "must_reset_password", "title_pref"])
       .where("id", "=", userId)
       .executeTakeFirst();
     if (!user || !user.active) {
@@ -384,6 +386,10 @@ export async function requireAuth(
       app_scope: appScope,
       token_scopes: tokenScopes,
       must_reset_password: user.must_reset_password,
+      // How a titled work's title reads for this person: served rows are
+      // composed with it (core-scan's withTitle), so every surface shows the
+      // one format without each reading the account (#3061).
+      title_pref: user.title_pref ?? null,
     };
     // Wrap the rest of the request chain in actor context so any
     // deeply-nested activity.log() call automatically picks up

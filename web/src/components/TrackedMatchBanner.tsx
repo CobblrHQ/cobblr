@@ -18,6 +18,7 @@ import { api, ApiError, type ScanInboxItem, type TrackedMatch } from "../lib/api
 import { useActiveOrg } from "../auth/ActiveOrgContext";
 import { RepurchaseAnswers, useBestTrackedMatch } from "./RepurchaseControls";
 import { TrackedMatchNudges } from "./TrackedMatchNudges";
+import { scanRowState, scanTrackedMatch } from "@cobblr/platform-contract/scan-triage";
 
 /** "license_plate" → "License plate" — a friendly label for a raw field key
  *  (no field-def lookup needed for a quick merge preview). */
@@ -58,16 +59,16 @@ export function TrackedMatchLine({
   onCompare: () => void;
 }) {
   const { match, where } = useBestTrackedMatch(item.id);
-  // A match by NAME is a proposal, not an identity: two records may or may
-  // not be one printer, and the screenshot alone cannot say (#3009). So the
-  // closed card says "Possible match" in the asking colour, leads with
-  // Compare, and holds back the answers that assume it IS the same thing
-  // (+N still had some, move it here, use this picture) for the open card,
-  // where the comparison is. A barcode or identifier match keeps its check.
-  const stamped = (item.suggested_metadata as { tracked_match?: { matched_by?: string } } | null)?.tracked_match?.matched_by;
-  const by = match?.matched_by ?? stamped ?? null;
+  // Whether this match is affirmed or a proposal is the row's resolved
+  // state (scanRowState): a match on a record the workspace COUNTS is a
+  // re-purchase, "+1 more" on the button, so the line affirms it; a match
+  // on one unique thing (two records may or may not be one printer, and
+  // the screenshot alone cannot say, #3009) is a "Possible match" in the
+  // asking colour that leads with Compare and holds back the answers that
+  // assume it IS the same thing for the open card, where the comparison is.
+  const by = match?.matched_by ?? scanTrackedMatch(item)?.matched_by ?? null;
   const exact = by === "barcode" || by === "identifier";
-  const possible = !exact;
+  const possible = !scanRowState(item).merge;
   return (
     <div className="mt-1.5 space-y-1 text-xs" onClick={(e) => e.stopPropagation()} data-match={possible ? "possible" : "exact"}>
       <div className="flex min-w-0 items-start gap-1.5">
@@ -89,7 +90,7 @@ export function TrackedMatchLine({
           ) : (
             <>
               <MatchTitle match={match} where={where} title={match?.title ?? fallbackTitle} />
-              <span className="text-[11px] text-faint"> · {by === "identifier" ? `same ${match?.matched_label || "identifier"}` : "same barcode"}</span>
+              <span className="text-[11px] text-faint"> · {by === "identifier" ? `same ${match?.matched_label || "identifier"}` : exact ? "same barcode" : "matched by name"}</span>
             </>
           )}
         </div>

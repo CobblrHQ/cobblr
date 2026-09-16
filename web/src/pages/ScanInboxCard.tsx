@@ -78,7 +78,8 @@ import {
   type ScanMenuEntry,
 } from "../lib/api";
 import { } from "../lib/scanPayload";
-import { needsScanReview, scanReviewQuestions, scanReviewReason } from "@cobblr/platform-contract/scan-triage";
+import { needsScanReview, scanDoubt, scanDoubtWords, scanProvenanceNote, scanReviewQuestions, scanReviewReason, scanRowState, scanTrackedMatch } from "@cobblr/platform-contract/scan-triage";
+import { KEYWORD_ROUTE_SENTENCE } from "@cobblr/platform-contract/scan-copy";
 import { matchParentType, readField } from "../lib/parent-type-match";
 import { isRerunInFlight } from "./scan-status";
 import { baseKind } from "./scanFileAll";
@@ -607,8 +608,55 @@ export function InboxCard({
       );
     return [...candidates, ...rest];
   })();
+  // The workspace's tables as the contract reads them, for the row's state:
+  // a better table the workspace gained since the route was stored, and the
+  // label of a table a person chose (#3062).
+  const stateTables = (menu ?? []).map((m) => ({
+    instance_name: m.instance ?? m.module,
+    display_name: m.label,
+    module_name: m.module,
+    keywords: m.scan_keywords ?? [],
+    kind: m.kind,
+    bundle_external_id: (m as { bundle_external_id?: string }).bundle_external_id ?? null,
+  }));
+  // The person may install a bundle: owner, admin and editor (admin-tier for
+  // actions; the role model in org-roles.ts).
+  const canInstallBundle =
+    activeOrg?.role === "owner" || activeOrg?.role === "admin" || activeOrg?.role === "editor";
+  // THE row's state (#3059 Engine 1): eligibility, the one sentence, the
+  // action's words and the destination, resolved once in the contract and
+  // rendered here, on the phone row and on the item screen alike. The
+  // destination it answers with is a person's stored choice when there is
+  // one, else the system's route, replaced by a better table the workspace
+  // has gained since (the owner's ruling: an untouched system choice may be
+  // replaced; a person's never).
+  const rowState = scanRowState(item, {
+    tables: stateTables,
+    canInstall: canInstallBundle,
+    fieldLabel: (name) => (topCand ? menuFieldLabel(menu, topCand, name) : name),
+  });
+  const resolvedDestKey = rowState.destination ? entryKey(rowState.destination.module, rowState.destination.instance) : null;
   const dest =
-    destOptions.find((c) => entryKey(c.module, c.instance) === destKey) ?? topCand ?? destOptions[0] ?? null;
+    // A pick made a moment ago, until the row comes back served with it.
+    destOptions.find((c) => entryKey(c.module, c.instance) === destKey) ??
+    (resolvedDestKey ? destOptions.find((c) => entryKey(c.module, c.instance) === resolvedDestKey) : undefined) ??
+    topCand ??
+    destOptions[0] ??
+    null;
+  // A pick is the PERSON's choice: kept on the row and stamped theirs, so no
+  // later system suggestion replaces it (#3062). The pill follows at once;
+  // the row's state follows when the row is served again.
+  const pickDestination = useMutation({
+    mutationFn: (k: string) => {
+      const c = destOptions.find((o) => entryKey(o.module, o.instance) === k);
+      return api.updateScanItem(activeSlug, item.id, {
+        destination: c ? { module: c.module, instance: c.instance ?? null, kind: c.kind ?? null, label: c.label } : null,
+      });
+    },
+    onMutate: (k) => setDestKey(k),
+    onSuccess: () => void qc.invalidateQueries({ queryKey: ["scan-inbox", activeSlug] }),
+    onError: (e) => toast.error(e instanceof ApiError ? e.message : String(e)),
+  });
 
   // A ROUTE CAN GO STALE WHILE IT SITS IN THE INBOX.
   //
@@ -624,6 +672,15 @@ export function InboxCard({
   // one that moves under them costs their trust.
   const staleHint = (() => {
     if (!dest || item.status !== "pending") return null;
+    // A system route that had a better table was replaced by the resolver
+    // above; the chip then offers the way BACK. A person's choice is never
+    // replaced, so for it the chip offers the better table, and only offers.
+    if (rowState.destination?.replaced) {
+      const r = rowState.destination.replaced;
+      const entry = (menu ?? []).find((m) => m.module === r.module && (m.instance ?? null) === (r.instance ?? null));
+      return entry ? { entry, label: r.label, back: true } : null;
+    }
+    if (rowState.destination?.chosenBy !== "person") return null;
     const tables = (menu ?? []).map((m) => ({
       instance_name: m.instance ?? m.module,
       display_name: m.label,
@@ -637,7 +694,7 @@ export function InboxCard({
     const better = betterDestination(item.suggested_name ?? "", dest.kind, tables, dest.module);
     if (!better) return null;
     const entry = (menu ?? []).find((m) => (m.instance ?? m.module) === better.instance_name);
-    return entry ? { entry, label: better.display_name ?? better.instance_name } : null;
+    return entry ? { entry, label: better.display_name ?? better.instance_name, back: false } : null;
   })();
   // Re-arm the OPEN form when a re-run lands a new answer. `formCtx` (which drives
   // ADD TO + the pre-filled fields) is only set by openForm() on a CLICK, so a
@@ -727,11 +784,17 @@ export function InboxCard({
   // the lookup has SETTLED; an unnamed row then prompts to name, not "awaiting".
   const awaitingFresh =
     !item.suggested_name && !item.ai_suggested_at && candidates.length === 0 && !rateLimited;
-  // Low-trust hit: a short/ambiguous barcode the catalogs may have mis-matched
-  // (set in enrich.ts). Surface a ⚠ note + an obvious one-tap corrector so a
-  // wrong match is easy to catch and fix — the fix feeds the shared Barcode
+  // A doubt the pipeline raised (a short barcode the catalogs may have
+  // mis-matched, a split piece read from the group) that no person has
+  // retired: the contract's one answer (scanDoubt), which already folds in
+  // "Looks fine" (#3057). Surface the sentence + an obvious one-tap
+  // corrector while it is open; the fix feeds the shared Barcode
   // Intelligence DB and improves the next scan of this UPC everywhere.
-  const lowTrust = !!(item.suggested_metadata as { low_trust?: boolean } | null)?.low_trust;
+  const doubt = scanDoubt(item);
+  const doubtWords = scanDoubtWords(item);
+  // The note as provenance: the doubt a lookup once baked into it is
+  // stripped at render, so an older row reads like a new one.
+  const provenanceNote = scanProvenanceNote(item.ai_notes);
   // Amber warning line vs the Source data box - one or the other, never both,
   // and never a function of whether the card happens to be open.
   // A photo the identify step could not name carries its reason as a code
@@ -749,7 +812,11 @@ export function InboxCard({
   const deterministicMiss = lookupSettledNameless && (storeCode || heldWebGuess);
   const identifyFailed =
     item.status === "pending" && !item.suggested_name && (!!(item.suggested_metadata as { identify_failure?: unknown } | null)?.identify_failure || (lookupSettledNameless && !deterministicMiss));
-  const notesPlacement = scanNotesPlacement({ notes: item.ai_notes, rateLimited, lowTrust, identifyFailed: identifyFailed || deterministicMiss });
+  // A human who pressed "Looks fine" clears the review flag — and with it the
+  // action that clears it — so a low-trust note must stop shouting in amber, or
+  // it becomes a warning nobody can dismiss (feedback 29a2515b).
+  const reviewed = (item.suggested_metadata as { reviewed?: boolean } | null)?.reviewed === true;
+  const notesPlacement = scanNotesPlacement({ notes: provenanceNote, rateLimited, identifyFailed: identifyFailed || deterministicMiss, reviewed, doubt, doubtWords });
   const barcodeIdentified = !!item.barcode_text && !!item.suggested_name;
   // "I said I would photograph this." A person set it, so an AI re-run must
   // not clear it (see IDENTIFY_OWNED_KEYS in core-scan metadata.ts).
@@ -830,15 +897,9 @@ export function InboxCard({
   // One-tap confirm from the collapsed row — commit into the AI's top candidate
   // without opening the accordion (mirrors the form's confirm path). Ready only
   // when we have a routed candidate + a name (same guard as bulk-confirm).
-  // The top match can be a bundle this workspace hasn't installed (a scanned VIN
-  // → "Vehicles"). Surface the install right on the CLOSED card — most people
-  // won't open the accordion. Owner/admin only (install changes composition).
-  // Editor included: the server-side enable path (module enable behind the
-  // confirm) allows editor too, and gating the UI stricter than the API just
-  // hands editors a raw 409 instead of the install flow (2026-08-25 audit).
-  const canInstallBundle =
-    activeOrg?.role === "owner" || activeOrg?.role === "admin" || activeOrg?.role === "editor";
-  const topBundle = canInstallBundle && dest?.bundle_external_id ? dest : null;
+  // A top match that is a bundle this workspace has not installed (a scanned
+  // VIN → "Vehicles") is the row's needs-install state, resolved above with
+  // whether this person may install it; the closed card's button says so.
   // Ready to one-tap confirm from the collapsed card. A not-installed-bundle top
   // match is only "ready" when the user can install it (else the green check
   // would try to file into a table that doesn't exist).
@@ -847,10 +908,8 @@ export function InboxCard({
   // One-tap Add CREATES an entity; offering it when the workspace already tracks
   // the thing is how you end up with a second Honda Civic. So the green Add gives
   // way to a chip that opens the card, where the merge banner lives.
-  const trackedMatch = (
-    (item.suggested_metadata as Record<string, unknown> | null) ?? {}
-  ).tracked_match as { title?: string; matched_by?: string } | null | undefined;
-  const alreadyTracked = !!trackedMatch?.title;
+  const trackedMatch = scanTrackedMatch(item);
+  const alreadyTracked = !!trackedMatch;
   // One name, whoever wrote it (#2982): the person's when they gave one,
   // the model's otherwise; the model's newest read is offered beside it.
   const shownName = displayName(item);
@@ -860,7 +919,7 @@ export function InboxCard({
   // keyword hits — the tier that filed a storage tote into Vehicles. It renders
   // tentative (outline + "?") and gets no one-tap Add; isScanReadyToFile applies
   // the same bar to File all, so the card and the bulk sweep agree.
-  const tentativeRoute = dest?.basis === "keywords";
+  const tentativeRoute = rowState.sentence === KEYWORD_ROUTE_SENTENCE;
   const cardAiStatus = useAiStatus();
   /** Why this card has no name: nothing here can identify a photo (the setup
    *  sentence), a store's own code, the identify step's own coded reason
@@ -931,6 +990,29 @@ export function InboxCard({
     },
     onError: (e) => toast.error((e as Error).message),
   });
+  // "+1 more": the resolver said this is another of a thing the workspace
+  // counts, and named the record. Filed through the attach endpoint, the
+  // same call the bulk sweep makes for the row, never a create (#3076).
+  const quickMerge = useMutation({
+    mutationFn: async () => {
+      const m = rowState.merge;
+      if (!m) throw new Error("not a merge");
+      return api.scanAttach(activeSlug, item.id, {
+        kind: m.kind,
+        entity_id: m.id,
+        instance: m.instance ?? undefined,
+        mode: "add-qty",
+        ...(item.target_location_id ? { location_id: item.target_location_id } : {}),
+      });
+    },
+    onSuccess: (r) => {
+      void qc.invalidateQueries({ queryKey: ["scan-inbox", activeSlug] });
+      toast.success(r.new_qty != null ? `${r.entity_title}: now ${r.new_qty}` : `Added one more to ${r.entity_title}`);
+    },
+    onError: (e) => toast.error(e instanceof ApiError ? e.message : String(e)),
+  });
+  const commitBusy = quickConfirm.isPending || quickMerge.isPending;
+  const runCommit = () => (rowState.action.kind === "merge" ? quickMerge.mutate() : quickConfirm.mutate());
   // Put back what the last re-run overwrote (the row snapshots it before running).
   const undoRerun = useMutation({
     mutationFn: () => api.scanUndoRerun(activeSlug, item.id),
@@ -1725,7 +1807,7 @@ export function InboxCard({
               {/* A warning already reads in amber above; repeating it here in
                   muted body text says it twice and says it quieter. */}
               {notesPlacement.sourceBox && (
-                <p className="text-xs text-muted dark:text-slate-400 mt-1">{item.ai_notes}</p>
+                <p className="text-xs text-muted dark:text-slate-400 mt-1" data-testid="source-note">{notesPlacement.boxText}</p>
               )}
               {/* A re-run is a gamble you can LOSE: vision re-read a dark photo of
                   a tool tote as a "Portable Bluetooth Speaker" and the good name
@@ -2145,7 +2227,7 @@ export function InboxCard({
     return segs;
   })();
   const phoneSubtitle = subtitleParts.join(" · ");
-  const phoneWarning = notesPlacement.amber ? (item.ai_notes ?? null) : flaggedForReview && item.suggested_name ? reviewReason : null;
+  const phoneWarning = notesPlacement.amber ? notesPlacement.amberText : flaggedForReview && item.suggested_name ? reviewReason : null;
   // The card asks its question instead of reading the sentence; the item
   // screen keeps the sentence, where the evidence is.
   const phoneRowWarning = questions.length > 0 && item.suggested_name ? null : phoneWarning;
@@ -2173,12 +2255,12 @@ export function InboxCard({
   if (sheet) {
     const actions: ScanItemScreenAction[] = [];
     if (item.status === "pending") {
-      if (item.image_file_id && !multiItem && toolSplit) actions.push({ ...toolSplit, label: "Split into items", icon: screenIcons.split, hint: "Several different things in one photo", busy: split.isPending, onClick: () => split.mutate() });
-      if (item.image_file_id && toolReceipt) actions.push({ ...toolReceipt, label: "Read as a receipt", icon: screenIcons.receipt, hint: "This photo is a receipt: split into its lines", busy: asReceipt.isPending, onClick: () => asReceipt.mutate() });
+      if (item.image_file_id && !multiItem && toolSplit) actions.push({ ...toolSplit, tool: "split", label: "Split into items", icon: screenIcons.split, hint: "Several different things in one photo", busy: split.isPending, onClick: () => split.mutate() });
+      if (item.image_file_id && toolReceipt) actions.push({ ...toolReceipt, tool: "receipt", label: "Read as a receipt", icon: screenIcons.receipt, hint: "This photo is a receipt: split into its lines", busy: asReceipt.isPending, onClick: () => asReceipt.mutate() });
       if ((item.suggested_metadata as { split_from?: string } | null)?.split_from) actions.push({ label: "Undo split", icon: screenIcons.undo, hint: "Put the group photo back; every piece goes to Recently deleted", busy: unsplit.isPending, onClick: () => unsplit.mutate() });
-      if (hasLocations && toolBin) actions.push({ ...toolBin, label: "Turn into a bin", hint: "This IS a container: make it a location you can scan into", onClick: () => setMakeBinOpen(true) });
-      if (toolBox) actions.push({ ...toolBox, group: "box_state", label: boxState === "empty-box" ? "Not an empty box" : "Empty box", hint: "The box is here; the item isn't", busy: setBoxState.isPending, onClick: () => setBoxState.mutate(boxState === "empty-box" ? null : "empty-box") });
-      if (toolBox) actions.push({ ...toolBox, group: "box_state", label: boxState === "item-in-box" ? "Not in its box" : "Item in box", hint: "Still packaged; the box rides along", busy: setBoxState.isPending, onClick: () => setBoxState.mutate(boxState === "item-in-box" ? null : "item-in-box") });
+      if (hasLocations && toolBin) actions.push({ ...toolBin, tool: "bin", label: "Turn into a bin", hint: "This IS a container: make it a location you can scan into", onClick: () => setMakeBinOpen(true) });
+      if (toolBox) actions.push({ ...toolBox, tool: "box_state", group: "box_state", label: boxState === "empty-box" ? "Not an empty box" : "Empty box", hint: "The box is here; the item isn't", busy: setBoxState.isPending, onClick: () => setBoxState.mutate(boxState === "empty-box" ? null : "empty-box") });
+      if (toolBox) actions.push({ ...toolBox, tool: "box_state", group: "box_state", label: boxState === "item-in-box" ? "Not in its box" : "Item in box", hint: "Still packaged; the box rides along", busy: setBoxState.isPending, onClick: () => setBoxState.mutate(boxState === "item-in-box" ? null : "item-in-box") });
       if (item.suggested_location_id && !item.target_location_id) actions.push({ label: "Put it where suggested", hint: item.suggested_location_note ?? "the suggested spot", busy: acceptSuggestedLocation.isPending, onClick: () => acceptSuggestedLocation.mutate() });
     }
     return (
@@ -2210,13 +2292,17 @@ export function InboxCard({
         // nagging), so it lives here and nowhere else on the phone; a row
         // with no flag has no block and no Looks fine (#3018).
         review={
-          flaggedForReview && item.status === "pending"
+          rowState.eligibility === "needs-review"
             ? (() => {
+                // Every reason the resolver holds a row back leads the screen
+                // with its sentence: a doubt's question when there is one, else
+                // the sentence itself (a duplicate, a keyword route). Looks fine
+                // retires whichever it is, as the resolver reads `reviewed`.
                 const q = questions[0];
                 const typed = q && q.field && !q.choices.length;
                 return {
-                  prompt: q ? questionPrompt(q) : "Check this item",
-                  because: q?.because || reviewReason || "",
+                  prompt: q ? questionPrompt(q) : rowState.sentence ?? "Check this item",
+                  because: q ? rowState.sentence ?? q.because ?? "" : "",
                   busy: answerQuestion.isPending || markReviewed.isPending,
                   choices: (q?.choices ?? []).map((c) => ({ value: c.value, source: c.source, onPick: () => q?.field && answerQuestion.mutate({ field: q.field, value: c.value }) })),
                   actions: [
@@ -2266,7 +2352,15 @@ export function InboxCard({
             </>
           ),
         }}
-        footer={{ formOpen, addLabel: phoneAddLabel, onOpenForm: () => openForm(dest ?? undefined), onDiscard: () => discard.mutate(), discardPending: discard.isPending, setActionSlot }}
+        footer={{
+          formOpen,
+          addLabel: rowState.action.kind === "merge" ? rowState.action.label : phoneAddLabel,
+          onOpenForm: rowState.action.kind === "merge" ? runCommit : () => openForm(dest ?? undefined),
+          primary: rowState.action.kind === "merge" ? { label: rowState.action.label, title: rowState.action.title, busy: commitBusy, onClick: runCommit } : null,
+          onDiscard: () => discard.mutate(),
+          discardPending: discard.isPending,
+          setActionSlot,
+        }}
       />
     );
   }
@@ -2295,12 +2389,12 @@ export function InboxCard({
     const more: ScanPhoneRowAction[] = [];
     if (item.status === "pending") {
       more.push({ label: "Replay processing", hint: "Free: keeps the identification, re-applies routing and fields", busy: aiWorking, onClick: () => rerun.mutate({ noAi: true }) });
-      if (item.image_file_id && !multiItem && toolSplit) more.push({ ...toolSplit, label: "Split into items", hint: "Several different things in one photo", busy: split.isPending, onClick: () => split.mutate() });
-      if (item.image_file_id && toolReceipt) more.push({ ...toolReceipt, label: "Read as a receipt", hint: "This photo is a receipt: split into its lines", busy: asReceipt.isPending, onClick: () => asReceipt.mutate() });
+      if (item.image_file_id && !multiItem && toolSplit) more.push({ ...toolSplit, tool: "split", label: "Split into items", hint: "Several different things in one photo", busy: split.isPending, onClick: () => split.mutate() });
+      if (item.image_file_id && toolReceipt) more.push({ ...toolReceipt, tool: "receipt", label: "Read as a receipt", hint: "This photo is a receipt: split into its lines", busy: asReceipt.isPending, onClick: () => asReceipt.mutate() });
       if (splitFrom) more.push({ label: "Undo split", hint: "Put the group photo back; every piece goes to Recently deleted", busy: unsplit.isPending, onClick: () => unsplit.mutate() });
-      if (hasLocations && toolBin) more.push({ ...toolBin, label: "Turn into a bin", hint: "This IS a container: make it a location you can scan into", onClick: () => setMakeBinOpen(true) });
-      if (toolBox) more.push({ ...toolBox, group: "box_state", label: boxState === "empty-box" ? "Not an empty box" : "Empty box", hint: "The box is here; the item isn't", busy: setBoxState.isPending, onClick: () => setBoxState.mutate(boxState === "empty-box" ? null : "empty-box") });
-      if (toolBox) more.push({ ...toolBox, group: "box_state", label: boxState === "item-in-box" ? "Not in its box" : "Item in box", hint: "Still packaged; the box rides along", busy: setBoxState.isPending, onClick: () => setBoxState.mutate(boxState === "item-in-box" ? null : "item-in-box") });
+      if (hasLocations && toolBin) more.push({ ...toolBin, tool: "bin", label: "Turn into a bin", hint: "This IS a container: make it a location you can scan into", onClick: () => setMakeBinOpen(true) });
+      if (toolBox) more.push({ ...toolBox, tool: "box_state", group: "box_state", label: boxState === "empty-box" ? "Not an empty box" : "Empty box", hint: "The box is here; the item isn't", busy: setBoxState.isPending, onClick: () => setBoxState.mutate(boxState === "empty-box" ? null : "empty-box") });
+      if (toolBox) more.push({ ...toolBox, tool: "box_state", group: "box_state", label: boxState === "item-in-box" ? "Not in its box" : "Item in box", hint: "Still packaged; the box rides along", busy: setBoxState.isPending, onClick: () => setBoxState.mutate(boxState === "item-in-box" ? null : "item-in-box") });
       if (flaggedForReview) more.push({ label: "Looks fine", hint: "A person looked; stop flagging it", busy: markReviewed.isPending, onClick: () => markReviewed.mutate() });
       more.push({ label: "Discard", hint: "Recoverable from Recently deleted", busy: discard.isPending, danger: true, onClick: () => discard.mutate() });
     }
@@ -2349,30 +2443,27 @@ export function InboxCard({
             !dest || item.status !== "pending"
               ? null
               : {
-                  kind: !item.suggested_name || flaggedForReview || tentativeRoute || alreadyTracked || (!!dest.bundle_external_id && !topBundle)
-                    ? "review"
-                    : dest.bundle_external_id
-                      ? "install"
-                      : "add",
+                  kind: rowState.action.kind === "add" ? "add" : rowState.action.kind === "install-add" ? "install" : rowState.action.kind === "merge" ? "merge" : "review",
+                  label: rowState.action.label,
                   destination: dest.label,
                   tentative: tentativeRoute,
-                  reason: reviewReason ?? (alreadyTracked ? "You already have one of these" : !item.suggested_name ? "Name it first" : "Open to review"),
-                  busy: quickConfirm.isPending,
-                  onAdd: () => quickConfirm.mutate(),
+                  reason: rowState.sentence ?? rowState.action.title,
+                  busy: commitBusy,
+                  onAdd: runCommit,
                   options: destOptions.map((c) => ({
                     key: entryKey(c.module, c.instance),
                     label: c.label,
                     installs: !!c.bundle_external_id,
                     selected: entryKey(c.module, c.instance) === entryKey(dest.module, dest.instance),
                   })),
-                  onPick: (k) => setDestKey(k),
-                  better: staleHint ? { label: staleHint.label, onPick: () => setDestKey(entryKey(staleHint.entry.module, staleHint.entry.instance)) } : null,
+                  onPick: (k) => pickDestination.mutate(k),
+                  better: staleHint ? { label: staleHint.label, onPick: () => pickDestination.mutate(entryKey(staleHint.entry.module, staleHint.entry.instance)) } : null,
                 }
           }
           multi={multiItem ? { distinct: multiItem.distinct ?? multiItem.individuals.length, onSplit: () => split.mutate(), onKeep: () => keepGrouped.mutate(), busy: split.isPending || keepGrouped.isPending } : null}
           tracked={
             alreadyTracked && trackedMatch?.title
-              ? trackedMatch.matched_by === "barcode" || trackedMatch.matched_by === "identifier"
+              ? rowState.merge
                 ? `You already have: ${trackedMatch.title}`
                 : `Possible match: ${trackedMatch.title}`
               : null
@@ -2380,6 +2471,7 @@ export function InboxCard({
           rerun={{ running: aiWorking, replaying: replayNoAi, failed: !aiWorking && (matchFailed || identifyFailed || aiDowngraded), can: canRerunLookup(item), onRun: () => rerun.mutate(undefined) }}
           onCapture={() => setCaptureSheet("add")}
           more={more}
+          toolHints={item.tool_hints}
           selection={onToggleSelect ? { active: !!selectionActive, selected: !!selected, onToggle: onToggleSelect } : null}
           onOpen={() => onOpenSheet?.(dest)}
         />
@@ -2793,8 +2885,8 @@ export function InboxCard({
             </div>
           )}
           {notesPlacement.amber && (expanded || cardQuestions.length === 0 || !item.suggested_name) && !(aiDowngraded && !expanded) && (
-            <div className={`text-[11px] mt-0.5 text-amber-600 dark:text-amber-400 ${expanded ? "" : "line-clamp-1"}`}>
-              {item.ai_notes}
+            <div className={`text-[11px] mt-0.5 text-amber-600 dark:text-amber-400 ${expanded ? "" : "line-clamp-1"}`} data-testid="amber-note">
+              {notesPlacement.amberText}
             </div>
           )}
           {/* A named row flagged with no note of its own (a low score) still
@@ -2949,7 +3041,7 @@ export function InboxCard({
               onDone={() => setCorrecting(false)}
             />
           )}
-          {barcodeIdentified && !correcting && lowTrust && (
+          {barcodeIdentified && !correcting && doubt !== null && (
             <button
               type="button"
               onClick={(e) => {
@@ -2957,6 +3049,7 @@ export function InboxCard({
                 setCorrecting(true);
               }}
               className="mt-0.5 text-[11px] underline decoration-dotted underline-offset-2 text-amber-600 dark:text-amber-400"
+              data-testid="double-check-link"
             >
               Double-check: fix the name
             </button>
@@ -3062,14 +3155,9 @@ export function InboxCard({
                     </button>
                   </span>
                   <ScanCardCommit
-                    item={item}
-                    destLabel={dest.label}
-                    tentative={tentativeRoute}
-                    installs={!!dest.bundle_external_id}
-                    canInstall={!!topBundle}
-                    alreadyTracked={alreadyTracked}
-                    busy={quickConfirm.isPending}
-                    onAdd={() => quickConfirm.mutate()}
+                    state={rowState}
+                    busy={commitBusy}
+                    onAdd={runCommit}
                     onReview={() => openForm(dest)}
                   />
                 </span>
@@ -3082,10 +3170,10 @@ export function InboxCard({
                     type="button"
                     onClick={(e) => {
                       e.stopPropagation();
-                      setDestKey(entryKey(staleHint.entry.module, staleHint.entry.instance));
+                      pickDestination.mutate(entryKey(staleHint.entry.module, staleHint.entry.instance));
                     }}
                     className="ml-1.5 max-sm:ml-0 max-sm:mt-1 max-sm:basis-full shrink-0 inline-flex items-center gap-1 rounded-full border border-ember-300 dark:border-ember-700 bg-ember-50 dark:bg-ember-950/30 px-2 py-0.5 text-[11px] text-ember-700 dark:text-ember-300 hover:bg-ember-100 dark:hover:bg-ember-900/40 transition"
-                    title={`${staleHint.label} was set up after this scan was routed. Tap to file it there instead.`}
+                    title={staleHint.back ? `This scan was first routed to ${staleHint.label}. Tap to file it there after all.` : `${staleHint.label} was set up after this scan was routed. Tap to file it there instead.`}
                   >
                     {staleHint.label}?
                   </button>
@@ -3124,7 +3212,7 @@ export function InboxCard({
                                 autoFocus={on}
                                 onClick={(e) => {
                                   e.stopPropagation();
-                                  setDestKey(k);
+                                  pickDestination.mutate(k);
                                   closeDest();
                                 }}
                                 className={

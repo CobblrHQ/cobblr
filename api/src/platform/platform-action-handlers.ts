@@ -127,13 +127,22 @@ function fieldsBackWhereTheyWere(entityKind: string, before: Array<{ field: stri
  *  order is kept, a new choice goes at the end, one already there is not
  *  doubled, and a choice that is not there to remove is refused by name with
  *  the list, so the next sentence can be right. */
+/** One or more names, however the caller sent them: "Tea, Coffee", or the
+ *  JSON list the invoke tool says any value may be. A list used to read as
+ *  no names at all, and the refusal for that ("nothing to change") sent the
+ *  model round again (#3087). */
+function namesOf(v: unknown): string[] {
+  if (Array.isArray(v)) return v.flatMap((x) => (typeof x === "string" ? splitNames(x) : []));
+  return splitNames(str(v));
+}
+
 function choicesEdited(
   current: string[] | null,
   args: Record<string, unknown>,
   fieldLabel: string,
 ): { choices: string[] } | { error: string } | undefined {
-  const add = splitNames(str(args.add_choices));
-  const remove = splitNames(str(args.remove_choices));
+  const add = namesOf(args.add_choices);
+  const remove = namesOf(args.remove_choices);
   if (add.length === 0 && remove.length === 0) return undefined;
   if (str(args.choices) || args.choices === null) {
     return { error: "pass either choices (the whole list) or add_choices / remove_choices, not both" };
@@ -141,11 +150,18 @@ function choicesEdited(
   const same = (a: string, b: string) => a.trim().toLowerCase() === b.trim().toLowerCase();
   let next = [...(current ?? [])];
   for (const gone of remove) {
-    if (!next.some((c) => same(c, gone))) {
+    // Matched the way a field is matched from what a person said: exact,
+    // then case aside, then a unique prefix ("Tea" for "Teas"), and never a
+    // guess between two.
+    const hit = matchByLabel(gone, next.map((c) => ({ label: c })));
+    if (!hit) {
       const have = next.length ? next.join(", ") : "none";
       return { error: `"${gone}" is not one of the choices of "${fieldLabel}" (${have})` };
     }
-    next = next.filter((c) => !same(c, gone));
+    if ("ambiguous" in hit) {
+      return { error: `"${gone}" could be ${hit.ambiguous.map((a) => `"${a.label}"`).join(" or ")} on "${fieldLabel}" — which one?` };
+    }
+    next = next.filter((c) => c !== hit.label);
   }
   for (const more of add) if (!next.some((c) => same(c, more))) next.push(more);
   return { choices: next };
@@ -310,11 +326,98 @@ export function registerPlatformActionHandlers(): void {
     return hit;
   };
 
+  /** The kind a field is on, when the sentence did not say. "remove tea
+   *  category from inventory" names the field and not inventory:part, and the
+   *  model sent it that way; refusing for the kind's id sent it round three
+   *  times and then to the settings page (#3087). One kind carrying the field
+   *  is the answer; two is a question back, naming both; none is the usual
+   *  refusal. */
+  const kindOfField = async (orgId: string, said: string): Promise<{ kind: string } | { error: string }> => {
+    const kinds = await listKindsForOrg(orgId);
+    const carrying: string[] = [];
+    const defIds = new Set<string>();
+    let nativeHits = 0;
+    for (const k of kinds) {
+      const custom = await findField(orgId, k.id, said);
+      if (!("error" in custom)) {
+        carrying.push(k.id);
+        defIds.add(custom.id);
+        continue;
+      }
+      if (await findNativeField(orgId, k.id, said)) {
+        carrying.push(k.id);
+        nativeHits += 1;
+      }
+    }
+    // One def on many kinds is a class-wide field, not an ambiguity; the scope
+    // refusal downstream says what it covers.
+    if (carrying.length === 1 || (carrying.length > 1 && defIds.size === 1 && nativeHits === 0)) {
+      return { kind: carrying[0]! };
+    }
+    if (carrying.length > 1) {
+      return { error: `"${said}" is on ${carrying.join(" and ")}; say which with entity_kind` };
+    }
+    return { error: `no field called "${said}" on any kind — check list_record_kinds` };
+  };
+
+  /** What an edit-field call would touch, worked out BEFORE a card exists.
+   *  The handler used to be the first thing that read the arguments, so a
+   *  call the handler would refuse ("Category is on four kinds; say which",
+   *  "Tea is not one of the choices") became a card that failed when
+   *  confirmed, or a refusal fed back after the turn. The planner runs the
+   *  same resolution in the write door (chat.ts validateWrite): a reason
+   *  goes back to the model while it can still correct the call, and a card
+   *  says what it will do. */
+  registerPlanner("platform.edit-field", async (ctx: ActionInvokeContext) => {
+    const args = (ctx.args ?? {}) as Record<string, unknown>;
+    const said = str(args.field);
+    if (!said) return { error: "field is required" };
+    let entityKind = str(args.entity_kind);
+    if (!entityKind) {
+      const worked = await kindOfField(ctx.orgId, said);
+      if ("error" in worked) return { error: worked.error };
+      entityKind = worked.kind;
+    }
+    const found = await findField(ctx.orgId, entityKind, said);
+    const native = "error" in found ? await findNativeField(ctx.orgId, entityKind, said) : null;
+    if ("error" in found && !native) return { error: found.error };
+    const label = "error" in found ? native!.label : found.label;
+    const current =
+      "error" in found
+        ? (await readFieldOverride(ctx.orgId, entityKind, native!.name)).choices
+        : ((await resolveFieldDefsForKind(ctx.orgId, entityKind)).find((d) => d.id === found.id)?.choices ?? null);
+    const edited = choicesEdited(current, args, label);
+    if (edited && "error" in edited) return { error: edited.error };
+    const lines: string[] = [];
+    if (str(args.display_label)) lines.push(`Call it "${str(args.display_label)}"`);
+    if (typeof args.required === "boolean") lines.push(args.required ? "Make it required" : "No longer required");
+    if (typeof args.hidden === "boolean") lines.push(args.hidden ? "Take it off forms and lists" : "Show it again");
+    if (str(args.unit)) lines.push(`Unit: ${str(args.unit)}`);
+    if (edited) {
+      const gone = (current ?? []).filter((c) => !edited.choices.includes(c));
+      const added = edited.choices.filter((c) => !(current ?? []).includes(c));
+      if (gone.length) lines.push(`Take off: ${gone.join(", ")}`);
+      if (added.length) lines.push(`Add: ${added.join(", ")}`);
+      lines.push(`Choices after: ${edited.choices.length ? edited.choices.join(", ") : "none"}`);
+    } else if (str(args.choices)) {
+      lines.push(`Choices: ${str(args.choices)}`);
+    } else if (args.choices === null) {
+      lines.push("Choices cleared");
+    }
+    if (!lines.length) return { error: "nothing to change — pass a new display_label, required, choices, add_choices, remove_choices, unit, or hidden" };
+    return { title: `Change "${label}" on ${entityKind}`, lines };
+  });
+
   registerHandler("platform.edit-field", async (ctx: ActionInvokeContext) => {
     const args = (ctx.args ?? {}) as Record<string, unknown>;
-    const entityKind = str(args.entity_kind);
     const said = str(args.field);
-    if (!entityKind || !said) return { ok: false, error: "entity_kind and field are required" };
+    if (!said) return { ok: false, error: "field is required" };
+    let entityKind = str(args.entity_kind);
+    if (!entityKind) {
+      const worked = await kindOfField(ctx.orgId, said);
+      if ("error" in worked) return { ok: false, error: worked.error };
+      entityKind = worked.kind;
+    }
     const hidden = typeof args.hidden === "boolean" ? args.hidden : undefined;
     const found = await findField(ctx.orgId, entityKind, said);
     if ("error" in found) {
@@ -469,9 +572,14 @@ export function registerPlatformActionHandlers(): void {
 
   registerHandler("platform.remove-field", async (ctx: ActionInvokeContext) => {
     const args = (ctx.args ?? {}) as Record<string, unknown>;
-    const entityKind = str(args.entity_kind);
     const said = str(args.field);
-    if (!entityKind || !said) return { ok: false, error: "entity_kind and field are required" };
+    if (!said) return { ok: false, error: "field is required" };
+    let entityKind = str(args.entity_kind);
+    if (!entityKind) {
+      const worked = await kindOfField(ctx.orgId, said);
+      if ("error" in worked) return { ok: false, error: worked.error };
+      entityKind = worked.kind;
+    }
     const found = await findField(ctx.orgId, entityKind, said);
     if ("error" in found) return { ok: false, error: found.error };
     const wide = scopeRefusal(found, entityKind, "remove");

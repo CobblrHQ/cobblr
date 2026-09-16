@@ -6,6 +6,7 @@ import { markSandboxEnded } from "./sandbox-session";
 import type { CommunityLinkId } from "@cobblr/platform-contract/community-links";
 import type { AiFallback } from "@cobblr/platform-contract/scan-fallback";
 import type { ScanToolHints } from "@cobblr/platform-contract/scan-tools";
+import type { TitleFormat } from "@cobblr/platform-contract/display-identity";
 import type { SourceConflict } from "@cobblr/platform-contract/acquisition-source";
 import type { ReceiptReadFailure } from "@cobblr/platform-contract/scan-session";
 import { getImpersonationToken } from "./impersonation";
@@ -208,6 +209,9 @@ export interface SessionUser {
   /** Desktop nav layout, follows you across devices. null/absent = this device's
    *  own default stands. Phones ignore it (the sidebar is `hidden md:block`). */
   nav_pref?: { mode: "top" | "side"; autohide: boolean; topbar: boolean } | null;
+  /** How a title that has an original, a translation and a transliteration
+   *  reads for this person. null/absent = the platform default. */
+  title_pref?: TitleFormat | null;
   /** When the guided tour was completed or skipped. null = never, absent = the
    *  account has not loaded yet. Account-level so a new device, a different
    *  origin and a new workspace all agree. */
@@ -975,6 +979,10 @@ export const api = {
    *  workspaces). null = follow the device/OS. */
   setThemePref: (theme_pref: "light" | "dark" | null) =>
     request<{ user: { theme_pref: "light" | "dark" | null } }>("PATCH", "/me", { theme_pref }),
+  /** Persist how a title with variants reads for this person. null = the
+   *  platform default. */
+  setTitlePref: (title_pref: TitleFormat | null) =>
+    request<{ user: { title_pref: TitleFormat | null } }>("PATCH", "/me", { title_pref }),
   /** Persist the per-user desktop nav layout (follows you across devices). */
   setNavPref: (nav_pref: { mode: "top" | "side"; autohide: boolean; topbar: boolean } | null) =>
     request<{ user: { nav_pref: unknown } }>("PATCH", "/me", { nav_pref }),
@@ -3170,6 +3178,9 @@ export const api = {
       /** "I will photograph this myself." Survives an AI re-run — only the
        *  person, or the photo arriving, clears it. */
       photo_wanted?: boolean;
+      /** Where the person said this goes: kept on the row as theirs, never
+       *  replaced by a system suggestion (#3062). null clears the choice. */
+      destination?: { module: string; instance?: string | null; kind?: string | null; label?: string | null } | null;
       /** Values typed against the destination's fields, kept on the row
        *  without filing it; null clears one. The served row carries them
        *  merged over the top candidate's fields. */

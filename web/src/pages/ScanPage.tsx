@@ -71,7 +71,7 @@ import {
   type TrackedMatch,
 } from "../lib/api";
 import { classifyScanPayload } from "../lib/scanPayload";
-import { isScanStale, needsScanReview } from "@cobblr/platform-contract/scan-triage";
+import { isScanStale, needsScanReview, scanSessionAction } from "@cobblr/platform-contract/scan-triage";
 import { displayName } from "@cobblr/platform-contract/display-identity";
 import { sessionVerdict, type SessionVerdict } from "@cobblr/platform-contract/scan-session";
 import { itemEnriching } from "./scan-status";
@@ -3258,7 +3258,12 @@ className="ml-1.5 sm:ml-0 rounded px-1 py-0.5 text-[12.5px] hover:bg-subtle dark
             // Pending items with a confident destination + a name — the ones
             // "File all" will commit to their own candidate. Pending items that
             // still need a manual look aren't counted here.
-            const readyIds = g.items.filter(isReadyToFile).map((it) => it.id);
+            // The session's one action and its words come from the row-state
+            // resolver every row reads (scanSessionAction, #3076): the rows it
+            // counts are the rows whose own button says Add or Install & add,
+            // and the label says when filing installs a table.
+            const sessionAction = scanSessionAction(g.items);
+            const readyIds = sessionAction.ids;
             // Tables these items are routed to that the workspace does not have
             // yet. Filing installs them (see confirmItemsToTheirCandidate); the
             // tooltip says so, because installing a table is not something to
@@ -4101,7 +4106,7 @@ className="ml-1.5 sm:ml-0 rounded px-1 py-0.5 text-[12.5px] hover:bg-subtle dark
                           <span>
                             {bulkProgress ?? (
                               <>
-                                <span className="sm:hidden">File {readyIds.length}</span><span className="hidden sm:inline">File all {readyIds.length}</span>
+                                <span data-testid="session-file">{sessionAction.label}</span>
                               </>
                             )}
                           </span>
@@ -4122,7 +4127,7 @@ className="ml-1.5 sm:ml-0 rounded px-1 py-0.5 text-[12.5px] hover:bg-subtle dark
                           <span>
                             {bulkProgress ?? (
                               <>
-                                <span className="sm:hidden">File {readyIds.length}</span><span className="hidden sm:inline">File all {readyIds.length}</span>
+                                <span data-testid="session-file">{sessionAction.label}</span>
                               </>
                             )}
                           </span>

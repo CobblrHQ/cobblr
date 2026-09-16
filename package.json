@@ -311,7 +311,8 @@
     "lint:tenant-sweep-registered": "tsx scripts/lint-tenant-sweep-registered.ts",
     "lint:scan-door-intake": "tsx scripts/lint-scan-door-intake.ts",
     "lint:phone-input-font": "tsx scripts/lint-phone-input-font.ts",
-    "lint:row-pictures-resolved": "tsx scripts/lint-row-pictures-resolved.ts"
+    "lint:row-pictures-resolved": "tsx scripts/lint-row-pictures-resolved.ts",
+    "lint:scan-doubt-from-contract": "tsx scripts/lint-scan-doubt-from-contract.ts"
   },
   "devDependencies": {
     "jsdom": "^30.0.1",

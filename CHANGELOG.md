@@ -2,6 +2,17 @@
 
 User-facing changes, newest first. Dates are release dates.
 
+## 2026-09-16
+
+### Features
+- A scan row says what it needs once, and every screen agrees. Each inbox row now reads Add, Install & add, +1 more or Review, with one short sentence naming the problem and what to do, and the phone row, the item screen, the desktop card and the session's File N all show the same words. File N counts only the rows whose own button would file, and says Install & file N when filing installs a table. A destination the system picked is swapped for a better table that appears later; one you picked yourself stays put. Names read with a first capital on every card, without changing what is stored, and a new Titles in another language setting under Your account chooses how a foreign title reads (original with the translation in brackets by default).
+
+### Fixes
+- "Remove tea category from inventory" now takes the "Teas" choice off the Category dropdown: a choice is matched the way you say it (exact, then case aside, then a unique start such as "Tea" for "Teas", and a question back when two match), the kind is worked out from the field when only one kind has it, and a list of names is read as the names. Each of those used to be a refusal, and three refusals in a row ended in directions to the settings page.
+- A long conversation with Cobb no longer goes red. Past forty messages in one panel, every send came back "Bad request body" until the panel was cleared; the panel now sends the newest part of the conversation and the server reads the newest part, one number for both, and the whole scrollback stays on your device.
+- A question is never answered with an offer to create something. "How much do I have of the black yarn" could end in a card that would have made a second black yarn beside the ones already owned; a question is now answered from what Cobb found, and a "how ..." question without its question mark is read as the question it is.
+- "Looks fine" now clears the short-barcode warning everywhere. Tapping Looks fine on an item scanned from a short (8-digit) barcode left the amber "double-check this is the right product" on the row, on the item screen and on the desktop card, with nothing left to dismiss it. The warning is now part of the item's state and goes away the moment you say it looks fine, on every surface; the "Identified via…" provenance stays readable in the Source data box.
+
 ## 2026-09-15
 
 ### Features

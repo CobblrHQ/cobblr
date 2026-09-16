@@ -17,7 +17,10 @@ export function isAQuestion(text: string): boolean {
   const t = text.trim();
   if (!t) return false;
   if (t.includes("?")) return true;
-  return /^(who|what|whats|what's|which|where|when|whose|why|is|are|was|were|does|do|did|has|have|had|can|could|should|any)\b/i.test(t);
+  // "how" was missing: "how much do I have of the black yarn" counted as an
+  // instruction, so the guard that pushes an instruction from words to
+  // action pushed a question's answer into a create proposal (2026-09-16).
+  return /^(who|what|whats|what's|which|where|when|whose|why|how|is|are|was|were|does|do|did|has|have|had|can|could|should|any)\b/i.test(t);
 }
 
 /** Is this reply the tool-less JSON move rather than prose? A model with no

@@ -11,6 +11,8 @@
 // which are the same components the desktop card renders. Two layouts, one
 // set of behaviours.
 import { useState, type ReactNode } from "react";
+import { scanToolsFold } from "@cobblr/platform-contract/scan-triage";
+import type { ScanTool, ScanToolHints } from "@cobblr/platform-contract/scan-tools";
 import { Camera, ChevronDown, Pencil, ReceiptText, RefreshCw, RotateCcw, Scissors, Sparkles, Undo2, X } from "lucide-react";
 import type { ScanInboxItem } from "../lib/api";
 import { displayName } from "@cobblr/platform-contract/display-identity";
@@ -27,6 +29,9 @@ export interface ScanItemScreenAction {
   folded?: string;
   /** Actions that are one tool (the two box states) count once in the fold. */
   group?: string;
+  /** The tool this action belongs to (the row's tool_hints key), so the
+   *  fold can count and name tools rather than buttons. */
+  tool?: ScanTool;
   onClick: () => void;
 }
 
@@ -99,6 +104,8 @@ export interface ScanItemScreenProps {
     formOpen: boolean;
     addLabel: string;
     onOpenForm: () => void;
+    /** The row's resolved action when it is a merge (see ScanItemSheetFooter). */
+    primary?: { label: string; title?: string; busy: boolean; onClick: () => void } | null;
     onDiscard: () => void;
     discardPending: boolean;
     setActionSlot: (el: HTMLDivElement | null) => void;
@@ -157,11 +164,14 @@ function ReviewBlock({ r, barcode }: { r: NonNullable<ScanItemScreenProps["revie
  *  reason it is folded; one they call no is not on the phone at all (the
  *  desktop menu has the room to fold those too). Every capability the row
  *  can use stays reachable; nothing unrequested is read first (#3006). */
-function MoreSection({ actions }: { actions: ScanItemScreenAction[] }) {
+function MoreSection({ actions, hints }: { actions: ScanItemScreenAction[]; hints: ScanToolHints | null | undefined }) {
   const [moreOpen, setMoreOpen] = useState(false);
   const inline = actions.filter((a) => !a.folded);
   const folded = actions.filter((a) => !!a.folded);
-  const foldedTools = new Set(folded.map((a) => a.group ?? a.label)).size;
+  // The fold's words come from the same place as the tools it counts
+  // (scanToolsFold, #3075): one tool with two buttons is one tool, and a
+  // tool that might apply is not "unlikely".
+  const foldLabel = scanToolsFold(hints, folded.map((a) => a.tool).filter((t): t is ScanTool => !!t)).label;
   const button = (a: ScanItemScreenAction) => (
     <button
       key={a.label}
@@ -197,7 +207,7 @@ function MoreSection({ actions }: { actions: ScanItemScreenAction[] }) {
             className={`flex min-h-11 w-full items-center gap-2 text-left text-sm text-faint ${inline.length > 0 ? "mt-2" : ""}`}
           >
             <ChevronDown size={14} className={`shrink-0 transition-transform ${moreOpen ? "rotate-180" : ""}`} />
-            More tools <span className="text-[11px]">({foldedTools} unlikely for this one)</span>
+            More tools{foldLabel && <span className="text-[11px]">({foldLabel})</span>}
           </button>
           {moreOpen && <div className="grid grid-cols-2 gap-2">{folded.map(button)}</div>}
         </>
@@ -406,12 +416,13 @@ export function ScanItemScreen(p: ScanItemScreenProps) {
         {p.slots.evidence && <Section title="What the AI found">{p.slots.evidence}</Section>}
         {p.slots.correction && <Section title="Correct it">{p.slots.correction}</Section>}
 
-        {p.actions.length > 0 && <MoreSection actions={p.actions} />}
+        {p.actions.length > 0 && <MoreSection actions={p.actions} hints={p.item.tool_hints} />}
       </div>
       <ScanItemSheetFooter
         formOpen={p.footer.formOpen}
         addLabel={p.footer.addLabel}
         onOpenForm={p.footer.onOpenForm}
+        primary={p.footer.primary ?? null}
         onCancel={p.nav.onClose}
         onDiscard={p.footer.onDiscard}
         discardPending={p.footer.discardPending}

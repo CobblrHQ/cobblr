@@ -20,6 +20,7 @@
 // body limits sane.
 
 import { rememberPickedImage } from "../services/picked-images.js";
+import { asTitleFormat, formatTitleVariants, titleVariantsOf, type TitleFormat } from "@cobblr/platform-contract/display-identity";
 import { applyUserFieldPatch, candidateKind, candidatesWithUserFields } from "../services/user-fields.js";
 import { isMachineReadCode } from "../services/barcode-source.js";
 import { randomUUID } from "node:crypto";
@@ -66,8 +67,7 @@ import {
   SCAN_TRIAGE_FACETS,
   SCAN_TRIAGE_COLUMNS,
   type ScanTriageFacet,
-  type ScanTriageRow,
-} from "@cobblr/platform-contract/scan-triage";
+  type ScanTriageRow, DESTINATION_KEY, type StoredDestination } from "@cobblr/platform-contract/scan-triage";
 import { scanToolRelevance, type ScanToolHints } from "@cobblr/platform-contract/scan-tools";
 import { bearer, sessionUser, tenantContext, tenantDb } from "../db.js";
 import { liveTablesOf, withResolvedOffers, type LiveTable } from "../services/resolve-offers.js";
@@ -149,7 +149,7 @@ import {
 } from "@cobblr/platform-contract/acquisition-source";
 import { applyNameFacts, nameFactWords } from "../services/name-facts.js";
 import { applyPersonName, withPersonName } from "../services/user-name.js";
-import { displayName } from "@cobblr/platform-contract/display-identity";
+import { displayName, filingName } from "@cobblr/platform-contract/display-identity";
 import { extractLocation, type LocationLite } from "../services/note-location.js";
 import { suggestLocationForItem } from "../services/suggest-location.js";
 import { normaliseCategory } from "@cobblr/platform-contract/category-reconcile";
@@ -1785,6 +1785,19 @@ const PatchBody = z.object({
   // The table the fields were typed for ("yarn:item"). Absent: the top
   // candidate's table at the time of the write.
   fields_kind: z.string().max(120).optional(),
+  // Where the PERSON said this goes (the pill's pick), kept on the row and
+  // stamped as theirs, so a better system suggestion never replaces it; the
+  // system's own route (the top candidate) may be (#3062). null clears the
+  // choice, and the row reads as the system's again.
+  destination: z
+    .object({
+      module: z.string().min(1).max(120),
+      instance: z.string().max(120).nullable().optional(),
+      kind: z.string().max(120).nullable().optional(),
+      label: z.string().max(160).nullable().optional(),
+    })
+    .nullable()
+    .optional(),
 });
 
 // AI-REACH: a step of the guided scan/put-away flow, driven from the scanner screen with a camera in hand; the assistant reaches the inbox through list_scan_inbox and the plan through get_putaway_plan
@@ -1818,7 +1831,8 @@ inboxRouter.patch(
       parsed.data.keep_grouped !== undefined ||
       parsed.data.photo_wanted !== undefined ||
       parsed.data.fields !== undefined ||
-      parsed.data.name !== undefined
+      parsed.data.name !== undefined ||
+      parsed.data.destination !== undefined
     ) {
       const cur = await db
         .selectFrom("core_scan_inbox_items")
@@ -1851,6 +1865,14 @@ inboxRouter.patch(
       }
       if (parsed.data.reviewed !== undefined) meta.reviewed = parsed.data.reviewed;
       if (parsed.data.keep_grouped !== undefined) meta.keep_grouped = parsed.data.keep_grouped;
+      if (parsed.data.destination !== undefined) {
+        if (parsed.data.destination === null) delete meta[DESTINATION_KEY];
+        else {
+          const d = parsed.data.destination;
+          const stored: StoredDestination = { module: d.module, instance: d.instance ?? null, kind: d.kind ?? null, label: d.label ?? null, by: "person", at: new Date().toISOString() };
+          meta[DESTINATION_KEY] = stored;
+        }
+      }
       // Cleared rather than stored false: the queue asks "which items want a
       // photo", and a row answering "not me" is noise in a jsonb bag that four
       // other writers share.
@@ -2306,7 +2328,7 @@ inboxRouter.post(
     const body: Record<string, unknown> = {
       // Entity names cap at 160 (the modules' own create schemas); a catalog
       // title just gets cut there - a long name must never fail the commit.
-      name: clampEntityName(parsed.data.name ?? displayName(row) ?? "Untitled"),
+      name: clampEntityName(parsed.data.name ?? filingName(row) ?? "Untitled"),
       manufacturer: row.suggested_manufacturer ?? undefined,
       // A serial/service tag (vision-read) OR a decoder-mapped value (a VIN) →
       // the destination table's NATIVE serial_number field (inventory/assets/
@@ -2699,7 +2721,7 @@ inboxRouter.post(
     // anyone reaching for the (operator-only) green button. Fire-and-forget;
     // inert unless the resolver + a correction token are configured.
     if (row.barcode_text) {
-      const committedName = String(body.name ?? displayName(row) ?? "").trim();
+      const committedName = String(body.name ?? filingName(row) ?? "").trim();
       const renamed = meaningfullyChanged(row.suggested_name, committedName);
       if (committedName) {
         void reportBarcodeCorrection({
@@ -3170,7 +3192,7 @@ async function served<T extends ScanTriageRow & {
   suggested_metadata?: unknown;
 }>(req: Request, row: T): Promise<T & { needs_review: boolean; waiting_days: number | null; group_image_file_id: string | null }> {
   const [withGroup] = await withGroupImages(req, [row]);
-  return withTitle(withResolvedOffers(withGroup!, await liveTablesFor(req)), await containerKindsFor(req));
+  return withTitle(withResolvedOffers(withGroup!, await liveTablesFor(req)), await containerKindsFor(req), titleFormatFor(req));
 }
 
 async function servedAll<T extends ScanTriageRow & {
@@ -3181,7 +3203,8 @@ async function servedAll<T extends ScanTriageRow & {
 }>(req: Request, rows: T[]): Promise<Array<T & { needs_review: boolean; waiting_days: number | null; group_image_file_id: string | null }>> {
   const live = await liveTablesFor(req);
   const containers = await containerKindsFor(req);
-  return (await withGroupImages(req, rows)).map((r) => withTitle(withResolvedOffers(r, live), containers));
+  const format = titleFormatFor(req);
+  return (await withGroupImages(req, rows)).map((r) => withTitle(withResolvedOffers(r, live), containers, format));
 }
 
 /** A split child's group shot, served on the child as `group_image_file_id`
@@ -3251,19 +3274,28 @@ function withTitle<T extends ScanTriageRow & {
   suggested_manufacturer?: string | null;
   suggested_candidates?: unknown;
   suggested_metadata?: unknown;
-}>(row: T, containerKinds: ReadonlySet<string> = new Set()): T & { needs_review: boolean; waiting_days: number | null } {
+}>(row: T, containerKinds: ReadonlySet<string> = new Set(), titleFormat: TitleFormat | null = null): T & { needs_review: boolean; waiting_days: number | null } {
+  // A titled work with its variants on the row reads in the person's
+  // format, composed here like the colour is: derived, never stored, one
+  // format on every surface (#3061). The stored name is what the source said.
+  const variants = formatTitleVariants(titleVariantsOf(row.suggested_metadata), titleFormat);
   const titled = colouredTitleFor({
-    suggested_name: row.suggested_name,
+    suggested_name: variants ?? row.suggested_name,
     suggested_manufacturer: row.suggested_manufacturer ?? null,
     suggested_candidates: row.suggested_candidates,
     suggested_metadata: (row.suggested_metadata ?? {}) as Record<string, unknown>,
-  });
+  }) ?? variants;
   const withUser = { ...row, suggested_candidates: candidatesWithUserFields(storedCandidateList(row.suggested_candidates), row.suggested_metadata) };
   // A name a person gave is theirs, whole: no colour suffix, and the
   // column a re-run wrote sits beside it as `replaced` (#2982).
   const named = withPersonName(withUser);
   const base = named !== withUser ? named : titled ? { ...withUser, suggested_name: titled } : withUser;
   return withTriage(withDisplayCategory(base), containerKinds);
+}
+
+/** The requesting person's title format, for withTitle. */
+function titleFormatFor(req: Request): TitleFormat | null {
+  return asTitleFormat((req as unknown as { session?: { title_pref?: string | null } }).session?.title_pref);
 }
 
 /** The queue facets, composed onto the row on the way out (same reason as the
@@ -7438,6 +7470,11 @@ async function matchItem(opts: MatchItemOpts): Promise<unknown[] | null> {
                 instance: bestTracked.instance,
                 matched_by: bestTracked.matched_by,
                 matched_label: bestTracked.matched_label ?? null,
+                // Whether the record keeps a count is what makes "+1 more"
+                // the right filing (scanRowState); a record with none is one
+                // unique thing. A row stamped before this key reads as
+                // uncounted, which is a look first, never a wrong +1.
+                qty: bestTracked.qty,
                 // The picture a person already chose for the thing they have.
                 // A re-purchase off a receipt searched the web again and came
                 // home with a tin, over a photo the owner had hand-picked for

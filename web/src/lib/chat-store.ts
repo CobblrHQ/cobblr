@@ -6,6 +6,8 @@
 // working state. A card that is half done comes back half done, with the
 // same Undo handles, because the person left it that way.
 
+import { CHAT_HISTORY_MESSAGES } from "@cobblr/platform-contract";
+
 export interface StoredChatMessage {
   role: "user" | "assistant";
   content: string;
@@ -33,4 +35,11 @@ export function slimForStore<M extends StoredChatMessage>(messages: M[], max: nu
       ...(m.sections && Object.keys(m.sections).length ? { sections: m.sections } : {}),
       ...(m.resolved ? { resolved: true } : {}),
     }));
+}
+
+/** The conversation as it is SENT with a message: the newest messages up to
+ *  the number the server keeps, each just its role and words. The whole
+ *  scrollback stays on the device. */
+export function historyToSend<M extends { role: "user" | "assistant"; content: string }>(messages: M[]): Array<{ role: "user" | "assistant"; content: string }> {
+  return messages.slice(-CHAT_HISTORY_MESSAGES).map((m) => ({ role: m.role, content: m.content }));
 }

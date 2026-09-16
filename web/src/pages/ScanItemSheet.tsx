@@ -15,7 +15,7 @@
 //
 // Both are sticky INSIDE the modal's scroller, hence sticky-in-scroller /
 // sticky bottom-0 and never a top-* of their own (lint:sticky-under-header).
-import { ChevronLeft, ChevronRight, Trash2 } from "lucide-react";
+import { ChevronLeft, ChevronRight, PackagePlus, Trash2 } from "lucide-react";
 
 export interface ScanItemSheetNav {
   index: number;
@@ -55,6 +55,7 @@ export function ScanItemSheetFooter({
   formOpen,
   addLabel,
   onOpenForm,
+  primary,
   onCancel,
   onDiscard,
   discardPending,
@@ -66,6 +67,12 @@ export function ScanItemSheetFooter({
   /** "Add to Groceries…" or "Add to a table…". */
   addLabel: string;
   onOpenForm: () => void;
+  /** The row's resolved action when it is not the form's own filing (a
+   *  "+1 more" onto a record the workspace counts): rendered in the slot's
+   *  place with the same words the list and the session show, so the
+   *  screen never offers a create where the row says merge (#3076). The
+   *  form's Confirm then renders inside the form, as filing it as new. */
+  primary?: { label: string; title?: string; busy: boolean; onClick: () => void } | null;
   /** Leave the screen without changes (the header's "All items"). */
   onCancel: () => void;
   onDiscard: () => void;
@@ -102,7 +109,21 @@ export function ScanItemSheetFooter({
           >
             Cancel
           </button>
-          <div ref={setActionSlot} className="flex justify-end" />
+          {primary ? (
+            <button
+              type="button"
+              onClick={primary.onClick}
+              disabled={primary.busy}
+              title={primary.title}
+              data-testid="sheet-primary"
+              className="inline-flex items-center gap-1.5 rounded-md bg-emerald-600 hover:bg-emerald-500 text-white px-4 py-2.5 text-sm font-semibold transition disabled:opacity-60"
+            >
+              <PackagePlus size={14} className={primary.busy ? "animate-pulse" : ""} />
+              {primary.label}
+            </button>
+          ) : (
+            <div ref={setActionSlot} className="flex justify-end" />
+          )}
         </>
       )}
     </div>

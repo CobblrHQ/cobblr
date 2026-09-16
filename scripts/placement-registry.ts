@@ -89,7 +89,7 @@ export const PLACEMENT: PlacementRow[] = [
     dir: "web/src/components/",
     exemplar: "web/src/components/EntityAttachments.tsx",
     why: "This layer is module-agnostic: it may not name a module's entity kind, because doing so silently excludes every module added later.",
-    lints: ["lint:component-kinds", "lint:hooks-after-return", "lint:no-emdash", "lint:ui-jargon", "lint:authed-image-src", "lint:noun-pluralisation", "lint:dark-mode-ember", "lint:dark-mode-tints", "lint:number-input-commits-a-number", "lint:action-outcome-shown", "lint:actions-run-through-one-door", "lint:shape-changes-run-through-one-door", "lint:sticky-under-header", "lint:fixed-chrome", "lint:phone-input-font", "lint:row-pictures-resolved"],
+    lints: ["lint:component-kinds", "lint:hooks-after-return", "lint:no-emdash", "lint:ui-jargon", "lint:authed-image-src", "lint:noun-pluralisation", "lint:dark-mode-ember", "lint:dark-mode-tints", "lint:number-input-commits-a-number", "lint:action-outcome-shown", "lint:actions-run-through-one-door", "lint:shape-changes-run-through-one-door", "lint:sticky-under-header", "lint:fixed-chrome", "lint:phone-input-font", "lint:row-pictures-resolved", "lint:scan-doubt-from-contract"],
     notes: [
       "If it names one module's kind, it is not generic — it belongs beside that module's page (see page-level-module-ui).",
     ],

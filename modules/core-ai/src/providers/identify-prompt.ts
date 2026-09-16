@@ -89,6 +89,13 @@ export const IDENTIFY_PROMPT =
   "a book in a series (Harry Potter, Little House on the Prairie), a film in a " +
   "franchise (John Wick), an album in a set — name that series. Only when you " +
   "actually recognise the series; never guess one from a generic title.\n\n" +
+  "If the item is a titled work (a book, a film, an album) whose printed " +
+  "title is in a language other than English, or a translated edition, give " +
+  "the title AS PRINTED with its language, the English translation of that " +
+  "title ONLY if you know it (a literal translation, or the published title " +
+  "of the English edition when there is one; never a guess), and a " +
+  "transliteration of the printed title into Latin letters. Leave any part " +
+  "you do not know null; never invent one to fill the shape.\n\n" +
   'Also report "observations": 2-3 short factual sentences on what is ' +
   "physically present — how many retail units are visible (one loose unit, a " +
   "sealed multipack of N, a shelf of several), the packaging state, and any " +
@@ -138,6 +145,9 @@ export const IDENTIFY_PROMPT =
   '"color": <the item\'s colour in plain English, else null>, ' +
   '"category": <string|null>, "entity_type": "asset"|"part"|null, ' +
   '"series": <the series/franchise name if this is part of one, else null>, ' +
+  '"title_variants": {"original": {"title": <as printed>, "language": <ISO 639-1 code>}|null, ' +
+  '"translation": {"title": <English title>, "language": "en"}|null, ' +
+  '"transliteration": {"title": <Latin letters>}|null}|null, ' +
   '"barcode": <the UPC/EAN digits if clearly legible, else null>, ' +
   '"serial_number": <the serial number / service tag read verbatim if clearly legible, else null>, ' +
   '"observations": <string>, "distinct_items": <integer>, ' +

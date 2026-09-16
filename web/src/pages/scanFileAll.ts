@@ -13,7 +13,7 @@
 // carried separately. Dropping the instance (or sending the wrong kind) sends
 // an item to the module's default table instead of the chosen instance.
 
-import { isScanReadyToFile } from "@cobblr/platform-contract/scan-triage";
+import { isScanReadyToFile, scanRowState } from "@cobblr/platform-contract/scan-triage";
 
 export interface ScanCandidateLike {
   module: string;
@@ -57,14 +57,17 @@ export interface TrackedMatchLike {
 }
 
 /**
- * The thing this workspace already has, when the scan is another of it.
+ * The thing this workspace already has, when the scan is another of it and
+ * the row's resolved action is to add to it (scanRowState, `merge`).
  *
- * Resolved server-side and stamped on the row, so the closed card and the bulk
- * sweep read the same answer rather than each deciding for themselves.
+ * Resolved once in the contract, so the card's "+1 more", the phone row's
+ * and the bulk sweep read the same answer rather than each deciding for
+ * themselves. A match the resolver calls a review (one unique thing this
+ * looks like) is null here: the sweep leaves it for a person, the same as
+ * the card does.
  */
 export function trackedMatchOf(it: ScanItemLike): TrackedMatchLike | null {
-  const m = it.suggested_metadata?.tracked_match as TrackedMatchLike | null | undefined;
-  return m && m.kind && m.id && m.title ? m : null;
+  return scanRowState(it).merge;
 }
 
 /**

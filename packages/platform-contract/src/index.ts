@@ -3766,6 +3766,15 @@ export const AiCapabilities = [
 
 export type AiCapability = (typeof AiCapabilities)[number];
 
+/** How much of a conversation the assistant is given with each message: the
+ *  newest this many. ONE number for both ends. The panel sends the newest
+ *  part and the server keeps the newest part, so a long conversation never
+ *  becomes a request the server refuses. The panel keeps the whole scrollback
+ *  on the device; this bounds only what is sent and read. Forty messages of
+ *  history was a server-side limit alone, and the twenty-first exchange in a
+ *  conversation was a red "Bad request body" until the panel was cleared. */
+export const CHAT_HISTORY_MESSAGES = 40;
+
 /** A job an OLDER job can serve when nothing declares the new one.
  *
  *  A capability id is a promise to every provider that already exists, and

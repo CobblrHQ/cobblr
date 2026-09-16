@@ -9,9 +9,11 @@
 // itself: the camera, Re-run AI with its live running state, and an
 // overflow for the rest. The card's brain (InboxCard) computes everything.
 import { displayName } from "@cobblr/platform-contract/display-identity";
+import { scanToolsFold } from "@cobblr/platform-contract/scan-triage";
+import type { ScanTool, ScanToolHints } from "@cobblr/platform-contract/scan-tools";
 import { useEffect, useState } from "react";
 import { createPortal } from "react-dom";
-import { Camera, CheckCircle, ChevronDown, ChevronRight, Download, Loader2, MoreHorizontal, RotateCcw, ScanLine, Scissors } from "lucide-react";
+import { Camera, CheckCircle, ChevronDown, ChevronRight, Download, Loader2, MoreHorizontal, PackagePlus, RotateCcw, ScanLine, Scissors } from "lucide-react";
 import type { ScanInboxItem } from "../lib/api";
 import { OverlayLayer, BackdropLayer } from "@cobblr/platform-web";
 
@@ -25,6 +27,9 @@ export interface ScanPhoneRowAction {
   folded?: string;
   /** Actions that are one tool (the two box states) count once in the fold. */
   group?: string;
+  /** The tool this action belongs to (the row's tool_hints key), so the
+   *  fold counts and names tools rather than buttons. */
+  tool?: ScanTool;
   onClick: () => void;
 }
 
@@ -61,7 +66,11 @@ export interface ScanPhoneRowProps {
   /** The filing control: the destination's real name and the override on the
    *  left, the small action on the right. Picking a destination never files. */
   commit: {
-    kind: "add" | "install" | "review";
+    /** `merge` is +1 more of a record the workspace counts; onAdd runs it. */
+    kind: "add" | "install" | "merge" | "review";
+    /** The action's words, from the row's resolved state (scanRowState):
+     *  the same words the desk card and the session show. */
+    label: string;
     destination: string;
     tentative: boolean;
     reason?: string;
@@ -83,6 +92,8 @@ export interface ScanPhoneRowProps {
   onCapture: () => void;
   /** The rest of the item's verbs, in an overflow menu. */
   more: ScanPhoneRowAction[];
+  /** The row's tool_hints, for the fold's words. */
+  toolHints?: ScanToolHints | null;
   selection: { active: boolean; selected: boolean; onToggle: () => void } | null;
   onOpen: () => void;
 }
@@ -244,7 +255,7 @@ export function ScanPhoneRow(p: ScanPhoneRowProps) {
               <MoreHorizontal size={14} />
             </button>
           )}
-          {moreOpen && <PhoneActionSheet title={name ?? "This item"} actions={p.more} onClose={() => setMoreOpen(false)} />}
+          {moreOpen && <PhoneActionSheet title={name ?? "This item"} actions={p.more} hints={p.toolHints} onClose={() => setMoreOpen(false)} />}
           </span>
         </div>
         {p.commit && (
@@ -278,12 +289,17 @@ export function ScanPhoneRow(p: ScanPhoneRowProps) {
  *  with no left side (border-l-0 against the grey divider), which the owner
  *  read as a different, broken control: "missing yellow line" (#3018). */
 function PhoneCommit({ c, open, setOpen, onReview }: { c: NonNullable<ScanPhoneRowProps["commit"]>; open: boolean; setOpen: (v: boolean) => void; onReview: () => void }) {
+  // The words are the contract's (scanRowState.action.label, handed down as
+  // c.label); this only colours them. A second copy of "Install & add" here
+  // is how the list and the card once disagreed (#3076).
   const action =
     c.kind === "review"
-      ? { label: "Review", cls: "border-amber-500 bg-amber-100 text-amber-900 dark:border-amber-500/80 dark:bg-amber-900/40 dark:text-amber-100", icon: null, onClick: onReview, title: c.reason }
+      ? { label: c.label, cls: "border-amber-500 bg-amber-100 text-amber-900 dark:border-amber-500/80 dark:bg-amber-900/40 dark:text-amber-100", icon: null, onClick: onReview, title: c.reason }
       : c.kind === "install"
-        ? { label: "Install & add", cls: "border-cobble-600 bg-cobble-600 text-white", icon: <Download size={13} />, onClick: c.onAdd, title: `${c.destination} is not set up yet; this installs it and files the item` }
-        : { label: "Add", cls: "border-emerald-600 bg-emerald-600 text-white", icon: <CheckCircle size={13} />, onClick: c.onAdd, title: `File into ${c.destination}` };
+        ? { label: c.label, cls: "border-cobble-600 bg-cobble-600 text-white", icon: <Download size={13} />, onClick: c.onAdd, title: `${c.destination} is not set up yet; this installs it and files the item` }
+        : c.kind === "merge"
+          ? { label: c.label, cls: "border-emerald-600 bg-emerald-600 text-white", icon: <PackagePlus size={13} />, onClick: c.onAdd, title: c.reason }
+          : { label: c.label, cls: "border-emerald-600 bg-emerald-600 text-white", icon: <CheckCircle size={13} />, onClick: c.onAdd, title: `File into ${c.destination}` };
   return (
     <div className="relative flex min-w-0 max-w-full flex-wrap items-stretch">
       <button
@@ -343,14 +359,16 @@ function PhoneCommit({ c, open, setOpen, onReview }: { c: NonNullable<ScanPhoneR
  *  the card's last rows) while the page was scroll-locked, so the menu was
  *  unreachable and the page felt stuck (the owner, 2026-09-14). A sheet is
  *  always fully on screen; the backdrop, Cancel and any action close it. */
-function PhoneActionSheet({ title, actions, onClose }: { title: string; actions: ScanPhoneRowAction[]; onClose: () => void }) {
+function PhoneActionSheet({ title, actions, hints, onClose }: { title: string; actions: ScanPhoneRowAction[]; hints: ScanToolHints | null | undefined; onClose: () => void }) {
   // A tool the row's `tool_hints` call possible sits behind one "More tools"
   // row, with the reason it is folded; one they call no is not offered on the
   // phone at all (#3006). Opening the fold keeps the sheet open.
   const [moreOpen, setMoreOpen] = useState(false);
   const inline = actions.filter((a) => !a.folded);
   const folded = actions.filter((a) => !!a.folded);
-  const foldedTools = new Set(folded.map((a) => a.group ?? a.label)).size;
+  // The fold's words come from the same place as the tools it counts
+  // (scanToolsFold, #3075).
+  const foldLabel = scanToolsFold(hints, folded.map((a) => a.tool).filter((t): t is ScanTool => !!t)).label;
   const row = (a: ScanPhoneRowAction) => (
     <button
       key={a.label}
@@ -403,7 +421,7 @@ function PhoneActionSheet({ title, actions, onClose }: { title: string; actions:
               className="flex min-h-12 w-full items-center gap-2 border-t border-line dark:border-slate-800 px-4 text-left text-sm text-faint"
             >
               <ChevronDown size={14} className={`shrink-0 transition-transform ${moreOpen ? "rotate-180" : ""}`} />
-              More tools <span className="text-xs">({foldedTools} unlikely for this one)</span>
+              More tools{foldLabel && <span className="text-xs">({foldLabel})</span>}
             </button>
             {moreOpen && folded.map(row)}
           </>

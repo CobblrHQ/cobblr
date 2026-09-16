@@ -278,7 +278,7 @@ interface RequestWithTenant {
     role: OrgRole;
     db: unknown;
   };
-  session?: { id: string; email: string; display_name: string; is_platform_admin?: boolean };
+  session?: { id: string; email: string; display_name: string; is_platform_admin?: boolean; title_pref?: string | null };
 }
 
 export function tenantDb(req: Request): Kysely<CoreScanDB> {

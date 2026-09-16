@@ -411,6 +411,10 @@ export const ESCORT_DESTINATIONS: EscortDestination[] = [
 
 /** The relationship list_related reports a placement under: a thing points at the container it is in. */
 const PLACED_IN = "placed_in";
+/** A relationship filter that means placement, in the words a model reaches
+ *  for ("location", "stored_in", "contains", "inside"): the exact name is not
+ *  what a model asks with. */
+const PLACEMENT_WORDS = /placed|placement|locat|stored|contain|inside|within|holds/i;
 
 export const WORKSPACE_TOOLS: WorkspaceTool[] = [
   {
@@ -642,7 +646,8 @@ export const WORKSPACE_TOOLS: WorkspaceTool[] = [
       // not a pairing. A tool that promises what is stored in a location and
       // reads pairings alone answers "empty" for every bin a person filled by
       // placing things in it, which is how they fill bins.
-      const wantsPlacement = !rel || rel === `&relationship_kind=${encodeURIComponent(PLACED_IN)}`;
+      const relName = typeof args.relationship === "string" ? args.relationship.trim() : "";
+      const wantsPlacement = !relName || relName === PLACED_IN || PLACEMENT_WORDS.test(relName);
       type Placed = { kind: string; id: string; title?: string };
       const placedRow = (side: "out" | "in", e: Placed) => ({
         relationship: PLACED_IN,
@@ -674,8 +679,13 @@ export const WORKSPACE_TOOLS: WorkspaceTool[] = [
           await Promise.all([
             dir !== "in" ? fetchSide("out") : Promise.resolve([]),
             dir !== "out" ? fetchSide("in") : Promise.resolve([]),
-            wantsPlacement && dir !== "in" ? containerOf() : Promise.resolve([]),
-            wantsPlacement && dir !== "out" ? contents() : Promise.resolve([]),
+            // Whatever direction was asked for. A pairing's direction is
+            // arbitrary and worth narrowing; a placement has one meaning,
+            // and a model asks a thing for its links pointing IN when it
+            // means "what is it in" (the live bench, 2026-09-16: the CubePro
+            // asked IN, the Garage asked OUT, both told "nothing").
+            wantsPlacement ? containerOf() : Promise.resolve([]),
+            wantsPlacement ? contents() : Promise.resolve([]),
           ])
         ).flat();
         return toolOk({ items });

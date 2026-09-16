@@ -952,11 +952,12 @@ export async function enrichBarcodeItem(ctx: EnrichContext): Promise<void> {
   // Intelligence DB (cache or OFF mirror) returns resolver.cache==="hit" — it
   // resolved instantly from BIdb, NOT a live provider call. Surface that as
   // "BIdb / go-upc" so an instant hit doesn't read as a live go-upc fetch.
-  const confirmedNotes = hit.title
-    ? `Identified via ${provenanceLabel(hit)}.${
-        lowTrust ? " ⚠ Short barcode — double-check this is the right product." : ""
-      }`
-    : `Resolved via ${provenanceLabel(hit)}.`;
+  // Provenance only. The short-barcode doubt is the row's STATE (low_trust),
+  // rendered by every surface through the contract's scanDoubtWords while
+  // it is open and retired by "Looks fine"; baked into the note it outlived
+  // that tap and kept telling a person who had just said "looks fine" to
+  // double-check (#3057).
+  const confirmedNotes = hit.title ? `Identified via ${provenanceLabel(hit)}.` : `Resolved via ${provenanceLabel(hit)}.`;
   // Gate the hit behind the photo cross-check only when there's a photo to check
   // AND a real product name to verify.
   const gateOnPhoto = hasScanPhoto && !!hit.title;

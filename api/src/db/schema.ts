@@ -24,6 +24,9 @@ export interface UsersTable {
   /** Desktop nav layout that follows the user across devices. null = the device
    *  default stands. A phone ignores it: the sidebar renders `hidden md:block`. */
   nav_pref: { mode: "top" | "side"; autohide: boolean; topbar: boolean } | null;
+  /** How a titled work's title variants read for this person (the contract's
+   *  TitleFormat). null = the default format. */
+  title_pref: string | null;
   /** When the guided tour was completed or skipped. NULL = never. Lives on the
    *  ACCOUNT because localStorage forgets on a new device, a different origin
    *  (the main host vs a preview host) and a cleared cache. */

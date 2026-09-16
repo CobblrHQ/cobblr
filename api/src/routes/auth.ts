@@ -148,6 +148,7 @@ interface AuthResponseUser {
    *  Signing in used to come up in the wrong theme for exactly that reason.
    *  null means "follow this device"; these are never absent here. */
   theme_pref: "light" | "dark" | null;
+  title_pref?: string | null;
   nav_pref: unknown;
   tour_seen_at: Date | string | null;
   /** Community Discord invite (DISCORD_INVITE_URL) or null; signed-in chrome only. */

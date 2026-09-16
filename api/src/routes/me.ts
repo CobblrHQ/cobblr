@@ -2,6 +2,7 @@
 // the shape /auth/login returns so the web can reuse the same hook.
 
 import { OPERATOR_ONLY_ACTIONS } from "../platform/activity.js";
+import { TITLE_FORMATS, type TitleFormat } from "@cobblr/platform-contract/display-identity";
 import { Router } from "express";
 import { randomBytes } from "node:crypto";
 import { z } from "zod";
@@ -204,6 +205,9 @@ const MeUpdate = z.object({
     .strict()
     .nullable()
     .optional(),
+  // How a titled work's original / translated / transliterated title reads
+  // for this person (#3061). null = the default format.
+  title_pref: z.enum(TITLE_FORMATS as [TitleFormat, ...TitleFormat[]]).nullable().optional(),
 });
 meRouter.patch("/me", requireAuth, async (req, res, next) => {
   try {
@@ -225,6 +229,7 @@ meRouter.patch("/me", requireAuth, async (req, res, next) => {
           display_name: parsed.data.display_name.trim(),
         }),
         ...(parsed.data.theme_pref !== undefined && { theme_pref: parsed.data.theme_pref }),
+        ...(parsed.data.title_pref !== undefined && { title_pref: parsed.data.title_pref }),
         ...(parsed.data.tour_seen !== undefined && {
           tour_seen_at: parsed.data.tour_seen ? new Date() : null,
         }),
@@ -236,7 +241,7 @@ meRouter.patch("/me", requireAuth, async (req, res, next) => {
         }),
       })
       .where("id", "=", req.session!.id)
-      .returning(["id", "email", "display_name", "theme_pref", "nav_pref", "tour_seen_at"])
+      .returning(["id", "email", "display_name", "theme_pref", "nav_pref", "title_pref", "tour_seen_at"])
       .executeTakeFirstOrThrow();
     res.json({ user: updated });
   } catch (err) {

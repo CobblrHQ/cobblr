@@ -32,6 +32,7 @@ export const SESSION_USER_COLUMNS = [
   // that distinction, so a door that omits them makes it lie.
   "theme_pref",
   "nav_pref",
+  "title_pref",
   "tour_seen_at",
 ] as const;
 

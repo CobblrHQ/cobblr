@@ -1,6 +1,6 @@
 {
   "name": "@cobblr/platform-contract",
-  "version": "0.5.39",
+  "version": "0.5.41",
   "private": true,
   "type": "module",
   "main": "src/index.ts",

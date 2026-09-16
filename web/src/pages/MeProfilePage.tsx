@@ -15,7 +15,7 @@
 import { useState } from "react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { Link } from "react-router-dom";
-import { KeyRound, Monitor, Moon, Sun, Unlock, UserCog , PanelLeft} from "lucide-react";
+import { KeyRound, Languages, Monitor, Moon, Sun, Unlock, UserCog , PanelLeft} from "lucide-react";
 import { useAuth } from "../auth/AuthContext";
 import { useActiveOrg } from "../auth/ActiveOrgContext";
 import { api, ApiError } from "../lib/api";
@@ -24,6 +24,13 @@ import { useTheme } from "../theme/ThemeContext";
 import { useToast, usePageTitle } from "@cobblr/platform-web";
 import { NAV_LAYOUTS, setNavLayout, useNavLayout } from "../lib/nav-mode";
 import { LayoutPreview } from "../components/LayoutPreview";
+import {
+  DEFAULT_TITLE_FORMAT,
+  TITLE_FORMATS,
+  TITLE_FORMAT_LABELS,
+  formatTitleVariants,
+  type TitleFormat,
+} from "@cobblr/platform-contract/display-identity";
 
 function AccountHead({ title, blurb }: { title: string; blurb?: string }) {
   return (
@@ -162,6 +169,7 @@ export function MeAppearancePage() {
   return (
     <div className="space-y-4">
       <AppearanceSection />
+      <TitleFormatSection />
       <LayoutSection />
     </div>
   );
@@ -306,6 +314,67 @@ function AppearanceSection() {
       <p className="text-[11px] text-faint leading-tight">
         Precedence: <span className="font-medium">this device</span> → <span className="font-medium">account default</span> → the device's OS. This device can follow its own OS (Match OS) even when your account default is a fixed Light/Dark. The header toggle sets this device only; only you see it.
       </p>
+    </section>
+  );
+}
+
+/** A sample with all three variants so every option previews as the real
+ *  formatter would render it; a title missing a variant falls back the same
+ *  way on a real row. */
+const TITLE_SAMPLE = {
+  original: { title: "Синяя книга", language: "ru" },
+  translation: { title: "The Blue Book", language: "en" },
+  transliteration: { title: "Sinyaya kniga" },
+};
+
+/** How a scanned title that has an original, a translation and a
+ *  transliteration reads. Stored on the account like the theme, read by the
+ *  server when it composes a row's title, so every surface shows one shape. */
+function TitleFormatSection() {
+  const { user, refreshMe } = useAuth();
+  const toast = useToast();
+  const current: TitleFormat = user?.title_pref ?? DEFAULT_TITLE_FORMAT;
+  const save = useMutation({
+    mutationFn: (title_pref: TitleFormat) => api.setTitlePref(title_pref === DEFAULT_TITLE_FORMAT ? null : title_pref),
+    onSuccess: () => void refreshMe(),
+    onError: (e) => toast.error(e instanceof ApiError ? e.message : String(e)),
+  });
+  return (
+    <section className="rounded-xl border border-line dark:border-slate-700 bg-surface dark:bg-slate-900 p-5 space-y-3">
+      <h2 className="text-sm font-semibold text-content dark:text-mortar-100 flex items-center gap-2">
+        <Languages size={14} /> Titles in another language
+      </h2>
+      <p className="text-xs text-muted dark:text-slate-400">
+        When a scan knows a title's original, its translation and how it is pronounced, this is how the name reads. Nothing is ever invented: a title missing a variant shows what it has.
+      </p>
+      <div className="grid grid-cols-1 sm:grid-cols-2 gap-2" role="radiogroup" aria-label="Title format">
+        {TITLE_FORMATS.map((f) => {
+          const selected = current === f;
+          return (
+            <button
+              key={f}
+              type="button"
+              role="radio"
+              aria-checked={selected}
+              data-testid={`title-format-${f}`}
+              disabled={save.isPending}
+              onClick={() => save.mutate(f)}
+              className={
+                "flex flex-col gap-0.5 rounded-lg border p-3 text-left transition " +
+                (selected
+                  ? "border-cobble-500 bg-cobble-50 dark:bg-cobble-500/10 ring-1 ring-cobble-500 text-cobble-700 dark:text-cobble-300"
+                  : "border-line dark:border-slate-700 text-muted dark:text-slate-400 hover:bg-subtle dark:hover:bg-slate-800/60")
+              }
+            >
+              <span className={"text-sm font-medium " + (selected ? "" : "text-content dark:text-mortar-100")}>
+                {TITLE_FORMAT_LABELS[f]}
+                {f === DEFAULT_TITLE_FORMAT && <span className="ml-1 text-[11px] font-normal text-faint">default</span>}
+              </span>
+              <span className="text-[12px] leading-snug text-faint dark:text-slate-400" lang="ru">{formatTitleVariants(TITLE_SAMPLE, f)}</span>
+            </button>
+          );
+        })}
+      </div>
     </section>
   );
 }

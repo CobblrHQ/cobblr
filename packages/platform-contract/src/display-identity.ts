@@ -123,10 +123,34 @@ export function personNameOf(meta: unknown): string | null {
   return clean(m[USER_NAME_KEY]);
 }
 
-/** The one name every surface shows: the person's when there is one, the
- *  model's otherwise. Reads a served row and a stored row alike. */
-export function displayName(row: NamedRowLike): string | null {
-  return personNameOf(row.suggested_metadata) ?? clean(row.suggested_name);
+/** The one name every surface shows: the person's when there is one,
+ *  untouched; the model's otherwise, read through the presentation rules
+ *  (the first letter capitalised, a titled work's variants in the person's
+ *  format). Reads a served row and a stored row alike. The stored value is
+ *  never rewritten: display only, reversible, no migration (#3060). */
+export function displayName(row: NamedRowLike, opts: { titleFormat?: TitleFormat | null } = {}): string | null {
+  const person = personNameOf(row.suggested_metadata);
+  if (person) return person;
+  // A title's variants are composed by whoever knows the person's format:
+  // the server, serving the row (a null preference is the default). A
+  // caller that passes no format reads the row as served, so a surface never
+  // re-formats a title the server composed in the person's format.
+  if ("titleFormat" in opts) {
+    const variants = formatTitleVariants(titleVariantsOf(row.suggested_metadata), opts.titleFormat);
+    if (variants) return variants;
+  }
+  const column = clean(row.suggested_name);
+  return column ? presentName(column) : null;
+}
+
+/** The name to WRITE when a row is filed without one given: the person's
+ *  when there is one, else the stored column as the source spelt it. Never
+ *  the presentation (`displayName`): the first-letter rule and a title's
+ *  format are display only, so a filed record carries what was stored, and
+ *  a barcode correction compares the source's spelling to the person's,
+ *  not to a capital the display added (#3060). */
+export function filingName(row: NamedRowLike): string | null {
+  return personNameOf(row.suggested_metadata) ?? clean(row.suggested_name) ?? null;
 }
 
 /** The model's name when a person's stands and the model's newest read
@@ -141,4 +165,178 @@ export function modelNameBeside(row: NamedRowLike): string | null {
   const prov = ((row.suggested_metadata ?? {}) as Record<string, unknown>)[FIELD_PROVENANCE_KEY] as FieldProvenanceMap | undefined;
   const replaced = clean(prov?.name?.replaced);
   return replaced && replaced !== person ? replaced : null;
+}
+
+// ── How a name READS (#3059 Engine 2: #3060, #3061, #3077). One formatter,
+// three rules, read by every surface; the stored value is never rewritten.
+
+/** The first letter of an ordinary name, capitalised at display: "corn
+ *  Starch" reads "Corn Starch" (#3060). Only the first letter, only when
+ *  the first word is plain lowercase letters: "iPhone", "eBay", "m&m's",
+ *  "3D printer", "WD40" and an all-caps acronym keep their case, since a
+ *  word with any capital, digit or symbol of its own is spelt that way on
+ *  purpose. No Title Case: the owner did not ask for it and flagged it as
+ *  possibly wrong. A name a PERSON typed is never touched (displayName
+ *  handles that: person-provenance wins, as with every field). */
+export function presentName(name: string): string {
+  const s = name.trim();
+  if (!s) return s;
+  const first = s.split(/\s+/)[0] ?? "";
+  if (!/^\p{Ll}+$/u.test(first)) return s;
+  return s[0]!.toLocaleUpperCase() + s.slice(1);
+}
+
+/** A titled work's title, kept as SEPARATE values: what is printed on it
+ *  in its own language, a translation of that, and a transliteration of
+ *  it. A value the source did not give is absent, never made up: a literal
+ *  translation and the published title of a translated edition are two
+ *  different things, and neither is invented to fill a format (#3061). */
+export interface TitleVariants {
+  original?: { title: string; language?: string | null } | null;
+  translation?: { title: string; language?: string | null } | null;
+  transliteration?: { title: string } | null;
+}
+
+/** Where a row keeps its title variants (suggested_metadata). */
+export const TITLE_VARIANTS_KEY = "title_variants";
+
+/** How a person wants a title with variants to read. A PERSONAL preference
+ *  (the account's), not a policy: the default leads with the original and
+ *  brackets the translation, "Желтый туман (Yellow Fog)". */
+export type TitleFormat =
+  | "original"
+  | "original-translation"
+  | "translation-original"
+  | "transliteration-translation"
+  | "original-transliteration"
+  | "translation";
+export const TITLE_FORMATS: readonly TitleFormat[] = [
+  "original-translation",
+  "translation-original",
+  "original",
+  "translation",
+  "original-transliteration",
+  "transliteration-translation",
+];
+export const DEFAULT_TITLE_FORMAT: TitleFormat = "original-translation";
+
+export const TITLE_FORMAT_LABELS: Record<TitleFormat, string> = {
+  "original-translation": "Original (translation)",
+  "translation-original": "Translation (original)",
+  original: "Original only",
+  translation: "Translation only",
+  "original-transliteration": "Original (transliteration)",
+  "transliteration-translation": "Transliteration (translation)",
+};
+
+export function asTitleFormat(v: unknown): TitleFormat | null {
+  return typeof v === "string" && (TITLE_FORMATS as string[]).includes(v) ? (v as TitleFormat) : null;
+}
+
+export function titleVariantsOf(meta: unknown): TitleVariants | null {
+  const v = ((meta ?? {}) as Record<string, unknown>)[TITLE_VARIANTS_KEY];
+  if (!v || typeof v !== "object") return null;
+  const o = v as Record<string, unknown>;
+  const part = (k: string): { title: string; language?: string | null } | null => {
+    const p = o[k];
+    if (!p || typeof p !== "object") return null;
+    const t = clean((p as { title?: unknown }).title);
+    if (!t) return null;
+    const lang = clean((p as { language?: unknown }).language);
+    return lang ? { title: t, language: lang } : { title: t };
+  };
+  const out: TitleVariants = {};
+  const original = part("original");
+  const translation = part("translation");
+  const transliteration = part("transliteration");
+  if (original) out.original = original;
+  if (translation) out.translation = translation;
+  if (transliteration) out.transliteration = { title: transliteration.title };
+  return original || translation || transliteration ? out : null;
+}
+
+/** The title in the person's format, from the variants the row HAS. A
+ *  format asks for two values; with one missing, what exists is shown
+ *  alone rather than a value invented for the slot. Null when there is no
+ *  variant at all (the plain name stands). */
+export function formatTitleVariants(v: TitleVariants | null | undefined, format: TitleFormat | null | undefined = DEFAULT_TITLE_FORMAT): string | null {
+  if (!v) return null;
+  const o = v.original?.title ?? null;
+  const t = v.translation?.title ?? null;
+  const r = v.transliteration?.title ?? null;
+  const pair = (lead: string | null, bracket: string | null, alt: string | null): string | null => {
+    if (lead && bracket && bracket !== lead) return `${lead} (${bracket})`;
+    return lead ?? bracket ?? alt;
+  };
+  switch (format ?? DEFAULT_TITLE_FORMAT) {
+    case "original":
+      return o ?? t ?? r;
+    case "translation":
+      return t ?? o ?? r;
+    case "translation-original":
+      return pair(t, o, r);
+    case "original-transliteration":
+      return pair(o, r, t);
+    case "transliteration-translation":
+      return pair(r, t, o);
+    case "original-translation":
+    default:
+      return pair(o, t, r);
+  }
+}
+
+/** A field as a card lists it. */
+export interface CardField {
+  name: string;
+  label?: string | null;
+  value: unknown;
+}
+
+/** A field's label as a person reads it: the declared label, else the name
+ *  with its underscores and prefixes spelt out ("set_number" reads "Set
+ *  number", "isbn" reads "ISBN"). */
+export function humanFieldLabel(name: string, label?: string | null): string {
+  const l = clean(label);
+  if (l) return l;
+  const words = name.replace(/^x_/, "").split(/[_\s]+/).filter(Boolean);
+  const upper = new Set(["isbn", "upc", "ean", "sku", "vin", "id", "url", "qr", "gtin", "asin", "mpn"]);
+  return words
+    .map((w, i) => (upper.has(w.toLowerCase()) ? w.toUpperCase() : i === 0 ? w[0]!.toUpperCase() + w.slice(1) : w))
+    .join(" ");
+}
+
+function containsWhole(line: string, value: string): boolean {
+  const i = line.indexOf(value);
+  if (i === -1) return false;
+  const before = i === 0 ? "" : line[i - 1]!;
+  const after = i + value.length >= line.length ? "" : line[i + value.length]!;
+  const wordy = (c: string) => /[\p{L}\p{N}]/u.test(c);
+  return !wordy(before) && !wordy(after);
+}
+
+/** The fields a compact card shows: never the same value twice on one card
+ *  (an ISBN in the title line and again as a field; a brand in the name and
+ *  again as Brand), every label human-readable, every field the full detail
+ *  keeps (this is a read for the compact card, not a cut of the record;
+ *  #3077). `shown` is what the card already prints (the title line, the
+ *  identity line), so a field whose value is in it is left out. */
+export function compactCardFields(fields: readonly CardField[], shown: readonly (string | null | undefined)[]): Array<{ name: string; label: string; value: string }> {
+  const seen = new Set<string>();
+  const norm = (v: unknown): string => String(v ?? "").replace(/\s+/g, " ").trim().toLowerCase();
+  for (const s of shown) if (s) seen.add(norm(s));
+  const printed = shown.filter((s): s is string => !!s).map((s) => s.toLowerCase());
+  const out: Array<{ name: string; label: string; value: string }> = [];
+  for (const f of fields) {
+    if (f.value == null || f.value === "") continue;
+    const value = String(f.value).replace(/\s+/g, " ").trim();
+    const key = norm(value);
+    if (!key || seen.has(key)) continue;
+    // A value the card already prints inside a longer line (the ISBN inside
+    // "ISBN 9785170058907", the brand inside the name) is already shown:
+    // whole, between word breaks, so "558" is not found inside an ISBN.
+    if (printed.some((p) => containsWhole(p, key))) continue;
+    seen.add(key);
+    out.push({ name: f.name, label: humanFieldLabel(f.name, f.label), value });
+  }
+  return out;
 }
