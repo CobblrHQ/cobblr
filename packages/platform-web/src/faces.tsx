@@ -110,7 +110,13 @@ export function RecordFaces({
 
 /** Is this face on, here and now? True when the collection wears it or the
  *  person just opened it on this screen. Outside RecordFaces: always true,
- *  so a page that has not adopted faces shows everything it always did. */
+ *  so a page that has not adopted faces shows everything it always did.
+ *
+ *  That default is a trap in the component that RENDERS RecordFaces: a hook
+ *  in its body runs outside the provider it is about to mount, reads "no
+ *  faces here" and answers true for every face, so a field it gates never
+ *  folds (Assets' warranty fields, 2026-09-17, caught by a rendered test).
+ *  Inside that component, read faces with <FacesOn>, which asks from within. */
 export function useFaceOn(face: FaceName | undefined, kind: string): boolean {
   const opened = useContext(Opened);
   const { on } = useFaces(kind);
@@ -122,4 +128,17 @@ export function useFaceOn(face: FaceName | undefined, kind: string): boolean {
 /** Wrap one section: rendered only while its face is on. */
 export function FaceSection({ face, kind, children }: { face: FaceName; kind: string; children: ReactNode }) {
   return useFaceOn(face, kind) ? <>{children}</> : null;
+}
+
+/** Read several faces from INSIDE the record's faces and hand the answers to
+ *  what renders them: for a list of pack items where a face decides whether
+ *  a field is present at all (no cell), which a wrapper around the item
+ *  cannot express. Rendered under RecordFaces; the component that mounts
+ *  RecordFaces cannot call useFaceOn itself (see it). */
+export function FacesOn<F extends FaceName>({ kind, faces, children }: { kind: string; faces: readonly F[]; children: (on: Record<F, boolean>) => ReactNode }) {
+  const opened = useContext(Opened);
+  const { on } = useFaces(kind);
+  const answer = {} as Record<F, boolean>;
+  for (const f of faces) answer[f] = !opened ? true : on.has(f) || opened.opened.has(f);
+  return <>{children(answer)}</>;
 }

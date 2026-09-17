@@ -9,7 +9,8 @@
 // itself: the camera, Re-run AI with its live running state, and an
 // overflow for the rest. The card's brain (InboxCard) computes everything.
 import { displayName } from "@cobblr/platform-contract/display-identity";
-import { scanToolsFold } from "@cobblr/platform-contract/scan-triage";
+import { scanToolsFold, scanToolsFoldGroups } from "@cobblr/platform-contract/scan-triage";
+import { thumbnailFit, thumbnailTextHeavy, type ThumbFit } from "@cobblr/platform-contract/thumbnail-fit";
 import type { ScanTool, ScanToolHints } from "@cobblr/platform-contract/scan-tools";
 import { useEffect, useState } from "react";
 import { createPortal } from "react-dom";
@@ -66,8 +67,10 @@ export interface ScanPhoneRowProps {
   /** The filing control: the destination's real name and the override on the
    *  left, the small action on the right. Picking a destination never files. */
   commit: {
-    /** `merge` is +1 more of a record the workspace counts; onAdd runs it. */
-    kind: "add" | "install" | "merge" | "review";
+    /** `merge` is +1 more of a record the workspace counts; onAdd runs it.
+     *  `ask` is a row this person cannot file (a permission, a bundle only an
+     *  admin installs): onAdd raises the ask instead of a File (#3073). */
+    kind: "add" | "install" | "merge" | "review" | "ask";
     /** The action's words, from the row's resolved state (scanRowState):
      *  the same words the desk card and the session show. */
     label: string;
@@ -102,6 +105,13 @@ export function ScanPhoneRow(p: ScanPhoneRowProps) {
   const { item } = p;
   const [pickOpen, setPickOpen] = useState(false);
   const [moreOpen, setMoreOpen] = useState(false);
+  // A long thin thing lying flat is a sliver in this 64px column; turned a
+  // quarter it runs the column's height. Measured from the picture's own
+  // size when it loads, decided by the contract's fit rule, display only:
+  // the stored picture and the lightbox keep the orientation as taken
+  // (#3066). Words are never turned (packaging in frame, a book).
+  const [thumbFit, setThumbFit] = useState<ThumbFit>({ rotate: 0, gain: 1 });
+  const textHeavy = thumbnailTextHeavy(item.suggested_metadata);
   const name = displayName(item);
   const nameless = !name;
   const stop = (e: React.SyntheticEvent) => e.stopPropagation();
@@ -129,7 +139,21 @@ export function ScanPhoneRow(p: ScanPhoneRowProps) {
         className="w-16 shrink-0 overflow-hidden rounded-lg bg-subtle dark:bg-slate-800 flex items-center justify-center"
       >
         {p.thumb ? (
-          <img src={p.thumb} alt="" className="max-h-44 w-full object-contain" onError={p.onThumbBroken} />
+          // Turned: a 128 by 64 box, contained, rotated a quarter about its
+          // centre, sits inside a 64 by 128 frame (the row's height budget).
+          <span className={thumbFit.rotate ? "relative block h-32 w-16 overflow-hidden" : "block w-full"} data-rotate={thumbFit.rotate || undefined}>
+            <img
+              src={p.thumb}
+              alt=""
+              className={thumbFit.rotate ? "absolute object-contain" : "max-h-44 w-full object-contain"}
+              style={thumbFit.rotate ? { width: 128, maxWidth: "none", height: 64, left: -32, top: 32, transform: "rotate(90deg)" } : undefined}
+              onLoad={(e) => {
+                const img = e.currentTarget;
+                setThumbFit(thumbnailFit({ width: img.naturalWidth, height: img.naturalHeight }, { width: 64, maxHeight: 128 }, { textHeavy }));
+              }}
+              onError={p.onThumbBroken}
+            />
+          </span>
         ) : (
           <span className="flex h-16 w-full items-center justify-center"><ScanLine size={22} className="text-faint dark:text-slate-600" /></span>
         )}
@@ -295,6 +319,8 @@ function PhoneCommit({ c, open, setOpen, onReview }: { c: NonNullable<ScanPhoneR
   const action =
     c.kind === "review"
       ? { label: c.label, cls: "border-amber-500 bg-amber-100 text-amber-900 dark:border-amber-500/80 dark:bg-amber-900/40 dark:text-amber-100", icon: null, onClick: onReview, title: c.reason }
+      : c.kind === "ask"
+        ? { label: c.label, cls: "border-amber-500 bg-amber-100 text-amber-900 dark:border-amber-500/80 dark:bg-amber-900/40 dark:text-amber-100", icon: null, onClick: c.onAdd, title: c.reason }
       : c.kind === "install"
         ? { label: c.label, cls: "border-cobble-600 bg-cobble-600 text-white", icon: <Download size={13} />, onClick: c.onAdd, title: `${c.destination} is not set up yet; this installs it and files the item` }
         : c.kind === "merge"
@@ -386,9 +412,13 @@ function PhoneActionSheet({ title, actions, hints, onClose }: { title: string; a
       }
     >
       <span className="text-[15px]">{a.label}</span>
-      {(a.folded ?? a.hint) && <span className="text-xs text-faint">{a.folded ?? a.hint}</span>}
+      {a.hint && <span className="text-xs text-faint">{a.hint}</span>}
     </button>
   );
+  // Behind the fold a tool's reason is said once, as the tool's own line,
+  // and each row says what a tap does; two rows of one tool used to each
+  // repeat the reason (#3075).
+  const groups = scanToolsFoldGroups(hints, folded);
   useEffect(() => {
     const prev = document.body.style.overflow;
     document.body.style.overflow = "hidden";
@@ -423,7 +453,13 @@ function PhoneActionSheet({ title, actions, hints, onClose }: { title: string; a
               <ChevronDown size={14} className={`shrink-0 transition-transform ${moreOpen ? "rotate-180" : ""}`} />
               More tools{foldLabel && <span className="text-xs">({foldLabel})</span>}
             </button>
-            {moreOpen && folded.map(row)}
+            {moreOpen &&
+              groups.map((g) => (
+                <div key={g.key} data-tool-group={g.key}>
+                  {g.reason && <p className="px-4 pt-2 text-xs text-faint">{g.reason}</p>}
+                  {g.actions.map(row)}
+                </div>
+              ))}
           </>
         )}
         <button type="button" role="menuitem" onClick={onClose} className="mt-1 flex min-h-12 w-full items-center justify-center border-t border-line dark:border-slate-800 text-[15px] font-medium text-content dark:text-mortar-100">

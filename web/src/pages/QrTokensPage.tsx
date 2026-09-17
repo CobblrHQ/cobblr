@@ -9,6 +9,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Copy, ExternalLink, QrCode, Ban, Globe } from "lucide-react";
 import { ApiError, api, type QrToken } from "../lib/api";
 import { useActiveOrg } from "../auth/ActiveOrgContext";
+import { roleSatisfies } from "@cobblr/platform-contract/org-roles";
 import { useConfirm, useToast, usePageTitle } from "@cobblr/platform-web";
 
 export function QrTokensPage({ embedded = false }: { embedded?: boolean } = {}) {
@@ -17,7 +18,7 @@ export function QrTokensPage({ embedded = false }: { embedded?: boolean } = {}) 
   const qc = useQueryClient();
   const toast = useToast();
   const confirm = useConfirm();
-  const isAdmin = activeOrg?.role === "owner" || activeOrg?.role === "admin";
+  const isAdmin = roleSatisfies(activeOrg?.role, ["owner", "admin"]);
 
   const list = useQuery({
     queryKey: ["qr-tokens", activeSlug],

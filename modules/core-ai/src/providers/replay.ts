@@ -35,6 +35,20 @@
 // plain reply, so a test that only cares about plumbing needs no cassette of
 // its own.
 //
+// A round may point INTO the previous tool result. A recorded model that
+// searched and then acted on what it found carries the id of a record that
+// exists only in the workspace it was recorded against; in a fresh test
+// workspace that id matches nothing. So a string argument of the form
+// "$prev.<path>" is read from the JSON of the most recent tool result when
+// the round is played: "$prev.data.items[0].id" is the first hit of the
+// search the round before, and "$result.list_records.data.items[0].id" is
+// the first hit of the most recent list_records whatever came after it (a
+// bounced write leaves its own tool result on top). This is what lets a
+// cassette do what the live model did with two CubePros (#3154): search,
+// take the first hit, act. The longest matching `match` wins, so a cassette
+// for the re-ask "label on the cubepro #9" beats the one for the sentence
+// it extends.
+//
 // IMAGE cassettes, for the scan surfaces (identify-image, classify-image,
 // extract-text), in the `images/` subdirectory of the cassette dir: a photo
 // has no "last user message" to match, so an image cassette is keyed by a
@@ -204,6 +218,48 @@ function lastUserMessage(turns: ChatTurn[]): string {
 
 /** Which round of a turn is this call? Count the assistant turns that carry
  *  tool_calls in the transcript: the loop appends one per completed round. */
+/** The JSON of the most recent tool result in the transcript (of one tool,
+ *  when named: "$result.list_records" reads past a bounce that came after
+ *  the search), or null. */
+function lastToolResult(turns: ChatTurn[], tool?: string): unknown {
+  const nameOf = new Map<string, string>();
+  for (const t of turns) if (t.role === "assistant") for (const c of t.tool_calls ?? []) nameOf.set(c.id, c.name);
+  for (let i = turns.length - 1; i >= 0; i--) {
+    const t = turns[i]!;
+    if (t.role !== "tool") continue;
+    if (tool && nameOf.get(t.tool_call_id ?? "") !== tool) continue;
+    try {
+      return JSON.parse(t.content);
+    } catch {
+      return null;
+    }
+  }
+  return null;
+}
+
+/** "$prev.data.items[0].id" -> the value at that path in the previous tool
+ *  result; "$result.list_records.data.items[0].id" -> in the most recent
+ *  result of THAT tool. Any other value is returned as it is. Walks objects
+ *  and arrays so a nested `args` is resolved too. */
+function resolvePrevRefs(v: unknown, turns: ChatTurn[]): unknown {
+  if (typeof v === "string") {
+    const m = /^\$(prev|result\.([a-z_]+))\.(.+)$/.exec(v);
+    if (!m) return v;
+    let cur: unknown = lastToolResult(turns, m[2]);
+    const path = m[3]!;
+    for (const step of path.split(".")) {
+      const idx = /^([^[]+)\[(\d+)\]$/.exec(step);
+      const key = idx ? idx[1]! : step;
+      cur = cur && typeof cur === "object" ? (cur as Record<string, unknown>)[key] : undefined;
+      if (idx) cur = Array.isArray(cur) ? cur[Number(idx[2])] : undefined;
+    }
+    return cur ?? v;
+  }
+  if (Array.isArray(v)) return v.map((x) => resolvePrevRefs(x, turns));
+  if (v && typeof v === "object") return Object.fromEntries(Object.entries(v as Record<string, unknown>).map(([k, x]) => [k, resolvePrevRefs(x, turns)]));
+  return v;
+}
+
 function roundIndex(turns: ChatTurn[]): number {
   return turns.filter((t) => t.role === "assistant" && (t.tool_calls?.length ?? 0) > 0).length;
 }
@@ -261,8 +317,14 @@ export function register(): void {
           // the model call this is standing in for.
           const cassettes = loadCassettes(dir);
           if (process.env.COBBLR_AI_REPLAY_DEBUG) console.log(`[ai:replay] ask: ${JSON.stringify(ask.slice(0, 200))}`);
+          // The longest match wins: a cassette for "label on the cubepro #9"
+          // is the answer to that sentence even though the shorter "label on
+          // the cubepro" is a substring of it too (a re-ask with the record
+          // named is the same sentence plus the name).
           const cassette =
-            cassettes.find((c) => c.match !== "*" && ask.includes(c.match.toLowerCase())) ??
+            cassettes
+              .filter((c) => c.match !== "*" && ask.includes(c.match.toLowerCase()))
+              .sort((a, b) => b.match.length - a.match.length)[0] ??
             cassettes.find((c) => c.match === "*");
           if (process.env.COBBLR_AI_REPLAY_DEBUG) console.log(`[ai:replay] chose: ${cassette?.file ?? "(none)"} round ${roundIndex(turns)}`);
           if (!cassette) {
@@ -285,7 +347,7 @@ export function register(): void {
           const tool_calls: ToolCall[] | undefined = round.tool_calls?.map((c) => ({
             id: `replay-${++idCounter}`,
             name: c.name,
-            args: c.args ?? {},
+            args: resolvePrevRefs(c.args ?? {}, turns) as Record<string, unknown>,
           }));
           return {
             result: {

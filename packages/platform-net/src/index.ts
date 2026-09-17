@@ -25,6 +25,18 @@ import {
   type RequestInit as UndiciRequestInit,
   type Response as UndiciResponse,
 } from "undici";
+import { applyOutboundHold } from "@cobblr/platform-net/outbound-hold";
+
+export {
+  registerOutboundHold,
+  releaseOutboundHold,
+  forgetOutboundHold,
+  outboundHoldStatus,
+  outboundHoldMatches,
+  hasOutboundHolds,
+  type OutboundHoldSpec,
+  type OutboundHoldStatus,
+} from "@cobblr/platform-net/outbound-hold";
 
 /** The address to pin a hop's connection to. `family` is 4 or 6. */
 export interface Pin {
@@ -131,6 +143,11 @@ export async function pinnedRedirectingFetch(args: PinnedFetchArgs): Promise<Pin
 
   for (let hop = 0; ; hop++) {
     const pin = await args.validate(current); // throws to block the hop
+    // A test's hold on this URL (outbound-hold.ts): waits here, after the
+    // policy has had its say, and answers from the hold's canned response
+    // when it carries one. One map-size check when nothing is held.
+    const held = await applyOutboundHold(current.href);
+    if (held) return { response: held, dispatcher: null };
     const dispatcher = pin ? pinnedAgent(pin) : null;
 
     let response: UndiciResponse;

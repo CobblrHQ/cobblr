@@ -18,8 +18,11 @@ import {
   EntityActionsBar,
   EntityThumb,
   EntityTile,
+  FieldPack,
   Modal,
   ViewModeToggle,
+  editFieldItem,
+  fieldNeed,
   useConfirm,
   useCreateDoor,
   usePageTitle,
@@ -445,16 +448,18 @@ function RecordDetailModal({
             </div>
             <div className="min-w-0 space-y-4">
               {/* Native fields are just the universal base; everything
-                  domain-shaped lives in the CustomFieldsPanel below. */}
-              <dl className="grid grid-cols-2 gap-3 text-xs">
-                <EditField label={fp.label("name", "Name")} value={r.name} onCommit={(v) => update.mutate({ name: v })} />
-                <LocationTreePicker
-                  label="Location"
-                  value={r.location_id}
-                  onChange={(lid) => update.mutate({ location_id: lid })}
-                  size="sm"
-                />
-              </dl>
+                  domain-shaped lives in the CustomFieldsPanel below. The
+                  packer lays them out from what each needs (#3067). */}
+              <FieldPack
+                className="text-xs"
+                items={[
+                  editFieldItem("name", { label: fp.label("name", "Name"), value: r.name, onCommit: (v) => update.mutate({ name: v }) }),
+                  {
+                    need: fieldNeed("location", { control: "picker", label: "Location" }),
+                    node: <LocationTreePicker label="Location" value={r.location_id} onChange={(lid) => update.mutate({ location_id: lid })} size="sm" />,
+                  },
+                ]}
+              />
               <CustomFieldsPanel
                 entityKind={kind}
                 entityId={r.id}
@@ -464,7 +469,7 @@ function RecordDetailModal({
                 }
               />
               <EntityAttachments kind={ENTITY_KIND} entityId={r.id} />
-              <EditField label={fp.label("notes", "Notes")} value={r.notes ?? ""} multiline onCommit={(v) => update.mutate({ notes: v || null })} />
+              <FieldPack className="text-xs" items={[editFieldItem("notes", { label: fp.label("notes", "Notes"), value: r.notes ?? "", multiline: true, onCommit: (v) => update.mutate({ notes: v || null }) })]} />
             </div>
           </div>
           <div className="pt-3 border-t border-line dark:border-slate-700 flex items-center justify-between">
@@ -572,35 +577,3 @@ function NewRecordModal({
   );
 }
 
-function EditField({
-  label,
-  value,
-  onCommit,
-  multiline,
-}: {
-  label: string;
-  value: string;
-  onCommit: (v: string) => void;
-  multiline?: boolean;
-}) {
-  const Cmp = multiline ? "textarea" : "input";
-  return (
-    <label className={"block " + (multiline ? "col-span-2" : "")}>
-      <span className="block text-[10px] font-mono uppercase tracking-widest text-faint dark:text-slate-500 mb-1">
-        {label}
-      </span>
-      <Cmp
-        type={multiline ? undefined : "text"}
-        defaultValue={value}
-        onBlur={(e) => {
-          if (e.target.value !== value) onCommit(e.target.value);
-        }}
-        onKeyDown={(e) => {
-          if (!multiline && e.key === "Enter") (e.target as HTMLInputElement).blur();
-        }}
-        rows={multiline ? 3 : undefined}
-        className="input"
-      />
-    </label>
-  );
-}

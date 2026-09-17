@@ -72,70 +72,9 @@ export function destinationLabel(
     .replace(/\b\w/g, (c) => c.toUpperCase());
 }
 
-/**
- * Is this destination still the best one available?
- *
- * A scan matched days ago carries the routing of the workspace AS IT WAS. Install
- * a Tea table afterwards and every tea already in the inbox still points at plain
- * Inventory, because nothing recomputes an answer once it is stored.
- *
- * This is the cheap half of noticing: a table whose name appears in the item's
- * own words, and which is NOT where the item is headed, is a discrepancy worth
- * raising. It is deliberately conservative - one word, matched whole - because
- * the cost of a wrong nudge is a person second-guessing a correct filing.
- */
-export function betterDestination(
-  itemText: string,
-  target: string | null | undefined,
-  tables: readonly DestinationTable[],
-  module?: string | null,
-): DestinationTable | null {
-  const words = new Set(
-    itemText
-      .toLowerCase()
-      .replace(/[^a-z0-9 ]+/g, " ")
-      .split(/\s+/)
-      .filter(Boolean),
-  );
-  if (words.size === 0) return null;
-  const head = normaliseTargetKind(target, module).split(":")[0] ?? "";
-  const hit = (term: string): boolean => {
-    const t = term.toLowerCase().trim();
-    if (!t) return false;
-    // A multi-word term ("tea bags") is checked against the text; a single word
-    // must match a WHOLE word, so "tea" does not fire on "steamer".
-    if (t.includes(" ")) return itemText.toLowerCase().includes(t);
-    // Singular and plural both count: a table called "Spices" should be found
-    // by an item that says "spice", and "Tea" by one that says "teas".
-    //
-    // The forms are ENUMERATED rather than matched by prefix. Prefix matching
-    // would find "tomatoes" from "tomato" for free, and would also fire "tea"
-    // on "teaspoon" - a nudge that sends somebody to re-file a measuring spoon
-    // as a beverage. A short list of real plural endings costs nothing and
-    // cannot do that.
-    const forms = [t, t.replace(/s$/, ""), `${t}s`, `${t}es`];
-    if (/[^aeiou]y$/.test(t)) forms.push(`${t.slice(0, -1)}ies`);
-    return forms.some((f) => f.length > 1 && words.has(f));
-  };
-  // If the table it is IN already claims a word of its name, it is where it
-  // belongs and nothing else gets to argue. "Rosemary Olive Oil Bread" hits
-  // Spices on "rosemary" and Groceries on "bread"; filed in Groceries, the
-  // Spices nudge is wrong, because the bread is the thing and the rosemary is
-  // what is in it (2026-09-06). A nudge is for an item its current table has
-  // no claim on at all - a tea sitting in plain Inventory.
-  const current = tables.find((t) => t.instance_name === head);
-  if (current) {
-    const own = (current.display_name ?? current.instance_name).trim();
-    if ((own && hit(own)) || (current.keywords ?? []).some(hit)) return null;
-  }
-  for (const t of tables) {
-    if (t.instance_name === head) continue;
-    // The table's own name first - it is the strongest signal and the one a
-    // person would give. Then the terms it declares, which is how a table gets
-    // found by members that never say its name.
-    const name = (t.display_name ?? t.instance_name).trim();
-    if (name && hit(name)) return t;
-    for (const k of t.keywords ?? []) if (hit(k)) return t;
-  }
-  return null;
-}
+// The better-table question ("does a table the workspace has now claim this
+// item better than where it is headed?") is the resolver's, answered by the
+// router's one rule: scanBetterTable in scan-triage.ts, over table-fit.ts.
+// A one-whole-word rule used to live here beside it, with no plausibility
+// floor and no category, and every product whose brand is a fruit was
+// offered Groceries (#3136).

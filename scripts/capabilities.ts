@@ -69,6 +69,92 @@ export interface VocabularyCapability extends Base {
 export const CAPABILITIES: Capability[] = [
   {
     kind: "owns",
+    id: "scan:where-a-row-is-headed",
+    what:
+      "the question 'which table is this row headed to, and does the workspace have a better one': answered once by the resolver " +
+      "(scanDestination / scanBetterTable over the router's rule in table-fit.ts), never re-derived on a surface",
+    why:
+      "the destination nudge was a third opinion outside the resolver, a one-whole-word rule with no plausibility floor and no " +
+      "category, read from four places: every product whose brand is a fruit was offered Groceries (Apple iPhone, Orange SIM, " +
+      "a Raspberry Pi board), and File all moved a person's chosen table by default (#3136). The doubt lint (#3058) owns 'is this " +
+      "row ready and what is wrong'; this row owns 'where is it headed'; the next gap is a third question nobody has named",
+    owner: "packages/platform-contract/src/scan-triage.ts",
+    scope: [
+      "packages/platform-contract/src/destination-label.ts",
+      "web/src/pages/ScanPage.tsx",
+      "web/src/pages/ScanInboxCard.tsx",
+      "web/src/pages/ScanPhoneRow.tsx",
+      "web/src/pages/ScanItemScreen.tsx",
+      "web/src/pages/scanFileAll.ts",
+      "web/src/lib/scanCombine.ts",
+      "web/src/lib/scanResolverTables.ts",
+    ],
+    // The router's fit rule asked directly, or a table's declared words
+    // matched by hand against an item's words (the old nudge's shape).
+    detect: /\b(rankFits|bestFit|betterDestination)\s*\(|\b(scan_keywords|keywords)\b[^\n]*\.(some|includes|find)\s*\(/,
+    use: "scanRowState(row, { tables }).destination (replaced / offered) on a pending row, scanBetterTable(item, kind, tables) on a filed one; tables from web/src/lib/scanResolverTables.ts",
+  },
+  {
+    kind: "owns",
+    id: "identity:how-a-title-reads",
+    what:
+      "how a titled work's title READS for the person asking: composed once by the kernel for every served entity (served-title.ts, " +
+      "from the request's actor) and by the scan inbox's withTitle for its rows; the web reads a served row as served",
+    why:
+      "the inbox composed its rows with the person's title preference while a filed record showed the stored name, so an item " +
+      "page, a search result and the assistant each read the same book differently from the inbox (#3061). Two formatters " +
+      "agreeing today drift next quarter, so a second call to the formatter outside the two composers is refused",
+    owner: "api/src/platform/served-title.ts",
+    scope: [
+      "modules/core-scan/src/api/organize.ts",
+      "modules/core-scan/src/api/duplicates.ts",
+      "modules/core-search/src/api/index.ts",
+      "modules/core-ai/src/api/chat.ts",
+      "packages/workspace-tools/src/tools.ts",
+      "api/src/routes/platform.ts",
+      "api/src/platform/entities.ts",
+      "web/src/pages/ScanPage.tsx",
+      "web/src/pages/ScanInboxCard.tsx",
+      "web/src/pages/ScanItemScreen.tsx",
+      "web/src/pages/ScanPhoneRow.tsx",
+      "web/src/pages/RecordsPage.tsx",
+      "web/src/components/SearchBar.tsx",
+    ],
+    // The formatter asked directly. The scan inbox's withTitle (inbox.ts) is
+    // the one other composer and is not in scope by name; the Appearance
+    // page previews the formats themselves on a sample, not a record.
+    detect: /\bformatTitleVariants\s*\(/,
+    use: "read `title` as served (the kernel composed it for this request); a row's forms are on `title_variants` beside it",
+  },
+  {
+    kind: "owns",
+    id: "scan:names-as-people",
+    what: "whether two names name one PERSON (namesAgree) or one MAKER (brandsAgree): the surname shared and nothing else differing, erring toward asking",
+    why:
+      "the first comparator leaned toward 'same person' (any shared word, a four-letter prefix, initials dropped), so Amy Johnson agreed with John Smith " +
+      "and A. Volkov with Sergei Volkov: a conflict suppressed with no hold, no sentence, no question (#3070, #3118); a local 'quick match' " +
+      "written beside a route is exactly where that lean walks back in",
+    owner: "packages/platform-contract/src/scan-evidence.ts",
+    scope: [
+      "packages/platform-contract/src/scan-triage.ts",
+      "packages/platform-contract/src/display-identity.ts",
+      "modules/core-scan/src/services/field-provenance.ts",
+      "modules/core-scan/src/services/entity-match.ts",
+      "modules/core-scan/src/services/matchmaker.ts",
+      "modules/core-scan/src/services/enrich.ts",
+      "modules/core-scan/src/services/enrich-photo.ts",
+      "web/src/lib/scanCombine.ts",
+      "web/src/pages/ScanInboxCard.tsx",
+    ],
+    // A comparator DEFINED for names, people or makers (a call to the owner's
+    // is fine), or a Cyrillic-to-Latin table literal (the transliteration a
+    // second copy would start by pasting).
+    detect:
+      /\bfunction\s+\w*(?:names?|authors?|creators?|persons?|people|makers?|brands?)(?:Agree|Match|Same|Equal|Alike)\w*\s*\(|\b(?:const|let)\s+\w*(?:names?|authors?|creators?|persons?|people|makers?|brands?)(?:Agree|Match|Same|Equal|Alike)\w*\s*=\s*(?:\(|async|function)|["']?[а-яё]["']?\s*:\s*["'][a-z]{1,4}["']\s*,\s*["']?[а-яё]["']?\s*:/i,
+    use: "namesAgree(a, b) for people and brandsAgree(a, b) for makers, from @cobblr/platform-contract/scan-evidence",
+  },
+  {
+    kind: "owns",
     id: "nav:hover-aware-open",
     what: "a menu that opens on hover and toggles on click: one rule for the click, since a click is a hover first",
     why:
@@ -187,16 +273,27 @@ export const CAPABILITIES: Capability[] = [
       "scannability is registered per MODULE kind and a tracked match is reported under the kind it lives in, so a route " +
       "that looked the request's kind up directly answered 'groceries:item is not a scan target' on every re-buy button " +
       "(2026-09-12). Confirm had grown its own fallback for the same miss in June and attach never did; a third spelling " +
-      "sat in the matcher. Only the owner asks the kernel's scannable registry, whatever the argument is called",
+      "sat in the matcher. And the LIST has the same blind spot the other way: listScannable() is the registry of BASE " +
+      "kinds, so a walk over it to read records saw no grocery and no yarn and looked like it worked, in the sibling tier, " +
+      "the Organize plan, the bin census and the per-kind duplicates door (#3132), after a comment in one of them had " +
+      "said exactly that. Only the owner asks the kernel's scannable registry, whatever the argument is called",
     owner: "modules/core-scan/src/services/scan-target.ts",
     scope: [
       "modules/core-scan/src/api/inbox.ts",
       "modules/core-scan/src/api/duplicates.ts",
       "modules/core-scan/src/api/entity-image.ts",
+      "modules/core-scan/src/api/organize.ts",
       "modules/core-scan/src/services/entity-match.ts",
+      "modules/core-scan/src/services/matchmaker.ts",
+      "modules/core-scan/src/services/suggest-location.ts",
+      "modules/core-scan/src/services/organize-plan.ts",
+      "modules/core-scan/src/services/putaway-route.ts",
+      "modules/core-scan/src/services/reroute-keyword-rows.ts",
     ],
-    detect: /\bgetScannable(ForModule)?\s*\(/,
-    use: "scanTargetOf(orgId, kind, instance?, module?) for a request's kind, scanTargetOfRecord({ kind, module_name }) for a registry record, both from services/scan-target.ts",
+    detect: /\b(getScannable(ForModule)?|listScannable(ForOrg)?)\s*\(/,
+    use:
+      "scanTargetOf(orgId, kind, instance?, module?) for a request's kind, scanTargetOfRecord({ kind, module_name }) for a registry record, " +
+      "scanTargetsForOrg(orgId) to walk the kinds that hold records in a workspace, scanTargetsRegistered() for the module-level list; all from services/scan-target.ts",
   },
   {
     kind: "owns",
@@ -725,5 +822,58 @@ export const CAPABILITIES: Capability[] = [
       { phrase: /\bchoose a location\b/, as: "label", use: '"Set location"' },
       { phrase: /\bset a location\b/, as: "label", use: '"Set location" or "Set the location"' },
     ],
+  },
+  {
+    kind: "owns",
+    id: "fields:edit-field",
+    what: "the blur-to-commit field a record page edits a native column with (EditField, EditSelect), and the caption over any control beside one (FieldLabel, LabeledField)",
+    why:
+      "the 2026-09-16 review started from a survey that found EditField written four times (assets, machines, purchases, " +
+      "records), each drifting on its own: one had lost `numeric`, one `type`, and every one carried `col-span-2` for its " +
+      "multiline case, a layout decision the field made for the grid around it. #3107 replaced the four with the one in " +
+      "platform-web and gave the span to the packer; a fifth copy is how the survey's finding comes back",
+    owner: "packages/platform-web/src/EditField.tsx",
+    scope: [
+      "web/src/pages/AssetsPage.tsx",
+      "web/src/pages/MachinesPage.tsx",
+      "web/src/pages/PurchasesPage.tsx",
+      "web/src/pages/RecordsPage.tsx",
+      "web/src/pages/LocationDetailPage.tsx",
+      "web/src/pages/BundleComposerPage.tsx",
+      "web/src/pages/BundlesPage.tsx",
+      "web/src/pages/MeNotificationChannelsPage.tsx",
+      "modules/inventory/src/ui/NewPartDialog.tsx",
+      "modules/inventory/src/ui/PartDetailPage.tsx",
+    ],
+    detect: /\b(function|const)\s+(EditField|EditSelect|FieldLabel|LabeledField|InlineText|InlineTextarea)\b/,
+    use: "import { EditField, EditSelect, LabeledField, editFieldItem } from \"@cobblr/platform-web\" and render the fields through <FieldPack>",
+  },
+  {
+    kind: "owns",
+    id: "scan:unresolved-is-not-absent",
+    what: "writing a barcode lookup's answer to the SHARED barcode cache, the one every workspace reads: only a DURABLE outcome (hit, miss) may be written",
+    why:
+      "a throttled, refused or unreachable catalog is UNRESOLVED, not absent, and a miss cached from one stands in the workspace " +
+      "with no expiry and in every workspace for thirty days. The outcome type carried a comment saying not to cache `unavailable` " +
+      "and the caller cached it anyway for a year; every provider mapped a 5xx or the network to miss; the book door's null meant " +
+      "both. decodeVin had the right shape (unavailable, never cached) beside them and nobody was pointed at it (2026-09-17, #3179). " +
+      "So the writers live in one file and take DurableBarcodeOutcome, which durableOutcome() alone produces: a comment asked, the type refuses",
+    owner: "modules/core-scan/src/services/enrich.ts",
+    scope: [
+      "modules/core-scan/src/services/barcode-lookup.ts",
+      "modules/core-scan/src/services/barcode-cache.ts",
+      "modules/core-scan/src/services/barcode-websearch.ts",
+      "modules/core-scan/src/services/enrich-photo.ts",
+      "modules/core-scan/src/services/scan-router.ts",
+      "modules/core-scan/src/services/retry-lookup.ts",
+      "modules/core-scan/src/services/hosted-identify.ts",
+      "modules/core-scan/src/services/identify-identifier.ts",
+      "modules/core-scan/src/services/catalog-replay.ts",
+      "modules/core-scan/src/api/inbox.ts",
+      "modules/core-scan/src/api/decode.ts",
+      "modules/core-scan/src/api/handlers.ts",
+    ],
+    detect: /\.sharedCache\.put\(\s*BARCODE_NS\b/,
+    use: "return the outcome to enrich.ts; a new writer goes beside cacheDurable/cacheHit there and takes DurableBarcodeOutcome (durableOutcome(result) is the one filter). A workspace's own photo-proven identity is rememberLocalIdentity, tenant cache only",
   },
 ];

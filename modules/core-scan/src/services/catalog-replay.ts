@@ -41,15 +41,40 @@ export function cassetteKey(code: string): string {
   return code.replace(/[^0-9A-Za-z]/g, "").toUpperCase();
 }
 
+/** Which catalog door is asking. The product chain and the book catalog
+ *  can answer one code differently (a junk Open Food Facts entry for an
+ *  ISBN, and Open Library's book, #3162), so the book door has a cassette
+ *  of its own, `<code>.book.json`, and falls back to the code's one file
+ *  when none was recorded: every cassette recorded before this reads as it
+ *  did. The product chain keeps `<code>.json`. */
+export type CatalogDoor = "product" | "book";
+
+/** The catalogs that know BOOKS. An ISBN answered by any other source is a
+ *  product catalog's stray entry until the book catalog has been asked
+ *  (enrich.ts applies that; the book door's cassette fallback reads it). */
+const BOOK_SOURCES = new Set(["openlibrary", "googlebooks", "isbndb", "worldcat"]);
+export const isBookSource = (source: string): boolean => BOOK_SOURCES.has(source);
+
+function cassetteFile(code: string, door: CatalogDoor): string {
+  return door === "book" ? `${cassetteKey(code)}.book.json` : `${cassetteKey(code)}.json`;
+}
+
 /** The recorded answer for a code, or null when the dir is not set or holds
- *  nothing for it. A recording session reads nothing, so the live chain runs. */
-export function readCatalogCassette(code: string): CatalogCassette | null {
+ *  nothing for it. A recording session reads nothing, so the live chain runs.
+ *  The book door's fallback to the code's one file takes only a book
+ *  source's answer (or a miss): a product cassette is the other door's
+ *  answer, and handing it to the book door would say the book catalog
+ *  knows a code it was never asked about. */
+export function readCatalogCassette(code: string, door: CatalogDoor = "product"): CatalogCassette | null {
   const dir = catalogReplayDir();
   if (!dir || catalogRecording()) return null;
-  const file = join(dir, `${cassetteKey(code)}.json`);
+  const own = join(dir, cassetteFile(code, door));
+  const fellBack = !existsSync(own);
+  const file = fellBack ? join(dir, cassetteFile(code, "product")) : own;
   if (!existsSync(file)) return null;
   try {
     const parsed = JSON.parse(readFileSync(file, "utf8")) as CatalogCassette;
+    if (fellBack && door === "book" && parsed.outcome === "hit" && !isBookSource(parsed.hit.source)) return null;
     return parsed && typeof parsed === "object" && "outcome" in parsed ? parsed : null;
   } catch {
     return null;
@@ -58,16 +83,16 @@ export function readCatalogCassette(code: string): CatalogCassette | null {
 
 /** Replay mode with no cassette: a miss, deterministically. Null when the
  *  door should ask the live catalog (no dir, or recording). */
-export function replayMiss(code: string): BarcodeOutcome | null {
+export function replayMiss(code: string, door: CatalogDoor = "product"): BarcodeOutcome | null {
   if (!catalogReplayDir() || catalogRecording()) return null;
-  return readCatalogCassette(code) ?? { outcome: "miss" };
+  return readCatalogCassette(code, door) ?? { outcome: "miss" };
 }
 
-export function writeCatalogCassette(code: string, answer: CatalogCassette): void {
+export function writeCatalogCassette(code: string, answer: CatalogCassette, door: CatalogDoor = "product"): void {
   const dir = catalogReplayDir();
   if (!dir || !catalogRecording()) return;
   mkdirSync(dir, { recursive: true });
-  writeFileSync(join(dir, `${cassetteKey(code)}.json`), JSON.stringify(answer, null, 2) + "\n");
+  writeFileSync(join(dir, cassetteFile(code, door)), JSON.stringify(answer, null, 2) + "\n");
 }
 
 /** A live hit from a door, as a cassette. */

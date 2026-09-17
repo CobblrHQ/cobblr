@@ -163,3 +163,27 @@ export function leadYours(pictures: readonly RowPicture[]): RowPicture | null {
 export function currentPicture(pictures: readonly RowPicture[]): RowPicture | null {
   return pictures.find((p) => p.current) ?? null;
 }
+
+/** The catalog pane's caption: the picture's ROLE (it is the catalog
+ *  picture) and, when it is one of the row's own or a web pick, where it
+ *  came from. "Catalog" over a household photo read as a claim that the
+ *  photo came from a catalog (#3071); a person's own photo can be the
+ *  catalog picture, and the caption says both. */
+export function catalogCaption(pictures: readonly RowPicture[]): string {
+  const cur = currentPicture(pictures);
+  if (!cur) return "Catalog";
+  switch (cur.role) {
+    case "own":
+      return "Catalog: your photo";
+    case "crop":
+      return cur.cropOf === "screenshot" ? "Catalog: from your screenshot" : "Catalog: your crop";
+    case "group":
+      return "Catalog: the group photo";
+    case "extra":
+      return "Catalog: your added photo";
+    case "web":
+      return cur.source ? `Catalog: from ${cur.source}` : "Catalog: from the web";
+    default:
+      return "Catalog";
+  }
+}

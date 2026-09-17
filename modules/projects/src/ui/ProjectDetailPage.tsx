@@ -10,7 +10,8 @@ import { ContributedDetailPanels, EntityActionsBar, CustomFieldsPanel, Modal, us
 import { useProjects } from "./context";
 import { DesignFiles } from "./DesignFiles";
 import { useFieldPresentation } from "./useFieldPresentation";
-import type { PatternExtract, Priority, ProjectStatus, ProjectsApi, Task, TaskStatus } from "./api";
+import type { InvPart, PatternExtract, Priority, ProjectStatus, ProjectsApi, Task, TaskStatus } from "./api";
+import { PART_PICKER_KEY, PartPicker } from "./PartPicker";
 
 const PROJECT_STATUSES: ProjectStatus[] = ["planning", "active", "blocked", "done", "abandoned"];
 const PRIORITIES: Priority[] = ["low", "med", "high", "urgent"];
@@ -97,7 +98,7 @@ export function ProjectDetailPage() {
         ),
       );
       void qc.invalidateQueries({ queryKey: ["design-allocations", id] });
-      void qc.invalidateQueries({ queryKey: ["inv-parts-for-alloc"] });
+      void qc.invalidateQueries({ queryKey: [PART_PICKER_KEY] });
     } catch {
       /* inventory module not enabled — nothing to settle */
     }
@@ -460,19 +461,16 @@ function MaterialsPanel({
     queryFn: () => api.listDesignAllocations(designId),
     retry: false,
   });
-  const parts = useQuery({
-    queryKey: ["inv-parts-for-alloc"],
-    queryFn: () => api.listInventoryParts(),
-    retry: false,
-  });
-  const [partId, setPartId] = useState("");
+  // The picker searches the stash itself; the panel only keeps the pick.
+  const [picked, setPicked] = useState<InvPart | null>(null);
+  const partId = picked?.id ?? "";
   const [amount, setAmount] = useState("");
   const reserve = useMutation({
     mutationFn: () => api.reserveYarn(designId, partId, Number(amount)),
     onSuccess: () => {
       void qc.invalidateQueries({ queryKey: ["design-allocations", designId] });
-      void qc.invalidateQueries({ queryKey: ["inv-parts-for-alloc"] });
-      setPartId("");
+      void qc.invalidateQueries({ queryKey: [PART_PICKER_KEY] });
+      setPicked(null);
       setAmount("");
     },
   });
@@ -481,14 +479,13 @@ function MaterialsPanel({
       api.setAllocationStatus(v.id, v.status),
     onSuccess: () => {
       void qc.invalidateQueries({ queryKey: ["design-allocations", designId] });
-      void qc.invalidateQueries({ queryKey: ["inv-parts-for-alloc"] });
+      void qc.invalidateQueries({ queryKey: [PART_PICKER_KEY] });
     },
   });
 
-  // Inventory module not enabled → both queries error; show nothing.
-  if (allocs.isError || parts.isError) return null;
+  // Inventory module not enabled → the allocations read errors; show nothing.
+  if (allocs.isError) return null;
   const items = allocs.data?.items ?? [];
-  const partsList = parts.data?.items ?? [];
   const label: Record<string, string> = { reserved: "reserved", consumed: "used", released: "returned" };
   const open = status !== "done" && status !== "abandoned";
 
@@ -550,18 +547,13 @@ function MaterialsPanel({
           }}
           className="flex items-center gap-2"
         >
-          <select
-            value={partId}
-            onChange={(e) => setPartId(e.target.value)}
-            className="input text-sm flex-1"
-          >
-            <option value="">Pick yarn / material…</option>
-            {partsList.map((p) => (
-              <option key={p.id} value={p.id}>
-                {p.name} ({[p.available_qty, units.suffix(p.unit)].filter(Boolean).join(" ")} free)
-              </option>
-            ))}
-          </select>
+          <PartPicker
+            api={api}
+            value={picked}
+            onChange={setPicked}
+            placeholder="Search yarn / material…"
+            describe={(p) => `(${[p.available_qty, units.suffix(p.unit)].filter(Boolean).join(" ")} free)`}
+          />
           <input
             value={amount}
             onChange={(e) => setAmount(e.target.value)}
@@ -597,20 +589,30 @@ function HooksNeededPanel({
   onChange: (ids: string[]) => void;
   api: ProjectsApi;
 }) {
-  const parts = useQuery({
-    queryKey: ["inv-parts-for-alloc"],
-    queryFn: () => api.listInventoryParts(),
+  // The hooks this design already lists, read by id across every instance:
+  // a hook past the first page of the stash used to vanish from this list
+  // (the ids were looked up in one capped page, #3129).
+  const needed = useQuery({
+    queryKey: [PART_PICKER_KEY, "by-id", neededIds],
+    queryFn: () => api.listInventoryParts({ ids: neededIds, limit: 200 }),
+    enabled: neededIds.length > 0,
     retry: false,
   });
-  const [pick, setPick] = useState("");
-  if (parts.isError) return null; // inventory not enabled
-  const all = parts.data?.items ?? [];
+  // Whether the stash has any hooks at all, for the empty state: the first
+  // page says so when it IS the whole stash; a bigger stash gets the picker.
+  const firstPage = useQuery({
+    queryKey: [PART_PICKER_KEY, ""],
+    queryFn: () => api.listInventoryParts({ limit: 50 }),
+    retry: false,
+    staleTime: 30_000,
+  });
+  const [pick, setPick] = useState<InvPart | null>(null);
+  if (needed.isError || firstPage.isError) return null; // inventory not enabled
   const isHook = (p: { metadata?: Record<string, unknown> | null }) =>
     !!(p.metadata && (p.metadata.hook_gauge || p.metadata.hook_material));
-  const hooks = all.filter(isHook);
-  const byId = new Map(all.map((p) => [p.id, p]));
-  const needed = neededIds.map((id) => byId.get(id)).filter((p): p is NonNullable<typeof p> => !!p);
-  const addable = hooks.filter((h) => !neededIds.includes(h.id));
+  const byId = new Map((needed.data?.items ?? []).map((p) => [p.id, p]));
+  const neededParts = neededIds.map((id) => byId.get(id)).filter((p): p is NonNullable<typeof p> => !!p);
+  const stashHasHooks = !!firstPage.data?.next_cursor || (firstPage.data?.items ?? []).some(isHook);
   const gauge = (p: { metadata?: Record<string, unknown> | null }) =>
     (p.metadata?.hook_gauge as string | undefined) ?? "";
 
@@ -619,14 +621,14 @@ function HooksNeededPanel({
       <div className="text-[10px] font-mono uppercase tracking-widest text-accent mb-3">
         // hooks needed
       </div>
-      {needed.length === 0 ? (
+      {neededParts.length === 0 ? (
         <p className="text-xs text-faint dark:text-slate-500 mb-3">
           No hooks listed for this design yet. Add the ones the pattern calls for and
           you'll see at a glance whether they're in your stash.
         </p>
       ) : (
         <ul className="space-y-1.5 mb-3">
-          {needed.map((h) => {
+          {neededParts.map((h) => {
             const inStock = Number(h.available_qty) > 0;
             return (
               <li key={h.id} className="flex items-center gap-2 text-sm">
@@ -655,31 +657,27 @@ function HooksNeededPanel({
           })}
         </ul>
       )}
-      {hooks.length === 0 ? (
+      {!stashHasHooks ? (
         <p className="text-[11px] text-faint dark:text-slate-500 italic">
           No hooks in your inventory yet - add some (with a gauge) to track them here.
         </p>
       ) : (
         <div className="flex items-center gap-2">
-          <select
+          <PartPicker
+            api={api}
             value={pick}
-            onChange={(e) => setPick(e.target.value)}
-            className="input text-sm flex-1"
-          >
-            <option value="">Add a hook this design needs…</option>
-            {addable.map((h) => (
-              <option key={h.id} value={h.id}>
-                {h.name}
-                {gauge(h) ? ` (${gauge(h)})` : ""}
-              </option>
-            ))}
-          </select>
+            onChange={setPick}
+            placeholder="Search for a hook this design needs…"
+            include={(h) => isHook(h) && !neededIds.includes(h.id)}
+            describe={(h) => (gauge(h) ? `(${gauge(h)})` : "")}
+            emptyHint="No hooks match"
+          />
           <button
             type="button"
             disabled={!pick}
             onClick={() => {
-              if (pick) onChange([...neededIds, pick]);
-              setPick("");
+              if (pick) onChange([...neededIds, pick.id]);
+              setPick(null);
             }}
             className="shrink-0 inline-flex items-center gap-1 rounded-md bg-cobble-600 hover:bg-cobble-700 text-white text-sm px-3 py-2 disabled:opacity-40"
           >
@@ -711,11 +709,16 @@ function PatternExtractPanel({
   const [text, setText] = useState("");
   const [patternName, setPatternName] = useState<string | null>(null);
   const [result, setResult] = useState<PatternExtract | null>(null);
+  // The stash the extracted materials are matched against: one page of
+  // 200. Matching reads weight, fibre and gauge off each row's own fields,
+  // which the list's search cannot see, so a bigger stash is matched on its
+  // first page and the panel says so; the pickers search all of it.
   const parts = useQuery({
-    queryKey: ["inv-parts-for-alloc"],
-    queryFn: () => api.listInventoryParts(),
+    queryKey: [PART_PICKER_KEY, "match-window"],
+    queryFn: () => api.listInventoryParts({ limit: 200 }),
     retry: false,
   });
+  const matchWindowPartial = !!parts.data?.next_cursor;
   const extract = useMutation({
     mutationFn: () => api.extractPattern(designId, text),
     onSuccess: (r) => setResult(r),
@@ -789,7 +792,7 @@ function PatternExtractPanel({
     mutationFn: (v: { partId: string; qty: number }) => api.reserveYarn(designId, v.partId, v.qty),
     onSuccess: () => {
       void qc.invalidateQueries({ queryKey: ["design-allocations", designId] });
-      void qc.invalidateQueries({ queryKey: ["inv-parts-for-alloc"] });
+      void qc.invalidateQueries({ queryKey: [PART_PICKER_KEY] });
     },
   });
 
@@ -853,6 +856,11 @@ function PatternExtractPanel({
         )}
         {result?.ai && (
           <div className="mt-4 space-y-3">
+            {matchWindowPartial && (
+              <p className="text-[11px] text-faint dark:text-slate-500">
+                Matched against the first {parts.data?.items.length ?? 200} things in your stash; the materials and hooks pickers search all of it.
+              </p>
+            )}
             <div>
               <div className="text-[10px] font-mono uppercase tracking-widest text-accent mb-1">yarn</div>
               {result.yarn.length === 0 ? (

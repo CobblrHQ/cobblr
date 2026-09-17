@@ -51,7 +51,7 @@ export interface ReceiptLine {
  *  chicken is one package, and rounding it to four was recording four. */
 export function lineQuantity(line: Pick<ReceiptLine, "qty" | "weight">): number {
   if (line.weight !== null && line.weight !== undefined && line.weight > 0) return 1;
-  return Math.max(1, Math.round(line.qty || 1));
+  return filedQuantityOf(line.qty);
 }
 
 const WEIGHT_UNITS = new Set(["lb", "kg", "oz", "g"]);
@@ -87,6 +87,7 @@ export function vendorFromLabel(label: string | null | undefined): string | null
 }
 
 import type { AiFallback, ProviderErrorReason } from "@cobblr/platform-contract/scan-fallback";
+import { filedQuantityOf } from "./filed-quantity.js";
 import type { ReceiptDateReading } from "./receipt-date.js";
 import {
   detectSeller,

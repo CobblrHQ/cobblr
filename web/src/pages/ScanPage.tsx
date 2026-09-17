@@ -22,7 +22,7 @@ import { SessionReadVerdict } from "../components/SessionReadVerdict";
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { Link, useNavigate, useSearchParams } from "react-router-dom";
 import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { CheckCircle, ChevronDown, ExternalLink, Image as ImagePlus, LayoutGrid, List, Loader2, MapPin, MonitorSmartphone, Pencil, ReceiptText, RotateCcw, ScanLine, Search, Sparkles, Tag, Trash2, Truck, X, Zap } from "lucide-react";
+import { CheckCircle, ChevronDown, ExternalLink, Image as ImagePlus, LayoutGrid, List, Loader2, MapPin, MonitorSmartphone, Pencil, ReceiptText, RotateCcw, ScanLine, Search, Sparkles, Tag, Trash2, Truck, X, Zap, MoreHorizontal, Undo2 } from "lucide-react";
 import { Modal, useToast, usePageTitle, PopoverLayer } from "@cobblr/platform-web";
 import { ScanImportModal } from "../components/ScanImportModal";
 import { ExportInboxModal } from "../components/ExportInboxModal";
@@ -71,11 +71,12 @@ import {
   type TrackedMatch,
 } from "../lib/api";
 import { classifyScanPayload } from "../lib/scanPayload";
-import { isScanStale, needsScanReview, scanSessionAction } from "@cobblr/platform-contract/scan-triage";
+import { isScanStale, needsScanReview, scanBetterTable, scanRowState, scanSessionAction, type ScanResolverTable } from "@cobblr/platform-contract/scan-triage";
 import { displayName } from "@cobblr/platform-contract/display-identity";
 import { sessionVerdict, type SessionVerdict } from "@cobblr/platform-contract/scan-session";
 import { itemEnriching } from "./scan-status";
 import { attachBodyFor, confirmBodyFor, duplicateSummary, isReadyToFile, placementPreview } from "./scanFileAll";
+import { useScanViewer } from "./scanViewer";
 import { resolveInstanceForFiling } from "./scanInstall";
 import { arrivalLabel, arrivalOf } from "./scanArrival";
 import type { ScanBatchMeta } from "../lib/api";
@@ -92,9 +93,10 @@ import { useBarcodeWedge } from "../lib/useBarcodeWedge";
 import { resolveSessionBatch, clearScanSession, readScanSession, isSessionFresh, SESSION_GAP_MS, gapSessionKey } from "../lib/scanSession";
 import { tabBrowserId } from "../hooks/useBrowserDrive";
 import { useActiveOrg } from "../auth/ActiveOrgContext";
+import { roleSatisfies } from "@cobblr/platform-contract/org-roles";
 import { } from "../lib/useFieldPresentation";
 import { } from "../auth/AuthContext";
-import { destinationLabel, betterDestination, type DestinationTable } from "@cobblr/platform-contract";
+import { destinationLabel, type DestinationTable } from "@cobblr/platform-contract";
 import { InboxCard, GalleryTile } from "./ScanInboxCard";
 import { timeAgo, type ScanTarget } from "./scanInboxShared";
 export type { ScanTarget } from "./scanInboxShared";
@@ -414,17 +416,17 @@ const SHIPMENT_LABEL: Record<string, string> = {
 function CommittedDestination({
   item,
   tables,
+  menuTables,
 }: {
-  item: { target_kind?: string | null; target_module?: string | null; barcode_text?: string | null; suggested_name?: string | null };
+  item: { target_kind?: string | null; target_module?: string | null; barcode_text?: string | null; suggested_name?: string | null; suggested_manufacturer?: string | null };
   tables: DestinationTable[];
+  menuTables: readonly ScanResolverTable[];
 }) {
   const label = destinationLabel(item.target_kind, tables, item.target_module);
-  const better = betterDestination(
-    item.suggested_name ?? "",
-    item.target_kind,
-    tables,
-    item.target_module,
-  );
+  // The same question the resolver asks a pending row, by the router's one
+  // rule (#3136), of a row already filed: the menu's tables carry the fit
+  // shape; the instance list alone can label but not judge.
+  const better = scanBetterTable({ name: item.suggested_name ?? "", manufacturer: item.suggested_manufacturer ?? null }, item.target_kind, menuTables, item.target_module);
   return (
     <div className="text-[10px] font-mono text-faint truncate">
       {label ? `→ ${label}` : ""}
@@ -474,9 +476,9 @@ export function ScanPage() {
     else localStorage.removeItem(fileBinKey);
   };
   // Always-on catalog-photo ranking: the workspace opt-in behind the per-item
-  // ✨ Pick best button. Owner/admin only, because turning it on commits the
-  // workspace to a vision call per enriched scan. Off unless stored on.
-  const canSetPhotoRank = activeOrg?.role === "owner" || activeOrg?.role === "admin";
+  // ✨ Pick best button. The admin tier only, because turning it on commits
+  // the workspace to a vision call per enriched scan. Off unless stored on.
+  const canSetPhotoRank = roleSatisfies(activeOrg?.role, ["owner", "admin"]);
   const photoRank = useQuery({
     queryKey: ["scan-photo-rank-config", activeSlug],
     queryFn: () => api.getScanPhotoRankConfig(activeSlug),
@@ -826,9 +828,12 @@ export function ScanPage() {
     if (!keep) return null;
     const totalQty = cluster.items.reduce((n, c) => n + (c.quantity || 1), 0);
     return (
-      <div className="rounded-lg border border-amber-300 dark:border-amber-700/60 bg-amber-50/70 dark:bg-amber-950/20 px-3 py-2.5 flex items-center gap-3">
-        <Sparkles size={15} className="text-amber-500 shrink-0" />
-        <div className="min-w-0 flex-1 text-sm">
+      // On a phone the words take the row and the two actions sit under
+      // them: beside a 150px button the paragraph became a column a screen
+      // tall (#3065). From sm up it is one row again.
+      <div data-testid="combine-offer" className="rounded-lg border border-amber-300 dark:border-amber-700/60 bg-amber-50/70 dark:bg-amber-950/20 px-3 py-2.5 flex flex-wrap items-center gap-x-3 gap-y-2 sm:flex-nowrap">
+        <Sparkles size={15} className="text-amber-500 shrink-0 max-sm:hidden" />
+        <div className="min-w-0 basis-full sm:basis-auto sm:flex-1 text-sm">
           <span className="font-medium text-content dark:text-mortar-100">
             {cluster.items.length} items look like the same {isUnique ? clusterNoun : "product"}
           </span>
@@ -849,7 +854,7 @@ export function ScanPage() {
           disabled={combineMut.isPending}
           onClick={() => combineMut.mutate({ ids, ...(isUnique ? {} : { keepId: keep.id }) })}
           title={`Combines these ${cluster.items.length} pending rows into one row in this inbox${isUnique ? " with all their details" : ` at ×${totalQty}`}. The other ${cluster.items.length > 2 ? "rows go" : "row goes"} to Recently deleted, where it can be restored. Nothing already filed changes.`}
-          className="shrink-0 rounded bg-amber-600 hover:bg-amber-700 text-white px-3 py-1.5 text-sm font-medium disabled:opacity-50"
+          className="shrink-0 rounded bg-amber-600 hover:bg-amber-700 text-white px-3 py-1.5 text-sm font-medium disabled:opacity-50 min-h-9 sm:min-h-0"
         >
           {isUnique ? "Combine into one row" : "Combine rows"}
         </button>
@@ -857,9 +862,9 @@ export function ScanPage() {
           type="button"
           title="Not the same - keep separate"
           onClick={() => setDismissedCombine((s) => new Set(s).add(sig))}
-          className="shrink-0 text-faint hover:text-muted p-1"
+          className="shrink-0 inline-flex min-h-9 items-center gap-1 rounded px-2 text-sm text-faint hover:text-muted sm:min-h-0 sm:p-1"
         >
-          <X size={16} />
+          <X size={16} /><span className="sm:hidden">Not the same</span>
         </button>
       </div>
     );
@@ -981,6 +986,8 @@ export function ScanPage() {
   // them whenever we're grouping at all.
   const showSessionHeaders = sessionGroups.length > 0;
   const [collapsedSessions, setCollapsedSessions] = useState<Set<string>>(new Set());
+  // Sessions whose "Do these belong together?" was pressed in the ⋯ (#3064).
+  const [themeAsked, setThemeAsked] = useState<Set<string>>(new Set());
   // A sent-back item returns to its ORIGINAL spot (created_at preserved), so
   // it isn't at the top — surface it non-destructively (expand its session,
   // scroll, flash a ring). Never a created_at rewrite.
@@ -1362,6 +1369,11 @@ export function ScanPage() {
     staleTime: 60_000,
   });
   const menu = menuQ.data?.items ?? null;
+  // Who is looking, for every readiness read on this page (the header's
+  // count, the session strip, the sweep): the same context each card's row
+  // reads, so a row a member cannot file is not counted by the strip beside
+  // it (scanViewer.ts, #3122).
+  const viewer = useScanViewer(menu);
 
   // Location is core-locations' noun, and that capability auto-enables
   // everywhere — so "module enabled" gates nothing. The author's rule: the field
@@ -1507,7 +1519,7 @@ export function ScanPage() {
   // over 8 items when two are counted twice is a lie the eye can check, and
   // the page tells you to work this way: bulk-confirm the confident ones, then
   // focus the rest.
-  const confidentCount = items.filter(isReadyToFile).length;
+  const confidentCount = items.filter((it) => isReadyToFile(it, viewer)).length;
 
   // The standing bin, resolved to a location so the chip can NAME it.
   const fileBinName = fileBin ? (locsQ.data?.items ?? []).find((l) => l.id === fileBin) : null;
@@ -1932,12 +1944,10 @@ export function ScanPage() {
     // goes through - not at the two call sites, which would be two copies to
     // drift. One question, grouped by table, and "file as-is" stays one click
     // away because the suggestion is a suggestion.
-    const tables = (menu ?? []).map((m) => ({
-      instance_name: m.instance ?? m.module,
-      display_name: m.label,
-      module_name: m.module,
-      keywords: m.scan_keywords ?? [],
-    }));
+    // The resolver's answer, the same one the card shows (#3136): a SYSTEM
+    // route the router's rule replaces with a better table is a group to
+    // confirm; a PERSON's choice is never moved by a batch, whatever the
+    // router offers beside it (#3062).
     const idList = [...ids];
     // Grouped by TABLE and carrying ids, not names. Names are for reading; two
     // jars of the same thing share one, and an unnamed scan has none at all, so
@@ -1946,12 +1956,11 @@ export function ScanPage() {
     for (const id of idList) {
       const it = byId.get(id);
       if (!it) continue;
-      const cand = it.suggested_candidates?.[0] as { kind?: string; module?: string } | undefined;
-      const better = betterDestination(displayName(it) ?? "", cand?.kind ?? null, tables, cand?.module ?? null);
-      if (!better) continue;
-      const entry = (menu ?? []).find((m) => (m.instance ?? m.module) === better.instance_name);
+      const d = scanRowState(it, viewer).destination;
+      if (!d?.replaced) continue;
+      const entry = (menu ?? []).find((m) => m.module === d.module && (m.instance ?? null) === (d.instance ?? null));
       if (!entry) continue;
-      const label = better.display_name ?? better.instance_name;
+      const label = d.label;
       const cur = misrouted.get(label) ?? { label, entry, ids: [], names: [] };
       cur.ids.push(id);
       cur.names.push(displayName(it) ?? "one scan");
@@ -2058,7 +2067,7 @@ export function ScanPage() {
       // reason; the bulk sweep used to create the duplicate anyway, and two
       // rows of one product differing only in word order ("Roma Tomatoes" /
       // "Tomatoes Roma") is not something anybody should have to spot.
-      const attach = it ? attachBodyFor(it) : null;
+      const attach = it ? attachBodyFor(it, viewer) : null;
       let mergedThis = false;
       if (attach) {
         try {
@@ -2084,6 +2093,7 @@ export function ScanPage() {
             // The DECLARED category axis, so the agreed category applies even
             // when the stored value spells it differently than the candidate.
             categoryAxisKey(it, menu),
+            viewer,
           )
         : null;
       if (!body) {
@@ -3248,6 +3258,19 @@ className="ml-1.5 sm:ml-0 rounded px-1 py-0.5 text-[12.5px] hover:bg-subtle dark
             const mergeInto = g.isBatch
               ? sessionGroups.slice(gi + 1).find((o) => o.isBatch && o.batchId)?.batchId ?? null
               : null;
+            // "Do these belong together?" is offered for a scan session of two
+            // or more pending rows (a receipt is already one group). It
+            // SURFACES on its own only on evidence: the rows already agree on a
+            // category that some of them still lack, so the tag-and-category
+            // pass has something to apply (#3064; the owner: keep the
+            // capability, drop the standing prompt).
+            const pendingRows = g.items.filter((i) => i.status === "pending");
+            const themeOffer = !!g.batchId && pendingRows.length >= 2 && !g.items.every((i) => i.source_kind === "receipt");
+            const themeEvidence = (() => {
+              if (!themeOffer) return false;
+              const agreed = sessionCategory(pendingRows);
+              return !!agreed.suggestion && !agreed.unanimous && agreed.seen.length >= 1;
+            })();
             // How many items in this session are still being worked by the AI —
             // the one clear "is the whole session done thinking?" signal. Drives
             // the header control: "N finishing…" while any churn; once 0, it
@@ -3262,7 +3285,7 @@ className="ml-1.5 sm:ml-0 rounded px-1 py-0.5 text-[12.5px] hover:bg-subtle dark
             // resolver every row reads (scanSessionAction, #3076): the rows it
             // counts are the rows whose own button says Add or Install & add,
             // and the label says when filing installs a table.
-            const sessionAction = scanSessionAction(g.items);
+            const sessionAction = scanSessionAction(g.items, viewer);
             const readyIds = sessionAction.ids;
             // Tables these items are routed to that the workspace does not have
             // yet. Filing installs them (see confirmItemsToTheirCandidate); the
@@ -3271,13 +3294,13 @@ className="ml-1.5 sm:ml-0 rounded px-1 py-0.5 text-[12.5px] hover:bg-subtle dark
             const willInstallLabels = [
               ...new Set(
                 g.items
-                  .filter(isReadyToFile)
+                  .filter((it) => isReadyToFile(it, viewer))
                   .map((it) => it.suggested_candidates?.[0] as { bundle_external_id?: string; label?: string } | undefined)
                   .filter((c) => c?.bundle_external_id)
                   .map((c) => c!.label ?? "a table"),
               ),
             ];
-                const readyItems = g.items.filter(isReadyToFile);
+                const readyItems = g.items.filter((it) => isReadyToFile(it, viewer));
                 const filing = sessionFilingReadiness(readyItems, { activeBin: fileBin || null });
                 // Filing into the standing bin without SAYING so is how the two
                 // location controls got confusing - the copy names the place.
@@ -3295,13 +3318,13 @@ className="ml-1.5 sm:ml-0 rounded px-1 py-0.5 text-[12.5px] hover:bg-subtle dark
                 // named rather than applied quietly.
                 // Merging is a write on somebody's behalf, so the button says
                 // so before it is pressed rather than reporting it afterwards.
-                const dupes = duplicateSummary(readyItems);
+                const dupes = duplicateSummary(readyItems, viewer);
                 const dupeClause = dupes.count
                   ? `; ${dupes.count} join what you already have (${dupes.names.slice(0, 3).join(", ")}${
                       dupes.names.length > 3 ? ", …" : ""
                     })`
                   : "";
-                const placing = placementPreview(readyItems, filing.fallbackLocation);
+                const placing = placementPreview(readyItems, filing.fallbackLocation, viewer);
                 const placingClause = placing.placed.length
                   ? `; ${placing.placed
                       .map((p) => `${p.count} into ${p.name}`)
@@ -3497,13 +3520,17 @@ className="ml-1.5 sm:ml-0 rounded px-1 py-0.5 text-[12.5px] hover:bg-subtle dark
                     >
                       {/* Without the order number — that is the control beside
                           it, so tapping the number edits it. */}
-                      {sessionName(g, isReceiptSession) ?? formatSessionTime(g.latest)}
-                      {/* PHONE ONLY: the rest of the identity, in the same
-                          truncating span. The order number is still the
-                          control it is beside the name from sm up. */}
-                      <span className="sm:hidden font-normal text-faint">
-                        {isReceiptSession && g.batchId && g.orderRef && editingPo !== g.batchId && <span className="font-medium text-muted"> · #{g.orderRef}</span>}
-                        {g.verdict.kind !== "failed" && g.verdict.kind !== "in_flight" && ` · ${g.items.length} item${g.items.length === 1 ? "" : "s"}`}
+                      {/* PHONE: the name gives way, the count never does. The
+                          count sat at the END of one truncating span, so a long
+                          location beside it left "6 ite…" (#3064). */}
+                      <span className="flex min-w-0 items-baseline">
+                        <span className="truncate">{sessionName(g, isReceiptSession) ?? formatSessionTime(g.latest)}</span>
+                        {/* PHONE ONLY: the rest of the identity. The order number
+                            is still the control it is beside the name from sm up. */}
+                        <span className="sm:hidden shrink-0 whitespace-nowrap font-normal text-faint">
+                          {isReceiptSession && g.batchId && g.orderRef && editingPo !== g.batchId && <span className="font-medium text-muted"> · #{g.orderRef}</span>}
+                          {g.verdict.kind !== "failed" && g.verdict.kind !== "in_flight" && ` · ${g.items.length} item${g.items.length === 1 ? "" : "s"}`}
+                        </span>
                       </span>
                     </SessionIdentity>
                   {/* The receipt's own number, edited where it is READ. A separate
@@ -3621,6 +3648,59 @@ className="ml-1.5 sm:ml-0 rounded px-1 py-0.5 text-[12.5px] hover:bg-subtle dark
                     >
                       End
                     </button>
+                  )}
+                  {/* The session's rarer verbs, in one ⋯ rather than a line
+                      each under the session (#3064: two spacious lines per
+                      session read as nagging). "Do these belong together?"
+                      costs nothing until pressed; it also surfaces on its own
+                      below, but only on evidence of a shared theme. */}
+                  {g.batchId && (themeOffer || mergeInto) && (
+                    <HeaderMenu
+                      width={264}
+                      align="right"
+                      trigger={({ toggle }) => (
+                        <button
+                          type="button"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            toggle();
+                          }}
+                          aria-label="Session actions"
+                          title="More for this session"
+                          className="shrink-0 inline-flex min-h-6 items-center rounded p-0.5 text-faint hover:text-accent"
+                        >
+                          <MoreHorizontal size={14} />
+                        </button>
+                      )}
+                    >
+                      {({ close }) => (
+                        <>
+                          {themeOffer && (
+                            <MenuItem
+                              icon={<Sparkles size={13} />}
+                              label={`Do these ${g.items.filter((i) => i.status === "pending").length} belong together?`}
+                              hint="Ask whether they share a tag or a category. Nothing runs until you press this."
+                              onClick={() => {
+                                setThemeAsked((prev) => new Set(prev).add(g.batchId!));
+                                close();
+                              }}
+                            />
+                          )}
+                          {mergeInto && (
+                            <MenuItem
+                              icon={<Undo2 size={13} />}
+                              label="Move into the previous session"
+                              hint="Two bursts that are really one job: these rows join the older session. Only which session they sit in changes."
+                              disabled={mergeBatches.isPending}
+                              onClick={() => {
+                                close();
+                                void mergeBatches.mutateAsync({ from: g.batchId!, into: mergeInto, itemIds: groupIds });
+                              }}
+                            />
+                          )}
+                        </>
+                      )}
+                    </HeaderMenu>
                   )}
                   {/* PER-SESSION UTILITIES sit LEFT of the filing trio.
                       The rightmost three controls are always location · file ·
@@ -3993,6 +4073,9 @@ className="ml-1.5 sm:ml-0 rounded px-1 py-0.5 text-[12.5px] hover:bg-subtle dark
                         <>
                           {sessionLoc.missing} of {readyIds.length}
                           <span className="hidden sm:inline">&nbsp;need a location</span>
+                          {/* A phone gets the shortest honest word rather than a
+                              bare fraction (#3064: "2 of 8" said nothing). */}
+                          <span className="sm:hidden">&nbsp;unplaced</span>
                         </>
                       ) : (
                         // It's a button: say the action, not the absence. Also
@@ -4145,6 +4228,15 @@ className="ml-1.5 sm:ml-0 rounded px-1 py-0.5 text-[12.5px] hover:bg-subtle dark
                         </>
                       )}
                     </button>
+                  ) : pendingInSession > 0 && sessionAction.reviews === 0 && sessionAction.blocked > 0 ? (
+                    // Nothing here is this person's to look at: every row is
+                    // waiting on an admin, and each says what to ask for.
+                    <span
+                      className="shrink-0 inline-flex items-center gap-1 text-amber-600/80 dark:text-amber-400/80 text-[10px] font-medium"
+                      title="Every item still here is waiting on an admin - each row says what to ask for"
+                    >
+                      waiting on an admin
+                    </span>
                   ) : pendingInSession > 0 ? (
                     <span
                       className="shrink-0 inline-flex items-center gap-1 text-amber-600/80 dark:text-amber-400/80 text-[10px] font-medium"
@@ -4205,27 +4297,16 @@ className="ml-1.5 sm:ml-0 rounded px-1 py-0.5 text-[12.5px] hover:bg-subtle dark
                         rare re-unify action; every merge is Undo-able via toast. */}
                     {/* A receipt is already one group; asking whether its
                         lines belong together is noise (2026-09-06). */}
-                    {g.batchId && !g.items.every((i) => i.source_kind === "receipt") && (
+                    {/* Only on evidence (the rows already share a category
+                        that some still lack) or when asked from the session's
+                        ⋯ (#3064): a question on every session read as nagging. */}
+                    {themeOffer && (themeAsked.has(g.batchId!) || themeEvidence) && (
                       <SessionTheme
                         slug={activeSlug}
-                        batchId={g.batchId}
+                        batchId={g.batchId!}
                         itemCount={g.items.filter((i) => i.status === "pending").length}
+                        evidence={themeEvidence}
                       />
-                    )}
-                    {mergeInto && g.batchId && (
-                      <div className="pt-0.5">
-                        <button
-                          type="button"
-                          title="Two bursts that are really one job? Moves these rows into the previous (older) session. Only which session they sit in changes: nothing is combined and nothing filed changes. You can undo it."
-                          onClick={() =>
-                            void mergeBatches.mutateAsync({ from: g.batchId!, into: mergeInto, itemIds: groupIds })
-                          }
-                          disabled={mergeBatches.isPending}
-                          className="text-xs text-faint hover:text-accent disabled:opacity-50"
-                        >
-                          Move into the previous session
-                        </button>
-                      </div>
                     )}
                   </div>
                 )}
@@ -4426,7 +4507,7 @@ className="ml-1.5 sm:ml-0 rounded px-1 py-0.5 text-[12.5px] hover:bg-subtle dark
                           {splitPieces(d) ? (
                             <div className="text-[10px] font-mono text-faint truncate">✂ split into {splitPieces(d)} items</div>
                           ) : (
-                            <CommittedDestination item={d} tables={destinationTables} />
+                            <CommittedDestination item={d} tables={destinationTables} menuTables={viewer.tables ?? []} />
                           )}
                         </div>
                         {splitPieces(d) ? (
@@ -4464,7 +4545,7 @@ className="ml-1.5 sm:ml-0 rounded px-1 py-0.5 text-[12.5px] hover:bg-subtle dark
                         {splitPieces(grp.items[0]) ? (
                           <div className="text-[10px] font-mono text-faint truncate">✂ split into {splitPieces(grp.items[0])} items</div>
                         ) : (
-                          <CommittedDestination item={grp.items[0]} tables={destinationTables} />
+                          <CommittedDestination item={grp.items[0]} tables={destinationTables} menuTables={viewer.tables ?? []} />
                         )}
                       </div>
                       {splitPieces(grp.items[0]) ? (
@@ -4656,10 +4737,12 @@ function sessionName(
  * until someone presses it, it asks only about that session, and both numbers
  * in the sentence come from the same set of items.
  */
-function SessionTheme({ slug, batchId, itemCount }: { slug: string; batchId: string; itemCount: number }) {
+function SessionTheme({ slug, batchId, itemCount, evidence }: { slug: string; batchId: string; itemCount: number; evidence: boolean }) {
   const qc = useQueryClient();
   const toast = useToast();
-  const [asked, setAsked] = useState(false);
+  // Rendered means asked: the parent mounts this only on evidence of a
+  // shared theme or after the session's ⋯ was pressed (#3064).
+  const asked = true;
   const [dismissed, setDismissed] = useState(false);
   const theme = useQuery({
     queryKey: ["scan-session-theme", slug, batchId],
@@ -4686,23 +4769,12 @@ function SessionTheme({ slug, batchId, itemCount }: { slug: string; batchId: str
     onError: (e) => toast.error(e instanceof ApiError ? e.message : "Couldn't apply that."),
   });
   if (dismissed || itemCount < 2) return null;
-  if (!asked) {
-    return (
-      <div className="pt-0.5">
-        <button
-          type="button"
-          onClick={() => setAsked(true)}
-          title="Ask whether these scans share a tag or a category. Nothing runs until you press this."
-          className="text-xs text-faint hover:text-accent"
-        >
-          Do these {itemCount} belong together?
-        </button>
-      </div>
-    );
-  }
   if (theme.isFetching) return <div className="pt-0.5 text-xs text-faint">Reading the {itemCount}…</div>;
   const t = theme.data;
   if (!t || (!t.tag && !t.category)) {
+    // Evidence that led nowhere says nothing: the rows agreed on a category
+    // and the pass found nothing to add, so there is no question to ask.
+    if (evidence) return null;
     return (
       <div className="pt-0.5 text-xs text-faint">
         Nothing these {itemCount} obviously share.{" "}
@@ -4713,7 +4785,7 @@ function SessionTheme({ slug, batchId, itemCount }: { slug: string; batchId: str
     );
   }
   return (
-    <div className="pt-0.5 rounded-lg border border-cobble-300 dark:border-cobble-700/60 bg-cobble-50/70 dark:bg-cobble-950/20 px-3 py-2.5 flex items-center gap-3">
+    <div data-testid="session-theme" data-evidence={evidence ? "" : undefined} className="pt-0.5 rounded-lg border border-cobble-300 dark:border-cobble-700/60 bg-cobble-50/70 dark:bg-cobble-950/20 px-3 py-2.5 flex items-center gap-3">
       <Sparkles size={15} className="text-accent shrink-0" />
       <div className="min-w-0 flex-1 text-sm text-content dark:text-mortar-100">
         {/* Both counts come from THIS session now, so they cannot disagree - and

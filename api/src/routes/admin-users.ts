@@ -64,6 +64,8 @@ adminUsersRouter.post(
   withTenant,
   async (req, res, next) => {
     try {
+      // role-gate: exact — minting an account or resetting somebody's password
+      // is membership governance; an editor does not inherit it by rank.
       if (req.tenant!.role !== "owner" && req.tenant!.role !== "admin") {
         res.status(403).json({
           error: { code: "forbidden", message: "Admins only." },
@@ -176,6 +178,8 @@ adminUsersRouter.post(
   withTenant,
   async (req, res, next) => {
     try {
+      // role-gate: exact — minting an account or resetting somebody's password
+      // is membership governance; an editor does not inherit it by rank.
       if (req.tenant!.role !== "owner" && req.tenant!.role !== "admin") {
         res.status(403).json({
           error: { code: "forbidden", message: "Admins only." },

@@ -9,10 +9,10 @@ import { z } from "zod";
 import { isSafeFontUrl } from "@cobblr/platform-contract/safe-font-url";
 import { sql } from "kysely";
 import { requireAuth } from "../auth/middleware.js";
+import { requireRole } from "../auth/capability.js";
 import { withTenant } from "../middleware/tenant.js";
 import { meta } from "../db/meta.js";
-import { listEntries } from "../modules/registry.js";
-import { capabilityModule, scopeToWorkspace } from "../platform/grantable-scope.js";
+import { grantCapability, grantableActions } from "../platform/capability-grants.js";
 import { effectiveCapabilities } from "../auth/effective-capabilities.js";
 import * as activity from "../platform/activity.js";
 
@@ -109,14 +109,9 @@ portalRouter.put(
   withTenant,
   async (req, res, next) => {
     try {
-      // Only admins/owners can edit. The portal it configures is
-      // visible to every role.
-      if (req.tenant!.role !== "owner" && req.tenant!.role !== "admin") {
-        res.status(403).json({
-          error: { code: "forbidden", message: "Admins only." },
-        });
-        return;
-      }
+      // Shaping the portal is configuration: the admin tier, by rank. The
+      // portal it configures is visible to every role.
+      if (!requireRole(req, res, "owner", "admin")) return;
       const parsed = PortalConfigShape.safeParse(req.body);
       if (!parsed.success) {
         res.status(400).json({
@@ -158,6 +153,8 @@ portalRouter.get(
   withTenant,
   async (req, res, next) => {
     try {
+      // role-gate: exact — who holds which powers is governance, not action.
+      // An editor is admin-tier for what it DOES, not for what others may do.
       if (req.tenant!.role !== "owner" && req.tenant!.role !== "admin") {
         res.status(403).json({
           error: { code: "forbidden", message: "Admins only." },
@@ -211,134 +208,13 @@ const GrantBody = z.object({
   action_id: z.string().min(1).max(120),
 });
 
-// Capabilities that requireCapability() gates check but that aren't
-// invokable "actions" in the entity_actions registry yet. Until the
-// manifest gains a first-class capability registry, list the
-// endpoint-gate caps here so they're grantable + validated alongside
-// the registered actions. TODO: fold into a manifest-declared registry.
-const ENDPOINT_CAPABILITIES = [
-  { action_id: "inventory:create-part", label: "Create parts", description: "Add new parts to inventory." },
-  { action_id: "inventory:update-part", label: "Edit parts", description: "Edit existing part fields." },
-];
-
-/** The module a capability belongs to, for grouping in the admin UI.
- *  Registered actions know theirs; everything else is namespaced
- *  `<module>:<verb>`, so the prefix is the answer. */
-/** Every capability an admin can grant a member: the registered actions
- *  (entity_actions) plus the endpoint-gate caps above. Single source of
- *  truth for both the matrix columns and grant validation.
- *
- *  USER-INVOKABLE ONLY. `user_invokable = false` marks an action that exists
- *  purely for a wire to fire on an event — `assets:update-fields` is the
- *  inbound-telemetry shape (an OBD dongle posts a webhook, a wire sets the
- *  mileage); a human never "does" it, so granting a person permission to it is
- *  meaningless. The entity-actions bar already filters on this flag (migration
- *  20260515-012) and the wires builder deliberately doesn't; this surface is
- *  user-facing, so it does. Without the filter the permission matrix listed the
- *  ENTIRE action registry of every installed module. */
-async function grantableActions(
-  orgId?: string,
-): Promise<Array<{ action_id: string; label: string; description: string; module: string }>> {
-  const registered = await meta
-    .selectFrom("entity_actions")
-    .select(["id", "label", "description", "module_name"])
-    .where("user_invokable", "=", true)
-    .orderBy("id")
-    .execute();
-  const items = registered.map((r) => ({
-    action_id: r.id,
-    label: r.label,
-    description: r.description ?? "",
-    module: capabilityModule(r.id, r.module_name),
-  }));
-  const have = new Set(items.map((a) => a.action_id));
-  for (const c of ENDPOINT_CAPABILITIES)
-    if (!have.has(c.action_id)) items.push({ ...c, module: capabilityModule(c.action_id) });
-  // H2 — per-field read-scope capabilities declared by entity kinds
-  // (entity_kinds.field_read_scopes values). Auto-grantable so an admin
-  // can assign a "view costs"-style cap from the matrix without any
-  // central registry: any module that gates a field makes its
-  // capability appear here automatically.
-  const gatedKinds = await meta
-    .selectFrom("entity_kinds")
-    .select(["field_read_scopes"])
-    .where("field_read_scopes", "is not", null)
-    .execute();
-  for (const k of gatedKinds) {
-    const scopes = (k.field_read_scopes as Record<string, string> | null) ?? {};
-    for (const [field, cap] of Object.entries(scopes)) {
-      if (have.has(cap)) continue;
-      have.add(cap);
-      items.push({
-        action_id: cap,
-        label: `View ${field}`,
-        description: `See the "${field}" field on records that restrict it.`,
-        module: capabilityModule(cap),
-      });
-    }
-  }
-  // H2 admin-configurable — per-workspace field scopes the admin defined
-  // (workspace_field_scopes). Same auto-grantable treatment so a
-  // workspace's own "view X" caps show in its matrix.
-  if (orgId) {
-    const perOrg = await meta
-      .selectFrom("workspace_field_scopes")
-      .select(["field", "capability"])
-      .where("org_id", "=", orgId)
-      .execute();
-    for (const s of perOrg) {
-      if (have.has(s.capability)) continue;
-      have.add(s.capability);
-      items.push({
-        action_id: s.capability,
-        label: `View ${s.field}`,
-        description: `See the "${s.field}" field (restricted in this workspace).`,
-        module: capabilityModule(s.capability),
-      });
-    }
-  }
-  return orgId ? await onlyEnabledHere(items, orgId) : items;
-}
-
-/** Drop capabilities belonging to a module this WORKSPACE has not enabled.
- *
- *  entity_actions is a cobblr_meta table: it registers what every module loaded
- *  by the SERVER declares, not what any one workspace turned on. So a workspace
- *  that never enabled BrickLink was still offered `bricklink:disassemble-kit`
- *  when creating a role — a permission to do something the workspace cannot do,
- *  named after a product its owner may never have heard of.
- *
- *  Conservative on purpose: a capability is dropped only when its module is one
- *  we can SEE in the registry and the workspace lacks it. Anything we cannot
- *  attribute (platform endpoint gates, field-scope caps, a capability whose id
- *  does not name a loaded module) is kept, because silently hiding a grantable
- *  capability locks an admin out of their own permissions with no error to
- *  explain it. Showing one extra is a wart; hiding one is a bug. */
-async function onlyEnabledHere<T extends { module: string }>(
-  items: T[],
-  orgId: string,
-): Promise<T[]> {
-  const enabled = new Set(
-    (
-      await meta
-        .selectFrom("org_modules")
-        .select("module_name")
-        .where("org_id", "=", orgId)
-        .execute()
-    ).map((r) => r.module_name),
-  );
-  return scopeToWorkspace(items, {
-    enabled,
-    known: new Set(listEntries().map((e) => e.manifest.name)),
-  });
-}
-
 portalRouter.post(
   "/:slug/permissions/grants",
   requireAuth,
   withTenant,
   async (req, res, next) => {
     try {
+      // role-gate: exact — granting a power is governance, not action.
       if (req.tenant!.role !== "owner" && req.tenant!.role !== "admin") {
         res.status(403).json({
           error: { code: "forbidden", message: "Admins only." },
@@ -353,62 +229,17 @@ portalRouter.post(
         return;
       }
       // Verify the target user is actually a member of this workspace.
-      const member = await meta
-        .selectFrom("org_memberships")
-        .select(["user_id", "role"])
-        .where("org_id", "=", req.tenant!.org.id)
-        .where("user_id", "=", parsed.data.user_id)
-        .executeTakeFirst();
-      if (!member) {
-        res.status(404).json({
-          error: { code: "not_member", message: "User isn't a member of this workspace." },
-        });
-        return;
-      }
-      // A guest is read-only by invariant (auth/capability.ts). Every grantable
-      // capability gates a MUTATION, so handing one to a guest quietly makes them
-      // a writer the rest of the code still treats as read-only. Refuse it; change
-      // their role first if they should be able to act. (audit L-GUESTGRANT)
-      if (member.role === "guest") {
-        res.status(403).json({
-          error: {
-            code: "guest_read_only",
-            message: "Guests are read-only. Change this person's role before granting a capability.",
-          },
-        });
-        return;
-      }
-      // Don't persist arbitrary action_id strings: a grant for a cap
-      // that no gate checks is dead, and it pollutes the matrix.
-      const grantable = await grantableActions(req.tenant!.org.id);
-      if (!grantable.some((a) => a.action_id === parsed.data.action_id)) {
-        res.status(400).json({
-          error: {
-            code: "unknown_action",
-            message: `${parsed.data.action_id} is not a grantable capability.`,
-          },
-        });
-        return;
-      }
-      const row = await meta
-        .insertInto("workspace_capability_grants")
-        .values({
-          org_id: req.tenant!.org.id,
-          user_id: parsed.data.user_id,
-          action_id: parsed.data.action_id,
-          granted_by: req.session!.id,
-        })
-        .onConflict((c) => c.columns(["org_id", "user_id", "action_id"]).doNothing())
-        .returningAll()
-        .executeTakeFirst();
-      await activity.log({
+      const granted = await grantCapability({
         orgId: req.tenant!.org.id,
-        userId: req.session!.id,
-        action: "capability_granted",
-        ref: { module: null, entityType: "user", entityId: parsed.data.user_id },
-        diff: { action_id: parsed.data.action_id },
+        userId: parsed.data.user_id,
+        actionId: parsed.data.action_id,
+        grantedBy: req.session!.id,
       });
-      res.status(201).json({ grant: row ?? null });
+      if (!granted.ok) {
+        res.status(granted.status).json({ error: { code: granted.code, message: granted.message } });
+        return;
+      }
+      res.status(201).json({ grant: granted.grant });
     } catch (err) {
       next(err);
     }
@@ -421,6 +252,7 @@ portalRouter.delete(
   withTenant,
   async (req, res, next) => {
     try {
+      // role-gate: exact — granting a power is governance, not action.
       if (req.tenant!.role !== "owner" && req.tenant!.role !== "admin") {
         res.status(403).json({
           error: { code: "forbidden", message: "Admins only." },
@@ -477,6 +309,8 @@ portalRouter.get(
 // time (see getFieldReadScopes); the capability is auto-grantable.
 function adminOnly(req: Parameters<typeof requireAuth>[0], res: Parameters<typeof requireAuth>[1]): boolean {
   const role = (req as { tenant?: { role?: string } }).tenant?.role;
+  // role-gate: exact — which fields are withheld from whom is governance,
+  // not action; an editor reads everything but does not decide who else may.
   if (role === "owner" || role === "admin") return true;
   res.status(403).json({ error: { code: "forbidden", message: "Admins only." } });
   return false;
@@ -566,6 +400,9 @@ portalRouter.get(
       );
       res.json({
         role,
+        // The admin tier's implicit pass, decided here so no surface has to
+        // keep its own list of which roles that is.
+        all: ec.all,
         grants: ec.all ? [] : Array.from(ec.caps).sort(),
       });
     } catch (err) {

@@ -23,6 +23,8 @@
 // plan lists it under "left for you" with the reason, never as "filed as new"
 // (#2980).
 
+import { filedQuantityOf } from "./filed-quantity.js";
+
 /** What findTracked gives back, narrowed to what the decision needs. */
 export interface TrackedCandidate {
   kind: string;
@@ -83,7 +85,7 @@ export type AutofilePlan =
  * guess about where a NEW record should go.
  */
 export function planItem(item: AutofileItem): AutofilePlan {
-  const qty = Math.max(1, Math.trunc(Number(item.quantity ?? 1)));
+  const qty = filedQuantityOf(item.quantity);
   const name = item.suggested_name?.trim() || null;
 
   // Flagged for review: a person looks before anything commits, and the

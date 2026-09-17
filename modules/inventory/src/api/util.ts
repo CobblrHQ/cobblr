@@ -73,11 +73,20 @@ export async function requireCapability(
     actionId,
   });
   if (!ok) {
+    // The refusal is the platform's sentence, not this module's: what is
+    // missing, whether asking is a remedy, who decides (blocked-action.ts).
+    const blocked = await platform().auth.describeBlockedCapability({
+      orgId: ctx.org.id,
+      userId: user.id,
+      role: ctx.role,
+      actionId,
+    });
     res.status(403).json({
       error: {
         code: "missing_capability",
-        message: `This action requires the ${actionId} capability. Ask a workspace admin to grant it.`,
+        message: blocked.sentence,
         details: { action_id: actionId, your_role: ctx.role },
+        blocked,
       },
     });
     return false;

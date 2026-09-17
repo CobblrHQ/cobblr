@@ -19,6 +19,18 @@
 // So: a role check compares RANK, from the one shared table, and a role
 // ranking is not written down twice.
 //
+// The same bug has a second spelling, and this lint missed it for three
+// months:
+//
+//     if (role === "owner" || role === "admin") return true;
+//
+// That is an exact-set test with the set unrolled into a chain, and it sat at
+// the top of the capability layer (`userHasCapability`). An editor therefore
+// cleared every rank gate in the product and failed every capability gate
+// behind them — installed the bundle, could not create the record it exists
+// for (#3072). A chain of two or more literal role comparisons on one
+// variable is now the same finding as `.includes(role)`.
+//
 // Run: npx tsx scripts/lint-role-gate-shared.ts
 
 import { readFileSync } from "node:fs";
@@ -43,11 +55,21 @@ function candidates(): string[] {
   // reintroducing the bug and watching this stay green.
   const PREFILTER =
     "[.]includes\\([[:space:]]*([A-Za-z_$][A-Za-z0-9_$]*[.])?role[[:space:]]*\\)" +
-    "|ROLE_RANK|ROLE_ORDER";
+    "|ROLE_RANK|ROLE_ORDER" +
+    // The unrolled spelling: any literal comparison against a role name. Most
+    // files with ONE such comparison are fine (owner-only is exact by
+    // construction, a data filter on `m.role === "owner"` is not a gate); the
+    // detailed pass below only fails a CHAIN of two or more.
+    "|[!=]==[[:space:]]*[\"'](owner|admin|editor|member|guest)[\"']";
   try {
+    // A plain git pathspec has no `**`: `api/src/**/*.ts` needs a second
+    // slash, so a file sitting directly in a root — api/src/index.ts, where
+    // the capability layer lives — was never read. The bug this lint was
+    // widened for sat there, one directory above the prefilter's reach.
+    // `:(glob)` makes `**` mean "any depth, including none".
     const out = execFileSync(
       "git",
-      ["grep", "-lE", "--", PREFILTER, ...ROOTS.map((r) => `${r}/**/*.ts`), ...ROOTS.map((r) => `${r}/**/*.tsx`)],
+      ["grep", "-lE", "--", PREFILTER, ...ROOTS.map((r) => `:(glob)${r}/**/*.ts`), ...ROOTS.map((r) => `:(glob)${r}/**/*.tsx`)],
       { encoding: "utf8", maxBuffer: 8 * 1024 * 1024 },
     );
     return out.split("\n").filter(Boolean);
@@ -84,6 +106,47 @@ for (const file of candidates()) {
         `${file}:${line}\n      \`${m[0]}\` is an exact-set role test, so it rejects any MORE privileged\n` +
           `      role that is not literally in the list — which is how "editor" lost every write.\n` +
           `      Use roleSatisfies(role, allowed) from @cobblr/platform-contract/org-roles.`,
+      );
+    }
+
+    // 1b. The same test unrolled: `x === "owner" || x === "admin"`, or its
+    // negation `x !== "owner" && x !== "admin"`. Two or more literal role
+    // comparisons chained on ONE variable name a set, and a set is exact.
+    // The governance annotation stands here too.
+    // The variable may be a member chain with `?.` and `!.` in it
+    // (`caps.data?.role`, `req.tenant!.role`).
+    const ROLE_CMP = /([A-Za-z_$][\w$]*(?:(?:\?\.|!\.|\.)[\w$]+)*)\s*([!=]==)\s*["'](owner|admin|editor|member|guest)["']/g;
+    const seen = new Set<number>();
+    for (const m of src.matchAll(ROLE_CMP)) {
+      if (seen.has(m.index)) continue;
+      const subject = m[1]!;
+      const op = m[2]!;
+      // Walk forward: same variable, same operator, joined by || (for ===) or
+      // && (for !==). Stop at the first link that is not part of the chain.
+      const joiner = op === "===" ? "\\|\\|" : "&&";
+      let end = m.index + m[0].length;
+      let links = 1;
+      for (;;) {
+        const rest = src.slice(end);
+        const next = new RegExp(
+          `^(\\s*${joiner}\\s*)${subject.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\s*${op}\\s*["'](owner|admin|editor|member|guest)["']`,
+        ).exec(rest);
+        if (!next) break;
+        // The later links are matches of ROLE_CMP in their own right; mark
+        // them so one chain is one finding.
+        seen.add(end + next[1]!.length);
+        end += next[0].length;
+        links += 1;
+      }
+      if (links < 2) continue;
+      const line = src.slice(0, m.index).split("\n").length;
+      const preceding = src.slice(0, m.index).split("\n").slice(-8).join("\n");
+      if (/role-gate:\s*exact/.test(preceding)) continue;
+      problems.push(
+        `${file}:${line}\n      \`${src.slice(m.index, end).replace(/\s+/g, " ")}\` is an exact-set role test spelled as a chain, so it\n` +
+          `      rejects any MORE privileged role that is not literally named — which is how the\n` +
+          `      capability layer forgot "editor". Use roleSatisfies(role, allowed) (or requireRole)\n` +
+          `      from @cobblr/platform-contract/org-roles; a governance gate says // role-gate: exact — <why>.`,
       );
     }
 

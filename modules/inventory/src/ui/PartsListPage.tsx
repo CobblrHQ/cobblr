@@ -1241,7 +1241,10 @@ function PartsTable({
                         to={`${basePath}/parts/${p.id}`}
                         className="font-medium text-content dark:text-mortar-100 hover:text-accent line-clamp-2 break-words"
                       >
-                        {p.name}
+                        {/* The served title (a titled work in the person's
+                            format, #3061) is what reads; the cell edits the
+                            stored name, which is what a commit writes. */}
+                        {p.title ?? p.name}
                       </Link>
                     </EditableCell>
                     {p.manufacturer && (
@@ -1447,7 +1450,8 @@ function PartsTable({
                     to={`${basePath}/parts/${p.id}`}
                     className="font-medium text-content dark:text-mortar-100 hover:text-accent min-w-0 break-words line-clamp-2"
                   >
-                    {p.name}
+                    {/* The served title reads; the cell edits the stored name (#3061). */}
+                    {p.title ?? p.name}
                   </Link>
                 </EditableCell>
                 {p.manufacturer && !hide("manufacturer") && (

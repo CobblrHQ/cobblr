@@ -30,7 +30,7 @@ const DIR = join(ROOT, ".forgejo", "workflows");
  *  this list as a claim about infrastructure, not a formality. */
 // bake-<box> is one label per PHYSICAL machine: the pool image is baked and
 // committed locally, so the nightly bake has to land on each box by name.
-const KNOWN = new Set(["ubuntu-latest", "light", "ci-test", "ci-test-full", "bake-a6", "bake-aurora"]);
+const KNOWN = new Set(["ubuntu-latest", "light", "ci-test", "ci-test-full", "ci-e2e", "bake-a6", "bake-aurora"]);
 
 const errors: string[] = [];
 const seen = new Map<string, string[]>();

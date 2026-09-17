@@ -12,6 +12,7 @@ import { Router } from "express";
 import { z } from "zod";
 import { requireAuth } from "../auth/middleware.js";
 import { withTenant } from "../middleware/tenant.js";
+import { requireRole } from "../auth/capability.js";
 import { MoveError, getMover, moveRecords, planMove } from "../platform/move-records.js";
 
 export const recordMoveRouter = Router({ mergeParams: true });
@@ -19,14 +20,10 @@ export const recordMoveRouter = Router({ mergeParams: true });
 type Req = import("express").Request;
 type Res = import("express").Response;
 
-/** Moving records is an edit, not an admin act: the same bar as changing them. */
+/** Moving records is an edit, not an admin act: the admin tier, by rank
+ *  (an editor sits in it). */
 function requireEditor(req: Req, res: Res): boolean {
-  const role = (req as unknown as { tenant?: { role: string } }).tenant?.role;
-  if (role === "owner" || role === "admin" || role === "editor") return true;
-  res.status(403).json({
-    error: { code: "forbidden", message: "Requires owner, admin, or editor role." },
-  });
-  return false;
+  return requireRole(req, res, "owner", "admin");
 }
 
 const bodySchema = z.object({

@@ -38,7 +38,19 @@ export interface Verdict {
   names?: string[];
   /** The answer's words, when the path can show them. */
   text?: string;
+  /** The record an entity-scoped action was invoked on, from the call. */
+  entity?: { kind: string; id: string };
+  /** What the DOOR did when the bench opened it: the action run for real
+   *  with the arguments the model sent, and put back. The id is where the
+   *  model chose; the outcome is whether the choice worked. "remove tea
+   *  category from inventory" scored green on the id for days while the
+   *  handler refused the arguments three times (#3090). */
+  outcome?: Outcome;
 }
+
+export type Outcome =
+  | { ran: true; ok: boolean; said: string }
+  | { ran: false; why: string };
 
 export function parseClaim(ai: string): Claim {
   const m = /^([a-z]+)(?::([^{]*))?(?:\{(.*)\})?$/.exec(ai.trim());
@@ -101,6 +113,13 @@ export function judge(
   }
   if (!road?.ok) return road;
   let verdict = road;
+  // Two signals, read apart: the wrong door is the wrong door above; the
+  // right door that refused is a miss here, with the refusal, and a door the
+  // bench could not open is a pass on the door alone that says so.
+  if (v.outcome && v.picked && !v.picked.startsWith("(")) {
+    if (v.outcome.ran && !v.outcome.ok) return { ok: false, why: `${road.why}, but the door refused: ${v.outcome.said}` };
+    verdict = { ok: true, why: v.outcome.ran ? `${road.why}; ran and put back` : `${road.why} (door only: ${v.outcome.why})` };
+  }
   if (names.length) {
     const have = new Set((v.names ?? []).map((n) => n.toLowerCase()));
     const missing = names.filter((n) => !have.has(n.toLowerCase()));

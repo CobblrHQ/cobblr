@@ -35,6 +35,14 @@ export type ScanToolHints = Record<ScanTool, ToolHint>;
 
 export const SCAN_TOOLS: ScanTool[] = ["receipt", "split", "bin", "box_state"];
 
+/** What a tap on each box-state button DOES, the words every surface's
+ *  button carries under its label (the reason a tool is folded is said
+ *  once, at the tool; the effect is the button's own, #3075). */
+export const BOX_STATE_EFFECT: Record<"empty-box" | "item-in-box", string> = {
+  "empty-box": "The box is here; the item isn't",
+  "item-in-box": "Still packaged; the box rides along",
+};
+
 /** What a vision pass saw of the packaging: none (a bare product), box (a
  *  carton, blister or retail box in frame), sealed, opened, or unknown. */
 export type Packaging = "none" | "box" | "sealed" | "opened" | "unknown";

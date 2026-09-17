@@ -98,7 +98,8 @@ export function requireScope(req: Request, res: Response, scope: string): boolea
   return true;
 }
 
-/** Gate by a specific action capability. Owner/admin pass implicitly;
+/** Gate by a specific action capability. The admin tier passes implicitly
+ *  (owner, admin, and editor — by rank, see roleHoldsEveryCapability);
  *  members/guests need an explicit grant (workspace_capability_grants
  *  or a custom-role bundle) — see platform().auth.userHasCapability.
  *  docs/modules/member-portal-and-permissions.md. */
@@ -120,14 +121,32 @@ export async function requireCapability(
     actionId,
   });
   if (!ok) {
-    res.status(403).json({
-      error: {
-        code: "missing_capability",
-        message: `This action requires the ${actionId} capability. Ask a workspace admin to grant it.`,
-        details: { action_id: actionId, your_role: tenant.role },
-      },
-    });
+    await refuseCapability(res, { orgId: tenant.org.id, userId: session.id, role: tenant.role, actionId });
     return false;
   }
   return true;
+}
+
+/**
+ * The 403 a capability gate answers with. The prerequisite in words, whether
+ * asking is a remedy, who decides, and a request already waiting: everything
+ * the app's blocked-action sheet needs to turn the refusal into an ask, or to
+ * say honestly that there is nothing to ask for. The old text named an
+ * internal id and told the person to "ask a workspace admin" with no way to
+ * (#3073). The inventory module's twin gate answers with the same object,
+ * through platform().auth.describeBlockedCapability.
+ */
+export async function refuseCapability(
+  res: Response,
+  args: { orgId: string; userId: string; role: string; actionId: string },
+): Promise<void> {
+  const blocked = await platform().auth.describeBlockedCapability(args);
+  res.status(403).json({
+    error: {
+      code: "missing_capability",
+      message: blocked.sentence,
+      details: { action_id: args.actionId, your_role: args.role },
+      blocked,
+    },
+  });
 }

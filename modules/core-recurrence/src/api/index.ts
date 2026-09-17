@@ -8,6 +8,7 @@
 // instead of waiting up to 60s for the next interval.
 
 import { Router } from "express";
+import { roleSatisfies } from "@cobblr/platform-contract/org-roles";
 import { tick } from "./scheduler.js";
 
 const router = Router({ mergeParams: true });
@@ -18,7 +19,7 @@ router.post("/tick", (req, res, next) => {
   // privileged — keep a read-only guest (or plain member) from triggering it.
   // (Audit 2026-06-26 P2.)
   const role = (req as unknown as { tenant?: { role?: string } }).tenant?.role;
-  if (role && role !== "owner" && role !== "admin") {
+  if (role && !roleSatisfies(role, ["owner", "admin"])) {
     res.status(403).json({ error: { code: "forbidden", message: "This action requires owner or admin." } });
     return;
   }

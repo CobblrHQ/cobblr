@@ -19,7 +19,10 @@ export { actionRunsUnconfirmed, type ActionConsent } from "@cobblr/platform-cont
 export { ActionRefusal, isActionRefusal, crashSentence } from "@cobblr/platform-contract/action-refusal";
 export { isActionStep, type ActionUndoStep, type ActionUndoer, type ActionUndoContext } from "@cobblr/platform-contract/action-undo";
 import type { ActionUndoer, ActionUndoStep, ActionUndoContext } from "@cobblr/platform-contract/action-undo";
-export { destinationLabel, normaliseTargetKind, betterDestination, type DestinationTable } from "@cobblr/platform-contract/destination-label";
+export { approvalDedupeKey, blockedSentence, type ApprovalRemedy, type ApprovalRemedyKind, type BlockedAction } from "@cobblr/platform-contract/blocked-action";
+import type { BlockedAction } from "@cobblr/platform-contract/blocked-action";
+export { destinationLabel, normaliseTargetKind, type DestinationTable } from "@cobblr/platform-contract/destination-label";
+import type { TitleVariants } from "@cobblr/platform-contract/display-identity";
 export { NotificationBatcher, type ComposedBurst } from "@cobblr/platform-contract/notification-batcher";
 import type {
   ResolvableProvider,
@@ -2216,6 +2219,13 @@ export interface ResolvedEntity {
    * Absent means not retired. A module with no such concept just omits it.
    */
   retired?: boolean;
+  /** A titled work's other forms (the original, a translation, a
+   *  transliteration), when the record carries them in its metadata. The
+   *  kernel composes `title` from these for the request's actor (their
+   *  title preference) on the way out, so a surface reads `title` as
+   *  served and never formats; the forms ride beside it for anything that
+   *  needs to say where a title came from (#3061). */
+  title_variants?: TitleVariants;
 }
 
 /** Module-side resolver for an entity kind. Registered at module
@@ -2473,6 +2483,19 @@ export type DeviceApplyProvider = (
  *  field map. Registered at boot via platform().entities.registerScannable.
  *  (Audit 2026-06-26 follow-up — replaces the hardcoded SCANNABLE set +
  *  KIND_CREATE_ENDPOINTS + KIND_QTY_FIELD maps in core-scan.) */
+/** One scannable kind a workspace has (listScannableForOrg). */
+export interface ScannableKind extends ScannableInfo {
+  /** The kind records live under: a module's own ("inventory:part") or an
+   *  instance's ("groceries:item"). */
+  kind: string;
+  /** The owning module. */
+  module: string;
+  /** The named instance the kind lives in, or null for the module's own. */
+  instance: string | null;
+  /** The registry record the kind came from (its fields, routes, traits). */
+  record: EntityKindRecord;
+}
+
 export interface ScannableInfo {
   /** Singular noun for the scan UI / routing ("part", "asset", "machine"). */
   noun: string;
@@ -2665,8 +2688,17 @@ export interface PlatformEntities {
    *  module prefix; null if the module has no scan target. */
   getScannableForModule(module: string): ScannableInfo | null;
   /** Every registered scan target as { kind, ...info } — core-scan builds its
-   *  scan menu from this (which modules/kinds are scannable + their nouns). */
+   *  scan menu from this (which modules/kinds are scannable + their nouns).
+   *  BASE kinds only, one per module: the answer to "which modules can be
+   *  scanned into", never to "which kinds hold records here". */
   listScannable(): Array<{ kind: string } & ScannableInfo>;
+  /** The scannable kinds THIS workspace has, instances included: each of
+   *  listKindsForOrg's records that is scannable (an instance kind inherits
+   *  its module's scannable), with the module, the instance it lives in and
+   *  the record. The one answer for anything that walks a workspace's
+   *  RECORDS across kinds: a base-registry walk sees no grocery and no yarn
+   *  and looks like it worked (#3132). */
+  listScannableForOrg(orgId: string): Promise<ScannableKind[]>;
   /** Run every registered provider for `ctx.kind` and return the merged
    *  defaults. The FIRST provider to set a key wins (deterministic); a provider
    *  that throws contributes nothing; null/undefined values are skipped.
@@ -4330,6 +4362,17 @@ export interface PlatformAuth {
     role: string;
     actionId: string;
   }): Promise<boolean>;
+  /** The refusal, explained: what `userHasCapability` said no to, in words,
+   *  with whether asking is a remedy for this person and who would decide.
+   *  A capability gate puts this on its 403 as `error.blocked`, so the one
+   *  blocked-action sheet in the app can offer the ask (blocked-action.ts).
+   *  Kernel-owned; a module never writes its own refusal sentence. */
+  describeBlockedCapability(args: {
+    orgId: string;
+    userId: string;
+    role: string;
+    actionId: string;
+  }): Promise<BlockedAction>;
   /** Mint a SHORT-LIVED, capability-scoped token carrying `userId`'s
    *  own identity + an `app:<slug>` audience (H1 Tier B). It verifies
    *  as a normal session, so it acts AS the member — bounded by their

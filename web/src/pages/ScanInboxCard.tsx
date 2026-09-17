@@ -19,7 +19,7 @@ import { Fragment, useEffect, useMemo, useRef, useState, type ReactNode } from "
 import { Link } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Camera, CheckCircle, ChevronDown, Download, ExternalLink, Flag, Image as ImageIcon, ImagePlus, Library, Loader2, MapPin, MoreHorizontal, Pencil, RefreshCw, RotateCcw, ScanLine, Scissors, Sparkles, X, Database } from "lucide-react";
-import { Modal, useImageSrc, useOverlayOpenFlag, useToast, colorSwatch, wantsSwatch, valueFromInput, PopoverLayer, BackdropLayer } from "@cobblr/platform-web";
+import { Modal, useImageSrc, useOverlayOpenFlag, useToast, colorSwatch, wantsSwatch, valueFromInput, PopoverLayer, BackdropLayer, FieldPack, fieldNeed, fieldControl, fieldPackControlClass, type FieldType } from "@cobblr/platform-web";
 import { } from "../components/ScanImportModal";
 import { } from "../components/ExportInboxModal";
 import { CameraCaptureSheet } from "../components/CameraCaptureSheet";
@@ -33,7 +33,7 @@ import { CropPhotoModal } from "../components/CropPhotoModal";
 import { imageUrlFrom } from "../components/pastedImage";
 import { ImageLightbox, type LightboxItem } from "../components/ImageLightbox";
 import { ScanYourPhotos } from "../components/ScanYourPhotos";
-import { leadYours, rowPictures, scanFileUrl, yourPictures } from "../lib/rowPictures";
+import { catalogCaption, leadYours, rowPictures, scanFileUrl, yourPictures } from "../lib/rowPictures";
 import { } from "../components/ReceiptPeek";
 import { fieldsStillOnTable, fieldsNoLongerOnTable, isQuietDefault, isImpliedByPeer, isStatedByReceipt } from "../lib/scanCandidateFields";
 import { canRerunLookup } from "../lib/scanRerun";
@@ -59,7 +59,8 @@ import { ScanItemScreen, screenIcons, type ScanItemScreenAction } from "./ScanIt
 import { scanNotesPlacement } from "../lib/scanNotes";
 import { ScanCardCommit } from "../components/ScanCardCommit";
 import { ScanToolMenu } from "../components/ScanToolMenu";
-import { displayIdentity, displayName, modelNameBeside } from "@cobblr/platform-contract/display-identity";
+import { BOX_STATE_EFFECT } from "@cobblr/platform-contract/scan-tools";
+import { displayIdentity, displayName, modelNameBeside, compactCardFields, humanFieldLabel } from "@cobblr/platform-contract/display-identity";
 import { useHeldField, useHeldRecord } from "../lib/scanHeldField";
 import { ScanTitleInPlace } from "./ScanTitleInPlace";
 import { ScanChoiceSelect, canGrowChoices } from "./ScanChoiceSelect";
@@ -79,7 +80,8 @@ import {
 } from "../lib/api";
 import { } from "../lib/scanPayload";
 import { needsScanReview, scanDoubt, scanDoubtWords, scanProvenanceNote, scanReviewQuestions, scanReviewReason, scanRowState, scanTrackedMatch } from "@cobblr/platform-contract/scan-triage";
-import { KEYWORD_ROUTE_SENTENCE } from "@cobblr/platform-contract/scan-copy";
+import { scanAssertedFields } from "@cobblr/platform-contract/scan-evidence";
+import { KEYWORD_ROUTE_SENTENCE, ACTION_ADD, ACTION_INSTALL_ADD } from "@cobblr/platform-contract/scan-copy";
 import { matchParentType, readField } from "../lib/parent-type-match";
 import { isRerunInFlight } from "./scan-status";
 import { baseKind } from "./scanFileAll";
@@ -96,9 +98,11 @@ import { } from "../lib/chat-context";
 import { } from "../lib/useBarcodeWedge";
 import { } from "../hooks/useBrowserDrive";
 import { useActiveOrg } from "../auth/ActiveOrgContext";
+import { roleSatisfies } from "@cobblr/platform-contract/org-roles";
+import { raiseBlockedAction } from "../lib/blocked-action";
+import { useScanViewer } from "./scanViewer";
 import { useFieldPresentation } from "../lib/useFieldPresentation";
 import { useAuth } from "../auth/AuthContext";
-import { betterDestination } from "@cobblr/platform-contract";
 import { timeAgo, type ScanTarget } from "./scanInboxShared";
 import { ScanNameItInline as NameItInline } from "../components/ScanNameItInline";
 import { STORE_CODE_TITLE } from "@cobblr/platform-contract/scan-copy";
@@ -435,7 +439,7 @@ export function InboxCard({
   /** Something in the list is selected, so the phone row shows its checkbox. */
   selectionActive?: boolean;
 }) {
-  const { activeSlug, activeOrg } = useActiveOrg();
+  const { activeSlug } = useActiveOrg();
   const handheld = useHandheld();
   const qc = useQueryClient();
   const toast = useToast();
@@ -608,21 +612,10 @@ export function InboxCard({
       );
     return [...candidates, ...rest];
   })();
-  // The workspace's tables as the contract reads them, for the row's state:
-  // a better table the workspace gained since the route was stored, and the
-  // label of a table a person chose (#3062).
-  const stateTables = (menu ?? []).map((m) => ({
-    instance_name: m.instance ?? m.module,
-    display_name: m.label,
-    module_name: m.module,
-    keywords: m.scan_keywords ?? [],
-    kind: m.kind,
-    bundle_external_id: (m as { bundle_external_id?: string }).bundle_external_id ?? null,
-  }));
-  // The person may install a bundle: owner, admin and editor (admin-tier for
-  // actions; the role model in org-roles.ts).
-  const canInstallBundle =
-    activeOrg?.role === "owner" || activeOrg?.role === "admin" || activeOrg?.role === "editor";
+  // Who is looking: the workspace's tables, whether this person may install
+  // one and whether they may file into each, the same answer the page's
+  // session strip reads (scanViewer.ts).
+  const viewer = useScanViewer(menu);
   // THE row's state (#3059 Engine 1): eligibility, the one sentence, the
   // action's words and the destination, resolved once in the contract and
   // rendered here, on the phone row and on the item screen alike. The
@@ -630,9 +623,11 @@ export function InboxCard({
   // one, else the system's route, replaced by a better table the workspace
   // has gained since (the owner's ruling: an untouched system choice may be
   // replaced; a person's never).
+  // The fields the AI supplied rather than read, from their stamps: shown
+  // apart from the confirmed ones, never dressed in the confidence number.
+  const assertedFields = scanAssertedFields(item);
   const rowState = scanRowState(item, {
-    tables: stateTables,
-    canInstall: canInstallBundle,
+    ...viewer,
     fieldLabel: (name) => (topCand ? menuFieldLabel(menu, topCand, name) : name),
   });
   const resolvedDestKey = rowState.destination ? entryKey(rowState.destination.module, rowState.destination.instance) : null;
@@ -680,21 +675,13 @@ export function InboxCard({
       const entry = (menu ?? []).find((m) => m.module === r.module && (m.instance ?? null) === (r.instance ?? null));
       return entry ? { entry, label: r.label, back: true } : null;
     }
-    if (rowState.destination?.chosenBy !== "person") return null;
-    const tables = (menu ?? []).map((m) => ({
-      instance_name: m.instance ?? m.module,
-      display_name: m.label,
-      module_name: m.module,
-      // The terms the table declares for itself. Without these the nudge can
-      // only find a table whose NAME an item says, so Groceries could never be
-      // suggested by anything - no food is called a grocery. That is the same
-      // reason the routing keywords exist in the first place.
-      keywords: m.scan_keywords ?? [],
-    }));
-    const better = betterDestination(item.suggested_name ?? "", dest.kind, tables, dest.module);
-    if (!better) return null;
-    const entry = (menu ?? []).find((m) => (m.instance ?? m.module) === better.instance_name);
-    return entry ? { entry, label: better.display_name ?? better.instance_name, back: false } : null;
+    // A person's choice: the resolver OFFERS the router's better table
+    // beside it (scanDestination.offered), and only offers; this card never
+    // asks the question itself (#3136).
+    const offered = rowState.destination?.offered;
+    if (!offered) return null;
+    const entry = (menu ?? []).find((m) => m.module === offered.module && (m.instance ?? null) === (offered.instance ?? null));
+    return entry ? { entry, label: offered.label, back: false } : null;
   })();
   // Re-arm the OPEN form when a re-run lands a new answer. `formCtx` (which drives
   // ADD TO + the pre-filled fields) is only set by openForm() on a CLICK, so a
@@ -1013,6 +1000,26 @@ export function InboxCard({
   });
   const commitBusy = quickConfirm.isPending || quickMerge.isPending;
   const runCommit = () => (rowState.action.kind === "merge" ? quickMerge.mutate() : quickConfirm.mutate());
+  // "Ask an admin": the blocked row's button. The server explains what is
+  // missing the way a 403 would, and the sheet offers the ask with this
+  // row's own File as the thing a yes finishes (#3073).
+  const askToFile = useMutation({
+    mutationFn: async () => {
+      const ask = rowState.ask ?? [];
+      if (ask.length === 0 || !dest) throw new Error("nothing to ask for");
+      const { blocked } = await api.describeBlockedAction(activeSlug, ask, "Filing this");
+      // The row is its own draft (blocked-action.ts, refusedRequestFor): the
+      // yes reopens the inbox and the row's CURRENT state says what its
+      // button does. Nothing replays a snapshot of a row that may have
+      // changed while the ask waited.
+      raiseBlockedAction({
+        blocked,
+        subject: `File ${item.suggested_name ?? "this"} into ${dest.label}`,
+        refused: null,
+      });
+    },
+    onError: (e) => toast.error(e instanceof ApiError ? e.message : String(e)),
+  });
   // Put back what the last re-run overwrote (the row snapshots it before running).
   const undoRerun = useMutation({
     mutationFn: () => api.scanUndoRerun(activeSlug, item.id),
@@ -1809,6 +1816,21 @@ export function InboxCard({
               {notesPlacement.sourceBox && (
                 <p className="text-xs text-muted dark:text-slate-400 mt-1" data-testid="source-note">{notesPlacement.boxText}</p>
               )}
+              {/* What the AI asserted, apart from what was read off the code,
+                  the photo or the receipt: the confidence above is the
+                  identification's, and says nothing about these (#3070). */}
+              {assertedFields.length > 0 && (
+                <p className="text-xs text-muted dark:text-slate-400 mt-1" data-testid="asserted-fields">
+                  Said by the AI, not read off the item:{" "}
+                  {assertedFields.map((f, i) => (
+                    <span key={f.field}>
+                      {i > 0 && ", "}
+                      {humanFieldLabel(f.field).toLowerCase()} <span className="text-content dark:text-mortar-100">{f.value}</span>
+                    </span>
+                  ))}
+                  .
+                </p>
+              )}
               {/* A re-run is a gamble you can LOSE: vision re-read a dark photo of
                   a tool tote as a "Portable Bluetooth Speaker" and the good name
                   was gone, recoverable only by hand-reading the raw AI call log
@@ -2109,21 +2131,9 @@ export function InboxCard({
                 <MapPin size={11} className="text-accent" /> {item.scan_area}
               </span>
             )}
-            {/* Suggested home from where similar items live — one-tap accept.
-                Only when we have a suggestion and the user hasn't filed it yet. */}
-            {item.suggested_location_id && !item.target_location_id && (
-              <span className="inline-flex items-center gap-1.5 rounded-full bg-moss-500/10 text-moss-700 dark:text-moss-400 px-2 py-0.5">
-                <MapPin size={11} /> Suggested: {item.suggested_location_note ?? "a spot"}
-                <button
-                  type="button"
-                  onClick={() => acceptSuggestedLocation.mutate()}
-                  disabled={acceptSuggestedLocation.isPending}
-                  className="ml-0.5 rounded bg-moss-600 hover:bg-moss-700 text-white px-1.5 py-0.5 text-[10px] transition disabled:opacity-50"
-                >
-                  {acceptSuggestedLocation.isPending ? "…" : "Put here"}
-                </button>
-              </span>
-            )}
+            {/* The suggested spot is offered ONCE, beside the Location field
+                in the form (#3074); it used to sit here too, as a second
+                "Put here" that did the same write. */}
           </div>
     </>
   );
@@ -2239,6 +2249,7 @@ export function InboxCard({
     : split.isPending ? "Splitting the photo…"
     : null;
   const phoneAddLabel = dest && !isUnidentified(item.suggested_name) ? `Add to ${dest.label}…` : "Add to a table…";
+  const blockedAsk = rowState.action.kind === "blocked" && (rowState.ask?.length ?? 0) > 0;
   // The phone offers a tool by the row's own `tool_hints` (#3006): likely
   // inline, possible behind the fold with its reason, no not at all. A row
   // with no hints (an older api) offers every tool, as before.
@@ -2259,9 +2270,9 @@ export function InboxCard({
       if (item.image_file_id && toolReceipt) actions.push({ ...toolReceipt, tool: "receipt", label: "Read as a receipt", icon: screenIcons.receipt, hint: "This photo is a receipt: split into its lines", busy: asReceipt.isPending, onClick: () => asReceipt.mutate() });
       if ((item.suggested_metadata as { split_from?: string } | null)?.split_from) actions.push({ label: "Undo split", icon: screenIcons.undo, hint: "Put the group photo back; every piece goes to Recently deleted", busy: unsplit.isPending, onClick: () => unsplit.mutate() });
       if (hasLocations && toolBin) actions.push({ ...toolBin, tool: "bin", label: "Turn into a bin", hint: "This IS a container: make it a location you can scan into", onClick: () => setMakeBinOpen(true) });
-      if (toolBox) actions.push({ ...toolBox, tool: "box_state", group: "box_state", label: boxState === "empty-box" ? "Not an empty box" : "Empty box", hint: "The box is here; the item isn't", busy: setBoxState.isPending, onClick: () => setBoxState.mutate(boxState === "empty-box" ? null : "empty-box") });
-      if (toolBox) actions.push({ ...toolBox, tool: "box_state", group: "box_state", label: boxState === "item-in-box" ? "Not in its box" : "Item in box", hint: "Still packaged; the box rides along", busy: setBoxState.isPending, onClick: () => setBoxState.mutate(boxState === "item-in-box" ? null : "item-in-box") });
-      if (item.suggested_location_id && !item.target_location_id) actions.push({ label: "Put it where suggested", hint: item.suggested_location_note ?? "the suggested spot", busy: acceptSuggestedLocation.isPending, onClick: () => acceptSuggestedLocation.mutate() });
+      if (toolBox) actions.push({ ...toolBox, tool: "box_state", group: "box_state", label: boxState === "empty-box" ? "Not an empty box" : "Empty box", hint: BOX_STATE_EFFECT["empty-box"], busy: setBoxState.isPending, onClick: () => setBoxState.mutate(boxState === "empty-box" ? null : "empty-box") });
+      if (toolBox) actions.push({ ...toolBox, tool: "box_state", group: "box_state", label: boxState === "item-in-box" ? "Not in its box" : "Item in box", hint: BOX_STATE_EFFECT["item-in-box"], busy: setBoxState.isPending, onClick: () => setBoxState.mutate(boxState === "item-in-box" ? null : "item-in-box") });
+      // "Put it where suggested" lives beside the Location field now (#3074).
     }
     return (
       <ScanItemScreen
@@ -2319,6 +2330,7 @@ export function InboxCard({
           yours: yoursImg && yoursImg !== catalogImg ? yoursImg : null,
           catalog: catalogImg,
           catalogChecking: unverified,
+          catalogCaption: catalogCaption(resolved.pictures),
           onOpenYours: () => openZoom("yours"),
           onOpenCatalog: () => openZoom("catalog"),
           onCapture: () => setCaptureSheet("add"),
@@ -2354,9 +2366,17 @@ export function InboxCard({
         }}
         footer={{
           formOpen,
-          addLabel: rowState.action.kind === "merge" ? rowState.action.label : phoneAddLabel,
-          onOpenForm: rowState.action.kind === "merge" ? runCommit : () => openForm(dest ?? undefined),
-          primary: rowState.action.kind === "merge" ? { label: rowState.action.label, title: rowState.action.title, busy: commitBusy, onClick: runCommit } : null,
+          addLabel: rowState.action.kind === "merge" || blockedAsk ? rowState.action.label : phoneAddLabel,
+          onOpenForm: rowState.action.kind === "merge" ? runCommit : blockedAsk ? () => askToFile.mutate() : () => openForm(dest ?? undefined),
+          // The screen's footer says what the row says (#3076): +1 more runs
+          // the merge, and a blocked row's Ask raises the ask, never a form
+          // whose Confirm would meet the refusal a second time.
+          primary:
+            rowState.action.kind === "merge"
+              ? { label: rowState.action.label, title: rowState.action.title, busy: commitBusy, onClick: runCommit }
+              : blockedAsk
+                ? { label: rowState.action.label, title: rowState.action.title, busy: askToFile.isPending, onClick: () => askToFile.mutate() }
+                : null,
           onDiscard: () => discard.mutate(),
           discardPending: discard.isPending,
           setActionSlot,
@@ -2374,17 +2394,24 @@ export function InboxCard({
     const brandLower = (item.suggested_manufacturer ?? "").trim().toLowerCase();
     const creatorLower = (creatorOf(item) ?? "").trim().toLowerCase();
     const shopLower = ((item.suggested_metadata as { receipt_vendor?: string } | null)?.receipt_vendor ?? "").trim().toLowerCase();
-    const chips = Object.entries(liveFields)
-      .filter(([k, v]) => {
-        if (v == null || String(v).trim() === "") return false;
-        if (/^isbn$/i.test(k)) return false;
-        if (isQuietDefault(k, v) || isImpliedByPeer(k, v, liveFields)) return false;
-        if (isStatedByReceipt(k, v, item.suggested_metadata as { receipt_date?: unknown; receipt_vendor?: unknown } | null)) return false;
-        const val = String(v).trim().toLowerCase();
-        return val !== brandLower && val !== creatorLower && val !== shopLower;
-      })
+    // Never the same value twice on one row: the contract's compactCardFields
+    // drops a field the title line or the subtitle already prints (the ISBN
+    // in "ISBN 9785170058907", the brand in the name, the shop) and reads
+    // every label as words (#3077). The scan's own "not news" rules (a quiet
+    // default, a value a sibling implies, a fact the receipt states) stay
+    // on top of that; three at most, Details has them all.
+    const chips = compactCardFields(
+      Object.entries(liveFields)
+        .filter(([k, v]) => {
+          if (v == null || String(v).trim() === "") return false;
+          if (isQuietDefault(k, v) || isImpliedByPeer(k, v, liveFields)) return false;
+          return !isStatedByReceipt(k, v, item.suggested_metadata as { receipt_date?: unknown; receipt_vendor?: unknown } | null);
+        })
+        .map(([k, v]) => ({ name: k, label: dest ? menuFieldLabel(menu, dest, k) : null, value: v })),
+      [shownName, item.barcode_text, phoneSubtitle, brandLower, creatorLower, shopLower],
+    )
       .slice(0, 3)
-      .map(([k, v]) => ({ key: k, label: dest ? menuFieldLabel(menu, dest, k) : k, value: String(v), confirmed: k in userValues, swatch: /colou?r/i.test(k) ? colorSwatch(v) : null }));
+      .map(({ name: k, label, value: v }) => ({ key: k, label, value: v, confirmed: k in userValues, swatch: /colou?r/i.test(k) ? colorSwatch(v) : null }));
     const splitFrom = (item.suggested_metadata as { split_from?: string } | null)?.split_from;
     const more: ScanPhoneRowAction[] = [];
     if (item.status === "pending") {
@@ -2393,8 +2420,8 @@ export function InboxCard({
       if (item.image_file_id && toolReceipt) more.push({ ...toolReceipt, tool: "receipt", label: "Read as a receipt", hint: "This photo is a receipt: split into its lines", busy: asReceipt.isPending, onClick: () => asReceipt.mutate() });
       if (splitFrom) more.push({ label: "Undo split", hint: "Put the group photo back; every piece goes to Recently deleted", busy: unsplit.isPending, onClick: () => unsplit.mutate() });
       if (hasLocations && toolBin) more.push({ ...toolBin, tool: "bin", label: "Turn into a bin", hint: "This IS a container: make it a location you can scan into", onClick: () => setMakeBinOpen(true) });
-      if (toolBox) more.push({ ...toolBox, tool: "box_state", group: "box_state", label: boxState === "empty-box" ? "Not an empty box" : "Empty box", hint: "The box is here; the item isn't", busy: setBoxState.isPending, onClick: () => setBoxState.mutate(boxState === "empty-box" ? null : "empty-box") });
-      if (toolBox) more.push({ ...toolBox, tool: "box_state", group: "box_state", label: boxState === "item-in-box" ? "Not in its box" : "Item in box", hint: "Still packaged; the box rides along", busy: setBoxState.isPending, onClick: () => setBoxState.mutate(boxState === "item-in-box" ? null : "item-in-box") });
+      if (toolBox) more.push({ ...toolBox, tool: "box_state", group: "box_state", label: boxState === "empty-box" ? "Not an empty box" : "Empty box", hint: BOX_STATE_EFFECT["empty-box"], busy: setBoxState.isPending, onClick: () => setBoxState.mutate(boxState === "empty-box" ? null : "empty-box") });
+      if (toolBox) more.push({ ...toolBox, tool: "box_state", group: "box_state", label: boxState === "item-in-box" ? "Not in its box" : "Item in box", hint: BOX_STATE_EFFECT["item-in-box"], busy: setBoxState.isPending, onClick: () => setBoxState.mutate(boxState === "item-in-box" ? null : "item-in-box") });
       if (flaggedForReview) more.push({ label: "Looks fine", hint: "A person looked; stop flagging it", busy: markReviewed.isPending, onClick: () => markReviewed.mutate() });
       more.push({ label: "Discard", hint: "Recoverable from Recently deleted", busy: discard.isPending, danger: true, onClick: () => discard.mutate() });
     }
@@ -2443,13 +2470,22 @@ export function InboxCard({
             !dest || item.status !== "pending"
               ? null
               : {
-                  kind: rowState.action.kind === "add" ? "add" : rowState.action.kind === "install-add" ? "install" : rowState.action.kind === "merge" ? "merge" : "review",
+                  kind:
+                    rowState.action.kind === "add"
+                      ? "add"
+                      : rowState.action.kind === "install-add"
+                        ? "install"
+                        : rowState.action.kind === "merge"
+                          ? "merge"
+                          : rowState.action.kind === "blocked" && rowState.ask?.length
+                            ? "ask"
+                            : "review",
                   label: rowState.action.label,
                   destination: dest.label,
                   tentative: tentativeRoute,
                   reason: rowState.sentence ?? rowState.action.title,
-                  busy: commitBusy,
-                  onAdd: runCommit,
+                  busy: commitBusy || askToFile.isPending,
+                  onAdd: rowState.action.kind === "blocked" ? () => askToFile.mutate() : runCommit,
                   options: destOptions.map((c) => ({
                     key: entryKey(c.module, c.instance),
                     label: c.label,
@@ -2572,7 +2608,11 @@ export function InboxCard({
                   title={!expanded && identity.rest ? shownName : undefined}
                   canEdit={item.status === "pending" && !renameTitle.isPending}
                   onSave={(next) => renameTitle.mutate(next)}
-                  className="break-words min-w-0 max-w-full"
+                  // No max-w-full here: beside the hover pill's negative margin
+                  // it resolved against a container sized from the title itself
+                  // and clamped the title under its own word width ("Kugelho /
+                  // pf", #3086). The flex column shrinks it when it must.
+                  className="break-words min-w-0"
                 />
                 {modelName && item.status === "pending" && (
                   <span data-testid="model-name" className="text-xs font-normal text-muted dark:text-slate-400 min-w-0 break-words">
@@ -3156,9 +3196,9 @@ export function InboxCard({
                   </span>
                   <ScanCardCommit
                     state={rowState}
-                    busy={commitBusy}
+                    busy={commitBusy || askToFile.isPending}
                     onAdd={runCommit}
-                    onReview={() => openForm(dest)}
+                    onReview={() => (rowState.action.kind === "blocked" && rowState.ask?.length ? askToFile.mutate() : openForm(dest))}
                   />
                 </span>
                 {/* The route was answered against the workspace as it was. A table
@@ -3266,14 +3306,20 @@ export function InboxCard({
                     (menu ?? []).find((m) => m.module === topCand.module && (m.instance ?? null) === (topCand.instance ?? null)),
                     topCand.fields,
                   );
-                  const entries = Object.entries(liveFields).filter(([k, v]) => {
-                    if (/^isbn$/i.test(k)) return false; // shown in the subtitle now
-                    if (isQuietDefault(k, v)) return false; // "kept ambient" is not news
-                    if (isImpliedByPeer(k, v, liveFields)) return false; // "Storage Fridge" already says it
-                    if (isStatedByReceipt(k, v, item.suggested_metadata as { receipt_date?: unknown; receipt_vendor?: unknown } | null)) return false; // the session header says it
-                    const val = String(v).trim().toLowerCase();
-                    return val && val !== brand && val !== creator;
-                  });
+                  // Never the same value twice on one card (#3077): the
+                  // contract's compactCardFields drops what the title line
+                  // and the subtitle already print (an ISBN, the brand, the
+                  // creator); the scan's own "not news" rules stay on top.
+                  const entries: Array<[string, unknown]> = compactCardFields(
+                    Object.entries(liveFields)
+                      .filter(([k, v]) => {
+                        if (isQuietDefault(k, v)) return false; // "kept ambient" is not news
+                        if (isImpliedByPeer(k, v, liveFields)) return false; // "Storage Fridge" already says it
+                        return !isStatedByReceipt(k, v, item.suggested_metadata as { receipt_date?: unknown; receipt_vendor?: unknown } | null); // the session header says it
+                      })
+                      .map(([k, v]) => ({ name: k, label: menuFieldLabel(menu, topCand, k), value: v })),
+                    [shownName, item.barcode_text, brand, creator],
+                  ).map((f) => [f.name, f.value]);
                   if (entries.length === 0) return null;
                   // The row wraps, so let it breathe: cap only a genuinely long
                   // tail, and never render "+1" — that summary chip costs as
@@ -3467,13 +3513,12 @@ export function InboxCard({
               action sat outside the control that names the destination.
               What remains is the quiet way in: adjust the fields first. */}
         </div>
-        {/* The tools are ONE row at the card's top right, not a rail down its
-            side. The rail stretched to hold five stacked icons (about 150px),
-            so every quiet row was that tall whatever it had to say, and the
-            photo column stretched with it (#3009: "when everything is good
-            there should be little to show or ask"). A row's height now comes
-            from what it shows; the title wraps under the tools and still
-            reads in full. */}
+        {/* The tools are ONE column at the card's top right: camera, ⋯,
+            re-run, discard, expand. They were a row for a day (#3009) and the
+            owner asked for the column back (#3086). The column is top-aligned
+            and never stretches the card (it once did, to about 150px, which
+            is why the row was tried), so a quiet row is still no taller than
+            its 128px picture: five 22px buttons and their gaps. */}
         {/* THE one image control on a closed card. Everything rarer (retake for
             catalog, another angle, split) stays in the ⋯ menu beside it.
             One button, one sentence: "I'll photograph this." The only thing
@@ -3487,6 +3532,7 @@ export function InboxCard({
             of the card is the title's first line, and it stays there when a long
             title wraps to two - which is the case that would otherwise push it
             somewhere different on every row. */}
+        <div data-testid="tool-rail" className="flex flex-col items-center shrink-0 self-start gap-0.5 pt-1.5 pr-1" onClick={(e) => e.stopPropagation()}>
         {item.status === "pending" && (
           <button
             type="button"
@@ -3509,7 +3555,7 @@ export function InboxCard({
                 ? "Waiting for your photo - tap to clear"
                 : "I'll photograph this myself"
             }
-            className={`relative shrink-0 self-start mt-1.5 rounded-lg border p-1.5 transition disabled:opacity-50 ${
+            className={`relative shrink-0 rounded-lg border p-1 transition disabled:opacity-50 ${
               photoWanted
                 ? "border-cobble-400 bg-cobble-500/20 text-cobble-200"
                 : "border-transparent text-faint hover:border-line hover:text-accent"
@@ -3521,7 +3567,7 @@ export function InboxCard({
             )}
           </button>
         )}
-        <div className="flex items-center shrink-0 self-start pt-1.5 pr-1.5" onClick={(e) => e.stopPropagation()}>
+        <div className="contents">
           {/* The item's rare tools. They lived under the photos, where the row
               they needed cost more vertical space than the controls were worth
               (reported 2026-08-11). The rail is where this card's other verbs
@@ -3537,7 +3583,7 @@ export function InboxCard({
                 aria-expanded={open}
                 aria-label="More item tools"
                 title="Split, retake, box state, turn into a bin"
-                className="text-faint hover:text-accent p-1.5"
+                className="text-faint hover:text-accent p-1"
               >
                 <MoreHorizontal size={14} />
               </button>
@@ -3612,7 +3658,7 @@ export function InboxCard({
             // web/text lookup and can finally fetch a product image). See
             // canRerunLookup — gating on barcode||image alone greyed out receipts.
             disabled={aiWorking || !canRerunLookup(item)}
-            className="text-faint hover:text-accent p-1.5 disabled:opacity-30"
+            className="text-faint hover:text-accent p-1 disabled:opacity-30"
             title={replayNoAi ? "Replaying…" : aiWorking ? "AI is working…" : "Rerun lookup"}
           >
             <RotateCcw size={14} className={aiWorking ? "animate-spin text-accent" : ""} />
@@ -3622,7 +3668,7 @@ export function InboxCard({
               type="button"
               onClick={() => discard.mutate()}
               disabled={discard.isPending}
-              className="text-faint hover:text-ember-500 p-1.5 disabled:opacity-30"
+              className="text-faint hover:text-ember-500 p-1 disabled:opacity-30"
               title="Discard (recoverable from Recently deleted)"
             >
               <X size={14} />
@@ -3634,13 +3680,14 @@ export function InboxCard({
             aria-label={expanded ? "Collapse" : "Expand"}
             aria-expanded={expanded}
             title={expanded ? "Collapse" : "Details"}
-            className="text-faint hover:text-accent p-1.5"
+            className="text-faint hover:text-accent p-1"
           >
             <ChevronDown
               size={16}
               className={`transition-transform ${expanded ? "rotate-180" : ""}`}
             />
           </button>
+        </div>
         </div>
       </div>
 
@@ -4369,7 +4416,9 @@ function menuFieldLabel(
   const entry = (menu ?? []).find(
     (m) => m.module === cand.module && (m.instance ?? null) === (cand.instance ?? null),
   );
-  return entry?.fields.find((f) => f.name === fieldName)?.label ?? fieldName;
+  // A table with no label for the field still reads as words, never as
+  // "set_number" (#3077): the contract's humanFieldLabel.
+  return humanFieldLabel(fieldName, entry?.fields.find((f) => f.name === fieldName)?.label);
 }
 
 /** The fields the DESTINATION declares that the matchmaker left empty.
@@ -4614,8 +4663,7 @@ function ConfirmForm({
   // Editor included: the server-side enable path (module enable behind the
   // confirm) allows editor too, and gating the UI stricter than the API just
   // hands editors a raw 409 instead of the install flow (2026-08-25 audit).
-  const canInstallBundle =
-    activeOrg?.role === "owner" || activeOrg?.role === "admin" || activeOrg?.role === "editor";
+  const canInstallBundle = roleSatisfies(activeOrg?.role, ["owner", "admin"]);
   const qc = useQueryClient();
   const toast = useToast();
   // Platform-admin only: capture this corrected commit as a matchmaker eval case.
@@ -4985,6 +5033,37 @@ function ConfirmForm({
   const [addedFields, setAddedFields] = useState<string[]>([]);
   const selectedLoc = locationId ? (locs.data?.items ?? []).find((l) => l.id === locationId) : null;
   const locLabel = selectedLoc ? (selectedLoc.short_name?.trim() || selectedLoc.name) : locationId ? "…" : "";
+  // ONE placement action, beside the field it fills (#3074). It was two
+  // apparently different buttons in two regions, "Put here" on a green
+  // banner under the source data and "Put it where suggested" under More,
+  // and both did exactly this write. The destination and its reason are
+  // said here; the same picker above is how to choose otherwise.
+  const suggestedSpot = item.suggested_location_id && !item.target_location_id && !locationId ? item.suggested_location_id : null;
+  const suggestedNote = item.suggested_location_note ?? "";
+  const [suggestedName, suggestedWhy] = suggestedNote.includes(" — ") ? suggestedNote.split(" — ", 2) as [string, string] : [suggestedNote || "the suggested spot", ""];
+  const putWhereSuggested = () => {
+    if (!suggestedSpot) return;
+    setLocTouched(true);
+    setLocationId(suggestedSpot);
+    persistLocation.mutate(suggestedSpot);
+  };
+  const suggestedPlacement = suggestedSpot ? (
+    <div data-testid="suggested-placement" className="flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-moss-800 dark:text-moss-300">
+      <span className="min-w-0">
+        <MapPin size={11} className="mr-1 inline-block" />
+        Suggested: <span className="font-medium">{suggestedName}</span>
+        {suggestedWhy ? <span className="text-muted dark:text-slate-400"> · {suggestedWhy}</span> : null}
+      </span>
+      <button
+        type="button"
+        onClick={putWhereSuggested}
+        disabled={persistLocation.isPending}
+        className="inline-flex min-h-11 sm:min-h-0 shrink-0 items-center rounded bg-moss-600 hover:bg-moss-700 text-white px-3 sm:px-2 py-1 text-xs font-medium transition disabled:opacity-50"
+      >
+        {persistLocation.isPending ? "…" : "Put here"}
+      </button>
+    </div>
+  ) : null;
 
   useEffect(() => {
     if (item.status !== "pending") return;
@@ -5060,16 +5139,24 @@ function ConfirmForm({
               type="submit"
         form={formId}
               disabled={confirmMut.isPending || (!name.trim() && !item.suggested_name)}
+              title={willInstall ? `${entry.label} is not set up yet: this installs it and files the item there` : `Files the item into ${entry.label}`}
+              data-testid="form-submit"
               className={(row ? "px-4 py-2.5 text-sm font-semibold " : "px-3 py-1.5 text-sm ") + "rounded bg-cobble-600 hover:bg-cobble-700 text-white disabled:opacity-50 inline-flex items-center gap-1"}
             >
               {willInstall ? <Download size={14} /> : <CheckCircle size={14} />}
+              {/* The button says what it DOES, in the contract's words: the
+                  plain label files the record, the install label sets the
+                  table up first. "Confirm" hid the material action, and the
+                  note beside it named a button that did not exist (#3068).
+                  The table's name is the title, so the label stays short
+                  enough to be whole beside Cancel on a phone. */}
               {confirmMut.isPending
                 ? willInstall
                   ? `Installing ${entry.label}…`
-                  : "Creating…"
+                  : "Adding…"
                 : willInstall
-                  ? `Install ${entry.label} & add`
-                  : "Confirm"}
+                  ? ACTION_INSTALL_ADD
+                  : ACTION_ADD}
             </button>
             {!row && (
               <button
@@ -5135,7 +5222,7 @@ function ConfirmForm({
             <option key={entryKey(m.module, m.instance)} value={entryKey(m.module, m.instance)}>
               {m.label}
               {m.instance ? "" : ` (${m.noun})`}
-              {wi ? " · installs on confirm" : ""}
+              {wi ? " · not set up yet" : ""}
             </option>
           );
         })}
@@ -5172,13 +5259,30 @@ function ConfirmForm({
     return h ? heldNote(h, false) : null;
   };
   const heldNotes = held.length ? <div data-testid="held-notes" className="space-y-1">{held.map((h) => heldNote(h, true))}</div> : null;
+  // Every field on the list, built in and the table's own, laid out by the
+  // one packer from what each needs (field-pack.ts, #3067): a date gets a
+  // column it fits, two short selects share a row, the name and the
+  // location picker take the row. A hand-rolled two-column grid put an
+  // iOS date input in a column it overran ("Opened" off the right edge,
+  // "Best before" under "Acquired from").
   const fieldList = (
-    <div className="grid grid-cols-2 gap-x-3 gap-y-2.5">
-      {all.map((f) => {
+    <FieldPack
+      className="gap-y-2.5"
+      testId="scan-field-pack"
+      items={all.map((f) => {
         const def = (entry.fields ?? []).find((x) => x.name === f.key);
-        const wide = f.key === "name" || f.key === "location" || (def?.type === "text" && !!def.help && def.help.length > 40);
-        return (
-          <label key={f.key} className={"flex min-w-0 flex-col gap-1 " + (wide ? "col-span-2" : "")}>
+        const need = fieldNeed(f.key, {
+          control:
+            f.key === "location" ? "location"
+            : f.key === "name" ? "text"
+            : def ? fieldControl({ type: def.type as FieldType, choices: def.choices ?? null })
+            : f.type === "number" ? "number" : "text",
+          label: f.label,
+          choices: def?.choices ?? null,
+          valueLength: f.key === "name" ? Math.max(41, String(f.value ?? "").length) : String(f.value ?? "").length,
+        });
+        return { need, node: (
+          <label className="flex min-w-0 flex-col gap-1">
             {/* A table field's input carries its own label; the builtins get one here. */}
             {!def && <span className="text-[10px] font-medium uppercase tracking-wide text-faint">{f.label}</span>}
             {f.key === "location" ? (
@@ -5208,6 +5312,7 @@ function ConfirmForm({
                     />
                   </div>
                 )}
+                {suggestedPlacement}
               </>
             ) : def ? (
               // No help paragraph under a phone input: the label says what
@@ -5229,14 +5334,14 @@ function ConfirmForm({
                 placeholder={f.placeholder ?? ""}
                 onChange={(e) => setChipValue(f.key, e.target.value)}
                 onBlur={f.key === "name" ? flushName : undefined}
-                className="min-h-10 w-full rounded-md border border-line dark:border-slate-600 bg-surface dark:bg-slate-800 px-2.5 text-sm text-content dark:text-mortar-100"
+                className="min-h-10 w-full min-w-0 max-w-full appearance-none rounded-md border border-line dark:border-slate-600 bg-surface dark:bg-slate-800 px-2.5 text-sm text-content dark:text-mortar-100"
               />
             )}
             {heldUnder(f.key)}
           </label>
-        );
+        ) };
       })}
-    </div>
+    />
   );
   const fieldChips = (dense: boolean) => (
     <>
@@ -5294,7 +5399,7 @@ function ConfirmForm({
           <Sparkles size={14} className="text-accent shrink-0 mt-0.5" />
           <span>
             You don't have <span className="font-semibold text-content dark:text-mortar-100">{entry.label}</span> yet - {" "}
-            <strong>Confirm</strong> installs it (its own table + nav entry) and files this in, with the fields below. Want to
+            <strong>{ACTION_INSTALL_ADD}</strong> installs it (its own table + nav entry) and files this in, with the fields below. Want to
             track it another way? Pick a different table in <em>Add to</em>.
           </span>
         </div>
@@ -5357,6 +5462,7 @@ function ConfirmForm({
           ? createPortal(<div className="px-3 pb-3">{drawer}</div>, locSlot)
           : drawer;
       })()}
+      {fieldsLayout !== "list" && suggestedPlacement && !locOpen && (locSlot ? createPortal(<div className="px-3 pb-2">{suggestedPlacement}</div>, locSlot) : suggestedPlacement)}
       {isAdmin && fieldsLayout !== "list" && (
         <div className="rounded border border-dashed border-line dark:border-slate-700 p-2 space-y-2">
           <label className="flex items-center gap-2 text-sm text-content cursor-pointer">
@@ -5493,14 +5599,14 @@ function ScanFieldInput({
           onChange={onChange}
           canAdd={choiceDoor.canAdd}
           dataField={def.name}
-          className="w-full px-2 py-1.5 text-sm border border-line dark:border-slate-600 rounded bg-surface dark:bg-slate-800"
+          className={fieldPackControlClass + " px-2 py-1.5 text-sm border border-line dark:border-slate-600 rounded bg-surface dark:bg-slate-800"}
         />
       ) : def.choices && def.choices.length > 0 ? (
         <select
           data-field={def.name}
           value={s}
           onChange={(e) => onChange(e.target.value || null)}
-          className="w-full px-2 py-1.5 text-sm border border-line dark:border-slate-600 rounded bg-surface dark:bg-slate-800"
+          className={fieldPackControlClass + " px-2 py-1.5 text-sm border border-line dark:border-slate-600 rounded bg-surface dark:bg-slate-800"}
         >
           <option value=""> - none - </option>
           {def.choices.map((c) => (
@@ -5516,7 +5622,7 @@ function ScanFieldInput({
           step={def.type === "number" ? "any" : undefined}
           value={s}
           onChange={(e) => onChange(valueFromInput(def.type, e.target.value))}
-          className="w-full px-2 py-1.5 text-sm border border-line dark:border-slate-600 rounded bg-surface dark:bg-slate-800"
+          className={fieldPackControlClass + " px-2 py-1.5 text-sm border border-line dark:border-slate-600 rounded bg-surface dark:bg-slate-800"}
         />
       )}
       {help}

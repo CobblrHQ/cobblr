@@ -11,7 +11,7 @@
 // which are the same components the desktop card renders. Two layouts, one
 // set of behaviours.
 import { useState, type ReactNode } from "react";
-import { scanToolsFold } from "@cobblr/platform-contract/scan-triage";
+import { scanToolsFold, scanToolsFoldGroups } from "@cobblr/platform-contract/scan-triage";
 import type { ScanTool, ScanToolHints } from "@cobblr/platform-contract/scan-tools";
 import { Camera, ChevronDown, Pencil, ReceiptText, RefreshCw, RotateCcw, Scissors, Sparkles, Undo2, X } from "lucide-react";
 import type { ScanInboxItem } from "../lib/api";
@@ -78,6 +78,9 @@ export interface ScanItemScreenProps {
     yours: string | null;
     catalog: string | null;
     catalogChecking: boolean;
+    /** The catalog pane's caption: the role and where the picture came from
+     *  (the contract's catalogCaption, #3071). */
+    catalogCaption?: string;
     onOpenYours: () => void;
     onOpenCatalog: () => void;
     onCapture: () => void;
@@ -171,7 +174,11 @@ function MoreSection({ actions, hints }: { actions: ScanItemScreenAction[]; hint
   // The fold's words come from the same place as the tools it counts
   // (scanToolsFold, #3075): one tool with two buttons is one tool, and a
   // tool that might apply is not "unlikely".
+  // Behind the fold, a tool's reason is said once, as the tool's own line,
+  // and each button says what a tap does (its hint, which a phone cannot
+  // hover for). Two buttons of one tool used to each repeat the reason.
   const foldLabel = scanToolsFold(hints, folded.map((a) => a.tool).filter((t): t is ScanTool => !!t)).label;
+  const groups = scanToolsFoldGroups(hints, folded);
   const button = (a: ScanItemScreenAction) => (
     <button
       key={a.label}
@@ -191,7 +198,7 @@ function MoreSection({ actions, hints }: { actions: ScanItemScreenAction[]; hint
         {a.icon}
         {a.label}
       </span>
-      {a.folded && <span className="text-[11px] leading-tight text-faint">{a.folded}</span>}
+      {a.folded && a.hint && <span className="text-[11px] leading-tight text-faint">{a.hint}</span>}
     </button>
   );
   return (
@@ -209,7 +216,13 @@ function MoreSection({ actions, hints }: { actions: ScanItemScreenAction[]; hint
             <ChevronDown size={14} className={`shrink-0 transition-transform ${moreOpen ? "rotate-180" : ""}`} />
             More tools{foldLabel && <span className="text-[11px]">({foldLabel})</span>}
           </button>
-          {moreOpen && <div className="grid grid-cols-2 gap-2">{folded.map(button)}</div>}
+          {moreOpen &&
+            groups.map((g) => (
+              <div key={g.key} className="mt-1" data-tool-group={g.key}>
+                {g.reason && <p className="mb-1 text-[11px] leading-tight text-faint">{g.reason}</p>}
+                <div className="grid grid-cols-2 gap-2">{g.actions.map(button)}</div>
+              </div>
+            ))}
         </>
       )}
     </Section>
@@ -284,7 +297,7 @@ export function ScanItemScreen(p: ScanItemScreenProps) {
   return (
     <div className="bg-surface dark:bg-slate-900">
       <ScanItemSheetHeader nav={p.nav} />
-      <div className="space-y-6 px-4 pb-4 pt-3">
+      <div className="space-y-5 px-4 pb-4 pt-3">
         <section className="space-y-1.5">
           <h2 className={"text-xl font-semibold leading-tight " + (displayName(item) ? "text-content dark:text-mortar-100" : "text-muted dark:text-slate-400")}>
             {displayName(item) ?? "Name this item"}
@@ -323,7 +336,12 @@ export function ScanItemScreen(p: ScanItemScreenProps) {
                 aria-label={p.barcode.value ? "Edit the barcode" : "Add a barcode"}
                 title={p.barcode.value ? "Fix the barcode; saving re-runs the lookup on the corrected code" : "Type the barcode off the label; it identifies the product exactly"}
                 data-testid="phone-barcode"
-                className="-ml-1 inline-flex min-h-11 items-center gap-1.5 rounded-md px-1 text-[11px] font-mono text-content dark:text-mortar-200 active:bg-subtle dark:active:bg-slate-800"
+                // A 44px hit area (#14668) drawn over the line rather than
+                // spent on it: the negative margins keep the row a line tall,
+                // so the identity block does not float a band of nothing
+                // above Pictures (the owner: "a little dead whitespace",
+                // #3078).
+                className="-ml-1 -my-3 inline-flex min-h-11 items-center gap-1.5 rounded-md px-1 text-[11px] font-mono text-content dark:text-mortar-200 active:bg-subtle dark:active:bg-slate-800"
               >
                 {p.barcode.value ? (
                   <>
@@ -400,7 +418,7 @@ export function ScanItemScreen(p: ScanItemScreenProps) {
           <div className="grid grid-cols-2 gap-2">
             <Picture
               src={p.pictures.catalog}
-              caption={p.pictures.catalogChecking ? "Catalog, checking" : "Catalog"}
+              caption={p.pictures.catalogChecking ? "Catalog, checking" : (p.pictures.catalogCaption ?? "Catalog")}
               empty="No picture"
               onOpen={p.pictures.onOpenCatalog}
               onBroken={p.pictures.onCatalogBroken}

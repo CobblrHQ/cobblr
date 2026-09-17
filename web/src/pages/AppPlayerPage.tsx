@@ -21,6 +21,8 @@ import { useAuth } from "../auth/AuthContext";
 import { useRunAction, EntityActionsBar, EntityThumb, usePageTitle, useToast, OverlayLayer, BackdropLayer } from "@cobblr/platform-web";
 import { NewPartDialog, InventoryProvider } from "@cobblr/inventory/ui";
 import { api, getToken, type AppBlock, type AppTheme } from "../lib/api";
+import { createCapabilityForKind } from "@cobblr/platform-contract/create-capability";
+import { AskForItButton } from "../components/AskForItButton";
 // Per-surface theme → CSS variables. Shared with the member portal so the
 // launcher can wear the same brand. See web/src/lib/appTheme.ts.
 import {
@@ -39,21 +41,21 @@ import {
 
 interface Caps {
   role: string;
+  /** The server's answer to "holds every capability implicitly" — the
+   *  admin tier, by rank. Read, never re-derived from the role name. */
+  all: boolean;
   grants: string[];
 }
-/** Can the viewer perform an action? owner/admin always; else an
- *  explicit grant. Mirrors the server's requireCapability so the
+/** Can the viewer perform an action? The admin tier always; else an
+ *  explicit grant. Reads the server's requireCapability answer so the
  *  worker app only shows affordances the member can actually use. */
 function canDo(caps: Caps | undefined, actionId: string | undefined): boolean {
   if (!actionId) return false;
   if (!caps) return false;
-  return caps.role === "owner" || caps.role === "admin" || caps.grants.includes(actionId);
+  return caps.all || caps.grants.includes(actionId);
 }
-/** Per-kind create capability + dialog. Extend as other kinds export a
- *  portal create dialog (same registry shape as PortalViewPage). */
-const CREATE_CAPABILITY_BY_KIND: Record<string, string> = {
-  "inventory:part": "inventory:create-part",
-};
+/** Per-kind create dialog. The capability behind it is the contract's answer
+ *  (create-capability.ts), the same one the portal and the scan inbox read. */
 
 export function AppPlayerPage() {
   const { slug, appSlug } = useParams<{ slug: string; appSlug: string }>();
@@ -140,7 +142,7 @@ export function AppPlayerPage() {
   // dual-access (owner/admin) users. App-only users just get Exit + Log
   // out; the standalone look never strands anyone without a way out.
   if (theme) {
-    const isAdmin = caps.data?.role === "owner" || caps.data?.role === "admin";
+    const isAdmin = caps.data?.all === true;
     const ff = fontFaceCss(theme);
     return createPortal(
       <OverlayLayer className="z-50 overflow-y-auto" style={themeWrapperStyle(theme)}>
@@ -461,9 +463,16 @@ function FormBlock({
 }) {
   const [open, setOpen] = useState(false);
   const qc = useQueryClient();
-  const createCap = CREATE_CAPABILITY_BY_KIND[kind];
-  if (mode !== "create" || !canDo(caps, createCap)) return null;
+  const createCap = createCapabilityForKind(kind) ?? undefined;
+  if (mode !== "create") return null;
   const label = kind.split(":")[1] ?? kind;
+  // A create the member may not do yet is offered as an ask, in the block's
+  // place, rather than the block vanishing (#3073).
+  if (!canDo(caps, createCap)) {
+    return createCap && caps ? (
+      <AskForItButton slug={slug} remedies={[{ kind: "capability", key: createCap }]} doing="Adding here" subject={`Add a ${label}`} label={`Ask to add a ${label}`} />
+    ) : null;
+  }
   return (
     <div>
       <button
@@ -585,7 +594,7 @@ function RecordView({
     queryFn: () => api.listGrantableActions(slug),
     enabled: !!slug,
   });
-  const isPriv = caps.data?.role === "owner" || caps.data?.role === "admin";
+  const isPriv = caps.data?.all === true;
   const held = new Set(caps.data?.grants ?? []);
   const excludeActionIds = isPriv
     ? undefined
@@ -657,7 +666,7 @@ get:fetchPath,
 viewData:function(viewId,opts){return fetchPath("/modules/core-views/views/"+encodeURIComponent(viewId)+"/data"+qs(opts)).then(function(r){return (r&&r.items)||[];});},
 entity:function(kind,id){return fetchPath("/entities/"+encodeURIComponent(kind)+"/"+encodeURIComponent(id));},
 me:function(){return fetchPath("/me/capabilities");},
-can:function(actionId){return window.cobblr.me().then(function(c){return !!c&&(c.role==="owner"||c.role==="admin"||((c.grants||[]).indexOf(actionId)>=0));});},
+can:function(actionId){return window.cobblr.me().then(function(c){return !!c&&(c.all===true||((c.grants||[]).indexOf(actionId)>=0));});},
 invoke:invoke,
 action:invoke,
 image:function(path){if(!path)return Promise.resolve(null);return send("cobblr:image",{path:path}).then(function(r){return (r&&r.dataUrl)||null;}).catch(function(){return null;});},

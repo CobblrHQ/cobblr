@@ -95,6 +95,19 @@ export const PLACEMENT: PlacementRow[] = [
     ],
   },
   {
+    id: "shared-web-primitive",
+    what: "a form, field or layout primitive that a SHARED package component must also reach (a field control, a field grid, a modal layout rule)",
+    keywords: ["primitive", "field", "form", "grid", "packer", "layout", "control", "input", "platform-web", "custom fields panel"],
+    dir: "packages/platform-web/src/",
+    exemplar: "packages/platform-web/src/fieldControl.ts",
+    why: "The shared consumers (CustomFieldsPanel, FieldRenderer, Modal) live in @cobblr/platform-web, and that package cannot import web/src. A primitive put in web/src/components would be unreachable from the very panel that every record page renders, so a second copy appears there. The rule has one home where both the app and the package import it.",
+    lints: ["lint:field-pack", "lint:hooks-after-return", "lint:no-emdash", "lint:ui-jargon", "lint:phone-input-font", "lint:fixed-chrome", "lint:sticky-under-header", "lint:field-pack"],
+    notes: [
+      "Not every generic component belongs here: only one a package component must reach. A widget only pages render is a generic-web-component in web/src/components.",
+      "Pair the pure rule (a .ts file with tests) with the component that renders it (a .tsx), the way field-pack.ts and FieldPack.tsx are paired.",
+    ],
+  },
+  {
     id: "page-level-module-ui",
     what: "a page, sheet or modal that belongs to ONE module's surface",
     keywords: ["page", "sheet", "modal", "drawer", "screen", "one module", "locations page", "scan page"],
@@ -122,6 +135,20 @@ export const PLACEMENT: PlacementRow[] = [
     why: "Band, capability-vs-domain naming and instanceability are decided BEFORE any code, because renaming touches the package, tablePrefix, every id, routes and bundles.",
     lints: ["lint:manifests", "lint:isolation", "lint:versions", "lint:ai-reach"],
     notes: ["Load the `authoring-a-module` skill first — it owns those three decisions."],
+  },
+  {
+    id: "contract-resolver",
+    what: "a pure rule in the platform contract that every surface reads (a resolver, a predicate, the context it takes)",
+    keywords: ["resolver", "contract", "context", "predicate", "one rule", "platform-contract", "scan-triage", "row state", "eligibility", "readiness", "resolver context field"],
+    dir: "packages/platform-contract/src/",
+    exemplar: "packages/platform-contract/src/scan-triage.ts",
+    why: "A rule two surfaces would otherwise each derive lives once in @cobblr/platform-contract, where the api, the web app, a module and the assistant all import it; a surface RENDERS the answer and never derives its own.",
+    lints: ["lint:contract-sibling-imports", "lint:gated-state-has-a-producer", "lint:scan-doubt-from-contract"],
+    notes: [
+      "Every optional field on the resolver's context must be PRODUCED by a surface before it is read; a field nothing sets is coverage that is not there (lint:gated-state-has-a-producer).",
+      "The surface that calls the resolver builds its context in ONE place (web/src/pages/scanViewer.ts is the shape), and a surface test takes it from there, never from a hand-built object.",
+      "Pair the rule with its own unit test beside it (scan-row-state.test.ts); a contract test builds contexts by hand on purpose, a surface test may not.",
+    ],
   },
   {
     id: "kernel-platform-service",
@@ -208,7 +235,7 @@ export const PLACEMENT: PlacementRow[] = [
     dir: "modules/<name>/src/api/ or api/src/routes/",
     exemplar: "modules/core-scan/src/api/inbox.ts",
     why: "Express matches in registration order: a literal path declared after a parameter route on the same prefix is never reached, and the client gets a 400 that nothing reports (the session theme was dead this way for weeks).",
-    lints: ["lint:route-shadowing", "lint:announce-routes-home", "lint:api-client-reachable", "lint:scan-triage-columns", "lint:scan-door-intake"],
+    lints: ["lint:route-shadowing", "lint:announce-routes-home", "lint:api-client-reachable", "lint:scan-triage-columns", "lint:scan-door-intake", "lint:refusal-carries-blocked", "lint:capability-gates-grantable", "lint:test-doors-gated"],
     notes: [
       "Register literal paths (/inbox/session-theme) ABOVE parameter paths (/inbox/:id) in the same router.",
       "A route's client method in web/src/lib/api.ts is not a feature until something on screen calls it: lint:api-client-reachable refuses a method with no caller (the catalog crop sat reachable-by-curl-only for a month).",
@@ -222,7 +249,7 @@ export const PLACEMENT: PlacementRow[] = [
     dir: "scripts/ (git hooks in scripts/git-hooks/)",
     exemplar: "scripts/merge-pr.sh",
     why: "The same file runs on macOS (bash 3.2, BSD sed) and on the Linux CI box; a construct that is fine on one aborts on the other, after part of the work has already printed as done.",
-    lints: ["lint:bash-portable", "lint:portable-sed", "lint:sigpipe", "lint:deploy-state-in-flow", "lint:shell-lib-git-cwd", "lint:tsbuildinfo-not-shared", "lint:nightly-cut-clock", "lint:empty-array-under-set-u", "lint:scripts-typecheck", "lint:fetch-retry", "lint:porcelain-parse", "lint:alert-lib-sync", "lint:lint-durations", "lint:no-pattern-kill", "lint:forgejo-api-base"],
+    lints: ["lint:bash-portable", "lint:portable-sed", "lint:sigpipe", "lint:deploy-state-in-flow", "lint:shell-lib-git-cwd", "lint:tsbuildinfo-not-shared", "lint:nightly-cut-clock", "lint:empty-array-under-set-u", "lint:scripts-typecheck", "lint:fetch-retry", "lint:porcelain-parse", "lint:alert-lib-sync", "lint:lint-durations", "lint:no-pattern-kill", "lint:forgejo-api-base", "lint:git-pathspec-glob"],
     notes: [
       "Prose (commit messages, PR bodies) goes through a FILE, never a quoted shell string.",
       "Linux-only scripts opt out with `# gnu-sed: <reason>`; that one line covers both sed and bash rules.",
@@ -239,9 +266,10 @@ export const PLACEMENT: PlacementRow[] = [
     dir: "api/src/cli/",
     exemplar: "api/src/cli/view-as.ts",
     why: "Its stdout and stderr are pipes, and on a pipe a stream write is asynchronous: a process.exit() right after it drops everything past ~64 KiB, and the JSON arrives cut mid-string with no error (view-as list, 2026-09-08). The exit is still needed because the meta pool keeps the process alive.",
-    lints: ["lint:cli-flush-before-exit", "lint:cli-flush-before-exit"],
+    lints: ["lint:cli-flush-before-exit"],
     notes: [
       "Write output with fs.writeSync(1, ...) / writeSync(2, ...), never process.stdout.write / process.stderr.write / console.log, in any file that also calls process.exit.",
+      "The same lint holds the CI harnesses (any scripts/ file importing lib/parallel.mjs): they print a child's whole captured output into the job's `| tee`, and the failing run's log was the one cut at 64 KiB (#3167). There, drop the exit call and set process.exitCode.",
       "Being inside the container IS the authority: a CLI here needs no API token, and must not mint one. Keep it read-only unless the owner has decided otherwise.",
     ],
   },
@@ -252,8 +280,9 @@ export const PLACEMENT: PlacementRow[] = [
     dir: ".forgejo/workflows/",
     exemplar: ".forgejo/workflows/ci.yml",
     why: "Forgejo keeps no job logs and parses each job on its own: a step that ships no log is unreadable after the fact, a label nobody carries never runs, and a YAML anchor across jobs invalidates the whole file.",
-    lints: ["lint:ci-sink", "lint:ci-runner-labels", "lint:ci-lanes", "lint:workflow-yaml", "lint:latest-monotonic", "lint:ci-pr-any-base", "lint:forgejo-pagination", "lint:main-runs-complete", "lint:catalog-replay"],
+    lints: ["lint:ci-sink", "lint:ci-runner-labels", "lint:ci-lanes", "lint:workflow-yaml", "lint:latest-monotonic", "lint:ci-pr-any-base", "lint:forgejo-pagination", "lint:main-runs-complete", "lint:catalog-replay", "lint:ci-exit-read-under-set-e"],
     notes: [
+      "A step's log is a pipe (`| tee`): a harness that prints a child's captured output must end by process.exitCode, never process.exit(), or the failing run's log stops at 64 KiB with no failing test in it (#3167; lint:cli-flush-before-exit).",
       "The `test` and `test-full` jobs are one job in two places; edit the gate, copy its env+steps over the tracker.",
       "No YAML anchors or merge keys across jobs: Forgejo's job parser splits first and resolves second.",
       "Every run ships its log to the sink (scripts/ci-log.sh reads it); `?limit=` needs `&page=1` on this API.",
@@ -266,7 +295,7 @@ export const PLACEMENT: PlacementRow[] = [
     dir: "scripts/",
     exemplar: "scripts/lint-background-loops.ts",
     why: "Bespoke scripts enforce invariants a general linter cannot express; there is deliberately no ESLint here.",
-    lints: ["lint:placement", "lint:lints-are-wired", "lint:scripts-typecheck", "lint:shipped-script-imports"],
+    lints: ["lint:placement", "lint:lints-are-wired", "lint:scripts-typecheck", "lint:shipped-script-imports", "lint:corpus-known-red-live"],
     notes: [
       "Start with scripts/new-lint.sh <slug> --row <row> --rule \"<sentence>\": it writes the file from scripts/templates/lint.template.ts, registers lint:<slug> in package.json, claims the row, and runs it once (skill: writing-a-lint).",
       "A 'one implementation only' rule is a ROW in scripts/capabilities.ts, not a new script.",
@@ -296,7 +325,7 @@ export const PLACEMENT: PlacementRow[] = [
     dir: "api/tests/ or beside: the file it tests, for a pure one",
     exemplar: "web/src/pages/newBinSheet.test.ts",
     why: "Pure decisions are tested where they live; anything needing a tenant database is an integration test in api/tests/.",
-    lints: ["lint:hook-timeouts"],
+    lints: ["lint:hook-timeouts", "lint:test-path-starts-with-its-own-bin"],
     notes: [
       "Name it after the CONSEQUENCE, not the mechanism, and prove it red before you trust it green.",
       "Keep the db out of the import graph: a test that imports a file which eagerly imports cobblr_meta dies before it reaches its subject.",

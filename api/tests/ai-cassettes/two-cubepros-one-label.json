@@ -1,0 +1,8 @@
+{
+  "match": "label on the cubepro",
+  "rounds": [
+    { "tool_calls": [{ "name": "list_records", "args": { "kind": "machines:machine", "q": "CubePro" } }] },
+    { "tool_calls": [{ "name": "invoke_action", "args": { "action_id": "labels:print", "entity_kind": "machines:machine", "entity_id": "$prev.data.items[0].id" } }] },
+    { "content": "You have two machines called CubePro: CubePro #9 and CubePro #10. Which one would you like a label for?" }
+  ]
+}

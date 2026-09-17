@@ -10,20 +10,21 @@
 // this finish detached.
 
 import net from "node:net";
-import { recordImage, replayImage } from "./catalog-replay.js";
+import { isBookSource, recordImage, replayImage } from "./catalog-replay.js";
 import { lookup as dnsLookup } from "node:dns/promises";
-import { pinnedRedirectingFetch } from "@cobblr/platform-net";
+import { outboundHoldMatches, pinnedRedirectingFetch } from "@cobblr/platform-net";
 import { isPrivateIp } from "@cobblr/platform-contract/private-ip";
 import type { Kysely } from "kysely";
 import { sql } from "kysely";
 import { browserImageHeaders } from "./image-fetch-headers.js";
 import { platform } from "@cobblr/platform-contract";
-import { lookupBarcode, type BarcodeHit } from "./barcode-lookup.js";
+import { isShortBarcode } from "@cobblr/platform-contract/scan-triage";
+import { durableOutcome, lookupBarcode, type BarcodeHit, type DurableBarcodeOutcome } from "./barcode-lookup.js";
 import { resolveBarcodeViaWebSearch } from "./barcode-websearch.js";
 import { reportBarcodeCorrection } from "./barcode-corrections.js";
-import { classifyScanCode, resolveIsbn, resolveAsin, isbnFieldsForHit, ISBN_DECODER_ID, type ScanCodeType } from "./scan-router.js";
+import { BookDoorUnavailable, classifyScanCode, resolveIsbn, resolveAsin, isbnFieldsForHit, ISBN_DECODER_ID, type ScanCodeType } from "./scan-router.js";
 import { crossCheckScanPhoto, identifyImage, parsePackSize, refreshCatalogImageByName } from "./enrich-photo.js";
-import { identityMeta, mergeMeta } from "./metadata.js";
+import { identityMeta, mergeMeta, CATALOG_PICTURE_NOT_PERSONS } from "./metadata.js";
 import { looksNonEnglish } from "./catalog-normalize.js";
 import { trimCatalogMarginsWithVerdict } from "./trim-margins.js";
 import { cropToUnit } from "./unit-crop.js";
@@ -350,8 +351,11 @@ export async function guardedImageFetch(
   init: { headers?: Record<string, string>; signal?: AbortSignal },
 ): Promise<Response> {
   // A replay dir answers from its recorded pictures and never from the
-  // network (catalog-replay.ts): a test's catalog is a fixture.
-  const replayed = replayImage(url);
+  // network (catalog-replay.ts): a test's catalog is a fixture. A URL a test
+  // HOLDS (platform-net outbound-hold, #3119) is that test's own I/O and
+  // outranks the fixture: it goes to the loop, waits there, and answers from
+  // the hold.
+  const replayed = outboundHoldMatches(url) ? null : replayImage(url);
   if (replayed) return replayed;
   // The shared pinnedRedirectingFetch owns the redirect + pin loop; the image
   // policy (block private, always) is resolveSafeOutboundPin. GET only, so no
@@ -636,6 +640,31 @@ export async function enrichBarcodeItem(ctx: EnrichContext): Promise<void> {
       raw: cacheVal.raw,
       ...decodedOf(cacheVal.raw),
     };
+    // A stray product-catalog answer for an ISBN, cached before the book
+    // catalog was asked (#3162), is not served again: a HIT is cached with no
+    // expiry, so without this a junk "Fit Shake" for a book's ISBN would stand
+    // in every workspace for ever. The book's answer replaces it in both
+    // caches. When no book source knows the ISBN the stray stands, stamped, so
+    // the book catalog is asked again once a day, not on every scan.
+    if (codeClass.type === "isbn" && !isBookSource(hit.source)) {
+      // `__no_book_at`, not the earlier `__book_checked_at`: that stamp was
+      // written while an unreachable catalog read as absent (one afternoon,
+      // 2026-09-17), so every entry carrying it was stamped under a false
+      // premise. A key nobody reads any more is how they stop counting; the
+      // next read asks the catalog again instead of waiting out the day.
+      const checkedAt = Number((cacheVal.raw as { __no_book_at?: number } | null)?.__no_book_at ?? 0);
+      if (!checkedAt || Date.now() - checkedAt > CACHE_REVALIDATE_MS) {
+        // Unreachable is not absent: a catalog that could not be asked leaves
+        // the entry unstamped, so the next read asks again.
+        const book = await resolveIsbn(codeClass.code).catch((err: unknown) => (err instanceof BookDoorUnavailable ? undefined : null));
+        if (book) {
+          hit = { ...book, raw: { ...book.raw, displaced: { source: cacheVal.source, title: cacheVal.title } } };
+          await cacheHit(ctx, hit).catch(() => {});
+        } else if (book === null) {
+          await stampBookChecked(ctx, cacheVal).catch(() => {});
+        }
+      }
+    }
     // Stale-while-revalidate: serve instantly, re-check a day-old (or legacy
     // unstamped) entry in the background so corrections propagate everywhere.
     const fetchedAt = Number((cacheVal.raw as { __fetched_at?: number } | null)?.__fetched_at ?? 0);
@@ -653,33 +682,30 @@ export async function enrichBarcodeItem(ctx: EnrichContext): Promise<void> {
     // the live Open Library API below (a brand-new book not yet in the mirror).
     const result = await lookupBarcode(ctx.upc);
     if (result.outcome === "hit") hit = result.hit;
-    if (result.outcome === "rate_limited") rateLimited = true;
-    // Cache a HIT or a DEFINITIVE MISS — both durable — to BOTH the tenant and
-    // the cross-tenant cache. CRUCIALLY do NOT cache a `rate_limited` outcome:
-    // the product is unresolved, not absent, so a later scan must retry. (That
-    // mis-cache was the bug that made real products — yarn — permanently
-    // un-findable once the shared upcitemdb trial throttled us.)
-    if (result.outcome !== "rate_limited") {
-      const value: BarcodeCacheValue = {
-        found: !!hit,
-        source: hit?.source ?? "miss",
-        title: hit?.title ?? null,
-        brand: hit?.brand ?? null,
-        model: hit?.model ?? null,
-        description: hit?.description ?? null,
-        category: hit?.category ?? null,
-        image_url: hit?.image_url ?? null,
-        raw: stampFetchedAt(withDecoded(hit?.raw, hit)),
-      };
-      await writeTenantCache(ctx, value).catch((err) =>
-        console.error("[core-scan] tenant cache write failed:", (err as Error).message),
-      );
-      // A HIT is stable → no expiry; a MISS gets a TTL so a product later added
-      // to the catalog is re-checked instead of being a permanent global "no".
-      await platform()
-        .sharedCache.put(BARCODE_NS, ctx.upc, value, value.found ? undefined : GLOBAL_MISS_TTL_SEC)
-        .catch((err) => console.error("[core-scan] shared cache write failed:", (err as Error).message));
+    // Throttled, refused, or could not be asked: the code is UNRESOLVED, not
+    // absent. All three ride the retry path below and none is cached.
+    if (result.outcome === "rate_limited" || result.outcome === "unavailable") rateLimited = true;
+    // An ISBN is a book. The chain's first answer for one can be a product
+    // catalog's stray entry (Open Food Facts answered "Fit Shake" for
+    // Designing Data-Intensive Applications, #3162), so an ISBN-13 that a
+    // non-book source answered asks the book catalog before accepting it;
+    // the book's answer wins when there is one, the stray stands only when
+    // no book source knows the ISBN.
+    if (codeClass.type === "isbn" && hit && !isBookSource(hit.source) && !rateLimited) {
+      const book = await resolveIsbn(codeClass.code).catch(() => null);
+      if (book) hit = { ...book, raw: { ...book.raw, displaced: { source: hit.source, title: hit.title } } };
     }
+    // Cache a HIT or a DEFINITIVE MISS — both durable — to BOTH the tenant and
+    // the cross-tenant cache. A `rate_limited` or `unavailable` outcome is
+    // unresolved, not absent, so a later scan must retry; the writer's type
+    // refuses them (durableOutcome is the only way to one). That mis-cache
+    // was the bug that made real products — yarn — permanently un-findable
+    // once the shared upcitemdb trial throttled us; and `unavailable` was
+    // being cached as a miss until 2026-09-17, against a comment on the type,
+    // so a refused key or a catalog outage negative-cached every code scanned
+    // in it. A comment asked; the type refuses.
+    const durable = durableOutcome(result);
+    if (durable) await cacheDurable(ctx, durable, hit);
     // ISBN-13 not in any resolver tier (incl. the OL mirror) → the live Open
     // Library API as a last resort before web search. A book it finds is
     // cached like any other hit (over the miss the chain just wrote), so the
@@ -937,7 +963,10 @@ export async function enrichBarcodeItem(ctx: EnrichContext): Promise<void> {
   // (the classic Trader Joe's store-code mismatch — an 8-digit code resolving to
   // an unrelated item). Flag these so the user double-checks instead of trusting
   // blindly, and damp the confidence so nothing auto-commits on a shaky match.
-  const lowTrust = codeClass.type === "upc" && ctx.upc.replace(/\D/g, "").length < 12;
+  // "Short" is the contract's word (isShortBarcode, 6..11 pure digits): the
+  // same predicate the card's doubt reads, so the flag and the sentence
+  // cannot drift apart (#3057).
+  const lowTrust = codeClass.type === "upc" && isShortBarcode(codeClass.code);
 
   // 2. Stash the catalog image URL on the row immediately; the
   // actual file download happens next and may take a moment.
@@ -1437,6 +1466,39 @@ async function enrichThinHit(ctx: EnrichContext, hit: BarcodeHit): Promise<void>
 /** Upsert the per-tenant barcode cache row for this UPC. Upsert (not
  *  insert-or-nothing) so mirroring a cross-tenant value or promoting a
  *  web-search resolution updates an existing row instead of being dropped. */
+/** The fresh path's answer, to both caches. Takes the DURABLE outcome type:
+ *  an unresolved one (throttled, refused, unreachable) cannot be passed here,
+ *  which is what "do not cache it" looks like when it is a mechanism. */
+async function cacheDurable(ctx: EnrichContext, durable: DurableBarcodeOutcome, hit: BarcodeHit | null): Promise<void> {
+  const value: BarcodeCacheValue = {
+    found: durable.outcome === "hit" && !!hit,
+    source: hit?.source ?? "miss",
+    title: hit?.title ?? null,
+    brand: hit?.brand ?? null,
+    model: hit?.model ?? null,
+    description: hit?.description ?? null,
+    category: hit?.category ?? null,
+    image_url: hit?.image_url ?? null,
+    raw: stampFetchedAt(withDecoded(hit?.raw, hit)),
+  };
+  await writeTenantCache(ctx, value).catch((err) =>
+    console.error("[core-scan] tenant cache write failed:", (err as Error).message),
+  );
+  // A HIT is stable → no expiry; a MISS gets a TTL so a product later added
+  // to the catalog is re-checked instead of being a permanent global "no".
+  await platform()
+    .sharedCache.put(BARCODE_NS, ctx.upc, value, value.found ? undefined : GLOBAL_MISS_TTL_SEC)
+    .catch((err) => console.error("[core-scan] shared cache write failed:", (err as Error).message));
+}
+
+/** The cached stray keeps its own fetched-at clock; only the book check's is
+ *  set, and only after a REACHED catalog said it holds no such book. */
+async function stampBookChecked(ctx: EnrichContext, cached: BarcodeCacheValue): Promise<void> {
+  const value: BarcodeCacheValue = { ...cached, raw: { ...(cached.raw ?? {}), __no_book_at: Date.now() } };
+  await writeTenantCache(ctx, value);
+  await platform().sharedCache.put(BARCODE_NS, ctx.upc, value);
+}
+
 async function writeTenantCache(ctx: EnrichContext, v: BarcodeCacheValue): Promise<void> {
   const fields = {
     found: v.found,
@@ -1582,6 +1644,9 @@ export async function downloadCatalogImage(
           updated_at: new Date(),
         })
         .where("id", "=", ctx.itemId)
+        // Never over a picture the person picked while this download was
+        // out (metadata.ts CATALOG_PICTURE_NOT_PERSONS).
+        .where(CATALOG_PICTURE_NOT_PERSONS)
         .execute();
       return true;
     } catch (err) {

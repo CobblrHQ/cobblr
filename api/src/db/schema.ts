@@ -8,6 +8,7 @@
 
 import type { ColumnType, Generated } from "kysely";
 import type { OrgRoleName } from "@cobblr/platform-contract/org-roles";
+import type { ApprovalRemedy } from "@cobblr/platform-contract/blocked-action";
 // Type-only: the card's one definition lives with the channels that render it.
 import type { NotificationCard } from "../platform/channels/types.js";
 
@@ -146,6 +147,50 @@ export interface WorkspaceFieldScopesTable {
   capability: string;
   created_by: string | null;
   created_at: Generated<Date>;
+}
+
+/** A blocked action asked for, decided and resumed (approval-flows.md).
+ *  Platform-level: the approvers, the cards and the grants all live here. */
+export interface ApprovalRequestsTable {
+  id: Generated<string>;
+  org_id: string;
+  requester_id: string;
+  /** What was blocked, in the words the person saw. */
+  subject: string;
+  /** What is asked for. Written as `JSON.stringify(...) as never`
+   *  (lint:jsonb-array-writes). */
+  remedies: ApprovalRemedy[];
+  /** The sorted remedy keys, joined: one pending row per requester and set. */
+  dedupe_key: string;
+  /** The refused request, replayed by the requester once the answer is yes. */
+  resume: ApprovalResume | null;
+  /** The web route the person was on when they asked; the yes reopens it. */
+  route: string | null;
+  note: string | null;
+  status: Generated<ApprovalStatus>;
+  decided_by: string | null;
+  decided_at: Date | null;
+  decision_note: string | null;
+  outcome: Record<string, unknown> | null;
+  approver_notification_ids: string[] | null;
+  expires_at: Date;
+  created_at: Generated<Date>;
+  updated_at: Generated<Date>;
+}
+
+export type ApprovalStatus =
+  | "pending"
+  | "approved"
+  | "denied"
+  | "expired"
+  | "withdrawn"
+  | "resuming"
+  | "completed";
+
+export interface ApprovalResume {
+  method: "POST" | "PATCH" | "DELETE";
+  path: string;
+  body: unknown;
 }
 
 export interface WorkspaceNavHeadingsTable {
@@ -1180,6 +1225,7 @@ export interface MetaDB {
   org_encryption_keys: OrgEncryptionKeysTable;
   workspace_capability_grants: WorkspaceCapabilityGrantsTable;
   workspace_field_scopes: WorkspaceFieldScopesTable;
+  approval_requests: ApprovalRequestsTable;
   workspace_nav_headings: WorkspaceNavHeadingsTable;
   workspace_nav_heading_members: WorkspaceNavHeadingMembersTable;
   workspace_roles: WorkspaceRolesTable;

@@ -21,6 +21,7 @@ import { useQuery } from "@tanstack/react-query";
 import { LabelsBasket } from "@cobblr/labels/ui";
 import { api, getToken } from "../lib/api";
 import { useActiveOrg } from "../auth/ActiveOrgContext";
+import { configurationReachable } from "../lib/configuration-nav";
 import { UpdateBadge } from "./UpdateBadge";
 import { usePendingAiShares } from "../lib/usePendingAiShares";
 import { useAuth } from "../auth/AuthContext";
@@ -402,7 +403,7 @@ export function MobileNav() {
                   <span className={footLabel}>account</span>
                 </NavLink>
 
-{!appMode && (
+{!appMode && configurationReachable(activeOrg?.role) && (
                 <NavLink to="/configuration" onClick={() => setOpen(false)} className={footItem}>
                   {/* Signals ride ON the icon here, since a narrow footer cell
                       has no right edge to align them against. */}

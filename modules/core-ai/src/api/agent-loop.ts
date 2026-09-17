@@ -71,6 +71,11 @@ export interface AgentLoopDeps {
    *  looking, naming the very action that would have done it. Handed back once
    *  so it can run the thing it found. See act-dont-describe.ts. */
   actNudge?(userText: string, reply: string, reads: string[]): Promise<string | null> | string | null;
+  /** A QUESTION answered "none" after reads that never looked across every
+   *  kind. Handed back once naming the cross-kind search, so a no about a
+   *  person's own things is never given from one list. See
+   *  none-from-one-list.ts. */
+  absenceNudge?(userText: string, reply: string, reads: string[]): string | null;
   /** Progress, as it happens. Optional so every existing caller and test is
    *  unchanged; the chat route passes one to feed the persisted turn log, which
    *  is what lets a widget show "reading your locations…" instead of nothing
@@ -152,10 +157,16 @@ export function clampJson(value: unknown, maxChars: number): string {
   // Not a list (or a list too big for even one record): a string cut, with
   // the truncated notice FIRST and the budget honoured whatever it is.
   const head = `{"PARTIAL":"truncated ${whole.length} to ${maxChars} chars; incomplete, do not count from it","cut":`;
+  // The cut is a JSON string, so every quote and backslash in it costs a
+  // second character. Shrink until the whole line fits the budget; comparing
+  // the escaped cut to the raw room instead shrank it by a fifth a round
+  // for as long as the text held quotes, which for a tool result is always,
+  // down to nothing: list_actions and list_record_kinds reached the model as
+  // an empty string in any workspace big enough to matter.
   let room = Math.max(0, maxChars - head.length - 1);
   let cut = JSON.stringify(whole.slice(0, room));
-  while (cut.length > room + 1 && room > 0) {
-    room = Math.floor(room * 0.8);
+  while (head.length + cut.length + 1 > maxChars && room > 0) {
+    room = Math.floor(room * 0.9);
     cut = JSON.stringify(whole.slice(0, room));
   }
   return `${head}${cut}}`;
@@ -234,7 +245,9 @@ export async function runAgentLoop(turns: ChatTurn[], deps: AgentLoopDeps): Prom
           const nudge =
             readsDone === 0
               ? (deps.groundingNudge?.(lastUserSaid, r.content) ?? null)
-              : ((await deps.actNudge?.(lastUserSaid, r.content, readNames)) ?? null);
+              : ((await deps.actNudge?.(lastUserSaid, r.content, readNames)) ??
+                deps.absenceNudge?.(lastUserSaid, r.content, readNames) ??
+                null);
           if (nudge) {
             nudgedForReply = true;
             transcript.push({ role: "assistant", content: r.content });

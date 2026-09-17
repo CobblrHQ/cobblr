@@ -13,7 +13,7 @@
 // carried separately. Dropping the instance (or sending the wrong kind) sends
 // an item to the module's default table instead of the chosen instance.
 
-import { isScanReadyToFile, scanRowState } from "@cobblr/platform-contract/scan-triage";
+import { isScanReadyToFile, scanRowState, type ScanRowStateContext } from "@cobblr/platform-contract/scan-triage";
 
 export interface ScanCandidateLike {
   module: string;
@@ -66,8 +66,8 @@ export interface TrackedMatchLike {
  * looks like) is null here: the sweep leaves it for a person, the same as
  * the card does.
  */
-export function trackedMatchOf(it: ScanItemLike): TrackedMatchLike | null {
-  return scanRowState(it).merge;
+export function trackedMatchOf(it: ScanItemLike, viewer: ScanRowStateContext = {}): TrackedMatchLike | null {
+  return scanRowState(it, viewer).merge;
 }
 
 /**
@@ -83,9 +83,10 @@ export function trackedMatchOf(it: ScanItemLike): TrackedMatchLike | null {
  */
 export function attachBodyFor(
   it: ScanItemLike,
+  viewer: ScanRowStateContext = {},
 ): { kind: string; entity_id: string; instance?: string; mode: "add-qty" } | null {
-  if (!isReadyToFile(it)) return null;
-  const m = trackedMatchOf(it);
+  if (!isReadyToFile(it, viewer)) return null;
+  const m = trackedMatchOf(it, viewer);
   if (!m) return null;
   return {
     kind: m.kind,
@@ -98,10 +99,10 @@ export function attachBodyFor(
 /** What "File all" is about to merge rather than create, for the label that
  *  has to say so before it happens. Names are the EXISTING entities', because
  *  that is what the count will join. */
-export function duplicateSummary(items: readonly ScanItemLike[]): { count: number; names: string[] } {
+export function duplicateSummary(items: readonly ScanItemLike[], viewer: ScanRowStateContext = {}): { count: number; names: string[] } {
   const names = items
-    .filter((it) => isReadyToFile(it))
-    .map((it) => trackedMatchOf(it)?.title)
+    .filter((it) => isReadyToFile(it, viewer))
+    .map((it) => trackedMatchOf(it, viewer)?.title)
     .filter((t): t is string => !!t);
   return { count: names.length, names: [...new Set(names)] };
 }
@@ -119,14 +120,19 @@ export function baseKind(module: string): string {
  *  here read one name. It used to be a second copy that ignored the review
  *  flag, so File all committed rows the header counted under the warning
  *  (#2980). Noun and fallback bases stay filable (a no-AI workspace still
- *  files cleanly). */
-export function isReadyToFile(it: ScanItemLike): boolean {
-  return isScanReadyToFile(it);
+ *  files cleanly).
+ *
+ *  WHO is asking is part of the question (scanViewer.ts): a row a member
+ *  may not file into, or whose table they may not install, is not ready
+ *  for them, however clean its route. Required here, not defaulted, so a
+ *  page cannot count rows for nobody in particular (#3122). */
+export function isReadyToFile(it: ScanItemLike, viewer: ScanRowStateContext): boolean {
+  return isScanReadyToFile(it, viewer);
 }
 
 /** Ids of the items "File all" will commit, in order. */
-export function readyToFileIds(items: readonly ScanItemLike[]): string[] {
-  return items.filter(isReadyToFile).map((it) => it.id);
+export function readyToFileIds(items: readonly ScanItemLike[], viewer: ScanRowStateContext): string[] {
+  return items.filter((it) => isReadyToFile(it, viewer)).map((it) => it.id);
 }
 
 export interface ConfirmBody {
@@ -179,9 +185,12 @@ export function confirmBodyFor(
    *  category silently failed to apply on exactly the rows that needed it.
    *  Optional so a caller with no menu degrades to the guess, not to nothing. */
   categoryAxis?: string | null,
+  /** Who is filing (scanViewer.ts). The WHETHER was decided by the list this
+   *  item came from; this re-reads it for the same person. */
+  viewer: ScanRowStateContext = {},
 ): ConfirmBody | null {
   const cand = it.suggested_candidates?.[0];
-  if (!isReadyToFile(it) || !cand) return null;
+  if (!isReadyToFile(it, viewer) || !cand) return null;
   const fields = { ...(cand.fields ?? {}) };
   if (agreedCategory) {
     const axis =
@@ -225,11 +234,12 @@ export function confirmBodyFor(
 export function placementPreview(
   items: readonly ScanItemLike[],
   agreedLocationId?: string | null,
+  viewer: ScanRowStateContext = {},
 ): { placed: Array<{ name: string; count: number }>; unplaced: number } {
   const byName = new Map<string, number>();
   let unplaced = 0;
   for (const it of items) {
-    if (!isReadyToFile(it)) continue;
+    if (!isReadyToFile(it, viewer)) continue;
     // Only the SUGGESTED spots are described. A location the person set on the
     // item is not news, and reporting it back as though the system had decided
     // it would be misleading.

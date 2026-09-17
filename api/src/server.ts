@@ -62,6 +62,7 @@ import { scanDriveRouter } from "./routes/scan-drive.js";
 import { liveRouter } from "./routes/live.js";
 import { instancesRouter, overridesRouter } from "./routes/instances.js";
 import { navHeadingsRouter } from "./routes/nav-headings.js";
+import { approvalRequestsRouter } from "./routes/approval-requests.js";
 import { recordMoveRouter } from "./routes/record-move.js";
 import { requireAuth } from "./auth/middleware.js";
 import { withTenant } from "./middleware/tenant.js";
@@ -369,6 +370,7 @@ export function createApp(): AppHandles {
   );
   v1.use("/orgs/:slug/entity-kind-overrides", overridesRouter);
   v1.use("/orgs/:slug/nav-headings", navHeadingsRouter);
+  v1.use("/orgs/:slug/approval-requests", approvalRequestsRouter);
   v1.use("/orgs/:slug/record-move", recordMoveRouter);
   // /invites/:token + accept don't take a tenant slug — auth-only.
   v1.use(invitesRootRouter);

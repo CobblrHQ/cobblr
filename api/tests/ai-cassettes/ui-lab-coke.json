@@ -1,0 +1,9 @@
+{
+  "_about": "UI lab (dev rig, ui-lab workspace): the router's answer for a review-pack item, so the seeded inbox reads as a clean AI route instead of the keyword fallback. Safe to delete; only the ui-lab seed depends on it.",
+  "match": "\"barcode\":\"5000112637922\"",
+  "rounds": [
+    {
+      "content": "{\"candidates\": [{\"module\": \"inventory\", \"instance\": \"groceries\", \"kind\": \"inventory:part\", \"label\": \"Groceries\", \"name\": \"Coca-Cola 330 mL\", \"confidence\": 0.9, \"fields\": {\"storage\": \"Fridge\"}, \"notes\": \"A can of Coca-Cola; keep chilled.\"}]}"
+    }
+  ]
+}

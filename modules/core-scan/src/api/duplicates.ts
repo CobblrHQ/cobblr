@@ -26,7 +26,7 @@
 import { Router } from "express";
 import { z } from "zod";
 import { platform, type ResolvedEntity } from "@cobblr/platform-contract";
-import { scanTargetOfRecord } from "../services/scan-target.js";
+import { scanTargetOfRecord, scanTargetsForOrg } from "../services/scan-target.js";
 import { bearer, tenantContext } from "../db.js";
 import { INTERNAL_API } from "./inbox.js";
 import { asyncHandler, badBody, requireRole } from "./util.js";
@@ -217,7 +217,9 @@ duplicatesRouter.post(
       return;
     }
     const ctx = tenantContext(req);
-    const scannable = platform().entities.listScannable().find((k) => k.kind === kind);
+    // The workspace's own kinds, instances included: a merge of two grocery
+    // records asks with groceries:item, which the base registry never lists.
+    const scannable = (await scanTargetsForOrg(ctx.org.id)).find((k) => k.kind === kind);
     if (!scannable) {
       res.status(400).json({ error: { code: "unknown_kind", message: `${kind} is not scannable` } });
       return;

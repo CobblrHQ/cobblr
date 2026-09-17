@@ -40,7 +40,7 @@ import {
   isTier2,
   isPrefChannel,
 } from "../platform/notification-catalog.js";
-import { ORG_ROLES } from "@cobblr/platform-contract/org-roles";
+import { ORG_ROLES, roleSatisfies } from "@cobblr/platform-contract/org-roles";
 
 export const meRouter = Router();
 
@@ -1721,7 +1721,8 @@ meRouter.post("/me/signup-invites", requireAuth, async (req, res, next) => {
         .where("orgs.slug", "=", parsed.data.from_workspace)
         .where("m.user_id", "=", userId)
         .executeTakeFirst();
-      if (!org || (org.role !== "owner" && org.role !== "admin")) {
+      // Copying a workspace's shape is builder work: the admin tier, by rank.
+      if (!org || !roleSatisfies(org.role, ["owner", "admin"])) {
         res.status(403).json({
           error: { code: "forbidden", message: "You must be an owner/admin of the workspace you seed from." },
         });

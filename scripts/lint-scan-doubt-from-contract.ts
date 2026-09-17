@@ -1,5 +1,5 @@
 #!/usr/bin/env tsx
-// A scan row's doubt (low_trust) is read through the contract's scanDoubt / scanDoubtOpen, never from suggested_metadata.low_trust in web/src
+// A scan row's doubt (low_trust), its duplicate, its route's basis and its fields' standing are read through the contract's resolvers, never from the raw metadata in web/src
 //
 // THE BUG THIS PREVENTS. A hosted user tapped "Looks fine" on an 8-digit
 // barcode and the amber "double-check this is the right product" stayed on
@@ -22,7 +22,15 @@
 //     doubt is the resolver's);
 //   - the action words written by hand: "Install & add", "Install & file",
 //     a "File {n}" template, "unlikely for this one" (the words are
-//     scan-copy's, chosen by the resolver).
+//     scan-copy's, chosen by the resolver);
+//   - a raw read of a field's standing: `field_provenance`, a candidate's
+//     `inferred` list, `photo_read` (#3059 Engine 4, #3070). What the AI
+//     asserted and what the evidence contradicts are the contract's calls
+//     (scan-evidence: scanAssertedFields / scanEvidenceConflicts /
+//     fieldStandingsOf); a surface that reads the raw keys dresses a guess
+//     in the identification's confidence, which is the defect;
+//   - the words "catalog knowledge" written by hand (scan-evidence's
+//     standing words, not a note a surface composes).
 // Tests are exempt (they build rows). No opt-out: a surface that needs a
 // new answer asks the contract owner for it.
 //
@@ -81,6 +89,9 @@ function check(file: string, src: string): Violation[] {
     }
     if (/Install & (add|file)|File all \{|>File \{|unlikely for this one/.test(line)) {
       out.push({ file, line: i + 1, what: "writes the action's words by hand; they are scan-copy's, chosen by scanRowState / scanSessionAction / scanToolsFold" });
+    }
+    if (/\bfield_provenance\b|\.inferred\b|\bphoto_read\b|catalog knowledge/.test(line)) {
+      out.push({ file, line: i + 1, what: "reads a field's standing raw; what the AI asserted and what the evidence contradicts are the contract's calls (scanAssertedFields / scanEvidenceConflicts / fieldStandingsOf in @cobblr/platform-contract/scan-evidence)" });
     }
   }
   return out;

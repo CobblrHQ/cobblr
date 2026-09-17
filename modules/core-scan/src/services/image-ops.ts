@@ -8,6 +8,7 @@
 // parent keeps its photo and is soft-resolved, restorable).
 
 import sharp from "sharp";
+import { seenCountOf } from "./seen-count.js";
 import { platform } from "@cobblr/platform-contract";
 import { uprightBytes } from "./trim-margins.js";
 
@@ -265,10 +266,17 @@ export async function detectSplitItems(
   const items = Array.isArray((raw as { items?: unknown })?.items)
     ? ((raw as { items: unknown[] }).items as Array<Record<string, unknown>>)
     : [];
-  const num = (v: unknown): number => (typeof v === "number" && Number.isFinite(v) ? v : NaN);
   // The displayed frame, for a model that answered in pixels.
   const up = await uprightBytes(src.buf);
   const frame = up?.meta.width && up.meta.height ? { width: up.meta.width, height: up.meta.height } : null;
+  return readSplitItems(items, frame);
+}
+
+/** The model's segmentation answer, shaped: a named item with a usable box
+ *  survives, the rest drop out. Pure, so the shaping is tested beside the
+ *  other two readers of a model's count (seen-count.ts). */
+export function readSplitItems(items: Array<Record<string, unknown>>, frame: { width: number; height: number } | null): SplitItem[] {
+  const num = (v: unknown): number => (typeof v === "number" && Number.isFinite(v) ? v : NaN);
   const out: SplitItem[] = [];
   for (const it of items) {
     const name = typeof it.name === "string" ? it.name.trim() : "";
@@ -280,7 +288,7 @@ export async function detectSplitItems(
     out.push({
       name,
       brand: typeof it.brand === "string" && it.brand.trim() ? it.brand.trim() : null,
-      qty: Math.max(1, Math.round(num(it.qty) || 1)),
+      qty: seenCountOf(it.qty),
       box: read.box,
       box_scale: read.scale,
     });

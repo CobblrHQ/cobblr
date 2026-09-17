@@ -11,9 +11,12 @@
 
 import { useEffect, useMemo, useState, type FocusEvent } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { roleSatisfies } from "@cobblr/platform-contract/org-roles";
 import { usePlatformWeb } from "./context";
 import type { PlatformFieldDef } from "./types";
 import { fieldControl, valueFromInput } from "./fieldControl";
+import { FieldPack, fieldPackControlClass } from "./FieldPack";
+import { fieldNeed } from "./field-pack";
 import { FieldRenderer, boolLabel, boolTruthy } from "./FieldRenderer";
 import { canCarryNote, noteKey, noteOf } from "./field-note";
 import { MarkdownEditor } from "./MarkdownEditor";
@@ -122,24 +125,39 @@ export function CustomFieldsPanel({
   const ungrouped = inSection(null);
   const grouped = sections.map((s) => ({ s, fs: inSection(s.id) })).filter((g) => g.fs.length > 0);
 
-  // One column on a phone. Two columns at 390px left each field 170px wide,
-  // which a date input's own minimum width in Safari overran, and every
-  // bundle-authored help paragraph wrapped to five lines beside another one.
+  // The packer lays the fields out from what each needs and how wide the
+  // panel is (field-pack.ts, #3067). This used to be one column on a phone:
+  // two columns at 390px left each field 170px wide, which a date input's
+  // own minimum width in Safari overran, and every bundle-authored help
+  // paragraph wrapped to five lines beside another one. Now a date gets a
+  // column it fits, a help paragraph takes the row, and two short selects
+  // still share one.
   const grid = (fs: PlatformFieldDef[]) => (
-    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-      {fs.map((f) => (
-        <FieldRow
-          key={f.id}
-          def={f}
-          value={f.type === "computed" ? computedValues[f.name] : values[f.name]}
-          fallbackValue={fallbackValues?.[f.name]}
-          fallbackLabel={fallbackLabel}
-          onCommit={(v) => onCommit(f.name, v)}
-          note={noteOf(values, f.name)}
-          onCommitNote={(v) => onCommit(noteKey(f.name), v)}
-        />
-      ))}
-    </div>
+    <FieldPack
+      items={fs.map((f) => {
+        const value = f.type === "computed" ? computedValues[f.name] : values[f.name];
+        return {
+          need: fieldNeed(f.id, {
+            control: fieldControl(f),
+            label: f.display_label,
+            choices: f.choices,
+            help: f.help,
+            valueLength: typeof value === "string" ? value.length : 0,
+          }),
+          node: (
+            <FieldRow
+              def={f}
+              value={value}
+              fallbackValue={fallbackValues?.[f.name]}
+              fallbackLabel={fallbackLabel}
+              onCommit={(v) => onCommit(f.name, v)}
+              note={noteOf(values, f.name)}
+              onCommitNote={(v) => onCommit(noteKey(f.name), v)}
+            />
+          ),
+        };
+      })}
+    />
   );
 
   return (
@@ -319,7 +337,7 @@ function PlainRow({
             if (e.key === "Enter") (e.target as HTMLInputElement).blur();
           }}
           className={
-            "input flex-1 " +
+            "input flex-1 " + fieldPackControlClass + " " +
             (usingFallback
               ? "italic placeholder:text-accent placeholder:not-italic"
               : "")
@@ -707,7 +725,7 @@ function ChoiceRow({
   // Growing a dropdown's choices is a member's write (the server's bar); a
   // guest sees no entry. An unknown role (a host that passes none) is left
   // to the server.
-  const canDefine = !role || role === "owner" || role === "admin" || role === "member";
+  const canDefine = !role || roleSatisfies(role, ["member"]);
   const append = useMutation({
     mutationFn: (newVal: string) =>
       api.appendFieldDefChoice

@@ -32,6 +32,7 @@ import { AuthProvider, useAuth } from "./auth/AuthContext";
 import { useTheme } from "./theme/ThemeContext";
 import { themePrefToApply } from "./theme/pref-to-apply";
 import { ActiveOrgProvider, useActiveOrg, pickDefaultOrg, urlHandleFor } from "./auth/ActiveOrgContext";
+import { shellForRole } from "@cobblr/platform-contract/org-roles";
 import { deepPathAfterWorkspace } from "./lib/deep-path";
 import { AuthPage, MagicConsumePage, IdentityCallbackPage } from "./pages/AuthPage";
 import { PairPage } from "./pages/PairPage";
@@ -135,6 +136,7 @@ import { ForcePasswordResetPage } from "./pages/ForcePasswordResetPage";
 const AdminConsole = lazy(() => import("./pages/AdminConsole").then((m) => ({ default: m.AdminConsole })));
 import { AppLayout } from "./components/AppLayout";
 import { WorkspaceStateBar } from "./components/WorkspaceStateBar";
+import { BlockedActionSheet } from "./components/BlockedActionSheet";
 import { ImpersonationBanner } from "./components/ImpersonationBanner";
 import { AdminLayout } from "./components/AdminLayout";
 import { ErrorBoundary } from "./components/ErrorBoundary";
@@ -424,10 +426,11 @@ function ActiveOrgScopedRoutes() {
   const { activeSlug, activeOrg } = useActiveOrg();
   const location = useLocation();
 
-  // Shell routing: members + guests land in the portal; owners, admins, and
-  // editors get the full builder shell. If a non-builder lands on a builder
-  // route via direct link, the redirect below bounces them. They can navigate
-  // freely once in the portal. See docs/modules/member-portal-and-permissions.md.
+  // Shell routing: a guest lands in the portal (what the workspace shares);
+  // everyone else gets the workspace, and the gates decide what they may do
+  // in it. The rule is the contract's (shellForRole, beside the rank table),
+  // because the shell used to send members to the portal too, contradicting
+  // the role's own words (#3122). See docs/modules/member-portal-and-permissions.md.
   const role = activeOrg?.role;
   // basename-relative (react-router strips the /w/:slug base) — NOT
   // window.location.pathname, which still carries the base.
@@ -462,13 +465,7 @@ function ActiveOrgScopedRoutes() {
   const labelsEnabled = (orgModulesQ.data?.items ?? []).some(
     (m) => m.name === "labels" && m.enabled,
   );
-  const shouldRedirectToPortal =
-    activeSlug &&
-    role &&
-    role !== "owner" &&
-    role !== "admin" &&
-    role !== "editor" &&
-    !onPortal;
+  const shouldRedirectToPortal = activeSlug && role && shellForRole(role) === "portal" && !onPortal;
 
   // Managed-app lock-down: when the active workspace is a managed vertical app
   // ("Cobblr for Yarn"), the user only ever sees the app — its instance tables,
@@ -550,6 +547,9 @@ function ActiveOrgScopedRoutes() {
           decides is WHETHER it mounts. Here it always does; the server says
           whether there is anything to draw. */}
       <WorkspaceStateBar slug={activeSlug} />
+      {/* The one sheet a refusal opens, from whichever surface made the call,
+          and the one that finishes an approved ask (?resume=<id>). */}
+      <BlockedActionSheet />
       {shouldRedirectToPortal && <Navigate to={`/portal/${activeSlug}`} replace />}
       {shouldRedirectToAppHome && <Navigate to={appMode!.home_path} replace />}
       <Routes>

@@ -18,6 +18,7 @@
 // "unassigned"), never a guess.
 
 import { platform } from "@cobblr/platform-contract";
+import { scanTargetsForOrg } from "./scan-target.js";
 import { significantTokens } from "./suggest-location.js";
 import { resolveRequirement, satisfiesRequirement } from "./storage-requirement.js";
 
@@ -147,7 +148,8 @@ export async function buildBinCensus(orgId: string): Promise<Census> {
   const occupied = new Map<string, string[]>(); // location_id → titles
   const categorized = new Map<string, string[]>(); // location_id → category values
   const catCounts = new Map<string, Map<string, number>>(); // location_id → category(lc) → n
-  const kinds = platform().entities.listScannable();
+  // Instances included: what a bin holds is counted whatever kind it is under (#3132).
+  const kinds = await scanTargetsForOrg(orgId);
   const sweeps = await Promise.all(
     kinds.map((k) =>
       platform()

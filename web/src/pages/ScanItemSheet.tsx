@@ -81,12 +81,15 @@ export function ScanItemSheetFooter({
   setActionSlot: (el: HTMLDivElement | null) => void;
 }) {
   return (
-    <div className="sticky bottom-0 z-20 flex items-center justify-end gap-2 border-t border-line dark:border-slate-700 bg-surface dark:bg-slate-900 px-3 py-2 pb-[max(0.5rem,env(safe-area-inset-bottom))]">
+    // Discard and Cancel never shrink and never wrap (the owner's phone
+    // showed "ncel" and "el", #3068); the primary is the one that may wrap,
+    // inside its own box, so every action stays whole and reachable.
+    <div data-testid="sheet-footer" className="sticky bottom-0 z-20 flex items-center justify-end gap-2 border-t border-line dark:border-slate-700 bg-surface dark:bg-slate-900 px-3 py-2 pb-[max(0.5rem,env(safe-area-inset-bottom))]">
       <button
         type="button"
         onClick={onDiscard}
         disabled={discardPending}
-        className="mr-auto inline-flex items-center gap-1 rounded-md px-2 py-2 text-sm text-ember-600 dark:text-ember-400 hover:bg-ember-50 dark:hover:bg-ember-900/20 transition disabled:opacity-50"
+        className="mr-auto inline-flex shrink-0 items-center gap-1 whitespace-nowrap rounded-md px-2 py-2 text-sm text-ember-600 dark:text-ember-400 hover:bg-ember-50 dark:hover:bg-ember-900/20 transition disabled:opacity-50"
         title="Discard (recoverable from Recently deleted)"
       >
         <Trash2 size={14} /> Discard
@@ -95,7 +98,7 @@ export function ScanItemSheetFooter({
         <button
           type="button"
           onClick={onOpenForm}
-          className="inline-flex items-center gap-1.5 rounded-md bg-cobble-600 hover:bg-cobble-700 text-white px-4 py-2.5 text-sm font-semibold transition"
+          className="inline-flex min-w-0 max-w-[70%] items-center gap-1.5 rounded-md bg-cobble-600 hover:bg-cobble-700 text-white px-4 py-2.5 text-left text-sm font-semibold transition"
         >
           {addLabel}
         </button>
@@ -105,7 +108,7 @@ export function ScanItemSheetFooter({
           <button
             type="button"
             onClick={onCancel}
-            className="inline-flex items-center rounded-md px-4 py-2.5 text-sm text-content dark:text-mortar-100 hover:bg-subtle dark:hover:bg-slate-800 transition"
+            className="inline-flex shrink-0 items-center whitespace-nowrap rounded-md px-3 py-2.5 text-sm text-content dark:text-mortar-100 hover:bg-subtle dark:hover:bg-slate-800 transition"
           >
             Cancel
           </button>
@@ -116,13 +119,13 @@ export function ScanItemSheetFooter({
               disabled={primary.busy}
               title={primary.title}
               data-testid="sheet-primary"
-              className="inline-flex items-center gap-1.5 rounded-md bg-emerald-600 hover:bg-emerald-500 text-white px-4 py-2.5 text-sm font-semibold transition disabled:opacity-60"
+              className="inline-flex min-w-0 max-w-[60%] items-center gap-1.5 rounded-md bg-emerald-600 hover:bg-emerald-500 text-white px-4 py-2.5 text-left text-sm font-semibold transition disabled:opacity-60"
             >
               <PackagePlus size={14} className={primary.busy ? "animate-pulse" : ""} />
               {primary.label}
             </button>
           ) : (
-            <div ref={setActionSlot} className="flex justify-end" />
+            <div ref={setActionSlot} className="flex min-w-0 max-w-[60%] justify-end" />
           )}
         </>
       )}

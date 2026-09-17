@@ -22,15 +22,18 @@
 // commit in agreement by construction.
 
 import { scanSourceConflict, sourceConflictWords, type SourceConflict } from "@cobblr/platform-contract/acquisition-source";
+import { evidenceConflictWords, scanEvidenceConflicts } from "@cobblr/platform-contract/scan-evidence";
 import {
   ACTION_ADD,
   ACTION_BLOCKED,
   ACTION_INSTALL_ADD,
   ACTION_MERGE,
   ACTION_REVIEW,
+  AI_FAILED_SENTENCE,
   BLOCKED_SENTENCE,
   DUPLICATE_SENTENCE,
   INSTALL_SENTENCE,
+  INSTALL_BLOCKED_SENTENCE,
   KEYWORD_ROUTE_SENTENCE,
   LOW_CONFIDENCE_SENTENCE,
   MERGE_SENTENCE,
@@ -43,7 +46,9 @@ import {
   UNTRUSTED_DOUBT,
   fillSentence,
 } from "@cobblr/platform-contract/scan-copy";
-import { betterDestination, type DestinationTable } from "@cobblr/platform-contract/destination-label";
+import { createCapabilityForModule } from "@cobblr/platform-contract/create-capability";
+import { normaliseTargetKind, type DestinationTable } from "@cobblr/platform-contract/destination-label";
+import { rankFits, type FitItem, type FitTable } from "@cobblr/platform-contract/table-fit";
 import { SCAN_TOOLS, type ScanTool, type ScanToolHints } from "@cobblr/platform-contract/scan-tools";
 
 /** The columns/fields any triage decision is made from — the subset of a scan
@@ -65,9 +70,14 @@ export interface ScanTriageRow {
    *  is the reason (the crop that failed, the fields the twins disagree on),
    *  and the reason is what a person is shown instead of Add. */
   ai_notes?: string | null;
+  /** The maker the lookup named, for the fit rule (a brand says who). */
+  suggested_manufacturer?: string | null;
   /** The code that was scanned, when one was: a short one is what a
    *  low_trust flag on a barcode row is about (scanDoubt). */
   barcode_text?: string | null;
+  /** The row's own picture: what a photo read (`photo_read`) is evidence
+   *  about only while it is about THIS picture (scan-evidence.ts). */
+  image_file_id?: string | null;
 }
 
 /** The row columns the predicates above read. A server select that feeds
@@ -86,6 +96,8 @@ export const SCAN_TRIAGE_COLUMNS = [
   "target_container_id",
   "ai_notes",
   "barcode_text",
+  "image_file_id",
+  "suggested_manufacturer",
 ] as const;
 
 /** Confidence at or above which an identification stands on its own. Below it a
@@ -105,6 +117,8 @@ interface TriageMeta {
   code_type?: string;
   low_trust?: boolean;
   rate_limited?: boolean;
+  /** The identify pass was asked and did not answer (coded, #2916). */
+  identify_failure?: unknown;
   reviewed?: boolean;
   photo_wanted?: boolean;
   split_review?: string;
@@ -169,7 +183,11 @@ export function needsScanReview(row: ScanTriageRow): boolean {
     !!meta.low_trust ||
     !!meta.rate_limited ||
     (confidence != null && !Number.isNaN(confidence) && confidence < SCAN_REVIEW_CONFIDENCE) ||
-    scanSourceConflict(row) !== null
+    scanSourceConflict(row) !== null ||
+    // A field the row's own evidence contradicts (the cover, the decoded
+    // code) holds the row whatever the confidence number says: the number
+    // is the identification's, not the field's (#3070, scan-evidence.ts).
+    scanEvidenceConflicts(row).length > 0
   );
 }
 
@@ -261,10 +279,13 @@ export function scanReviewReason(
   const meta = metaOf(row);
   if (!isNamed(row)) return meta.code_type === "store-code" ? STORE_CODE_NOTE : NO_NAME_SENTENCE;
   if (meta.rate_limited) return THROTTLED_SENTENCE;
+  if (meta.identify_failure) return AI_FAILED_SENTENCE;
   // Said before the trust and confidence reasons: it names the exact value
   // to look at, where those only say "check it".
   const conflict = scanSourceConflict(row);
   if (conflict) return sourceConflictWords(conflict, opts.fieldLabel?.(conflict.field));
+  const contradicted = scanEvidenceConflicts(row)[0];
+  if (contradicted) return evidenceConflictWords(contradicted, opts.fieldLabel?.(contradicted.field));
   if (meta.low_trust) return scanDoubtWords(row) ?? UNTRUSTED_DOUBT;
   const confidence = Number(row.ai_confidence);
   return fillSentence(LOW_CONFIDENCE_SENTENCE, { pct: Math.round(confidence * 100) });
@@ -326,6 +347,20 @@ export function scanReviewQuestions(row: ScanTriageRow): ScanQuestion[] {
       because: `the field says ${conflict.value}, but ${said} ${conflict.evidence}`,
     });
   }
+  // The evidence on the row against what it asserts: both values are taps,
+  // the evidence first, and the sentence says where each came from (#3070).
+  for (const c of scanEvidenceConflicts(row)) {
+    if (answered(c.field)) continue;
+    out.push({
+      field: c.field,
+      prompt: `Check ${humanField(c.field)}`,
+      choices: [
+        { value: c.evidence, source: `${c.label} says` },
+        { value: c.claimed, source: "the AI says" },
+      ],
+      because: `${c.label} says ${c.evidence}; the AI says ${c.claimed}`,
+    });
+  }
   for (const f of meta.name_facts ?? []) {
     if (!f.was || answered(f.field)) continue;
     out.push({
@@ -348,21 +383,23 @@ export function scanReviewQuestions(row: ScanTriageRow): ScanQuestion[] {
     });
   }
   if (out.length) return out;
-  // The identification itself. A doubt the pipeline raised says what it is
-  // (a short barcode's card sentence, a split's own words); otherwise the
-  // row's own sentence (a receipt line whose AI errored says so; a
-  // percentage says nothing to do).
-  const note = scanProvenanceNote(row.ai_notes);
-  const doubt = scanDoubtWords(row);
-  if (meta.rate_limited) out.push({ field: null, prompt: "Check the name", choices: [], because: "the lookup was throttled and has not answered yet" });
-  else if (meta.split_review) out.push({ field: null, prompt: "Check the name", choices: [], because: "identified from the group photo, not its own crop" });
-  else if (doubt) out.push({ field: null, prompt: "Check the name", choices: [], because: doubt });
-  else if (note) out.push({ field: null, prompt: "Check the name", choices: [], because: note });
-  else {
-    const confidence = Number(row.ai_confidence);
-    out.push({ field: null, prompt: "Check the name", choices: [], because: `identified at ${Math.round(confidence * 100)}% confidence` });
-  }
+  // The identification itself: the row's one sentence (scanReviewReason),
+  // split into the problem and the action, so the question's heading is
+  // the thing to do and its line is why. Never the router's paragraph
+  // (`ai_notes`): that is provenance, and it stays in Source data (#3063).
+  const sentence = scanReviewReason(row) ?? UNTRUSTED_DOUBT;
+  const { problem, action } = splitSentence(sentence);
+  out.push({ field: null, prompt: action ?? "Check the name", choices: [], because: problem });
   return out;
+}
+
+/** A card sentence is "{problem}. {action}." (scan-copy's 70-char rule);
+ *  the last clause is the action, everything before it the problem. A
+ *  one-clause sentence is all problem. */
+function splitSentence(sentence: string): { problem: string; action: string | null } {
+  const clauses = sentence.replace(/[.\s]+$/, "").split(/\.\s+/);
+  if (clauses.length < 2) return { problem: clauses[0] ?? sentence, action: null };
+  return { problem: clauses.slice(0, -1).join(". "), action: clauses[clauses.length - 1]! };
 }
 
 /** Ready to file: named, routed, and nothing left to ask. THE rule behind
@@ -376,9 +413,9 @@ export function scanReviewQuestions(row: ScanTriageRow): ScanQuestion[] {
  *  Vehicles because a marketing description grazed "car(ds)". The card
  *  renders those tentative, and a bulk sweep may not commit what the card
  *  will not one-tap. */
-export function isScanReadyToFile(row: ScanTriageRow): boolean {
+export function isScanReadyToFile(row: ScanTriageRow, ctx: ScanRowStateContext = {}): boolean {
   if (!isPending(row)) return false;
-  const e = scanRowState(row).eligibility;
+  const e = scanRowState(row, ctx).eligibility;
   return e === "ready" || e === "needs-install";
 }
 
@@ -409,6 +446,11 @@ export interface ScanDestination {
    *  (a better table the workspace gained since): what the chip offers to
    *  go back to. Null when nothing was replaced. */
   replaced: { module: string; instance: string | null; label: string } | null;
+  /** For a PERSON's choice, which is never replaced: the table the router's
+   *  rule would put it in instead, offered and only offered. Null when the
+   *  choice is where the router would put it too, or for a system route
+   *  (there the better table IS the destination and `replaced` says so). */
+  offered: { module: string; instance: string | null; kind: string | null; label: string } | null;
 }
 
 /** The stored choice a person made on the row. */
@@ -448,11 +490,55 @@ export interface ScanDestinationCandidate {
   bundle_external_id?: string | null;
 }
 
+/** A workspace table as the resolver reads it: the destination shape (the
+ *  instance, its module, its label and kind) and, for the better-table
+ *  question, the fit shape the router reads (noun, fields, scan_keywords,
+ *  category_field). The web's scan menu entries carry both. A table handed
+ *  in without the fit shape can be filed into and labelled, never nudged
+ *  to: the resolver holds no second rule for that. */
+export type ScanResolverTable = DestinationTable & { kind?: string | null; bundle_external_id?: string | null } & Partial<FitTable>;
+
 export interface ScanDestinationContext {
   /** The workspace's routable tables (the menu), for a better table the
    *  workspace gained since the route was stored, and for a stored choice's
    *  label. */
-  tables?: readonly (DestinationTable & { kind?: string | null; bundle_external_id?: string | null })[];
+  tables?: readonly ScanResolverTable[];
+}
+
+/** What the fit rule reads off a row: its own words, its maker, what the
+ *  catalog said it is. The same evidence the router had. */
+export function scanFitItem(row: ScanTriageRow): FitItem {
+  const meta = metaOf(row) as { category?: unknown; description?: unknown };
+  const top = candidatesOf(row)[0] as { category?: unknown } | undefined;
+  const text = (v: unknown) => (typeof v === "string" && v.trim() ? v : null);
+  return {
+    name: row.suggested_name ?? "",
+    manufacturer: text(row.suggested_manufacturer) ?? null,
+    category: text(top?.category) ?? text(meta.category) ?? null,
+    description: text(meta.description) ?? null,
+  };
+}
+
+const isFitTable = (t: ScanResolverTable): t is ScanResolverTable & FitTable => typeof t.noun === "string" && Array.isArray(t.fields);
+
+/**
+ * The table an item fits better than the one it is headed to, by THE
+ * router's rule (table-fit.ts: a noun, a head-noun hit or two corroborating
+ * keywords; the catalog's category outranks a grazed word; the narrower
+ * table first), or null. One rule, so the chip cannot argue with the route:
+ * the nudge used to be its own one-whole-word rule with no floor and no
+ * category, and every product whose brand is a fruit was offered Groceries
+ * (#3136). The table the item is IN fitting means nothing else argues.
+ */
+export function scanBetterTable(item: FitItem, currentKind: string | null | undefined, tables: readonly ScanResolverTable[], module?: string | null): ScanResolverTable | null {
+  const fit = tables.filter(isFitTable);
+  if (fit.length === 0 || !item.name.trim()) return null;
+  const head = normaliseTargetKind(currentKind, module).split(":")[0] ?? "";
+  const fits = rankFits(item, fit);
+  if (fits.length === 0) return null;
+  if (fits.some((f) => f.table.instance_name === head)) return null;
+  const best = fits[0]!.table;
+  return best.instance_name === head ? null : best;
 }
 
 function candidatesOf(row: ScanTriageRow): ScanDestinationCandidate[] {
@@ -499,6 +585,11 @@ export function scanDestination(row: ScanTriageRow, ctx: ScanDestinationContext 
       bundle_external_id: cand?.bundle_external_id ?? table?.bundle_external_id ?? null,
       chosenBy: "person",
       replaced: null,
+      offered: (() => {
+        if (!isPending(row)) return null;
+        const b = scanBetterTable(scanFitItem(row), stored.kind ?? cand?.kind ?? table?.kind ?? null, tables, stored.module);
+        return b ? { module: b.module_name ?? b.instance_name, instance: b.instance_name, kind: b.kind ?? null, label: b.display_name ?? b.instance_name } : null;
+      })(),
     };
   }
   const top = cands[0];
@@ -512,11 +603,10 @@ export function scanDestination(row: ScanTriageRow, ctx: ScanDestinationContext 
     bundle_external_id: top.bundle_external_id ?? null,
     chosenBy: "system",
     replaced: null,
+    offered: null,
   };
   if (!isPending(row) || tables.length === 0) return system;
-  const better = betterDestination(row.suggested_name ?? "", system.kind, tables, system.module);
-  if (!better) return system;
-  const entry = tables.find((t) => t.instance_name === better.instance_name);
+  const entry = scanBetterTable(scanFitItem(row), system.kind, tables, system.module);
   if (!entry || sameTable({ module: entry.module_name ?? entry.instance_name, instance: entry.instance_name }, system)) return system;
   return {
     module: entry.module_name ?? entry.instance_name,
@@ -527,12 +617,18 @@ export function scanDestination(row: ScanTriageRow, ctx: ScanDestinationContext 
     bundle_external_id: entry.bundle_external_id ?? null,
     chosenBy: "system",
     replaced: { module: system.module, instance: system.instance, label: system.label },
+    offered: null,
   };
 }
 
 export interface ScanRowStateContext extends ScanDestinationContext {
-  /** The person may file into this workspace (the capability). Default true. */
-  permitted?: boolean;
+  /** The person may file into THIS table (the capability): asked with the
+   *  resolved destination's module, so a session of rows routed to
+   *  different tables gets one answer per row (create-capability.ts,
+   *  /me/capabilities). Null or undefined is "not known yet", which never
+   *  blocks. Once a plain `permitted` boolean that nothing in the product
+   *  set, so the blocked state never rendered (#3126). */
+  permittedFor?: (module: string | null) => boolean | null | undefined;
   /** The person may install a bundle (the role). Default true. */
   canInstall?: boolean;
   /** The field's label on the destination's table, for the source-conflict
@@ -590,6 +686,12 @@ export interface ScanRowState {
   destination: ScanDestination | null;
   /** The record a `merge` action adds to. Null for every other action. */
   merge: ScanMergeTarget | null;
+  /** What a `blocked` row would ask an admin for (blocked-action.ts): the
+   *  create capability the destination's module gates on, the bundle the
+   *  destination installs, or both. The surface hands these to the
+   *  approval seam; the words come back from the server. Null unless
+   *  blocked. */
+  ask: Array<{ kind: "capability" | "install"; key: string }> | null;
 }
 
 /**
@@ -605,6 +707,9 @@ export interface ScanRowState {
 export function scanRowState(row: ScanTriageRow, ctx: ScanRowStateContext = {}): ScanRowState {
   const destination = scanDestination(row, ctx);
   const destLabel = destination?.label ?? "a table";
+  // Whether this person may file into the table the row resolved to: asked
+  // with the destination the resolver chose, not one the caller guessed at.
+  const permitted = ctx.permittedFor?.(destination?.module ?? null);
   const meta = metaOf(row);
   const review = (sentence: string): ScanRowState => ({
     eligibility: "needs-review",
@@ -612,6 +717,7 @@ export function scanRowState(row: ScanTriageRow, ctx: ScanRowStateContext = {}):
     action: { kind: "review", label: ACTION_REVIEW, title: sentence },
     destination,
     merge: null,
+    ask: null,
   });
   const add = (): ScanRowState => ({
     eligibility: "ready",
@@ -619,11 +725,19 @@ export function scanRowState(row: ScanTriageRow, ctx: ScanRowStateContext = {}):
     action: { kind: "add", label: ACTION_ADD, title: `File into ${destLabel}` },
     destination,
     merge: null,
+    ask: null,
   });
+  // Blocked is not a dead end: the row says what to ask for, and the
+  // approval seam (#3073) turns the button into the ask.
+  const blocked = (sentence: string): ScanRowState => {
+    const ask: NonNullable<ScanRowState["ask"]> = [];
+    if (destination?.installs && destination.bundle_external_id) ask.push({ kind: "install", key: destination.bundle_external_id });
+    const cap = createCapabilityForModule(destination?.module);
+    if (cap && permitted === false) ask.push({ kind: "capability", key: cap });
+    return { eligibility: "blocked", sentence, action: { kind: "blocked", label: ACTION_BLOCKED, title: sentence }, destination, merge: null, ask };
+  };
   if (!isPending(row)) return add();
-  if (ctx.permitted === false) {
-    return { eligibility: "blocked", sentence: BLOCKED_SENTENCE, action: { kind: "blocked", label: ACTION_BLOCKED, title: BLOCKED_SENTENCE }, destination, merge: null };
-  }
+  if (permitted === false) return blocked(BLOCKED_SENTENCE);
   if (needsScanReview(row)) return review(scanReviewReason(row, { fieldLabel: ctx.fieldLabel }) ?? UNTRUSTED_DOUBT);
   if (!meta.reviewed) {
     // Another of a thing the workspace COUNTS is a re-purchase: +1 more, one
@@ -640,6 +754,7 @@ export function scanRowState(row: ScanTriageRow, ctx: ScanRowStateContext = {}):
           action: { kind: "merge", label: ACTION_MERGE, title: `Adds one more to ${tracked.title}, the one you already have` },
           destination,
           merge: { kind: tracked.kind, id: tracked.id, instance: tracked.instance, title: tracked.title },
+          ask: null,
         };
       }
       return review(DUPLICATE_SENTENCE);
@@ -649,24 +764,35 @@ export function scanRowState(row: ScanTriageRow, ctx: ScanRowStateContext = {}):
   }
   if (!destination) return review(KEYWORD_ROUTE_SENTENCE);
   if (destination.installs) {
+    // A person who may not install is blocked with an ask, not asked to
+    // review: the review step cannot install either, and the ask can.
+    if (ctx.canInstall === false) return blocked(fillSentence(INSTALL_BLOCKED_SENTENCE, { table: destination.label }));
     const sentence = fillSentence(INSTALL_SENTENCE, { table: destination.label });
-    if (ctx.canInstall === false) return review(sentence);
-    return { eligibility: "needs-install", sentence, action: { kind: "install-add", label: ACTION_INSTALL_ADD, title: `${destination.label} is not set up yet; this installs it and files the item` }, destination, merge: null };
+    return { eligibility: "needs-install", sentence, action: { kind: "install-add", label: ACTION_INSTALL_ADD, title: `${destination.label} is not set up yet; this installs it and files the item` }, destination, merge: null, ask: null };
   }
   return add();
 }
 
 /** The session's one action over its rows: what "File N" says and covers.
  *  Counts the rows the resolver calls ready or needs-install (an install is
- *  part of filing, said in the label), never a row that needs a person. */
+ *  part of filing, said in the label), never a row that needs a person.
+ *
+ *  The context is not optional: a session is somebody's session, and what
+ *  it offers depends on who is looking (a member's rows read Ask, and the
+ *  strip must not count them). The page once called this with no context
+ *  while the rows beside it had one, so the row said Ask an admin and the
+ *  strip said Install & file 1 (#3122). */
 export function scanSessionAction(
   rows: readonly ScanTriageRow[],
-  ctx: ScanRowStateContext = {},
-): { label: string | null; ids: string[]; installs: number; reviews: number; merges: number } {
+  ctx: ScanRowStateContext,
+): { label: string | null; ids: string[]; installs: number; reviews: number; merges: number; blocked: number } {
   const ids: string[] = [];
   let installs = 0;
   let reviews = 0;
   let merges = 0;
+  // Rows waiting on an admin's yes, not on this person's look: the strip
+  // says so rather than "needs review" over rows that have nothing to review.
+  let blocked = 0;
   for (const r of rows) {
     const st = scanRowState(r, ctx);
     const id = (r as { id?: unknown }).id;
@@ -675,10 +801,11 @@ export function scanSessionAction(
       if (st.eligibility === "needs-install") installs++;
       if (st.action.kind === "merge") merges++;
     } else if (st.eligibility === "needs-review") reviews++;
+    else if (st.eligibility === "blocked") blocked++;
   }
   const n = ids.length;
   const label = n === 0 ? null : installs > 0 ? `Install & file ${n}` : `File ${n}`;
-  return { label, ids, installs, reviews, merges };
+  return { label, ids, installs, reviews, merges, blocked };
 }
 
 /** The "More tools" fold, summarised from the same hints the tools come
@@ -703,6 +830,25 @@ export function scanToolsFold(
     label: parts.length ? parts.join(", ") : null,
     reasons: tools.map((t) => ({ tool: t, reason: hints[t].reason })),
   };
+}
+
+/** The buttons behind the fold, by TOOL, each tool with its one reason
+ *  (#3075): a tool with two buttons (the box states) is one group under one
+ *  line, and a button's own words are its effect, never the reason again.
+ *  A surface renders a group as the reason line, then its buttons. */
+export function scanToolsFoldGroups<A extends { label: string; tool?: ScanTool; group?: string; folded?: string }>(
+  hints: ScanToolHints | null | undefined,
+  folded: readonly A[],
+): Array<{ key: string; reason: string | null; actions: A[] }> {
+  const fold = scanToolsFold(hints, folded.map((a) => a.tool).filter((t): t is ScanTool => !!t));
+  const groups: Array<{ key: string; reason: string | null; actions: A[] }> = [];
+  for (const a of folded) {
+    const key = a.group ?? a.tool ?? a.label;
+    const g = groups.find((x) => x.key === key);
+    if (g) g.actions.push(a);
+    else groups.push({ key, reason: fold.reasons.find((r) => r.tool === a.tool)?.reason ?? a.folded ?? null, actions: [a] });
+  }
+  return groups;
 }
 
 /** How long this capture has been sitting, in whole days. Null when it carries

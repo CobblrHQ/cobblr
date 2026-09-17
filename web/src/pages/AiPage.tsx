@@ -41,6 +41,7 @@ import {
   type WorkspaceAiOffer,
 } from "../lib/api";
 import { useActiveOrg } from "../auth/ActiveOrgContext";
+import { roleSatisfies } from "@cobblr/platform-contract/org-roles";
 import { TestConnectionButton, VerificationBadge } from "../components/ConnectionState";
 import { keyRefusedBy, refusalDialog, verificationToast } from "../lib/connection-state";
 import { useAiStatus } from "../components/AiStatusNotice";
@@ -131,7 +132,7 @@ export function AiPage() {
 
       <AutoPickPhotosSection
         slug={activeSlug}
-        canEdit={activeOrg?.role === "owner" || activeOrg?.role === "admin"}
+        canEdit={roleSatisfies(activeOrg?.role, ["owner", "admin"])}
       />
 
       <section className="rounded-xl border border-line dark:border-slate-700 bg-surface dark:bg-slate-900 p-4">
@@ -860,7 +861,7 @@ function AiAvailabilityBanner({ onAdd }: { onAdd?: () => void }) {
   const qc = useQueryClient();
   const toast = useToast();
   const status = useAiStatus();
-  const canEdit = activeOrg?.role === "owner" || activeOrg?.role === "admin";
+  const canEdit = roleSatisfies(activeOrg?.role, ["owner", "admin"]);
   const settingsQ = useQuery({
     queryKey: ["ai-settings", activeSlug],
     queryFn: () => api.getAiSettings(activeSlug),

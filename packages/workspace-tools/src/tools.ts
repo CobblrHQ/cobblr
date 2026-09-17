@@ -105,6 +105,14 @@ async function scanByText(api: WorkspaceApi, kind: string, q: string, limit: num
     total: hits.length,
     partial: items.length < hits.length,
     matched_by: `any text field (the kind's own search found no NAME containing "${q}")`,
+    // Nothing here is not nothing anywhere. "how much do I have of the black
+    // yarn" was searched in the Yarn list, found nothing, and answered "you
+    // don't have any black yarn" while four sat in Inventory (#3085): a
+    // thing filed in one list is not in another, and the cross-kind search
+    // is the tool that looks everywhere.
+    ...(hits.length === 0
+      ? { hint: `nothing in ${kind} matched "${q}". A thing filed in another list is not here: search_records looks across every list and kind before you say there is none.` }
+      : {}),
     ...(notes.length ? { note: notes.join(" ") } : {}),
     items,
   };

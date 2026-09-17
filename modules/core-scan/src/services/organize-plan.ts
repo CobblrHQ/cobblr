@@ -20,6 +20,7 @@
 
 import { randomUUID } from "node:crypto";
 import { platform } from "@cobblr/platform-contract";
+import { scanTargetsForOrg } from "./scan-target.js";
 import { significantTokens } from "./suggest-location.js";
 import { bucketForCategory, type CategoryBucket } from "./category-buckets.js";
 import { LengthUnitResolver, entityLongestMm, unitFieldDefsByKind } from "./organize-dims.js";
@@ -479,7 +480,8 @@ function storageOf(fields: Record<string, unknown>): unknown {
 }
 
 export async function gatherUnplacedEntities(orgId: string): Promise<UnplacedGather> {
-  const kinds = platform().entities.listScannable();
+  // Instances included: an unplaced grocery or yarn is unplaced too (#3132).
+  const kinds = await scanTargetsForOrg(orgId);
   const sweeps = await Promise.all(
     kinds.map((k) =>
       platform()

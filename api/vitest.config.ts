@@ -2,6 +2,7 @@ import { basename } from "node:path";
 import { defineConfig } from "vitest/config";
 import { BaseSequencer, type TestSpecification } from "vitest/node";
 import fileDurations from "./tests/file-durations.json";
+import { loadFactor, loadPerCore } from "../scripts/lib/load-factor.mjs";
 
 // Longest-first (LPT) file scheduling. With 8 forks the wall-clock is set by
 // whatever's still running at the end — and by default the 30-45s
@@ -29,6 +30,28 @@ class LongestFirstSequencer extends BaseSequencer {
   }
 }
 
+// The quiet-box budgets, as literals: lint:test-timeout-floor and
+// lint:poll-budget read them from here. Worn at the box's load below.
+const QUIET = {
+  // 60s — Cobblr's tests boot full tenant DBs (signup creates a
+  // dedicated postgres database, runs all module migrations, seeds
+  // bindings). On the author's Mac that's ~1.5s; the Forgejo runner on
+  // the OMV box is closer to 5–15s for the same work. Tail
+  // operations like DELETE /orgs (DROP DATABASE + cascade) can
+  // push past 20s under load. Generous so CI flake isn't a thing.
+  testTimeout: 60_000,
+  // hookTimeout has to be generous enough for the afterAll
+  // teardown sweep — a file that signs up 10 orgs needs to drop 10
+  // tenant DBs, each is a DROP DATABASE which can take seconds
+  // when other connections need to drain first.
+  hookTimeout: 120_000,
+};
+const perCore = loadPerCore();
+const factor = loadFactor(perCore);
+if (factor > 1) {
+  console.log(`[vitest] box at ${perCore?.toFixed(2)} load per core: test and hook timeouts scaled x${factor.toFixed(2)} (#3150)`);
+}
+
 export default defineConfig({
   test: {
     include: ["tests/**/*.test.ts"],
@@ -37,24 +60,18 @@ export default defineConfig({
     // tenant-DB leak that used to accumulate hundreds of orphan
     // databases per CI/dev cycle and exhaust connection slots + disk.
     setupFiles: ["./tests/setup-teardown.ts"],
-    // 60s — Cobblr's tests boot full tenant DBs (signup creates a
-    // dedicated postgres database, runs all module migrations, seeds
-    // bindings). On the author's Mac that's ~1.5s; the Forgejo runner on
-    // the OMV box is closer to 5–15s for the same work. Tail
-    // operations like DELETE /orgs (DROP DATABASE + cascade) can
-    // push past 20s under load. Generous so CI flake isn't a thing.
-    testTimeout: 60_000,
+    // Scaled by the box's load at start (scripts/lib/load-factor.mjs, #3150):
+    // a wall-clock budget measures the runner as much as the test, and five
+    // files timed out on one contended evening with nothing wrong in them.
+    // x1 on a quiet box, up to x3.
+    testTimeout: Math.round(QUIET.testTimeout * factor),
     // Tests hit a real, shared API container over HTTP. A cold
     // container warming its tenant-DB + wasm-sandbox pools under the
     // serial suite can spike and time a request out; the container
     // recovers, so one retry absorbs that transient without masking a
     // genuine logic failure (which fails deterministically on retry).
     retry: 1,
-    // hookTimeout has to be generous enough for the afterAll
-    // teardown sweep — a file that signs up 10 orgs needs to drop 10
-    // tenant DBs, each is a DROP DATABASE which can take seconds
-    // when other connections need to drain first.
-    hookTimeout: 120_000,
+    hookTimeout: Math.round(QUIET.hookTimeout * factor),
     // Run files across forks instead of one serial fork — the suite is ~2min
     // serial and the runner has 12 cores.
     //

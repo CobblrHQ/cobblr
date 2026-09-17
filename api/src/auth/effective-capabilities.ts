@@ -1,7 +1,9 @@
 // The single source of truth for "what can this user do in this org."
 //
 // Resolved the same way platform().auth.userHasCapability enforces:
-//   owner / admin → every capability, implicitly (all: true).
+//   admin tier    → every capability, implicitly (all: true). Which roles that
+//                    is comes from roleHoldsEveryCapability, the one home of
+//                    the rule — it is NOT a list of role names in here.
 //   else          → direct per-user grants (workspace_capability_grants)
 //                    UNION custom-role capability bundles
 //                    (workspace_role_assignments → workspace_role_capabilities).
@@ -12,11 +14,13 @@
 // no drift between the two that could either leak a field or hide one
 // the user is actually allowed to see.
 
+import { roleHoldsEveryCapability } from "@cobblr/platform-contract/org-roles";
 import { meta } from "../db/meta.js";
 
 export interface EffectiveCapabilities {
-  /** owner / admin — holds every capability implicitly. When true,
-   *  `caps` is empty and callers should skip per-capability checks. */
+  /** The admin tier (owner, admin, editor) holds every capability
+   *  implicitly. When true, `caps` is empty and callers should skip
+   *  per-capability checks. */
   all: boolean;
   /** Granted capability action_ids (direct grants ∪ custom-role bundles).
    *  Empty when `all` is true. */
@@ -28,7 +32,7 @@ export async function effectiveCapabilities(
   userId: string,
   role: string,
 ): Promise<EffectiveCapabilities> {
-  if (role === "owner" || role === "admin") {
+  if (roleHoldsEveryCapability(role)) {
     return { all: true, caps: new Set() };
   }
   const [direct, viaRole] = await Promise.all([

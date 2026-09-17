@@ -11,13 +11,15 @@
 // confirm in the triage queue).
 
 import type { Kysely } from "kysely";
+import { seenCountOf, seenDistinctOf } from "./seen-count.js";
 import { titleVariantsOf, type TitleVariants } from "@cobblr/platform-contract/display-identity";
+import { PHOTO_READ_KEY, type PhotoRead } from "@cobblr/platform-contract/scan-evidence";
 import { asPackaging, packagingFromProse, type Packaging } from "@cobblr/platform-contract/scan-tools";
 import { platform } from "@cobblr/platform-contract";
 import { tidyTruncatedName } from "./item-name.js";
 import type { CoreScanDB } from "../db.js";
 import { reportBarcodeCorrection, reportBarcodeReject } from "./barcode-corrections.js";
-import { identityMeta, mergeMeta } from "./metadata.js";
+import { identityMeta, mergeMeta, CATALOG_PICTURE_NOT_PERSONS } from "./metadata.js";
 import {
   earnsMatchesYourPhoto,
   firstPass,
@@ -204,6 +206,9 @@ export async function refreshCatalogImageByName(
       updated_at: new Date(),
     })
     .where("id", "=", itemId)
+    // The check at the top of this function read the row before the search
+    // went out; a pick made since is the person's (metadata.ts).
+    .where(CATALOG_PICTURE_NOT_PERSONS)
     .execute();
   return "url";
 }
@@ -273,6 +278,10 @@ export interface PhotoIdentity {
   /** A known series/franchise this titled work belongs to (Harry Potter,
    *  Little House on the Prairie), or null. Used to group + tag siblings. */
   series: string | null;
+  /** The author, artist or maker AS PRINTED on the cover or label, when
+   *  legible; never completed from knowledge. Evidence, not inference
+   *  (scan-evidence.ts). */
+  creator?: string | null;
   /** A titled work's title as printed, its translation and its
    *  transliteration, kept apart (the contract's TitleVariants, #3061); null
    *  for anything that is not a titled work in another language. Only what
@@ -334,11 +343,10 @@ export function normalizeIndividuals(
       const i = (it ?? {}) as { name?: unknown; brand?: unknown; qty?: unknown };
       const name = typeof i.name === "string" ? i.name.trim() : "";
       if (!name) return null;
-      const qty = Number(i.qty);
       return {
         name: name.slice(0, 200),
         brand: typeof i.brand === "string" && i.brand.trim() ? i.brand.trim().slice(0, 120) : null,
-        qty: Number.isFinite(qty) && qty >= 1 ? Math.min(Math.round(qty), 999) : 1,
+        qty: seenCountOf(i.qty),
       };
     })
     .filter((x): x is Individual => x !== null);
@@ -347,13 +355,7 @@ export function normalizeIndividuals(
   // what it actually saw, and the offer must never promise an item it can't
   // produce. A count with NO names is still honest ("2 items — split?"); the
   // names then come from the segmentation pass the user opted into.
-  const claimed = Number(claimedDistinct);
-  const distinct =
-    individuals.length >= 2
-      ? individuals.length
-      : Number.isFinite(claimed) && claimed >= 1
-        ? Math.min(Math.round(claimed), 99)
-        : 1;
+  const distinct = individuals.length >= 2 ? individuals.length : seenDistinctOf(claimedDistinct);
   return { distinct, individuals };
 }
 
@@ -551,6 +553,7 @@ export function parseIdentityReply(parsed: Record<string, unknown> | null): Phot
     entityType: et,
     series: str(p.series) || str(p.franchise) || null,
     title_variants: titleVariantsOf({ title_variants: p.title_variants }),
+    creator: str(p.creator),
     // A richer-shape reply with no confidence field WAS confident enough to
     // describe the item — don't read that as a 0.5 maybe.
     confidence: clamp01(typeof p.confidence === "number" ? p.confidence : str(p.name) ? 0.5 : 0.75),
@@ -615,6 +618,10 @@ export function identityOverlay(
   };
   if (identity.series) set.series = identity.series;
   if (identity.title_variants) set.title_variants = identity.title_variants;
+  // What this picture shows as printed, kept apart from what the pass
+  // inferred: the route's guesses are checked against it (#3070).
+  const read = photoReadFor(opts.imageFileId, { creator: identity.creator ?? null, brand: identity.brand, title: identity.title_variants?.original?.title ?? null });
+  if (read) set[PHOTO_READ_KEY] = read;
   // A serial/service tag read off the label → carried to the destination table's
   // native serial_number field on commit (see inbox.ts commit).
   if (identity.serial_number) set.serial_number = identity.serial_number;
@@ -645,6 +652,31 @@ export function identityOverlay(
     keep.push("photo_observations", "photo_distinct", "photo_individuals", "photo_observed_for");
   }
   return { set, keep };
+}
+
+/** The printed read of ONE picture, as the evidence rule reads it
+ *  (scan-evidence.ts PHOTO_READ_KEY): nothing stored when nothing legible
+ *  was read, and never a read of another picture than the row's own. */
+export function photoReadFor(imageFileId: string, printed: { creator?: string | null; brand?: string | null; title?: string | null } | null | undefined): PhotoRead | null {
+  if (!printed || typeof printed !== "object") return null;
+  const clean = (v: unknown): string | null => (typeof v === "string" && v.trim() && v.trim().toLowerCase() !== "null" ? v.trim() : null);
+  const read: PhotoRead = { for: imageFileId, creator: clean(printed.creator), brand: clean(printed.brand), title: clean(printed.title) };
+  return read.creator || read.brand || read.title ? read : null;
+}
+
+async function keepPhotoRead(orgId: string, itemId: string, imageFileId: string, printed: { creator?: string | null; brand?: string | null; title?: string | null } | null | undefined): Promise<void> {
+  const read = photoReadFor(imageFileId, printed);
+  if (!read) return;
+  try {
+    const db = (await platform().tenants.getDb(orgId)) as unknown as Kysely<CoreScanDB>;
+    await db
+      .updateTable("core_scan_inbox_items")
+      .set({ suggested_metadata: mergeMeta({ [PHOTO_READ_KEY]: read }, []) as never, updated_at: new Date() })
+      .where("id", "=", itemId)
+      .execute();
+  } catch (e) {
+    console.warn(`[core-scan] ${itemId}: could not keep the photo's printed read:`, (e as Error).message);
+  }
 }
 
 async function patchNote(ctx: PhotoEnrichContext, note: string): Promise<void> {
@@ -889,7 +921,15 @@ export async function crossCheckScanPhoto(
       ? meta.photo_observations.trim()
       : null;
 
-  type Verdict = { match?: string; reason?: string; correct_name?: string; correct_brand?: string };
+  type Verdict = {
+    match?: string;
+    reason?: string;
+    correct_name?: string;
+    correct_brand?: string;
+    /** What the photo shows AS PRINTED, kept apart from the verdict: the
+     *  evidence a route's guess is checked against (scan-evidence.ts). */
+    printed?: { creator?: string | null; brand?: string | null; title?: string | null } | null;
+  };
   const parseVerdict = (r: { result: unknown }): Verdict => {
     const res = r.result as { text?: string; content?: string };
     const raw = res.text ?? res.content ?? "";
@@ -947,8 +987,13 @@ export async function crossCheckScanPhoto(
             "real product unambiguous, also return what the item actually IS — a concise " +
             "retail product name, plus brand if visible. Omit them if you can't read it " +
             "confidently. " +
+            'Separately, in "printed", report what is PRINTED on the item or its cover, ' +
+            "verbatim and only when clearly legible: the author, artist or maker as " +
+            "printed (a book's cover author, a record's artist), the brand as printed, " +
+            "and the title as printed. Never complete or translate them; null when not shown. " +
             'Reply with JSON only: {"match":"yes"|"no"|"unsure","reason":"<one short sentence>",' +
-            '"correct_name":"<the real product name, optional>","correct_brand":"<brand, optional>"}.',
+            '"correct_name":"<the real product name, optional>","correct_brand":"<brand, optional>",' +
+            '"printed":{"creator":<string|null>,"brand":<string|null>,"title":<string|null>}}.',
         },
         source: { kind: "core-scan:photo-crosscheck", id: itemId },
       }),
@@ -971,6 +1016,11 @@ export async function crossCheckScanPhoto(
     await confirmPending(false); // can't verify → fall back to the barcode result
     return; // best-effort — a flaky/absent vision provider never blocks anything
   }
+  // What the photo showed as printed is evidence about THIS picture, kept
+  // whatever the verdict: a name the barcode resolved right can still carry
+  // an author the cover contradicts (#3070). Only a look at the pixels can
+  // have read it.
+  if (basis === "image") await keepPhotoRead(orgId, itemId, row.image_file_id!, verdict?.printed);
   const matchVerdict = String(verdict?.match ?? "").toLowerCase();
   if (matchVerdict !== "no") {
     // "yes" / "unsure" → the photo does not contradict the barcode. Release the

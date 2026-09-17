@@ -11,7 +11,7 @@
 import { useState, type ReactNode } from "react";
 import { scanToolsFold } from "@cobblr/platform-contract/scan-triage";
 import { ChevronDown, MapPin, ReceiptText, Scissors } from "lucide-react";
-import { SCAN_TOOLS, type ScanTool, type ScanToolHints } from "@cobblr/platform-contract/scan-tools";
+import { BOX_STATE_EFFECT, SCAN_TOOLS, type ScanTool, type ScanToolHints } from "@cobblr/platform-contract/scan-tools";
 import { MenuHead, MenuItem, MenuSep } from "./HeaderMenu";
 
 export interface ScanToolMenuProps {
@@ -96,7 +96,7 @@ export function ScanToolMenu(p: ScanToolMenuProps) {
             <MenuItem
               icon={<span className="text-[13px]">📦</span>}
               label="Empty box"
-              hint="The box is here; the item isn't"
+              hint={BOX_STATE_EFFECT["empty-box"]}
               state={p.boxState === "empty-box" ? "on" : undefined}
               disabled={!!p.busy.boxState}
               onClick={() => p.onBoxState(p.boxState === "empty-box" ? null : "empty-box")}
@@ -104,7 +104,7 @@ export function ScanToolMenu(p: ScanToolMenuProps) {
             <MenuItem
               icon={<span className="text-[13px]">📦</span>}
               label="Item in box"
-              hint="Still packaged — the box rides along"
+              hint={BOX_STATE_EFFECT["item-in-box"]}
               state={p.boxState === "item-in-box" ? "on" : undefined}
               disabled={!!p.busy.boxState}
               onClick={() => p.onBoxState(p.boxState === "item-in-box" ? null : "item-in-box")}

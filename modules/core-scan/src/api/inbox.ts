@@ -20,7 +20,7 @@
 // body limits sane.
 
 import { rememberPickedImage } from "../services/picked-images.js";
-import { asTitleFormat, formatTitleVariants, titleVariantsOf, type TitleFormat } from "@cobblr/platform-contract/display-identity";
+import { TITLE_VARIANTS_KEY, asTitleFormat, formatTitleVariants, titleVariantsOf, type TitleFormat } from "@cobblr/platform-contract/display-identity";
 import { applyUserFieldPatch, candidateKind, candidatesWithUserFields } from "../services/user-fields.js";
 import { isMachineReadCode } from "../services/barcode-source.js";
 import { randomUUID } from "node:crypto";
@@ -36,9 +36,10 @@ import {
 import { resolveRequirement, storageRequirementFor } from "../services/storage-requirement.js";
 import { applyReceiptFacts } from "../services/receipt-candidate-facts.js";
 import { alignStorageFields } from "../services/align-storage-fields.js";
-import { moveQuantity, scanTargetOf, startingCount, type QuantityMove } from "../services/scan-target.js";
+import { moveQuantity, scanTargetOf, scanTargetsRegistered, startingCount, type QuantityMove } from "../services/scan-target.js";
 import { retargetByCategory } from "../services/retarget-by-category.js";
 import { lineQuantity } from "../services/receipt-shared.js";
+import { FiledQuantity, filedQuantityOf } from "../services/filed-quantity.js";
 import { expiryDefaults } from "../services/shelf-life.js";
 import { Router, type Request } from "express";
 import { sql } from "kysely";
@@ -1758,8 +1759,8 @@ inboxRouter.get(
 // Light edits the camera modal makes in-the-moment: the quantity stepper,
 // and an optional name correction. Triage/commit still happens on /scan.
 
-const PatchBody = z.object({
-  quantity: z.number().int().min(1).max(100_000).optional(),
+export const PatchBody = z.object({
+  quantity: FiledQuantity.optional(),
   name: z.string().min(1).max(160).optional(),
   // Set/clear the filing location on an existing item (bulk "Set location" in
   // triage stamps the same value across a selection). null clears it.
@@ -1999,7 +2000,7 @@ async function growCategoryChoices(
   });
 }
 
-const ConfirmBody = z.object({
+export const ConfirmBody = z.object({
   /** Optional — when absent, routed from the identify's asset/part hint
    *  (suggested_metadata.entity_type): asset → assets:asset, else
    *  inventory:part. Both must be given together to override. */
@@ -2012,8 +2013,10 @@ const ConfirmBody = z.object({
    *  "bad request body" (reported 2026-08-03). */
   name: z.string().min(1).max(2000).optional(),
   location_id: z.string().uuid().optional(),
-  /** Quantity override. Falls back to the inbox row's quantity. */
-  quantity: z.number().nonnegative().optional(),
+  /** Quantity override. Falls back to the inbox row's quantity. The same
+   *  rule as the stepper's, from the same place (services/filed-quantity.ts):
+   *  a count from one, never zero (#3088). */
+  quantity: FiledQuantity.optional(),
   /** Module-specific extras forwarded verbatim to the create endpoint. */
   extras: z.record(z.unknown()).optional(),
   /** Tags to attach to the created entity (session-theme "tag them all", or a
@@ -2046,7 +2049,7 @@ function resolveTargetKind(
   entityType: unknown,
 ): { module: string; kind: string } {
   if (explicitModule && explicitKind) return { module: explicitModule, kind: explicitKind };
-  const scannables = platform().entities.listScannable();
+  const scannables = scanTargetsRegistered();
   const hint = typeof entityType === "string" ? entityType : undefined;
   const chosen =
     (hint ? scannables.find((s) => s.noun === hint) : undefined) ??
@@ -2205,7 +2208,7 @@ inboxRouter.post(
     } catch {
       /* advisory — a confirm must never fail over provenance */
     }
-    const scannedQty = Number(row.quantity ?? 1);
+    const scannedQty = filedQuantityOf(row.quantity);
     const qty =
       parsed.data.quantity ??
       (targetIsUnique && !(scannedQty > 1) ? undefined : scannedQty);
@@ -2349,6 +2352,12 @@ inboxRouter.post(
         // Physical annotations the triage captured (scan-parity Epic D).
         pack_size: (meta as { pack_size?: number }).pack_size ?? undefined,
         box_state: (meta as { box_state?: string }).box_state ?? undefined,
+        // A titled work's other forms (the original, a translation, a
+        // transliteration) ride to the record under the same key the row
+        // keeps them, so the kernel serves the record's title in the
+        // person's format the way the inbox served the row (#3061). The
+        // stored name stays what the source said.
+        [TITLE_VARIANTS_KEY]: titleVariantsOf(meta) ?? undefined,
         // Empty box: the scan location is the BOX's home, not the item's — say
         // so instead of silently mislocating the entity.
         ...((meta as { box_state?: string }).box_state === "empty-box" &&
@@ -2443,9 +2452,17 @@ inboxRouter.post(
       const errText = await createRes.text();
       // Surface the TARGET's own message (e.g. "Enable Inventory in Configuration
       // → Modules"), not just the bare status, so the error is actionable.
+      // And its `blocked`, whole: a refusal the target explained (a permission
+      // the person can ask for, blocked-action.ts) reaches the app's
+      // blocked-action sheet through here exactly as it would have directly.
+      // This is the door the reporter's "ask a workspace admin" toast came
+      // through, with the explanation stripped (#3073).
       let targetMsg: string | undefined;
+      let blocked: unknown;
       try {
-        targetMsg = (JSON.parse(errText) as { error?: { message?: string } }).error?.message;
+        const parsed = JSON.parse(errText) as { error?: { message?: string; blocked?: unknown } };
+        targetMsg = parsed.error?.message;
+        blocked = parsed.error?.blocked;
       } catch {
         /* non-JSON body */
       }
@@ -2454,6 +2471,7 @@ inboxRouter.post(
           code: "create_failed",
           message: targetMsg ?? `Target create returned ${createRes.status}`,
           details: errText,
+          ...(blocked ? { blocked } : {}),
         },
       });
       return;
@@ -4873,7 +4891,7 @@ inboxRouter.get(
     const ctx = tenantContext(req);
     const row = await db
       .selectFrom("core_scan_inbox_items")
-      .select(["barcode_text", "suggested_name", "status", "target_entity_id", "suggested_candidates"])
+      .select(["barcode_text", "suggested_name", "suggested_manufacturer", "status", "target_entity_id", "suggested_candidates"])
       .where("id", "=", id ?? "")
       .executeTakeFirst();
     if (!row) {
@@ -4884,6 +4902,8 @@ inboxRouter.get(
       barcode: row.barcode_text,
       name: row.suggested_name,
       fields: topCandidateFields(row.suggested_candidates),
+      brand: row.suggested_manufacturer,
+      category: topCandidateCategory(row.suggested_candidates),
     });
     res.json(matches);
   }),
@@ -5373,7 +5393,7 @@ inboxRouter.post(
         // a fresh lot on it is never overwritten by a snapshot taken before
         // the lot existed, and a PATCH that fails leaves the count unmoved.
         priorQty = Number.isFinite(cur) ? cur : 0;
-        qtyAdded = Math.max(1, Number(row.quantity ?? 1));
+        qtyAdded = filedQuantityOf(row.quantity);
       }
       // Barcode-append: a scanned (not AI-read) code the entity doesn't have yet.
       const aiRead = isMachineReadCode(
@@ -6426,6 +6446,8 @@ inboxRouter.post(
           barcode: row.barcode_text,
           name: row.suggested_name,
           fields: topCandidateFields(candidatesWithUserFields(storedCandidateList(row.suggested_candidates), row.suggested_metadata)),
+          brand: row.suggested_manufacturer,
+          category: topCandidateCategory(row.suggested_candidates),
         })) as never;
       } catch {
         // A matcher that fails must not turn into "nothing matched", which
@@ -6798,7 +6820,7 @@ inboxRouter.post(
         /* trait lookup is best-effort — fall back to the summing default */
       }
     }
-    const totalQty = combinedQuantity(rows.map((r) => Number(r.quantity) || 1), uniqueKind);
+    const totalQty = combinedQuantity(rows.map((r) => filedQuantityOf(r.quantity)), uniqueKind);
     const barcodes = Array.from(new Set(rows.map((r) => r.barcode_text).filter(Boolean))) as string[];
     const meta = (primary.suggested_metadata ?? {}) as Record<string, unknown>;
     // Barcode authority: if the kept item's own barcode was READ BY AI (OCR, can
@@ -7093,6 +7115,13 @@ function topCandidateFields(raw: unknown): Record<string, unknown> | null {
   return top?.fields ?? null;
 }
 
+/** The kind of thing the top route calls the scan: its category, when the
+ *  table declared one. */
+function topCandidateCategory(raw: unknown): string | null {
+  const top = storedCandidateList(raw)[0] as { category?: unknown } | undefined;
+  return typeof top?.category === "string" && top.category.trim() ? top.category : null;
+}
+
 export function storedCandidateList(raw: unknown): unknown[] {
   if (Array.isArray(raw)) return raw;
   if (typeof raw === "string") {
@@ -7370,6 +7399,7 @@ async function matchItem(opts: MatchItemOpts): Promise<unknown[] | null> {
       evidence: evidenceStamps,
       tableFields: topEntry?.fields,
       priorFields: (storedCandidateList(row.suggested_candidates)[0] as { fields?: Record<string, unknown> } | undefined)?.fields ?? null,
+      row: { image_file_id: row.image_file_id, suggested_name: row.suggested_name },
     });
 
     // THE REPLAY INVARIANT, checked rather than merely intended: a replay may
@@ -7439,6 +7469,8 @@ async function matchItem(opts: MatchItemOpts): Promise<unknown[] | null> {
       barcode: row.barcode_text,
       name: adoptName ? candName : row.suggested_name,
       fields: (top as { fields?: Record<string, unknown> } | undefined)?.fields ?? null,
+      brand: row.suggested_manufacturer,
+      category: (top as { category?: string } | undefined)?.category ?? null,
     }).catch(() => null);
     const bestTracked =
       tracked?.barcode_matches[0] ?? tracked?.name_matches[0] ?? null;

@@ -20,8 +20,10 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { EyeOff, Plus, X } from "lucide-react";
 import { useToast, usePageTitle } from "@cobblr/platform-web";
 import { ApiError, api } from "../lib/api";
+import { roleHoldsEveryCapability } from "@cobblr/platform-contract/org-roles";
 import { useActiveOrg } from "../auth/ActiveOrgContext";
 import { CapabilityMatrix } from "../components/CapabilityMatrix";
+import { ApprovalRequestsCard } from "../components/ApprovalRequestsCard";
 import { useSearchParams } from "react-router-dom";
 
 import { UsersPage } from "./UsersPage";
@@ -173,6 +175,9 @@ function PermissionsOverview() {
 
   return (
     <div className="space-y-6">
+      {/* What people are asking for, first: the same cards the bell and the
+          Discord DM carried, for an approver who missed both. */}
+      <ApprovalRequestsCard slug={activeSlug} />
       {members.length > 0 && (
         <section className="rounded-xl border border-line dark:border-slate-700 bg-surface dark:bg-slate-900 p-4 space-y-2">
           <div className="flex items-baseline gap-2">
@@ -190,7 +195,7 @@ function PermissionsOverview() {
               const roleNames = (m.custom_role_ids ?? [])
                 .map((id) => (customRolesQ.data?.items ?? []).find((r) => r.id === id)?.name)
                 .filter(Boolean) as string[];
-              const adminish = m.role === "owner" || m.role === "admin" || m.role === "editor";
+              const adminish = roleHoldsEveryCapability(m.role);
               return (
                 <li key={m.id} className="py-2 flex flex-wrap items-center gap-2">
                   <span className="font-medium text-content dark:text-mortar-100 min-w-0 truncate">

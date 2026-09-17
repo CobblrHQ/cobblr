@@ -24,6 +24,7 @@
 
 import { sql, type Kysely } from "kysely";
 import { platform } from "@cobblr/platform-contract";
+import { storedDestinationOf } from "@cobblr/platform-contract/scan-triage";
 import { assembleMergedMenu, heuristicMatch, perceiveRow, type MatchCandidate, type ScanMenuEntry } from "./matchmaker.js";
 import { applyReceiptFacts } from "./receipt-candidate-facts.js";
 import { applySplitInheritance } from "./split-inherit.js";
@@ -127,7 +128,7 @@ export function rerouteVerdict(row: RerouteRow, menu: readonly ScanMenuEntry[]):
   if (Number.isNaN(matchedAt)) return { action: "skip", why: "not-matched" };
   if (matchedAt >= Date.parse(REROUTE_RULE.since)) return { action: "skip", why: "matched-after-rule" };
   if (row.target_entity_id || row.target_module) return { action: "skip", why: "filed" };
-  if (meta.user_fields || meta.reviewed === true) return { action: "skip", why: "person-answered" };
+  if (meta.user_fields || meta.reviewed === true || storedDestinationOf(meta)?.by === "person") return { action: "skip", why: "person-answered" };
   const stored = candidateList(row.suggested_candidates);
   const top = stored[0];
   if (!top) return { action: "skip", why: "no-route" };

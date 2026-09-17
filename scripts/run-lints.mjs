@@ -72,7 +72,8 @@ function main() {
 
   if (names.length === 0) {
     console.error("[lints] no lint:* scripts matched — the discovery is broken, which is worse than a red lint.");
-    process.exit(1);
+    process.exitCode = 1;
+    return;
   }
 
   const concurrency = Number(process.env.COBBLR_LINT_CONCURRENCY) || defaultConcurrency();
@@ -147,7 +148,8 @@ function main() {
     const blocking = record ? failed.filter((f) => f.name !== "lint:lint-durations") : failed;
     if (blocking.length) {
       console.error(`\n[lints] ✗ ${blocking.length} failing: ${blocking.map((f) => f.name).join(", ")}`);
-      process.exit(1);
+      process.exitCode = 1;
+      return;
     }
 
     // A GREEN lint that got slow is invisible: it passes, CI passes, and the
@@ -204,16 +206,19 @@ function main() {
           `  (node scripts/run-lints.mjs --record, on an idle machine) so it stays a\n` +
           `  decision someone made rather than drift nobody saw.\n`,
       );
-      process.exit(1);
+      process.exitCode = 1;
+      return;
     }
     if (record) {
       if (only) {
         console.error("[lints] --record refused: a partial run (--only) is not a baseline for the suite.");
-        process.exit(1);
+        process.exitCode = 1;
+        return;
       }
       if (contended) {
         console.error(`[lints] --record refused: ${factorLine}; a contended run is not a quiet baseline. Try again when the machine is idle.`);
-        process.exit(1);
+        process.exitCode = 1;
+        return;
       }
       const ms = Object.fromEntries(results.map((r) => [r.name, r.ms]).sort(([a], [b]) => a.localeCompare(b)));
       const doc = {
@@ -228,7 +233,8 @@ function main() {
         const [again] = await runParallel([{ name: "lint:lint-durations", cmd: scripts["lint:lint-durations"], cwd: ROOT }], { concurrency: 1 });
         if (again.code !== 0) {
           console.error(`[lints] ✗ lint:lint-durations still fails against the file just recorded`);
-          process.exit(1);
+          process.exitCode = 1;
+          return;
         }
       }
     }

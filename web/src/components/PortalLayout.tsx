@@ -19,6 +19,7 @@ import { Link, Outlet, useNavigate, useParams } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
 import { LogOut, Moon, Settings, Sun } from "lucide-react";
 import { api, type AppTheme, type PortalConfig } from "../lib/api";
+import { shellForRole } from "@cobblr/platform-contract/org-roles";
 import { useAuth } from "../auth/AuthContext";
 import { useTheme } from "../theme/ThemeContext";
 import { fontFaceCss, mutedStyle, textStyle, themeWrapperStyle } from "../lib/appTheme";
@@ -49,9 +50,12 @@ export function PortalLayout() {
     enabled: !!slug,
   });
 
-  // Admins/owners see a "Back to admin" link so they can hop between
-  // shells without typing the URL.
-  const isAdmin = caps.data?.role === "owner" || caps.data?.role === "admin";
+  // The admin tier sees a "Back to admin" link so they can hop between
+  // shells without typing the URL. `all` is the server's answer to which
+  // roles that is. A member's shell is the workspace too (#3122); their
+  // link says so, and a guest, whose shell is this, gets none.
+  const isAdmin = caps.data?.all === true;
+  const hasWorkspace = !!caps.data && shellForRole(caps.data.role) === "workspace";
 
   const portalConfig: PortalConfig = config.data?.config ?? { pinned_views: [] };
   const headerName = portalConfig.display_name || config.data?.org_name || "Portal";
@@ -106,15 +110,15 @@ export function PortalLayout() {
           <div className="flex-1" />
 
           <div className="flex items-center gap-1 shrink-0">
-            {isAdmin && (
+            {hasWorkspace && (
               <button
                 onClick={() => navigate("/")}
                 className="text-[11px] font-mono uppercase tracking-widest text-faint dark:text-slate-500 hover:text-accent transition px-2 py-1"
                 style={mutedStyle(skin)}
-                title="Switch to the admin shell"
+                title={isAdmin ? "Switch to the admin shell" : "Open the workspace"}
               >
                 <Settings size={11} className="inline -mt-0.5 mr-1" />
-                admin
+                {isAdmin ? "admin" : "workspace"}
               </button>
             )}
             <span

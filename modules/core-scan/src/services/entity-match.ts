@@ -20,8 +20,8 @@
 // EZ-Reach" matches "WD-40 EZ-Reach Lubricant" but not "WD External Drive".
 
 import type { Kysely } from "kysely";
-import { identifierFieldNames, platform, type ResolvedEntity } from "@cobblr/platform-contract";
-import { scanTargetOfRecord } from "./scan-target.js";
+import { identifierFieldNames, platform, type ResolvedEntity, type ScannableKind } from "@cobblr/platform-contract";
+import { scanTargetsForOrg, scanTargetsRegistered } from "./scan-target.js";
 import { isJunkName } from "./enrich.js";
 import { identifierEquals, identifierForms } from "./identifier-equals.js";
 import { sameProduct } from "@cobblr/platform-contract/same-product";
@@ -174,20 +174,57 @@ function tokenMatches(want: string, have: string): boolean {
  *  the case that otherwise made every weekly repeat purchase a NEW part and
  *  quietly split its own price history in half. Each stored token is spent at
  *  most once, so a two-word scan can't score 2 against a single stored word. */
-export function nameOverlap(want: string[], storedTitle: string): { shared: number; pass: boolean } {
-  const have = tokens(storedTitle);
+export function nameOverlap(
+  want: string[],
+  storedTitle: string,
+  /** What the two sides are known to share by declaration rather than by
+   *  identity: the maker and the kind of thing. "Royal Doulton" and
+   *  "Character Jug" are four of the five words on a Geronimo and on a Don
+   *  Quixote, and they say what the things are, never which one (#3065).
+   *  Taken out of both sides before the count, so the words that remain are
+   *  the ones that name the thing. */
+  ignore: { brand?: string | null; category?: string | null } = {},
+): { shared: number; pass: boolean } {
+  // "Character Jugs" names the kind of a "Character Jug": compared as stems.
+  const stem = (w: string): string => w.replace(/(ie)?s$/, (m) => (m === "ies" ? "y" : ""));
+  const known = new Set([...tokens(ignore.brand ?? ""), ...tokens(ignore.category ?? "")].map(stem));
+  const wanted = want.filter((w) => !known.has(stem(w)));
+  const stored = tokens(storedTitle);
+  const have = stored.filter((h) => !known.has(stem(h)));
+  const stripped = wanted.length < want.length || have.length < stored.length;
+  // A scan that is nothing but the maker and the kind cannot name a record.
+  if (wanted.length === 0) return { shared: 0, pass: false };
   const spent = new Set<number>();
   let shared = 0;
-  for (const w of want) {
+  for (const w of wanted) {
     const hit = have.findIndex((h, i) => !spent.has(i) && tokenMatches(w, h));
     if (hit >= 0) {
       spent.add(hit);
       shared += 1;
     }
   }
-  const ratio = shared / Math.max(1, Math.min(want.length, new Set(have).size));
-  const pass = want.length === 1 ? shared === 1 : shared >= 2 && ratio >= 0.6;
+  const ratio = shared / Math.max(1, Math.min(wanted.length, new Set(have).size));
+  // With the maker and the kind gone, the words left are the ones that name
+  // the thing, and one of them shared over half of the shorter side is a
+  // name ("Civic Hatchback" and "2019 Civic" are one car); with nothing
+  // known to strip, the bar stays two shared words, as before.
+  const pass = wanted.length === 1 ? shared === 1 : stripped ? shared >= 1 && ratio >= 0.5 : shared >= 2 && ratio >= 0.6;
   return { shared, pass };
+}
+
+/** The words a scan and a record share by declaration: the maker and the
+ *  kind, from the scan's brand and category and the record's own fields. */
+function knownWords(
+  opts: { brand?: string | null; category?: string | null; fields?: Record<string, unknown> | null },
+  stored: Record<string, unknown>,
+): { brand: string | null; category: string | null } {
+  const text = (v: unknown): string => (typeof v === "string" ? v : "");
+  const brand = [opts.brand, stored.manufacturer, stored.brand, stored.maker].map(text).filter(Boolean).join(" ");
+  const category = [opts.category, opts.fields?.category, stored.category, stored.category_name, stored.kind, stored.type]
+    .map(text)
+    .filter(Boolean)
+    .join(" ");
+  return { brand: brand || null, category: category || null };
 }
 
 function metaBarcode(fields: Record<string, unknown>): string | null {
@@ -251,27 +288,18 @@ interface OrgKind {
 }
 
 async function kindsForOrg(orgId: string): Promise<OrgKind[]> {
-  let recs: Array<{ id: string; module_name: string; fields?: { name: string; fieldRole?: string | null }[] }>;
+  let kinds: ScannableKind[];
   try {
-    recs = await platform().entities.listKindsForOrg(orgId);
+    kinds = await scanTargetsForOrg(orgId);
   } catch {
-    return platform().entities.listScannable().map((k) => ({ ...k, nativeIdentifiers: [] }));
+    return scanTargetsRegistered().map((k) => ({ ...k, nativeIdentifiers: [] }));
   }
-  const out: OrgKind[] = [];
-  for (const rec of recs) {
-    // A synthesized instance record already carries its full kind in `id`
-    // ("groceries:item"); a base record carries the bare kind ("part").
-    const kind = rec.id.includes(":") ? rec.id : `${rec.module_name}:${rec.id}`;
-    const info = scanTargetOfRecord({ kind, module_name: rec.module_name });
-    if (!info) continue;
-    out.push({
-      kind,
-      noun: info.noun,
-      ...(info.qtyField ? { qtyField: info.qtyField } : {}),
-      nativeIdentifiers: identifierFieldNames(rec),
-    });
-  }
-  return out;
+  return kinds.map((k) => ({
+    kind: k.kind,
+    noun: k.noun,
+    ...(k.qtyField ? { qtyField: k.qtyField } : {}),
+    nativeIdentifiers: identifierFieldNames(k.record),
+  }));
 }
 
 /** The workspace's identifier-ROLE custom fields, per kind: a bundle's ISBN, a
@@ -320,6 +348,11 @@ export async function findTracked(
      *  inherited): a set number, a model, an ISBN. A record whose identifier
      *  differs is never a name match, however the words overlap. */
     fields?: Record<string, unknown> | null;
+    /** The maker the scan names, and the kind of thing its route calls it
+     *  (the candidate's category): what two records share by declaration,
+     *  never evidence they are one record (#3065). */
+    brand?: string | null;
+    category?: string | null;
   },
 ): Promise<{ barcode_matches: TrackedMatch[]; name_matches: TrackedMatch[] }> {
   const kinds = await kindsForOrg(orgId);
@@ -405,7 +438,10 @@ export async function findTracked(
                 const b = metaBarcode(e.fields);
                 return !b || !barcode || b === barcode;
               })
-              .map((e) => ({ e, ...nameOverlap(want, e.title) }))
+              // The maker and the kind on EITHER side are taken out of the
+              // count: the scan's brand and category, and the record's own
+              // manufacturer and category fields.
+              .map((e) => ({ e, ...nameOverlap(want, e.title, knownWords(opts, e.fields)) }))
               .filter(({ pass }) => pass)
               // The identity the two sides already carry outranks the word
               // overlap that got them here: a record with a different set

@@ -18,6 +18,8 @@ import { fileURLToPath } from "node:url";
 import { withFieldLabels } from "./platform/field-labels.js";
 import { dirname, resolve } from "node:path";
 import { setPlatform, canContain, canBeContained } from "@cobblr/platform-contract";
+import { roleHoldsEveryCapability } from "@cobblr/platform-contract/org-roles";
+import { describeCapabilityBlock } from "./platform/approvals.js";
 import { resolveFieldDefsForKind } from "./platform/field-defs.js";
 import { sql, type Kysely, type Generated } from "kysely";
 import { env } from "./env.js";
@@ -264,6 +266,7 @@ async function boot() {
       getScannable: scanRegistry.getScannable,
       getScannableForModule: scanRegistry.getScannableForModule,
       listScannable: scanRegistry.listScannable,
+      listScannableForOrg: scanRegistry.listScannableForOrg,
       lookup: entities.lookup,
       lookupMany: entities.lookupMany,
       list: entities.list,
@@ -504,13 +507,13 @@ async function boot() {
     },
     auth: {
       // Capability check walks three sources in order:
-      //   1. Stock role: owner/admin always pass.
+      //   1. Stock role: the admin tier (by rank, so editor too) always passes.
       //   2. Direct per-user grant (workspace_capability_grants).
       //   3. Custom-role assignment that includes the capability.
       // See docs/modules/member-portal-and-permissions.md
       // §2.4 + 2026-05-25-audit.md S2.
       userHasCapability: async ({ orgId, userId, role, actionId }) => {
-        if (role === "owner" || role === "admin") return true;
+        if (roleHoldsEveryCapability(role)) return true;
         // Direct grant.
         const grant = await meta
           .selectFrom("workspace_capability_grants")
@@ -532,6 +535,7 @@ async function boot() {
           .executeTakeFirst();
         return !!viaRole;
       },
+      describeBlockedCapability: (args) => describeCapabilityBlock(args),
       mintAppToken: ({ userId, appSlug }) => signAppToken(userId, appSlug),
       mintSession: ({ userId }) => signSession(userId),
       registerEmailSender: hostedSeams.registerAuthEmailSender,

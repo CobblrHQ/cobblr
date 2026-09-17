@@ -7,12 +7,13 @@
 import { useState } from "react";
 import { Sliders } from "lucide-react";
 import { useActiveOrg } from "../auth/ActiveOrgContext";
+import { roleSatisfies } from "@cobblr/platform-contract/org-roles";
 import { isFocused, setFocused } from "../lib/api";
 
 export function SimpleModeNotice({ variant = "bar" }: { variant?: "bar" | "sidebar" } = {}) {
   const { activeOrg, activeSlug } = useActiveOrg();
   const [busy, setBusy] = useState(false);
-  const canFocus = activeOrg?.role === "owner" || activeOrg?.role === "admin";
+  const canFocus = roleSatisfies(activeOrg?.role, ["owner", "admin"]);
   if (!isFocused(activeOrg) || !canFocus) return null;
 
   const turnOff = async () => {

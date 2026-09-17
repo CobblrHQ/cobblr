@@ -12,6 +12,7 @@ import { api, isFocused } from "../lib/api";
 import { moduleIcon } from "../lib/module-icon";
 import { readNavActionsHidden } from "../lib/nav-order";
 import { useActiveOrg } from "../auth/ActiveOrgContext";
+import { roleSatisfies } from "@cobblr/platform-contract/org-roles";
 
 /** A header action that leads to BUILDER chrome (the AI builder, the
  *  marketplace) — hidden in focused mode. NB: `/builds` (the Builds domain) is
@@ -46,7 +47,9 @@ export function HeaderActions({ asRows = false }: {
   // Builder chrome (the AI builder, the marketplace) is the platform. Focused
   // mode hides it; a locked managed app has no platform at all, so the same
   // rule holds there ("Build" sat in a Home app's header and bounced, 2026-09-02).
-  const focused = isFocused(activeOrg) || !!activeOrg?.app_mode;
+  // And it is the admin tier's: a member now walks the workspace (#3122) but
+  // installing and building are structure, not content.
+  const focused = isFocused(activeOrg) || !!activeOrg?.app_mode || !roleSatisfies(activeOrg?.role, ["owner", "admin"]);
   const modules = useQuery({
     queryKey: ["org-modules", activeSlug],
     queryFn: () => api.orgModules(activeSlug),

@@ -13,7 +13,7 @@ import { QuickCreateLocation } from "../components/QuickCreateLocation";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { ArrowLeft, ChevronRight, MapPin, Plus, Save, Trash2 } from "lucide-react";
 
-import { EntityActionsBar, EntityThumb, Modal, useConfirm, useToast, usePageTitle } from "@cobblr/platform-web";
+import { EntityActionsBar, EntityThumb, FieldPack, LabeledField, Modal, fieldNeed, useConfirm, useToast, usePageTitle } from "@cobblr/platform-web";
 import { ApiError, api, type Location, type PlatformEntityKind } from "../lib/api";
 import { useActiveOrg } from "../auth/ActiveOrgContext";
 import { EntityAttachments } from "../components/EntityAttachments";
@@ -471,52 +471,53 @@ function EditLocationModal({
         }}
         className="space-y-3"
       >
-        <Field label="Name">
-          <input
-            required
-            value={name}
-            onChange={(e) => setName(e.target.value)}
-            className="input"
-          />
-        </Field>
-        <div className="grid grid-cols-2 gap-3">
-          <Field label="Short name">
-            <input
-              value={shortName}
-              onChange={(e) => setShortName(e.target.value)}
-              className="input"
-              placeholder="—"
-            />
-          </Field>
-          <Field label="Kind">
-            <select
-              value={kind}
-              onChange={(e) => setKind(e.target.value as "area" | "container")}
-              className="input"
-            >
-              <option value="area">Area</option>
-              <option value="container">Container</option>
-            </select>
-          </Field>
-        </div>
-        <Field label="Description">
-          <textarea
-            value={description}
-            onChange={(e) => setDescription(e.target.value)}
-            rows={2}
-            className="input"
-            placeholder="One-line summary."
-          />
-        </Field>
-        <Field label="Notes">
-          <textarea
-            value={notes}
-            onChange={(e) => setNotes(e.target.value)}
-            rows={4}
-            className="input"
-            placeholder="Anything that helps future-you remember what lives here."
-          />
-        </Field>
+        <FieldPack
+          items={[
+            {
+              need: fieldNeed("name", { control: "text", label: "Name", valueLength: name.length }),
+              node: (
+                <Field label="Name">
+                  <input required value={name} onChange={(e) => setName(e.target.value)} className="input" />
+                </Field>
+              ),
+            },
+            {
+              need: fieldNeed("short_name", { control: "text", label: "Short name", valueLength: shortName.length }),
+              node: (
+                <Field label="Short name">
+                  <input value={shortName} onChange={(e) => setShortName(e.target.value)} className="input" placeholder="—" />
+                </Field>
+              ),
+            },
+            {
+              need: fieldNeed("kind", { control: "choice", label: "Kind", choices: ["Area", "Container"] }),
+              node: (
+                <Field label="Kind">
+                  <select value={kind} onChange={(e) => setKind(e.target.value as "area" | "container")} className="input">
+                    <option value="area">Area</option>
+                    <option value="container">Container</option>
+                  </select>
+                </Field>
+              ),
+            },
+            {
+              need: fieldNeed("description", { control: "markdown", label: "Description" }),
+              node: (
+                <Field label="Description">
+                  <textarea value={description} onChange={(e) => setDescription(e.target.value)} rows={2} className="input" placeholder="One-line summary." />
+                </Field>
+              ),
+            },
+            {
+              need: fieldNeed("notes", { control: "markdown", label: "Notes" }),
+              node: (
+                <Field label="Notes">
+                  <textarea value={notes} onChange={(e) => setNotes(e.target.value)} rows={4} className="input" placeholder="Anything that helps future-you remember what lives here." />
+                </Field>
+              ),
+            },
+          ]}
+        />
         {kind === "container" && (
           <Field label="Interior size (mm) - optional">
             <div className="flex items-center gap-2">
@@ -576,14 +577,7 @@ function EditLocationModal({
   );
 }
 
-function Field({ label, children }: { label: string; children: React.ReactNode }) {
-  return (
-    <label className="block">
-      <span className="block text-[10px] font-mono uppercase tracking-widest text-faint dark:text-slate-500 mb-1">
-        {label}
-      </span>
-      {children}
-    </label>
-  );
-}
+/** The caption over a control: the shared one, so this form's labels and a
+ *  record page's read the same. */
+const Field = LabeledField;
 

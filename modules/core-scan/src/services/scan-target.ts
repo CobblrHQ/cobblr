@@ -16,7 +16,7 @@
 // The instance-kind grammar is the kernel's (`resolveKind`), not re-parsed
 // here: which module a kind resolves to, and which instance it names, is one
 // answer from one place.
-import { platform, type ActionUndoStep, type ScannableInfo } from "@cobblr/platform-contract";
+import { platform, type ActionUndoStep, type ScannableInfo, type ScannableKind } from "@cobblr/platform-contract";
 
 export interface ScanTarget {
   scannable: ScannableInfo;
@@ -54,6 +54,23 @@ export async function scanTargetOf(
  *  is already in hand and no workspace lookup is needed. */
 export function scanTargetOfRecord(rec: { kind: string; module_name: string }): ScannableInfo | null {
   return platform().entities.getScannable(rec.kind) ?? platform().entities.getScannableForModule(rec.module_name);
+}
+
+/** The scannable kinds THIS workspace has, instances included: the one
+ *  answer for a walk over a workspace's records across kinds (the sibling
+ *  tier, the unplaced sweep, the bin census, the duplicates door, the
+ *  tracked match). The base registry (`scanTargetsRegistered`) never lists an
+ *  instance kind, so a walk over it saw no grocery and no yarn and looked
+ *  like it worked (#3132). */
+export function scanTargetsForOrg(orgId: string): Promise<ScannableKind[]> {
+  return platform().entities.listScannableForOrg(orgId);
+}
+
+/** The registered scan targets, one per module: the answer to a MODULE
+ *  question (which module a noun names, the module's default kind), never
+ *  to "which kinds hold records here". */
+export function scanTargetsRegistered(): Array<{ kind: string } & ScannableInfo> {
+  return platform().entities.listScannable();
 }
 
 // ─────────────── moving a scannable kind's quantity, one way ───────────────

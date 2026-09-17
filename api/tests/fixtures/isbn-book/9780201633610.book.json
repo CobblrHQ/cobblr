@@ -1,0 +1,30 @@
+{
+  "outcome": "hit",
+  "hit": {
+    "source": "openlibrary",
+    "title": "Design Patterns",
+    "brand": "Addison-Wesley",
+    "model": "9780201633610",
+    "description": "Elements of Reusable Object-Oriented Software",
+    "category": "Books",
+    "image_url": null,
+    "raw": {
+      "openlibrary": {
+        "key": "/books/OL7409650M",
+        "url": "http://openlibrary.org/books/OL7409650M/Design_Patterns",
+        "authors": "Erich Gamma, Richard Helm, Ralph Johnson, John Vlissides",
+        "isbn": "9780201633610",
+        "publish_date": "1994",
+        "note": "hand-written in the book door's shape; the test copies it into the replay dir once the recorded outage is over (#3162)"
+      }
+    },
+    "fields": {
+      "isbn": "9780201633610",
+      "title": "Design Patterns",
+      "author": "Erich Gamma, Richard Helm, Ralph Johnson, John Vlissides",
+      "year": 1994,
+      "publisher": "Addison-Wesley"
+    },
+    "decoder_id": "isbn"
+  }
+}

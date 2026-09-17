@@ -18,6 +18,8 @@ import { useState } from "react";
 import { EntityThumb, usePageTitle } from "@cobblr/platform-web";
 import { NewPartDialog, InventoryProvider } from "@cobblr/inventory/ui";
 import { api, getToken } from "../lib/api";
+import { createCapabilityForKind } from "@cobblr/platform-contract/create-capability";
+import { AskForItButton } from "../components/AskForItButton";
 
 interface PortalCtx {
   activeSlug: string | null;
@@ -26,10 +28,6 @@ interface PortalCtx {
 /** Map an entity_kind to the capability that gates its create.
  *  Extend as other modules opt in. Returns null when no
  *  capability is known → no create button rendered. */
-const CREATE_CAPABILITY_BY_KIND: Record<string, string> = {
-  "inventory:part": "inventory:create-part",
-};
-
 export function PortalViewPage() {
   const { viewId } = useParams<{ viewId: string }>();
   const { activeSlug } = useOutletContext<PortalCtx>();
@@ -54,12 +52,10 @@ export function PortalViewPage() {
   if (!viewId || !activeSlug) return null;
 
   const entityKind = data.data?.view.entity_kind;
-  const createCap = entityKind ? CREATE_CAPABILITY_BY_KIND[entityKind] : undefined;
+  const createCap = createCapabilityForKind(entityKind) ?? undefined;
   const canCreate =
     createCap !== undefined &&
-    (caps.data?.role === "owner" ||
-      caps.data?.role === "admin" ||
-      caps.data?.grants.includes(createCap));
+    (caps.data?.all === true || caps.data?.grants.includes(createCap) === true);
 
   return (
     <div className="space-y-4">
@@ -83,6 +79,16 @@ export function PortalViewPage() {
             >
               <Plus size={14} /> New
             </button>
+          )}
+          {/* A create the person may not do yet is an ask, not a missing
+              button: the sheet explains and offers it (#3073). */}
+          {createCap !== undefined && caps.data && !canCreate && (
+            <AskForItButton
+              slug={activeSlug}
+              remedies={[{ kind: "capability", key: createCap }]}
+              doing="Adding here"
+              subject={`Add to ${data.data?.view.name ?? "this view"}`}
+            />
           )}
           <div className="flex items-center gap-2 rounded-md border border-line dark:border-slate-700 bg-surface dark:bg-slate-900 px-2">
             <Search size={14} className="text-faint" />

@@ -12,6 +12,7 @@
 
 import { platform, extractJsonObject, repairJson, parseJsonReply } from "@cobblr/platform-contract";
 import { routingNoteBare, routingNoteWithCategory } from "./routing-note.js";
+import { scanTargetsRegistered } from "./scan-target.js";
 import { fallbackHint, type AiFallback } from "@cobblr/platform-contract/scan-fallback";
 import { classifyAiFailure } from "@cobblr/platform-contract/ai-refusal";
 import { providerReasonOf } from "@cobblr/platform-contract/provider-reason";
@@ -358,7 +359,7 @@ export async function assembleScanMenu(
   // hardcoded here — a new scannable module needs no matchmaker edit. Map each
   // module to its default kind + noun. (Audit 2026-06-26 follow-up.)
   const scanByModule = new Map<string, { kind: string; noun: string }>();
-  for (const s of platform().entities.listScannable()) {
+  for (const s of scanTargetsRegistered()) {
     scanByModule.set(s.kind.split(":")[0]!, { kind: s.kind, noun: s.noun });
   }
 
@@ -787,7 +788,7 @@ export function heuristicMatch(
 ): MatchCandidate[] {
   const menu = filterMenuForItem(item, menuIn);
   if (menu.length === 0) return [];
-  const { hay, scoreEntry } = makeLexicalScorer(item);
+  const { scoreEntry } = makeLexicalScorer(item);
 
   const all = menu
     .map((entry) => ({ entry, ...scoreEntry(entry) }))
@@ -810,7 +811,15 @@ export function heuristicMatch(
     .sort((a, b) => orderFits({ table: a.entry, evidence: a }, { table: b.entry, evidence: b }))
     .slice(0, 2);
 
-  const qm = hay.match(/(\d+)\s*(skein|ball|spool|roll|pack|box|bottle|can|bag|unit|pcs|piece|x|×)/);
+  // A count is a QUANTITY only in the person's own words (a typed note:
+  // "3 spools of black PLA"). In a catalog or listing title it is the
+  // product's pack size ("Sugar 4 Pack" is one pack of four, "12 Rolls" is
+  // one pack of twelve), which parsePackSize reads for the pack field; a
+  // listing must never move how many the person has (#3071).
+  const personsWords = /^(phrase|identifier)$/.test(String((item.metadata as { intake_shape?: unknown } | null | undefined)?.intake_shape ?? ""))
+    ? `${item.name ?? ""} ${item.description ?? ""}`.toLowerCase()
+    : "";
+  const qm = personsWords.match(/(\d+)\s*(skein|ball|spool|roll|pack|box|bottle|can|bag|unit|pcs|piece|x|×)/);
   const quantity = qm ? Number(qm[1]) : undefined;
   const name = cleanCaptureName(item.name ?? "");
 

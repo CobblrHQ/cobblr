@@ -28,6 +28,17 @@ One file per scenario:
 model says on the Nth call of that turn. `"match": "*"` is the fallback for
 anything a test does not care to script.
 
+A round may point INTO an earlier tool result, because a recorded model that
+searched and then acted carries the id of a record that exists only where it
+was recorded: `"entity_id": "$prev.data.items[0].id"` reads the first hit of
+the previous tool result when the round is played, and
+`"$result.list_records.data.items[0].id"` reads the most recent result of
+THAT tool whatever came after it (a bounced write leaves its own result on
+top). `two-cubepros-one-label.json` is the shape: search, take the first hit,
+act, which is what the live model did (#3154). The longest matching `match`
+wins, so a cassette for the re-ask "label on the cubepro #9" beats the one
+for the sentence it extends.
+
 `"refuse": "quota"` (or `invalid_key`, `model_unavailable`, `unreachable`,
 `unknown`) makes the provider REFUSE the turn instead of answering: the same
 `ProviderError` a real adapter throws on a 429 or a rejected key, with the

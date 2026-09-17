@@ -27,9 +27,10 @@ import {
 } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
 import { GripVertical, Plus, Pencil, Trash2, ArrowRight, ClipboardPaste } from "lucide-react";
-import { Modal, useConfirm, useToast, usePageTitle } from "@cobblr/platform-web";
+import { FieldPack, Modal, fieldNeed, useConfirm, useToast, usePageTitle } from "@cobblr/platform-web";
 import { ApiError, api, type ScanQrRule, type ScanResolveOutcome } from "../lib/api";
 import { useActiveOrg } from "../auth/ActiveOrgContext";
+import { roleSatisfies } from "@cobblr/platform-contract/org-roles";
 
 type RuleDraft = Omit<ScanQrRule, "id" | "created_at" | "updated_at">;
 
@@ -61,7 +62,7 @@ export function ScanRulesPage() {
   const qc = useQueryClient();
   const toast = useToast();
   const confirm = useConfirm();
-  const isAdmin = activeOrg?.role === "owner" || activeOrg?.role === "admin";
+  const isAdmin = roleSatisfies(activeOrg?.role, ["owner", "admin"]);
 
   const list = useQuery({
     queryKey: ["scan-qr-rules", activeSlug],
@@ -556,14 +557,26 @@ function RuleModal({
         {/* EXTRACT — regex only (url_base/url_prefix derive the key by position) */}
         {isRegex && (
           <Section title="Extract - pull the key from the payload">
-            <div className="grid grid-cols-2 gap-3">
-              <Field label="Key group (name or index)">
-                <input value={String(d.extract.group ?? "")} onChange={(e) => set({ extract: { ...d.extract, group: e.target.value || undefined } })} placeholder="key" className="input" />
-              </Field>
-              <Field label="Type group (optional → type_map)">
-                <input value={String(d.extract.type_from ?? "")} onChange={(e) => set({ extract: { ...d.extract, type_from: e.target.value || undefined } })} placeholder="type" className="input" />
-              </Field>
-            </div>
+            <FieldPack
+              items={[
+                {
+                  need: fieldNeed("group", { control: "text", label: "Key group (name or index)" }),
+                  node: (
+                    <Field label="Key group (name or index)">
+                      <input value={String(d.extract.group ?? "")} onChange={(e) => set({ extract: { ...d.extract, group: e.target.value || undefined } })} placeholder="key" className="input" />
+                    </Field>
+                  ),
+                },
+                {
+                  need: fieldNeed("type_from", { control: "text", label: "Type group (optional → type_map)" }),
+                  node: (
+                    <Field label="Type group (optional → type_map)">
+                      <input value={String(d.extract.type_from ?? "")} onChange={(e) => set({ extract: { ...d.extract, type_from: e.target.value || undefined } })} placeholder="type" className="input" />
+                    </Field>
+                  ),
+                },
+              ]}
+            />
           </Section>
         )}
 
@@ -657,6 +670,9 @@ function Section({ title, children }: { title: string; children: React.ReactNode
   );
 }
 
+// Not the shared LabeledField on purpose: this editor's labels are sentences
+// ("Key field - the entity field holding the foreign id ..."), read as
+// prose, not as the small mono caption a record field wears.
 function Field({ label, children }: { label: string; children: React.ReactNode }) {
   return (
     <label className="block">

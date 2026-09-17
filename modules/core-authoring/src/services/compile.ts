@@ -15,6 +15,7 @@ import {
   type EntityKindRecord,
   type NativeFieldsPolicy,
 } from "@cobblr/platform-contract";
+import { roleSatisfies } from "@cobblr/platform-contract/org-roles";
 import { getTemplate, type TemplateEntry } from "./templates.js";
 
 export interface ContextField {
@@ -542,7 +543,7 @@ RULES:
  *  byte-for-byte unchanged. */
 function roleNote(ctx: AuthoringContext): string {
   const r = ctx.requesterRole;
-  if (!r || r === "owner" || r === "admin") return "";
+  if (!r || roleSatisfies(r, ["owner", "admin"])) return "";
   return `\n- NOTE: your workspace role is "${r}". You may not be able to ENABLE new modules — prefer kinds whose modules are already on, and in "interpretation" call out any module an owner/admin will need to turn on for this to apply.`;
 }
 

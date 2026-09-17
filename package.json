@@ -226,6 +226,9 @@
     "lint:dead-exports": "tsx scripts/lint-dead-exports.ts",
     "lint:auth-rate-limits": "tsx scripts/lint-auth-rate-limits.ts",
     "e2e:scan-header": "node e2e/scan-header-margin.mjs",
+    "e2e:approval-flow": "node e2e/approval-flow.mjs",
+    "e2e:design-reserves-any-yarn": "node e2e/design-reserves-any-yarn.mjs",
+    "e2e:two-cubepros-one-label": "node e2e/two-cubepros-one-label.mjs",
     "e2e:live-sort": "node e2e/live-sort-mobile.mjs",
     "e2e:try-captcha-recovery": "node --experimental-strip-types e2e/try-start-captcha-recovery.mjs",
     "e2e:sandbox-strip-foot": "node e2e/sandbox-strip-foot.mjs",
@@ -312,7 +315,16 @@
     "lint:scan-door-intake": "tsx scripts/lint-scan-door-intake.ts",
     "lint:phone-input-font": "tsx scripts/lint-phone-input-font.ts",
     "lint:row-pictures-resolved": "tsx scripts/lint-row-pictures-resolved.ts",
-    "lint:scan-doubt-from-contract": "tsx scripts/lint-scan-doubt-from-contract.ts"
+    "lint:scan-doubt-from-contract": "tsx scripts/lint-scan-doubt-from-contract.ts",
+    "lint:git-pathspec-glob": "tsx scripts/lint-git-pathspec-glob.ts",
+    "lint:field-pack": "tsx scripts/lint-field-pack.ts",
+    "lint:test-path-starts-with-its-own-bin": "tsx scripts/lint-test-path-starts-with-its-own-bin.ts",
+    "lint:refusal-carries-blocked": "tsx scripts/lint-refusal-carries-blocked.ts",
+    "lint:capability-gates-grantable": "tsx scripts/lint-capability-gates-grantable.ts",
+    "lint:ci-exit-read-under-set-e": "tsx scripts/lint-ci-exit-read-under-set-e.ts",
+    "lint:test-doors-gated": "tsx scripts/lint-test-doors-gated.ts",
+    "lint:gated-state-has-a-producer": "tsx scripts/lint-gated-state-has-a-producer.ts",
+    "lint:corpus-known-red-live": "tsx scripts/lint-corpus-known-red-live.ts"
   },
   "devDependencies": {
     "jsdom": "^30.0.1",

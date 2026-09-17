@@ -13,12 +13,19 @@
 // there is a single definition of "what a resolved row looks like" to collapse
 // onto — and `lint:list-route-labels` fails a module list route that skips it.
 //
+// "What a resolved row looks like" includes how a titled work's title READS
+// for the person asking (#3061): the generic pipeline composes `title` from
+// the record's forms for the request's actor (served-title.ts), and a module
+// row that came through here carries the same `title` beside its stored
+// `name`. The name is never touched: nothing composed is ever writable.
+//
 // Batched across the whole page on purpose: a 200-row list must cost one lookup
 // per referenced KIND, not one per row.
 
 import { meta } from "../db/meta.js";
 import { lookupMany } from "./entities.js";
 import { memberNamesFor } from "./member-fields.js";
+import { withServedTitle } from "./served-title.js";
 
 interface LabelDef {
   name: string;
@@ -72,8 +79,9 @@ export async function withFieldLabels<T extends Record<string, unknown>>(
   rows: T[],
 ): Promise<T[]> {
   if (rows.length === 0) return rows;
+  const titled = rows.map(withServedTitle) as T[];
   const defs = await labelDefsFor(orgId, kind);
-  if (defs.length === 0) return rows;
+  if (defs.length === 0) return titled;
 
   const memberDefs = defs.filter((d) => d.type === "member");
   const relationDefs = defs.filter((d) => d.type === "relation" && d.ref_kind);
@@ -84,7 +92,7 @@ export async function withFieldLabels<T extends Record<string, unknown>>(
   const titles = new Map<string, string>();
   if (relationDefs.length > 0) {
     const refs: Array<{ kind: string; id: string }> = [];
-    for (const row of rows) {
+    for (const row of titled) {
       for (const d of relationDefs) {
         const v = valueOf(row, d.name);
         if (v) refs.push({ kind: d.ref_kind!, id: v });
@@ -102,7 +110,7 @@ export async function withFieldLabels<T extends Record<string, unknown>>(
     }
   }
 
-  return rows.map((row) => {
+  return titled.map((row) => {
     const labels: Record<string, unknown> = {};
     for (const d of memberDefs) {
       const v = valueOf(row, d.name);

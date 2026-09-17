@@ -1,0 +1,13 @@
+{
+  "outcome": "hit",
+  "hit": {
+    "source": "openfoodfacts",
+    "title": "Mars Bar 51g",
+    "brand": "Mars",
+    "model": "5000159484695",
+    "description": null,
+    "category": "Snacks",
+    "image_url": null,
+    "raw": { "openfoodfacts": { "note": "hand-written in the product chain's shape: the catalog's answer once it is back (#3179)" } }
+  }
+}

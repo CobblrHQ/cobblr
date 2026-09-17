@@ -27,12 +27,27 @@ export function stackBottomChrome(heights: readonly number[]): { offsets: number
   return { offsets, total };
 }
 
+/** What the page's end must clear: the dock's bars, plus the tallest corner
+ *  piece sitting above them (its lift and its own height). A corner piece
+ *  goes translucent over a control it covers (yield-to-content.ts), but a
+ *  page whose last row can never scroll clear of the Live pill and the
+ *  bubble still has actions nobody can read whole (#3069). A hidden corner
+ *  piece (height 0) costs nothing. */
+export function bottomClearance(barTotal: number, corners: readonly { height: number; lift: number }[]): number {
+  let tallest = 0;
+  for (const c of corners) if (c.height > 0) tallest = Math.max(tallest, c.height + c.lift);
+  return barTotal + tallest;
+}
+
 export const BOTTOM_CHROME_HEIGHT_VAR = "--bottom-chrome-height";
+/** The room the page's end reserves: the bars plus the tallest corner piece. */
+export const BOTTOM_CLEARANCE_VAR = "--bottom-chrome-clearance";
 /** Set on each member: where the dock put it. */
 export const MEMBER_BOTTOM_VAR = "--fc-bottom";
 
 type Member = { el: HTMLElement; order: number };
 const members = new Map<HTMLElement, Member>();
+const corners = new Set<HTMLElement>();
 let seq = 0;
 let frame = 0;
 let ro: ResizeObserver | null = null;
@@ -45,6 +60,17 @@ function heightOf(el: HTMLElement): number {
   return el.isConnected ? el.getBoundingClientRect().height : 0;
 }
 
+/** A corner piece's lift above the dock, in px, as the browser resolved it
+ *  (its --fc-lift, default 1rem). */
+function liftOf(el: HTMLElement): number {
+  const v = getComputedStyle(el).getPropertyValue("--fc-lift").trim();
+  if (!v) return 16;
+  if (v.endsWith("rem")) return parseFloat(v) * parseFloat(getComputedStyle(document.documentElement).fontSize || "16");
+  if (v.endsWith("px")) return parseFloat(v);
+  const n = parseFloat(v);
+  return Number.isFinite(n) ? n : 16;
+}
+
 function layout(): void {
   frame = 0;
   const list = [...members.values()].sort((a, b) => a.order - b.order);
@@ -53,7 +79,12 @@ function layout(): void {
   const root = document.documentElement;
   if (total > 0) root.style.setProperty(BOTTOM_CHROME_HEIGHT_VAR, `${total}px`);
   else root.style.removeProperty(BOTTOM_CHROME_HEIGHT_VAR);
-  document.body.style.paddingBottom = total > 0 ? `${total}px` : "";
+  // A corner piece that yields to content is translucent over a control; a
+  // hidden one (the overlay flag) is display:none and measures 0.
+  const clearance = bottomClearance(total, [...corners].map((el) => ({ height: heightOf(el), lift: liftOf(el) })));
+  if (clearance > 0) root.style.setProperty(BOTTOM_CLEARANCE_VAR, `${clearance}px`);
+  else root.style.removeProperty(BOTTOM_CLEARANCE_VAR);
+  document.body.style.paddingBottom = clearance > 0 ? `${clearance}px` : "";
 }
 
 /** Coalesced: a burst of resizes is one layout. */
@@ -82,6 +113,20 @@ export function registerBottomChrome(el: HTMLElement): () => void {
     members.delete(el);
     ro?.unobserve(el);
     el.style.removeProperty(MEMBER_BOTTOM_VAR);
+    scheduleDockLayout();
+  };
+}
+
+/** A corner piece joins the clearance the page's end reserves (it does not
+ *  stack). Returns the leave function. */
+export function registerCornerChrome(el: HTMLElement): () => void {
+  ensureObservers();
+  corners.add(el);
+  ro?.observe(el);
+  scheduleDockLayout();
+  return () => {
+    corners.delete(el);
+    ro?.unobserve(el);
     scheduleDockLayout();
   };
 }

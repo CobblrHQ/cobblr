@@ -15,7 +15,10 @@ import { DiscordUnsubscribedCallout } from "../components/DiscordUnsubscribedCal
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Plus, Send, Trash2, Zap } from "lucide-react";
 import {
+  FieldPack,
+  LabeledField,
   Modal,
+  fieldNeed,
   useConfirm,
   usePageTitle, useToast,
 } from "@cobblr/platform-web";
@@ -509,60 +512,67 @@ function AddBindingModal({
   return (
     <Modal open onClose={onClose} title="Add notification binding" size="lg">
       <div className="space-y-4">
-        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-          <Field label="Channel">
-            <select
-              className="input"
-              value={channel}
-              onChange={(e) => {
-                setChannel(e.target.value as NotificationChannelName);
-                setConfig({});
-              }}
-            >
-              {/* All channels including in_app/browser_push — users can
-                  add an in_app row with enabled=off to mute a specific
-                  event_type. The hint copy spells that out. */}
-              {CHANNEL_OPTIONS.map((c) => (
-                <option key={c.channel} value={c.channel}>
-                  {c.label}
-                </option>
-              ))}
-            </select>
-          </Field>
-          <Field label="Event type">
-            <input
-              className="input"
-              value={eventType}
-              onChange={(e) => setEventType(e.target.value)}
-              placeholder="* for all"
-            />
-          </Field>
-          <Field label="Min priority">
-            <select
-              className="input"
-              value={minPriority}
-              onChange={(e) =>
-                setMinPriority(e.target.value as NotificationPriority)
-              }
-            >
-              {PRIORITIES.map((p) => (
-                <option key={p} value={p}>
-                  {p}
-                </option>
-              ))}
-            </select>
-          </Field>
-          <Field label="Enabled">
-            <label className="flex items-center gap-2 text-xs h-9">
-              <input
-                type="checkbox"
-                checked={enabled}
-                onChange={(e) => setEnabled(e.target.checked)}
-              />
-              <span>{enabled ? "fires" : "paused"}</span>
-            </label>
-          </Field>
-        </div>
+        <FieldPack
+          items={[
+            {
+              need: fieldNeed("channel", { control: "choice", label: "Channel", choices: CHANNEL_OPTIONS.map((c) => c.label) }),
+              node: (
+                <Field label="Channel">
+                  <select
+                    className="input"
+                    value={channel}
+                    onChange={(e) => {
+                      setChannel(e.target.value as NotificationChannelName);
+                      setConfig({});
+                    }}
+                  >
+                    {/* All channels including in_app/browser_push: users can add an
+                        in_app row with enabled=off to mute a specific event_type.
+                        The hint copy spells that out. */}
+                    {CHANNEL_OPTIONS.map((c) => (
+                      <option key={c.channel} value={c.channel}>
+                        {c.label}
+                      </option>
+                    ))}
+                  </select>
+                </Field>
+              ),
+            },
+            {
+              need: fieldNeed("event_type", { control: "text", label: "Event type", valueLength: eventType.length }),
+              node: (
+                <Field label="Event type">
+                  <input className="input" value={eventType} onChange={(e) => setEventType(e.target.value)} placeholder="* for all" />
+                </Field>
+              ),
+            },
+            {
+              need: fieldNeed("min_priority", { control: "choice", label: "Min priority", choices: PRIORITIES }),
+              node: (
+                <Field label="Min priority">
+                  <select className="input" value={minPriority} onChange={(e) => setMinPriority(e.target.value as NotificationPriority)}>
+                    {PRIORITIES.map((p) => (
+                      <option key={p} value={p}>
+                        {p}
+                      </option>
+                    ))}
+                  </select>
+                </Field>
+              ),
+            },
+            {
+              need: fieldNeed("enabled", { control: "checkbox", label: "Enabled" }),
+              node: (
+                <Field label="Enabled" as="div">
+                  <label className="flex items-center gap-2 text-xs h-9">
+                    <input type="checkbox" checked={enabled} onChange={(e) => setEnabled(e.target.checked)} />
+                    <span>{enabled ? "fires" : "paused"}</span>
+                  </label>
+                </Field>
+              ),
+            },
+          ]}
+        />
 
         <div className="text-xs text-muted dark:text-slate-400 italic">
           {channelDef.hint}
@@ -573,49 +583,38 @@ function AddBindingModal({
             <div className="text-[10px] font-mono uppercase tracking-widest text-accent">
               // {channelDef.label.toLowerCase()} config
             </div>
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-              {visibleFields(channelDef, config).map((f) => (
-                <Field key={f.key} label={f.label}>
-                  {f.type === "select" ? (
-                    <select
-                      className="input"
-                      value={config[f.key] ?? f.default ?? ""}
-                      onChange={(e) => setConfig((p) => ({ ...p, [f.key]: e.target.value }))}
-                    >
-                      {f.options?.map((o) => (
-                        <option key={o.value} value={o.value}>
-                          {o.label}
-                        </option>
-                      ))}
-                    </select>
-                  ) : f.type === "checkbox" ? (
-                    <label className="flex items-center gap-2 text-xs h-9">
-                      <input
-                        type="checkbox"
-                        checked={config[f.key] === "true"}
-                        onChange={(e) =>
-                          setConfig((p) => ({ ...p, [f.key]: e.target.checked ? "true" : "" }))
-                        }
-                      />
-                      <span>{config[f.key] === "true" ? "yes" : "no"}</span>
-                    </label>
-                  ) : (
-                    <input
-                      className="input"
-                      type={f.type ?? "text"}
-                      value={config[f.key] ?? ""}
-                      onChange={(e) => setConfig((p) => ({ ...p, [f.key]: e.target.value }))}
-                      placeholder={f.placeholder}
-                    />
-                  )}
-                  {f.helpText && (
-                    <div className="text-[10px] text-faint mt-0.5">
-                      {f.helpText}
-                    </div>
-                  )}
-                </Field>
-              ))}
-            </div>
+            <FieldPack
+              items={visibleFields(channelDef, config).map((f) => ({
+                need: fieldNeed(f.key, {
+                  control: f.type === "select" ? "choice" : f.type === "checkbox" ? "checkbox" : f.type === "url" ? "url" : "text",
+                  label: f.label,
+                  choices: f.options?.map((o) => o.label),
+                  help: f.helpText,
+                  valueLength: (config[f.key] ?? "").length,
+                }),
+                node: (
+                  <Field key={f.key} label={f.label} as={f.type === "checkbox" ? "div" : "label"}>
+                    {f.type === "select" ? (
+                      <select className="input" value={config[f.key] ?? f.default ?? ""} onChange={(e) => setConfig((p) => ({ ...p, [f.key]: e.target.value }))}>
+                        {f.options?.map((o) => (
+                          <option key={o.value} value={o.value}>
+                            {o.label}
+                          </option>
+                        ))}
+                      </select>
+                    ) : f.type === "checkbox" ? (
+                      <label className="flex items-center gap-2 text-xs h-9">
+                        <input type="checkbox" checked={config[f.key] === "true"} onChange={(e) => setConfig((p) => ({ ...p, [f.key]: e.target.checked ? "true" : "" }))} />
+                        <span>{config[f.key] === "true" ? "yes" : "no"}</span>
+                      </label>
+                    ) : (
+                      <input className="input" type={f.type ?? "text"} value={config[f.key] ?? ""} onChange={(e) => setConfig((p) => ({ ...p, [f.key]: e.target.value }))} placeholder={f.placeholder} />
+                    )}
+                    {f.helpText && <div className="text-[10px] text-faint mt-0.5">{f.helpText}</div>}
+                  </Field>
+                ),
+              }))}
+            />
           </div>
         )}
 
@@ -639,19 +638,5 @@ function AddBindingModal({
   );
 }
 
-function Field({
-  label,
-  children,
-}: {
-  label: string;
-  children: React.ReactNode;
-}) {
-  return (
-    <label className="block">
-      <span className="block text-[10px] font-mono uppercase tracking-widest text-accent mb-1">
-        {label}
-      </span>
-      {children}
-    </label>
-  );
-}
+/** The caption over a control: the shared one. */
+const Field = LabeledField;

@@ -1,0 +1,8 @@
+{
+  "match": "label on the cubepro #9",
+  "rounds": [
+    { "tool_calls": [{ "name": "list_records", "args": { "kind": "machines:machine", "q": "CubePro #9" } }] },
+    { "tool_calls": [{ "name": "invoke_action", "args": { "action_id": "labels:print", "entity_kind": "machines:machine", "entity_id": "$prev.data.items[0].id" } }] },
+    { "content": "Queued a label for CubePro #9." }
+  ]
+}

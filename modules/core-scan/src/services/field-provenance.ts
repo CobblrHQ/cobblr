@@ -190,6 +190,7 @@ export function siblingReviewWords(fields: readonly string[]): string {
 // confirm read to keep their hands off.
 
 import { userFieldsOf } from "./user-fields.js";
+import { BRAND_FIELD_NAMES, CREATOR_FIELD_NAMES, brandsAgree, evidenceFactsOf, namesAgree } from "@cobblr/platform-contract/scan-evidence";
 
 /** A menu field as the stamping needs it. */
 interface RoledFieldLike {
@@ -206,7 +207,7 @@ interface RoledFieldLike {
  */
 export function provenanceStamps(opts: {
   meta: Record<string, unknown> | null | undefined;
-  candidates: CandidateLike[];
+  candidates: Array<CandidateLike & { inferred?: unknown }>;
   evidence: FieldProvenanceMap;
   /** The top route's table fields, for the roles; names decide otherwise. */
   tableFields?: readonly RoledFieldLike[];
@@ -214,6 +215,9 @@ export function provenanceStamps(opts: {
    *  evidence displaced on an earlier run, or one this run's router did not
    *  repeat, stays on the record as `replaced` rather than vanishing. */
   priorFields?: Record<string, unknown> | null;
+  /** The row's columns the evidence is read from: its picture (what the
+   *  photo read is about) and its name (the catalog's title). */
+  row?: { image_file_id?: string | null; suggested_name?: string | null };
 }): FieldProvenanceMap {
   const prior = fieldProvenanceOf(opts.meta);
   const person = userFieldsOf(opts.meta)?.values ?? {};
@@ -237,13 +241,70 @@ export function provenanceStamps(opts: {
     out[name] = displaced ? { ...stamp, replaced: displaced } : stamp;
   }
   if (!top) return out;
+  // Every other field the route filled gets its standing from where its
+  // value can be found (#3070): the code's decode, what the photo read as
+  // printed, the catalog's own text, the person's hint; a field the model
+  // listed as completed from its knowledge is an inference from knowledge,
+  // and one nothing vouches for is the router's. A purchase-source field
+  // keeps its role on the stamp, as the acquisition check reads it.
+  const listedInferred = new Set(Array.isArray(opts.candidates[0]?.inferred) ? (opts.candidates[0]!.inferred as unknown[]).filter((n): n is string => typeof n === "string") : []);
+  const facts = evidenceFactsOf({ image_file_id: opts.row?.image_file_id ?? null, suggested_metadata: opts.meta, suggested_candidates: opts.candidates });
+  const catalogText = catalogTextOf(opts.meta, opts.row?.suggested_name ?? null);
+  const hint = typeof opts.meta?.user_hint === "string" ? opts.meta.user_hint : "";
   for (const [name, value] of Object.entries(top)) {
     if (out[name] || value === null || value === undefined || value === "") continue;
     const f = byName.get(name) ?? { name };
     const role = purchaseFieldRole(f);
-    if (!role || !(isAcquiredFromField(f) || isSellerField(f))) continue;
-    // Nothing vouched for it: a model or a rule put it there. Said so.
-    out[name] = { by: "inference", from: "router", role };
+    const withRole = role && (isAcquiredFromField(f) || isSellerField(f)) ? { role } : {};
+    const claimed = String(value);
+    const fact = facts.find((x) => x.field === name && valueAgrees(name, claimed, x.value));
+    if (fact) out[name] = { by: "evidence", from: fact.source, ...withRole };
+    else if (listedInferred.has(name)) out[name] = { by: "inference", from: "model", ...withRole };
+    else if (hint && containsWhole(hint, claimed)) out[name] = { by: "evidence", from: "hint", ...withRole };
+    else if (containsWhole(catalogText, claimed)) out[name] = { by: "evidence", from: "catalog", ...withRole };
+    else out[name] = { by: "inference", from: "router", ...withRole };
   }
   return out;
+}
+
+/** The catalog's own words about the code: the lookup's title (the row's
+ *  name), its description, and the raw payload it came with. */
+function catalogTextOf(meta: Record<string, unknown> | null | undefined, name: string | null): string {
+  const m = meta ?? {};
+  const parts = [name ?? "", typeof m.description === "string" ? m.description : "", typeof m.category === "string" ? m.category : ""];
+  const raw = m.raw;
+  if (raw && typeof raw === "object") {
+    try {
+      parts.push(JSON.stringify(raw));
+    } catch {
+      /* a payload that cannot be stringified says nothing */
+    }
+  } else if (typeof raw === "string") parts.push(raw);
+  return parts.join("\n");
+}
+
+/** A value read off the evidence, whole, between word breaks: "АСТ" is in
+ *  "Издательство АСТ, 2001" and "20" is not in "2001". */
+function containsWhole(haystack: string, value: string): boolean {
+  const v = value.trim().toLowerCase();
+  if (v.length < 2) return false;
+  const h = haystack.toLowerCase();
+  let i = h.indexOf(v);
+  const wordy = (c: string) => /[\p{L}\p{N}]/u.test(c);
+  while (i >= 0) {
+    const before = i === 0 ? "" : h[i - 1]!;
+    const after = i + v.length >= h.length ? "" : h[i + v.length]!;
+    if (!wordy(before) && !wordy(after)) return true;
+    i = h.indexOf(v, i + 1);
+  }
+  return false;
+}
+
+/** A route's value against a fact of the same field: a name by its people
+ *  (the same author across scripts), a code by its characters. */
+function valueAgrees(field: string, claimed: string, fact: string): boolean {
+  if (CREATOR_FIELD_NAMES.test(field)) return namesAgree(claimed, fact);
+  if (BRAND_FIELD_NAMES.test(field)) return brandsAgree(claimed, fact);
+  const key = (v: string) => v.toLowerCase().replace(/[\s.\-_/]+/g, "");
+  return key(claimed) === key(fact);
 }

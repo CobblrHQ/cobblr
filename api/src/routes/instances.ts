@@ -9,6 +9,7 @@ import { Router } from "express";
 import { z } from "zod";
 import { requireAuth } from "../auth/middleware.js";
 import { withTenant } from "../middleware/tenant.js";
+import { requireRole } from "../auth/capability.js";
 import { getMover } from "../platform/move-records.js";
 import {
   provisionInstance,
@@ -39,17 +40,9 @@ const CreateInstanceBody = z.object({
   display_name: z.string().min(1).max(160),
 });
 
-function role(req: Request): string | undefined {
-  return (req as unknown as { tenant?: { role: string } }).tenant?.role;
-}
-
+/** Shaping instances is builder work: the admin tier, by rank. */
 function requireOwnerOrAdmin(req: Request, res: Response): boolean {
-  const r = role(req);
-  if (r === "owner" || r === "admin") return true;
-  res.status(403).json({
-    error: { code: "forbidden", message: "Requires owner or admin role." },
-  });
-  return false;
+  return requireRole(req, res, "owner", "admin");
 }
 
 instancesRouter.get(

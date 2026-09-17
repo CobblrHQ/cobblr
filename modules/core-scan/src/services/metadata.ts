@@ -41,6 +41,7 @@ export const IDENTIFY_OWNED_KEYS = [
   "entity_type",
   "series",
   "title_variants",
+  "photo_read",
   "serial_number",
   "barcode_source",
   "fields",
@@ -199,3 +200,13 @@ export function standingHint(meta: Record<string, unknown> | null | undefined): 
   const all = standingHints(meta);
   return all.length ? all[all.length - 1]! : null;
 }
+
+/** The catalog picture belongs to the person once they picked one
+ *  (`catalog_image_user_set`, stamped by the catalog-image endpoint). Every
+ *  detached writer of the catalog picture (a download that lands seconds
+ *  after the search that started it) puts this on its UPDATE, so a pick made
+ *  while the search was out is never overwritten (2026-09-17: a rename started
+ *  a web search, the person picked their own photo, the search's result
+ *  landed over it). A check at the start of the search is not enough; the
+ *  write is where the race is. */
+export const CATALOG_PICTURE_NOT_PERSONS = sql<boolean>`coalesce((suggested_metadata->>'catalog_image_user_set')::boolean, false) = false`;

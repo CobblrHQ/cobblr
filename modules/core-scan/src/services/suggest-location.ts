@@ -26,6 +26,7 @@
 // could do.
 
 import { platform } from "@cobblr/platform-contract";
+import { scanTargetsForOrg } from "./scan-target.js";
 import { isJunkName } from "./enrich.js";
 import { satisfiesRequirement, type StorageRequirement } from "./storage-requirement.js";
 
@@ -234,7 +235,10 @@ export async function suggestLocationForItem(
 
   const want = significantTokens(name);
   const catTokens = significantTokens(category);
-  const kinds = platform().entities.listScannable();
+  // The kinds that hold records HERE, instances included: two tomatoes in
+  // the Pantry live under groceries:item, which the base registry never
+  // lists, so the sibling tier learned nothing from fifty groceries (#3132).
+  const kinds = await scanTargetsForOrg(orgId);
 
   // Gather similar placed entities across kinds. Query by individual significant
   // TOKENS, not the full name — the entity `q` search AND-matches its words, so

@@ -13,8 +13,13 @@
 //
 // THE RULE. Every name in the snapshot's `ms` map is a lint:* script that
 // package.json still runs, and at most MAX_UNKNOWN lints that run are missing
-// from it. Refresh with `node scripts/run-lints.mjs --record` on an idle
-// machine (it refuses a contended or partial run), commit the file.
+// from it. Record the missing ones with
+// `node scripts/lint-durations-record-missing.mjs` (their CI-measured time
+// from the newest green typecheck log in the sink; no idle machine needed),
+// commit the file. MAX_UNKNOWN is a pressure valve, not a quota: it filled on
+// five other people's merges in one week and blocked the sixth builder
+// mid-feature (2026-09-17), which is why recording is one command now and
+// part of writing a lint.
 //
 // The DURATIONS themselves are not checked: the runner measures those on every
 // run, and a baseline that drifted is caught the moment a quiet run compares
@@ -45,7 +50,9 @@ if (unknown.length > MAX_UNKNOWN) problems.push(`${unknown.length} lints that ru
 if (problems.length) {
   console.error(`lint:lint-durations - the lint budget's baseline is stale:`);
   for (const p of problems) console.error(`  ${p}`);
-  console.error(`  Refresh it on an idle machine: node scripts/run-lints.mjs --record   (then commit scripts/lint-durations.json)`);
+  console.error(`  Record the missing ones from CI's own clock: node scripts/lint-durations-record-missing.mjs`);
+  console.error(`  (newest green typecheck log from the sink; then commit scripts/lint-durations.json). A full refresh is`);
+  console.error(`  node scripts/run-lints.mjs --record on idle CI-class hardware.`);
   process.exit(1);
 }
 console.log(`lint:lint-durations OK (${Object.keys(ms).length} baselines, ${unknown.length} lint(s) not yet recorded)`);

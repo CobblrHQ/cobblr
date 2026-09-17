@@ -71,6 +71,11 @@ export interface PlatformActionDecl {
   // never grown it.
   args_schema: Record<string, { label: string; type: "text" | "boolean" | "number" | "list" }>;
   version: string;
+  /** Never offered to the assistant, on the rail or in list_actions, and
+   *  never a button: run from a card a person presses (a notification's
+   *  Approve/Deny) and nothing else. A decision about a person is not the
+   *  assistant's to make. */
+  wire_only?: boolean;
 }
 
 export const PLATFORM_ACTIONS: PlatformActionDecl[] = [
@@ -435,6 +440,52 @@ export const PLATFORM_ACTIONS: PlatformActionDecl[] = [
       enabled: { label: "On (true) or off (false)", type: "boolean" },
     },
     version: "0.1.0",
+  },
+  // ── Approvals (approvals.ts). The two buttons on an approver's card. ──
+  //
+  // min_role "admin" is the rank floor the invoke route enforces; the handler
+  // then applies the EXACT rule (owner/admin, never editor) because deciding
+  // what another person may do is governance, and an approval must never be
+  // able to grant the power to approve. wire_only keeps them off the
+  // assistant's rail: a decision about a person is not the assistant's to
+  // make, and `user_invokable: false` keeps them out of the grantable list.
+  {
+    id: "platform:approve-request",
+    min_role: "admin",
+    label: "Approve a request",
+    description:
+      "Answer yes to a member's request for a capability or a bundle install. Gives exactly what was asked, to that person, and nothing else; the person is told and can finish what they started. Pressed from the request card by a workspace owner or admin.",
+    icon: "check",
+    scope: "workspace",
+    invoke_handler: "platform.approve-request",
+    user_invokable: false,
+    // a granted capability can be revoked in the matrix; an installed bundle
+    // can be uninstalled. The yes itself is a decision, not a record.
+    undoable: false,
+    args_schema: {
+      request_id: { label: "The request", type: "text" },
+      note: { label: "A word for the person (optional)", type: "text" },
+    },
+    version: "0.1.0",
+    wire_only: true,
+  },
+  {
+    id: "platform:deny-request",
+    min_role: "admin",
+    label: "Decline a request",
+    description:
+      "Answer no to a member's request. Nothing changes; the person is told, with the note if one was given. Pressed from the request card by a workspace owner or admin.",
+    icon: "x",
+    scope: "workspace",
+    invoke_handler: "platform.deny-request",
+    user_invokable: false,
+    undoable: false,
+    args_schema: {
+      request_id: { label: "The request", type: "text" },
+      note: { label: "Why (optional)", type: "text" },
+    },
+    version: "0.1.0",
+    wire_only: true,
   },
 ];
 

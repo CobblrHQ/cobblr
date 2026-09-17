@@ -1,0 +1,9 @@
+{
+  "_about": "UI lab (dev rig, ui-lab workspace): the router's answer for a review-pack item, so the seeded inbox reads as a clean AI route instead of the keyword fallback. Safe to delete; only the ui-lab seed depends on it. Mirrors matchmaker-names-a-store-code: the model makes a name up and the row must not adopt it.",
+  "match": "\"barcode\":\"2000000000008\"",
+  "rounds": [
+    {
+      "content": "{\"candidates\": [{\"module\": \"inventory\", \"instance\": null, \"kind\": \"inventory:part\", \"label\": \"Inventory\", \"name\": \"Store Item\", \"confidence\": 0.5, \"fields\": {}, \"notes\": \"A store-internal code with no product name; filed under Inventory as a generic item.\"}]}"
+    }
+  ]
+}

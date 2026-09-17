@@ -1,0 +1,9 @@
+{
+  "_about": "UI lab (dev rig, ui-lab workspace): the router's answer for a review-pack item, so the seeded inbox reads as a clean AI route instead of the keyword fallback. Safe to delete; only the ui-lab seed depends on it.",
+  "match": "\"barcode\":\"3017620422003\"",
+  "rounds": [
+    {
+      "content": "{\"candidates\": [{\"module\": \"inventory\", \"instance\": \"groceries\", \"kind\": \"inventory:part\", \"label\": \"Groceries\", \"name\": \"Nutella hazelnut spread 400 g\", \"confidence\": 0.92, \"fields\": {\"storage\": \"Pantry\", \"food_category\": \"Condiments\"}, \"notes\": \"Nutella spread, 400 g jar; a pantry staple.\"}]}"
+    }
+  ]
+}

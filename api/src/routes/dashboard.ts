@@ -16,6 +16,7 @@ import { z } from "zod";
 import { sql } from "kysely";
 import { requireAuth } from "../auth/middleware.js";
 import { withTenant } from "../middleware/tenant.js";
+import { requireRole } from "../auth/capability.js";
 import { meta } from "../db/meta.js";
 import * as activity from "../platform/activity.js";
 
@@ -72,11 +73,8 @@ dashboardRouter.put(
   withTenant,
   async (req, res, next) => {
     try {
-      // Only admins/owners arrange the workspace dashboard.
-      if (req.tenant!.role !== "owner" && req.tenant!.role !== "admin") {
-        res.status(403).json({ error: { code: "forbidden", message: "Admins only." } });
-        return;
-      }
+      // Arranging the dashboard is configuration: the admin tier, by rank.
+      if (!requireRole(req, res, "owner", "admin")) return;
       const parsed = DashboardLayoutShape.safeParse(req.body);
       if (!parsed.success) {
         res.status(400).json({

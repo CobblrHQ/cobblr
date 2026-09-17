@@ -1,0 +1,9 @@
+{
+  "_about": "UI lab (dev rig, ui-lab workspace): the router's answer for a review-pack item, so the seeded inbox reads as a clean AI route instead of the keyword fallback. Safe to delete; only the ui-lab seed depends on it.",
+  "match": "\"name\":\"LED DESK LAMP\"",
+  "rounds": [
+    {
+      "content": "{\"candidates\": [{\"module\": \"inventory\", \"instance\": \"home-inventory\", \"kind\": \"inventory:part\", \"label\": \"Home Inventory\", \"name\": \"LED desk lamp\", \"confidence\": 0.8, \"fields\": {\"condition\": \"New\"}, \"notes\": \"An LED desk lamp from the receipt; a household item, not consumable stock.\"}]}"
+    }
+  ]
+}

@@ -36,7 +36,7 @@
 import { forwardRef, useEffect, useImperativeHandle, useRef, type CSSProperties, type ElementType, type HTMLAttributes, type ReactNode } from "react";
 import { createPortal } from "react-dom";
 import { HIDE_WHEN_OVERLAY_OPEN } from "./overlay-open";
-import { registerBottomChrome } from "./bottom-dock";
+import { registerBottomChrome, registerCornerChrome } from "./bottom-dock";
 import { useYieldToContent, YIELDING_CLASS } from "./yield-to-content";
 
 export type FloatingAnchor = "top" | "bottom" | "corner";
@@ -75,8 +75,10 @@ export const FloatingChrome = forwardRef<HTMLElement, FloatingChromeProps>(funct
   const covering = useYieldToContent(yieldToContent ? inner : never);
 
   useEffect(() => {
-    if (anchor !== "bottom" || !inner.current) return;
-    return registerBottomChrome(inner.current);
+    if (!inner.current) return;
+    if (anchor === "bottom") return registerBottomChrome(inner.current);
+    if (anchor === "corner") return registerCornerChrome(inner.current);
+    return;
   }, [anchor]);
 
   const cls =

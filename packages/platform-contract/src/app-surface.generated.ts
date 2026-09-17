@@ -254,7 +254,7 @@ export const GENERATED_SURFACE: Capability[] = [
   },
   {
     "feature": "Member portal",
-    "does": "Branding + pinned views for the slimmed-down member portal at /portal/:slug. Members + guests land here by default; admins can preview.",
+    "does": "Branding + pinned views for the member portal at /portal/:slug. Guests land here; members and admins can open it beside the workspace.",
     "where": "/configuration/portal",
     "also": [
       "branding",

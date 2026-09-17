@@ -23,6 +23,8 @@ const MODES: Array<{ mode: NotificationAudienceMode; label: string; blurb: strin
 export function NotificationAudiencesPage() {
   usePageTitle("Who gets told");
   const { activeSlug, activeOrg } = useActiveOrg();
+  // role-gate: exact — who is told what is governance; mirrors the server's
+  // exact gate on /notification-audiences.
   const canEdit = activeOrg?.role === "owner" || activeOrg?.role === "admin";
   const kinds = useQuery({
     queryKey: ["notification-audiences", activeSlug],

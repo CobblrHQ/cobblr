@@ -10,6 +10,7 @@ import { Router } from "express";
 import { z } from "zod";
 import { sql } from "kysely";
 import { platform } from "@cobblr/platform-contract";
+import { roleHoldsEveryCapability } from "@cobblr/platform-contract/org-roles";
 import { isSafeFontUrl } from "@cobblr/platform-contract/safe-font-url";
 import { sessionUser, tenantContext, tenantDb } from "../db.js";
 import { asyncHandler, badBody, requireRole } from "./util.js";
@@ -140,7 +141,7 @@ interface AppRow {
  *  worker surface and the management surface agree. */
 async function canOpen(req: Parameters<typeof tenantContext>[0], app: { visible_capability: string | null }): Promise<boolean> {
   const ctx = tenantContext(req);
-  if (ctx.role === "owner" || ctx.role === "admin") return true;
+  if (roleHoldsEveryCapability(ctx.role)) return true;
   if (!app.visible_capability) return true;
   const user = sessionUser(req);
   if (!user) return false;

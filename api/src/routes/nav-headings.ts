@@ -6,6 +6,7 @@ import { Router } from "express";
 import { z } from "zod";
 import { requireAuth } from "../auth/middleware.js";
 import { withTenant } from "../middleware/tenant.js";
+import { requireRole } from "../auth/capability.js";
 import {
   addNavMember,
   createNavHeading,
@@ -20,13 +21,9 @@ export const navHeadingsRouter = Router({ mergeParams: true });
 type Req = import("express").Request;
 type Res = import("express").Response;
 
+/** Shaping the navbar is builder work: the admin tier, by rank. */
 function requireOwnerOrAdmin(req: Req, res: Res): boolean {
-  const role = (req as unknown as { tenant?: { role: string } }).tenant?.role;
-  if (role === "owner" || role === "admin") return true;
-  res.status(403).json({
-    error: { code: "forbidden", message: "Requires owner or admin role." },
-  });
-  return false;
+  return requireRole(req, res, "owner", "admin");
 }
 
 const CreateBody = z.object({

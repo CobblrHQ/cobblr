@@ -10,7 +10,7 @@ export {
 } from "./context";
 export { EntityActionsBar } from "./EntityActionsBar";
 export { RecordHeaderChips } from "./RecordHeaderChips";
-export { RecordFaces, FaceSection, useFaces, useFaceOn } from "./faces";
+export { RecordFaces, FaceSection, FacesOn, useFaces, useFaceOn } from "./faces";
 export { useInvokeEntityAction } from "./use-invoke-action";
 export { runAction, useRunAction, refreshAfterAction, queryShowsKinds, affectedKindsOf, type ActionBody, type ActionRun, type ActionAffected, type KindMeta } from "./run-action";
 export { changeWorkspaceShape, useChangeWorkspaceShape, afterWorkspaceShapeChange, queryFollowsWorkspaceShape, type ShapeMeta, type ChangeShapeOptions } from "./workspace-shape";
@@ -56,6 +56,9 @@ export {
 export { FeedbackCard, PriorityChip, FEEDBACK_STATUSES, fbStatusLabel } from "./FeedbackCard";
 
 export { fieldControl, valueFromInput, type FieldControl } from "./fieldControl";
+export { packFields, fieldNeed, MIN_COL_PX, GAP_PX, type FieldNeed, type FieldSpace, type FieldPacking, type PackedCell, type PackOptions } from "./field-pack";
+export { FieldPack, fieldPackControlClass, type FieldPackItem } from "./FieldPack";
+export { EditField, EditSelect, FieldLabel, LabeledField, editFieldNeed, editFieldItem, editFieldText, type EditFieldProps } from "./EditField";
 export { relativeTime } from "./relativeTime";
 export { FieldRenderer, boolLabel, boolTruthy, NoImage } from "./FieldRenderer";
 export {
@@ -233,7 +236,7 @@ export { downloadBlob } from "./download-blob";
 export { withPngDpi, readPngDpi, isPng, crc32, dpiToPixelsPerMetre } from "./png-dpi";
 export { YIELDING_CLASS, useYieldToContent, pressableBeneath, samplePoints } from "./yield-to-content";
 export { FloatingChrome, type FloatingChromeProps, type FloatingAnchor } from "./FloatingChrome";
-export { registerBottomChrome, stackBottomChrome, layoutDockNow, BOTTOM_CHROME_HEIGHT_VAR } from "./bottom-dock";
+export { registerBottomChrome, registerCornerChrome, stackBottomChrome, bottomClearance, layoutDockNow, BOTTOM_CHROME_HEIGHT_VAR, BOTTOM_CLEARANCE_VAR } from "./bottom-dock";
 export { OverlayLayer, PopoverLayer, BackdropLayer, OVERLAY_LAYER_CLASS, POPOVER_LAYER_CLASS, BACKDROP_LAYER_CLASS, type LayerProps } from "./fixed-layers";
 export { LiveSurfaceProvider, useOverLiveSurface } from "./live-surface";
 export { describeUnreadableBody } from "./unreadableBody";

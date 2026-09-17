@@ -12,10 +12,14 @@ import { useNavigate } from "react-router-dom";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   CatalogTypeahead,
+  FieldPack,
+  LabeledField,
   Modal,
   RelationSelect,
   MarkdownEditor,
   fieldControl,
+  fieldNeed,
+  fieldPackControlClass,
   valueFromInput,
   useUnits,
   type CatalogTypeaheadHit,
@@ -298,133 +302,148 @@ export function NewPartDialog({ onClose, onCreated, seed }: NewPartDialogProps) 
             className="input"
           />
         </Field>
-        {/* Everything below name flows in a 2-up grid — a wide modal that uses
-            the horizontal space instead of a tall column you have to scroll.
-            Full-width things (parent picker, long text) span both columns. */}
-        <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-4 gap-y-3">
-          {!fp.hidden("qty") && (
-            <Field label={estimated ? "Roughly how many" : fp.label("qty", "Qty")}>
-              <input
-                type="number"
-                step="any"
-                min="0"
-                value={qty}
-                onChange={(e) => setQty(e.target.value)}
-                className="input"
-              />
-              <label className="mt-1 flex items-center gap-1.5 text-xs text-muted">
-                <input
-                  type="checkbox"
-                  checked={estimated}
-                  onChange={(e) => setEstimated(e.target.checked)}
-                />
-                I have not counted these
-              </label>
-            </Field>
-          )}
-          {!fp.hidden("unit") && (
-            <Field label={fp.label("unit", "Unit")}>
-              <input
-                value={unit}
-                onChange={(e) => setUnit(e.target.value)}
-                onFocus={() => {
-                  unitAtFocus.current = unit;
-                }}
-                onBlur={() => {
-                  const n = Number(qty);
-                  const c = Number.isFinite(n) ? units.convert(n, unitAtFocus.current, unit) : null;
-                  if (c != null) setQty(String(c));
-                }}
-                list="part-unit-options"
-                className="input"
-              />
-              <datalist id="part-unit-options">
-                {UNIT_SUGGESTIONS.map((u) => (
-                  <option key={u} value={u} />
-                ))}
-              </datalist>
-            </Field>
-          )}
-          {/* Parent / "type" link — when this instance's items belong to a type
-              in another instance (Spool → Filament type), pick it here; the
-              `instance-of` pairing is written after create. */}
-          {parent && (
-            <div className="sm:col-span-2">
-              <Field label={parent.label ?? "Type"}>
-                <ParentPicker
-                  instance={parent.instance}
-                  value={parentRef}
-                  onChange={setParentRef}
-                  placeholder={`Search ${parent.label?.toLowerCase() ?? "type"}…`}
-                />
-              </Field>
-            </div>
-          )}
-          {/* The instance's own fields, promoted into create (the whole point of a
-              skinned instance — fill yarn fields here, not after). Long fields
-              (rich text) span both columns. */}
-          {customFields.map((f) => (
-            <div key={f.id} className={f.type === "richtext" ? "sm:col-span-2" : undefined}>
-              <CustomFieldInput
-                def={f}
-                value={meta[f.name]}
-                onChange={(v) => setMeta((m) => ({ ...m, [f.name]: v }))}
-              />
-            </div>
-          ))}
-          {/* Brand + Price — natives that belong on the first create modal,
-              not buried in the full-size editor. Relabelled per instance via fp
-              (Yarn: "Brand" / "Price"); an instance can still hide either. */}
-          {!fp.hidden("manufacturer") && (
-            <Field label={fp.label("manufacturer", "Brand")}>
-              <input
-                value={manufacturer}
-                onChange={(e) => setManufacturer(e.target.value)}
-                className="input"
-              />
-            </Field>
-          )}
-          {!fp.hidden("cost") && (
-            <Field label={fp.label("cost", "Price")}>
-              <input
-                type="number"
-                step="any"
-                min="0"
-                inputMode="decimal"
-                value={cost}
-                onChange={(e) => setCost(e.target.value)}
-                className="input"
-              />
-            </Field>
-          )}
-          {/* VOCAB-ENUMERATION OK: a coincidence of spelling, not a field role */}
-          {!fp.hidden("category") && (
-            <Field label={fp.label("category", "Category")}>
-              <select value={categoryId} onChange={(e) => setCategoryId(e.target.value)} className="input">
-                <option value=""> - none - </option>
-                {cats.data?.items.map((c) => (
-                  <option key={c.id} value={c.id}>
-                    {c.name}
-                  </option>
-                ))}
-              </select>
-            </Field>
-          )}
-          {/* VOCAB-ENUMERATION OK: a coincidence of spelling, not a field role */}
-          {!fp.hidden("location") && (
-            <Field label={fp.label("location", "Location")}>
-              <select value={locationId} onChange={(e) => setLocationId(e.target.value)} className="input">
-                <option value=""> - none - </option>
-                {locs.data?.items.map((l) => (
-                  <option key={l.id} value={l.id}>
-                    {"  ".repeat(l.depth)}
-                    {l.name}
-                  </option>
-                ))}
-              </select>
-            </Field>
-          )}
-        </div>
+        {/* Everything below the name is packed from what each field needs
+            (#3067): a wide modal uses its width, a phone gets two columns,
+            and a long field (the type picker, rich text) takes the row. */}
+        <FieldPack
+          className="gap-y-3"
+          items={[
+            !fp.hidden("qty")
+              ? {
+                  need: fieldNeed("native:qty", { control: "number", label: estimated ? "Roughly how many" : fp.label("qty", "Qty") }),
+                  node: (
+                    <Field label={estimated ? "Roughly how many" : fp.label("qty", "Qty")}>
+                      <input type="number" step="any" min="0" value={qty} onChange={(e) => setQty(e.target.value)} className={"input " + fieldPackControlClass} />
+                    </Field>
+                  ),
+                }
+              : null,
+            !fp.hidden("qty")
+              ? {
+                  need: fieldNeed("native:estimated", { control: "checkbox", label: "I have not counted these" }),
+                  node: (
+                    <label className="flex min-h-[38px] items-center gap-1.5 text-xs text-muted">
+                      <input type="checkbox" checked={estimated} onChange={(e) => setEstimated(e.target.checked)} />
+                      I have not counted these
+                    </label>
+                  ),
+                }
+              : null,
+            !fp.hidden("unit")
+              ? {
+                  need: fieldNeed("native:unit", { control: "text", label: fp.label("unit", "Unit") }),
+                  node: (
+                    <Field label={fp.label("unit", "Unit")}>
+                      <input
+                        value={unit}
+                        onChange={(e) => setUnit(e.target.value)}
+                        onFocus={() => {
+                          unitAtFocus.current = unit;
+                        }}
+                        onBlur={() => {
+                          const n = Number(qty);
+                          const c = Number.isFinite(n) ? units.convert(n, unitAtFocus.current, unit) : null;
+                          if (c != null) setQty(String(c));
+                        }}
+                        list="part-unit-options"
+                        className={"input " + fieldPackControlClass}
+                      />
+                      <datalist id="part-unit-options">
+                        {UNIT_SUGGESTIONS.map((u) => (
+                          <option key={u} value={u} />
+                        ))}
+                      </datalist>
+                    </Field>
+                  ),
+                }
+              : null,
+            // Parent / "type" link: when this instance's items belong to a type
+            // in another instance (Spool -> Filament type), pick it here; the
+            // `instance-of` pairing is written after create.
+            parent
+              ? {
+                  need: fieldNeed("native:parent", { control: "relation", label: parent.label ?? "Type" }),
+                  node: (
+                    <Field label={parent.label ?? "Type"}>
+                      <ParentPicker instance={parent.instance} value={parentRef} onChange={setParentRef} placeholder={`Search ${parent.label?.toLowerCase() ?? "type"}…`} />
+                    </Field>
+                  ),
+                }
+              : null,
+            // The instance's own fields, promoted into create (the whole point
+            // of a skinned instance: fill yarn fields here, not after). Each
+            // asks the packer for what its control needs.
+            ...customFields.map((f) => ({
+                need: fieldNeed(f.name, {
+                  control: fieldControl({ type: f.type as FieldType, renderer: f.renderer as FieldRendererId | null, choices: f.choices, server_managed: f.server_managed }),
+                  label: f.display_label,
+                  choices: f.choices,
+                  help: f.help,
+                }),
+                node: <CustomFieldInput key={f.id} def={f} value={meta[f.name]} onChange={(v) => setMeta((m) => ({ ...m, [f.name]: v }))} />,
+            })),
+            // Brand + Price: natives that belong on the first create modal, not
+            // buried in the full-size editor. Relabelled per instance via fp
+            // (Yarn: "Brand" / "Price"); an instance can still hide either.
+            !fp.hidden("manufacturer")
+              ? {
+                  need: fieldNeed("native:manufacturer", { control: "text", label: fp.label("manufacturer", "Brand") }),
+                  node: (
+                    <Field label={fp.label("manufacturer", "Brand")}>
+                      <input value={manufacturer} onChange={(e) => setManufacturer(e.target.value)} className={"input " + fieldPackControlClass} />
+                    </Field>
+                  ),
+                }
+              : null,
+            !fp.hidden("cost")
+              ? {
+                  need: fieldNeed("native:cost", { control: "number", label: fp.label("cost", "Price") }),
+                  node: (
+                    <Field label={fp.label("cost", "Price")}>
+                      <input type="number" step="any" min="0" inputMode="decimal" value={cost} onChange={(e) => setCost(e.target.value)} className={"input " + fieldPackControlClass} />
+                    </Field>
+                  ),
+                }
+              : null,
+            // VOCAB-ENUMERATION OK: a coincidence of spelling, not a field role
+            !fp.hidden("category")
+              ? {
+                  need: fieldNeed("native:category", { control: "choice", label: fp.label("category", "Category"), choices: (cats.data?.items ?? []).map((c) => c.name) }),
+                  node: (
+                    <Field label={fp.label("category", "Category")}>
+                      <select value={categoryId} onChange={(e) => setCategoryId(e.target.value)} className={"input " + fieldPackControlClass}>
+                        <option value=""> - none - </option>
+                        {cats.data?.items.map((c) => (
+                          <option key={c.id} value={c.id}>
+                            {c.name}
+                          </option>
+                        ))}
+                      </select>
+                    </Field>
+                  ),
+                }
+              : null,
+            // VOCAB-ENUMERATION OK: a coincidence of spelling, not a field role
+            !fp.hidden("location")
+              ? {
+                  need: fieldNeed("native:location", { control: "choice", label: fp.label("location", "Location"), choices: (locs.data?.items ?? []).map((l) => l.name) }),
+                  node: (
+                    <Field label={fp.label("location", "Location")}>
+                      <select value={locationId} onChange={(e) => setLocationId(e.target.value)} className={"input " + fieldPackControlClass}>
+                        <option value=""> - none - </option>
+                        {locs.data?.items.map((l) => (
+                          <option key={l.id} value={l.id}>
+                            {"  ".repeat(l.depth)}
+                            {l.name}
+                          </option>
+                        ))}
+                      </select>
+                    </Field>
+                  ),
+                }
+              : null,
+          ]}
+        />
         {/* QR-label printing is a platform/maker feature — hide it in a locked
             managed app (a yarn consumer has no label printer). */}
         {!appMode && (
@@ -462,16 +481,9 @@ export function NewPartDialog({ onClose, onCreated, seed }: NewPartDialogProps) 
   );
 }
 
-function Field({ label, children }: { label: string; children: React.ReactNode }) {
-  return (
-    <label className="block">
-      <span className="block text-[10px] font-mono uppercase tracking-widest text-faint dark:text-slate-500 mb-1">
-        {label}
-      </span>
-      {children}
-    </label>
-  );
-}
+/** The caption over a control: the shared one, so this form's labels and a
+ *  record page's read the same. */
+const Field = LabeledField;
 
 /** Renders one custom-field input on the create form, by the field def's type:
  *  a colour-swatch picker for `color-hex`, an add-as-you-go dropdown for

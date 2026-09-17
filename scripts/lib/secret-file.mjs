@@ -9,6 +9,15 @@
 // Returns the first READABLE path, else the preferred one — a caller that wants to
 // print "no credential at X" then names where the file should go, rather than the
 // legacy path nobody should be creating anymore.
+//
+// This file is in the PUBLIC export (scripts/publish/manifests/core.json) on
+// purpose, though it names credential files: it is a path lookup with nothing
+// secret in it, and two lints otherwise disagree about any script that reads a
+// token. lint:secret-paths refuses a hard-coded credential path and requires
+// this resolver; the export gate refuses an import that is not in the export.
+// Both were right on their own terms and jointly unsatisfiable until this was
+// exported (2026-09-17, the corpus known-red lint). Do not take it out of the
+// manifest to "hide" it; there is nothing to hide.
 import { accessSync, constants, readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";

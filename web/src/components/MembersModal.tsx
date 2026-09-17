@@ -51,6 +51,8 @@ export function MembersModal({ open, onClose, slug, inline, chromeless, focus }:
     enabled: open && !!slug,
   });
 
+  // role-gate: exact — managing members is governance; the server's
+  // assertAdmin is exact for the same reason, and an editor is not in it.
   const isAdminish =
     members.data?.self.role === "owner" || members.data?.self.role === "admin";
   // Only an OWNER can invite a brand-new person who gets their OWN workspace

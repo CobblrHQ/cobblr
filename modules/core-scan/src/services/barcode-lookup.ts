@@ -52,7 +52,25 @@ export type BarcodeOutcome =
   // the caller must not cache it. Without this, an install misconfigured for an hour
   // negative-caches every code it scans and fixing the key does not bring them back
   // until those entries expire.
-  | { outcome: "unavailable"; reason: "auth" };
+  //
+  // `unreachable`: a catalog that was asked and could not answer (the network, a
+  // timeout, a 5xx) while nothing else resolved the code. An absence cannot
+  // clear a negative: a miss is definitive only when every catalog asked said
+  // no, so this too is UNRESOLVED and never cached. Read as a miss, one evening
+  // of a provider being down cached every code scanned in it as absent, for
+  // this workspace with no expiry and for every other for thirty days.
+  | { outcome: "unavailable"; reason: "auth" | "unreachable" };
+
+/** The two outcomes a cache may keep. The others are UNRESOLVED, and the
+ *  comment above asking callers not to cache them was ignored for a year
+ *  (`unavailable` was negative-cached until 2026-09-17): a writer that takes
+ *  THIS type cannot be handed them, and `durableOutcome` is the one place
+ *  that lists what durable means, positively, so an outcome added later is
+ *  unresolved until someone says otherwise here. */
+export type DurableBarcodeOutcome = Extract<BarcodeOutcome, { outcome: "hit" | "miss" }>;
+export function durableOutcome(o: BarcodeOutcome): DurableBarcodeOutcome | null {
+  return o.outcome === "hit" || o.outcome === "miss" ? o : null;
+}
 
 // upcitemdb's trial can be slow under load; give it room. OPF is snappy.
 const UPCITEMDB_TIMEOUT_MS = 12_000;
@@ -61,7 +79,13 @@ const OPF_TIMEOUT_MS = 10_000;
 type ProviderResult =
   | { kind: "hit"; hit: BarcodeHit }
   | { kind: "miss" }
-  | { kind: "rate_limited"; scope: "burst" | "daily" };
+  | { kind: "rate_limited"; scope: "burst" | "daily" }
+  // Asked and could not answer: a 5xx, a timeout, the network. Not a miss.
+  | { kind: "unreachable" };
+
+const UNREACHABLE: ProviderResult = { kind: "unreachable" };
+/** A thrown fetch (timeout, DNS, reset) is the catalog not answering. */
+const unreachableOnThrow = (): ProviderResult => UNREACHABLE;
 
 async function fetchJson(
   url: string,
@@ -95,6 +119,7 @@ async function tryUpcitemdb(upc: string): Promise<ProviderResult> {
   );
   // HTTP 429 = daily quota spent.
   if (status === 429) return { kind: "rate_limited", scope: "daily" };
+  if (status >= 500) return UNREACHABLE;
   const data = body as { code?: string; total?: number; items?: Array<Record<string, unknown>> } | null;
   // The trial signals throttling in the 200-body too: TOO_FAST = the 15/30s
   // burst cap, EXCEED_LIMIT = the daily quota. Treat BOTH as retryable, never
@@ -133,10 +158,12 @@ const OPEN_FACTS_DBS: ReadonlyArray<{ host: string; source: string }> = [
 ];
 
 async function tryOpenFacts(upc: string, host: string, source: string): Promise<ProviderResult> {
-  const { body } = await fetchJson(
+  const { status, body } = await fetchJson(
     `https://${host}/api/v2/product/${encodeURIComponent(upc)}.json`,
     OPF_TIMEOUT_MS,
   );
+  // A 404 is the catalog saying it has no such product; a 5xx is it not answering.
+  if (status >= 500) return UNREACHABLE;
   const data = body as { status?: number; product?: Record<string, unknown> } | null;
   if (!data || data.status !== 1 || !data.product) return { kind: "miss" };
   const p = data.product;
@@ -330,6 +357,7 @@ async function tryGoUpcApi(upc: string, key: string): Promise<ProviderResult> {
   );
   if (status === 404) return { kind: "miss" };
   if (status === 429) return { kind: "rate_limited", scope: "daily" };
+  if (status >= 500) return UNREACHABLE;
   const p = (body as { product?: Record<string, unknown> } | null)?.product;
   if (!p) return { kind: "miss" };
   const title = typeof p.name === "string" ? p.name.trim() : "";
@@ -658,6 +686,7 @@ async function doLookupBarcode(norm: string): Promise<BarcodeOutcome> {
   // as a permanent miss (the no-poison rule).
   let bidbThrottled = false;
   let bidbAuthFailed = false;
+  let bidbUnreachable = false;
   if (bidbEnabled()) {
     try {
       const r = await tryBidb(norm);
@@ -680,20 +709,26 @@ async function doLookupBarcode(norm: string): Promise<BarcodeOutcome> {
           );
         }
       } else {
+        bidbUnreachable = true;
         console.error(`[core-scan] bidb unreachable (${(e as Error).message}) — falling back to local chain`);
       }
     }
   }
-  const throttledMiss = (): BarcodeOutcome =>
+  // No hit anywhere. Definitive only when every catalog asked actually
+  // answered no; a throttle, a refused key or a catalog that could not answer
+  // leaves the code UNRESOLVED, which the caller never caches.
+  const noHit = (unreachable: boolean): BarcodeOutcome =>
     bidbThrottled
       ? { outcome: "rate_limited", scope: "daily" }
       : bidbAuthFailed
         ? { outcome: "unavailable", reason: "auth" }
-        : { outcome: "miss" };
+        : unreachable || bidbUnreachable
+          ? { outcome: "unavailable", reason: "unreachable" }
+          : { outcome: "miss" };
 
   // Third-party direct lookups — master switch (self-host privacy). Off ⇒ no
   // external barcode calls at all; only the cache + box resolver (above) answer.
-  if (!externalLookupsEnabled()) return throttledMiss();
+  if (!externalLookupsEnabled()) return noHit(false);
 
   // go-upc tier. A supplied API key uses the OFFICIAL API (clean transport);
   // otherwise the HTML scraper runs ONLY when explicitly opted in
@@ -703,22 +738,20 @@ async function doLookupBarcode(norm: string): Promise<BarcodeOutcome> {
   const goUpcKey = process.env.COBBLR_SCAN_GOUPC_API_KEY?.trim();
   let goRes: ProviderResult = { kind: "miss" };
   if (goUpcKey) {
-    goRes = await tryGoUpcApi(norm, goUpcKey).catch((): ProviderResult => ({ kind: "miss" }));
+    goRes = await tryGoUpcApi(norm, goUpcKey).catch(unreachableOnThrow);
   } else if (envBool("COBBLR_SCAN_GOUPC", false)) {
+    // The scraper's own "slot busy" is a skip for this scan, not the catalog
+    // failing to answer: the APIs decide, and a miss from them stands.
     goRes = await tryGoUpc(norm).catch((): ProviderResult => ({ kind: "miss" }));
   }
   if (goRes.kind === "hit") return { outcome: "hit", hit: goRes.hit };
 
   // Fallback: upcitemdb ‖ Open Facts trio, each independently toggleable.
   const upcP: Promise<ProviderResult> = envBool("COBBLR_SCAN_UPCITEMDB", true)
-    ? tryUpcitemdb(norm).catch((): ProviderResult => ({ kind: "miss" }))
+    ? tryUpcitemdb(norm).catch(unreachableOnThrow)
     : Promise.resolve({ kind: "miss" });
   const factsP: Promise<ProviderResult[]> = envBool("COBBLR_SCAN_OPENFACTS", true)
-    ? Promise.all(
-        OPEN_FACTS_DBS.map((db) =>
-          tryOpenFacts(norm, db.host, db.source).catch((): ProviderResult => ({ kind: "miss" })),
-        ),
-      )
+    ? Promise.all(OPEN_FACTS_DBS.map((db) => tryOpenFacts(norm, db.host, db.source).catch(unreachableOnThrow)))
     : Promise.resolve([]);
   const [upcRes, factsRes] = await Promise.all([upcP, factsP]);
 
@@ -729,5 +762,5 @@ async function doLookupBarcode(norm: string): Promise<BarcodeOutcome> {
   // No catalog hit. If upcitemdb was throttled, the answer is
   // "unknown, retry" — not "doesn't exist".
   if (upcRes.kind === "rate_limited") return { outcome: "rate_limited", scope: upcRes.scope };
-  return throttledMiss();
+  return noHit([goRes, upcRes, ...factsRes].some((r) => r.kind === "unreachable"));
 }

@@ -8,7 +8,8 @@
 // In-memory (no DB column) — same shape as create-defaults / device-apply.
 // (Audit 2026-06-26 follow-up.)
 
-import type { ScannableInfo } from "@cobblr/platform-contract";
+import type { EntityKindRecord, ScannableInfo, ScannableKind } from "@cobblr/platform-contract";
+import { listKindsForOrg } from "./entities.js";
 
 const scannable = new Map<string, ScannableInfo>();
 
@@ -36,4 +37,29 @@ export function getScannableForModule(module: string): ScannableInfo | null {
 
 export function listScannable(): Array<{ kind: string } & ScannableInfo> {
   return [...scannable.entries()].map(([kind, info]) => ({ kind, ...info }));
+}
+
+// The scannable kinds THIS workspace has, instances included. `listScannable`
+// above is the process-global registry of BASE kinds, one per module, and a
+// record living in a named instance (a Groceries table's tomatoes, under
+// `groceries:item`) never appears in its base kind's list. Every consumer that
+// walked `listScannable()` to read RECORDS saw no grocery and no yarn, returned
+// a plausible answer from what it did see, and errored nowhere: the tracked
+// match (2026-09-06), then the sibling tier, the Organize plan's unplaced
+// sweep, the bin census and the per-kind duplicates door (#3132). A comment in
+// one of them said so and three more were written after it, so the answer is
+// one seam here and a capability row refusing the registry walk elsewhere.
+//
+// An instance kind inherits its module's scannable (noun, create endpoint,
+// quantity field): the instance routes the write, the module owns the scan.
+export async function listScannableForOrg(orgId: string): Promise<ScannableKind[]> {
+  const recs = await listKindsForOrg(orgId);
+  const out: ScannableKind[] = [];
+  for (const rec of recs) {
+    const kind = rec.id.includes(":") ? rec.id : `${rec.module_name}:${rec.id}`;
+    const info = scannable.get(kind) ?? getScannableForModule(rec.module_name);
+    if (!info) continue;
+    out.push({ kind, ...info, module: rec.module_name, instance: rec.instance_name ?? null, record: rec as EntityKindRecord });
+  }
+  return out;
 }

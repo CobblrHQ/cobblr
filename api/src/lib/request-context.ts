@@ -14,6 +14,11 @@ export interface RequestActor {
   authMethod: AuthMethod;
   /** Set when authMethod === "api_token". */
   apiTokenId: string | null;
+  /** How a titled work's title reads for this person (their `title_pref`),
+   *  so a served entity's title is composed once, in the kernel, for whoever
+   *  is asking (served-title.ts, #3061). Absent for a token or an actor
+   *  with no preference: the default format. */
+  titlePref?: string | null;
 }
 
 const storage = new AsyncLocalStorage<RequestActor>();

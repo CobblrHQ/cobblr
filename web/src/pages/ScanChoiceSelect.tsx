@@ -11,13 +11,14 @@
 import { useState } from "react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { api } from "../lib/api";
+import { roleSatisfies } from "@cobblr/platform-contract/org-roles";
 
 export const NEW_CHOICE = "__new_choice__";
 
 /** May this role grow a dropdown's choices? The server's rule, mirrored so
  *  a refused viewer sees no entry. Unknown (still loading) is left to it. */
 export function canGrowChoices(role: string | null | undefined): boolean {
-  return !role || role === "owner" || role === "admin" || role === "member";
+  return !role || roleSatisfies(role, ["member"]);
 }
 
 export function ScanChoiceSelect({

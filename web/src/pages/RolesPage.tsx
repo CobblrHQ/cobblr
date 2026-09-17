@@ -13,6 +13,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Check, Pencil, Plus, Trash2 } from "lucide-react";
 import { Modal, useConfirm, usePageTitle, useToast } from "@cobblr/platform-web";
 import { ApiError, api, type CustomRole } from "../lib/api";
+import { roleHoldsEveryCapability } from "@cobblr/platform-contract/org-roles";
 import { useActiveOrg } from "../auth/ActiveOrgContext";
 
 export function RolesPage({ embedded = false }: { embedded?: boolean } = {}) {
@@ -172,7 +173,7 @@ export function RolesPage({ embedded = false }: { embedded?: boolean } = {}) {
             </thead>
             <tbody className="divide-y divide-line dark:divide-slate-800">
               {members.map((m) => {
-                const isAdmin = m.role === "owner" || m.role === "admin";
+                const isAdmin = roleHoldsEveryCapability(m.role);
                 // Need to know which roles a member has — fetch
                 // assignments via the matrix? For v1 just always
                 // show unchecked + let the toggle act. We re-query

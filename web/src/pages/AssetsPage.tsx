@@ -16,7 +16,8 @@ import { queueLabelsBulk } from "../lib/queue-label";
 import { useActiveOrg } from "../auth/ActiveOrgContext";
 import { useFieldPresentation } from "../lib/useFieldPresentation";
 import { CustomFieldsPanel,
-  EntityActionsBar, FaceSection, RecordFaces,
+  EditField, EntityActionsBar, FaceSection, FieldPack, RecordFaces,
+  FacesOn, editFieldItem, fieldNeed,
   useAskCobbAboutSelection,
   Modal,
   useToast,
@@ -655,7 +656,7 @@ function BulkTagPromptModal({
   );
 }
 
-function AssetDetailModal({
+export function AssetDetailModal({
   assetId,
   onClose,
   instance,
@@ -752,42 +753,44 @@ function AssetDetailModal({
               overrides — a bundle/config can relabel (e.g. Manufacturer → Make)
               or hide the ones a focused use-case doesn't need. `name` is the
               identity, so it's relabel-only (never hidden). */}
-          <dl className="grid grid-cols-2 gap-3 text-xs">
-            <EditField label={fp.label("name", "Name")} value={a.name} onCommit={(v) => update.mutate({ name: v })} />
-            {!fp.hidden("short_name") && <EditField label={fp.label("short_name", "Short name")} value={a.short_name ?? ""} onCommit={(v) => update.mutate({ short_name: v || null })} />}
-            {/* make/model are keyed on their value so a guarded-auto VIN fill
-                (which mutates + refetches) actually re-renders these otherwise
-                uncontrolled inputs. */}
-            {!fp.hidden("manufacturer") && <EditField key={`mfr-${a.manufacturer ?? ""}`} label={fp.label("manufacturer", "Manufacturer")} value={a.manufacturer ?? ""} onCommit={(v) => update.mutate({ manufacturer: v || null })} />}
-            {!fp.hidden("model") && <EditField key={`mdl-${a.model ?? ""}`} label={fp.label("model", "Model")} value={a.model ?? ""} onCommit={(v) => update.mutate({ model: v || null })} />}
-            {!fp.hidden("type") && <EditField label={fp.label("type", "Type")} value={a.type ?? ""} onCommit={(v) => update.mutate({ type: v || null })} />}
-            {!fp.hidden("state") && <EditField label={fp.label("state", "State")} value={a.state} onCommit={(v) => update.mutate({ state: v })} />}
-            {!fp.hidden("serial_number") &&
-              (/\bvin\b/i.test(fp.label("serial_number", "Serial number")) ? (
-                <VinDecodeField
-                  a={a}
-                  fp={fp}
-                  fieldDefs={fieldDefs.data?.items ?? []}
-                  slug={activeSlug}
-                  onPatch={(patch) => update.mutate(patch)}
-                />
-              ) : (
-                <EditField label={fp.label("serial_number", "Serial number")} value={a.serial_number ?? ""} onCommit={(v) => update.mutate({ serial_number: v || null })} />
-              ))}
-            {!fp.hidden("purchased_at") && <EditField label={fp.label("purchased_at", "Purchased at")} value={a.purchased_at ?? ""} onCommit={(v) => update.mutate({ purchased_at: v || null })} type="date" />}
-            {/* Service face: warranty + last service. Off hides them; the asset stays unique. */}
-            <FaceSection face="maintained" kind={kind}>
-            {!fp.hidden("warranty_until") && <EditField label={fp.label("warranty_until", "Warranty until")} value={a.warranty_until ?? ""} onCommit={(v) => update.mutate({ warranty_until: v || null })} type="date" />}
-            {!fp.hidden("last_service_at") && <EditField label={fp.label("last_service_at", "Last service")} value={a.last_service_at ?? ""} onCommit={(v) => update.mutate({ last_service_at: v || null })} type="date" />}
-            </FaceSection>
-            <FaceSection face="stock" kind={kind}>{!fp.hidden("quantity") && <EditField label={fp.label("quantity", "Quantity")} value={String(a.quantity)} numeric onCommit={(v) => update.mutate({ quantity: Number(v) || 0 })} />}</FaceSection>
-            <LocationTreePicker
-              label="Location"
-              value={a.location_id}
-              onChange={(id) => update.mutate({ location_id: id })}
-              size="sm"
-            />
-          </dl>
+          {/* The service and stock faces decide whether their fields are on
+              the record at all (no cell, not an empty one), read from inside
+              the record's faces: this component mounts RecordFaces, so a
+              hook in its own body would run outside it and answer true. */}
+          <FacesOn kind={kind} faces={["maintained", "stock"] as const}>
+            {({ maintained: maintainedOn, stock: stockOn }) => (
+          <FieldPack
+            className="text-xs"
+            items={[
+              editFieldItem("name", { label: fp.label("name", "Name"), value: a.name, onCommit: (v) => update.mutate({ name: v }) }),
+              !fp.hidden("short_name") ? editFieldItem("short_name", { label: fp.label("short_name", "Short name"), value: a.short_name ?? "", onCommit: (v) => update.mutate({ short_name: v || null }) }) : null,
+              // make/model are keyed on their value so a guarded-auto VIN fill
+              // (which mutates + refetches) actually re-renders these otherwise
+              // uncontrolled inputs.
+              !fp.hidden("manufacturer") ? { need: fieldNeed("manufacturer", { control: "text", label: fp.label("manufacturer", "Manufacturer"), valueLength: (a.manufacturer ?? "").length }), node: <EditField key={`mfr-${a.manufacturer ?? ""}`} label={fp.label("manufacturer", "Manufacturer")} value={a.manufacturer ?? ""} onCommit={(v) => update.mutate({ manufacturer: v || null })} /> } : null,
+              !fp.hidden("model") ? { need: fieldNeed("model", { control: "text", label: fp.label("model", "Model"), valueLength: (a.model ?? "").length }), node: <EditField key={`mdl-${a.model ?? ""}`} label={fp.label("model", "Model")} value={a.model ?? ""} onCommit={(v) => update.mutate({ model: v || null })} /> } : null,
+              !fp.hidden("type") ? editFieldItem("type", { label: fp.label("type", "Type"), value: a.type ?? "", onCommit: (v) => update.mutate({ type: v || null }) }) : null,
+              !fp.hidden("state") ? editFieldItem("state", { label: fp.label("state", "State"), value: a.state, onCommit: (v) => update.mutate({ state: v }) }) : null,
+              // A VIN carries its decode button and the fill it proposes under
+              // it: the row, whatever the width.
+              !fp.hidden("serial_number")
+                ? /\bvin\b/i.test(fp.label("serial_number", "Serial number"))
+                  ? { need: { key: "serial_number", minPx: 320, full: true }, node: <VinDecodeField a={a} fp={fp} fieldDefs={fieldDefs.data?.items ?? []} slug={activeSlug} onPatch={(patch) => update.mutate(patch)} /> }
+                  : editFieldItem("serial_number", { label: fp.label("serial_number", "Serial number"), value: a.serial_number ?? "", onCommit: (v) => update.mutate({ serial_number: v || null }) })
+                : null,
+              !fp.hidden("purchased_at") ? editFieldItem("purchased_at", { label: fp.label("purchased_at", "Purchased at"), value: a.purchased_at ?? "", type: "date", onCommit: (v) => update.mutate({ purchased_at: v || null }) }) : null,
+              // Service face: warranty + last service. Off hides them; the asset stays unique.
+              maintainedOn && !fp.hidden("warranty_until") ? editFieldItem("warranty_until", { label: fp.label("warranty_until", "Warranty until"), value: a.warranty_until ?? "", type: "date", onCommit: (v) => update.mutate({ warranty_until: v || null }) }) : null,
+              maintainedOn && !fp.hidden("last_service_at") ? editFieldItem("last_service_at", { label: fp.label("last_service_at", "Last service"), value: a.last_service_at ?? "", type: "date", onCommit: (v) => update.mutate({ last_service_at: v || null }) }) : null,
+              stockOn && !fp.hidden("quantity") ? editFieldItem("quantity", { label: fp.label("quantity", "Quantity"), value: String(a.quantity), numeric: true, onCommit: (v) => update.mutate({ quantity: Number(v) || 0 }) }) : null,
+              {
+                need: fieldNeed("location", { control: "picker", label: "Location" }),
+                node: <LocationTreePicker label="Location" value={a.location_id} onChange={(id) => update.mutate({ location_id: id })} size="sm" />,
+              },
+            ]}
+          />
+            )}
+          </FacesOn>
           <CustomFieldsPanel
             entityKind={kind}
             entityId={a.id}
@@ -951,42 +954,6 @@ function NewAssetModal({
   );
 }
 
-function EditField({
-  label,
-  value,
-  onCommit,
-  numeric,
-  multiline,
-  type,
-}: {
-  label: string;
-  value: string;
-  onCommit: (v: string) => void;
-  numeric?: boolean;
-  multiline?: boolean;
-  type?: string;
-}) {
-  const Cmp = multiline ? "textarea" : "input";
-  return (
-    <label className={"block " + (multiline ? "col-span-2" : "")}>
-      <span className="block text-[10px] font-mono uppercase tracking-widest text-faint dark:text-slate-500 mb-1">
-        {label}
-      </span>
-      <Cmp
-        type={type ?? (numeric ? "number" : "text")}
-        defaultValue={value}
-        onBlur={(e) => {
-          if (e.target.value !== value) onCommit(e.target.value);
-        }}
-        onKeyDown={(e) => {
-          if (!multiline && e.key === "Enter") (e.target as HTMLInputElement).blur();
-        }}
-        rows={multiline ? 3 : undefined}
-        className="input"
-      />
-    </label>
-  );
-}
 
 // ── Guarded-auto VIN decode ───────────────────────────────────────────────────
 // Renders the "VIN" field (the relabeled serial_number) as a controlled input
@@ -1106,7 +1073,7 @@ function VinDecodeField({
   const decoding = status.kind === "decoding";
 
   return (
-    <label className="block col-span-2">
+    <label className="block min-w-0">
       <span className="block text-[10px] font-mono uppercase tracking-widest text-faint dark:text-slate-500 mb-1">
         {fp.label("serial_number", "VIN")}
       </span>

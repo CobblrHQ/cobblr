@@ -339,8 +339,20 @@ if (existsSync(KERNEL)) {
 // so it cannot drift from the code and nobody has to remember to add a line.
 const actionLabels = new Map<string, string>();
 const actionsByModule = new Map<string, string[]>();
+/** Is this declaration wire-only — fired by an event or a card press and
+ *  never offered to the assistant? Read from the id to the next declaration,
+ *  since the flag sits at the end of the object, after the label. */
+function wireOnlyDecl(src: string, from: number): boolean {
+  const rest = src.slice(from + 4);
+  const next = rest.search(/\bid:\s*["'`][a-z0-9-]+:[a-z0-9-]+["'`]/);
+  const window = next < 0 ? rest : rest.slice(0, next);
+  return /\b(?:wire_only|wireOnly):\s*true/.test(window);
+}
 for (const m of platformActionSrc.matchAll(/id:\s*["'`]([a-z0-9-]+:[a-z0-9-]+)["'`]([\s\S]{0,200}?)label:\s*["'`]([^"'`]+)["'`]/g)) {
   actionLabels.set(m[1]!, m[3]!);
+  // A card-pressed decision (approve/deny a request) is not a door the
+  // assistant can walk through, and the registry must not say it is.
+  if (wireOnlyDecl(platformActionSrc, m.index)) continue;
   actionsByModule.set("the kernel itself", [...new Set([...(actionsByModule.get("the kernel itself") ?? []), m[1]!])]);
 }
 for (const mod of readdirSync(MODULES)) {
@@ -352,6 +364,7 @@ for (const mod of readdirSync(MODULES)) {
     // assistant can walk through, so it is not listed as one.
     if (/internal:\s*true/.test(m[2]!)) continue;
     if (!actionLabels.has(m[1]!)) actionLabels.set(m[1]!, m[3]!);
+    if (wireOnlyDecl(src, m.index)) continue;
     actionsByModule.set(mod, [...new Set([...(actionsByModule.get(mod) ?? []), m[1]!])]);
   }
 }

@@ -1,0 +1,13 @@
+{
+  "outcome": "hit",
+  "hit": {
+    "source": "openfoodfacts",
+    "title": "Fit Shake",
+    "brand": null,
+    "model": "9781449373320",
+    "description": null,
+    "category": null,
+    "image_url": null,
+    "raw": { "openfoodfacts": { "note": "a stray entry for an ISBN, as staging's product chain answered on 2026-09-17 (#3162)" } }
+  }
+}

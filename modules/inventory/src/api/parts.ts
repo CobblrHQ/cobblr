@@ -826,8 +826,18 @@ partsRouter.get(
     });
     const openRows = (await openUnitsFor(db, [row.id])).get(row.id);
     const open = openUnitsSummary(openRows, openRows?.length ? await consumptionUnitFor(req) : null);
+    // The one helper both read paths share (withFieldLabels): the labels a
+    // relation or member field prints, and the served title of a titled
+    // work beside its stored name (#3061), the same as the list and the
+    // generic door. A person opening a book saw the stored name where the
+    // table beside it showed their format.
+    const [labelledRow] = await platform().entities.withFieldLabels(
+      tenantContext(req).org.id,
+      instanceOf(req) === "inventory" ? "inventory:part" : `${instanceOf(req)}:item`,
+      [row as unknown as Record<string, unknown>],
+    );
     res.json({
-      ...row,
+      ...(labelledRow ?? row),
       units_count: unitsCount,
       units_latest_at: unitsLatestAt,
       reconcile,
@@ -1249,7 +1259,10 @@ partsRouter.patch(
       after: { ...before, ...applyMetadataMerge(beforeMeta, own) },
     });
 
-    res.json(updated);
+    // The row after a save carries its served title too, so a page that
+    // keeps the response does not fall back to the stored name until a
+    // refetch (#3061).
+    res.json((await platform().entities.withFieldLabels(ctx.org.id, instanceOf(req) === "inventory" ? "inventory:part" : `${instanceOf(req)}:item`, [updated as unknown as Record<string, unknown>]))[0] ?? updated);
   }),
 );
 
@@ -1388,7 +1401,10 @@ partsRouter.patch(
       unit: parsed.data.unit,
     });
 
-    res.json(updated);
+    // The row after a save carries its served title too, so a page that
+    // keeps the response does not fall back to the stored name until a
+    // refetch (#3061).
+    res.json((await platform().entities.withFieldLabels(ctx.org.id, instanceOf(req) === "inventory" ? "inventory:part" : `${instanceOf(req)}:item`, [updated as unknown as Record<string, unknown>]))[0] ?? updated);
   }),
 );
 
@@ -1436,7 +1452,12 @@ partsRouter.delete(
 partsRouter.post(
   "/:id/stock-adjust",
   asyncHandler(async (req, res) => {
-    if (!(await requireCapability(req, res, "inventory:adjust-stock"))) return;
+    // Gated on "Edit parts", the capability a person can hold. The action
+    // this route backs (inventory:adjust-stock) is wire-fired and deliberately
+    // not a button, so it is not grantable; gating the ROUTE on it meant a
+    // member could be refused here and nobody could say yes
+    // (lint:capability-gates-grantable). Changing a count is editing the part.
+    if (!(await requireCapability(req, res, "inventory:update-part"))) return;
     const parsed = StockAdjust.safeParse(req.body);
     if (!parsed.success) return badBody(res, parsed.error);
     const id = req.params.id;

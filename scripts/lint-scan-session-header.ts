@@ -101,6 +101,7 @@ if (errors.length === 0) {
     ["PO#", at('{g.orderRef ? "PO#" : "+ PO#"}')],
     ["Re-parse", at("/> Re-parse")],
     ["End", at("End this scan session")],
+    ["Session actions", at('aria-label="Session actions"')],
   ];
   for (const [name, idx] of UTILITIES) {
     if (idx === -1) continue; // removed on purpose is fine; misplaced is not

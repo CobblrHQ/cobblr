@@ -24,6 +24,7 @@
 //   4. Never merge two pages just to make a count look smaller.
 
 import type { LucideIcon } from "lucide-react";
+import { roleSatisfies } from "@cobblr/platform-contract/org-roles";
 import {
   Activity,
   BookOpen,
@@ -67,12 +68,18 @@ export type ConfigSection =
 /** The minimum org role that can use a destination. The API has exactly two
  *  tiers (verified by sweeping `requireRole` across api/src + modules): the
  *  admin tier `("owner","admin")` and the member tier
- *  `("owner","admin","member")`. Nothing in settings is owner-exclusive, so
- *  "admin" is the only meaningful value here — `owner` would hide pages the
- *  server happily serves to admins. */
-// role-vocab: ok — a nav TIER, not the role vocabulary. It names the two
-// thresholds settings pages are gated at; a sixth role would not add a third.
-export type ConfigRole = "admin" | "member";
+ *  `("owner","admin","member")`, both read by RANK the way the server reads
+ *  them (so an editor, admin-tier for actions, sees the admin tier). Nothing
+ *  in settings is owner-exclusive, so `owner` is not a value here — it would
+ *  hide pages the server happily serves to admins.
+ *
+ *  `governance` is the exception the role model itself makes: managing who
+ *  is in the workspace and what they may do is owner/admin EXACTLY, never
+ *  reached by outranking a member. An editor outranks a member and must not
+ *  see those tiles, since the server refuses it on every one of them. */
+// role-vocab: ok — a nav TIER, not the role vocabulary. It names the
+// thresholds settings pages are gated at; a sixth role would not add one.
+export type ConfigRole = "admin" | "member" | "governance";
 
 /** Width is a pair, not a flag: choosing the wide column obliges you to say what
  *  needs the room. Modelled as a union so TypeScript refuses `width: "wide"`
@@ -343,6 +350,7 @@ export const CONFIG_DESTINATIONS: ConfigDestination[] = [
     label: "Members & invites",
     description: "Invite collaborators to this workspace, change roles, revoke access.",
     to: "/configuration/members",
+    minRole: "governance",
     keywords: ["team", "collaborators", "invite"],
   },
   {
@@ -352,6 +360,7 @@ export const CONFIG_DESTINATIONS: ConfigDestination[] = [
     description:
       "For each kind of workspace notification (things to use up, maintenance due, an order that should have arrived), choose everyone, the owners only, or specific people.",
     to: "/configuration/notification-audiences",
+    minRole: "governance",
     keywords: ["notifications", "audience", "recipients", "digest", "who receives", "owner only"],
   },
   {
@@ -361,6 +370,7 @@ export const CONFIG_DESTINATIONS: ConfigDestination[] = [
     description:
       "Who can do what: the capability overview + per-member grants, custom roles, and minted accounts.",
     to: "/configuration/permissions",
+    minRole: "governance",
     keywords: [
       "roles",
       "grants",
@@ -377,7 +387,7 @@ export const CONFIG_DESTINATIONS: ConfigDestination[] = [
     icon: LayoutGrid,
     label: "Member portal",
     description:
-      "Branding + pinned views for the slimmed-down member portal at /portal/:slug. Members + guests land here by default; admins can preview.",
+      "Branding + pinned views for the member portal at /portal/:slug. Guests land here; members and admins can open it beside the workspace.",
     to: "/configuration/portal",
     keywords: ["branding", "guests", "landing"],
   },
@@ -585,12 +595,27 @@ export function isDestinationVisible(
   const role = ctx.role ?? undefined;
   // Unknown role (still loading) → don't hide; the server is the real gate.
   if (!role) return true;
-  if (min === "admin") return role === "owner" || role === "admin";
-  return role === "owner" || role === "admin" || role === "member";
+  // role-gate: exact — governance pages mirror the server's exact gates
+  // (assertAdmin and friends); an editor is not in them.
+  if (min === "governance") return role === "owner" || role === "admin";
+  // By rank, the way the server gates: "admin" admits the admin tier (an
+  // editor included), "member" admits anyone who can write.
+  return roleSatisfies(role, [min]);
 }
 
 export function visibleDestinations(ctx: VisibilityContext): ConfigDestination[] {
   return CONFIG_DESTINATIONS.filter((d) => isDestinationVisible(d, ctx));
+}
+
+/** Is there any configuration for this role to reach at all? Read off the
+ *  registry (every destination, modules unknown), so the entry points into
+ *  the hub and the hub agree: a member now walks the workspace (#3122) and
+ *  every settings page is admin-tier or governance, so a Configuration link
+ *  would lead them to "managed by this workspace's admins" every time. One
+ *  answer here, not a role test at each link. */
+export function configurationReachable(role: string | null | undefined): boolean {
+  if (!role) return true;
+  return CONFIG_DESTINATIONS.some((d) => isDestinationVisible(d, { role, enabledModules: null }));
 }
 
 /** Is this route part of the configuration family? True for /configuration/*

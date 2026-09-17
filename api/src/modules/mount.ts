@@ -28,6 +28,7 @@ export interface ModuleApiModule {
 const mountedNames = new Set<string>();
 /** moduleName → its primary-entity router, for instance-scoped item CRUD. */
 import { applyComputedFields } from "../platform/computed-fields.js";
+import { withServedTitle } from "../platform/served-title.js";
 
 const primaryRouters = new Map<string, Router>();
 let appRef: Application | null = null;
@@ -119,7 +120,11 @@ async function withComputedFields(orgId: string, kind: string, body: unknown): P
       title: String(row.name ?? ""),
       fields: row,
     } as Parameters<typeof applyComputedFields>[1]);
-    return { ...row, metadata: resolved.fields.metadata };
+    // The same trap one step further: how a titled work's title READS is a
+    // platform step too (served-title.ts, #3061), and an instance item that
+    // read through here showed the stored name while the generic pipeline
+    // composed it. `title` beside `name`; the name is never touched.
+    return withServedTitle({ ...row, metadata: resolved.fields.metadata });
   };
 
   if (rows) return { ...(body as object), items: await Promise.all(rows.map(apply)) };

@@ -423,6 +423,8 @@ function SortableRow(props: {
     >
       <WorkspaceRow
         {...props}
+        // role-gate: exact — Manage opens the members modal, which is
+        // governance; an editor does not inherit it by rank.
         onManage={props.org.role === "owner" || props.org.role === "admin" ? props.onManage : undefined}
         dragHandle={
           <button

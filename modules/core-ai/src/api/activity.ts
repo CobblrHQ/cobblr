@@ -7,6 +7,7 @@ import { sql } from "kysely";
 import { Router } from "express";
 import { tenantContext, tenantDb, sessionUserId } from "../db.js";
 import { asyncHandler, requireRole } from "./util.js";
+import { roleSatisfies } from "@cobblr/platform-contract/org-roles";
 
 export const activityRouter = Router({ mergeParams: true });
 
@@ -35,8 +36,8 @@ activityRouter.get(
     const role = tenantContext(req).role;
     const limit = Math.min(parseInt(String(req.query.limit ?? "100"), 10) || 100, 300);
     const wantWorkspace = req.query.scope === "workspace";
-    // Only owners/admins may see the whole workspace; everyone else → own only.
-    const scopeWorkspace = wantWorkspace && (role === "owner" || role === "admin");
+    // The admin tier (by rank) may see the whole workspace; everyone else → own only.
+    const scopeWorkspace = wantWorkspace && roleSatisfies(role, ["owner", "admin"]);
 
     let q = db
       .selectFrom("core_ai_calls")
@@ -84,7 +85,7 @@ activityRouter.get(
       res.status(404).json({ error: { code: "not_found", message: "Not found." } });
       return;
     }
-    if (role !== "owner" && role !== "admin" && row.user_id !== me) {
+    if (!roleSatisfies(role, ["owner", "admin"]) && row.user_id !== me) {
       res.status(403).json({ error: { code: "forbidden", message: "That entry isn't yours." } });
       return;
     }

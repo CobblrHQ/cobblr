@@ -10,6 +10,7 @@ import { useParams, Link, useLocation } from "react-router-dom";
 import { useMutation } from "@tanstack/react-query";
 import { CheckCircle2, Share2 } from "lucide-react";
 import { ApiError, api } from "../lib/api";
+import { roleSatisfies } from "@cobblr/platform-contract/org-roles";
 import { useAuth } from "../auth/AuthContext";
 import { displaySlug } from "../lib/workspaceSlug";
 import { usePageTitle, useToast } from "@cobblr/platform-web";
@@ -20,9 +21,9 @@ export function JoinMachinesPage() {
   const { user, orgs } = useAuth();
   const loc = useLocation();
   const toast = useToast();
-  // You can only add machines to a workspace you own/administer (it creates a
-  // connection there). Guests/members of a workspace can't.
-  const addable = orgs.filter((o) => o.role === "owner" || o.role === "admin");
+  // You can only add machines to a workspace you build in (it creates a
+  // connection there): the admin tier, by rank. Guests/members can't.
+  const addable = orgs.filter((o) => roleSatisfies(o.role, ["owner", "admin"]));
   const [target, setTarget] = useState(addable[0]?.slug ?? "");
   const [added, setAdded] = useState<{ name: string; count: number }[]>([]);
   const redeem = useMutation({

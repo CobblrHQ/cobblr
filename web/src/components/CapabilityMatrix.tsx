@@ -29,10 +29,12 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Check, ChevronRight, Shield, Users } from "lucide-react";
 import { useToast } from "@cobblr/platform-web";
 import { ApiError, api, type CustomRole, type GrantableAction, type PermissionsMember } from "../lib/api";
+import { roleHoldsEveryCapability } from "@cobblr/platform-contract/org-roles";
 
-/** Stock roles that carry every capability without being granted anything. */
+/** Stock roles that carry every capability without being granted anything:
+ *  the admin tier, by rank — the same answer the server enforces. */
 function isImplicit(role: PermissionsMember["role"]): boolean {
-  return role === "owner" || role === "admin";
+  return roleHoldsEveryCapability(role);
 }
 
 /** "core-devices" → "Devices", "digifab" → "Digifab". Only a fallback: the

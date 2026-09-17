@@ -19,6 +19,7 @@ import { isSandboxUser } from "../platform/try-sandbox.js";
 import { hardDeleteOrg } from "../platform/delete-org.js";
 import { convertDemoToKeep } from "../platform/provision-demo.js";
 import { requireAuth } from "../auth/middleware.js";
+import { requireRole } from "../auth/capability.js";
 import { withTenant } from "../middleware/tenant.js";
 import * as activity from "../platform/activity.js";
 import * as notifications from "../platform/notifications.js";
@@ -158,12 +159,8 @@ orgsRouter.post(
   withTenant,
   async (req, res, next) => {
     try {
-      if (req.tenant!.role !== "owner" && req.tenant!.role !== "admin" && req.tenant!.role !== "editor") {
-        res.status(403).json({
-          error: { code: "forbidden", message: "Only owners, admins, or editors can enable modules." },
-        });
-        return;
-      }
+      // Turning a module on is builder work: the admin tier, by rank.
+      if (!requireRole(req, res, "owner", "admin")) return;
       const name = req.params.moduleName;
       if (!name) {
         res.status(400).json({ error: { code: "missing_id", message: "module name required" } });
@@ -205,12 +202,7 @@ orgsRouter.post(
   withTenant,
   async (req, res, next) => {
     try {
-      if (req.tenant!.role !== "owner" && req.tenant!.role !== "admin" && req.tenant!.role !== "editor") {
-        res.status(403).json({
-          error: { code: "forbidden", message: "Only owners, admins, or editors can disable modules." },
-        });
-        return;
-      }
+      if (!requireRole(req, res, "owner", "admin")) return;
       const name = req.params.moduleName;
       if (!name) {
         res.status(400).json({ error: { code: "missing_id", message: "module name required" } });
@@ -402,12 +394,7 @@ const FocusedBody = z.object({ focused: z.boolean() });
 // AI-ACTION: platform:set-simple-mode
 orgsRouter.patch("/:slug/focused", requireAuth, withTenant, async (req, res, next) => {
   try {
-    if (req.tenant!.role !== "owner" && req.tenant!.role !== "admin") {
-      res.status(403).json({
-        error: { code: "forbidden", message: "Only an owner or admin can change focused mode." },
-      });
-      return;
-    }
+    if (!requireRole(req, res, "owner", "admin")) return;
     const parsed = FocusedBody.safeParse(req.body);
     if (!parsed.success) {
       res.status(400).json({ error: { code: "invalid_body", message: "Bad request body", details: parsed.error.issues } });
@@ -496,10 +483,7 @@ orgsRouter.patch("/:slug", requireAuth, withTenant, async (req, res, next) => {
 const RefreshAppBody = z.object({ manifest: z.unknown().optional() });
 orgsRouter.post("/:slug/refresh-app", requireAuth, withTenant, async (req, res, next) => {
   try {
-    if (req.tenant!.role !== "owner" && req.tenant!.role !== "admin") {
-      res.status(403).json({ error: { code: "forbidden", message: "Only owners or admins can refresh the app." } });
-      return;
-    }
+    if (!requireRole(req, res, "owner", "admin")) return;
     const parsed = RefreshAppBody.safeParse(req.body ?? {});
     const result = await refreshManagedApp(req.tenant!.org.id, req.session!.id, parsed.success ? parsed.data.manifest : undefined);
     res.json(result);
@@ -515,10 +499,7 @@ orgsRouter.post("/:slug/refresh-app", requireAuth, withTenant, async (req, res, 
 const ImportAppBody = z.object({ source_slug: z.string().min(1) });
 orgsRouter.post("/:slug/import-app", requireAuth, withTenant, async (req, res, next) => {
   try {
-    if (req.tenant!.role !== "owner" && req.tenant!.role !== "admin") {
-      res.status(403).json({ error: { code: "forbidden", message: "Only owners or admins can import into this workspace." } });
-      return;
-    }
+    if (!requireRole(req, res, "owner", "admin")) return;
     const parsed = ImportAppBody.safeParse(req.body);
     if (!parsed.success) {
       res.status(400).json({ error: { code: "invalid_body", message: "Bad request body", details: parsed.error.issues } });

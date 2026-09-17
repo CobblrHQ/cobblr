@@ -3,6 +3,7 @@
 // URL at the variant a surface wants. The one place in web/src that builds a
 // picture URL from a row's own files (lint:row-pictures-resolved).
 import {
+  catalogCaption,
   currentPicture,
   leadYours,
   rowPictures as resolve,
@@ -13,7 +14,7 @@ import {
 } from "@cobblr/platform-contract/scan-pictures";
 
 export type { RowPicture, PictureRole } from "@cobblr/platform-contract/scan-pictures";
-export { yourPictures, leadYours, currentPicture };
+export { yourPictures, leadYours, currentPicture, catalogCaption };
 
 export type PictureVariant = "thumb" | "med";
 

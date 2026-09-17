@@ -52,7 +52,7 @@ const MACHINE_STATES = [
 import { useActiveOrg } from "../auth/ActiveOrgContext";
 import { useFieldPresentation } from "../lib/useFieldPresentation";
 import { ContentsPanel } from "../components/ContentsPanel";
-import { CustomFieldsPanel, EntityActionsBar, FaceSection, RecordFaces, useAskCobbAboutSelection, Modal, useToast, useConfirm, usePageTitle, usePageWidth, BackdropLayer } from "@cobblr/platform-web";
+import { CustomFieldsPanel, EditField, EditSelect, EntityActionsBar, FaceSection, FacesOn, FieldPack, RecordFaces, editFieldItem, fieldNeed, useAskCobbAboutSelection, Modal, useToast, useConfirm, usePageTitle, usePageWidth, BackdropLayer } from "@cobblr/platform-web";
 import {
   BulkActionBar,
   EntityThumb,
@@ -1156,7 +1156,7 @@ function MachineTileGrid({
   );
 }
 
-function MachineDetailModal({
+export function MachineDetailModal({
   machineId,
   instance,
   specialisations,
@@ -1393,27 +1393,39 @@ function MachineDetailModal({
               </div>
             </div>
 
-          <dl className="grid grid-cols-2 gap-3 text-xs">
-            <EditField label={fp.label("name", "Name")} value={m.name} onCommit={(v) => update.mutate({ name: v })} />
-            {/* Short name + Type are low-signal — show only when set (keeps the default compact). */}
-            {!fp.hidden("short_name") && (m.short_name || !instance) && <EditField label={fp.label("short_name", "Short name")} value={m.short_name ?? ""} onCommit={(v) => update.mutate({ short_name: v || null })} />}
-            {!fp.hidden("family") && <EditField label={fp.label("family", "Family")} value={m.family ?? ""} onCommit={(v) => update.mutate({ family: v || null })} />}
-            {!fp.hidden("type") && (m.type || !instance) && <EditField label={fp.label("type", "Type")} value={m.type ?? ""} onCommit={(v) => update.mutate({ type: v || null })} />}
-            {!fp.hidden("manufacturer") && <EditField label={fp.label("manufacturer", "Manufacturer")} value={m.manufacturer ?? ""} onCommit={(v) => update.mutate({ manufacturer: v || null })} />}
-            {!fp.hidden("serial_number") && (m.serial_number || !instance) && <EditField label={fp.label("serial_number", "Serial number")} value={m.serial_number ?? ""} onCommit={(v) => update.mutate({ serial_number: v || null })} />}
-            {!fp.hidden("state") && (
-              <label className="block">
-                <span className="block text-[10px] font-mono uppercase tracking-widest text-faint dark:text-slate-500 mb-1">{fp.label("state", "State")}</span>
-                <select value={m.state} onChange={(e) => update.mutate({ state: e.target.value })} className="input">
-                  {m.state && !MACHINE_STATES.includes(m.state) && <option value={m.state}>{m.state}</option>}
-                  {MACHINE_STATES.map((st) => <option key={st} value={st}>{st}</option>)}
-                </select>
-              </label>
+          {/* The native fields, packed from what each needs (#3067). Short
+              name + Type are low-signal: shown only when set (keeps the
+              default compact). Quantity is an inventory-ism: a tracked
+              machine is one unit, so it shows only with the stock face on
+              and never for a specialised instance; the face is read from
+              inside the record's faces (this component mounts RecordFaces,
+              so a hook in its own body would answer true). */}
+          <FacesOn kind={instance ? `${instance}:item` : ENTITY_KIND} faces={["stock"] as const}>
+            {({ stock: stockOn }) => (
+          <FieldPack
+            className="text-xs"
+            items={[
+              editFieldItem("name", { label: fp.label("name", "Name"), value: m.name, onCommit: (v) => update.mutate({ name: v }) }),
+              !fp.hidden("short_name") && (m.short_name || !instance) ? editFieldItem("short_name", { label: fp.label("short_name", "Short name"), value: m.short_name ?? "", onCommit: (v) => update.mutate({ short_name: v || null }) }) : null,
+              !fp.hidden("family") ? editFieldItem("family", { label: fp.label("family", "Family"), value: m.family ?? "", onCommit: (v) => update.mutate({ family: v || null }) }) : null,
+              !fp.hidden("type") && (m.type || !instance) ? editFieldItem("type", { label: fp.label("type", "Type"), value: m.type ?? "", onCommit: (v) => update.mutate({ type: v || null }) }) : null,
+              !fp.hidden("manufacturer") ? editFieldItem("manufacturer", { label: fp.label("manufacturer", "Manufacturer"), value: m.manufacturer ?? "", onCommit: (v) => update.mutate({ manufacturer: v || null }) }) : null,
+              !fp.hidden("serial_number") && (m.serial_number || !instance) ? editFieldItem("serial_number", { label: fp.label("serial_number", "Serial number"), value: m.serial_number ?? "", onCommit: (v) => update.mutate({ serial_number: v || null }) }) : null,
+              !fp.hidden("state")
+                ? {
+                    need: fieldNeed("state", { control: "choice", label: fp.label("state", "State"), choices: MACHINE_STATES }),
+                    node: <EditSelect label={fp.label("state", "State")} value={m.state} options={MACHINE_STATES} onCommit={(v) => update.mutate({ state: v })} />,
+                  }
+                : null,
+              stockOn && !fp.hidden("quantity") && !instance ? editFieldItem("quantity", { label: fp.label("quantity", "Quantity"), value: String(m.quantity), numeric: true, onCommit: (v) => update.mutate({ quantity: Number(v) || 0 }) }) : null,
+              {
+                need: fieldNeed("location", { control: "picker", label: "Location" }),
+                node: <LocationTreePicker label="Location" kind="area" value={m.location_id} onChange={(id) => update.mutate({ location_id: id })} size="sm" />,
+              },
+            ]}
+          />
             )}
-            {/* Quantity is an inventory-ism — a tracked machine (printer/laser/CNC) is one unit. Hide for specialised instances. */}
-            <FaceSection face="stock" kind={instance ? `${instance}:item` : ENTITY_KIND}>{!fp.hidden("quantity") && !instance && <EditField label={fp.label("quantity", "Quantity")} value={String(m.quantity)} numeric onCommit={(v) => update.mutate({ quantity: Number(v) || 0 })} />}</FaceSection>
-            <LocationTreePicker label="Location" kind="area" value={m.location_id} onChange={(id) => update.mutate({ location_id: id })} size="sm" />
-          </dl>
+          </FacesOn>
 
           {/* Custom fields render inline (they self-collapse empty ones, and are
               null entirely for a closed printer once hideNames strips them). */}
@@ -1988,37 +2000,3 @@ function NewMachineModal({
 }
 
 
-function EditField({
-  label,
-  value,
-  onCommit,
-  numeric,
-  multiline,
-}: {
-  label: string;
-  value: string;
-  onCommit: (v: string) => void;
-  numeric?: boolean;
-  multiline?: boolean;
-}) {
-  const Cmp = multiline ? "textarea" : "input";
-  return (
-    <label className={"block " + (multiline ? "col-span-2" : "")}>
-      <span className="block text-[10px] font-mono uppercase tracking-widest text-faint dark:text-slate-500 mb-1">
-        {label}
-      </span>
-      <Cmp
-        type={numeric ? "number" : "text"}
-        defaultValue={value}
-        onBlur={(e) => {
-          if (e.target.value !== value) onCommit(e.target.value);
-        }}
-        onKeyDown={(e) => {
-          if (!multiline && e.key === "Enter") (e.target as HTMLInputElement).blur();
-        }}
-        rows={multiline ? 3 : undefined}
-        className="input"
-      />
-    </label>
-  );
-}

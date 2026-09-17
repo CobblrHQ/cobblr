@@ -9,13 +9,14 @@ import { useState } from "react";
 import { Eye } from "lucide-react";
 import { usePageTitle, useToast } from "@cobblr/platform-web";
 import { useActiveOrg } from "../auth/ActiveOrgContext";
+import { roleSatisfies } from "@cobblr/platform-contract/org-roles";
 import { displaySlug } from "../lib/workspaceSlug";
 import { isFocused, setFocused } from "../lib/api";
 
 export function GeneralSettingsPage() {
   usePageTitle("General");
   const { activeOrg, activeSlug } = useActiveOrg();
-  const canFocus = activeOrg?.role === "owner" || activeOrg?.role === "admin";
+  const canFocus = roleSatisfies(activeOrg?.role, ["owner", "admin"]);
 
   return (
     <div className="space-y-5">

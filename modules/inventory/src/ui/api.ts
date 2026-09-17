@@ -80,7 +80,12 @@ export interface HomeBoxFields {
 
 export interface PartListItem extends HomeBoxFields {
   id: string;
+  /** The stored name: what the source spelt, what the edit form writes. */
   name: string;
+  /** How the title READS for this person, when the server composed one (a
+   *  titled work's forms through their preference, #3061). Shown in place
+   *  of `name`, never written: nothing composed is ever writable. */
+  title?: string;
   description: string | null;
   qty: number;
   unit: string;
@@ -128,6 +133,8 @@ export interface PartListItem extends HomeBoxFields {
 export interface Part extends HomeBoxFields {
   id: string;
   name: string;
+  /** How the title READS for this person (served, never written; #3061). */
+  title?: string;
   description: string | null;
   qty: string;
   unit: string;

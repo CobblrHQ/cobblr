@@ -24,6 +24,7 @@ import { useMutation, useQueries, useQuery, useQueryClient } from "@tanstack/rea
 import { Link, useNavigate } from "react-router-dom";
 import { ArrowDown, ArrowLeft, ArrowRight, ArrowUp, ArrowUpCircle, CheckCircle2, ChevronDown, Compass, Download, Eye, EyeOff, GripVertical, LayoutList, Maximize2, Minimize2, Pin, Sliders, Sparkles, X } from "lucide-react";
 import { countOf, itemNounFor, pluralise } from "@cobblr/platform-contract";
+import { roleSatisfies } from "@cobblr/platform-contract/org-roles";
 import { offerMoves } from "../lib/table-move-offer";
 import { choosePinnedViews, navNamesWithViewCards } from "../lib/dashboard-pinned";
 import { useBundleUpdates, type BundleUpdate } from "../lib/useBundleUpdates";
@@ -414,7 +415,7 @@ function MoveIntoTablesCard({ slug }: { slug: string }) {
 function BundleSuggestionsCard({ slug, role }: { slug: string; role?: string }) {
   const qc = useQueryClient();
   const toast = useToast();
-  const canInstall = role === "owner" || role === "admin";
+  const canInstall = roleSatisfies(role, ["owner", "admin"]);
   const { hasContent } = useWorkspaceContentProbe(slug);
   const qs = useQuery({
     queryKey: ["quickstart", slug],
@@ -1002,7 +1003,7 @@ function WorkspaceHeader({
               key={u.externalId}
               slug={slug}
               update={u}
-              canApply={role === "owner" || role === "admin"}
+              canApply={roleSatisfies(role, ["owner", "admin"])}
               onSeeDetails={() => setDetail({ manifest: u.manifest, glyph: u.glyph, installedVersion: u.installedV })}
               onDone={() =>
                 setCompleted((c) => ({ ...c, [u.externalId]: { name: u.name, glyph: u.glyph, version: u.latestV, manifest: u.manifest } }))
@@ -1341,7 +1342,7 @@ function ArrangeableBody({
   const layout = layoutQ.data?.layout;
   const baseWidgets = arrangeWidgets(widgets, layout);
   const baseSections = arrangeSections(layout);
-  const canArrange = role === "owner" || role === "admin";
+  const canArrange = roleSatisfies(role, ["owner", "admin"]);
 
   const [draft, setDraft] = useState<{ widgets: WidgetDraft[]; sections: SectionDraft[] } | null>(null);
   const editing = draft !== null;

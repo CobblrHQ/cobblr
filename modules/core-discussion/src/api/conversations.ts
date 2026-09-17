@@ -5,6 +5,7 @@
 import { Router } from "express";
 import { z } from "zod";
 import { platform } from "@cobblr/platform-contract";
+import { roleSatisfies } from "@cobblr/platform-contract/org-roles";
 import { tenantContext, tenantDb, sessionUser } from "../db.js";
 import { asyncHandler, badBody, requireRole } from "./util.js";
 import { askCobb, summonsCobb } from "./cobb.js";
@@ -349,7 +350,7 @@ discussionRouter.delete(
       return;
     }
     const isOwn = existing.author_user_id === user?.id;
-    const isModerator = ctx.role === "owner" || ctx.role === "admin";
+    const isModerator = roleSatisfies(ctx.role, ["owner", "admin"]);
     if (!isOwn && !isModerator) {
       res.status(403).json({ error: { code: "not_yours", message: "You can only delete your own comments." } });
       return;

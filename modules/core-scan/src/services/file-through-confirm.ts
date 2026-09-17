@@ -15,6 +15,7 @@
 // candidate's routing token would ask for one that was never created.
 
 import { displayName } from "@cobblr/platform-contract/display-identity";
+import { filedQuantityOf } from "./filed-quantity.js";
 
 export interface FilingCandidate {
   module?: string;
@@ -119,7 +120,9 @@ export async function fileThroughConfirm(
         target_kind: cand.kind,
         ...(instance ? { instance } : {}),
         name: displayName(row),
-        quantity: overrides.quantity ?? row.quantity ?? undefined,
+        // A row's own count goes through the rule the door checks, so a row
+        // that predates it never turns an auto-file into a bad request.
+        quantity: overrides.quantity ?? (row.quantity == null ? undefined : filedQuantityOf(row.quantity)),
         extras: cand.fields ?? {},
         ...(locationId ? { location_id: locationId } : {}),
       }),

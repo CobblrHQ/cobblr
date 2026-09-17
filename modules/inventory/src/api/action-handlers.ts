@@ -1015,7 +1015,24 @@ async function withBatches(
     const a = (ctx.args as Record<string, unknown> | null) ?? {};
     // Empty → undefined so the column DEFAULT ('inventory') applies (see
     // create-items); "" would hide the row in an unreadable instance.
-    const instance = typeof a.instance === "string" && a.instance.trim() ? a.instance.trim() : undefined;
+    const said = typeof a.instance === "string" && a.instance.trim() ? a.instance.trim() : undefined;
+    // The list has to exist. "new spice: garam masala" arrived with instance
+    // "spices" in a workspace with no such list; the row was written with
+    // that tag, reported made, and could be opened from nowhere: not in
+    // Inventory, not in any list, its page a dead link (#3092). A list is
+    // matched the way a person names it (its name or its label, case aside)
+    // and a list nobody has is refused with the ones they do have.
+    let instance: string | undefined;
+    if (said) {
+      const lists = (await platform().instances.list(ctx.orgId)).filter((i) => i.module_name === "inventory");
+      const norm = (v: string) => v.trim().toLowerCase();
+      const hit = lists.find((i) => norm(i.instance_name) === norm(said) || norm(i.display_name) === norm(said));
+      if (!hit) {
+        const have = lists.map((i) => (i.is_default ? `${i.instance_name} (Inventory itself)` : `${i.instance_name} ("${i.display_name}")`)).join(", ");
+        return { ok: false, error: `there is no list called "${said}". The inventory lists here are: ${have || "inventory"}. Leave instance out to add it to Inventory itself.` };
+      }
+      instance = hit.is_default ? undefined : hit.instance_name;
+    }
     const name = typeof a.name === "string" && a.name.trim() ? a.name.trim().slice(0, 200) : "Untitled";
     const manufacturer = typeof a.manufacturer === "string" && a.manufacturer.trim() ? a.manufacturer.trim().slice(0, 120) : null;
     const locationId = typeof a.location_id === "string" && a.location_id ? a.location_id : null;
@@ -1059,7 +1076,15 @@ async function withBatches(
     }
 
     await platform().events.emit("inventory.part.created", { orgId: ctx.orgId, partId: created.id });
-    return { ok: true, item_id: created.id, name: created.name, instance: instance ?? "inventory" };
+    return {
+      ok: true,
+      item_id: created.id,
+      name: created.name,
+      instance: instance ?? "inventory",
+      // The card and the reply say what was made and where; without a
+      // sentence the card said only "Add an item".
+      summary: `Added ${created.name} (${qty} ${unit}) to ${instance ?? "Inventory"}`,
+    };
   });
 
   // ─────────────────────── create-items (bulk) ─────────────────────

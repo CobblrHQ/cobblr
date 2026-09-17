@@ -4,6 +4,8 @@
 // the inbox-export interop spec (v1). Forward-compat by design:
 // unknown fields are ignored, never fatal.
 
+import { FILED_QUANTITY_MAX, FILED_QUANTITY_MIN, FiledQuantity } from "./filed-quantity.js";
+
 export interface ImportRowError {
   row: number;
   field: string;
@@ -224,14 +226,15 @@ function normalize(raw: Record<string, unknown>, row: number, sourceInstance: st
   const identifyEmbedded = asEmbed(embedded?.identify);
   const displayEmbedded = asEmbed(embedded?.display);
 
-  // quantity: integer ≥ 1 (default 1); a bad value is a row error but the row
-  // still imports with 1 — a wrong quantity shouldn't drop a whole item.
-  let quantity = 1;
+  // quantity: the filed-quantity rule (services/filed-quantity.ts), default
+  // 1; a bad value is a row error but the row still imports with 1 — a wrong
+  // quantity shouldn't drop a whole item.
+  let quantity = FILED_QUANTITY_MIN;
   const qRaw = raw.quantity;
   if (qRaw !== null && qRaw !== undefined && String(qRaw).trim() !== "") {
-    const q = Number(qRaw);
-    if (!Number.isInteger(q) || q < 1) errors.push({ row, field: "quantity", message: "expected integer ≥ 1" });
-    else quantity = q;
+    const q = FiledQuantity.safeParse(Number(qRaw));
+    if (!q.success) errors.push({ row, field: "quantity", message: `expected an integer from ${FILED_QUANTITY_MIN} to ${FILED_QUANTITY_MAX}` });
+    else quantity = q.data;
   }
 
   let confidence: number | null = null;

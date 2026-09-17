@@ -2,10 +2,10 @@
 // Stock adjustments are explicit (a button) so accidental qty edits
 // don't silently rewrite history.
 
-import { useEffect, useState, type FocusEvent } from "react";
+import { useEffect, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Archive, ArrowRightLeft, Copy, Library, Minus, Plus, ShieldCheck, Trash2 } from "lucide-react";
-import { AssortmentCard, ContentsPanel, ContributedDetailPanels, CustomFieldsPanel, EntityActionsBar, EntityThumb, FaceSection, Modal, RecordFaces, RecordHeaderChips, useFaces, MoveToInstanceModal, UnitInput, useConfirm, usePageTitle, useToast, useUnits } from "@cobblr/platform-web";
+import { AssortmentCard, ContentsPanel, ContributedDetailPanels, CustomFieldsPanel, EntityActionsBar, EntityThumb, FaceSection, FieldPack, LabeledField, Modal, RecordFaces, RecordHeaderChips, editFieldItem, fieldNeed, useFaces, MoveToInstanceModal, UnitInput, useConfirm, usePageTitle, useToast, useUnits } from "@cobblr/platform-web";
 import { useInventory } from "./context";
 import { QtyStepper } from "./QtyStepper";
 import { isAssorted } from "./assorted";
@@ -299,7 +299,7 @@ export function PartDetailPage({ id, onClose }: { id: string; onClose: () => voi
   // transitions from isLoading=true to isLoading=false the hook
   // count would change between renders and React silently fails the
   // component (the page renders blank, no error in the console).
-  usePageTitle(part.data?.name ?? itemNoun.charAt(0).toUpperCase() + itemNoun.slice(1));
+  usePageTitle(part.data?.title ?? part.data?.name ?? itemNoun.charAt(0).toUpperCase() + itemNoun.slice(1));
   if (part.isLoading) return <div className="text-sm text-faint dark:text-slate-500">loading…</div>;
   if (part.error) {
     return <div className="text-sm text-ember-500">{(part.error as Error).message}</div>;
@@ -403,7 +403,7 @@ export function PartDetailPage({ id, onClose }: { id: string; onClose: () => voi
 
       {p.approximate_qty != null && (
         <AssortmentCard
-          title={p.name}
+          title={p.title ?? p.name}
           approximateQty={Number(p.approximate_qty)}
           note={p.description}
           imagePath={p.image_path ?? matched.data?.image_path ?? null}
@@ -435,7 +435,7 @@ export function PartDetailPage({ id, onClose }: { id: string; onClose: () => voi
         />
       )}
 
-      <div className="rounded-xl border border-line dark:border-slate-700 bg-surface dark:bg-slate-900 p-5 space-y-3">
+      <div className="rounded-xl border border-line dark:border-slate-700 bg-surface dark:bg-slate-900 p-4 sm:p-5 space-y-3">
         <div className="flex items-start gap-4">
           <EntityThumb
             src={p.image_path ?? matched.data?.image_path ?? null}
@@ -449,6 +449,7 @@ export function PartDetailPage({ id, onClose }: { id: string; onClose: () => voi
             <div className="min-w-0">
               <EditableTitle
                 value={p.name}
+                display={p.title}
                 onCommit={(v) => update.mutate({ name: v })}
                 className="font-display text-xl sm:text-2xl font-bold text-content dark:text-mortar-100"
               />
@@ -502,168 +503,120 @@ export function PartDetailPage({ id, onClose }: { id: string; onClose: () => voi
           excludeActionIds={excludeActionIds}
           headerChips
         />
-        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-          {/* Quantity + unit read as ONE control: an inline +/- stepper sits
-              flush against the unit ("[-] 1 [+] skein") so it's clear they
-              belong together. The stepper writes through the same signed
-              stock-adjust API as before — no modal hop. */}
-          {(!hide("qty") || !hide("unit")) && (
-          <Field label="Qty" className="col-span-2">
-            <div className="flex items-center gap-2">
-              {!hide("qty") &&
-                // An uncounted assortment showed "[-] 0 [+]" directly under a
-                // card reading "~50 estimated, not counted" — the page
-                // contradicting itself, and one click on + silently turning a
-                // guess into a count of 1. Counting is the deliberate act on
-                // the card ("Count these"), so say what is true instead.
-                // A record carrying BOTH a count and an estimate still shows
-                // the count: hiding a real number would be the worse lie.
-                (isAssorted(p) && Number(p.qty) === 0 ? (
-                  <span className="text-muted text-sm" data-qty-uncounted="true">
-                    not counted
-                  </span>
-                ) : (
-                  <QtyStepper partId={p.id} qty={Number(p.qty)} />
-                ))}
-              {!hide("unit") && (
-                // Changing the unit auto-converts the quantity when the two are
-                // interconvertible (1000 g → kg = 1); otherwise just the unit
-                // changes. (e55169b1)
-                <UnitInput
-                  className="w-32"
-                  value={p.unit}
-                  onCommit={(v) => {
-                    const n = Number(p.qty);
-                    const c = Number.isFinite(n) ? units.convert(n, p.unit, v) : null;
-                    update.mutate(c != null ? { unit: v, qty: c } : { unit: v });
-                  }}
-                />
-              )}
-            </div>
-          </Field>
-          )}
-          {!hide("min_qty") && (
-          <Field label={fp.label("min_qty", "Min qty")}>
-            <InlineText
-              value={p.min_qty ?? ""}
-              placeholder="—"
-              onCommit={(v) => update.mutate({ min_qty: v === "" ? null : Number(v) })}
-              numeric
-            />
-          </Field>
-          )}
-          {!hide("cost") && (
-          <Field label={fp.label("cost", "Cost")}>
-            <InlineText
-              value={p.cost ?? ""}
-              placeholder="—"
-              onCommit={(v) => update.mutate({ cost: v === "" ? null : Number(v) })}
-              numeric
-            />
-          </Field>
-          )}
-          {!hide("category") && (
-          <Field label={fp.label("category", "Category")}>
-            <select
-              value={p.category_id ?? ""}
-              onChange={(e) => update.mutate({ category_id: e.target.value || null })}
-              className="input"
-            >
-              <option value=""> - none - </option>
-              {cats.data?.items.map((c) => (
-                <option key={c.id} value={c.id}>
-                  {c.name}
-                </option>
-              ))}
-            </select>
-          </Field>
-          )}
-          {!hide("location") && (
-          <Field label={fp.label("location", "Location")}>
-            <select
-              value={p.location_id ?? ""}
-              onChange={(e) => update.mutate({ location_id: e.target.value || null })}
-              className="input"
-            >
-              <option value=""> - none - </option>
-              {locs.data?.items.map((l) => (
-                <option key={l.id} value={l.id}>
-                  {"  ".repeat(l.depth)}
-                  {l.name}
-                </option>
-              ))}
-            </select>
-          </Field>
-          )}
-          {!hide("manufacturer") && (
-          <Field label={fp.label("manufacturer", "Manufacturer")}>
-            <InlineText
-              value={p.manufacturer ?? ""}
-              placeholder="—"
-              onCommit={(v) => update.mutate({ manufacturer: v || null })}
-            />
-          </Field>
-          )}
-          {!hide("supplier_url") && (
-          <Field label={fp.label("supplier_url", "Supplier URL")}>
-            <InlineText
-              value={p.supplier_url ?? ""}
-              placeholder="—"
-              onCommit={(v) => update.mutate({ supplier_url: v || null })}
-            />
-          </Field>
-          )}
-          {!hide("serial_number") && (
-          <Field label={fp.label("serial_number", "Serial number")}>
-            <InlineText
-              value={p.serial_number ?? ""}
-              placeholder="—"
-              onCommit={(v) => update.mutate({ serial_number: v || null })}
-            />
-          </Field>
-          )}
-          {!hide("model_number") && (
-          <Field label={fp.label("model_number", "Model number")}>
-            <InlineText
-              value={p.model_number ?? ""}
-              placeholder="—"
-              onCommit={(v) => update.mutate({ model_number: v || null })}
-            />
-          </Field>
-          )}
-          {/* The individual's holder. Generic + relabelable (a library calls it
-              "Borrower", IT "Assigned to"); see per-unit-assignment.md. */}
-          {!hide("assigned_to") && (
-          <Field label={fp.label("assigned_to", "Assigned to")}>
-            <InlineText
-              value={p.assigned_to ?? ""}
-              placeholder="—"
-              onCommit={(v) => update.mutate({ assigned_to: v || null })}
-            />
-          </Field>
-          )}
-          {/* The individual face's number, shown only once this model actually
-              has serials on file. Read-only by construction: it counts unit
-              rows, so the way to change it is to add or retire a unit. */}
-          {(p.units_count ?? 0) > 0 && (
-            <Field label="Units on file">
-              <span className="text-sm text-content dark:text-mortar-100">
-                {p.units_count} {p.units_count === 1 ? "unit" : "units"}
-                {Number(p.qty) > (p.units_count ?? 0) && (
-                  <span className="ml-2 text-xs text-muted dark:text-slate-400">
-                    ({Number(p.qty) - (p.units_count ?? 0)} not yet scanned)
-                  </span>
-                )}
-              </span>
-            </Field>
-          )}
-        </div>
-        <Field label="Notes">
-          <InlineTextarea
-            value={p.notes ?? ""}
-            onCommit={(v) => update.mutate({ notes: v || null })}
-          />
-        </Field>
+        <FieldPack
+          items={[
+            // Quantity + unit read as ONE control: an inline +/- stepper sits
+            // flush against the unit ("[-] 1 [+] skein") so it's clear they
+            // belong together. The stepper writes through the same signed
+            // stock-adjust API as before, no modal hop. The row, whatever the
+            // width: a stepper and a unit box never split.
+            !hide("qty") || !hide("unit")
+              ? {
+                  need: { key: "qty", minPx: 320, full: true },
+                  node: (
+                    <Field label="Qty">
+                      <div className="flex items-center gap-2">
+                        {!hide("qty") &&
+                          // An uncounted assortment showed "[-] 0 [+]" directly under a
+                          // card reading "~50 estimated, not counted": the page
+                          // contradicting itself, and one click on + silently turning a
+                          // guess into a count of 1. Counting is the deliberate act on
+                          // the card ("Count these"), so say what is true instead.
+                          // A record carrying BOTH a count and an estimate still shows
+                          // the count: hiding a real number would be the worse lie.
+                          (isAssorted(p) && Number(p.qty) === 0 ? (
+                            <span className="text-muted text-sm" data-qty-uncounted="true">
+                              not counted
+                            </span>
+                          ) : (
+                            <QtyStepper partId={p.id} qty={Number(p.qty)} />
+                          ))}
+                        {!hide("unit") && (
+                          // Changing the unit auto-converts the quantity when the two are
+                          // interconvertible (1000 g -> kg = 1); otherwise just the unit
+                          // changes. (e55169b1)
+                          <UnitInput
+                            className="w-32"
+                            value={p.unit}
+                            onCommit={(v) => {
+                              const n = Number(p.qty);
+                              const c = Number.isFinite(n) ? units.convert(n, p.unit, v) : null;
+                              update.mutate(c != null ? { unit: v, qty: c } : { unit: v });
+                            }}
+                          />
+                        )}
+                      </div>
+                    </Field>
+                  ),
+                }
+              : null,
+            !hide("min_qty") ? editFieldItem("min_qty", { label: fp.label("min_qty", "Min qty"), value: p.min_qty ?? "", placeholder: "—", numeric: true, onCommit: (v) => update.mutate({ min_qty: v === "" ? null : Number(v) }) }) : null,
+            !hide("cost") ? editFieldItem("cost", { label: fp.label("cost", "Cost"), value: p.cost ?? "", placeholder: "—", numeric: true, onCommit: (v) => update.mutate({ cost: v === "" ? null : Number(v) }) }) : null,
+            !hide("category")
+              ? {
+                  need: fieldNeed("category", { control: "choice", label: fp.label("category", "Category"), choices: (cats.data?.items ?? []).map((c) => c.name) }),
+                  node: (
+                    <Field label={fp.label("category", "Category")}>
+                      <select value={p.category_id ?? ""} onChange={(e) => update.mutate({ category_id: e.target.value || null })} className="input">
+                        <option value=""> - none - </option>
+                        {cats.data?.items.map((c) => (
+                          <option key={c.id} value={c.id}>
+                            {c.name}
+                          </option>
+                        ))}
+                      </select>
+                    </Field>
+                  ),
+                }
+              : null,
+            !hide("location")
+              ? {
+                  need: fieldNeed("location", { control: "choice", label: fp.label("location", "Location"), choices: (locs.data?.items ?? []).map((l) => l.name) }),
+                  node: (
+                    <Field label={fp.label("location", "Location")}>
+                      <select value={p.location_id ?? ""} onChange={(e) => update.mutate({ location_id: e.target.value || null })} className="input">
+                        <option value=""> - none - </option>
+                        {locs.data?.items.map((l) => (
+                          <option key={l.id} value={l.id}>
+                            {"  ".repeat(l.depth)}
+                            {l.name}
+                          </option>
+                        ))}
+                      </select>
+                    </Field>
+                  ),
+                }
+              : null,
+            !hide("manufacturer") ? editFieldItem("manufacturer", { label: fp.label("manufacturer", "Manufacturer"), value: p.manufacturer ?? "", placeholder: "—", onCommit: (v) => update.mutate({ manufacturer: v || null }) }) : null,
+            !hide("supplier_url") ? editFieldItem("supplier_url", { label: fp.label("supplier_url", "Supplier URL"), value: p.supplier_url ?? "", placeholder: "—", type: "url", onCommit: (v) => update.mutate({ supplier_url: v || null }) }) : null,
+            !hide("serial_number") ? editFieldItem("serial_number", { label: fp.label("serial_number", "Serial number"), value: p.serial_number ?? "", placeholder: "—", onCommit: (v) => update.mutate({ serial_number: v || null }) }) : null,
+            !hide("model_number") ? editFieldItem("model_number", { label: fp.label("model_number", "Model number"), value: p.model_number ?? "", placeholder: "—", onCommit: (v) => update.mutate({ model_number: v || null }) }) : null,
+            // The individual's holder. Generic + relabelable (a library calls it
+            // "Borrower", IT "Assigned to"); see per-unit-assignment.md.
+            !hide("assigned_to") ? editFieldItem("assigned_to", { label: fp.label("assigned_to", "Assigned to"), value: p.assigned_to ?? "", placeholder: "—", onCommit: (v) => update.mutate({ assigned_to: v || null }) }) : null,
+            // The individual face's number, shown only once this model actually
+            // has serials on file. Read-only by construction: it counts unit
+            // rows, so the way to change it is to add or retire a unit.
+            (p.units_count ?? 0) > 0
+              ? {
+                  need: fieldNeed("units_count", { control: "readonly", label: "Units on file" }),
+                  node: (
+                    <Field label="Units on file">
+                      <span className="text-sm text-content dark:text-mortar-100">
+                        {p.units_count} {p.units_count === 1 ? "unit" : "units"}
+                        {Number(p.qty) > (p.units_count ?? 0) && (
+                          <span className="ml-2 text-xs text-muted dark:text-slate-400">
+                            ({Number(p.qty) - (p.units_count ?? 0)} not yet scanned)
+                          </span>
+                        )}
+                      </span>
+                    </Field>
+                  ),
+                }
+              : null,
+            editFieldItem("notes", { label: "Notes", value: p.notes ?? "", multiline: true, onCommit: (v) => update.mutate({ notes: v || null }) }),
+          ]}
+        />
       </div>
 
       {/* Parent / "type" link — the unit's type lives in another instance
@@ -702,67 +655,55 @@ export function PartDetailPage({ id, onClose }: { id: string; onClose: () => voi
       />
 
       {!hide("warranty") && (
-      <div className="rounded-xl border border-line dark:border-slate-700 bg-surface dark:bg-slate-900 p-5 space-y-3">
+      <div className="rounded-xl border border-line dark:border-slate-700 bg-surface dark:bg-slate-900 p-4 sm:p-5 space-y-3">
         <h3 className="text-[10px] font-mono uppercase tracking-widest text-muted dark:text-slate-400">
           warranty & status
         </h3>
-        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-          <Field label="Warranty expires">
-            <InlineText
-              value={
-                p.warranty_expires
-                  ? new Date(p.warranty_expires).toISOString().slice(0, 10)
-                  : ""
-              }
-              placeholder="YYYY-MM-DD"
-              onCommit={(v) =>
-                update.mutate({ warranty_expires: v.trim() === "" ? null : v.trim() })
-              }
-            />
-          </Field>
-          <Field label="Lifetime warranty">
-            <label className="inline-flex items-center gap-2 text-sm">
-              <input
-                type="checkbox"
-                checked={p.lifetime_warranty}
-                onChange={(e) => update.mutate({ lifetime_warranty: e.target.checked })}
-                className="accent-cobble-500"
-              />
-              <span className="text-muted dark:text-slate-400">no expiry</span>
-            </label>
-          </Field>
-        </div>
-        <Field label="Warranty details">
-          <InlineTextarea
-            value={p.warranty_details ?? ""}
-            onCommit={(v) => update.mutate({ warranty_details: v || null })}
-          />
-        </Field>
-        <div className="grid grid-cols-2 gap-3 pt-2">
-          <label className="inline-flex items-center gap-2 text-sm">
-            <input
-              type="checkbox"
-              checked={p.insured}
-              onChange={(e) => update.mutate({ insured: e.target.checked })}
-              className="accent-cobble-500"
-            />
-            <span className="text-content dark:text-mortar-200 inline-flex items-center gap-1">
-              <ShieldCheck size={12} /> Insured
-            </span>
-          </label>
-          <label className="inline-flex items-center gap-2 text-sm">
-            <input
-              type="checkbox"
-              checked={p.archived}
-              onChange={(e) => update.mutate({ archived: e.target.checked })}
-              className="accent-cobble-500"
-            />
-            <span className="text-content dark:text-mortar-200 inline-flex items-center gap-1">
-              <Archive size={12} /> Archived
-              <span className="text-[10px] text-faint">(hidden from default list)</span>
-            </span>
-          </label>
-        </div>
+        <FieldPack
+          items={[
+            editFieldItem("warranty_expires", {
+              label: "Warranty expires",
+              value: p.warranty_expires ? new Date(p.warranty_expires).toISOString().slice(0, 10) : "",
+              placeholder: "YYYY-MM-DD",
+              onCommit: (v) => update.mutate({ warranty_expires: v.trim() === "" ? null : v.trim() }),
+            }),
+            {
+              need: fieldNeed("lifetime_warranty", { control: "checkbox", label: "Lifetime warranty" }),
+              node: (
+                <Field label="Lifetime warranty" as="div">
+                  <label className="inline-flex min-h-[38px] items-center gap-2 text-sm">
+                    <input type="checkbox" checked={p.lifetime_warranty} onChange={(e) => update.mutate({ lifetime_warranty: e.target.checked })} className="accent-cobble-500" />
+                    <span className="text-muted dark:text-slate-400">no expiry</span>
+                  </label>
+                </Field>
+              ),
+            },
+            editFieldItem("warranty_details", { label: "Warranty details", value: p.warranty_details ?? "", multiline: true, onCommit: (v) => update.mutate({ warranty_details: v || null }) }),
+            {
+              need: fieldNeed("insured", { control: "checkbox", label: "Insured" }),
+              node: (
+                <label className="inline-flex min-h-[38px] items-center gap-2 text-sm">
+                  <input type="checkbox" checked={p.insured} onChange={(e) => update.mutate({ insured: e.target.checked })} className="accent-cobble-500" />
+                  <span className="text-content dark:text-mortar-200 inline-flex items-center gap-1">
+                    <ShieldCheck size={12} /> Insured
+                  </span>
+                </label>
+              ),
+            },
+            {
+              need: fieldNeed("archived", { control: "checkbox", label: "Archived (hidden from default list)" }),
+              node: (
+                <label className="inline-flex min-h-[38px] items-center gap-2 text-sm">
+                  <input type="checkbox" checked={p.archived} onChange={(e) => update.mutate({ archived: e.target.checked })} className="accent-cobble-500" />
+                  <span className="text-content dark:text-mortar-200 inline-flex items-center gap-1">
+                    <Archive size={12} /> Archived
+                    <span className="text-[10px] text-faint">(hidden from default list)</span>
+                  </span>
+                </label>
+              ),
+            },
+          ]}
+        />
       </div>
       )}
 
@@ -904,24 +845,9 @@ export function PartDetailPage({ id, onClose }: { id: string; onClose: () => voi
 }
 
 
-function Field({
-  label,
-  children,
-  className = "",
-}: {
-  label: string;
-  children: React.ReactNode;
-  className?: string;
-}) {
-  return (
-    <label className={`block ${className}`}>
-      <span className="block text-[10px] font-mono uppercase tracking-widest text-faint dark:text-slate-500 mb-1">
-        {label}
-      </span>
-      {children}
-    </label>
-  );
-}
+/** The caption over a control: the shared one, so this page's labels and a
+ *  record page's read the same. */
+const Field = LabeledField;
 
 /** The part title. A single-line <input> can't wrap, so a long name (e.g.
  *  "Loops & Thread Impeccable") clipped mid-word on a narrow phone. This renders
@@ -929,10 +855,16 @@ function Field({
  *  rename — so long names wrap to two lines instead of being cut off. */
 function EditableTitle({
   value,
+  display,
   onCommit,
   className,
 }: {
+  /** The stored name: what the input edits and what a commit writes. */
   value: string;
+  /** How the title READS, when the server composed one (a titled work in
+   *  the person's format, #3061). Shown in place of the stored name and
+   *  never edited: nothing composed is ever writable. */
+  display?: string | null;
   onCommit: (v: string) => void;
   className: string;
 }) {
@@ -963,74 +895,12 @@ function EditableTitle({
       title="Click to rename"
       className={`${className} w-full min-w-0 break-words cursor-text leading-tight`}
     >
-      {value || <span className="text-faint dark:text-slate-500 font-normal">Unnamed</span>}
+      {display || value || <span className="text-faint dark:text-slate-500 font-normal">Unnamed</span>}
     </h1>
   );
 }
 
-function InlineText({
-  value,
-  onCommit,
-  placeholder,
-  numeric,
-  className = "input",
-}: {
-  value: string | number | null;
-  onCommit: (v: string) => void;
-  placeholder?: string;
-  numeric?: boolean;
-  className?: string;
-}) {
-  // A numeric column reaches the page as Postgres wrote it, "1.000" for a
-  // reorder point of 1, and String() kept the zeros (the 2026-09-12 review saw
-  // a threshold of 1.000 on a phone). A number shows as the number.
-  const initial =
-    value == null ? "" : numeric && Number.isFinite(Number(value)) ? String(parseFloat(Number(value).toFixed(3))) : String(value);
-  const [draft, setDraft] = useState(initial);
-  function commit(e: FocusEvent<HTMLInputElement>) {
-    if (e.target.value !== initial) onCommit(e.target.value);
-  }
-  return (
-    // NUMBER-INPUT-TEXT: onCommit(v: string) is the contract; every numeric caller wraps it in Number() before the PATCH.
-    <input
-      type={numeric ? "number" : "text"}
-      step={numeric ? "any" : undefined}
-      defaultValue={initial}
-      onChange={(e) => setDraft(e.target.value)}
-      onBlur={commit}
-      onKeyDown={(e) => {
-        if (e.key === "Enter") (e.target as HTMLInputElement).blur();
-        if (e.key === "Escape") {
-          (e.target as HTMLInputElement).value = initial;
-          (e.target as HTMLInputElement).blur();
-        }
-      }}
-      placeholder={placeholder}
-      className={className}
-      // suppress 'unused var' linter
-      data-draft={draft}
-    />
-  );
-}
 
-function InlineTextarea({
-  value,
-  onCommit,
-}: {
-  value: string;
-  onCommit: (v: string) => void;
-}) {
-  return (
-    <textarea
-      defaultValue={value}
-      onBlur={(e) => {
-        if (e.target.value !== value) onCommit(e.target.value);
-      }}
-      rows={3}
-      className="input"
-    />
-  );
-}
 
 // Part detail rendered as a MODAL over the list (D4 — consistent with
 // machine detail). The list route /inventory/parts/:id keeps the list
@@ -1053,7 +923,7 @@ export function PartDetailModal({
   // hardcoded "Part". See one-record-substrate.md (vocabulary is per-instance).
   const loadingTitle = itemNoun.charAt(0).toUpperCase() + itemNoun.slice(1);
   return (
-    <Modal open onClose={onClose} title={part.data?.name ?? loadingTitle} size="xl">
+    <Modal open onClose={onClose} title={part.data?.title ?? part.data?.name ?? loadingTitle} size="xl">
       <PartDetailPage id={id} onClose={onClose} />
     </Modal>
   );

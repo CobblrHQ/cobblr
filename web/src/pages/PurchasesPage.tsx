@@ -15,7 +15,7 @@ import { ReceiptSourceViewer } from "../components/ReceiptSourceViewer";
 import { ModuleInstanceChooser } from "../components/ModuleInstanceChooser";
 import { ModulePurposeHint } from "../components/ModulePurposeHint";
 import { usePublishChatContext, useAskCobbAboutSelection } from "../lib/chat-context";
-import { BulkActionBar, EntityActionsBar, EntityThumb, Modal, useToast, useConfirm, usePageTitle, usePageWidth } from "@cobblr/platform-web";
+import { BulkActionBar, EditSelect, EntityActionsBar, EntityThumb, FieldPack, LabeledField, Modal, editFieldItem, fieldNeed, useToast, useConfirm, usePageTitle, usePageWidth } from "@cobblr/platform-web";
 import { ContributedDetailPanels } from "../panels/registry";
 import { receiptGroupSummary } from "./receiptLabel";
 import { ReceiptAddressChip } from "../components/ReceiptAddressChip";
@@ -753,29 +753,36 @@ function OrderDetailModal({ orderId, onClose }: { orderId: string | null; onClos
               <span className="text-xs font-medium text-accent whitespace-nowrap">View receipt →</span>
             </button>
           )}
-          <dl className="grid grid-cols-2 gap-3 text-xs">
-            {!fp.hidden("vendor") && (
-              <div>
-                <dt className="text-[10px] font-mono uppercase tracking-widest text-faint dark:text-slate-500 mb-1">{fp.label("vendor", "Vendor")}</dt>
-                <VendorPicker
-                  slug={activeSlug}
-                  vendorId={o.vendor_id}
-                  vendorName={o.vendor ?? ""}
-                  onChange={(id, name) => update.mutate({ vendor_id: id, vendor: name || null })}
-                />
-              </div>
-            )}
-            {!fp.hidden("order_number") && <EditField label={fp.label("order_number", "Order #")} value={o.order_number ?? ""} onCommit={(v) => update.mutate({ order_number: v || null })} />}
-            {!fp.hidden("status") && <EditSelect label={fp.label("status", "Status")} value={o.status} options={STATUSES} onCommit={(v) => update.mutate({ status: v as Order["status"] })} />}
-            {!fp.hidden("tracking_number") && <EditField label={fp.label("tracking_number", "Tracking #")} value={o.tracking_number ?? ""} onCommit={(v) => update.mutate({ tracking_number: v || null })} />}
-            {!fp.hidden("ordered_at") && <EditField label={fp.label("ordered_at", "Ordered at")} value={o.ordered_at ?? ""} type="date" onCommit={(v) => update.mutate({ ordered_at: v || null })} />}
-            {!fp.hidden("expected_arrival") && <EditField label={fp.label("expected_arrival", "Expected arrival")} value={o.expected_arrival ?? ""} type="date" onCommit={(v) => update.mutate({ expected_arrival: v || null })} />}
-            {!fp.hidden("arrived_at") && <EditField label={fp.label("arrived_at", "Arrived at")} value={o.arrived_at ?? ""} type="date" onCommit={(v) => update.mutate({ arrived_at: v || null })} />}
-            {!fp.hidden("url") && <EditField label={fp.label("url", "URL")} value={o.url ?? ""} type="url" onCommit={(v) => update.mutate({ url: v || null })} />}
-            {!fp.hidden("total_cost") && <EditField label={fp.label("total_cost", "Total cost")} value={o.total_cost ?? ""} numeric onCommit={(v) => update.mutate({ total_cost: v ? (v as unknown as string) : null })} />}
-            {!fp.hidden("shipping_cost") && <EditField label={fp.label("shipping_cost", "Shipping cost")} value={o.shipping_cost ?? ""} numeric onCommit={(v) => update.mutate({ shipping_cost: v ? (v as unknown as string) : null })} />}
-          </dl>
-          <EditField label="Notes" value={o.notes ?? ""} multiline onCommit={(v) => update.mutate({ notes: v || null })} />
+          <FieldPack
+            className="text-xs"
+            items={[
+              !fp.hidden("vendor")
+                ? {
+                    need: fieldNeed("vendor", { control: "picker", label: fp.label("vendor", "Vendor") }),
+                    node: (
+                      <LabeledField as="div" label={fp.label("vendor", "Vendor")}>
+                        <VendorPicker slug={activeSlug} vendorId={o.vendor_id} vendorName={o.vendor ?? ""} onChange={(id, name) => update.mutate({ vendor_id: id, vendor: name || null })} />
+                      </LabeledField>
+                    ),
+                  }
+                : null,
+              !fp.hidden("order_number") ? editFieldItem("order_number", { label: fp.label("order_number", "Order #"), value: o.order_number ?? "", onCommit: (v) => update.mutate({ order_number: v || null }) }) : null,
+              !fp.hidden("status")
+                ? {
+                    need: fieldNeed("status", { control: "choice", label: fp.label("status", "Status"), choices: STATUSES }),
+                    node: <EditSelect label={fp.label("status", "Status")} value={o.status} options={STATUSES} onCommit={(v) => update.mutate({ status: v as Order["status"] })} />,
+                  }
+                : null,
+              !fp.hidden("tracking_number") ? editFieldItem("tracking_number", { label: fp.label("tracking_number", "Tracking #"), value: o.tracking_number ?? "", onCommit: (v) => update.mutate({ tracking_number: v || null }) }) : null,
+              !fp.hidden("ordered_at") ? editFieldItem("ordered_at", { label: fp.label("ordered_at", "Ordered at"), value: o.ordered_at ?? "", type: "date", onCommit: (v) => update.mutate({ ordered_at: v || null }) }) : null,
+              !fp.hidden("expected_arrival") ? editFieldItem("expected_arrival", { label: fp.label("expected_arrival", "Expected arrival"), value: o.expected_arrival ?? "", type: "date", onCommit: (v) => update.mutate({ expected_arrival: v || null }) }) : null,
+              !fp.hidden("arrived_at") ? editFieldItem("arrived_at", { label: fp.label("arrived_at", "Arrived at"), value: o.arrived_at ?? "", type: "date", onCommit: (v) => update.mutate({ arrived_at: v || null }) }) : null,
+              !fp.hidden("url") ? editFieldItem("url", { label: fp.label("url", "URL"), value: o.url ?? "", type: "url", onCommit: (v) => update.mutate({ url: v || null }) }) : null,
+              !fp.hidden("total_cost") ? editFieldItem("total_cost", { label: fp.label("total_cost", "Total cost"), value: o.total_cost ?? "", numeric: true, onCommit: (v) => update.mutate({ total_cost: v ? (v as unknown as string) : null }) }) : null,
+              !fp.hidden("shipping_cost") ? editFieldItem("shipping_cost", { label: fp.label("shipping_cost", "Shipping cost"), value: o.shipping_cost ?? "", numeric: true, onCommit: (v) => update.mutate({ shipping_cost: v ? (v as unknown as string) : null }) }) : null,
+              editFieldItem("notes", { label: "Notes", value: o.notes ?? "", multiline: true, onCommit: (v) => update.mutate({ notes: v || null }) }),
+            ]}
+          />
 
           {/* Contributed detail panels (e.g. core-shipments' Shipment) — the
               panel registry renders whatever enabled modules declare for
@@ -1003,61 +1010,7 @@ function NewOrderModal({ open, onClose }: { open: boolean; onClose: () => void }
   );
 }
 
-function EditField({
-  label,
-  value,
-  onCommit,
-  numeric,
-  multiline,
-  type,
-}: {
-  label: string;
-  value: string;
-  onCommit: (v: string) => void;
-  numeric?: boolean;
-  multiline?: boolean;
-  type?: string;
-}) {
-  const Cmp = multiline ? "textarea" : "input";
-  return (
-    <label className={"block " + (multiline ? "col-span-2" : "")}>
-      <span className="block text-[10px] font-mono uppercase tracking-widest text-faint dark:text-slate-500 mb-1">
-        {label}
-      </span>
-      <Cmp
-        type={type ?? (numeric ? "number" : "text")}
-        defaultValue={value}
-        onBlur={(e) => { if (e.target.value !== value) onCommit(e.target.value); }}
-        onKeyDown={(e) => { if (!multiline && e.key === "Enter") (e.target as HTMLInputElement).blur(); }}
-        rows={multiline ? 3 : undefined}
-        className="input"
-      />
-    </label>
-  );
-}
 
-function EditSelect({
-  label,
-  value,
-  options,
-  onCommit,
-}: {
-  label: string;
-  value: string;
-  options: readonly string[];
-  onCommit: (v: string) => void;
-}) {
-  return (
-    <label className="block">
-      <span className="block text-[10px] font-mono uppercase tracking-widest text-faint dark:text-slate-500 mb-1">
-        {label}
-      </span>
-      <select defaultValue={value} onChange={(e) => onCommit(e.target.value)} className="input">
-        {options.map((o) => (<option key={o} value={o}>{o}</option>))}
-      </select>
-    </label>
-  );
-}
 
 // Vendor combobox for the order form: pick a managed vendor, leave it unlinked,
 // or add a new vendor inline. Reports both the id (for linking) and the name

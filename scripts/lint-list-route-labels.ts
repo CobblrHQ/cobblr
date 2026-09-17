@@ -18,6 +18,20 @@
 // through the generic pipeline) and ALSO serves its own list route must call
 // `platform().entities.withFieldLabels`. Existing offenders are baselined —
 // this blocks NEW ones and shrinks as they are fixed.
+//
+// WHICH QUESTION THIS OWNS (written down, so the next gap is a named one):
+// "what does a resolved row look like on a module's own route", and since
+// #3061 that includes how a titled work's title READS for the person asking.
+// The kernel composes `title` from a record's forms for the request's actor
+// (served-title.ts) and withFieldLabels carries the same `title` beside the
+// stored `name` on a flat row, so a module route that skips the helper shows
+// the stored name where the generic door, search and the assistant show the
+// person's format. The DETAIL route is the second place that happens: a
+// person opening a book saw the stored name where the table beside it showed
+// their format. So a module that serves its own `/:id` must call the helper
+// in the file that serves it, with its own baseline of the routes that do
+// not yet. Nothing composed is ever writable: the helper adds `title` and
+// never touches `name`, and the update schemas do not take `title`.
 
 import { readFileSync, readdirSync, statSync } from "node:fs";
 import { fileURLToPath } from "node:url";
@@ -41,6 +55,21 @@ const BASELINE = new Set<string>([
   "knowledge",
   "lists",
   "digifab",
+  "core-locations",
+  "core-catalogs",
+]);
+
+/** Modules whose DETAIL route (`/:id`) still answers the stored row alone,
+ *  without the helper: a titled work reads in the stored name there while the
+ *  list and the generic door read the person's format. Shrink this; never
+ *  grow it. */
+const DETAIL_BASELINE = new Set<string>([
+  "assets",
+  "machines",
+  "projects",
+  "purchases",
+  "sales",
+  "records",
   "core-locations",
   "core-catalogs",
 ]);
@@ -95,6 +124,31 @@ for (const modDir of readdirSync(MODULES)) {
   }
 }
 
+// The detail route: the file that serves `/:id` must be a file that calls the
+// helper, or the record page shows the stored name (and raw ids) where the
+// list and the generic door show the resolved row.
+for (const modDir of readdirSync(MODULES)) {
+  const dir = join(MODULES, modDir);
+  if (!statSync(dir).isDirectory()) continue;
+  const sources = walk(dir).map((f) => ({ f, text: readFileSync(f, "utf8") }));
+  if (!sources.some((s) => s.text.includes("registerListResolver"))) continue;
+  const detailFiles = sources.filter((s) => /Router\.get\(\s*\n?\s*"\/:id"/.test(s.text));
+  if (detailFiles.length === 0) continue;
+  const resolves = detailFiles.some((s) => s.text.includes("withFieldLabels"));
+  if (resolves) {
+    if (DETAIL_BASELINE.has(modDir)) {
+      offenders.push(`${modDir}: its detail route now resolves the row — remove it from DETAIL_BASELINE in ${relative(ROOT, fileURLToPath(import.meta.url))}`);
+    }
+    continue;
+  }
+  if (!DETAIL_BASELINE.has(modDir)) {
+    offenders.push(
+      `modules/${modDir}: serves a record through its own /:id route but that file never calls ` +
+        `platform().entities.withFieldLabels — the record page shows the stored name where the list shows the person's title (#3061).`,
+    );
+  }
+}
+
 if (offenders.length > 0) {
   console.error(
     `Module list routes that disagree with the generic entity API (${offenders.length}):\n` +
@@ -106,6 +160,6 @@ if (offenders.length > 0) {
   process.exit(1);
 }
 console.log(
-  `lint:list-route-labels - every non-baselined module list route resolves field labels ✓ ` +
-    `(${BASELINE.size} baselined)`,
+  `lint:list-route-labels - every non-baselined module list and detail route resolves the row ✓ ` +
+    `(${BASELINE.size} list, ${DETAIL_BASELINE.size} detail baselined)`,
 );

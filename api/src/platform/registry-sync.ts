@@ -150,7 +150,7 @@ export async function syncManifestRegistries(): Promise<{
       invoke_handler: a.invoke_handler,
       user_invokable: a.user_invokable,
       internal: false,
-      wire_only: false,
+      wire_only: a.wire_only ?? false,
       args_schema: a.args_schema,
       undoable: a.undoable ?? false,
       examples: a.examples ?? [],

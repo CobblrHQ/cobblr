@@ -208,7 +208,7 @@ viewsRouter.get(
     const ctx = tenantContext(req);
     const view = await db
       .selectFrom("core_views_views")
-      .select(["id", "entity_kind", "view_type", "config"])
+      .select(["id", "name", "entity_kind", "view_type", "config"])
       .where("id", "=", id)
       .executeTakeFirst();
     if (!view) {
@@ -246,7 +246,7 @@ viewsRouter.get(
             .length === 0
         : false;
     res.json({
-      view: { id: view.id, entity_kind: view.entity_kind, view_type: view.view_type },
+      view: { id: view.id, name: view.name, entity_kind: view.entity_kind, view_type: view.view_type },
       ...result,
       collection_empty: collectionEmpty,
     });

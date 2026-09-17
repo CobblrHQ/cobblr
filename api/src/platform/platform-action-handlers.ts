@@ -35,6 +35,7 @@ import { demoteInstance, promoteCategory } from "./instance-promote.js";
 import { listInstances } from "./instances.js";
 import { provisionInstance } from "./instances.js";
 import { setWireEnabled } from "./wires.js";
+import { decideApprovalRequest } from "./approvals.js";
 
 /** A storage name from a label: "Purchase Date" → purchase_date. The def
  *  schema requires a leading letter, so a label like "3D printer count" gets a
@@ -1225,4 +1226,28 @@ export function registerPlatformActionHandlers(): void {
     if (typeof d?.id !== "string" || typeof d.enabled !== "boolean" || typeof d.before !== "boolean" || d.before === d.enabled) return null;
     return { action_id: "platform:set-wire-enabled", args: { wire_id: d.id, enabled: d.before } };
   });
+
+  // ── Approvals: the two buttons on an approver's card (approvals.ts) ──
+  // One decision function for both doors (this press and the settings page),
+  // so who may answer and what a yes does cannot drift between them.
+  for (const decision of ["approve", "deny"] as const) {
+    registerHandler(`platform.${decision}-request`, async (ctx: ActionInvokeContext) => {
+      const requestId = str((ctx.args ?? {}).request_id);
+      if (!requestId) return { ok: false, error: "request_id is required" };
+      if (!ctx.userId) return { ok: false, error: "a person has to press this" };
+      const r = await decideApprovalRequest({
+        requestId,
+        deciderId: ctx.userId,
+        decision,
+        note: str((ctx.args ?? {}).note) || null,
+      });
+      if (!r.ok) return { ok: false, error: r.message };
+      const asks = r.request.remedies.map((x) => x.label).join(" and ");
+      return {
+        ok: true,
+        summary: decision === "approve" ? `Approved: ${asks}. They have been told.` : `Declined. They have been told.`,
+        data: { request_id: requestId, status: r.request.status, applied: r.applied },
+      };
+    });
+  }
 }

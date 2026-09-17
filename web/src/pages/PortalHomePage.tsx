@@ -37,7 +37,7 @@ export function PortalHomePage() {
     queryFn: () => api.getMyCapabilities(activeSlug!),
     enabled: !!activeSlug,
   });
-  const isAdmin = caps.data?.role === "owner" || caps.data?.role === "admin";
+  const isAdmin = caps.data?.all === true;
 
   // Custom worker apps (H1) this member can open. The server already
   // filters to apps the caller's capabilities grant, so we render

@@ -192,10 +192,20 @@ export class ProjectsApi {
   private invBase(): string {
     return `/api/v1/orgs/${this.slug}/modules/inventory`;
   }
-  listInventoryParts = () =>
-    // all_instances: the stash lives in instances (yarn/hooks tables) —
-    // a design's materials picker + pattern matching must see them all.
-    this.requestUrl<{ items: InvPart[] }>("GET", `${this.invBase()}/parts?limit=200&all_instances=1`);
+  /** The stash, as a picker reads it: one page, searched by what the
+   *  person typed, or the rows for a known set of ids. all_instances: the
+   *  stash lives in instances (yarn/hooks tables) and a design's picker
+   *  must see them all. It used to be one capped page of 200 with no
+   *  search, so a household with a few hundred grocery rows never saw its
+   *  yarn in the picker at all (#3129); `next_cursor` says when the page
+   *  is not the whole stash. */
+  listInventoryParts = (opts: { search?: string; ids?: readonly string[]; limit?: number } = {}) => {
+    const p = new URLSearchParams({ limit: String(opts.limit ?? 50), all_instances: "1" });
+    const search = opts.search?.trim();
+    if (search) p.set("search", search);
+    if (opts.ids?.length) p.set("filter", JSON.stringify({ id: [...opts.ids] }));
+    return this.requestUrl<{ items: InvPart[]; next_cursor: string | null }>("GET", `${this.invBase()}/parts?${p.toString()}`);
+  };
   listDesignAllocations = (designId: string) =>
     this.requestUrl<{ items: DesignAllocation[] }>(
       "GET",

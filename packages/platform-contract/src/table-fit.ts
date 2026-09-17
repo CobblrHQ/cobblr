@@ -171,6 +171,17 @@ export function makeLexicalScorer(item: FitItem): {
     if (/\s/.test(p.trim())) return p.length >= 3 && hay.includes(p);
     return p.split(/[^a-z0-9]+/).some((w) => w.length >= 3 && wordHit(w));
   };
+  // A table's NOUN says what the thing IS, so it rides no compound: "tea"
+  // inside "teaspoon" is not a Tea table's noun, where "screw" inside
+  // "screwdriver" may still corroborate a Tools table as a keyword. The
+  // router routed a teaspoon to Tea on the compound (#3155); the retired
+  // destination nudge had a test for exactly this and the router never did,
+  // so the loser's specification is carried across here.
+  const hasWholeWord = (phrase: string): boolean => {
+    const p = phrase.toLowerCase();
+    if (/\s/.test(p.trim())) return p.length >= 3 && hay.includes(p);
+    return p.split(/[^a-z0-9]+/).some((w) => w.length >= 3 && tokens.has(stem(w)));
+  };
   // The capture's HEAD NOUN — the last content token of the NAME after
   // stripping trailing size/pack tails ("Fieldcrest Bath Towels 4 Pack" →
   // "towel"). A keyword matching the head noun is what the item IS, not an
@@ -297,7 +308,7 @@ export function makeLexicalScorer(item: FitItem): {
     // offered a home in the Lego Sets table because that table's noun is
     // "set" and the capture's head noun was "set" (2026-09-02). A generic noun
     // scores nothing and is never strong; such a table routes by its keywords.
-    if (entry.noun && hasWord(entry.noun) && !GENERIC_NOUNS.has(stem(entry.noun.toLowerCase()))) {
+    if (entry.noun && hasWholeWord(entry.noun) && !GENERIC_NOUNS.has(stem(entry.noun.toLowerCase()))) {
       score += 2;
       nounHit = true;
       // The NAME saying the noun is the classic signal. The CATEGORY saying it
@@ -329,8 +340,16 @@ export function makeLexicalScorer(item: FitItem): {
     // supplies). Single words keep stemmed token matching.
     const kwHit = (term: string): boolean =>
       /\s/.test(term.trim()) ? hay.includes(term.toLowerCase()) : hasWord(term);
+    // Two spellings of one word are one hit: a Tea table declares "tea" and
+    // "teas", both stem to "tea", and counting each made a lone compound
+    // graze ("tea" in "teaspoon") read as two corroborating keywords, which
+    // is the whole plausibility floor (#3155).
+    const seenStems = new Set<string>();
     for (const term of entry.scan_keywords ?? []) {
       if (term && kwHit(term)) {
+        const key = /\s/.test(term.trim()) ? term.toLowerCase() : stem(term.toLowerCase());
+        if (seenStems.has(key)) continue;
+        seenStems.add(key);
         score += 2;
         keywordHits += 1;
         // A keyword that IS the capture's head noun ("…Bath Towels" → keyword
@@ -445,6 +464,9 @@ export function nameNames(e: LexicalEvidence): boolean {
 /** The one ORDER both the scan floor and the no-AI move plan rank by, so
  *  "what outranks what" cannot drift between them (#3003):
  *
+ *  0. a module's catch-all yields to a table the catalog's category names
+ *     (a book whose head noun is "parts" goes to Bookshelf, not the parts
+ *     catch-all, #3155);
  *  1. a table whose word IS the item's head noun ("…Garlic Seasoning Blend"
  *     heads "seasoning") before one whose word sits beside it ("garlic");
  *  2. then a table the NAME calls by a word at or beside its head before
@@ -459,6 +481,16 @@ export function nameNames(e: LexicalEvidence): boolean {
  *     more). */
 export function orderFits<T extends FitTable>(a: RankedFit<T>, b: RankedFit<T>): number {
   return (
+    // 0. A module's catch-all yields to a table the CATEGORY names, whatever
+    //    its head noun says: "JavaScript: The Good Parts" (category "Books")
+    //    routed to Inventory because the parts table's noun is the name's
+    //    head, while Bookshelf, which the category names, sat second (#3155,
+    //    #3162). The catch-all is the least specific table there is; a
+    //    category naming a specific table is asserted evidence about the
+    //    thing, and the least specific table never outranks it. Between two
+    //    named tables the order below stands (Spices at the head over the
+    //    Groceries aisle the catalog names).
+    Number(!!a.table.is_fallback && b.evidence.categoryNames) - Number(!!b.table.is_fallback && a.evidence.categoryNames) ||
     Number(b.evidence.headNamed) - Number(a.evidence.headNamed) ||
     Number(nameNames(b.evidence)) - Number(nameNames(a.evidence)) ||
     Number(b.evidence.categoryNames) - Number(a.evidence.categoryNames) ||

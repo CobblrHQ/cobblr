@@ -14,7 +14,7 @@ import { type FeaturedBundle } from "../lib/featured-bundles";
 import { useBundleCatalog } from "../lib/useBundleCatalog";
 import { BundleDetailModal } from "../components/BundleDetailModal";
 import { RegistryItemModal, type RegistryItem } from "../components/RegistryItemModal";
-import { changeWorkspaceShape, downloadBlob, Modal, useConfirm, useToast, usePageTitle } from "@cobblr/platform-web";
+import { FieldPack, LabeledField, changeWorkspaceShape, downloadBlob, fieldNeed, Modal, useConfirm, useToast, usePageTitle } from "@cobblr/platform-web";
 import { ConfigHeaderActions } from "../components/ConfigPageHeader";
 
 // Third-party source index URLs (the HACS "add a custom repository" list).
@@ -838,49 +838,50 @@ function ExportBundleModal({
               {fieldCount === 1 ? "" : "s"}
             </span>
           </div>
-          <div className="grid grid-cols-2 gap-3">
-            <Field label="Bundle ID (kebab-case, unique)">
-              <input
-                type="text"
-                value={meta.id}
-                onChange={(e) => setMeta((m) => ({ ...m, id: e.target.value.toLowerCase().replace(/[^a-z0-9.-]+/g, "-") }))}
-                className="w-full px-2 py-1 text-sm font-mono border border-line dark:border-slate-600 rounded bg-surface dark:bg-slate-900"
-              />
-            </Field>
-            <Field label="Version (semver)">
-              <input
-                type="text"
-                value={meta.version}
-                onChange={(e) => setMeta((m) => ({ ...m, version: e.target.value }))}
-                className="w-full px-2 py-1 text-sm font-mono border border-line dark:border-slate-600 rounded bg-surface dark:bg-slate-900"
-              />
-            </Field>
-            <Field label="Display name" className="col-span-2">
-              <input
-                type="text"
-                value={meta.name}
-                onChange={(e) => setMeta((m) => ({ ...m, name: e.target.value }))}
-                className="w-full px-2 py-1 text-sm border border-line dark:border-slate-600 rounded bg-surface dark:bg-slate-900"
-              />
-            </Field>
-            <Field label="Description" className="col-span-2">
-              <textarea
-                value={meta.description}
-                onChange={(e) => setMeta((m) => ({ ...m, description: e.target.value }))}
-                rows={2}
-                className="w-full px-2 py-1 text-sm border border-line dark:border-slate-600 rounded bg-surface dark:bg-slate-900"
-              />
-            </Field>
-            <Field label="Author" className="col-span-2">
-              <input
-                type="text"
-                value={meta.author}
-                onChange={(e) => setMeta((m) => ({ ...m, author: e.target.value }))}
-                placeholder="e.g. Sarah's LUG, jane@example.com"
-                className="w-full px-2 py-1 text-sm border border-line dark:border-slate-600 rounded bg-surface dark:bg-slate-900"
-              />
-            </Field>
-          </div>
+          <FieldPack
+            items={[
+              {
+                need: fieldNeed("id", { control: "text", label: "Bundle ID (kebab-case, unique)", valueLength: meta.id.length }),
+                node: (
+                  <Field label="Bundle ID (kebab-case, unique)">
+                    <input type="text" value={meta.id} onChange={(e) => setMeta((m) => ({ ...m, id: e.target.value.toLowerCase().replace(/[^a-z0-9.-]+/g, "-") }))} className="input font-mono text-sm" />
+                  </Field>
+                ),
+              },
+              {
+                need: fieldNeed("version", { control: "text", label: "Version (semver)", valueLength: meta.version.length }),
+                node: (
+                  <Field label="Version (semver)">
+                    <input type="text" value={meta.version} onChange={(e) => setMeta((m) => ({ ...m, version: e.target.value }))} className="input font-mono text-sm" />
+                  </Field>
+                ),
+              },
+              {
+                need: fieldNeed("name", { control: "text", label: "Display name", valueLength: meta.name.length }),
+                node: (
+                  <Field label="Display name">
+                    <input type="text" value={meta.name} onChange={(e) => setMeta((m) => ({ ...m, name: e.target.value }))} className="input text-sm" />
+                  </Field>
+                ),
+              },
+              {
+                need: fieldNeed("description", { control: "markdown", label: "Description" }),
+                node: (
+                  <Field label="Description">
+                    <textarea value={meta.description} onChange={(e) => setMeta((m) => ({ ...m, description: e.target.value }))} rows={2} className="input text-sm" />
+                  </Field>
+                ),
+              },
+              {
+                need: fieldNeed("author", { control: "text", label: "Author", valueLength: meta.author.length }),
+                node: (
+                  <Field label="Author">
+                    <input type="text" value={meta.author} onChange={(e) => setMeta((m) => ({ ...m, author: e.target.value }))} placeholder="e.g. Sarah's LUG, jane@example.com" className="input text-sm" />
+                  </Field>
+                ),
+              },
+            ]}
+          />
           <div>
             <div className="text-[10px] font-mono uppercase tracking-widest text-muted mb-1">
               preview
@@ -924,21 +925,5 @@ function ExportBundleModal({
   );
 }
 
-function Field({
-  label,
-  className,
-  children,
-}: {
-  label: string;
-  className?: string;
-  children: React.ReactNode;
-}) {
-  return (
-    <label className={`block ${className ?? ""}`}>
-      <div className="text-[10px] font-mono uppercase tracking-widest text-muted mb-1">
-        {label}
-      </div>
-      {children}
-    </label>
-  );
-}
+/** The caption over a control: the shared one. */
+const Field = LabeledField;

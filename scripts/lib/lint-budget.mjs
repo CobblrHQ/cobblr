@@ -45,7 +45,12 @@
 //     says so rather than pretending: only the hard CEILING applies, the runner
 //     prints the factor and that per-lint budgets are deferred, and the next
 //     quiet run (most runs are quiet) judges them. A regression big enough to
-//     BE the CI job is caught on any machine by the ceiling.
+//     BE the CI job is caught on any machine by the ceiling. A lint over the
+//     ceiling whose QUIET time says it cannot be the job (quiet * MARGIN under
+//     the ceiling) is re-measured alone once, on any run: run 22733 (2026-09-17)
+//     reddened main with every lint passing when a 2.70x load carried the
+//     16.6s compiler lint to 127s. A stall does not reproduce alone; a
+//     regression does, and still fails.
 //   - A lint the snapshot has never heard of is judged against the snapshot's
 //     median as its quiet time: a new lint is cheap or it is recorded, and
 //     recording it is the decision. Nothing is fail-open.
@@ -140,12 +145,34 @@ export function overBudget(results, quietMs = {}, opts = {}) {
  * job is not a stall) and a contended run still defers: this sits inside the
  * quiet-run path only.
  *
+ * The ceiling is re-measured too, on any run, for a lint whose quiet time
+ * says it could not be the job (quiet * MARGIN under the ceiling): run 22733
+ * reddened main on a 16.6s lint at 127s under a 2.7x load. One the snapshot
+ * does not know, or whose quiet time is within the margin, is the job and
+ * fails on the first measurement.
+ *
  * `rerun(name)` resolves to the lint's wall time in ms when run alone.
  */
 export async function judgeRun(results, quietMs = {}, rerun, opts = {}) {
   const ceilingMs = opts.ceilingMs ?? CEILING_MS;
+  const margin = opts.margin ?? MARGIN;
   const first = overBudget(results, quietMs, opts);
-  const stalled = first.perLint && rerun ? first.over.filter((r) => r.budgetMs !== ceilingMs) : [];
+  // A per-lint budget miss is re-measured on a quiet run only. The CEILING
+  // is re-measured on any run, once, for a lint whose own quiet time says it
+  // cannot be the job: main went red at 866dc0f4e (run 22733) with every
+  // lint passing, when a 2.70x contended run carried scripts-typecheck (16.6s
+  // quiet) to 127.3s. A 16s lint at 7.7x is the stall shape the header
+  // measures under load, and the only remedy was the re-run button. A lint
+  // the snapshot has never heard of, or whose quiet time is already within
+  // the margin of the ceiling, IS the job when it crosses it (ci-sink at
+  // 151s) and fails without a second look.
+  const couldNotBeTheJob = (name) => {
+    const q = quietMs[name];
+    return !!q && q * margin < ceilingMs;
+  };
+  const stalled = rerun
+    ? first.over.filter((r) => (r.budgetMs === ceilingMs ? couldNotBeTheJob(r.name) : first.perLint))
+    : [];
   if (stalled.length === 0) return { ...first, remeasured: [] };
   const alone = {};
   for (const r of stalled) alone[r.name] = await rerun(r.name);

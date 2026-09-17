@@ -40,6 +40,7 @@ import { ErrorBoundary } from "./ErrorBoundary";
 import { LabelsBasket } from "@cobblr/labels/ui";
 import { api, getToken, isFocused } from "../lib/api";
 import { useActiveOrg } from "../auth/ActiveOrgContext";
+import { configurationReachable } from "../lib/configuration-nav";
 import { useAuth } from "../auth/AuthContext";
 import { useWorkspaceContentProbe } from "../lib/workspaceContent";
 import { getManagedAppMeta } from "../lib/managed-apps";
@@ -457,7 +458,7 @@ export function AppLayout({ activeSlug }: { activeSlug: string }) {
     // Configuration lives HERE, not behind the account menu: the menu detour
     // (open menu → Configuration → back into the sidebar) was the exact loop
     // the author flagged.
-    configuration: !isFocused(activeOrg) ? (
+    configuration: !isFocused(activeOrg) && configurationReachable(activeOrg?.role) ? (
       <NavLink to="/configuration" className={footRowCls}>
         <Sliders size={16} className="shrink-0" />
         Configuration
@@ -509,6 +510,23 @@ export function AppLayout({ activeSlug }: { activeSlug: string }) {
           top edge — a third grid child would steal the 1fr row and
           stretch the header. A thin branded edge over the (still neutral +
           readable) functional header; the Cobblr mark stays. */}
+      {/* The status area, painted. On a phone the header collapses on scroll
+          (intentional: the owner's word), and with it goes the only thing
+          that stood between the page and the OS clock, so a card scrolled up
+          under the status icons (#3069, IMG_0791). This strip is exactly the
+          status-bar inset tall (env() is 0 in a plain browser tab, so it is
+          nothing there), the page's own colour, under the header when the
+          header is shown and alone when it is not: content scrolls under an
+          opaque status area, the way a native screen does. Not a per-screen
+          fix: every page under this shell gets it. */}
+      <FloatingChrome
+        anchor="top"
+        yields={false}
+        aria-hidden
+        data-testid="status-area"
+        className="z-20 md:hidden bg-canvas dark:bg-slate-800"
+        style={{ height: "env(safe-area-inset-top)" }}
+      />
       {/* The shell's own top chrome: in place (its spacer and its measurement
           live beside it in the grid) and it never yields, since every overlay
           sits above it anyway. In the full sidebar it is static at md+ (the

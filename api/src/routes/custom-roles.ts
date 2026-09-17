@@ -17,6 +17,8 @@ import * as activity from "../platform/activity.js";
 export const customRolesRouter = Router({ mergeParams: true });
 
 function requireAdmin(req: Parameters<typeof requireAuth>[0], res: Parameters<typeof requireAuth>[1]): boolean {
+  // role-gate: exact — defining roles and handing them to people is
+  // governance, not action; an editor does not inherit it by rank.
   if (req.tenant!.role !== "owner" && req.tenant!.role !== "admin") {
     res.status(403).json({ error: { code: "forbidden", message: "Admins only." } });
     return false;

@@ -14,7 +14,9 @@ import { providerReasonOf } from "@cobblr/platform-contract/provider-reason";
 import { missingActionArgs, reconcileActionArgs } from "./action-args-guard.js";
 import { groundingNudgeFor } from "./groundless-answer.js";
 import { movedNotCreated } from "./move-not-create.js";
+import { noneFromOneList } from "./none-from-one-list.js";
 import { answeredNotProposed } from "./answer-dont-propose.js";
+import { askDontRank } from "./ask-dont-rank.js";
 import { misreportedWrites } from "./reported-truthfully.js";
 import { chatModelMenu } from "./chat-model-menu.js";
 import { describedInsteadOfActing } from "./act-dont-describe.js";
@@ -659,6 +661,11 @@ async function answerTurn(
   // Escorts the loop's take_user_to calls produced this turn — the widget
   // navigates to each (and pages read the prefill params). Inert server-side.
   const escorts: Array<{ path: string; label: string }> = [];
+  // Every search this turn ran and what came back, so a write aimed at one
+  // of several look-alikes can be asked whether the person chose it
+  // (ask-dont-rank.ts). When they did not, the turn carries the candidates
+  // as taps; the reply below says so.
+  const ambiguity = askDontRank(askedFor);
   let outcome: AgentLoopOutcome;
   try {
     outcome = await runAgentLoop(parsed.data.messages as ChatTurn[], {
@@ -711,6 +718,7 @@ async function answerTurn(
         const result = await tool.execute(wsApi, args);
         // What it read, kept: the reply is named by these and nothing else.
         for (const r of recordsFromToolResult(result)) reads.push(r);
+        ambiguity.onRead(name, args, result);
         // The escort tool (tier 1.5) rides the read rail — it mutates nothing
         // — but its OUTPUT is for the widget, not only the model: collect the
         // destinations so the response can move the user's screen there.
@@ -731,6 +739,12 @@ async function answerTurn(
         // nothing has to be undone. See move-not-create.ts.
         const dup = movedNotCreated(askedFor, call, seenNames);
         if (dup) return dup;
+        // Aimed at one of several records a search returned, and the person's
+        // words do not say which. Two CubePros, one label printed for the
+        // first hit (#3154): the write is bounced with both named, and the
+        // turn carries them as taps. See ask-dont-rank.ts.
+        const ranked = ambiguity.validate(call);
+        if (ranked) return ranked;
         if (call.name !== "invoke_action") return null;
         const a = call.args ?? {};
         const typed = String(a.action_id ?? "");
@@ -768,7 +782,7 @@ async function answerTurn(
       // with no tool-calling at all is the same story from the other side: it
       // answers by writing the JSON move the app parses into a proposal, and
       // there is no tool for it to reach for either.
-      ...(prefs.read_tools && toolDefs.length > 0 ? { groundingNudge: groundingNudgeFor } : {}),
+      ...(prefs.read_tools && toolDefs.length > 0 ? { groundingNudge: groundingNudgeFor, absenceNudge: noneFromOneList } : {}),
       // The answer has to match the ledger: a turn that only created things
       // cannot say it moved them. See reported-truthfully.ts.
       reportCheck: (_said, reply, appliedTools) => misreportedWrites(reply, appliedTools),
@@ -870,7 +884,15 @@ async function answerTurn(
 
   const move = parseMove(text);
   if (!move || move.type === "reply") {
-    return { type: "reply", text: move?.text ?? text, ...(done.length ? { applied: done } : {}), ...(escorts.length ? { escorts } : {}) };
+    // The candidates a bounced write named ride as taps when the turn ended
+    // in words (the question), never beside a proposal for something else.
+    return {
+      type: "reply",
+      text: move?.text ?? text,
+      ...(done.length ? { applied: done } : {}),
+      ...(escorts.length ? { escorts } : {}),
+      ...(ambiguity.choices ? { choices: ambiguity.choices } : {}),
+    };
   }
 
   // Consent gate for the LEGACY JSON-move protocol too (a tool-less provider

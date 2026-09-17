@@ -126,4 +126,12 @@ Next, in this order:
   3. Fix the violation, run it again, green.
   4. pnpm run lint:placement && pnpm run lint:lints-are-wired && pnpm run lint:no-emdash
   5. If it imports a new file of yours, add that file to scripts/publish/manifests/core.json.
+  6. Record its quiet time BY HAND in scripts/lint-durations.json before its first CI run:
+     run it twice on an idle box, take the larger, double it, and add
+     "lint:$SLUG": <ms> plus a note in "source" ("added by hand at twice a quiet
+     dev-box time (<date>), to be replaced from its first CI run"). The budget
+     (scripts/lib/lint-budget.mjs) fails a lint it has never heard of on the first
+     measurement that crosses the ceiling, with no second look; a recorded quiet
+     time is what earns it the re-measure. CI replaces the number later:
+     node scripts/lint-durations-record-missing.mjs
 MSG

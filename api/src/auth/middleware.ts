@@ -395,7 +395,7 @@ export async function requireAuth(
     // deeply-nested activity.log() call automatically picks up
     // user id + auth method + token id.
     runWithActor(
-      { userId: user.id, authMethod, apiTokenId },
+      { userId: user.id, authMethod, apiTokenId, titlePref: user.title_pref ?? null },
       () => next(),
     );
   } catch (err) {

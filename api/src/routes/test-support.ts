@@ -15,6 +15,12 @@ import { meta, metaPool } from "../db/meta.js";
 import { getTenantDb, tenantPoolStats } from "../db/tenant.js";
 import { poolCounts } from "../db/pool-stats.js";
 import { sql } from "kysely";
+import {
+  forgetOutboundHold,
+  outboundHoldStatus,
+  registerOutboundHold,
+  releaseOutboundHold,
+} from "@cobblr/platform-net";
 
 export const testSupportRouter = Router();
 
@@ -112,6 +118,64 @@ testSupportRouter.post("/test-support/subscriber-delay", (req, res) => {
   }
   setSubscriberDelayForTests({ event, orgId: org_id, ms });
   res.json({ ok: true, event, org_id, ms });
+});
+
+// Hold every outbound fetch whose URL contains a substring until the test
+// says so, and answer it from a canned response when one is given: a test's
+// way to say "this write has not landed yet" (#3119). A detached write is
+// detached because it awaits outbound I/O, and every SSRF-guarded fetch goes
+// through the one loop in @cobblr/platform-net, so holding the I/O holds the
+// write. GET reports `reached` (the positive control: a hold nobody reached
+// means nothing was in flight) and `returned`; DELETE releases; DELETE
+// ?forget=1 releases and drops the record. Every hold auto-releases at a cap
+// (default 30 s, max 120 s) so a test that died never wedges this shared api.
+// Body: { includes, status?, content_type?, body_base64?, auto_release_ms? }.
+testSupportRouter.post("/test-support/hold-outbound", (req, res) => {
+  const b = (req.body ?? {}) as {
+    includes?: string;
+    status?: number;
+    content_type?: string;
+    body_base64?: string;
+    auto_release_ms?: number;
+  };
+  if (!b.includes || typeof b.includes !== "string" || b.includes.length < 4) {
+    res.status(400).json({ error: { code: "bad_body", message: "includes (a URL substring, 4+ chars) required" } });
+    return;
+  }
+  const canned = b.status !== undefined || b.content_type !== undefined || b.body_base64 !== undefined;
+  const h = registerOutboundHold({
+    includes: b.includes,
+    ...(canned
+      ? {
+          respond: {
+            ...(b.status !== undefined ? { status: b.status } : {}),
+            ...(b.content_type !== undefined ? { contentType: b.content_type } : {}),
+            ...(b.body_base64 !== undefined ? { body: new Uint8Array(Buffer.from(b.body_base64, "base64")) } : {}),
+          },
+        }
+      : {}),
+    ...(b.auto_release_ms !== undefined ? { autoReleaseMs: b.auto_release_ms } : {}),
+  });
+  res.status(201).json(h);
+});
+
+testSupportRouter.get("/test-support/hold-outbound/:id", (req, res) => {
+  const st = outboundHoldStatus(String(req.params.id));
+  if (!st) {
+    res.status(404).json({ error: { code: "not_found", message: "no such hold" } });
+    return;
+  }
+  res.json(st);
+});
+
+testSupportRouter.delete("/test-support/hold-outbound/:id", (req, res) => {
+  const id = String(req.params.id);
+  const ok = req.query.forget === "1" ? forgetOutboundHold(id) : releaseOutboundHold(id);
+  if (!ok) {
+    res.status(404).json({ error: { code: "not_found", message: "no such hold" } });
+    return;
+  }
+  res.json({ ok: true, ...(outboundHoldStatus(id) ?? { id, forgotten: true }) });
 });
 
 // Hold ONE tenant connection in a query for `ms`, so a test can have a request

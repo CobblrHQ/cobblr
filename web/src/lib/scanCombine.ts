@@ -91,6 +91,40 @@ export function genericTokens(items: ScanInboxItem[]): Set<string> {
   return out;
 }
 
+/**
+ * Type words are measured among the things that could be combined at all:
+ * the items of ONE brand. Measured against the whole inbox, three Royal
+ * Doulton jugs among 139 rows shared "character" and "jug" with 2% of the
+ * batch, so nothing was generic, and the two without a D number were offered
+ * with Geronimo as one asset (the owner's inbox, 2026-09-15, #3065). Among
+ * the three jugs the same words are in 3 of 3, which is what they are: the
+ * kind of thing, never which one.
+ */
+export function genericTokensByBrand(items: ScanInboxItem[]): Map<string, Set<string>> {
+  const byBrand = new Map<string, ScanInboxItem[]>();
+  for (const it of items) {
+    const brand = (it.suggested_manufacturer ?? "").trim().toLowerCase();
+    if (!brand) continue;
+    byBrand.set(brand, [...(byBrand.get(brand) ?? []), it]);
+  }
+  return new Map([...byBrand].map(([brand, group]) => [brand, genericTokens(group)]));
+}
+
+/**
+ * Two names that each say something the other does not are two things, even
+ * when what they share clears the bar. "Geronimo Character Jug" and "Don
+ * Quixote Character Jug" share two words and differ on the ones that name
+ * the jug; "Ultra Soft Toilet Paper" and "Ultra Soft Toilet Paper 12 Mega
+ * Rolls" differ only in what one side adds. So a shared-word count carries
+ * a pair only when one side's words are a subset of the other's; a real
+ * overlap (jaccard) still carries a pair that differs both ways in small
+ * words ("Tomatoes Roma" / "Roma Tomatoes Vine" is one product).
+ */
+function oneExtendsTheOther(a: Set<string>, b: Set<string>): boolean {
+  const within = (x: Set<string>, y: Set<string>) => [...x].every((w) => y.has(w));
+  return within(a, b) || within(b, a);
+}
+
 /** A barcode a CATALOG resolved is an identity, not a guess. An AI-read one
  *  (OCR'd off a package by the vision model) can be misread a digit at a time, so
  *  it doesn't get to veto anything. */
@@ -169,14 +203,15 @@ export function combinable(
   const product = distinct(productTokens(b.suggested_name, brand));
   let shared = 0;
   for (const w of product) if (seedD.has(w)) shared++;
-  return shared >= 2 || jaccard(seedD, product) >= 0.5;
+  if (jaccard(seedD, product) >= 0.5) return true;
+  return shared >= 2 && oneExtendsTheOther(seedD, product);
 }
 
 /** Cluster pending items that look like the same product, so the inbox can OFFER
  *  to combine them. Each candidate is compared to the cluster's SEED (its first
  *  member) so a cluster can't drift member-to-member into a different product. */
 export function findCombineClusters(items: ScanInboxItem[]): ScanInboxItem[][] {
-  const generic = genericTokens(items);
+  const generic = genericTokensByBrand(items);
   const clusters: { brand: string; seed: Set<string>; head: ScanInboxItem; items: ScanInboxItem[] }[] = [];
   for (const it of items) {
     if (isTitledMedia(it)) continue; // a different title = a different work
@@ -184,7 +219,7 @@ export function findCombineClusters(items: ScanInboxItem[]): ScanInboxItem[][] {
     if (!brand || !it.suggested_name) continue;
     const product = productTokens(it.suggested_name, brand);
     if (product.size === 0) continue;
-    const hit = clusters.find((c) => combinable(c.head, it, c.seed, c.brand, generic));
+    const hit = clusters.find((c) => combinable(c.head, it, c.seed, c.brand, generic.get(c.brand)));
     if (hit) hit.items.push(it);
     else clusters.push({ brand, seed: product, head: it, items: [it] });
   }

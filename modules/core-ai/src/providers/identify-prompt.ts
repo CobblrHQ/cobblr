@@ -141,10 +141,15 @@ export const IDENTIFY_PROMPT =
   'frame), "box" when it sits in or on its retail box, carton or blister, ' +
   '"sealed" when that packaging is unopened, "opened" when it has been opened, ' +
   '"unknown" when you cannot tell.\n\n' +
+  "If an author, artist or maker is PRINTED on the cover or label and clearly " +
+  "legible, report it VERBATIM as \"creator\" (the cover's own spelling and " +
+  "script). Never complete it from what you know of the work, never translate " +
+  "or transliterate it; null when it is not printed or not legible.\n\n" +
   'Reply with ONLY a JSON object: {"name": <string>, "brand": <string|null>, ' +
   '"color": <the item\'s colour in plain English, else null>, ' +
   '"category": <string|null>, "entity_type": "asset"|"part"|null, ' +
   '"series": <the series/franchise name if this is part of one, else null>, ' +
+  '"creator": <the author/artist/maker as printed, verbatim, else null>, ' +
   '"title_variants": {"original": {"title": <as printed>, "language": <ISO 639-1 code>}|null, ' +
   '"translation": {"title": <English title>, "language": "en"}|null, ' +
   '"transliteration": {"title": <Latin letters>}|null}|null, ' +

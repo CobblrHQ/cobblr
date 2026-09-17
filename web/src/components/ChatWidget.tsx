@@ -100,6 +100,9 @@ interface Msg {
    *  message rides along because the SERVER re-binds it: the browser never
    *  sends the operations, only what the user said. */
   command?: NonNullable<AiChatResponse["command"]>;
+  /** Which of several look-alikes: one tap answers, by re-asking with the
+   *  record named (the sentence rides with the choice). */
+  choices?: NonNullable<AiChatResponse["choices"]>;
   /** Which parts of a plan with several destinations have run, by section
    *  key, with what each came back with (its sentence, its Undo handles).
    *  Kept with the conversation, so a reload shows the same half-done card. */
@@ -775,7 +778,7 @@ export function ChatPanel({ open: railOpen, setOpen }: { open: boolean; setOpen:
         setMessages([
           ...next,
           ...doneCards.map(named),
-          named({ role: "assistant", content: r.text?.trim() || (r.command ? "Here is what I can do." : "I didn't manage an answer for that. Try asking again, or in a different way.") }),
+          named({ role: "assistant", content: r.text?.trim() || (r.command ? "Here is what I can do." : "I didn't manage an answer for that. Try asking again, or in a different way."), ...(r.choices?.length ? { choices: r.choices } : {}) }),
           ...(r.command ? [named({ role: "assistant" as const, content: "", command: r.command })] : []),
         ]);
       }
@@ -1039,8 +1042,8 @@ export function ChatPanel({ open: railOpen, setOpen }: { open: boolean; setOpen:
     }
   }
 
-  async function send() {
-    const text = input.trim();
+  async function send(spoken?: string) {
+    const text = (spoken ?? input).trim();
     if (!text || busy) return;
     setInput("");
     setHistory((h) => {
@@ -2007,6 +2010,27 @@ export function ChatPanel({ open: railOpen, setOpen }: { open: boolean; setOpen:
                       that names it. A card that said only "Move records into
                       another list" asked for trust; this offers a check. */}
                   {m.proposal?.kind === "action" && m.proposal.plan && !m.resolved && <PlanLines lines={m.proposal.plan.lines} />}
+                  {/* Which one? The answer is a tap: it sends the person's own
+                      sentence back with the record named, so the write runs
+                      once, on the one they chose. Only until answered. */}
+                  {m.choices && !m.resolved && i === messages.length - 1 && (
+                    <div className="mt-2 flex flex-wrap items-center gap-1.5" data-testid="chat-choices">
+                      {m.choices.map((c) => (
+                        <button
+                          key={c.say}
+                          type="button"
+                          onClick={() => {
+                            setMessages((prev) => prev.map((x, j) => (j === i ? { ...x, resolved: true } : x)));
+                            void send(c.say);
+                          }}
+                          disabled={busy}
+                          className="rounded-full border border-cobble-300 dark:border-cobble-700 bg-cobble-50 dark:bg-cobble-950/40 text-accent hover:bg-cobble-100 dark:hover:bg-cobble-900/60 text-xs font-medium px-2.5 py-1 transition disabled:opacity-50"
+                        >
+                          {c.label}
+                        </button>
+                      ))}
+                    </div>
+                  )}
                   {m.proposal && !m.resolved && (
                     <div className="mt-2 flex items-center gap-2">
                       <Cobb pose="idea" size={44} title="Cobb suggests" className="cobb-lift shrink-0" />

@@ -13,6 +13,8 @@ import { sql, type Kysely } from "kysely";
 import { platform, CatalogSchemaConfig, packFieldIssues, FieldRoleSchema, FieldTypeSchema, isFieldScope, parseFieldScope, FaceSchema } from "@cobblr/platform-contract";
 import { requireAuth } from "../auth/middleware.js";
 import { requireRole } from "../auth/capability.js";
+import { roleSatisfies } from "@cobblr/platform-contract/org-roles";
+import { describeBlock } from "../platform/approvals.js";
 import { withTenant } from "../middleware/tenant.js";
 import { meta } from "../db/meta.js";
 import {
@@ -2202,9 +2204,25 @@ bundlesRouter.post(
   async (req, res, next) => {
     try {
       // Installing a bundle changes workspace composition — enables
-      // modules, adds field defs + automation wires. Owner/admin only; a
-      // read-only guest / plain member must not. See 2026-06-10 audit #3.
-      if (!requireRole(req, res, "owner", "admin")) return;
+      // modules, adds field defs + automation wires. The admin tier only (an
+      // editor is in it); a member or a read-only guest must not. See
+      // 2026-06-10 audit #3. The refusal is an ASK, not a dead end: it names
+      // the bundle and whether an admin can be asked to install it (#3073).
+      if (!roleSatisfies(req.tenant!.role, ["owner", "admin"])) {
+        const asked = (req.body ?? {}) as { id?: unknown; manifest?: { id?: unknown } };
+        const bundleId = typeof asked.id === "string" ? asked.id : typeof asked.manifest?.id === "string" ? asked.manifest.id : null;
+        const blocked = await describeBlock({
+          orgId: req.tenant!.org.id,
+          userId: req.session!.id,
+          role: req.tenant!.role,
+          remedies: bundleId ? [{ kind: "install", key: bundleId }] : [],
+          doing: "Installing this",
+        });
+        res.status(403).json({
+          error: { code: "forbidden", message: blocked.sentence, details: { your_role: req.tenant!.role }, blocked },
+        });
+        return;
+      }
       // Q5 (wires-and-bundles.md): `requires` is now an "install" not
       // a "check." If the bundle needs modules the workspace doesn't
       // have enabled, return 409 with `needs_enable` instead of

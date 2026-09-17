@@ -1,0 +1,29 @@
+{
+  "outcome": "hit",
+  "hit": {
+    "source": "openlibrary",
+    "title": "Designing Data-Intensive Applications",
+    "brand": "O'Reilly Media",
+    "model": "9781449373320",
+    "description": "The Big Ideas Behind Reliable, Scalable, and Maintainable Systems",
+    "category": "Books",
+    "image_url": null,
+    "raw": {
+      "openlibrary": {
+        "key": "/books/OL26839296M",
+        "url": "http://openlibrary.org/books/OL26839296M/Designing_Data-Intensive_Applications",
+        "authors": "Martin Kleppmann",
+        "isbn": "9781449373320",
+        "publish_date": "2017"
+      }
+    },
+    "fields": {
+      "isbn": "9781449373320",
+      "title": "Designing Data-Intensive Applications",
+      "author": "Martin Kleppmann",
+      "year": 2017,
+      "publisher": "O'Reilly Media"
+    },
+    "decoder_id": "isbn"
+  }
+}

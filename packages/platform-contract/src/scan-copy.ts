@@ -71,6 +71,21 @@ export const INSTALL_SENTENCE = "{table} is not set up yet. Adding installs it."
 /** The person may not file here. */
 export const BLOCKED_SENTENCE = "You cannot file here. Ask a workspace admin.";
 
+/** A field the evidence contradicts (#3070): `{source}` is where the
+ *  evidence came from ("The cover"), `{evidence}` and `{claimed}` the two
+ *  values, `{field}` the field's label. The template is short; the names
+ *  it carries are the row's own. */
+export const EVIDENCE_CONFLICT_SENTENCE = "{source} says {evidence}, not {claimed}. Check the {field}.";
+
+/** The destination is a table only an admin can install, and this person
+ *  is not one. `{table}` is the destination's label. Asking is the way. */
+export const INSTALL_BLOCKED_SENTENCE = "{table} is not set up yet. Ask a workspace admin.";
+
+/** The AI was asked and did not answer (the row's coded identify_failure):
+ *  the name is whatever else named it, and a person checks it. Never
+ *  "connect AI": a manual check settles the row without one. */
+export const AI_FAILED_SENTENCE = "The AI could not read this. Check the name.";
+
 /** A confident-enough score is not a reason; a low one asks for a look.
  *  `{pct}` is the whole-number percentage. */
 export const LOW_CONFIDENCE_SENTENCE = "Identified at {pct}% confidence. Check the name.";

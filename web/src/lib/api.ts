@@ -3,6 +3,8 @@
 // Everything goes through `request<T>` so error shape stays uniform.
 
 import { markSandboxEnded } from "./sandbox-session";
+import { isMutating, raiseBlockedAction, refusedRequestFor } from "./blocked-action";
+import type { ApprovalRemedy, BlockedAction } from "@cobblr/platform-contract/blocked-action";
 import type { CommunityLinkId } from "@cobblr/platform-contract/community-links";
 import type { AiFallback } from "@cobblr/platform-contract/scan-fallback";
 import type { ScanToolHints } from "@cobblr/platform-contract/scan-tools";
@@ -50,6 +52,10 @@ export class ApiError extends Error {
     public readonly code: string,
     message: string,
     public readonly details?: unknown,
+    /** A refusal explained: the prerequisite in words and whether asking is a
+     *  remedy (blocked-action.ts). The sheet in the shell reads it; a caller
+     *  that shows `message` in a toast needs to know nothing about it. */
+    public readonly blocked?: BlockedAction,
   ) {
     super(message);
   }
@@ -96,6 +102,9 @@ async function request<T>(
 ): Promise<T> {
   const headers: Record<string, string> = {};
   if (body !== undefined) headers["Content-Type"] = "application/json";
+  // Kept for the blocked-action sheet: `body` is shadowed by the response
+  // below, and a refusal needs the request as it was sent.
+  const sent = body;
   const token = getToken();
   if (token) headers["Authorization"] = `Bearer ${token}`;
   // Operator impersonation: the grant rides alongside the operator's own Bearer.
@@ -152,10 +161,17 @@ async function request<T>(
 
   if (!res.ok) {
     const body = parsed as {
-      error?: { code?: string; message?: string; details?: unknown };
+      error?: { code?: string; message?: string; details?: unknown; blocked?: BlockedAction };
       message?: string;
     };
     const err = body.error;
+    // A refusal that carries its explanation reaches the ONE sheet in the
+    // shell, whichever surface made the call (#3073): the prerequisite in
+    // words, the ask when there is one, and the refused request kept so a
+    // yes can finish it. The surface's own toast still shows the sentence.
+    if (res.status === 403 && err?.blocked && isMutating(method)) {
+      raiseBlockedAction({ blocked: err.blocked, refused: refusedRequestFor(method, path, sent), subject: null });
+    }
     // A route that answers `{ok:false,message}` is still TELLING us why. Reading
     // only `error.message` turned "a designs:item needs a name" into "HTTP 400"
     // for the person who had just pressed Confirm, and for the assistant that
@@ -165,7 +181,7 @@ async function request<T>(
     // The server saying the sandbox's hour is up ends it for the whole app,
     // whichever request heard it first; the workspace shell becomes the ending.
     if (res.status === 410 && err?.code === "sandbox_expired") markSandboxEnded();
-    throw new ApiError(res.status, err?.code ?? "unknown", reason ?? `HTTP ${res.status}`, err?.details);
+    throw new ApiError(res.status, err?.code ?? "unknown", reason ?? `HTTP ${res.status}`, err?.details, err?.blocked);
   }
   return parsed as T;
 }
@@ -4501,8 +4517,45 @@ export const api = {
         kind,
       )}&field=${encodeURIComponent(field)}`,
     ),
+  // Approval requests (api/src/routes/approval-requests.ts): asking for what
+  // a gate refused, answering, finishing. The sheet and the permissions page.
+  listApprovalRequests: (slug: string, status?: "open" | ApprovalRequestStatus) =>
+    request<{ items: ApprovalRequestView[]; can_decide: boolean }>(
+      "GET",
+      `/orgs/${slug}/approval-requests${status ? `?status=${status}` : ""}`,
+    ),
+  describeBlockedAction: (slug: string, remedies: Array<{ kind: ApprovalRemedy["kind"]; key: string }>, doing?: string) =>
+    request<{ blocked: BlockedAction }>("POST", `/orgs/${slug}/approval-requests/describe`, { remedies, doing }),
+  createApprovalRequest: (
+    slug: string,
+    body: {
+      remedies: Array<{ kind: ApprovalRemedy["kind"]; key: string }>;
+      subject: string;
+      note?: string | null;
+      resume?: { method: "POST" | "PATCH" | "DELETE"; path: string; body?: unknown } | null;
+      route?: string | null;
+    },
+  ) => request<{ request: ApprovalRequestView; existing: boolean }>("POST", `/orgs/${slug}/approval-requests`, body),
+  getApprovalRequest: (slug: string, id: string) =>
+    request<{ request: ApprovalRequestView }>("GET", `/orgs/${slug}/approval-requests/${id}`),
+  decideApprovalRequest: (slug: string, id: string, decision: "approve" | "deny", note?: string | null) =>
+    request<{ request: ApprovalRequestView; applied: Record<string, string> }>(
+      "POST",
+      `/orgs/${slug}/approval-requests/${id}/decide`,
+      { decision, note: note ?? null },
+    ),
+  withdrawApprovalRequest: (slug: string, id: string) =>
+    request<{ ok: true; status: ApprovalRequestStatus }>("POST", `/orgs/${slug}/approval-requests/${id}/withdraw`),
+  resumeApprovalRequest: (slug: string, id: string) =>
+    request<{ resume: { method: "POST" | "PATCH" | "DELETE"; path: string; body: unknown }; subject: string; remedies: ApprovalRemedy[] }>(
+      "POST",
+      `/orgs/${slug}/approval-requests/${id}/resume`,
+    ),
+  completeApprovalRequest: (slug: string, id: string, result: { ok: boolean; status?: number; message?: string | null }) =>
+    request<{ ok: true; status: ApprovalRequestStatus }>("POST", `/orgs/${slug}/approval-requests/${id}/complete`, result),
+
   getMyCapabilities: (slug: string) =>
-    request<{ role: string; grants: string[] }>(
+    request<{ role: string; all: boolean; grants: string[] }>(
       "GET",
       `/orgs/${slug}/me/capabilities`,
     ),
@@ -6172,7 +6225,7 @@ export interface WorkspaceApp extends WorkspaceAppMeta {
 }
 
 export interface ViewDataResponse {
-  view: { id: string; entity_kind: string; view_type: string };
+  view: { id: string; name: string; entity_kind: string; view_type: string };
   items: Array<{
     kind: string;
     id: string;
@@ -6400,6 +6453,10 @@ export interface AiChatResponse {
    *  opens what it names the way a write's card does. Decided server-side
    *  from what the tools returned; never a name the turn did not read. */
   mentions?: Array<{ kind: string; id: string; label: string }>;
+  /** A write aimed at one of several look-alikes the person's words did not
+   *  pick between (two CubePros, one label): the candidates, each with the
+   *  sentence that re-asks with that record named. A tap sends it. */
+  choices?: Array<{ label: string; say: string }>;
 }
 
 export type AiChatProposal =
@@ -7688,4 +7745,23 @@ export interface RegistryIndex {
   /** Whether the official index's detached sig verified against the baked
    *  root key. null = no root anchor configured (status-quo trust). */
   official_root_verified: boolean | null;
+}
+
+export type ApprovalRequestStatus = "pending" | "approved" | "denied" | "expired" | "withdrawn" | "resuming" | "completed";
+
+/** One request as the settings page and the sheet see it. */
+export interface ApprovalRequestView {
+  id: string;
+  subject: string;
+  remedies: ApprovalRemedy[];
+  status: ApprovalRequestStatus;
+  note: string | null;
+  decision_note: string | null;
+  requester: { id: string; name: string };
+  decided_by: { id: string; name: string } | null;
+  created_at: string;
+  decided_at: string | null;
+  expires_at: string;
+  has_resume: boolean;
+  route: string | null;
 }

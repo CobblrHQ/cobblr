@@ -80,30 +80,99 @@ export function isbnFieldsFromOpenLibrary(
   return out;
 }
 
-/** A book by ISBN, via Open Library (free, no key). null on miss/unreachable.
+/** The book catalog could not be asked: the network, a non-2xx answer, a body
+ *  that is not the API's. Distinct from "no such book" (a reachable catalog
+ *  with no entry, which resolveIsbn answers with null): a caller that caches
+ *  a miss, or stamps a cached answer as checked, must do neither on this.
+ *  Open Library's Books API answered 404 to every ISBN for a stretch on
+ *  2026-09-17; read as "no such book" that would have stamped every cached
+ *  stray (#3162) as checked for a day and cached every fresh ISBN as a miss. */
+export class BookDoorUnavailable extends Error {
+  constructor(why: string) {
+    super(`the book catalog could not be asked: ${why}`);
+    this.name = "BookDoorUnavailable";
+  }
+}
+
+/** A book by ISBN, via Open Library (free, no key). null when the catalog
+ *  has no such book; throws BookDoorUnavailable when it could not be asked.
  *  The hit's title is the book's title and its brand the publisher; the
  *  structured bag rides in `fields` for the role-fill. */
 export async function resolveIsbn(isbn: string): Promise<BarcodeHit | null> {
   const clean = isbn.replace(/[^0-9X]/gi, "").toUpperCase();
   if (!clean) return null;
   // A replay dir answers from its cassette and never from the network
-  // (catalog-replay.ts); a recording session asks live and writes one.
-  const replayed = replayMiss(clean);
-  if (replayed) return replayed.outcome === "hit" ? replayed.hit : null;
+  // (catalog-replay.ts); a recording session asks live and writes one. A
+  // cassette saying rate_limited is the recorded shape of "could not be
+  // asked", so a test can hold what an outage does.
+  const replayed = replayMiss(clean, "book");
+  if (replayed) {
+    if (replayed.outcome === "rate_limited") throw new BookDoorUnavailable("recorded as unreachable");
+    return replayed.outcome === "hit" ? replayed.hit : null;
+  }
+  // An outage is not recorded: the next recording session asks again.
   const live = await resolveIsbnLive(clean);
-  writeCatalogCassette(clean, hitCassette(live));
+  writeCatalogCassette(clean, hitCassette(live), "book");
   return live;
 }
 
+const OPEN_LIBRARY_TIMEOUT_MS = 8000;
+
+async function openLibraryJson<T>(url: string): Promise<{ ok: true; body: T } | { ok: false; why: string }> {
+  const res = await fetch(url, { headers: { accept: "application/json" }, signal: AbortSignal.timeout(OPEN_LIBRARY_TIMEOUT_MS) }).catch(
+    (err: unknown) => ({ error: err instanceof Error ? err.message : String(err) }),
+  );
+  if ("error" in res) return { ok: false, why: res.error };
+  if (!res.ok) return { ok: false, why: `HTTP ${res.status}` };
+  const body = (await res.json().catch(() => undefined)) as T | undefined;
+  if (body === undefined) return { ok: false, why: "not JSON" };
+  return { ok: true, body };
+}
+
+/** Two doors on the one catalog. The Books API answers one call with the
+ *  whole bag; when it cannot be asked, the edition record (`/isbn/<isbn>.json`)
+ *  carries the same title, date and publisher and names its authors by key,
+ *  read one more call each. A catalog reached through either door and
+ *  holding no entry is a null; neither door reachable is BookDoorUnavailable. */
 async function resolveIsbnLive(clean: string): Promise<BarcodeHit | null> {
-  const res = await fetch(
+  const books = await openLibraryJson<Record<string, OpenLibraryBook>>(
     `https://openlibrary.org/api/books?bibkeys=ISBN:${clean}&format=json&jscmd=data`,
-    { headers: { accept: "application/json" }, signal: AbortSignal.timeout(8000) },
-  ).catch(() => null);
-  if (!res || !res.ok) return null;
-  const j = (await res.json().catch(() => ({}))) as Record<string, OpenLibraryBook>;
-  const b = j[`ISBN:${clean}`];
-  if (!b || !b.title) return null;
+  );
+  if (books.ok) {
+    const b = books.body[`ISBN:${clean}`];
+    return b?.title ? bookHit(b, clean) : null;
+  }
+  const edition = await openLibraryJson<OpenLibraryEdition>(`https://openlibrary.org/isbn/${clean}.json`);
+  if (!edition.ok) {
+    // A 404 here can be an ISBN the catalog does not hold, but with the Books
+    // door already down there is no second opinion, so it reads as
+    // unreachable: the safe direction, since nothing is cached or stamped on it.
+    throw new BookDoorUnavailable(`books door: ${books.why}; edition door: ${edition.why}`);
+  }
+  const e = edition.body;
+  if (!e?.title) return null;
+  const authors: { name: string }[] = [];
+  for (const a of (e.authors ?? []).slice(0, 4)) {
+    const author = await openLibraryJson<{ name?: string }>(`https://openlibrary.org${a.key}.json`);
+    if (author.ok && author.body?.name) authors.push({ name: author.body.name });
+  }
+  const cover = e.covers?.[0];
+  return bookHit(
+    {
+      title: e.title,
+      subtitle: e.subtitle,
+      key: e.key,
+      url: e.key ? `https://openlibrary.org${e.key}` : undefined,
+      authors,
+      publishers: (e.publishers ?? []).map((name) => ({ name })),
+      publish_date: e.publish_date,
+      cover: cover ? { medium: `https://covers.openlibrary.org/b/id/${cover}-M.jpg` } : undefined,
+    },
+    clean,
+  );
+}
+
+function bookHit(b: OpenLibraryBook, clean: string): BarcodeHit {
   const fields = isbnFieldsFromOpenLibrary(b, clean);
   const authors = typeof fields.author === "string" ? fields.author : "";
   return {
@@ -146,6 +215,18 @@ export interface OpenLibraryBook {
   publishers?: { name: string }[];
   publish_date?: string;
   cover?: { small?: string; medium?: string; large?: string };
+}
+
+/** The edition record behind `/isbn/<isbn>.json`: the same facts as the Books
+ *  API's entry with authors as keys and covers as ids. */
+interface OpenLibraryEdition {
+  title?: string;
+  subtitle?: string;
+  key?: string;
+  authors?: { key: string }[];
+  publishers?: string[];
+  publish_date?: string;
+  covers?: number[];
 }
 
 /** Best-effort product name for an Amazon ASIN by reading its product page title.

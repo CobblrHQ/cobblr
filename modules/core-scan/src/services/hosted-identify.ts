@@ -18,6 +18,7 @@
 // Operator-configured internal service ⇒ plain fetch, strict-egress-safe
 // (the env-set-URL convention, CLAUDE.md §14.1).
 import type { PhotoIdentity } from "./enrich-photo.js";
+import { seenCountOf, seenDistinctOf } from "./seen-count.js";
 import type { Kysely } from "kysely";
 import { sql } from "kysely";
 import { platform } from "@cobblr/platform-contract";
@@ -347,11 +348,9 @@ export function toPhotoIdentity(item: Record<string, unknown>): PhotoIdentity | 
     .map((i) => {
       const n = str(i.name);
       if (!n) return null;
-      const qty = Number(i.qty);
-      return { name: n, brand: str(i.brand), qty: Number.isFinite(qty) && qty >= 1 ? Math.round(qty) : 1 };
+      return { name: n, brand: str(i.brand), qty: seenCountOf(i.qty) };
     })
     .filter((x): x is { name: string; brand: string | null; qty: number } => x !== null);
-  const distinct = Number(item.distinct);
   return {
     name,
     brand: str(item.brand),
@@ -364,7 +363,7 @@ export function toPhotoIdentity(item: Record<string, unknown>): PhotoIdentity | 
     serial_number: str(item.serial_number),
     observations: str(item.observations) ?? "",
     product_photo_box: null,
-    distinct: individuals.length >= 2 ? individuals.length : Number.isFinite(distinct) && distinct >= 1 ? distinct : 1,
+    distinct: individuals.length >= 2 ? individuals.length : seenDistinctOf(item.distinct),
     individuals,
   };
 }

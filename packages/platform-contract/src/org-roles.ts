@@ -60,7 +60,8 @@ export const ORG_ROLE_BLURB: Record<OrgRoleName, string> = {
   admin: "Manages people and settings. Can change non-owner roles and mint invites.",
   editor:
     "Trusted with the contents, not the membership. Builds, configures and edits everything, but cannot manage who is in the workspace.",
-  member: "Does the day-to-day work. Full access to the data, no say over people or settings.",
+  member:
+    "Does the day-to-day work. Sees the whole workspace, scans and files, and adds records where its modules allow; no say over people or settings, and cannot install or configure.",
   guest: "Along for the ride. Reads what the workspace shares.",
 };
 
@@ -98,4 +99,49 @@ export function roleSatisfies(role: string | null | undefined, allowed: readonly
     ...allowed.map((r) => ORG_ROLE_RANK[r as OrgRoleName] ?? Number.POSITIVE_INFINITY),
   );
   return have >= need;
+}
+
+/**
+ * Does `role` hold EVERY action capability without being granted anything?
+ *
+ * The capability layer's implicit pass, read off the rank table above rather
+ * than written down again. Admin-tier for actions means `editor` too: it
+ * installs a bundle (a rank gate) and must be able to create the record the
+ * bundle exists for (a capability gate) — one model, two readers.
+ *
+ * THE BUG THIS EXISTS FOR. `userHasCapability` spelled its own list —
+ * `role === "owner" || role === "admin"` — so an editor cleared every
+ * `requireRole(req, res, "owner", "admin")` in the product and then failed
+ * every `requireCapability(...)` behind them, with a toast telling them to ask
+ * an admin for a power their role already carried. The projection the UI
+ * reads (`effectiveCapabilities`) had a third copy. Three spellings of one
+ * rule; only this one is read now.
+ *
+ * Grants and custom roles are for `member` and `guest`: the roles below the
+ * tier, which start with nothing.
+ */
+export function roleHoldsEveryCapability(role: string | null | undefined): boolean {
+  return roleSatisfies(role, ["owner", "admin"]);
+}
+
+/**
+ * Which shell a role lands in: the workspace, or the member portal.
+ *
+ * THE BUG THIS EXISTS FOR (#3122). The app shell sent everyone below the
+ * admin tier to the portal, so a `member` — documented as doing the
+ * day-to-day work with full access to the data — could not open the scan
+ * inbox, a module's pages or a record's own link at all, while the server
+ * let them write in nearly every module. The written model and the routing
+ * disagreed, and "Ask to add" had to be bolted onto the portal because the
+ * person could not reach the real door. Now the routing reads this, beside
+ * the rank table, so the two cannot drift again.
+ *
+ * A guest is the one role the portal is FOR: "reads what the workspace
+ * shares", and the portal is what a workspace chooses to share. Everyone
+ * else gets the workspace; what they may do in it is the gates' business
+ * (rank for actions, capabilities for the few per-action doors), never the
+ * shell's.
+ */
+export function shellForRole(role: string | null | undefined): "workspace" | "portal" {
+  return role === "guest" ? "portal" : "workspace";
 }

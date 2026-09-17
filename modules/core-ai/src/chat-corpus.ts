@@ -71,6 +71,22 @@ export interface CorpusCase {
    *  sits in is not where it is (the 2026-09-13 continuation review was told
    *  "in the Home Inventory list"). */
   says?: string[];
+  /** A stated reason this case cannot be made deterministic, written after a
+   *  real attempt. A case with this LEAVES THE GATE: it is still asked and
+   *  recorded, but a miss cannot put its bucket under the floor; its pass rate
+   *  over the last runs is tracked instead and alerts on a drop (#3101).
+   *  "Non-deterministic" is a finding, never a label for a case somebody
+   *  could not fix; the corpus owner decides which cases carry it. */
+  trend?: string;
+  /** The issue this case cannot pass without: a defect at its door, a
+   *  fixture the seed never creates. A case with this is held OUT OF THE
+   *  FLOOR while it is asked and recorded, so a gate does not require every
+   *  known defect cleared before it can be green (a gate like that is one
+   *  everyone learns to ignore; twelve such cases the night the cold cache
+   *  warmed, #3101). Its failing is expected; its passing is reported, and a
+   *  marker that keeps passing is a stale label, cleared in the PR that fixed
+   *  the issue. Deterministic and red, which is the opposite of `trend`. */
+  known_red?: string;
 }
 
 const answer = (rule: string) => ({ kind: "answer", rule } as const);
@@ -94,7 +110,41 @@ function onScreen(
   return says.map((say) => ({ say, cat, no_ai, ai, on }));
 }
 
-export const CHAT_CORPUS: CorpusCase[] = [
+/** The cases held out of the floor, by sentence: the issue each one cannot
+ *  pass without. Named by the corpus owner from the outcome-scored pass
+ *  (2026-09-17). A sentence here that is not in the corpus is a dead marker,
+ *  refused at load (below), so the list cannot drift from the cases. */
+const KNOWN_RED: Record<string, string> = {
+  // #3123: args_schema has no `required`, so the door lets an argument-less
+  // call through and the card fails when pressed (class B, "call my parts
+  // spools": rename-thing given a kind id where it wants a list name).
+  "rename machines to printers everywhere": "#3123",
+  "put purchase date and supplier under Buying on parts": "#3123",
+  "rename the Buying heading to Purchasing": "#3123",
+  "track where my things came from": "#3123",
+  "turn on provenance": "#3123",
+  "we measure filament in spools": "#3123",
+  "call my parts spools": "#3123",
+  // #3125: the seed never creates the subject (no Purchase Date field, no
+  // Spices section), and turns every module on, so enable-module has nothing
+  // to enable.
+  "make Purchase Date required": "#3125",
+  "put Spices and Tea under a Kitchen heading": "#3125",
+  "turn on purchases": "#3125",
+  "I want to track maintenance": "#3125",
+  "enable the shipments feature": "#3125",
+};
+
+/** The cases that left the gate for the trend, by sentence: the reason each
+ *  cannot be made deterministic, after a real attempt. */
+const TREND: Record<string, string> = {
+  // #3159: the door works for the model's call; the miss is the model's
+  // choice between the action and a pointer to Fields & forms, two in three
+  // either way.
+  "add Aran to the yarn weight choices": "the model chooses between the action and a pointer to Fields & forms, two in three either way (#3159)",
+};
+
+const RAW_CORPUS: CorpusCase[] = [
   // ── greetings & meta ──────────────────────────────────────────────────────
   ...ph("meta", answer("greeting"), "answer", [
     "hi", "hey there", "good morning", "hello cobb",
@@ -148,8 +198,20 @@ export const CHAT_CORPUS: CorpusCase[] = [
   // "How much" reads a quantity off the record; a page or a count both get
   // there (measured: the model reads the record and says the number).
   ...ph("my-data", answer("my-data"), "read:list_records|count_records|search_records", [
-    "how much filament is there", "how much do I have of the black yarn",
+    "how much filament is there",
   ]),
+  // The answer must be TRUE, not merely a read. The model searched the Yarn
+  // list, found nothing, and said "you don't have any black yarn" while four
+  // sat in Inventory; that scored as a read answer (#3085). The record
+  // named as a chip proves it was found; the count proves it was read.
+  {
+    say: "how much do I have of the black yarn",
+    cat: "my-data",
+    no_ai: answer("my-data"),
+    ai: "read:list_records|count_records|search_records",
+    names: ["Black yarn"],
+    says: ["4"],
+  },
   ...ph("my-data", answer("my-data"), "read:list_records|search_records", [
     "what do I have in the garage", "show me my printers",
   ]),
@@ -409,7 +471,13 @@ export const CHAT_CORPUS: CorpusCase[] = [
   ...ph("kitchen", neverOffer, "action:core-placement:place{container_id=*}|update", [
     "the rice lives in the pantry now",
   ]),
-  ...ph("kitchen", neverOffer, "create:record", [
+  // Two doors end with the jar existing: the record create, and the
+  // inventory:create-item action (whose own examples are "add a box of
+  // screws"). The action is accepted here only because the bench opens the
+  // door: a call naming a list the workspace does not have is refused and
+  // scored as the miss it is (#3092), and one that lands in Inventory runs
+  // and is put back.
+  ...ph("kitchen", neverOffer, "create:record|action:inventory:create-item", [
     "add a jar of turmeric", "new spice: garam masala",
   ]),
   // "Used up one" is what use-one does; and on a pantry that dates lots on
@@ -428,8 +496,19 @@ export const CHAT_CORPUS: CorpusCase[] = [
     "kill the fragile tag on the Kossel",
   ]),
   ...ph("workshop", neverOffer, "action:labels:print", [
-    "sticker the Rostock", "I need a label on the CubePro",
+    "sticker the Rostock",
   ]),
+  // Two machines are called CubePro and no place is named, so the right
+  // answer is the question, naming both; a label printed for one of them is
+  // a guess. It missed two asks in three for weeks as an action claim,
+  // because the model was right two times in three (#3001).
+  {
+    say: "I need a label on the CubePro",
+    cat: "workshop",
+    no_ai: neverOffer,
+    ai: "clarify",
+    says: ["CubePro #9", "CubePro #10"],
+  },
   // "note that on it" is a comment or a maintenance note; both are notes on it.
   ...ph("workshop", neverOffer, "action:core-discussion:post-comment{body=nozzle}|action:core-maintenance:log{name=nozzle}", [
     "the X1 needs a new nozzle, note that on it",
@@ -479,3 +558,13 @@ export const CHAT_CORPUS: CorpusCase[] = [
     "what's the difference between PLA and ABS",
   ]),
 ];
+
+const marked = (c: CorpusCase): CorpusCase => ({
+  ...c,
+  ...(KNOWN_RED[c.say] ? { known_red: KNOWN_RED[c.say] } : {}),
+  ...(TREND[c.say] ? { trend: TREND[c.say] } : {}),
+});
+for (const say of [...Object.keys(KNOWN_RED), ...Object.keys(TREND)]) {
+  if (!RAW_CORPUS.some((c) => c.say === say)) throw new Error(`chat-corpus: a marker names a sentence that is not a case: "${say}"`);
+}
+export const CHAT_CORPUS: CorpusCase[] = RAW_CORPUS.map(marked);

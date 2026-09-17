@@ -26,10 +26,13 @@ import {
   Sun,
   UserCog,
   Compass,
+  DoorOpen,
 } from "lucide-react";
 import { startTour } from "../tour/useTour";
 import { useAuth } from "../auth/AuthContext";
 import { useActiveOrg } from "../auth/ActiveOrgContext";
+import { roleSatisfies } from "@cobblr/platform-contract/org-roles";
+import { configurationReachable } from "../lib/configuration-nav";
 import { useTheme } from "../theme/ThemeContext";
 import { useThemeToggle } from "../theme/useThemeToggle";
 import { UpdateBadge } from "./UpdateBadge";
@@ -74,7 +77,7 @@ export function UserMenu({ themed, inline = false }: { themed: boolean; inline?:
   // re-fetches /me so the whole shell re-renders (same pattern as switching
   // workspaces).
   const focused = isFocused(activeOrg);
-  const canFocus = activeOrg?.role === "owner" || activeOrg?.role === "admin";
+  const canFocus = roleSatisfies(activeOrg?.role, ["owner", "admin"]);
   const exitFocused = async () => {
     setOpen(false);
     try {
@@ -232,9 +235,19 @@ export function UserMenu({ themed, inline = false }: { themed: boolean; inline?:
               </button>
               {/* Personal edge bridge liveness — only shows for users running one. */}
               <EdgeBridgeMenuRow itemCls={itemCls} onNavigate={() => setOpen(false)} />
+              {/* The member portal: the curated front door (pinned views, worker
+                  apps, a welcome) beside the workspace. Every workspace role
+                  can open it, and its header offers the way back; a guest
+                  lands there and never sees this menu (#3122). */}
+              {activeSlug && (
+                <Link to={`/portal/${activeSlug}`} onClick={() => setOpen(false)} className={itemCls} role="menuitem">
+                  <DoorOpen size={14} className="text-faint dark:text-slate-400" /> Member portal
+                </Link>
+              )}
               {/* Configuration is the build-it hub (modules / bundles / wires /
-                  fields) — hidden in simple mode for a calmer everyday view. */}
-              {!focused && !inline && (
+                  fields) — hidden in simple mode for a calmer everyday view,
+                  and from a role with nothing there to reach (#3122). */}
+              {!focused && !inline && configurationReachable(activeOrg?.role) && (
                 <Link
                   to="/configuration"
                   onClick={() => setOpen(false)}
@@ -444,9 +457,19 @@ export function UserMenu({ themed, inline = false }: { themed: boolean; inline?:
               </button>
               {/* Personal edge bridge liveness — only shows for users running one. */}
               <EdgeBridgeMenuRow itemCls={itemCls} onNavigate={() => setOpen(false)} />
+              {/* The member portal: the curated front door (pinned views, worker
+                  apps, a welcome) beside the workspace. Every workspace role
+                  can open it, and its header offers the way back; a guest
+                  lands there and never sees this menu (#3122). */}
+              {activeSlug && (
+                <Link to={`/portal/${activeSlug}`} onClick={() => setOpen(false)} className={itemCls} role="menuitem">
+                  <DoorOpen size={14} className="text-faint dark:text-slate-400" /> Member portal
+                </Link>
+              )}
               {/* Configuration is the build-it hub (modules / bundles / wires /
-                  fields) — hidden in simple mode for a calmer everyday view. */}
-              {!focused && !inline && (
+                  fields) — hidden in simple mode for a calmer everyday view,
+                  and from a role with nothing there to reach (#3122). */}
+              {!focused && !inline && configurationReachable(activeOrg?.role) && (
                 <Link
                   to="/configuration"
                   onClick={() => setOpen(false)}

@@ -23,7 +23,7 @@ import {
   Square,
   SquareCheck,
 } from "lucide-react";
-import { downloadBlob, useChangeWorkspaceShape, useToast, usePageTitle } from "@cobblr/platform-web";
+import { FieldPack, LabeledField, downloadBlob, fieldNeed, useChangeWorkspaceShape, useToast, usePageTitle } from "@cobblr/platform-web";
 import {
   ApiError,
   api,
@@ -273,63 +273,58 @@ export function BundleComposerPage() {
               <div className="text-[10px] font-mono uppercase tracking-widest text-accent mb-3">
                 // metadata
               </div>
-              <div className="grid grid-cols-2 gap-3">
-                <Field label="ID (kebab-case)">
-                  <input
-                    type="text"
-                    value={meta.id}
-                    onChange={(e) =>
-                      setMeta((m) => ({
-                        ...m,
-                        id: e.target.value.toLowerCase().replace(/[^a-z0-9.-]+/g, "-"),
-                      }))
-                    }
-                    className="input font-mono text-xs"
-                  />
-                </Field>
-                <Field label="Version (semver)">
-                  <input
-                    type="text"
-                    value={meta.version}
-                    onChange={(e) => setMeta((m) => ({ ...m, version: e.target.value }))}
-                    className="input font-mono text-xs"
-                  />
-                </Field>
-                <Field label="Name" className="col-span-2">
-                  <input
-                    type="text"
-                    value={meta.name}
-                    onChange={(e) => setMeta((m) => ({ ...m, name: e.target.value }))}
-                    className="input"
-                  />
-                </Field>
-                <Field label="Description" className="col-span-2">
-                  <textarea
-                    value={meta.description}
-                    onChange={(e) => setMeta((m) => ({ ...m, description: e.target.value }))}
-                    rows={2}
-                    className="input"
-                  />
-                </Field>
-                <Field label="Author" className="col-span-2">
-                  <input
-                    type="text"
-                    value={meta.author}
-                    onChange={(e) => setMeta((m) => ({ ...m, author: e.target.value }))}
-                    placeholder="e.g. Sarah's LUG, jane@example.com"
-                    className="input"
-                  />
-                </Field>
-                <Field label="Walkthrough (markdown, optional)" className="col-span-2">
-                  <textarea
-                    value={meta.readme_md}
-                    onChange={(e) => setMeta((m) => ({ ...m, readme_md: e.target.value }))}
-                    rows={4}
-                    className="input font-mono text-xs"
-                    placeholder="## What this bundle does..."
-                  />
-                </Field>
-              </div>
+              <FieldPack
+                items={[
+                  {
+                    need: fieldNeed("id", { control: "text", label: "ID (kebab-case)", valueLength: meta.id.length }),
+                    node: (
+                      <Field label="ID (kebab-case)">
+                        <input type="text" value={meta.id} onChange={(e) => setMeta((m) => ({ ...m, id: e.target.value.toLowerCase().replace(/[^a-z0-9.-]+/g, "-") }))} className="input font-mono text-xs" />
+                      </Field>
+                    ),
+                  },
+                  {
+                    need: fieldNeed("version", { control: "text", label: "Version (semver)", valueLength: meta.version.length }),
+                    node: (
+                      <Field label="Version (semver)">
+                        <input type="text" value={meta.version} onChange={(e) => setMeta((m) => ({ ...m, version: e.target.value }))} className="input font-mono text-xs" />
+                      </Field>
+                    ),
+                  },
+                  {
+                    need: fieldNeed("name", { control: "text", label: "Name", valueLength: meta.name.length }),
+                    node: (
+                      <Field label="Name">
+                        <input type="text" value={meta.name} onChange={(e) => setMeta((m) => ({ ...m, name: e.target.value }))} className="input" />
+                      </Field>
+                    ),
+                  },
+                  {
+                    need: fieldNeed("description", { control: "markdown", label: "Description" }),
+                    node: (
+                      <Field label="Description">
+                        <textarea value={meta.description} onChange={(e) => setMeta((m) => ({ ...m, description: e.target.value }))} rows={2} className="input" />
+                      </Field>
+                    ),
+                  },
+                  {
+                    need: fieldNeed("author", { control: "text", label: "Author", valueLength: meta.author.length }),
+                    node: (
+                      <Field label="Author">
+                        <input type="text" value={meta.author} onChange={(e) => setMeta((m) => ({ ...m, author: e.target.value }))} placeholder="e.g. Sarah's LUG, jane@example.com" className="input" />
+                      </Field>
+                    ),
+                  },
+                  {
+                    need: fieldNeed("readme_md", { control: "markdown", label: "Walkthrough (markdown, optional)" }),
+                    node: (
+                      <Field label="Walkthrough (markdown, optional)">
+                        <textarea value={meta.readme_md} onChange={(e) => setMeta((m) => ({ ...m, readme_md: e.target.value }))} rows={4} className="input font-mono text-xs" placeholder="## What this bundle does..." />
+                      </Field>
+                    ),
+                  },
+                ]}
+              />
               {requires.length > 0 && (
                 <div className="mt-3 text-[11px] font-mono text-muted">
                   // auto-requires:{" "}
@@ -535,21 +530,5 @@ function Section({
   );
 }
 
-function Field({
-  label,
-  className,
-  children,
-}: {
-  label: string;
-  className?: string;
-  children: React.ReactNode;
-}) {
-  return (
-    <label className={`block ${className ?? ""}`}>
-      <div className="text-[10px] font-mono uppercase tracking-widest text-muted mb-1">
-        {label}
-      </div>
-      {children}
-    </label>
-  );
-}
+/** The caption over a control: the shared one. */
+const Field = LabeledField;
