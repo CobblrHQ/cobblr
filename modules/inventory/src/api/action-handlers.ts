@@ -1033,7 +1033,11 @@ async function withBatches(
       }
       instance = hit.is_default ? undefined : hit.instance_name;
     }
-    const name = typeof a.name === "string" && a.name.trim() ? a.name.trim().slice(0, 200) : "Untitled";
+    // No name is no item: a call with nothing said used to create "Untitled"
+    // and report it made (#3141, the #3133 family). The schema marks it
+    // required, so the door refuses first; this is the handler's own word.
+    if (typeof a.name !== "string" || !a.name.trim()) return { ok: false, error: "say what the item is called (name)" };
+    const name = a.name.trim().slice(0, 200);
     const manufacturer = typeof a.manufacturer === "string" && a.manufacturer.trim() ? a.manufacturer.trim().slice(0, 120) : null;
     const locationId = typeof a.location_id === "string" && a.location_id ? a.location_id : null;
     const fields = (a.fields && typeof a.fields === "object" ? a.fields : {}) as Record<string, unknown>;

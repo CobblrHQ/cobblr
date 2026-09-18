@@ -20,7 +20,7 @@ import { execFileSync } from "node:child_process";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { defaultConcurrency, runParallel } from "./lib/parallel.mjs";
-import { CEILING_MS, judgeRun } from "./lib/lint-budget.mjs";
+import { CEILING_MS, judgeRun, ioPressure, IO_CONTENDED_AT } from "./lib/lint-budget.mjs";
 import { writeFileSync } from "node:fs";
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
@@ -169,10 +169,13 @@ function main() {
       const [r] = await runParallel([{ name, cmd: scripts[name], cwd: ROOT }], { concurrency: 1 });
       return r.ms;
     };
-    const { factor, contended, perLint, over, unknown, remeasured } = await judgeRun(results, quietMs, record ? null : rerun);
-    const factorLine = `this run ran at ${factor.toFixed(2)}x the recorded quiet baseline`;
+    // The box's I/O pressure is the second axis of contention: a docker prune
+    // stalls every file-reading lint while the CPU factor reads quiet.
+    const io = ioPressure();
+    const { factor, contended, perLint, over, unknown, remeasured, ioContended } = await judgeRun(results, quietMs, record ? null : rerun, { ioPressure: io });
+    const factorLine = `this run ran at ${factor.toFixed(2)}x the recorded quiet baseline` + (io !== null ? `, I/O pressure ${io.toFixed(1)}%` : "");
     if (contended) {
-      console.log(`[lints] contended run (${factorLine}): per-lint budgets deferred to the next quiet run; only the hard ceiling applies here`);
+      console.log(`[lints] contended run (${factorLine}${ioContended ? `; the box is I/O-starved, at or over ${IO_CONTENDED_AT}%` : ""}): per-lint budgets deferred to the next quiet run; only the hard ceiling applies here`);
     } else if (perLint) {
       console.log(`[lints] budget: ${factorLine}; every lint judged against its own quiet time`);
     }

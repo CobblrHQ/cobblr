@@ -1464,12 +1464,14 @@ export const api = {
     // future caller has to remember to unwrap the envelope.
     request<{ ok: boolean; result: unknown }>("POST", `/orgs/${slug}/actions/invoke`, body).then(
       (res) => {
-        const inner = res.result as { ok?: unknown; error?: unknown } | null;
+        const inner = res.result as { ok?: unknown; error?: unknown; skipped?: unknown } | null;
         if (inner && typeof inner === "object" && inner.ok === false) {
-          throw new Error(
-            typeof inner.error === "string" && inner.error.trim()
-              ? inner.error
-              : "That action couldn't run.",
+          // Declined (nothing applied: "already confirmed") is thrown too, so
+          // no caller mistakes it for done, but marked, so a surface can say
+          // it calmly rather than as a failure (action-result.ts, #3141).
+          throw Object.assign(
+            new Error(typeof inner.error === "string" && inner.error.trim() ? inner.error : "That action couldn't run."),
+            inner.skipped === true ? { declined: true as const } : {},
           );
         }
         return res;

@@ -36,9 +36,9 @@ if (!markers.length) {
   console.log("lint:corpus-known-red-live OK: no known_red marker in the corpus");
   process.exit(0);
 }
-const bad = markers.filter((m) => !/^#\d+$/.test(m.issue));
+const bad = markers.filter((m) => !/^#\d+( #\d+)*( \(.+\))?$/.test(m.issue));
 if (bad.length) {
-  console.error(`lint:corpus-known-red-live - ${bad.length} marker(s) do not name an issue as #<number>:`);
+  console.error(`lint:corpus-known-red-live - ${bad.length} marker(s) do not name their issue(s) as #<number>[ #<number>...][ (why)]:`);
   for (const m of bad) console.error(`  "${m.say}": ${JSON.stringify(m.issue)}`);
   process.exit(1);
 }
@@ -76,7 +76,11 @@ async function main(): Promise<void> {
     console.log(`lint:corpus-known-red-live INCONCLUSIVE: ${!tok ? "no Forgejo token here" : "no API base"}; ${markers.length} marker(s) unchecked (CI checks them)`);
     process.exit(0);
   }
-  const issues = [...new Set(markers.map((m) => m.issue.slice(1)))];
+  // A marker naming several issues stays until ALL of them are closed: the
+  // second issue is there because the case can pass for a wrong reason until
+  // it lands, so only a marker whose every issue is closed is stale.
+  const issuesOf = (m: string) => [...m.replace(/\s*\(.*\)\s*$/, "").matchAll(/#(\d+)/g)].map((x) => x[1]!);
+  const issues = [...new Set(markers.flatMap((m) => issuesOf(m.issue)))];
   const closed: string[] = [];
   let unreachable = "";
   for (const n of issues) {
@@ -101,16 +105,15 @@ async function main(): Promise<void> {
     console.log(`lint:corpus-known-red-live INCONCLUSIVE: the Forgejo API did not answer (${unreachable}); ${markers.length} marker(s) unchecked (CI checks them)`);
     process.exit(0);
   }
-  if (closed.length) {
-    console.error(`lint:corpus-known-red-live - ${closed.length} known_red issue(s) are CLOSED, so their markers are a stale bypass of the corpus floor:`);
-    for (const c of closed) {
-      console.error(`  ${c}:`);
-      for (const m of markers.filter((m) => m.issue === c.split(" ")[0])) console.error(`    "${m.say}"`);
-    }
+  const closedSet = new Set(closed.map((c) => c.split(" ")[0]!.slice(1)));
+  const stale = markers.filter((m) => issuesOf(m.issue).every((n) => closedSet.has(n)));
+  if (stale.length) {
+    console.error(`lint:corpus-known-red-live - ${stale.length} known_red marker(s) name only CLOSED issue(s) (${closed.join(", ")}), so they are a stale bypass of the corpus floor:`);
+    for (const m of stale) console.error(`    "${m.say}": ${m.issue}`);
     console.error("Remove these markers from KNOWN_RED in modules/core-ai/src/chat-corpus.ts (the PR that fixed the issue is where they go). A case that still fails without its marker is a new finding: file it and mark it against THAT issue.");
     process.exit(1);
   }
-  console.log(`lint:corpus-known-red-live OK: ${markers.length} known_red marker(s) name ${issues.length} open issue(s) (${issues.map((n) => `#${n}`).join(", ")})`);
+  console.log(`lint:corpus-known-red-live OK: ${markers.length} known_red marker(s) name ${issues.length} issue(s) (${issues.map((n) => `#${n}`).join(", ")}), none stale${closed.length ? `; closed but still held by another open issue: ${closed.join(", ")}` : ""}`);
 }
 
 main().catch((err) => {

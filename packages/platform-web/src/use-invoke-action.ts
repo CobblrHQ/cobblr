@@ -23,7 +23,7 @@ import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { useNavigate } from "react-router-dom";
 import { usePlatformWeb, useFlowHost } from "./context";
 import { printDirectiveOf, runPrintDirective } from "./print-directive";
-import { printNextStep, verdictOf } from "./action-outcome-compose";
+import { printNextStep, refusalKind, verdictOf } from "./action-outcome-compose";
 import { runAction } from "./run-action";
 
 export interface InvokeTarget {
@@ -121,8 +121,16 @@ export function useInvokeEntityAction({ entityKind, entityId }: InvokeTarget) {
     onError: (err: unknown) => {
       // api.invokeAction raises a refusal (`result.ok:false`) with the
       // handler's sentence, and an HTTP failure with the server's; either
-      // way the words are here, and they stay.
-      setFailure(err instanceof Error && err.message.trim() ? err.message : "That action couldn't run.");
+      // way the words are here. A refusal stays until dismissed; a declined
+      // answer (nothing to apply to, nothing changed) passes as a note, the
+      // calm thing it is, never as a failure (#3141).
+      const { kind, words } = refusalKind(err);
+      if (kind === "declined") {
+        setNote(words);
+        setTimeout(() => setNote((cur) => (cur === words ? null : cur)), 6000);
+        return;
+      }
+      setFailure(words);
       setFlash("err");
       setTimeout(() => setFlash(null), 2400);
     },

@@ -1393,11 +1393,20 @@ const EntityAction = z.object({
   // array and as a delimited string, since the wire composer's field is a text
   // box and always will be. "json" is the same bargain for a structured value
   // (an order's line items, a view's config): read it with readJsonArg.
+  // `required`: the handler cannot do without it. The invoke door, the
+  // assistant's guard and the bench all read this one flag, so a call that
+  // drops it is refused before it becomes a card that dies on press; without
+  // it every caller assumed and nothing noticed (#3123). An argument the
+  // handler defaults or tolerates absent is left unmarked.
   argsSchema: z
     .record(
       z.object({
         label: z.string().min(1),
         type: z.enum(["text", "number", "boolean", "list", "json"]).default("text"),
+        required: z.boolean().optional(),
+        // Required as a group ("fields or rename_to"): at least one of the
+        // arguments naming the same group must be carried.
+        oneOf: z.string().min(1).optional(),
       }),
     )
     .optional(),
@@ -2933,6 +2942,20 @@ export interface EntityKindRecord {
  *  the return is mostly ignored. */
 export type ActionHandler = (ctx: ActionInvokeContext) => Promise<unknown>;
 
+/** What an action is about to do, from its arguments, before it does it. One
+ *  line for a single record; for a bulk action a list: every record that
+ *  moves, and where. */
+export interface ActionPlan {
+  /** One line, the change in a sentence: "Move 5 records from Pantry into Tea". */
+  title: string;
+  /** One line per thing touched, by what a person calls it. */
+  lines: string[];
+}
+/** A planner answers the plan, or the reason there is none. A reason goes
+ *  back to the caller (the assistant fixes its arguments); a plan goes on
+ *  the confirm card. Nothing else is ever shown. */
+export type ActionPlanner = (ctx: ActionInvokeContext) => Promise<ActionPlan | { error: string } | null>;
+
 /** A UI directive an action handler MAY include in its result to ask the web
  *  shell to open a first-party FLOW after the action completes — e.g.
  *  disassemble-kit returning `{ ok, ui: { flow: "core-scan:organize", args:
@@ -3106,6 +3129,11 @@ export function readJsonArg<T = unknown>(
 
 export interface PlatformActions {
   registerHandler(handlerKey: string, handler: ActionHandler): void;
+  /** What the action behind `handlerKey` would touch, from its arguments, or
+   *  the reason there is no plan: asked before a confirm card exists, so
+   *  "no unit called that" reaches the caller instead of a card that dies on
+   *  press. A module registers it beside its handler. */
+  registerPlanner(handlerKey: string, planner: ActionPlanner): void;
   /** How the action behind `handlerKey` is undone, from its result. Register
    *  it beside the handler; an action declared `undoable` must have one (a
    *  guard test holds the two together), and the card after a run offers
@@ -3167,7 +3195,7 @@ export interface EntityActionRecord {
   position: number;
   /** Machine-readable arg shape for the wire composer / invoke forms; null if
    *  the action declared none. */
-  args_schema: Record<string, { label: string; type: "text" | "number" | "boolean" }> | null;
+  args_schema: Record<string, { label: string; type: "text" | "number" | "boolean" | "list" | "json"; required?: boolean; oneOf?: string }> | null;
   version: string;
 }
 
@@ -3628,7 +3656,7 @@ export interface PlatformIntegrations {
       id: string;
       label: string;
       description?: string;
-      argsSchema?: Record<string, { label: string; type: "text" | "number" | "boolean" | "list" | "json" }>;
+      argsSchema?: Record<string, { label: string; type: "text" | "number" | "boolean" | "list" | "json"; required?: boolean; oneOf?: string }>;
       undoable?: boolean;
     }>;
     invoke: (
@@ -3686,7 +3714,7 @@ export interface PlatformIntegrations {
       id: string;
       label: string;
       description?: string;
-      argsSchema?: Record<string, { label: string; type: "text" | "number" | "boolean" | "list" | "json" }>;
+      argsSchema?: Record<string, { label: string; type: "text" | "number" | "boolean" | "list" | "json"; required?: boolean; oneOf?: string }>;
       undoable?: boolean;
     }>;
   }>;
@@ -3706,7 +3734,7 @@ export interface PlatformIntegrations {
       id: string;
       label: string;
       description?: string;
-      argsSchema?: Record<string, { label: string; type: "text" | "number" | "boolean" | "list" | "json" }>;
+      argsSchema?: Record<string, { label: string; type: "text" | "number" | "boolean" | "list" | "json"; required?: boolean; oneOf?: string }>;
       undoable?: boolean;
     }>;
     testConnection?: (credentials: Record<string, unknown>) => Promise<{ ok: boolean; error?: string }>;

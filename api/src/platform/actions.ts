@@ -3,16 +3,20 @@
 
 import type { ActionUndoStep, ActionUndoer, ActionUndoContext } from "@cobblr/platform-contract/action-undo";
 import type {
+  ActionPlan,
+  ActionPlanner,
   ActionAppliesToDecl,
   ActionHandler,
   ActionInvokeContext,
   EntityActionRecord,
 } from "@cobblr/platform-contract";
 import { axisOfTrait, type AnyAxisName } from "@cobblr/platform-contract";
+import { requiredArgsRefusal } from "@cobblr/platform-contract/action-args";
+import { normaliseActionResult } from "@cobblr/platform-contract/action-result";
 import { meta } from "../db/meta.js";
 import { facesForKind } from "./faces.js";
 import { fieldRolesForKind } from "./field-defs.js";
-import { listKinds, getKind, listKindsForOrg, baseKindOf } from "./entities.js";
+import { canResolve, lookup, listKinds, getKind, listKindsForOrg, baseKindOf } from "./entities.js";
 
 const handlers = new Map<string, ActionHandler>();
 
@@ -36,19 +40,13 @@ export function hasHandler(handlerKey: string): boolean {
  *  about to do, and for a bulk action that is a list: every record that
  *  moves, and where. The handler already knows how to work that out; a
  *  planner is the same reading with the write left off. */
-export interface ActionPlan {
-  /** One line, the change in a sentence: "Move 5 records from Pantry into Tea". */
-  title: string;
-  /** One line per thing touched, by what a person calls it. */
-  lines: string[];
-}
-/** A planner answers the plan, or the reason there is none. It used to answer
- *  null for both, and null is what let a confirm card fall back to the
- *  action's bare label ("Move records into another list") when the model had
- *  passed a list that did not exist - the card the rule was written against.
- *  A reason goes back to the model, which fixes its arguments; a plan goes on
- *  the card. Nothing else is ever shown. */
-export type ActionPlanner = (ctx: ActionInvokeContext) => Promise<ActionPlan | { error: string } | null>;
+/** The plan and planner shapes live in the contract now, so a module can
+ *  register a planner beside its handler through platform().actions. A
+ *  planner used to answer null for both "here is the plan" and "there is
+ *  none", and null is what let a confirm card fall back to the action's bare
+ *  label ("Move records into another list") when the model had passed a list
+ *  that did not exist - the card the rule was written against. */
+export type { ActionPlan, ActionPlanner };
 
 const planners = new Map<string, ActionPlanner>();
 
@@ -103,18 +101,39 @@ export async function undoFor(actionId: string, result: unknown, ctx: ActionUndo
   return list.length ? list : null;
 }
 
+/** The record an entity-scoped call names, or why there is none. A null
+ *  lookup used to become `fields: {}` and the handler ran on a hollow record
+ *  (#3141): seven actions answered ok to an id that matched nothing. A kind
+ *  nobody wrote a resolver for cannot be checked and is let through as
+ *  before; a kind that can be looked up and is not there is refused. */
+export async function missingRecordRefusal(ctx: ActionInvokeContext, scope: "entity" | "workspace"): Promise<string | null> {
+  if (scope !== "entity" || !ctx.entity?.kind || !ctx.entity.id) return null;
+  if (!(await canResolve(ctx.orgId, ctx.entity.kind))) return null;
+  const found = await lookup(ctx.orgId, ctx.entity.kind, ctx.entity.id);
+  if (found) return null;
+  return `No ${ctx.entity.kind} with id ${ctx.entity.id} here. Read the record first and pass its real id.`;
+}
+
 export async function planFor(
   actionId: string,
   ctx: ActionInvokeContext,
 ): Promise<ActionPlan | { error: string } | null> {
   const row = await meta
     .selectFrom("entity_actions")
-    .select("invoke_handler")
+    .select(["invoke_handler", "args_schema", "scope"])
     .where("id", "=", actionId)
     .executeTakeFirst();
+  // The record first, then the arguments: no plan for a record that is not
+  // there, and the reason goes back to the caller before any card exists.
+  const gone = row ? await missingRecordRefusal(ctx, row.scope === "workspace" ? "workspace" : "entity") : null;
+  if (gone) return { error: gone };
+  const refused = row ? requiredArgsRefusal(actionId, row.args_schema as ArgsSchema, ctx.args) : null;
+  if (refused) return { error: refused };
   const planner = row?.invoke_handler ? planners.get(row.invoke_handler) : undefined;
   return planner ? planner(ctx) : null;
 }
+
+type ArgsSchema = Record<string, { label?: string; type?: string; required?: boolean; oneOf?: string }> | null | undefined;
 
 /** Does this action belong in a RECORD's action bar?
  *
@@ -324,8 +343,21 @@ export async function invoke(
       `Action ${actionId} declared handler "${row.invoke_handler}" but it was never registered`,
     );
   }
+  // The door refuses a call it cannot serve, in the same shape a handler
+  // refuses with, before the handler runs: a record that is not there
+  // (#3141), then an argument the schema says it needs (#3123). A card that
+  // renders and dies on press was a call the door could have refused.
+  const gone = await missingRecordRefusal(ctx, row.scope === "workspace" ? "workspace" : "entity");
+  if (gone) return { ok: false, error: gone };
+  const refused = requiredArgsRefusal(actionId, row.args_schema as ArgsSchema, ctx.args);
+  if (refused) return { ok: false, error: refused };
   try {
-    return await handler(ctx);
+    // One meaning of ok for every reader (action-result.ts): a handler that
+    // found nothing to do is declined, not a pass; an answer that does not
+    // say whether it ran is a refusal, and is named in the log.
+    const answered = normaliseActionResult(await handler(ctx), row.invoke_handler);
+    if (answered.malformed) console.error(`[actions] ${actionId} handler ${row.invoke_handler} answered without ok:`, (answered as { raw?: unknown }).raw);
+    return answered;
   } catch (err) {
     // The handler is named here, once, where it is known; the caller (the
     // invoke route, the wire engine) answers in its own way.

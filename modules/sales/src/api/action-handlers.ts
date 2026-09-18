@@ -68,6 +68,9 @@ export function registerSalesActionHandlers(): void {
     const db = (await platform().tenants.getDb(ctx.orgId)) as Kysely<SalesDB>;
     const instance = "sales";
 
+    // An order with nothing on it is not an order: a call with no items used
+    // to create an empty confirmed order and report it made (#3141).
+    if (!Array.isArray(args.items) || args.items.length === 0) return { ok: false, error: "say what is on the order (items)" };
     let customerId: string | null = null;
     let customerName: string | null = args.customer?.name?.trim() || null;
     if (args.customer && (args.customer.email || args.customer.name)) {

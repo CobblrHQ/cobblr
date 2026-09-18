@@ -66,8 +66,8 @@ export default defineModule({
         invokeHandler: "core-placement.place",
         userInvokable: false,
         argsSchema: {
-          container_kind: { label: "Container kind", type: "text" },
-          container_id: { label: "Container id", type: "text" },
+          container_kind: { label: "Container kind", type: "text", required: true },
+          container_id: { label: "Container id", type: "text", required: true },
           slot: { label: "Slot (optional)", type: "text" },
         },
       },

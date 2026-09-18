@@ -60,8 +60,8 @@ export default defineModule({
       undoable: true,
       invokeHandler: "core-presentation.group-nav",
       argsSchema: {
-        heading: { label: "What to call the group", type: "text" as const },
-        sections: { label: "Sections to put under it, comma separated", type: "text" as const },
+        heading: { label: "What to call the group", type: "text" as const, required: true },
+        sections: { label: "Sections to put under it, comma separated", type: "text" as const, required: true },
       },
     },
     {
@@ -75,7 +75,7 @@ export default defineModule({
       undoable: true,
       invokeHandler: "core-presentation.ungroup-nav",
       argsSchema: {
-        sections: { label: "Sections to take out, comma separated", type: "text" as const },
+        sections: { label: "Sections to take out, comma separated", type: "text" as const, required: true },
       },
     },
     ],

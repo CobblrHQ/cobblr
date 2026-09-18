@@ -71,9 +71,9 @@ export default defineModule({
         scope: "workspace",
         invokeHandler: "core-units.add-unit",
         argsSchema: {
-          code: { label: "Code (lowercase, e.g. fathom)", type: "text" },
-          symbol: { label: "Symbol shown next to a number (e.g. ftm)", type: "text" },
-          name: { label: "Singular name", type: "text" },
+          code: { label: "Code (lowercase, e.g. fathom)", type: "text", required: true },
+          symbol: { label: "Symbol shown next to a number (e.g. ftm)", type: "text", required: true },
+          name: { label: "Singular name", type: "text", required: true },
           plural: { label: "Plural name", type: "text" },
           category: { label: "What it measures (length, mass, volume, count, …)", type: "text" },
         },

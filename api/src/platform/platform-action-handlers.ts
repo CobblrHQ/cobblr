@@ -595,15 +595,52 @@ export function registerPlatformActionHandlers(): void {
     };
   });
 
-  registerHandler("platform.group-fields", async (ctx: ActionInvokeContext) => {
-    const args = (ctx.args ?? {}) as Record<string, unknown>;
+  /** The arguments group-fields runs on, read once for the plan and the run.
+   *  entity_kind and section are required (the schema says so and the door
+   *  refuses without them); fields or rename_to is the conditional part
+   *  neither a marker nor the door can express, so it is said here. */
+  const readGroupFields = (
+    args: Record<string, unknown>,
+  ): { entityKind: string; section: string; renameTo: string; fields: string[] } | { error: string } => {
     const entityKind = str(args.entity_kind);
     const section = str(args.section);
     const renameTo = str(args.rename_to);
     const fields = splitNames(str(args.fields));
     if (!entityKind || !section || (fields.length === 0 && !renameTo)) {
-      return { ok: false, error: "entity_kind and section are required, plus either fields or rename_to" };
+      return { error: "entity_kind and section are required, plus either fields or rename_to" };
     }
+    return { entityKind, section, renameTo, fields };
+  };
+
+  // What grouping would touch, before a card exists: the kind must be one
+  // this workspace has, and each named field must be on it. "put purchase
+  // date and supplier under Buying on parts" with no such field was a card
+  // that died on press (#3123).
+  registerPlanner("platform.group-fields", async (ctx: ActionInvokeContext) => {
+    const read = readGroupFields((ctx.args ?? {}) as Record<string, unknown>);
+    if ("error" in read) return { error: read.error };
+    const kinds = await listKindsForOrg(ctx.orgId);
+    const kind = kinds.find((k) => k.id === read.entityKind);
+    if (!kind) return { error: `"${read.entityKind}" is not a kind of record here — check list_record_kinds for the kind id` };
+    const lines: string[] = [];
+    for (const f of read.fields) {
+      const found = await findField(ctx.orgId, read.entityKind, f);
+      if ("error" in found) return { error: found.error };
+      lines.push(`${found.label} → under "${read.section}"`);
+    }
+    if (read.renameTo) lines.push(`"${read.section}" → called "${read.renameTo}"`);
+    return {
+      title: read.renameTo
+        ? `Rename the "${read.section}" heading on ${kind.display_name} to "${read.renameTo}"`
+        : `Put ${read.fields.length} field(s) under "${read.section}" on ${kind.display_name}`,
+      lines,
+    };
+  });
+
+  registerHandler("platform.group-fields", async (ctx: ActionInvokeContext) => {
+    const read = readGroupFields((ctx.args ?? {}) as Record<string, unknown>);
+    if ("error" in read) return { ok: false, error: read.error };
+    const { entityKind, section, renameTo, fields } = read;
     const result = await groupFields(ctx.orgId, entityKind, section, fields, renameTo || undefined);
     if (!result.ok) return { ok: false, error: result.message };
     return {
@@ -722,13 +759,12 @@ export function registerPlatformActionHandlers(): void {
     // The same 'user' claim the screen records, so a later bundle uninstall
     // never auto-disables a feature someone asked for by name.
     await recordClaim(ctx.orgId, USER_SOURCE, "module", found.name);
-    return {
-      ok: true,
-      summary: result.alreadyEnabled
-        ? `${found.label} was already on`
-        : `${found.label} is on`,
-      data: { module: found.name, already_enabled: result.alreadyEnabled },
-    };
+    // Already on is declined, not acted: nothing was enabled. Said as ok it
+    // read as a pass on every seed that turns everything on (#3141).
+    if (result.alreadyEnabled) {
+      return { ok: false, skipped: true, error: `${found.label} was already on`, data: { module: found.name, already_enabled: true } };
+    }
+    return { ok: true, summary: `${found.label} is on`, data: { module: found.name, already_enabled: false } };
   });
 
   // Turning it off again. A feature that was already on was left as it was,
@@ -776,6 +812,32 @@ export function registerPlatformActionHandlers(): void {
       overrides.find((o) => o.target_kind === targetKind && o.target_id === targetId)?.display_label ?? fallback;
     const pluralOf = (targetKind: string, targetId: string, fallback: string): string =>
       overrides.find((o) => o.target_kind === targetKind && o.target_id === targetId)?.display_label_plural ?? fallback;
+
+    // The thing by its ID, before its label: the assistant reads kind ids
+    // ("machines:machine") and instance names ("pantry") off
+    // list_record_kinds and get_workspace_setup and hands one back as the
+    // target, which is not wrong, only not a label (#3123). An instance's
+    // own name wins over the kind synthesised from it, as below.
+    const byInstanceName = instances.find((i) => !i.is_default && i.instance_name === said.trim());
+    if (byInstanceName) {
+      const label = labelOf("instance", byInstanceName.instance_name, byInstanceName.display_name ?? byInstanceName.instance_name);
+      return {
+        targetKind: "instance",
+        targetId: byInstanceName.instance_name,
+        label,
+        before: { name: label, plural: pluralOf("instance", byInstanceName.instance_name, pluralise(label)) },
+      };
+    }
+    const byKindId = kinds.find((k) => k.id === said.trim());
+    if (byKindId) {
+      const label = labelOf("entity_kind", byKindId.id, byKindId.display_name);
+      return {
+        targetKind: "entity_kind",
+        targetId: byKindId.id,
+        label,
+        before: { name: label, plural: pluralOf("entity_kind", byKindId.id, byKindId.display_name_plural ?? pluralise(label)) },
+      };
+    }
 
     // `before` is what it is called today, singular and plural: the rename's
     // way back.
@@ -832,6 +894,21 @@ export function registerPlatformActionHandlers(): void {
     }
     return { targetKind: hit.targetKind, targetId: hit.targetId, label: hit.label, before: hit.before };
   };
+
+  // The rename, before the card: which thing, and what it is called now.
+  registerPlanner("platform.rename-thing", async (ctx: ActionInvokeContext) => {
+    const args = (ctx.args ?? {}) as Record<string, unknown>;
+    const said = str(args.target);
+    const name = str(args.name);
+    if (!said || !name) return { error: "target and name are required" };
+    const found = await findThing(ctx.orgId, said);
+    if ("error" in found) return { error: found.error };
+    const plural = str(args.plural) || pluralise(name);
+    return {
+      title: `Call "${found.label}" ${plural} from now on`,
+      lines: [`one: ${found.before.name} → ${name}`, `several: ${found.before.plural} → ${plural}`],
+    };
+  });
 
   registerHandler("platform.rename-thing", async (ctx: ActionInvokeContext) => {
     const args = (ctx.args ?? {}) as Record<string, unknown>;
@@ -1159,23 +1236,38 @@ export function registerPlatformActionHandlers(): void {
     return { action_id: "platform:set-simple-mode", args: { on: d.before } };
   });
 
-  registerHandler("platform.set-field-preset", async (ctx: ActionInvokeContext) => {
-    const args = (ctx.args ?? {}) as Record<string, unknown>;
+  /** The preset and the direction, read once for the plan and the run. By
+   *  key or by the words on the switch ("provenance", "Provenance"). */
+  const readPresetSwitch = (args: Record<string, unknown>): { key: string; on: boolean } | { error: string } => {
     const said = str(args.preset);
-    if (!said) return { ok: false, error: "preset is required" };
-    if (typeof args.on !== "boolean") return { ok: false, error: "on must be true or false" };
-    // By key or by the words on the switch ("provenance", "Provenance").
+    if (!said) return { error: "preset is required" };
+    if (typeof args.on !== "boolean") return { error: "on must be true or false" };
     const byKey = FIELD_PRESETS.find((p) => p.key === said.trim().toLowerCase());
     const matched = byKey
       ? { key: byKey.key }
       : matchByLabel(said, FIELD_PRESETS.map((p) => ({ label: p.label, key: p.key })));
     if (!matched || "ambiguous" in matched) {
-      return {
-        ok: false,
-        error: `no set of fields called "${said}". There is: ${FIELD_PRESETS.map((p) => p.label).join(", ")}`,
-      };
+      return { error: `no set of fields called "${said}". There is: ${FIELD_PRESETS.map((p) => p.label).join(", ")}` };
     }
-    const key = matched.key;
+    return { key: matched.key, on: args.on };
+  };
+
+  // "turn on provenance", before the card: which set, which way, which fields.
+  registerPlanner("platform.set-field-preset", async (ctx: ActionInvokeContext) => {
+    const read = readPresetSwitch((ctx.args ?? {}) as Record<string, unknown>);
+    if ("error" in read) return { error: read.error };
+    const preset = FIELD_PRESETS.find((p) => p.key === read.key)!;
+    return {
+      title: read.on ? `Turn ${preset.label} on` : `Turn ${preset.label} off (what is recorded stays)`,
+      lines: preset.fields.map((f) => f.display_label),
+    };
+  });
+
+  registerHandler("platform.set-field-preset", async (ctx: ActionInvokeContext) => {
+    const args = (ctx.args ?? {}) as Record<string, unknown>;
+    const read = readPresetSwitch(args);
+    if ("error" in read) return { ok: false, error: read.error };
+    const key = read.key;
     const result = args.on ? await turnPresetOn(ctx.orgId, key) : await turnPresetOff(ctx.orgId, key);
     if (!result.ok) return { ok: false, error: result.message };
     const preset = FIELD_PRESETS.find((p) => p.key === key)!;

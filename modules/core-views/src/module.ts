@@ -93,9 +93,9 @@ export default defineModule({
         invokeHandler: "core-views.save-view",
         argsSchema: {
           config: { label: "The view's configuration: columns, grouping, filters", type: "json" },
-          entity_kind: { label: "Which kind of record (e.g. inventory:part)", type: "text" },
-          name: { label: "What to call the view", type: "text" },
-          view_type: { label: "table, list, kanban, calendar or gantt", type: "text" },
+          entity_kind: { label: "Which kind of record (e.g. inventory:part)", type: "text", required: true },
+          name: { label: "What to call the view", type: "text", required: true },
+          view_type: { label: "table, list, kanban, calendar or gantt", type: "text", required: true },
           pinned: { label: "Pin it to the dashboard", type: "boolean" },
         },
       },

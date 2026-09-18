@@ -78,7 +78,7 @@ export default defineModule({
         // this one, which is the right way round for a shared conversation.
         undoable: false,
         argsSchema: {
-          body: { label: "What to say", type: "text" },
+          body: { label: "What to say", type: "text", required: true },
           in_reply_to: { label: "Id of the comment this answers (optional)", type: "text" },
         },
         // The person-facing surface is the Discussion tab on the record, not a

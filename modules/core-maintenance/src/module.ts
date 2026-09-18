@@ -91,7 +91,7 @@ export default defineModule({
         argsSchema: {
           description: { label: "Longer description of the work (optional)", type: "text" },
           recurrence_rule: { label: "How often it repeats, as an RRULE (optional)", type: "text" },
-          name: { label: "What was done", type: "text" },
+          name: { label: "What was done", type: "text", required: true },
           performed_at: { label: "When it was done (ISO date)", type: "text" },
           scheduled_at: { label: "When it is next due (ISO date)", type: "text" },
           notes: { label: "Notes", type: "text" },
@@ -139,7 +139,7 @@ export default defineModule({
         scope: "workspace" as const,
         invokeHandler: "core-maintenance.complete",
         argsSchema: {
-          entry_id: { label: "The scheduled entry's id", type: "text" },
+          entry_id: { label: "The scheduled entry's id", type: "text", required: true },
           performed_at: { label: "When it was done (ISO date)", type: "text" },
         },
       },

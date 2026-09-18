@@ -167,7 +167,7 @@ export default defineModule({
         scope: "workspace" as const,
         invokeHandler: "core-locations.reorder",
         argsSchema: {
-          ids: { label: "Location ids, in the order they should appear", type: "list" as const },
+          ids: { label: "Location ids, in the order they should appear", type: "list" as const, required: true },
         },
       },
     ],

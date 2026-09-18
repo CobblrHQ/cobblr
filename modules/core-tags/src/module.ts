@@ -81,7 +81,7 @@ export default defineModule({
         appliesTo: { kinds: ["core-tags:tag"] },
         invokeHandler: "core-tags.merge",
         argsSchema: {
-          into_tag_id: { label: "Id of the tag to keep", type: "text" },
+          into_tag_id: { label: "Id of the tag to keep", type: "text", required: true },
         },
       },
       // Wire/AI-invokable tagging — the same attach/detach the /attachments
@@ -103,7 +103,7 @@ export default defineModule({
         invokeHandler: "core-tags.tag-record",
         userInvokable: false,
         argsSchema: {
-          tag_name: { label: "Tag name", type: "text" },
+          tag_name: { label: "Tag name", type: "text", required: true },
         },
       },
       {
@@ -119,7 +119,7 @@ export default defineModule({
         invokeHandler: "core-tags.untag-record",
         userInvokable: false,
         argsSchema: {
-          tag_name: { label: "Tag name", type: "text" },
+          tag_name: { label: "Tag name", type: "text", required: true },
         },
       },
     ],

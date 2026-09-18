@@ -72,7 +72,7 @@ export default defineModule({
         appliesTo: { hasFieldRole: "quantity" },
         invokeHandler: "core-cadence.record-event",
         argsSchema: {
-          event_type: { label: "What happened: purchase, consume, adjust or discard", type: "text" },
+          event_type: { label: "What happened: purchase, consume, adjust or discard", type: "text", required: true },
           qty_delta: { label: "How much the quantity changed, negative for a decrease", type: "number" },
           context: { label: "Optional note about where this came from", type: "text" },
           source: { label: "Optional id of whatever triggered it", type: "text" },

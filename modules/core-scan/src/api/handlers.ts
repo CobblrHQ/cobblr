@@ -48,7 +48,13 @@ export function registerScanHandlers(): void {
 
   platform().actions.registerHandler("core-scan.fill-fields-from-receipts", async (ctx) => {
     const args = (ctx.args ?? {}) as { dry_run?: boolean };
-    return await runReceiptBackfill(ctx.orgId, { dryRun: args.dry_run === true });
+    const r = await runReceiptBackfill(ctx.orgId, { dryRun: args.dry_run === true });
+    // The backfill's counts, said as an outcome: it used to answer the raw
+    // counts with no `ok` at all, which every reader took as a pass (#3141).
+    // Nothing filled is declined, not success.
+    const what = `${r.filled} item${r.filled === 1 ? "" : "s"} filled from receipts (${r.scanned} looked at, ${r.already_filled} already filled, ${r.no_receipt} with no receipt)`;
+    if (r.filled === 0 && !r.dry_run) return { ok: false, skipped: true, error: `Nothing to fill: ${what}.`, data: r };
+    return { ok: true, summary: r.dry_run ? `Dry run: ${what}.` : `${what}.`, data: r };
   });
 
   platform().actions.registerHandler("core-scan.identify-photo", async (ctx) => {

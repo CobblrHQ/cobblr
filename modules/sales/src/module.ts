@@ -129,7 +129,7 @@ export default defineModule({
         appliesTo: { kinds: ["sales:order"] },
         invokeHandler: "sales.add-line",
         argsSchema: {
-          qty: { label: "How many", type: "number" },
+          qty: { label: "How many", type: "number", required: true },
           description: { label: "What is being sold", type: "text" },
           part_id: { label: "Id of a tracked part (optional)", type: "text" },
           unit_price: { label: "Price each (optional)", type: "number" },
@@ -159,7 +159,7 @@ export default defineModule({
         argsSchema: {
           order_number: { label: "Your reference for the order, generated if you leave it out", type: "text" },
           customer: { label: "The customer: name, email, phone, address", type: "json" },
-          items: { label: "The line items to order", type: "json" },
+          items: { label: "The line items to order", type: "json", required: true },
           status: { label: "Order status", type: "text" },
           order_date: { label: "The date of the order, ISO date", type: "text" },
           notes: { label: "Notes on the order (optional)", type: "text" },

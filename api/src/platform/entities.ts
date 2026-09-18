@@ -512,6 +512,14 @@ async function activeLinkedSources(
   }
 }
 
+/** Can this kind be looked up at all here? `lookup` answers null for a kind
+ *  with no resolver and for a record that does not exist alike; a door that
+ *  refuses a record it cannot find must know which it was, or it refuses
+ *  every kind nobody wrote a resolver for (#3141). */
+export async function canResolve(orgId: string, kind: string): Promise<boolean> {
+  return !!(resolvers.get(kind) ?? (await instanceFallbackEntityResolver(orgId, kind)));
+}
+
 export async function lookup(
   orgId: string,
   kind: string,

@@ -290,7 +290,7 @@ export default defineModule({
         invokeHandler: "inventory.set-status",
         argsSchema: {
           partId: { label: "Which part, defaults to the record this ran on", type: "text" },
-          status: { label: "The status to set", type: "text" },
+          status: { label: "The status to set", type: "text", required: true },
         },
         userInvokable: true,
       },
@@ -308,9 +308,9 @@ export default defineModule({
         appliesTo: { traits: ["fungible", "lendable"] },
         invokeHandler: "inventory.reserve-stock",
         argsSchema: {
-          qty: { label: "How much to reserve", type: "number" },
-          for_kind: { label: "Kind it is reserved for (e.g. projects:project)", type: "text" },
-          for_id: { label: "Id of that record", type: "text" },
+          qty: { label: "How much to reserve", type: "number", required: true },
+          for_kind: { label: "Kind it is reserved for (e.g. projects:project)", type: "text", required: true },
+          for_id: { label: "Id of that record", type: "text", required: true },
           reason: { label: "What it is for (shown on the statement)", type: "text" },
         },
       },
@@ -475,8 +475,8 @@ export default defineModule({
         scope: "workspace" as const,
         invokeHandler: "inventory.settle-allocation",
         argsSchema: {
-          allocation_id: { label: "The reservation's id", type: "text" },
-          status: { label: "consumed or released", type: "text" },
+          allocation_id: { label: "The reservation's id", type: "text", required: true },
+          status: { label: "consumed or released", type: "text", required: true },
         },
       },
       {
@@ -490,7 +490,7 @@ export default defineModule({
         scope: "workspace" as const,
         invokeHandler: "inventory.add-category",
         argsSchema: {
-          name: { label: "Category name", type: "text" },
+          name: { label: "Category name", type: "text", required: true },
           color: { label: "Colour (hex, optional)", type: "text" },
         },
       },
@@ -511,7 +511,7 @@ export default defineModule({
         userInvokable: true,
         argsSchema: {
           instance: { label: "Instance (table) name", type: "text" },
-          name: { label: "Item name", type: "text" },
+          name: { label: "Item name", type: "text", required: true },
         },
       },
       {

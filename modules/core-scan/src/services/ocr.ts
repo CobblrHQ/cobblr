@@ -35,7 +35,30 @@
 // the first pass could not read, which is also every product photo: those
 // pay ~0.3 s more before the model is asked, and the model call that follows
 // costs seconds.
+//
+// ONE THREAD PER ENGINE RUN, and ONE RUN PER IMAGE. Both measured on the
+// pack's yarn-and-lamp receipt (533 x 519, 2026-09-18), after the receipt
+// test timed out three times in two days on a loaded CI runner:
+//
+//   one read, quiet             default threads 0.20 s wall, 0.49 s CPU (255%)
+//                               OMP_THREAD_LIMIT=1  0.19 s wall, 0.17 s CPU
+//   12 concurrent reads, quiet  default 2.26 s        one thread 0.33 s
+//   12 concurrent, box loaded   default 60.1 s        one thread 0.33 s
+//   (32 busy loops on 16 cores, load 6: the CI runner's shape at load 4/core)
+//
+// The engine's OpenMP threads spin at their barriers, so on a busy box a
+// read that takes a fifth of a second alone takes a minute, which is exactly
+// the 40-80 s "the OCR is slow under load" that kept reading as the box's
+// fault. One thread reads a receipt in the same wall time and cannot be
+// slowed by neighbours; the api runs many of these at once, and the engine's
+// own advice for a multi-process server is the same knob (OMP_THREAD_LIMIT).
+// And a receipt through the photo door was read TWICE: the shape check
+// (enrich-photo.ts) and then the parser (receipt.ts), on identical bytes.
+// The result is memoised by the bytes' hash for a few minutes, so the
+// second ask costs nothing, and a concurrent ask for the same image joins
+// the run in flight instead of starting another.
 import { execFile } from "node:child_process";
+import { createHash } from "node:crypto";
 import sharp from "sharp";
 
 export interface OcrResult {
@@ -64,11 +87,25 @@ const PAPER_WIDTH = 1800;
  *  nothing: a photograph, or a blank. Four is under the shortest receipt. */
 const FRAME_ENOUGH_LINES = 4;
 
+/** How long a read's text is served from memory. Long enough for the
+ *  parser to follow the shape check on the same upload (seconds apart) and
+ *  for a person to press "Read as a receipt" on a row the shape check just
+ *  scored; short enough that memory never holds more than a handful. */
+const MEMO_TTL_MS = 10 * 60 * 1000;
+const MEMO_MAX = 64;
+
 let probe: Promise<boolean> | null = null;
+
+/** The engine's threads, bounded to one unless the operator says otherwise.
+ *  Honoured from the environment so a deployment that knows better can set
+ *  it; absent, the measured default above. */
+function engineEnv(): NodeJS.ProcessEnv {
+  return { ...process.env, OMP_THREAD_LIMIT: process.env.OMP_THREAD_LIMIT?.trim() || "1" };
+}
 
 function run(args: string[], input?: Buffer): Promise<string> {
   return new Promise((resolve, reject) => {
-    const child = execFile(BIN, args, { timeout: TIMEOUT_MS, maxBuffer: 8 * 1024 * 1024, encoding: "utf8" }, (err, stdout) => {
+    const child = execFile(BIN, args, { timeout: TIMEOUT_MS, maxBuffer: 8 * 1024 * 1024, encoding: "utf8", env: engineEnv() }, (err, stdout) => {
       if (err) reject(err);
       else resolve(stdout);
     });
@@ -241,20 +278,49 @@ function readLines(text: string): number {
  */
 export async function ocrImageText(bytes: Buffer | Uint8Array): Promise<OcrResult | null> {
   if (!(await ocrAvailable())) return null;
-  const t0 = performance.now();
+  const key = createHash("sha1").update(bytes).digest("hex");
+  const now = Date.now();
+  const kept = memo.get(key);
+  if (kept && now - kept.at < MEMO_TTL_MS) return kept.result;
+  const running = inFlight.get(key);
+  if (running) return running;
+  // Only an ANSWER is kept: the text, or "read nothing" (a product photo).
+  // An engine that failed or timed out is not an answer about the image,
+  // and keeping it would serve the failure to the parser a moment later.
+  const p = readImageText(bytes)
+    .then((result) => {
+      memo.set(key, { at: Date.now(), result });
+      if (memo.size > MEMO_MAX) memo.delete(memo.keys().next().value as string);
+      return result;
+    })
+    .catch((err: unknown) => {
+      console.warn(`[core-scan] OCR failed: ${(err as Error).message}`);
+      return null;
+    });
+  inFlight.set(key, p);
   try {
-    const frame = await run(["stdin", "stdout", "--psm", "4", "-l", "eng"], await preprocessForOcr(bytes));
-    if (readLines(frame) >= FRAME_ENOUGH_LINES) {
-      return { text: frame, ms: Math.round(performance.now() - t0), engine: "tesseract", pass: "frame" };
-    }
-    const paper = await preprocessPaperForOcr(bytes);
-    const cropped = paper ? await run(["stdin", "stdout", "--psm", "6", "-l", "eng"], paper) : "";
-    const ms = Math.round(performance.now() - t0);
-    if (readLines(cropped) > readLines(frame)) return { text: cropped, ms, engine: "tesseract", pass: "paper" };
-    if (!frame.trim()) return null;
-    return { text: frame, ms, engine: "tesseract", pass: "frame" };
-  } catch (err) {
-    console.warn(`[core-scan] OCR failed: ${(err as Error).message}`);
-    return null;
+    return await p;
+  } finally {
+    inFlight.delete(key);
   }
+}
+
+const memo = new Map<string, { at: number; result: OcrResult | null }>();
+const inFlight = new Map<string, Promise<OcrResult | null>>();
+
+/** The read itself, both passes. Only ocrImageText calls this; it is what the
+ *  memo above keeps to once per image. Null is "read nothing"; a failed
+ *  engine throws, so the two are never confused above. */
+async function readImageText(bytes: Buffer | Uint8Array): Promise<OcrResult | null> {
+  const t0 = performance.now();
+  const frame = await run(["stdin", "stdout", "--psm", "4", "-l", "eng"], await preprocessForOcr(bytes));
+  if (readLines(frame) >= FRAME_ENOUGH_LINES) {
+    return { text: frame, ms: Math.round(performance.now() - t0), engine: "tesseract", pass: "frame" };
+  }
+  const paper = await preprocessPaperForOcr(bytes);
+  const cropped = paper ? await run(["stdin", "stdout", "--psm", "6", "-l", "eng"], paper) : "";
+  const ms = Math.round(performance.now() - t0);
+  if (readLines(cropped) > readLines(frame)) return { text: cropped, ms, engine: "tesseract", pass: "paper" };
+  if (!frame.trim()) return null;
+  return { text: frame, ms, engine: "tesseract", pass: "frame" };
 }

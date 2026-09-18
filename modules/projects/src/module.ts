@@ -126,9 +126,9 @@ export default defineModule({
         appliesTo: { kinds: ["projects:task"] },
         invokeHandler: "projects.blocked-by",
         argsSchema: {
-          depends_on_task_id: { label: "Id of the task this waits on", type: "text" },
+          depends_on_task_id: { label: "Id of the task this waits on", type: "text", oneOf: "waits-on" },
           blocks_kind: { label: "Kind of record this waits on (e.g. purchases:order)", type: "text" },
-          blocks_id: { label: "Id of that record", type: "text" },
+          blocks_id: { label: "Id of that record", type: "text", oneOf: "waits-on" },
         },
       },
       {
@@ -141,7 +141,7 @@ export default defineModule({
         icon: "unlink",
         scope: "workspace" as const,
         invokeHandler: "projects.unblock",
-        argsSchema: { dependency_id: { label: "Id of the dependency to remove", type: "text" } },
+        argsSchema: { dependency_id: { label: "Id of the dependency to remove", type: "text", required: true } },
       },
       {
         // NO-PHRASING: flips flags for whatever entity triggered it, so without an event there is nothing to act on

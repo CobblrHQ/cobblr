@@ -69,7 +69,7 @@ export interface PlatformActionDecl {
   // "list" is a JSON array of values, the way core-locations:reorder takes its
   // ids. The kernel's own actions had never needed one, so this local type had
   // never grown it.
-  args_schema: Record<string, { label: string; type: "text" | "boolean" | "number" | "list" }>;
+  args_schema: Record<string, { label: string; type: "text" | "boolean" | "number" | "list"; required?: boolean; oneOf?: string }>;
   version: string;
   /** Never offered to the assistant, on the rail or in list_actions, and
    *  never a button: run from a card a person presses (a notification's
@@ -93,8 +93,8 @@ export const PLATFORM_ACTIONS: PlatformActionDecl[] = [
     undoable: false,
     examples: ["add a Purchase Date field to parts", "track a colour on every physical thing"],
     args_schema: {
-      entity_kind: { label: "Which kind of record (or a trait scope like @physical)", type: "text" },
-      display_label: { label: "The field's label (e.g. Purchase Date)", type: "text" },
+      entity_kind: { label: "Which kind of record (or a trait scope like @physical)", type: "text", required: true },
+      display_label: { label: "The field's label (e.g. Purchase Date)", type: "text", required: true },
       name: { label: "Storage name (lowercase; derived from the label if omitted)", type: "text" },
       type: { label: "text, number, date, boolean, relation (or: dropdown, checkbox)", type: "text" },
       choices: { label: "For a dropdown: the choices, comma-separated", type: "text" },
@@ -125,7 +125,7 @@ export const PLATFORM_ACTIONS: PlatformActionDecl[] = [
     ],
     args_schema: {
       entity_kind: { label: "Which kind of record the field is on (e.g. inventory:part)", type: "text" },
-      field: { label: "The field, by the label shown on the form (e.g. Purchase Date)", type: "text" },
+      field: { label: "The field, by the label shown on the form (e.g. Purchase Date)", type: "text", required: true },
       display_label: { label: "New label for it", type: "text" },
       required: { label: "Whether it must be filled in", type: "boolean" },
       add_choices: { label: "For a dropdown: choices to add, by name, comma-separated (the rest stay)", type: "text" },
@@ -152,7 +152,7 @@ export const PLATFORM_ACTIONS: PlatformActionDecl[] = [
     examples: ["remove the Colour field from parts", "I don't want to track shelf life any more"],
     args_schema: {
       entity_kind: { label: "Which kind of record the field is on (e.g. inventory:part)", type: "text" },
-      field: { label: "The field, by the label shown on the form (e.g. Shelf Life)", type: "text" },
+      field: { label: "The field, by the label shown on the form (e.g. Shelf Life)", type: "text", required: true },
     },
     version: "0.1.0",
   },
@@ -174,10 +174,10 @@ export const PLATFORM_ACTIONS: PlatformActionDecl[] = [
       "rename the Buying heading to Purchasing",
     ],
     args_schema: {
-      entity_kind: { label: "Which kind of record (e.g. inventory:part)", type: "text" },
-      section: { label: "The heading to put them under (e.g. Buying)", type: "text" },
-      fields: { label: "The fields, comma-separated, by their labels on the form", type: "text" },
-      rename_to: { label: "To RENAME the heading instead: what to call it now", type: "text" },
+      entity_kind: { label: "Which kind of record (e.g. inventory:part)", type: "text", required: true },
+      section: { label: "The heading to put them under (e.g. Buying)", type: "text", required: true },
+      fields: { label: "The fields, comma-separated, by their labels on the form", type: "text", oneOf: "what-to-change" },
+      rename_to: { label: "To RENAME the heading instead: what to call it now", type: "text", oneOf: "what-to-change" },
     },
     version: "0.2.0",
   },
@@ -195,8 +195,8 @@ export const PLATFORM_ACTIONS: PlatformActionDecl[] = [
     undoable: true,
     examples: ["take supplier out of Buying", "ungroup the size fields"],
     args_schema: {
-      entity_kind: { label: "Which kind of record (e.g. inventory:part)", type: "text" },
-      fields: { label: "The fields, comma-separated, by their labels on the form", type: "text" },
+      entity_kind: { label: "Which kind of record (e.g. inventory:part)", type: "text", required: true },
+      fields: { label: "The fields, comma-separated, by their labels on the form", type: "text", required: true },
     },
     version: "0.1.0",
   },
@@ -214,8 +214,8 @@ export const PLATFORM_ACTIONS: PlatformActionDecl[] = [
     undoable: false,
     examples: ["make a separate list for CNC machines", "I want 3D printers and laser cutters kept apart"],
     args_schema: {
-      module_name: { label: "The module to make a list from (e.g. machines)", type: "text" },
-      display_name: { label: "What to call the list (e.g. CNC Machines)", type: "text" },
+      module_name: { label: "The module to make a list from (e.g. machines)", type: "text", required: true },
+      display_name: { label: "What to call the list (e.g. CNC Machines)", type: "text", required: true },
       instance_name: { label: "Short name (lowercase; derived from the display name if omitted)", type: "text" },
     },
     version: "0.1.0",
@@ -235,7 +235,7 @@ export const PLATFORM_ACTIONS: PlatformActionDecl[] = [
     undoable: true,
     examples: ["turn on purchases", "I want to track maintenance", "add shipments to this workspace"],
     args_schema: {
-      module: { label: "The feature, by its name in the app (e.g. Purchases)", type: "text" },
+      module: { label: "The feature, by its name in the app (e.g. Purchases)", type: "text", required: true },
     },
     version: "0.1.0",
   },
@@ -277,8 +277,8 @@ export const PLATFORM_ACTIONS: PlatformActionDecl[] = [
       "put the chamomile in Tea",
     ],
     args_schema: {
-      ids: { label: "The records to move, by id (read them first)", type: "list" },
-      to: { label: "The list to move them into (e.g. Tea)", type: "text" },
+      ids: { label: "The records to move, by id (read them first)", type: "list", required: true },
+      to: { label: "The list to move them into (e.g. Tea)", type: "text", required: true },
       from: { label: "The list they are in now (optional; worked out from the records when left blank)", type: "text" },
     },
     version: "0.1.0",
@@ -298,7 +298,7 @@ export const PLATFORM_ACTIONS: PlatformActionDecl[] = [
     undoable: false,
     examples: ["turn off shipments", "I don't use maintenance, take it out"],
     args_schema: {
-      module: { label: "The feature, by its name in the app (e.g. Shipments)", type: "text" },
+      module: { label: "The feature, by its name in the app (e.g. Shipments)", type: "text", required: true },
     },
     version: "0.1.0",
   },
@@ -316,8 +316,8 @@ export const PLATFORM_ACTIONS: PlatformActionDecl[] = [
     undoable: true,
     examples: ["call my parts spools", "rename Machines to Printers", "we call those bins totes"],
     args_schema: {
-      target: { label: "What to rename, by what it is called now (e.g. Parts)", type: "text" },
-      name: { label: "What to call one of them (e.g. Spool)", type: "text" },
+      target: { label: "What to rename, by what it is called now (e.g. Parts)", type: "text", required: true },
+      name: { label: "What to call one of them (e.g. Spool)", type: "text", required: true },
       plural: { label: "What to call several (e.g. Spools). Defaults to the name plus s", type: "text" },
     },
     version: "0.1.0",
@@ -337,8 +337,8 @@ export const PLATFORM_ACTIONS: PlatformActionDecl[] = [
     undoable: true,
     examples: ["give spices their own list", "pull CNC out of machines into its own thing"],
     args_schema: {
-      from: { label: "The list the category is in now (e.g. pantry)", type: "text" },
-      category: { label: "The category to pull out (e.g. Spices)", type: "text" },
+      from: { label: "The list the category is in now (e.g. pantry)", type: "text", required: true },
+      category: { label: "The category to pull out (e.g. Spices)", type: "text", required: true },
       display_name: { label: "What to call the new list (defaults to the category)", type: "text" },
       instance_name: { label: "Short name for it (lowercase; derived from the display name if omitted)", type: "text" },
     },
@@ -358,8 +358,8 @@ export const PLATFORM_ACTIONS: PlatformActionDecl[] = [
     undoable: true,
     examples: ["fold spices back into the pantry", "put CNC back under machines as a category"],
     args_schema: {
-      list: { label: "The list to fold away (e.g. spices)", type: "text" },
-      into: { label: "The list it goes back into (e.g. pantry)", type: "text" },
+      list: { label: "The list to fold away (e.g. spices)", type: "text", required: true },
+      into: { label: "The list it goes back into (e.g. pantry)", type: "text", required: true },
       category: { label: "The category to stamp them with (defaults to the list's name)", type: "text" },
     },
     version: "0.1.0",
@@ -381,7 +381,7 @@ export const PLATFORM_ACTIONS: PlatformActionDecl[] = [
     undoable: true,
     examples: ["call this workspace The Garage", "rename my workspace to Home"],
     args_schema: {
-      name: { label: "What to call it", type: "text" },
+      name: { label: "What to call it", type: "text", required: true },
     },
     version: "0.1.0",
   },
@@ -399,7 +399,7 @@ export const PLATFORM_ACTIONS: PlatformActionDecl[] = [
     undoable: true,
     examples: ["this is too cluttered, simplify it", "turn simple mode off, I want the advanced screens"],
     args_schema: {
-      on: { label: "True for simple, false for everything", type: "boolean" },
+      on: { label: "True for simple, false for everything", type: "boolean", required: true },
     },
     version: "0.1.0",
   },
@@ -417,8 +417,8 @@ export const PLATFORM_ACTIONS: PlatformActionDecl[] = [
     undoable: true,
     examples: ["track where my things came from", "turn on provenance", "stop tracking what things cost"],
     args_schema: {
-      preset: { label: "Which set (e.g. provenance)", type: "text" },
-      on: { label: "True to switch it on, false to take it away", type: "boolean" },
+      preset: { label: "Which set (e.g. provenance)", type: "text", required: true },
+      on: { label: "True to switch it on, false to take it away", type: "boolean", required: true },
     },
     version: "0.1.0",
   },
@@ -436,8 +436,8 @@ export const PLATFORM_ACTIONS: PlatformActionDecl[] = [
     undoable: true,
     examples: ["stop the low stock wire from firing", "turn that automation back on"],
     args_schema: {
-      wire_id: { label: "The automation's id", type: "text" },
-      enabled: { label: "On (true) or off (false)", type: "boolean" },
+      wire_id: { label: "The automation's id", type: "text", required: true },
+      enabled: { label: "On (true) or off (false)", type: "boolean", required: true },
     },
     version: "0.1.0",
   },
@@ -463,7 +463,7 @@ export const PLATFORM_ACTIONS: PlatformActionDecl[] = [
     // can be uninstalled. The yes itself is a decision, not a record.
     undoable: false,
     args_schema: {
-      request_id: { label: "The request", type: "text" },
+      request_id: { label: "The request", type: "text", required: true },
       note: { label: "A word for the person (optional)", type: "text" },
     },
     version: "0.1.0",
@@ -481,7 +481,7 @@ export const PLATFORM_ACTIONS: PlatformActionDecl[] = [
     user_invokable: false,
     undoable: false,
     args_schema: {
-      request_id: { label: "The request", type: "text" },
+      request_id: { label: "The request", type: "text", required: true },
       note: { label: "Why (optional)", type: "text" },
     },
     version: "0.1.0",

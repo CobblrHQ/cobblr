@@ -287,6 +287,7 @@ async function boot() {
     },
     actions: {
       registerHandler: actions.registerHandler,
+      registerPlanner: actions.registerPlanner,
       registerUndo: actions.registerUndo,
       listApplicable: actions.listApplicable,
       invoke: actions.invoke,

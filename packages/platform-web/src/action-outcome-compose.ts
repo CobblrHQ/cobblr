@@ -13,6 +13,16 @@
 // Pure, so the rule is pinned by a test rather than by pressing buttons.
 import type { PrintDirectiveResult } from "./print-directive";
 
+/** What a thrown refusal is: DECLINED, the action found nothing to apply to
+ *  ("already confirmed", "no tracking number") and nothing changed, which a
+ *  surface says as a passing note; or REFUSED, a failure the person acts on,
+ *  which stays until dismissed. The web's api.invokeAction marks the first
+ *  with `declined: true` (@cobblr/platform-contract/action-result, #3141). */
+export function refusalKind(err: unknown): { kind: "declined" | "refused"; words: string } {
+  const words = err instanceof Error && err.message.trim() ? err.message.trim() : "That action couldn't run.";
+  return { kind: (err as { declined?: unknown } | null)?.declined === true ? "declined" : "refused", words };
+}
+
 /** The verdict: the handler's own sentence when it wrote one, else the
  *  surface's one word for a success. */
 export function verdictOf(result: unknown, fallback: string): string {

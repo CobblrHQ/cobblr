@@ -60,7 +60,9 @@
     "./ai-refusal": "./src/ai-refusal.ts",
     "./provider-reason": "./src/provider-reason.ts",
     "./table-fit": "./src/table-fit.ts",
-    "./connection-verification": "./src/connection-verification.ts"
+    "./connection-verification": "./src/connection-verification.ts",
+    "./action-args": "./src/action-args.ts",
+    "./action-result": "./src/action-result.ts"
   },
   "types": "src/index.ts",
   "scripts": {

@@ -10,10 +10,15 @@
 // the app no longer has, and reports as a model miss something the app would
 // have corrected (which is exactly what the 2026-09-04 nightly did).
 
-export interface ArgSpec {
-  label?: string;
-  type?: string;
-}
+import { describeArgs, requiredArgsRefusal, type ActionArgSpec } from "@cobblr/platform-contract/action-args";
+
+/** The schema's per-argument shape; `required` is the contract's flag
+ *  (@cobblr/platform-contract/action-args), read here, by the invoke door
+ *  and by the bench alike, so a call missing one is refused before it
+ *  becomes a card that dies on press (#3123). */
+export type ArgSpec = ActionArgSpec;
+
+const NEXT = "Call invoke_action again with args filled from what the user said, or ask the user for the value you are missing.";
 
 /** The message to hand back, or null when the call is fine as written. */
 export function missingActionArgs(
@@ -23,10 +28,11 @@ export function missingActionArgs(
 ): string | null {
   const names = Object.keys(schema ?? {});
   if (names.length === 0) return null;
+  const refused = requiredArgsRefusal(actionId, schema, given);
+  if (refused) return `${refused} ${NEXT}`;
   const passed = given && typeof given === "object" ? Object.keys(given as Record<string, unknown>) : [];
   if (passed.length > 0) return null;
-  const described = names.map((n) => `${n}${schema?.[n]?.label ? ` (${schema[n]!.label})` : ""}`).join(", ");
-  return `${actionId} takes arguments and none were given: ${described}. Call invoke_action again with args filled from what the user said, or ask the user for the value you are missing.`;
+  return `${actionId} takes arguments and none were given: ${describeArgs(schema, names)}. ${NEXT}`;
 }
 
 // The other half of the same miss: the model picks the right action, supplies

@@ -295,7 +295,7 @@ export const PLACEMENT: PlacementRow[] = [
     dir: "scripts/",
     exemplar: "scripts/lint-background-loops.ts",
     why: "Bespoke scripts enforce invariants a general linter cannot express; there is deliberately no ESLint here.",
-    lints: ["lint:placement", "lint:lints-are-wired", "lint:scripts-typecheck", "lint:shipped-script-imports", "lint:corpus-known-red-live"],
+    lints: ["lint:placement", "lint:lints-are-wired", "lint:scripts-typecheck", "lint:shipped-script-imports", "lint:corpus-known-red-live", "lint:dns-probe-unpinned"],
     notes: [
       "Start with scripts/new-lint.sh <slug> --row <row> --rule \"<sentence>\": it writes the file from scripts/templates/lint.template.ts, registers lint:<slug> in package.json, claims the row, and runs it once (skill: writing-a-lint).",
       "A 'one implementation only' rule is a ROW in scripts/capabilities.ts, not a new script.",

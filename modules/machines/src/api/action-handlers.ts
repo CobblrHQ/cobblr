@@ -20,7 +20,14 @@ export function registerMachinesActionHandlers(): void {
       hours?: number;
     };
     const machineId = args.machineId ?? ev.machineId ?? ev.linkedMachineId;
-    const prints = Number(args.prints ?? ev.prints ?? 1) || 0;
+    // A print is counted when there is evidence of one. A wire fires this on
+    // an event, and the event IS the print: one per firing when the payload
+    // does not count them, which is what every existing wire has meant since
+    // it was made, so nothing a person built changes. A person or the
+    // assistant pressing it with no count has no such evidence, and a call
+    // that said nothing used to record one print and report it (#3141).
+    const evidenced = ctx.event?.trigger_type && ctx.event.trigger_type !== "user-invoked" ? 1 : 0;
+    const prints = Number(args.prints ?? ev.prints ?? evidenced) || 0;
     const hours = Number(args.hours ?? ev.hours ?? 0) || 0;
     if (!machineId || (prints === 0 && hours === 0)) {
       return { ok: true, skipped: true, reason: "no machineId or nothing to add" };

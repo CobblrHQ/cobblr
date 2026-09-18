@@ -17,39 +17,52 @@ import { CustomUnit } from "./units.js";
 import type { CoreUnitsDB } from "../db.js";
 import { BUILTIN_UNITS } from "../units-catalog.js";
 
+/** The unit the arguments describe, read the same way for the plan and the
+ *  run. A model will happily send "Fathom" or "fathoms" for a code the route
+ *  requires to be lowercase and hyphenated; normalising here is kinder than
+ *  bouncing the proposal back to the user with a regex. */
+function readUnitArgs(args: Record<string, unknown>): { unit: ReturnType<typeof CustomUnit.parse> } | { error: string } {
+  const raw = {
+    code: typeof args.code === "string" ? args.code.trim().toLowerCase().replace(/\s+/g, "-") : "",
+    symbol: typeof args.symbol === "string" ? args.symbol.trim() : "",
+    name: typeof args.name === "string" ? args.name.trim() : "",
+    ...(typeof args.plural === "string" && args.plural.trim() ? { plural: args.plural.trim() } : {}),
+    ...(typeof args.category === "string" && args.category.trim() ? { category: args.category.trim().toLowerCase() } : {}),
+  };
+  const parsed = CustomUnit.safeParse(raw);
+  if (!parsed.success) {
+    return { error: parsed.error.issues.map((i) => `${i.path.join(".")}: ${i.message}`).join("; ") };
+  }
+  const builtin = BUILTIN_UNITS.find((u) => u.code === parsed.data.code);
+  if (builtin) {
+    // Not a failure worth alarming anyone about — they asked for something
+    // they already have, so say what they have.
+    return { error: `"${parsed.data.code}" is already a built-in unit (${builtin.name}) — it can be used as-is.` };
+  }
+  return { unit: parsed.data };
+}
+
 export function registerUnitsHandlers(): void {
   registerUndos();
+  // "we measure filament in spools", before the card: the unit as it would
+  // be added, or why it cannot be (#3123).
+  platform().actions.registerPlanner("core-units.add-unit", async (ctx) => {
+    const read = readUnitArgs((ctx.args ?? {}) as Record<string, unknown>);
+    if ("error" in read) return { error: read.error };
+    const u = read.unit;
+    return {
+      title: `Add the unit ${u.name} (${u.symbol})`,
+      lines: [`code: ${u.code}`, ...(u.plural ? [`several: ${u.plural}`] : []), ...(u.category ? [`measures: ${u.category}`] : [])],
+    };
+  });
   platform().actions.registerHandler("core-units.add-unit", async (ctx) => {
     const args = (ctx.args ?? {}) as Record<string, unknown>;
-    // A model will happily send "Fathom" or "fathoms" for a code the route
-    // requires to be lowercase and hyphenated; normalising here is kinder than
-    // bouncing the proposal back to the user with a regex.
-    const raw = {
-      code: typeof args.code === "string" ? args.code.trim().toLowerCase().replace(/\s+/g, "-") : "",
-      symbol: typeof args.symbol === "string" ? args.symbol.trim() : "",
-      name: typeof args.name === "string" ? args.name.trim() : "",
-      ...(typeof args.plural === "string" && args.plural.trim() ? { plural: args.plural.trim() } : {}),
-      ...(typeof args.category === "string" && args.category.trim()
-        ? { category: args.category.trim().toLowerCase() }
-        : {}),
-    };
-    const parsed = CustomUnit.safeParse(raw);
-    if (!parsed.success) {
-      return { ok: false, error: parsed.error.issues.map((i) => `${i.path.join(".")}: ${i.message}`).join("; ") };
-    }
-    const builtin = BUILTIN_UNITS.find((u) => u.code === parsed.data.code);
-    const dbForBefore = (await platform().tenants.getDb(ctx.orgId)) as Kysely<CoreUnitsDB>;
-    const existedBefore = !!(await dbForBefore.selectFrom("core_units_custom").select("code").where("code", "=", parsed.data.code).executeTakeFirst());
-    if (builtin) {
-      // Not a failure worth alarming anyone about — they asked for something
-      // they already have, so say what they have.
-      return {
-        ok: false,
-        error: `"${parsed.data.code}" is already a built-in unit (${builtin.name}) — it can be used as-is.`,
-      };
-    }
-
+    const read = readUnitArgs(args);
+    if ("error" in read) return { ok: false, error: read.error };
+    const parsed = { data: read.unit };
     const db = (await platform().tenants.getDb(ctx.orgId)) as Kysely<CoreUnitsDB>;
+    const existedBefore = !!(await db.selectFrom("core_units_custom").select("code").where("code", "=", parsed.data.code).executeTakeFirst());
+
     const row = await db
       .insertInto("core_units_custom")
       .values({

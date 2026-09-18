@@ -62,10 +62,34 @@
 // known regression (ci-sink at 151s) trips it; the worst stall measured under
 // a 3-job load (34s) does not.
 
+import { readFileSync } from "node:fs";
+
 export const MARGIN = 3;
 export const FLOOR_MS = 10_000;
 export const SCALING_MS = 2_000;
 export const CONTENDED_AT = 1.5;
+/** The box's I/O pressure (PSI `io` full, avg60, percent) at or above which
+ *  a run is contended whatever the CPU factor says. Run 23230 (2026-09-18)
+ *  went red on lint:staged-docs-reachable, 500 small file reads, at 14.5s
+ *  against a quiet 0.37s and 14.5s again re-measured alone, on a run whose
+ *  CPU factor read 1.26x: the box was in a docker prune (26 GB reclaimed,
+ *  `full avg300` at 10%), and a stall in the disk does not show in a factor
+ *  taken over CPU-bound lints. PSI is the kernel's own reading of time every
+ *  task spent waiting on I/O, so it is the same shape of evidence as the
+ *  factor, from the other axis. */
+export const IO_CONTENDED_AT = 10;
+
+/** PSI io "full" avg60, in percent, from /proc/pressure/io; null where the
+ *  kernel does not offer it (macOS, an old kernel, a container without it). */
+export function ioPressure(text) {
+  try {
+    const src = text ?? readFileSync("/proc/pressure/io", "utf8");
+    const m = /^full .*?avg60=([\d.]+)/m.exec(src);
+    return m ? Number(m[1]) : null;
+  } catch {
+    return null;
+  }
+}
 export const CEILING_MS = 120_000;
 export const MIN_SAMPLE = 20;
 
@@ -105,7 +129,9 @@ export function overBudget(results, quietMs = {}, opts = {}) {
   const unknownQuiet = median(known);
   const factor = contentionFactor(results, quietMs, opts);
   const sampled = results.length >= minSample && known.length > 0;
-  const contended = sampled && factor > contendedAt;
+  const io = opts.ioPressure ?? null;
+  const ioContended = io !== null && io >= (opts.ioContendedAt ?? IO_CONTENDED_AT);
+  const contended = sampled && (factor > contendedAt || ioContended);
   const perLint = sampled && !contended;
   const over = [];
   const unknown = [];
@@ -129,7 +155,7 @@ export function overBudget(results, quietMs = {}, opts = {}) {
     }
   }
   over.sort((a, b) => b.ms - a.ms);
-  return { factor, contended, perLint, over, unknown };
+  return { factor, contended, perLint, over, unknown, ioPressure: io, ioContended };
 }
 
 /**

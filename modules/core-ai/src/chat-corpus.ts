@@ -78,14 +78,19 @@ export interface CorpusCase {
    *  "Non-deterministic" is a finding, never a label for a case somebody
    *  could not fix; the corpus owner decides which cases carry it. */
   trend?: string;
-  /** The issue this case cannot pass without: a defect at its door, a
+  /** The issue(s) this case cannot pass without: a defect at its door, a
    *  fixture the seed never creates. A case with this is held OUT OF THE
    *  FLOOR while it is asked and recorded, so a gate does not require every
    *  known defect cleared before it can be green (a gate like that is one
    *  everyone learns to ignore; twelve such cases the night the cold cache
    *  warmed, #3101). Its failing is expected; its passing is reported, and a
    *  marker that keeps passing is a stale label, cleared in the PR that fixed
-   *  the issue. Deterministic and red, which is the opposite of `trend`. */
+   *  the issue. Deterministic and red, which is the opposite of `trend`.
+   *  Shape: `#NNNN`, or `#NNNN #MMMM` when the marker must outlive the first
+   *  issue (the case can pass for a wrong reason until the second lands),
+   *  optionally followed by ` (why)`, which the bench prints beside any
+   *  "clear its marker" line so the reader has the caveat where the
+   *  suggestion is. */
   known_red?: string;
 }
 
@@ -115,24 +120,6 @@ function onScreen(
  *  (2026-09-17). A sentence here that is not in the corpus is a dead marker,
  *  refused at load (below), so the list cannot drift from the cases. */
 const KNOWN_RED: Record<string, string> = {
-  // #3123: args_schema has no `required`, so the door lets an argument-less
-  // call through and the card fails when pressed (class B, "call my parts
-  // spools": rename-thing given a kind id where it wants a list name).
-  "rename machines to printers everywhere": "#3123",
-  "put purchase date and supplier under Buying on parts": "#3123",
-  "rename the Buying heading to Purchasing": "#3123",
-  "track where my things came from": "#3123",
-  "turn on provenance": "#3123",
-  "we measure filament in spools": "#3123",
-  "call my parts spools": "#3123",
-  // #3125: the seed never creates the subject (no Purchase Date field, no
-  // Spices section), and turns every module on, so enable-module has nothing
-  // to enable.
-  "make Purchase Date required": "#3125",
-  "put Spices and Tea under a Kitchen heading": "#3125",
-  "turn on purchases": "#3125",
-  "I want to track maintenance": "#3125",
-  "enable the shipments feature": "#3125",
 };
 
 /** The cases that left the gate for the trend, by sentence: the reason each
@@ -312,8 +299,14 @@ const RAW_CORPUS: CorpusCase[] = [
     "remove the test part I just made",
   ]),
   // ── instructions: workspace actions ──────────────────────────────────────
+  // The three modules these name are the three the seed leaves OFF, so the
+  // enable door has something to do (#3125). Two nouns changed with it:
+  // maintenance is autoEnable, which the platform turns back on at every
+  // boot, so "I want to track maintenance" could never be an enable anywhere;
+  // and shipments is what "where is my parcel" and "turn off shipments" need
+  // on. Sales and builds are read by no other case.
   ...ph("workspace", neverOffer, "action:platform:enable-module", [
-    "turn on purchases", "I want to track maintenance", "enable the shipments feature",
+    "turn on purchases", "I want to track sales", "enable the builds feature",
   ]),
   ...ph("workspace", neverOffer, "action:platform:rename-thing", [
     "call my parts spools", "rename machines to printers everywhere",

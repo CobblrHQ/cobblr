@@ -173,7 +173,7 @@ export default defineModule({
         appliesTo: { kinds: ["purchases:order"] },
         invokeHandler: "purchases.add-line",
         argsSchema: {
-          qty: { label: "How many", type: "number" },
+          qty: { label: "How many", type: "number", required: true },
           description: { label: "What it is", type: "text" },
           part_id: { label: "Id of a tracked part (optional)", type: "text" },
           unit_cost: { label: "Cost each (optional)", type: "number" },
