@@ -21,7 +21,7 @@ import { meta } from "../../db/meta.js";
 import { sendDiscordDm, dmResultUnverifies } from "../discord-bot-trigger.js";
 import { canDeliverDiscordDm } from "../discord-connection.js";
 import { absoluteAppUrl } from "../public-url.js";
-import { componentsFor } from "./discord-card.js";
+import { COMPONENTS_V2_FLAG, componentsFor, componentsV2For } from "./discord-card.js";
 import type { Channel, ChannelEvent } from "./types.js";
 
 export const discordDmChannel: Channel = {
@@ -60,6 +60,17 @@ export const discordDmChannel: Channel = {
     // endpoint reads the embed back as the message's "original" (the bot
     // forwards it), and the plain form below is what a failed embed degrades to.
     const text = event.card ? "" : plainForm;
+    const v2 = event.card?.rows?.length
+      ? componentsV2For(
+          event.notificationId,
+          { heading: event.card.heading, context: event.card.context, rows: event.card.rows },
+          event.actions,
+          event.link_url ? absoluteAppUrl(event.link_url) : null,
+          // The rest of a digest that did not fit is this same notification in
+          // the app's inbox, every row with its buttons.
+          absoluteAppUrl("/me/notifications"),
+        )
+      : undefined;
 
     // The card becomes ONE embed. Discord renders it with a coloured spine and
     // its own block, which is what makes a notification readable at a glance
@@ -83,6 +94,13 @@ export const discordDmChannel: Channel = {
       // Undefined when the notification offers nothing to do, which is most of
       // them — the bot then sends exactly what it sent before.
       components: componentsFor(event.notificationId, event.actions),
+      // A card with ROWS is also offered as Components V2: each line a section
+      // with its button beside it (#3282). Sent ALONGSIDE the classic shape,
+      // not instead of it: a bot that predates V2 ignores the extra keys and
+      // sends the embed and the block of buttons as before, and a bot that
+      // knows V2 prefers it and falls back to the classic shape if Discord
+      // refuses the tree. So the digest never fails to arrive across a deploy.
+      ...(v2 ? { components_v2: v2.components, flags: COMPONENTS_V2_FLAG } : {}),
       fallback_text: plainForm,
     });
     if (dmResultUnverifies(res)) {

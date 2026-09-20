@@ -31,3 +31,4 @@ export {
 export { jsonSchemaOf } from "./schema.js";
 export { offerableToAssistant } from "./tools.js";
 export { pageWithTruth } from "./tools.js";
+export { PLACED_IN, placementAsked } from "./tools.js";

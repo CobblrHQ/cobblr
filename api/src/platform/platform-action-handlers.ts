@@ -141,7 +141,7 @@ function choicesEdited(
   current: string[] | null,
   args: Record<string, unknown>,
   fieldLabel: string,
-): { choices: string[] } | { error: string } | undefined {
+): { choices: string[]; added: string[]; removed: string[] } | { error: string } | undefined {
   const add = namesOf(args.add_choices);
   const remove = namesOf(args.remove_choices);
   if (add.length === 0 && remove.length === 0) return undefined;
@@ -150,6 +150,8 @@ function choicesEdited(
   }
   const same = (a: string, b: string) => a.trim().toLowerCase() === b.trim().toLowerCase();
   let next = [...(current ?? [])];
+  const added: string[] = [];
+  const removed: string[] = [];
   for (const gone of remove) {
     // Matched the way a field is matched from what a person said: exact,
     // then case aside, then a unique prefix ("Tea" for "Teas"), and never a
@@ -163,13 +165,42 @@ function choicesEdited(
       return { error: `"${gone}" could be ${hit.ambiguous.map((a) => `"${a.label}"`).join(" or ")} on "${fieldLabel}" — which one?` };
     }
     next = next.filter((c) => c !== hit.label);
+    removed.push(hit.label);
   }
-  for (const more of add) if (!next.some((c) => same(c, more))) next.push(more);
-  return { choices: next };
+  for (const more of add) {
+    if (next.some((c) => same(c, more))) continue;
+    next.push(more);
+    added.push(more);
+  }
+  return { choices: next, added, removed };
+}
+
+/** What a choices edit did, said the way the person asked for it: "Added
+ *  Aran to the Yarn weight choices (DK, Worsted, Aran)". The generic
+ *  '"Yarn weight" on inventory:part: choices' was the whole result line on
+ *  the card after a phrase command ran (walked on the rig, 2026-09-20). */
+function choicesSentence(fieldLabel: string, edited: { choices: string[]; added: string[]; removed: string[] }): string {
+  const parts = [
+    edited.added.length ? `Added ${edited.added.join(", ")} to` : "",
+    edited.removed.length ? `Took ${edited.removed.join(", ")} off` : "",
+  ].filter(Boolean);
+  const did = parts.length ? parts.join("; ") : "No change to";
+  return `${did} the "${fieldLabel}" choices (${edited.choices.length ? edited.choices.join(", ") : "none left"})`;
 }
 
 function str(v: unknown): string {
   return typeof v === "string" ? v.trim() : "";
+}
+
+/** The workspace's kinds of record, for a refusal both readers can act on:
+ *  the plural a person knows them by, the id beside it for a model that will
+ *  call again ("parts (inventory:part), machines (machines:machine)"). A
+ *  refusal used to say "check list_record_kinds", a tool name a person cannot
+ *  do anything with, and on a card it read as something broken (#3237). */
+function kindsInWords(kinds: Array<{ id: string; display_name_plural?: string | null }>): string {
+  const named = kinds.map((k) => (k.display_name_plural ? `${k.display_name_plural} (${k.id})` : k.id));
+  const shown = named.slice(0, 8);
+  return `${shown.join(", ")}${named.length > shown.length ? ` and ${named.length - shown.length} more` : ""}`;
 }
 
 export function registerPlatformActionHandlers(): void {
@@ -196,7 +227,7 @@ export function registerPlatformActionHandlers(): void {
       if (!kinds.some((k) => k.id === entityKind)) {
         return {
           ok: false,
-          error: `this workspace has no "${entityKind}" to put a field on — check list_record_kinds (or use a trait scope like @physical)`,
+          error: `this workspace has no kind of record called "${entityKind}" to put a field on; it has ${kindsInWords(kinds)} (or a trait scope like @physical puts it on a whole class)`,
         };
       }
     }
@@ -243,7 +274,7 @@ export function registerPlatformActionHandlers(): void {
   ): Promise<{ id: string; name: string; label: string; scopeLabel: string | null } | { error: string }> => {
     const defs = await resolveFieldDefsForKind(orgId, entityKind);
     if (defs.length === 0) {
-      return { error: `"${entityKind}" has no custom fields — check list_record_kinds for the kind id` };
+      return { error: `"${entityKind}" has no custom fields yet` };
     }
     const byName = defs.filter((d) => d.name === said.trim().toLowerCase());
     if (byName.length === 1) {
@@ -355,10 +386,13 @@ export function registerPlatformActionHandlers(): void {
     if (carrying.length === 1 || (carrying.length > 1 && defIds.size === 1 && nativeHits === 0)) {
       return { kind: carrying[0]! };
     }
+    // Read by a model (which passes entity_kind on the next call) and by a
+    // person whose phrase command ran it (who reads it on the card), so it
+    // says the fact in words both can act on and no tool name.
     if (carrying.length > 1) {
-      return { error: `"${said}" is on ${carrying.join(" and ")}; say which with entity_kind` };
+      return { error: `"${said}" is on ${carrying.join(" and ")}; say which kind of record (entity_kind)` };
     }
-    return { error: `no field called "${said}" on any kind — check list_record_kinds` };
+    return { error: `no field called "${said}" on any kind of record; name it the way it appears on the form` };
   };
 
   /** What an edit-field call would touch, worked out BEFORE a card exists.
@@ -527,9 +561,16 @@ export function registerPlatformActionHandlers(): void {
     const changed = Object.keys(patch)
       .map((k) => (k === "display_label" ? `now called "${result.def.display_label}"` : k.replace(/_/g, " ")))
       .join(", ");
+    const onlyChoices = Object.keys(patch).length === 1 && patch.choices !== undefined;
+    const summary =
+      onlyChoices && edited
+        ? choicesSentence(found.label, edited)
+        : onlyChoices && Array.isArray(patch.choices)
+          ? `"${found.label}" choices are now: ${(patch.choices as string[]).join(", ") || "none"}`
+          : `"${found.label}" on ${entityKind}: ${changed}`;
     return {
       ok: true,
-      summary: `"${found.label}" on ${entityKind}: ${changed}`,
+      summary,
       data: {
         id: result.def.id,
         name: result.def.name,
@@ -621,7 +662,7 @@ export function registerPlatformActionHandlers(): void {
     if ("error" in read) return { error: read.error };
     const kinds = await listKindsForOrg(ctx.orgId);
     const kind = kinds.find((k) => k.id === read.entityKind);
-    if (!kind) return { error: `"${read.entityKind}" is not a kind of record here — check list_record_kinds for the kind id` };
+    if (!kind) return { error: `"${read.entityKind}" is not a kind of record here; the workspace has ${kindsInWords(kinds)}` };
     const lines: string[] = [];
     for (const f of read.fields) {
       const found = await findField(ctx.orgId, read.entityKind, f);
@@ -1115,7 +1156,7 @@ export function registerPlatformActionHandlers(): void {
     // Not one of them is a record: these are names, or ids from another list.
     // A card listing five "no longer exists" lines is a card about nothing.
     if (missing === ids.length) {
-      return { error: `none of those ids is a record in ${from.label} - pass the ids list_records returns, not names` };
+      return { error: `none of those ids is a record in ${from.label}; pass record ids, not names` };
     }
     const n = lines.length;
     return {

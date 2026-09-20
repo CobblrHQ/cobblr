@@ -22,9 +22,10 @@ import { activityKind } from "../lib/activityKind";
 import { useKindLabels } from "../lib/useKindLabels";
 import { useMutation, useQueries, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link, useNavigate } from "react-router-dom";
-import { ArrowDown, ArrowLeft, ArrowRight, ArrowUp, ArrowUpCircle, CheckCircle2, ChevronDown, Compass, Download, Eye, EyeOff, GripVertical, LayoutList, Maximize2, Minimize2, Pin, Sliders, Sparkles, X } from "lucide-react";
+import { ArrowDown, ArrowLeft, ArrowRight, ArrowUp, ArrowUpCircle, CheckCircle2, ChevronDown, Compass, Eye, EyeOff, GripVertical, LayoutList, Maximize2, Minimize2, Pin, Sliders, Sparkles, X } from "lucide-react";
 import { countOf, itemNounFor, pluralise } from "@cobblr/platform-contract";
 import { roleSatisfies } from "@cobblr/platform-contract/org-roles";
+import { putAwayParts, suggestionsPointer } from "../lib/scannerNags";
 import { offerMoves } from "../lib/table-move-offer";
 import { choosePinnedViews, navNamesWithViewCards } from "../lib/dashboard-pinned";
 import { useBundleUpdates, type BundleUpdate } from "../lib/useBundleUpdates";
@@ -176,7 +177,7 @@ export function Dashboard() {
           time-sensitive thing on this page, and it was previously visible only
           on the scan inbox or inside one order. Renders nothing when nothing is
           in flight. */}
-      <ParcelsInFlight slug={activeSlug} />
+      <ParcelsInFlight slug={activeSlug} hasPurchases={enabled.has("purchases")} />
 
       {/* The cockpit (redesign B2): what needs me TODAY, derived from the
           trackers' own field semantics. Renders nothing when nothing needs you. */}
@@ -197,11 +198,7 @@ export function Dashboard() {
           content in a 149px box — more than half of it empty (reported
           2026-08-11: "the left half is stretched way too tall for its short
           message"). Each card now costs only its own height. */}
-      <div className="flex flex-col md:flex-row gap-3 md:items-start empty:hidden">
-        <PutAwayCard slug={activeSlug} />
-        <MoveIntoTablesCard slug={activeSlug} />
-        <BundleSuggestionsCard slug={activeSlug} role={activeOrg.role} />
-      </div>
+      <ScannerNagRow slug={activeSlug} role={activeOrg.role} />
 
       {/* Quick links to the things this workspace uses most (Scan Inbox, Yarn,
           …). High up + big tap targets so a phone user isn't forced to find the
@@ -231,7 +228,36 @@ export function Dashboard() {
  *  Live Sort deliberately does NOT appear here; it lives where scanning
  *  starts (scan page header, camera Sort chip, the empty-workspace
  *  mission). Hidden at zero. */
-function PutAwayCard({ slug }: { slug: string }) {
+/** The nag row. One read of the bundle suggestions feeds both cards, so the
+ *  nag can leave out the scans the pointer beside it already accounts for
+ *  (scannerNags.ts). */
+function ScannerNagRow({ slug, role }: { slug: string; role?: string }) {
+  const { suggestions } = useBundleSuggestions(slug, role);
+  const offeredElsewhere = suggestions.reduce((n, s) => n + s.count, 0);
+  return (
+    <div className="flex flex-col md:flex-row gap-3 md:items-start empty:hidden">
+      <PutAwayCard slug={slug} offeredElsewhere={offeredElsewhere} />
+      <MoveIntoTablesCard slug={slug} />
+      <BundleSuggestionsCard suggestions={suggestions} />
+    </div>
+  );
+}
+
+/** Captures that fit a bundle this workspace does not have, for an owner or
+ *  admin of a workspace that has something in it. Empty otherwise. */
+function useBundleSuggestions(slug: string, role?: string): { suggestions: QuickstartSuggestion[] } {
+  const canInstall = roleSatisfies(role, ["owner", "admin"]);
+  const { hasContent } = useWorkspaceContentProbe(slug);
+  const qs = useQuery({
+    queryKey: ["quickstart", slug],
+    queryFn: () => api.quickstart(slug),
+    enabled: canInstall && hasContent,
+    staleTime: 60_000,
+  });
+  return { suggestions: canInstall && hasContent ? (qs.data?.suggestions ?? []) : [] };
+}
+
+function PutAwayCard({ slug, offeredElsewhere }: { slug: string; offeredElsewhere: number }) {
   const q = useQuery({
     queryKey: ["scan-stats", slug],
     queryFn: () => api.getScanStats(slug),
@@ -254,14 +280,14 @@ function PutAwayCard({ slug }: { slug: string }) {
     }, 5_000);
     return () => clearTimeout(t);
   }, [slug, unfiled, ready]);
-  if (unfiled === 0 && ready === 0 && failedReads === 0) return null;
   // Acknowledge BOTH: things that still need a home AND things already set,
   // just waiting to be physically put away. And a receipt that could not be
-  // read, which needs a person before it has any items at all.
-  const parts: string[] = [];
-  if (unfiled > 0) parts.push(`${unfiled} scanned item${unfiled === 1 ? "" : "s"} without a home`);
-  if (ready > 0) parts.push(`${ready} ready to put away`);
-  if (failedReads > 0) parts.push(`${failedReads} receipt${failedReads === 1 ? "" : "s"} that couldn't be read`);
+  // read, which needs a person before it has any items at all. Scans the
+  // suggestions card beside this one offers to file are not "without a home"
+  // (#3298): two cards on one screen must not disagree about the same scans.
+  const parts = putAwayParts({ unfiled, ready, failedReads, offeredElsewhere });
+  if (parts.length === 0) return null;
+  const homeless = unfiled > offeredElsewhere;
   return (
     // Stack until there's room for a real side-by-side. `flex-wrap` did NOT save
     // this: the copy is flex-1 + min-w-0, so it SHRANK to whatever the button
@@ -279,17 +305,17 @@ function PutAwayCard({ slug }: { slug: string }) {
             {parts.join(", and ")}.
           </div>
           <div className="text-xs text-muted dark:text-slate-400">
-            {unfiled === 0 && ready === 0
+            {!homeless && ready === 0
               ? "Open the session to see why, and read it again."
               : "Preview where everything should go - nothing moves until you confirm."}
           </div>
         </div>
       </div>
       <Link
-        to={unfiled === 0 && ready === 0 ? "/scan" : "/scan?view=plan"}
+        to={!homeless && ready === 0 ? "/scan" : "/scan?view=plan"}
         className="inline-flex items-center gap-1.5 rounded-lg bg-cobble-600 hover:bg-cobble-700 text-white px-3 py-1.5 text-sm font-medium transition shrink-0"
       >
-        {unfiled === 0 && ready === 0 ? "Open the inbox" : "Put them away"} <ArrowRight size={14} />
+        {!homeless && ready === 0 ? "Open the inbox" : "Put them away"} <ArrowRight size={14} />
       </Link>
     </section>
   );
@@ -412,77 +438,43 @@ function MoveIntoTablesCard({ slug }: { slug: string }) {
  *  bundle AND files every fitting capture into it (the capture-first materialize
  *  path). Owner/admin only (install changes composition). Hidden on empty
  *  workspaces (the first-run hero owns that) and when there's nothing to suggest. */
-function BundleSuggestionsCard({ slug, role }: { slug: string; role?: string }) {
-  const qc = useQueryClient();
-  const toast = useToast();
-  const canInstall = roleSatisfies(role, ["owner", "admin"]);
-  const { hasContent } = useWorkspaceContentProbe(slug);
-  const qs = useQuery({
-    queryKey: ["quickstart", slug],
-    queryFn: () => api.quickstart(slug),
-    enabled: canInstall && hasContent,
-    staleTime: 60_000,
-  });
-  const materializeMut = useMutation({
-    mutationFn: (s: QuickstartSuggestion) => api.materializeQuickstart(slug, s.bundle_external_id),
-    onSuccess: (r, s) => {
-      toast.success(`Installed ${s.bundle_name} — filed ${countOf(r.created, s.noun)}.`);
-      void qc.invalidateQueries({ queryKey: ["quickstart", slug] });
-      void qc.invalidateQueries({ queryKey: ["org-modules", slug] });
-      void qc.invalidateQueries({ queryKey: ["instances", slug] });
-      void qc.invalidateQueries({ queryKey: ["scan-inbox", slug] });
-      void qc.invalidateQueries({ queryKey: ["scan-stats", slug] });
-    },
-    onError: (e) => toast.error(e instanceof Error ? e.message : "Couldn't install that."),
-  });
-  if (!canInstall || !hasContent) return null;
-  const suggestions = qs.data?.suggestions ?? [];
-  if (suggestions.length === 0) return null;
+function BundleSuggestionsCard({ suggestions }: { suggestions: QuickstartSuggestion[] }) {
+  const navigate = useNavigate();
+  const pointer = suggestionsPointer(suggestions);
+  if (!pointer) return null;
+  // The scanner lane below owns the install: it has the person's own photos
+  // and a sentence that says what will happen ("2 look like Groceries, create
+  // it & file all 2"). This card used to carry a second set of install
+  // buttons above it, and a third card counted the same scans as homeless;
+  // three voices for three scans, and nothing said which to press (#3298).
+  // The lane is an arrangeable section, so when it is hidden the pointer
+  // goes to the inbox, where the same groups are offered.
+  const showMe = () => {
+    const lane = document.getElementById("from-your-scanner");
+    if (lane) lane.scrollIntoView({ behavior: "smooth", block: "start" });
+    else navigate("/scan");
+  };
   return (
     <section
-      className="md:flex-1 md:min-w-0 rounded-lg border border-accent/40 bg-accent/[0.06] dark:bg-accent/10 px-4 py-3 space-y-2"
+      className="md:flex-1 md:min-w-0 rounded-lg border border-accent/40 bg-accent/[0.06] dark:bg-accent/10 px-4 py-3 flex flex-col items-start gap-2 sm:flex-row sm:items-center"
       data-testid="bundle-suggestions"
     >
-      <div className="flex items-center gap-2 text-sm font-semibold text-content dark:text-mortar-100">
-        <Sparkles size={15} className="text-accent shrink-0" />
-        You've scanned things that fit a table you don't have yet
+      <div className="flex min-w-0 flex-1 items-start gap-2">
+        <Sparkles size={15} className="text-accent shrink-0 mt-0.5" />
+        <div className="min-w-0">
+          <div className="text-sm font-semibold text-content dark:text-mortar-100">
+            You've scanned things that fit a table you don't have yet
+          </div>
+          <div className="text-xs text-muted dark:text-slate-400">{pointer.sentence}</div>
+        </div>
       </div>
-      {/* A RAIL, not a wrapping block. One install button per suggestion means
-          the card's height grew with however many bundles happened to match, so
-          four of them turned a two-row nag into a four-row one. Scrolling
-          sideways keeps every suggestion reachable while the card stays the same
-          height whether there is one or a dozen. */}
-      {/* WRAPS. A nowrap row that scrolls sideways hid the second suggestion
-          behind the card's edge on a phone with nothing to say it was there
-          ("1 loo|" - found by the e2e walk, 2026-09-01). Two buttons stacked
-          is what a phone has room for; a row you cannot see is not a row. */}
-      <div className="flex flex-wrap gap-2 pb-0.5">
-        {suggestions.map((s) => {
-          const busy = materializeMut.isPending && materializeMut.variables?.bundle_external_id === s.bundle_external_id;
-          return (
-            <button
-              key={s.bundle_external_id}
-              type="button"
-              onClick={() => materializeMut.mutate(s)}
-              disabled={materializeMut.isPending}
-              title={s.sample_names.length ? `e.g. ${s.sample_names.join(", ")}` : undefined}
-              className="inline-flex shrink-0 items-center gap-1.5 rounded-lg bg-cobble-600 hover:bg-cobble-700 text-white px-3 py-1.5 text-sm font-medium transition disabled:opacity-50 whitespace-nowrap"
-            >
-              <Download size={14} />
-              {busy
-                ? `Installing ${s.bundle_name}…`
-                : `${s.count} look${s.count === 1 ? "s" : ""} like ${s.bundle_name} — install`}
-            </button>
-          );
-        })}
-      </div>
-      {/* One line, not two. This is a nag strip at the top of the dashboard, so
-          every row it spends is a row before the actual dashboard starts; the
-          "or triage them one-by-one" half was restating that the Scan inbox
-          exists, which the nav already says. */}
-      <div className="text-[10px] text-faint dark:text-slate-500">
-        Installs the bundle and files those scanned items into it.
-      </div>
+      <button
+        type="button"
+        onClick={showMe}
+        className="inline-flex items-center gap-1.5 rounded-lg border border-accent/50 text-accent hover:bg-accent/10 px-3 py-1.5 text-sm font-medium transition shrink-0"
+      >
+        Show me <ArrowDown size={14} />
+      </button>
     </section>
   );
 }
@@ -514,8 +506,11 @@ function AttentionFeed({ slug }: { slug: string }) {
     pending_scans: "border-cobble-300 dark:border-cobble-700 bg-cobble-50/60 dark:bg-cobble-900/20",
     photo_wanted: "border-cobble-300 dark:border-cobble-700 bg-cobble-50/60 dark:bg-cobble-900/20",
     upcoming: "border-line dark:border-slate-700 bg-surface dark:bg-slate-900",
+    // A date nothing can read: amber, because a reminder that will never
+    // fire is a deadline problem, not a note.
+    unreadable_date: "border-amber-300 dark:border-amber-800 bg-amber-50/70 dark:bg-amber-950/20",
   };
-  const glyph: Record<string, string> = { overdue: "⏰", due_today: "📆", low_stock: "📉", pending_scans: "📷", photo_wanted: "📷", upcoming: "📅" };
+  const glyph: Record<string, string> = { overdue: "⏰", due_today: "📆", low_stock: "📉", pending_scans: "📷", photo_wanted: "📷", upcoming: "📅", unreadable_date: "❓" };
   return (
     <section className="space-y-1.5">
       <div className="text-[10px] font-mono uppercase tracking-widest text-faint dark:text-slate-500">// needs you</div>

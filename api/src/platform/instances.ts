@@ -13,6 +13,25 @@ import { deleteOverride, getOverrideConfig, upsertOverride } from "./entity-kind
 import { fillItemNounIfAbsent } from "./override-config-merge.js";
 import { removeNavMember } from "./nav-headings.js";
 import { singularize, pluralize } from "../lib/inflect.js";
+import * as activity from "./activity.js";
+
+/** What a person did, kept: a list or table they made is an intent the
+ *  activity log carries (#3254), so a trial can later be read back as "made a
+ *  Spices list" and offered to a real account. A bundle's instances are the
+ *  bundle's own intent (bundle_installed) and are not logged here. Never
+ *  fails the birth: a ledger row is worth less than the table. */
+export async function logInstanceCreated(orgId: string, inst: ModuleInstance, how: { source: "created" | "promoted"; category?: string }): Promise<void> {
+  try {
+    await activity.log({
+      orgId,
+      action: "instance_created",
+      ref: { module: null, entityType: "instance", entityId: inst.id },
+      diff: { module_name: inst.module_name, instance_name: inst.instance_name, display_name: inst.display_name, ...how },
+    });
+  } catch (err) {
+    console.error(`[instances] activity log for ${inst.instance_name} failed:`, (err as Error)?.message ?? err);
+  }
+}
 
 const SLUG_RE = /^[a-z0-9][a-z0-9-]*$/;
 
@@ -433,5 +452,6 @@ export async function provisionInstance(args: {
   if (config !== existing) {
     await upsertOverride({ orgId: args.orgId, targetKind: "instance", targetId, config });
   }
+  await logInstanceCreated(args.orgId, created, { source: "created" });
   return { ok: true, instance: created };
 }

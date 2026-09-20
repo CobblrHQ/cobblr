@@ -9,7 +9,7 @@
 
 import type { Kysely } from "kysely";
 import type { CoreScanDB } from "../db.js";
-import { resolveBarcodeViaWebSearch } from "./barcode-websearch.js";
+import { resolveBarcodeViaWebSearch, productTitle } from "./barcode-websearch.js";
 import { webSearchEnabled } from "./barcode-lookup.js";
 import { replayingWeb } from "./web-replay.js";
 import { catalogImageUrlOrNull, downloadCatalogImage, isJunkName, withBrandPrefix } from "./enrich.js";
@@ -77,7 +77,7 @@ export async function identifyTypedIdentifier(opts: {
         : `Nothing on the web for ${code}. Kept the name you typed.`,
       suggested_metadata: mergeMeta({
         identifier: code,
-        ...(web ? { held_name: web.name, held_reason: "uncorroborated" } : {}),
+        ...(web ? { held_name: productTitle(web.name), held_reason: "uncorroborated" } : {}),
       }) as never,
       ai_suggested_at: new Date(),
       updated_at: new Date(),

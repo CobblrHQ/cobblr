@@ -123,6 +123,14 @@ export interface IdentifyFailure {
   reason?: string;
 }
 
+/** Nothing tried: no provider anywhere for this workspace, so no AI read the
+ *  photo at all. "We did not try" and "we tried and failed" are different
+ *  facts (#3233); a surface that says the AI could not read something, or
+ *  offers to ask it again, asks this first. */
+export function identifyNeverTried(f: IdentifyFailure): boolean {
+  return f.code === "ai_unavailable" && f.ai === "no-provider";
+}
+
 /** The note the server writes under a photo it could not name, the why for
  *  its title, whether a retry would help, and whether connecting a provider
  *  is the remedy. The sentence is one line a phone card can show whole; the

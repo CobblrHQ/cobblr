@@ -18,6 +18,11 @@
 // An image OVERLAY on a tile that is itself tappable is the exception — the
 // tile is the control and the overlay is decoration. Say so on the line:
 //   // TOUCH-OK: <why>
+// The exception is for decoration only: a marked overlay that holds a
+// <button> or an <a> is refused, because those are controls and they are the
+// exact thing a tablet cannot reach. A photo tile's cover / cut-out / remove
+// strip carried the marker for months and was unreachable on a tablet
+// (#3239, found on the desktop walk before the show).
 //
 // Run: npx tsx scripts/lint-touch-reachable.ts
 
@@ -50,10 +55,23 @@ for (const rel of files) {
   lines.forEach((line, i) => {
     // Two lines of lead-in, because a marker worth reading rarely fits on one.
     const context = [lines[i - 2], lines[i - 1], line].filter(Boolean).join("\n");
-    if (ALLOW.test(context)) return;
     for (const lit of line.match(STRINGS) ?? []) {
-      if (HIDDEN.test(lit) && REVEAL.test(lit)) {
+      if (!(HIDDEN.test(lit) && REVEAL.test(lit))) continue;
+      if (!ALLOW.test(context)) {
         bad.push(`${rel}:${i + 1}  ${lit.slice(0, 78)}`);
+        continue;
+      }
+      // Marked as decoration: it may not hold a control. Read to the element's
+      // close (its own indentation, or the next opening tag at it).
+      const indent = line.match(/^\s*/)?.[0].length ?? 0;
+      for (let j = i + 1; j < lines.length; j++) {
+        const l = lines[j] ?? "";
+        const ind = l.match(/^\s*/)?.[0].length ?? 0;
+        if (l.trim() && ind <= indent) break;
+        if (/<(button|a)\b/.test(l)) {
+          bad.push(`${rel}:${i + 1}  TOUCH-OK on an overlay that holds a control (line ${j + 1}: ${l.trim().slice(0, 40)})`);
+          break;
+        }
       }
     }
   });

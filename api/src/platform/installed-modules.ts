@@ -3,6 +3,8 @@
 // loader has populated the in-memory registry. Idempotent — upserts
 // by name, updates version + manifest + source.
 //
+// BORN WITH: nothing (process-wide: the installed-modules registry, not a workspace's rows)
+//
 // Provenance (source_url / source_sha256 / signed_by) comes from the
 // image-build's installed-modules.manifest.json — written by
 // scripts/install-registry-modules.mjs at docker build time. The

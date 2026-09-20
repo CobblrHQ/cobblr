@@ -205,7 +205,7 @@ export function RecordsPage({
         ) : (
           <div className="border-2 border-dashed border-line dark:border-slate-700 rounded-xl p-12 text-center text-xs text-faint dark:text-slate-500 italic">
             {allRows.length === 0
-              ? `No ${pluralise(noun)} yet. Click + New ${noun} to add one.`
+              ? `No ${pluralise(noun)} yet. Add one with New ${noun}.`
               : "No matches with the current filters."}
           </div>
         )

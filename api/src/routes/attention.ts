@@ -19,7 +19,7 @@ import { withTenant } from "../middleware/tenant.js";
 import { facesForKind } from "../platform/faces.js";
 import { resolveKind } from "../platform/entities.js";
 import { hasPrimaryRouter } from "../modules/mount.js";
-import { viewQuery } from "@cobblr/platform-contract";
+import { fieldDay, fieldDayUnreadable, viewQuery } from "@cobblr/platform-contract";
 import { dueState, todayFrom } from "../lib/due-day.js";
 
 export const attentionRouter = Router({ mergeParams: true });
@@ -55,7 +55,7 @@ interface AttentionEntry {
 }
 
 interface AttentionRow {
-  kind: "low_stock" | "overdue" | "due_today" | "upcoming" | "pending_scans" | "photo_wanted";
+  kind: "low_stock" | "overdue" | "due_today" | "upcoming" | "pending_scans" | "photo_wanted" | "unreadable_date";
   label: string;
   count: number;
   /** Up to 3 item names, for the row's detail line. */
@@ -139,9 +139,18 @@ attentionRouter.get("/", requireAuth, withTenant, async (req, res, next) => {
 
     await Promise.all(
       domain.map(async (inst) => {
+        // The kind this instance's records are: the named instance's own, or
+        // for the default instance the module's primary kind (the registry has
+        // no `inventory:item`; its records are `inventory:part`). The chips
+        // open by it, and the field defs are read by it: asked for
+        // `inventory:item`, the defs came back empty and a dated part in the
+        // base table was never coming up, never overdue (#3279).
+        const recordKind = inst.is_default
+          ? (await resolveKind(req.tenant!.org.id, `${inst.instance_name}:item`).catch(() => ({ base: `${inst.instance_name}:item` }))).base
+          : `${inst.instance_name}:item`;
         const [defs, items] = await Promise.all([
           j<{ items: Array<{ name: string; type: string; display_label?: string }> }>(
-            `/orgs/${slug}/field-defs?kind=${encodeURIComponent(`${inst.instance_name}:item`)}&effective=1`,
+            `/orgs/${slug}/field-defs?kind=${encodeURIComponent(recordKind)}&effective=1`,
             token,
           ),
           j<{ items: Array<Record<string, unknown>> }>(
@@ -152,12 +161,6 @@ attentionRouter.get("/", requireAuth, withTenant, async (req, res, next) => {
         const rowsOf = items?.items ?? [];
         if (rowsOf.length === 0) return;
         const route = inst.is_default ? `/${inst.module_name}` : `/instances/${inst.instance_name}`;
-        // The kind a chip can open: the named instance's own, or for the
-        // default instance the module's primary kind (the registry has no
-        // `inventory:item`; its records are `inventory:part`).
-        const recordKind = inst.is_default
-          ? (await resolveKind(req.tenant!.org.id, `${inst.instance_name}:item`).catch(() => ({ base: `${inst.instance_name}:item` }))).base
-          : `${inst.instance_name}:item`;
         const recordOf = (id: string, name: string) => ({ kind: recordKind, id, name });
 
         // Low stock: real columns on inventory-family rows, compared on what
@@ -184,10 +187,41 @@ attentionRouter.get("/", requireAuth, withTenant, async (req, res, next) => {
           });
         }
 
+        // A date field holding a value that names no day ("see lid", a date
+        // that does not exist) is something a person has to fix, and it must
+        // be SAID here: the sweeper, the calendar and this feed all read the
+        // value as none, so the record simply vanishes from every deadline
+        // surface, and one such value used to take a whole workspace's expiry
+        // reminders with it (#3279). Every date field, not only the deadline
+        // ones: the calendar reads them all.
+        const dateFields = (defs?.items ?? []).filter((d) => d.type === "date");
+        const kindHere = `${inst.instance_name}:item`;
+        const unreadable: Array<{ id: string; name: string; field: string; value: string }> = [];
+        for (const r of rowsOf) {
+          const meta = (r.metadata ?? {}) as Record<string, unknown>;
+          for (const f of dateFields) {
+            const raw = meta[f.name];
+            if (!fieldDayUnreadable(raw)) continue;
+            unreadable.push({ id: String(r.id ?? r.name ?? "item"), name: String(r.name ?? "item"), field: f.display_label ?? f.name, value: String(raw) });
+          }
+        }
+        if (unreadable.length > 0)
+          rows.push({
+            kind: "unreadable_date",
+            label: `dates that can't be read in ${inst.display_name}`,
+            count: unreadable.length,
+            sample: unreadable.slice(0, 3).map((d) => d.name),
+            route,
+            entries: unreadable.slice(0, 8).map((d) => ({
+              id: `${d.id}:${d.field}`,
+              title: `${d.name} — ${d.field}: "${d.value}"`,
+              action: { record: d.id, kind: kindHere },
+              record: recordOf(d.id, d.name),
+            })),
+          });
+
         // Deadline-semantic date fields, from the tracker's own declarations.
-        const dueFields = (defs?.items ?? []).filter(
-          (d) => d.type === "date" && DUE_RE.test(`${d.name} ${d.display_label ?? ""}`),
-        );
+        const dueFields = dateFields.filter((d) => DUE_RE.test(`${d.name} ${d.display_label ?? ""}`));
         if (dueFields.length === 0) return;
         // A stock-face record with nothing on hand has nothing left to date:
         // exhausted milk is not overdue, it is gone (the calendar and the
@@ -208,8 +242,12 @@ attentionRouter.get("/", requireAuth, withTenant, async (req, res, next) => {
           for (const f of dueFields) {
             const raw = meta[f.name];
             if (typeof raw !== "string" || !raw) continue;
-            const t = Date.parse(raw);
-            if (!Number.isFinite(t)) continue;
+            // The day the one rule reads (field-day): a month-only date is
+            // the last day of its month, here as on the calendar and in the
+            // sweeper. Date.parse read it as the first.
+            const day = fieldDay(raw);
+            if (day === null) continue; // said above, as unreadable
+            const t = Date.parse(`${day}T00:00:00Z`);
             const dated = { id: String(r.id ?? r.name ?? "item"), name: String(r.name ?? "item"), when: t, field: f.name };
             // By calendar day, the way the schedule reads it: due today is
             // today, never overdue (due-day.ts).
@@ -356,8 +394,9 @@ attentionRouter.get("/", requireAuth, withTenant, async (req, res, next) => {
         });
     }
 
-    // Severity order: overdue → low stock → pending scans → upcoming.
-    const rank = { overdue: 0, due_today: 1, low_stock: 2, photo_wanted: 3, pending_scans: 4, upcoming: 5 } as const;
+    // Severity order: overdue → low stock → a date nothing can read (a
+    // reminder that will never fire) → pending scans → upcoming.
+    const rank = { overdue: 0, due_today: 1, low_stock: 2, unreadable_date: 3, photo_wanted: 4, pending_scans: 5, upcoming: 6 } as const;
     rows.sort((a, b) => rank[a.kind] - rank[b.kind] || b.count - a.count);
     res.json({ items: rows });
   } catch (err) {

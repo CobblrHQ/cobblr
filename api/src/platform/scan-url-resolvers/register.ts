@@ -2,6 +2,8 @@
 // consults a manifest list — built-in (shipped data) + operator-added (the global
 // `scan_url_resolvers` table) — and interprets whichever claims the scanned value.
 // Registered once at boot through the existing platform().scan seam.
+//
+// BORN WITH: nothing (process-wide: the scan URL resolver manifests, refreshed for the api, not per workspace)
 
 import { platform } from "@cobblr/platform-contract";
 import type { ScanUrlResolution } from "@cobblr/platform-contract";

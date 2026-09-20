@@ -483,7 +483,7 @@ export function PurchasesPage() {
               <tr>
                 <td colSpan={9} className="px-3 py-10 text-center text-xs text-faint italic">
                   {allRows.length === 0
-                    ? "No orders yet. Click + new to log one."
+                    ? "No orders yet. Log the first with the + above."
                     : "No matches with the current filters."}
                 </td>
               </tr>

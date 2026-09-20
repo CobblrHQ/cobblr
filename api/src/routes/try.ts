@@ -14,6 +14,7 @@
 // stores the JWT and lands them on /w/<slug>. They type nothing.
 import { Router, type NextFunction, type Request, type Response } from "express";
 import { z } from "zod";
+import { DEFAULT_TRIAL_LENGTH, isTrialLength } from "@cobblr/platform-contract/trial-length";
 import { env } from "../env.js";
 import { meta } from "../db/meta.js";
 import { requireAuth } from "../auth/middleware.js";
@@ -39,6 +40,7 @@ import { createSandboxExport, fetchSandboxExport } from "../platform/try-sandbox
 import { takeYourWorkEmail } from "../platform/try-sandbox-export-copy.js";
 import { sendAuthEmail } from "../platform/hosted-seams.js";
 import { startHtml } from "./try-start-page.js";
+import { goneHtml } from "./try-gone-page.js";
 
 /** Not an error: a pooled sandbox was filled before it was handed over, so the
  *  seed step is skipped rather than run a second time and double everything. */
@@ -50,30 +52,7 @@ export const tryRouter = Router();
  *  Deliberately a real page rather than a JSON error: this URL is opened by a
  *  human in a browser, often hours later, and a raw 410 body reads as broken
  *  software rather than an expected ending. */
-function goneHtml(reason: "expired" | "unknown" | "revoked"): string {
-  const line =
-    reason === "expired"
-      ? "That sandbox has expired. They only last an hour, which is on purpose - nothing you did is still sitting on our server."
-      : reason === "revoked"
-        ? "That link was replaced when you added your email. Use the link we sent you instead."
-        : "We do not recognise that link. It may have expired and been cleaned up.";
-  return `<!doctype html><html lang="en"><head><meta charset="utf-8" />
-<meta name="viewport" content="width=device-width, initial-scale=1" />
-<meta name="robots" content="noindex" /><title>Cobblr - sandbox ended</title>
-<style>
- body{margin:0;min-height:100vh;display:grid;place-items:center;background:#F6F2EA;color:#2b3038;
-      font:16px/1.55 Inter,system-ui,-apple-system,Segoe UI,Roboto,sans-serif;padding:24px}
- .card{max-width:30rem;text-align:center}
- h1{font-size:1.6rem;color:#3D4451;margin:0 0 .6rem}
- p{margin:0 0 1.4rem;color:#5d5647}
- a{display:inline-block;border:2px solid #3D4451;border-radius:10px;padding:.7rem 1.3rem;
-   background:#8B7355;color:#fff;font-weight:600;text-decoration:none;box-shadow:4px 4px 0 #3D4451}
- a.ghost{background:transparent;color:#3D4451;margin-left:.5rem}
-</style></head><body><div class="card">
-<h1>Your hour is up.</h1><p>${line}</p>
-<a href="/api/v1/try">Start another</a><a class="ghost" href="/?mode=signup">Make an account</a>
-</div></body></html>`;
-}
+
 
 // ── GET /try — draw the challenge (free), then hand off to /try/start ─────
 //
@@ -230,7 +209,12 @@ tryRouter.get(
 );
 
 // ── POST /try/keep — bind an email, become an account trial ───────────────
-const KeepBody = z.object({ email: z.string().email().max(320) });
+// `days` is one of the contract's lengths, never a free number: the bound is
+// the product (#3254). Omitted (an older client) means the default length.
+const KeepBody = z.object({
+  email: z.string().email().max(320),
+  days: z.number().int().refine(isTrialLength, { message: "not one of the offered lengths" }).optional(),
+});
 
 tryRouter.post(
   "/try/keep",
@@ -262,6 +246,7 @@ tryRouter.post(
       }
 
       const email = parsed.data.email.toLowerCase().trim();
+      const days = parsed.data.days ?? DEFAULT_TRIAL_LENGTH;
       const absBase = `${req.protocol}://${req.get("host") ?? ""}`;
       const r = await keepSandbox(membership.org_id, userId, email, async (to) => {
         const issued = await issueSignInLink({
@@ -272,7 +257,7 @@ tryRouter.post(
           requestUa: req.get("user-agent") ?? null,
         });
         return issued.sent;
-      });
+      }, days);
       if (!r.ok) {
         const status = r.reason === "email_taken" ? 409 : 400;
         const message =
@@ -283,12 +268,12 @@ tryRouter.post(
         return;
       }
       console.log(
-        `[try-sandbox] kept ${membership.org_id} — now a ${env.TRY_TTL_DAYS}d trial` +
+        `[try-sandbox] kept ${membership.org_id} — now a ${days}d trial` +
           (r.emailed ? ", sign-in link sent" : ", NO EMAIL SENT (sandbox link left alive)"),
       );
       // `emailed` is not decoration: the UI must not tell someone to check an
       // inbox nothing was sent to.
-      res.json({ ok: true, kind: r.kind, expires_at: r.expiresAt.toISOString(), emailed: r.emailed });
+      res.json({ ok: true, kind: r.kind, expires_at: r.expiresAt.toISOString(), emailed: r.emailed, days });
       return;
     } catch (err) {
       next(err);
@@ -537,5 +522,12 @@ tryRouter.get("/try/paths", (_req: Request, res: Response): void => {
     cloud_url: env.COBBLR_CLOUD_SIGNUP_URL || null,
     selfhost_url: env.COBBLR_SELFHOST_DOCS_URL || null,
     export_days: env.TRY_SANDBOX_EXPORT_DAYS,
+    // The ending page says exactly how long a frozen sandbox is held (#3254).
+    decision_hours: env.TRY_SANDBOX_DECISION_HOURS,
+    // Whether "bring what I built" leads to a real account that replays the
+    // person's ledger. False until that replay exists (core is building the
+    // recording half); the web's third door degrades to the second one while
+    // it is false, so no sentence promises a path that is not there.
+    carry_available: false,
   });
 });

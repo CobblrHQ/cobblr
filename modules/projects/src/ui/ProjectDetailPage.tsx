@@ -490,7 +490,10 @@ function MaterialsPanel({
   const open = status !== "done" && status !== "abandoned";
 
   return (
-    <div className="rounded-xl border border-line dark:border-slate-700 bg-surface dark:bg-slate-900 p-5">
+    <div
+      className="rounded-xl border border-line dark:border-slate-700 bg-surface dark:bg-slate-900 p-5"
+      data-testid="design-materials-panel"
+    >
       <div className="text-[10px] font-mono uppercase tracking-widest text-accent mb-3">
         // materials for this design
       </div>
@@ -617,7 +620,10 @@ function HooksNeededPanel({
     (p.metadata?.hook_gauge as string | undefined) ?? "";
 
   return (
-    <div className="rounded-xl border border-line dark:border-slate-700 bg-surface dark:bg-slate-900 p-5">
+    <div
+      className="rounded-xl border border-line dark:border-slate-700 bg-surface dark:bg-slate-900 p-5"
+      data-testid="design-hooks-panel"
+    >
       <div className="text-[10px] font-mono uppercase tracking-widest text-accent mb-3">
         // hooks needed
       </div>

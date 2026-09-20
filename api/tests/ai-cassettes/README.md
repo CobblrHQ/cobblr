@@ -37,7 +37,11 @@ THAT tool whatever came after it (a bounced write leaves its own result on
 top). `two-cubepros-one-label.json` is the shape: search, take the first hit,
 act, which is what the live model did (#3154). The longest matching `match`
 wins, so a cassette for the re-ask "label on the cubepro #9" beats the one
-for the sentence it extends.
+for the sentence it extends. `two-cubepros-listed-not-searched.json` lists
+every machine with no `q` and acts on the first row (the 2026-09-18
+nightly's path), and `cubepro-out-of-the-garage.json` does what the remove
+action's description tells a model to do: find the Garage, `list_related`
+its contents, and act on what is inside (`$result.list_related...`).
 
 `"refuse": "quota"` (or `invalid_key`, `model_unavailable`, `unreachable`,
 `unknown`) makes the provider REFUSE the turn instead of answering: the same

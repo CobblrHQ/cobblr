@@ -15,6 +15,7 @@
 // single-use (tests mutate it) and torn down by the file's afterAll as normal.
 
 import { meta } from "./meta.js";
+import { createAccount } from "../platform/accounts.js";
 import { sql } from "kysely";
 import { env } from "../env.js";
 import { hashPassword } from "../auth/password.js";
@@ -66,11 +67,7 @@ async function bakeOneOrg(index: number): Promise<void> {
   const suffix = index.toString(36).padStart(4, "0");
   const email = `pool-${suffix}-${Date.now().toString(36)}@cobblr-test.local`;
   const password_hash = await hashPassword("pool-org-not-secret-1234");
-  const userRow = await meta
-    .insertInto("users")
-    .values({ email, password_hash, display_name: `pool ${suffix}` })
-    .returning("id")
-    .executeTakeFirstOrThrow();
+  const userRow = { id: await createAccount(meta, { email, password_hash, display_name: `pool ${suffix}` }, { via: "pool" }) };
   const { orgId, slug } = await provisionOrgForUser(userRow.id, `pool ${suffix}`);
   // Signup RETURNS SUCCESSFULLY even when tenant provisioning failed — the org
   // row is deliberately kept so an operator can re-provision (see the 503 in

@@ -22,6 +22,16 @@
 // no route to the API it says INCONCLUSIVE and passes (a laptop off the
 // tailnet must still push; CI carries the token and is the gate). No opt-out.
 //
+// AND THERE IS A CEILING, checked before the API and everywhere. A held-out
+// case is asked LIVE on every bench run, never answered from the cache
+// (lib/cache-evict.ts `served`: it is held out to be watched, and a
+// remembered pass is not a watch). So every marker costs one ask per run,
+// forever, and one slot of the merge run's `--max-new 40` (bench-ci.sh)
+// before the run starts. At thirty markers a re-key that needs fifteen
+// fresh asks pushes the budget and DEFERS the whole run, and the cause is a
+// marker somebody added three weeks earlier. Past KNOWN_RED_CEILING the
+// lever is the issue, not another marker.
+//
 // PROVEN RED 2026-09-17 against a marker on a closed issue (#3154, closed by
 // #3169 the same evening) before the marker was removed.
 //
@@ -35,6 +45,14 @@ const markers = CHAT_CORPUS.filter((c) => c.known_red).map((c) => ({ say: c.say,
 if (!markers.length) {
   console.log("lint:corpus-known-red-live OK: no known_red marker in the corpus");
   process.exit(0);
+}
+/** How many cases may be held out at once: each is a live ask on every run
+ *  and a slot of the merge budget (40), spoken for before the run starts. */
+const KNOWN_RED_CEILING = 10;
+if (markers.length > KNOWN_RED_CEILING) {
+  console.error(`lint:corpus-known-red-live - ${markers.length} known_red marker(s), more than ${KNOWN_RED_CEILING}. A held-out case is asked live on every bench run (never from the cache) and takes a slot of the merge run's --max-new 40 before it starts; past ${KNOWN_RED_CEILING} the markers themselves defer merge runs. Fix an issue and clear its markers rather than adding one:`);
+  for (const m of markers) console.error(`    "${m.say}": ${m.issue}`);
+  process.exit(1);
 }
 const bad = markers.filter((m) => !/^#\d+( #\d+)*( \(.+\))?$/.test(m.issue));
 if (bad.length) {

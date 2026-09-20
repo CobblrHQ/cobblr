@@ -6,6 +6,7 @@ import { markSandboxEnded } from "./sandbox-session";
 import { isMutating, raiseBlockedAction, refusedRequestFor } from "./blocked-action";
 import type { ApprovalRemedy, BlockedAction } from "@cobblr/platform-contract/blocked-action";
 import type { CommunityLinkId } from "@cobblr/platform-contract/community-links";
+import type { TrialLengthDays } from "@cobblr/platform-contract/trial-length";
 import type { AiFallback } from "@cobblr/platform-contract/scan-fallback";
 import type { ScanToolHints } from "@cobblr/platform-contract/scan-tools";
 import type { TitleFormat } from "@cobblr/platform-contract/display-identity";
@@ -180,7 +181,9 @@ async function request<T>(
       err?.message ?? (typeof body.message === "string" && body.message.trim() ? body.message : null);
     // The server saying the sandbox's hour is up ends it for the whole app,
     // whichever request heard it first; the workspace shell becomes the ending.
-    if (res.status === 410 && err?.code === "sandbox_expired") markSandboxEnded();
+    if (res.status === 410 && err?.code === "sandbox_expired") markSandboxEnded("sandbox");
+    // A kept trial past the length the person chose: the other ending.
+    if (res.status === 410 && err?.code === "trial_expired") markSandboxEnded("trial");
     throw new ApiError(res.status, err?.code ?? "unknown", reason ?? `HTTP ${res.status}`, err?.details, err?.blocked);
   }
   return parsed as T;
@@ -1343,6 +1346,16 @@ export const api = {
     request<{ verification: ConnectionVerification }>("POST", `/me/connections/${id}/test`, {}),
   deleteConnection: (id: string) =>
     request<void>("DELETE", `/me/connections/${id}`),
+  /** A consent-screen provider: the URL to send the browser to. `start` is
+   *  the provider's own route from the catalogue (`connect.start`). */
+  startOAuthConnect: (start: string, org_id: string) =>
+    request<{ url: string; redirect_uri: string }>("POST", start, { org_id }),
+  listMailSources: () => request<{ configured: boolean; items: MailSourceView[] }>("GET", "/me/mail-sources"),
+  /** Check now: read the mailbox this moment rather than at the next round. */
+  syncMailSource: (id: string) =>
+    request<{ ran: boolean; reason?: string; error?: string; result?: { delivered: number; listed: number; fetched: number } }>("POST", `/me/mail-sources/${id}/sync`, {}),
+  /** The mailboxes feeding a workspace, for its Integrations page. */
+  workspaceMailSources: (slug: string) => request<{ items: WorkspaceMailSource[] }>("GET", `/orgs/${slug}/mail-sources`),
   /** The order of MY connections in a workspace, first to last. Only meaningful
    *  when more than one of mine is routed there; without it the newest edit
    *  quietly wins. `capability` narrows the order to one kind of work. */
@@ -3465,7 +3478,15 @@ export const api = {
   /** The two ways to carry on, from the server so the modal and the email can
    *  never disagree about where they point. */
   sandboxPaths: () =>
-    request<{ cloud_url: string; selfhost_url: string; export_days: number }>("GET", "/try/paths"),
+    request<{
+      cloud_url: string | null;
+      selfhost_url: string | null;
+      export_days: number;
+      /** How long a sandbox past its hour is held so it can still be kept. */
+      decision_hours: number;
+      /** Whether a real account can carry what was built here (the ledger replay). */
+      carry_available: boolean;
+    }>("GET", "/try/paths"),
   /** "Email me my work": builds the workspace backup, keeps it for a short
    *  window and emails a link. `emailed` false still means the file exists -
    *  the link comes back either way. */
@@ -3479,8 +3500,9 @@ export const api = {
   /** Clear a sandbox's records, keeping its modules, fields and views. */
   emptySandbox: () => request<{ deleted: number; failed: number }>("POST", "/try/empty", {}),
 
-  keepSandbox: (email: string) =>
-    request<{ ok: boolean; kind: "trial"; expires_at: string; emailed: boolean }>("POST", "/try/keep", { email }),
+  /** `days` is one of the contract's lengths (a week, two weeks, a month). */
+  keepSandbox: (email: string, days: TrialLengthDays) =>
+    request<{ ok: boolean; kind: "trial"; expires_at: string; emailed: boolean; days: number }>("POST", "/try/keep", { email, days }),
 
   /** What kind of workspace this is, for the strip at the foot of the page.
    *  `link_open` is true while a kept sandbox's owner has no real door yet
@@ -3989,7 +4011,7 @@ export const api = {
   /** The dashboard "what needs me" feed (attention.ts) — derived from field
    *  semantics: low stock, overdue/upcoming dates, pending captures. */
   getAttention: (slug: string, today?: string) =>
-    request<{ items: Array<{ kind: "low_stock" | "overdue" | "due_today" | "upcoming" | "pending_scans" | "photo_wanted"; label: string; count: number; sample: string[]; route: string; entries?: Array<{ id: string; title: string; action?: Record<string, string> }> }> }>(
+    request<{ items: Array<{ kind: "low_stock" | "overdue" | "due_today" | "upcoming" | "pending_scans" | "photo_wanted" | "unreadable_date"; label: string; count: number; sample: string[]; route: string; entries?: Array<{ id: string; title: string; action?: Record<string, string> }> }> }>(
       "GET",
       // The client's calendar day, so "overdue" and "due today" are read the
       // way the schedule beside the feed reads them, not by the server clock.
@@ -5103,6 +5125,42 @@ export interface AiProviderDef {
     steps: Array<{ text: string; href?: string }>;
     caveat?: string;
   };
+  /** A provider connected through a consent screen rather than a form: the
+   *  page renders a Connect button that posts `{ org_id }` to `start`. */
+  connect?: { kind: "oauth"; start: string };
+}
+
+/** One of my connected mailboxes (a `mail-source` connection) with the state
+ *  the sync leaves beside it. Never the grant. */
+export interface MailSourceView {
+  id: string;
+  provider_id: string;
+  label: string;
+  email: string | null;
+  extra_senders: string[];
+  org_ids: string[];
+  share_status: Record<string, "pending" | "approved" | "active">;
+  state: {
+    cursor_at: string | null;
+    last_synced_at: string | null;
+    last_error: string | null;
+    status: "ok" | "needs_reconnect" | "failing";
+    messages_seen: number;
+    stopped_notified_at: string | null;
+  };
+}
+
+/** A mailbox feeding a workspace, as the workspace sees it: whose, how fresh. */
+export interface WorkspaceMailSource {
+  id: string;
+  provider_id: string;
+  owner_user_id: string;
+  owner_name: string | null;
+  approved: boolean;
+  mine: boolean;
+  status: "ok" | "needs_reconnect" | "failing";
+  last_synced_at: string | null;
+  messages_seen: number;
 }
 
 /** How the personal-connections page introduces each kind. An unlisted kind
@@ -5115,6 +5173,10 @@ export const CONNECTION_KIND_LABELS: Record<string, { title: string; blurb: stri
   "parcel-tracking": {
     title: "Parcel tracking",
     blurb: "Follow your own deliveries with your own tracking account.",
+  },
+  "mail-source": {
+    title: "Mail",
+    blurb: "A mailbox Cobblr reads for store and carrier mail, so orders and parcels track themselves.",
   },
 };
 
@@ -6457,8 +6519,9 @@ export interface AiChatResponse {
   mentions?: Array<{ kind: string; id: string; label: string }>;
   /** A write aimed at one of several look-alikes the person's words did not
    *  pick between (two CubePros, one label): the candidates, each with the
-   *  sentence that re-asks with that record named. A tap sends it. */
-  choices?: Array<{ label: string; say: string }>;
+   *  sentence that re-asks with that record named. A tap sends it. `note` is
+   *  what the turn read about that one ("in Garage"), never a guess. */
+  choices?: Array<{ label: string; say: string; note?: string }>;
 }
 
 export type AiChatProposal =
@@ -6936,11 +6999,11 @@ export interface NotificationEntry {
   link_url: string | null;
   /** The substance behind the one-liner, when there is any — the same card a
    *  Discord DM renders as an embed. Absent for most notifications. */
-  card?: { heading?: string; body?: string; context?: string } | null;
+  card?: { heading?: string; body?: string; context?: string; rows?: Array<{ text: string; actions?: string[] }> } | null;
   /** Pressable things this notification offers — "Mark done", "Accept", "Move
    *  it". Declared at dispatch; what a press DOES is a platform action, so the
    *  bell needs no per-notification code to render one. */
-  actions?: Array<{ id: string; label: string; style?: "primary" | "secondary" | "danger" }> | null;
+  actions?: Array<{ id: string; label: string; short?: string; style?: "primary" | "secondary" | "danger" }> | null;
   read_at: string | null;
   created_at: string;
 }

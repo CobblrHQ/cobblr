@@ -512,6 +512,87 @@ for (const file of [...TOURS, LIB]) {
   });
 }
 
+// ── a tour never reaches a control by its tag or its styling ──
+//
+// `panel.locator("select")` and `xpath=ancestor::div[contains(@class,'fixed')]`
+// name nothing the product promises. Both went stale the same week and both
+// were silent about it (#3181):
+//   - the design page's two pickers were <select>s when act 7 was written
+//     and became a search box on 2026-09-17 (#3129); selectOption on a tag
+//     that is no longer there never becomes actionable, so it burned its
+//     whole timeout and the API fallback's poll on top, sixteen seconds of
+//     one frozen panel, twice, on every nightly for three nights;
+//   - the location picker's panel lost its `fixed` class on 2026-09-14 when
+//     position:fixed moved into one primitive (fc-popover); the lego tour's
+//     "fixed ancestor of the search box" then matched nothing, the pick and
+//     the Create behind its click-catcher both timed out, and no nightly
+//     records that tour, so it stayed that way until someone dispatched it.
+// Reach a control by a hook the product declares (a data-testid, a label, a
+// placeholder), which lint:driver-hooks-live then holds to the source at PR
+// time; a tag or a class is the exact thing a product change swaps out, and
+// nothing can hold either.
+//
+// Refused: a bare tag (`locator("select")`), a tag with a class
+// (`locator("div.rounded-xl")`), and a class test in an xpath. Not refused:
+// `"input, select, textarea"` followed by reading the tag back (the adaptive
+// shape), an attribute selector on a real attribute (`input[type="file"]`),
+// and the kit's own DOM (`#__kiosk_phone`).
+const BY_STRUCTURE: Array<[RegExp, string]> = [
+  [/\.locator\(\s*["'`]select["'`]\s*\)/, "a dropdown by its bare tag: the product swaps a <select> for a search box"],
+  [/\.locator\(\s*["'`](?:div|span|section|article|li|ul|form)\.[a-z]/, "an element by its tag and a styling class: a refactor renames the class"],
+  [/contains\(@class/, "an ancestor by a styling class: the class moved into a primitive and the xpath matched nothing"],
+];
+for (const file of TOURS) {
+  let src: string;
+  try {
+    src = read(file);
+  } catch {
+    continue;
+  }
+  src.split("\n").forEach((line, i) => {
+    const code = line.trim();
+    if (code.startsWith("//") || code.startsWith("*") || code.startsWith("/*")) return;
+    for (const [re, what] of BY_STRUCTURE) {
+      if (!re.test(code)) continue;
+      failures.push(
+        `${file}:${i + 1}: reaches ${what}, and nothing holds that to the product.\n` +
+          `    → reach it by a data-testid, a label or a placeholder (lint:driver-hooks-live then checks it exists).\n    ${code.slice(0, 110)}`,
+      );
+    }
+  });
+}
+
+// ── a pre-warm runs BEFORE the camera exists ──
+//
+// A tour burns a cold start on a throwaway signup so the on-camera one is
+// quick. The video is captured from the page launchTour opens, so a pre-warm
+// awaited AFTER launchTour is on camera whatever the comment beside it says:
+// the yarn funnel's took 29 seconds on the CI runner and the first nightly to
+// record that tour opened on 29 seconds of white; the lego tour's put 8.5s of
+// white at its head, and hiding it behind the first caption only holds while
+// the warm signup is quicker than the typing (#3181). A throwaway signup is
+// spelled `warm-${Date.now()}` in every tour, so the check is exact: every
+// such line sits above the tour's launchTour call.
+for (const file of TOURS) {
+  let src: string;
+  try {
+    src = read(file);
+  } catch {
+    continue;
+  }
+  const lines = src.split("\n");
+  const launchAt = lines.findIndex((l) => /\blaunchTour\(/.test(l) && !l.trim().startsWith("//"));
+  if (launchAt < 0) continue;
+  lines.forEach((line, i) => {
+    if (!/warm-\$\{/.test(line) || line.trim().startsWith("//")) return;
+    if (i < launchAt) return;
+    failures.push(
+      `${file}:${i + 1}: a throwaway pre-warm signup after launchTour (line ${launchAt + 1}) is ON CAMERA - the recording starts when the page exists.\n` +
+        `    → move it above launchTour; a cold start is the rig's, not the product's, and belongs before the camera.\n    ${line.trim().slice(0, 110)}`,
+    );
+  });
+}
+
 // ── controls that are no longer <select>s ──
 //
 // selectOption() on anything but a <select> never becomes actionable, so it does

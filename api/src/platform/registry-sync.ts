@@ -3,13 +3,15 @@
 // upserts any changes and removes entries for modules that went
 // away. Safe because the tables are platform metadata, not user
 // data.
+//
+// BORN WITH: nothing (process-wide: it syncs the module registry rows from the loaded manifests; a workspace holds none of it)
 
 import { sql } from "kysely";
 import { meta } from "../db/meta.js";
 import { listEntries } from "../modules/registry.js";
 import { clearExposableFieldsCache } from "./entities.js";
 import { PLATFORM_ACTIONS, PLATFORM_ACTION_OWNER } from "./platform-actions.js";
-import { compileTemplate } from "@cobblr/platform-contract";
+import { compileTemplate, PLATFORM_COMMANDS, PLATFORM_COMMANDS_VERSION, type ModuleCommandDecl } from "@cobblr/platform-contract";
 
 export async function syncManifestRegistries(): Promise<{
   kinds: number;
@@ -175,17 +177,23 @@ export async function syncManifestRegistries(): Promise<{
     repeat_shape: string | null;
     version: string;
   }> = [];
-  for (const entry of listEntries()) {
-    const m = entry.manifest;
-    for (const c of m.exposes?.commands ?? []) {
+  // The kernel's own commands ride the same array (platform-commands.ts),
+  // under the same owner as its actions, so the orphan-cleanup below keeps
+  // them the way it keeps the actions.
+  const declared: Array<{ owner: string; version: string; commands: ModuleCommandDecl[] }> = [
+    ...listEntries().map((entry) => ({ owner: entry.manifest.name, version: entry.manifest.version, commands: entry.manifest.exposes?.commands ?? [] })),
+    { owner: PLATFORM_ACTION_OWNER, version: PLATFORM_COMMANDS_VERSION, commands: PLATFORM_COMMANDS },
+  ];
+  for (const { owner, version, commands } of declared) {
+    for (const c of commands) {
       const compiled = compileTemplate(c.template);
       if (!compiled) {
-        console.warn(`[registry-sync] ${m.name}: command ${c.id} has a template with no {blanks} or a repeated one — skipped`);
+        console.warn(`[registry-sync] ${owner}: command ${c.id} has a template with no {blanks} or a repeated one — skipped`);
         continue;
       }
       commandRows.push({
         id: c.id,
-        module_name: m.name,
+        module_name: owner,
         template: c.template,
         description: c.description ?? null,
         pattern: compiled.pattern,
@@ -198,7 +206,7 @@ export async function syncManifestRegistries(): Promise<{
         })),
         repeat_field: c.repeatField ?? null,
         repeat_shape: c.repeatShape ?? null,
-        version: m.version,
+        version,
       });
     }
   }

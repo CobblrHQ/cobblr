@@ -5,8 +5,10 @@
 // you instead of being re-added per workspace. Secrets are write-only — the
 // list shows which keys are set, never the values.
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
+import { useSearchParams } from "react-router-dom";
 import { incumbentConnection } from "../lib/incumbent-connection";
+import { MailSourceRow, OAuthConnectPanel } from "../components/MailSourceCard";
 import { CredentialFields } from "../components/CredentialFields";
 import { ProviderSetupSteps } from "../components/ProviderSetupSteps";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
@@ -51,6 +53,25 @@ export function ConnectionsPage({ startAdding = false }: { startAdding?: boolean
   const me = useQuery({ queryKey: ["me"], queryFn: api.me });
   const [adding, setAdding] = useState(startAdding);
   const [editing, setEditing] = useState<UserConnection | null>(null);
+  // Google sends the browser back here with one word in the query; say it
+  // once and take it out of the address bar so a reload does not say it again.
+  const [params, setParams] = useSearchParams();
+  useEffect(() => {
+    const word = params.get("gmail");
+    if (!word) return;
+    const said: Record<string, () => void> = {
+      connected: () => toast.success("Gmail connected. Reading store mail from the last 7 days, then as it arrives."),
+      reconnected: () => toast.success("Gmail reconnected."),
+      denied: () => toast.error("Gmail was not connected: access was declined on Google's screen."),
+      error: () => toast.error("Gmail could not be connected. Try again; if it keeps failing, the server's Google client may be misconfigured."),
+    };
+    (said[word] ?? said.error)!();
+    const next = new URLSearchParams(params);
+    next.delete("gmail");
+    setParams(next, { replace: true });
+    // toast is stable; params is the trigger.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [params]);
 
   const orgs = me.data?.orgs ?? [];
   const providers = catalogue.data?.items ?? [];
@@ -143,6 +164,7 @@ export function ConnectionsPage({ startAdding = false }: { startAdding?: boolean
                 </div>
               )}
               {isEdgeBridgeConnection(c) && <EdgeBridgeStatusRow />}
+              {c.kind === "mail-source" && <MailSourceRow connection={c} orgName={orgName} />}
             </div>
             <div className="flex items-center shrink-0">
               <button
@@ -397,6 +419,13 @@ function ConnectionForm({
     },
   });
 
+  // A consent-screen provider has no form to fill: the panel picks the
+  // workspace and sends the browser to the provider. Editing one afterwards
+  // is the ordinary form, minus the grant (write-only, never re-typed) and
+  // the address (read from the grant, not editable).
+  const oauth = provider?.connect?.kind === "oauth" ? provider.connect : null;
+  const editableFields = oauth ? credFields.filter(([k, d]) => !d.secret && k !== "email") : credFields;
+
   return (
     <section className="rounded-xl border border-cobble-300 dark:border-cobble-700 bg-cobble-50/40 dark:bg-cobble-900/15 p-5 space-y-3">
       <div className="flex items-center gap-2">
@@ -440,6 +469,10 @@ function ConnectionForm({
         {provider?.blurb && <div className="text-[11px] text-faint mt-1">{provider.blurb}</div>}
       </label>
 
+      {oauth && !isEdit ? (
+        <OAuthConnectPanel provider={provider!} start={oauth.start} orgs={orgs} onCancel={onCancel} />
+      ) : (
+      <>
       <label className="block">
         <div className="text-xs text-muted mb-1">Label (optional)</div>
         <input
@@ -454,7 +487,7 @@ function ConnectionForm({
       {provider?.setup && <ProviderSetupSteps setup={provider.setup} />}
 
       <CredentialFields
-        fields={provider?.credentials ?? {}}
+        fields={Object.fromEntries(editableFields)}
         creds={creds}
         onChange={(k, v) => setCreds((m) => ({ ...m, [k]: v }))}
         scope={{ kind: "personal" }}
@@ -471,6 +504,11 @@ function ConnectionForm({
       {credFields.length === 0 && (
         <div className="text-[11px] text-faint italic">
           This provider needs no credentials - it routes to a device you connect (e.g. the edge bridge).
+        </div>
+      )}
+      {oauth && (
+        <div className="text-[11px] text-faint">
+          The mailbox address and the grant are read from Google and are not edited here. Disconnect and connect again to change the mailbox.
         </div>
       )}
 
@@ -538,17 +576,26 @@ function ConnectionForm({
                   )}
                 </div>
                 <div className="flex shrink-0 rounded-md border border-line dark:border-slate-600 overflow-hidden text-[11px] font-medium">
-                  {([
-                    [null, "Off"],
-                    ["my-calls", "Just me"],
-                    ["workspace-default", "Share"],
-                  ] as Array<[ConnRouteMode | null, string]>).map(([val, lbl]) => {
+                  {(oauth
+                    ? ([
+                        [null, "Off"],
+                        ["workspace-default", "Feeds this workspace"],
+                      ] as Array<[ConnRouteMode | null, string]>)
+                    : ([
+                        [null, "Off"],
+                        ["my-calls", "Just me"],
+                        ["workspace-default", "Share"],
+                      ] as Array<[ConnRouteMode | null, string]>)).map(([val, lbl]) => {
                     const activeSeg = (val ?? "off") === (cur ?? "off");
                     return (
                       <button
                         key={lbl}
                         type="button"
-                        onClick={() => set(val)}
+                        onClick={() => {
+                          // A mailbox feeds exactly one workspace: a parcel lands once.
+                          if (oauth && val) setPerWs({ [o.id]: val });
+                          else set(val);
+                        }}
                         className={
                           "px-2.5 py-1 transition " +
                           (activeSeg
@@ -567,10 +614,16 @@ function ConnectionForm({
             </div>
           ))}
         </div>
-        <p className="text-[11px] text-faint mt-1">
-          <span className="font-medium">Just me</span> = only your own work here uses it.{" "}
-          <span className="font-medium">Share</span> = offer it to everyone in the workspace (the owner approves).
-        </p>
+        {oauth ? (
+          <p className="text-[11px] text-faint mt-1">
+            A mailbox feeds one workspace, so each order lands once. The workspace owner approves a mailbox that is not their own.
+          </p>
+        ) : (
+          <p className="text-[11px] text-faint mt-1">
+            <span className="font-medium">Just me</span> = only your own work here uses it.{" "}
+            <span className="font-medium">Share</span> = offer it to everyone in the workspace (the owner approves).
+          </p>
+        )}
       </div>
 
       <div className="flex justify-end gap-2 pt-1">
@@ -586,6 +639,8 @@ function ConnectionForm({
           {save.isPending ? "Saving…" : isEdit ? "Save changes" : "Save connection"}
         </button>
       </div>
+      </>
+      )}
     </section>
   );
 }

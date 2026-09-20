@@ -4,6 +4,8 @@
 // of another's instance kind, on prod + staging + dev consistently; then delete
 // this file and its boot call.
 //
+// BORN WITH: nothing (duplicate wires three bundles once declared at two scopes; the bundles are fixed)
+//
 // Three bundles (Groceries, Spice Rack, Tea) declared their wires at the top
 // level on inventory:part AND inside their instance on `<instance>:item`. Both
 // rows were installed, both fire for one event, and checking milk off the

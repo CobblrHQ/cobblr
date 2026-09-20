@@ -61,6 +61,10 @@ let ended = false;
 // page ending itself first.
 let holds = 0;
 let noted = false;
+/** Which ending: the sandbox's hour (frozen, keepable for the decision
+ *  window) or a kept trial's chosen length running out (#3254). */
+export type EndingKind = "sandbox" | "trial";
+let endedKind: EndingKind = "sandbox";
 
 /** Over already? Reads the hint's clock too, so the very first render of a
  *  tab reopened after the hour is the ending, and the shell it would have
@@ -69,19 +73,23 @@ let noted = false;
 export function sandboxEnded(): boolean {
   if (!ended && holds === 0) {
     const e = sandboxExpiry();
-    if (e != null && e <= Date.now()) ended = true;
+    if (e != null && e <= Date.now()) {
+      ended = true;
+      endedKind = "sandbox"; // the hint is the sandbox's own clock
+    }
   }
   return ended;
 }
 
 /** Mark the sandbox over. Idempotent; the first call announces it. Held
  *  back while a keep or a take is in flight, and applied when it settles. */
-export function markSandboxEnded(): void {
+export function markSandboxEnded(kind: EndingKind = "sandbox"): void {
   if (holds > 0) {
     noted = true;
     return;
   }
   ended = true;
+  endedKind = kind;
   try {
     window.dispatchEvent(new Event(ENDED_EVT));
   } catch {
@@ -111,6 +119,25 @@ export async function holdSandboxEnd<T>(work: Promise<T>, opts: { keeps?: boolea
   }
 }
 
+/** The ending that applies, once one does. */
+export function sandboxEndedKind(): EndingKind | false {
+  return sandboxEnded() ? endedKind : false;
+}
+
+/** The person kept it from the ending page: the latch opens, the hint goes,
+ *  and the workspace is a trial the shell can draw again. */
+export function sandboxKeptAtTheEnd(): void {
+  ended = false;
+  noted = false;
+  endedKind = "sandbox";
+  clearSandboxExpiry();
+  try {
+    window.dispatchEvent(new Event(ENDED_EVT));
+  } catch {
+    /* no window (tests) */
+  }
+}
+
 export function onSandboxEnded(fn: () => void): () => void {
   window.addEventListener(ENDED_EVT, fn);
   return () => window.removeEventListener(ENDED_EVT, fn);
@@ -119,8 +146,8 @@ export function onSandboxEnded(fn: () => void): () => void {
 /** True once the sandbox is over, by any of the three tellers. Watches the
  *  hint's clock itself, so a shell that never mounted the strip (a workspace
  *  the reaper already removed answers 404 to everything) still ends. */
-export function useSandboxEnded(): boolean {
-  const over = useSyncExternalStore(onSandboxEnded, sandboxEnded, sandboxEnded);
+export function useSandboxEnded(): EndingKind | false {
+  const over = useSyncExternalStore(onSandboxEnded, sandboxEndedKind, sandboxEndedKind);
   useEffect(() => {
     if (over) return;
     const t = setInterval(() => {
@@ -134,6 +161,7 @@ export function useSandboxEnded(): boolean {
 /** Tests only. */
 export function resetSandboxEnded(): void {
   ended = false;
+  endedKind = "sandbox";
   holds = 0;
   noted = false;
 }

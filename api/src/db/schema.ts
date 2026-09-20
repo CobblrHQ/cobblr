@@ -537,6 +537,10 @@ export interface NotificationAction {
   /** Stable within one notification. This is what a client sends back. */
   id: string;
   label: string;
+  /** The label when the button sits BESIDE the line it is about (a card
+   *  row), where repeating the item's name would say it twice: "Used up"
+   *  rather than "Used up · Baby Carrots". Falls back to `label`. */
+  short?: string;
   /** A registered action id, e.g. "purchases:mark-arrived". */
   action: string;
   args?: Record<string, unknown>;
@@ -1233,6 +1237,7 @@ export interface MetaDB {
   workspace_role_assignments: WorkspaceRoleAssignmentsTable;
   installed_modules: InstalledModulesTable;
   inbound_emails: InboundEmailsTable;
+  mail_source_state: MailSourceStateTable;
 }
 
 /** Durable archive of every inbound email, written BEFORE processing so a
@@ -1254,6 +1259,23 @@ export interface InboundEmailsTable {
   outcome: ColumnType<Record<string, unknown> | null, Record<string, unknown> | null | undefined, Record<string, unknown> | null | undefined>;
   processed_at: ColumnType<Date | null, Date | null | undefined, Date | null | undefined>;
   attempts: Generated<number>;
+  /** Which mailbox door read it ('gmail'), null for the forwarding door. */
+  source: ColumnType<string | null, string | null | undefined, string | null | undefined>;
+  /** The message's id at that source, so it is read once and replayable. */
+  source_ref: ColumnType<string | null, string | null | undefined, string | null | undefined>;
+}
+
+/** Sync state of a connected mailbox (a `mail-source` personal connection). */
+export interface MailSourceStateTable {
+  credential_id: string;
+  cursor_at: ColumnType<Date | null, Date | null | undefined, Date | null | undefined>;
+  last_synced_at: ColumnType<Date | null, Date | null | undefined, Date | null | undefined>;
+  last_error: ColumnType<string | null, string | null | undefined, string | null | undefined>;
+  status: Generated<"ok" | "needs_reconnect" | "failing">;
+  messages_seen: Generated<number>;
+  stopped_notified_at: ColumnType<Date | null, Date | null | undefined, Date | null | undefined>;
+  created_at: Generated<Date>;
+  updated_at: Generated<Date>;
 }
 
 /** Marketplace v2 — registry of code that can run on this host.

@@ -25,6 +25,8 @@ import {
   type EmbeddedPhoto,
 } from "../services/export.js";
 import { signExportToken } from "../services/export-token.js";
+import { rowPictures } from "@cobblr/platform-contract/scan-pictures";
+import { withGroupImages } from "../services/group-image.js";
 
 export const exportRouter = Router({ mergeParams: true });
 
@@ -85,7 +87,10 @@ async function loadRows(
     if (statusQ !== "all") q = q.where("status", "=", statusQ as never);
     if (batchId) q = q.where("scan_batch_id", "=", batchId);
   }
-  const rows = (await q.orderBy("created_at", "asc").execute()) as unknown as ScanRowForExport[];
+  // Served the way the inbox serves them: a split child carries its group
+  // shot (the parent's photo), which the parent, usually no longer pending,
+  // would otherwise never bring along (#3127).
+  const rows = (await withGroupImages(db, (await q.orderBy("created_at", "asc").execute()) as unknown as ScanRowForExport[])) as ScanRowForExport[];
   const batches = await loadBatches(db, rows);
   return { rows, batches, status: sel.ids?.length ? "selection" : statusQ, batchId };
 }
@@ -125,10 +130,19 @@ async function embedResolver(
   rows: ScanRowForExport[],
   batches: BatchRowForExport[] = [],
 ): Promise<PhotoResolver> {
+  // Every picture the row shows, as the one resolver lists them: its own
+  // photo, the group shot, the screenshot crop, the gallery, the catalog file.
   const fileIds = new Set<string>();
   for (const r of rows) {
-    if (r.image_file_id) fileIds.add(r.image_file_id);
-    if (r.catalog_image_file_id) fileIds.add(r.catalog_image_file_id);
+    for (const p of rowPictures({
+      image_file_id: r.image_file_id,
+      catalog_image_file_id: r.catalog_image_file_id,
+      catalog_image_url: r.catalog_image_url,
+      group_image_file_id: r.group_image_file_id ?? null,
+      suggested_metadata: r.suggested_metadata,
+    })) {
+      if (p.fileId) fileIds.add(p.fileId);
+    }
   }
   // A receipt session's original document rides along too - it is the evidence
   // behind every line the parser produced, and the inbox's "Original" button.

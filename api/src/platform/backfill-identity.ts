@@ -3,6 +3,8 @@
 // new local users keep appearing during the transition (local signup still works) and
 // each needs linking. No-op unless IDENTITY_URL is set.
 //
+// BORN WITH: nothing (per-user, not per-workspace, and the one known hole of this shape: a local signup while IDENTITY_URL is set stays unlinked until the next boot links it, by the transition's own design; see #3252)
+//
 // Meta-only (no tenant pools opened), idempotent (only unlinked users), and resilient
 // (a failed batch or a single link never aborts the rest). It PUSHES each user's existing
 // (bcrypt) password_hash so the migrated account can log in centrally unchanged; the

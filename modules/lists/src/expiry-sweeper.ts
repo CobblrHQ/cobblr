@@ -45,7 +45,7 @@ interface ExpiringRow {
 
 /** One workspace, the pool already open: the pass's visit. `org` and `raw`
  *  keep their names so the body reads as it did when it was the loop's. */
-async function visitWorkspace(orgId: string, raw: unknown): Promise<{ scanned: number; alerted: number } | void> {
+async function visitWorkspace(orgId: string, raw: unknown): Promise<{ scanned: number; alerted: number; unreadable: number } | void> {
   const org = { id: orgId };
   let scanned = 0;
   let alerted = 0;
@@ -63,6 +63,16 @@ async function visitWorkspace(orgId: string, raw: unknown): Promise<{ scanned: n
       "1970-01-01", // no lower bound — include already-expired leftovers
       toISO,
     );
+    // A dated row whose value names no day is not a candidate and never
+    // blanks the others; it is counted here and named on the dashboard's
+    // attention list, so "nothing due" and "something could not be read"
+    // are two different answers. One such value once read as the first for
+    // a whole workspace, twelve days running (#3279).
+    const unreadable = await platform().calendar.unreadableDateField(org.id, "inventory:part", "expires_on");
+    if (unreadable.length > 0) {
+      const eg = unreadable[0]!;
+      console.warn(`[lists] expiry sweep: ${unreadable.length} expiry date(s) in workspace ${org.id} cannot be read (e.g. "${eg.name}": "${eg.value}"); they are on the attention list`);
+    }
 
     // Drop any we've already alerted at THIS expires_on (our own ledger); a
     // re-dated leftover (different expires_on) re-alerts. Was a SQL left join to
@@ -108,7 +118,7 @@ async function visitWorkspace(orgId: string, raw: unknown): Promise<{ scanned: n
         })
         .map((c) => ({ id: c.id, name: c.name, expires_on: c.value }));
     }
-    if (due.length === 0 && dueToday.length === 0) return;
+    if (due.length === 0 && dueToday.length === 0) return { scanned, alerted, unreadable: unreadable.length };
     // The people this KIND is for in this workspace (everyone by default;
     // the owners, or a chosen few, once somebody says so under Configuration).
     const memberIds = await platform().notifications.audienceFor(org.id, "lists.expiring");
@@ -140,7 +150,7 @@ async function visitWorkspace(orgId: string, raw: unknown): Promise<{ scanned: n
     }
 
     scanned += due.length;
-    if (due.length === 0) return;
+    if (due.length === 0) return { scanned, alerted, unreadable: unreadable.length };
 
     for (const row of due) {
       const daysUntil = Math.ceil((new Date(row.expires_on).getTime() - Date.now()) / 86_400_000);
@@ -255,5 +265,5 @@ async function visitWorkspace(orgId: string, raw: unknown): Promise<{ scanned: n
         }
       }
     }
-  return { scanned, alerted };
+  return { scanned, alerted, unreadable: unreadable.length };
 }

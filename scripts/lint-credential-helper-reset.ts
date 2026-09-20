@@ -22,9 +22,23 @@ import { readFileSync } from "node:fs";
 import { execFileSync } from "node:child_process";
 
 const ROOT = execFileSync("git", ["rev-parse", "--show-toplevel"], { encoding: "utf8" }).trim();
-const files = execFileSync("git", ["-C", ROOT, "ls-files"], { encoding: "utf8" })
-  .split("\n")
-  .filter((f) => /\.(mjs|cjs|js|ts|sh|bash|yml|yaml)$/.test(f));
+// Only the files that mention the helper at all, found by git in one call.
+// The first version read every code file in the tree (3,200 of them) to
+// find the six that say `credential.helper=`: 0.6s on a warm cache and 13s
+// on a CI box with a cold cache and a busy disk, over its budget at 1.45x
+// load (run 23862, 2026-09-20), a red main for a lint whose answer had not
+// changed since August. A lint that walks the tree pays in I/O, and I/O is
+// the one cost the budget's re-measure cannot subtract.
+const files = (() => {
+  try {
+    return execFileSync("git", ["-C", ROOT, "grep", "-l", "-e", "credential\\.helper=", "--", "*.mjs", "*.cjs", "*.js", "*.ts", "*.sh", "*.bash", "*.yml", "*.yaml"], { encoding: "utf8" })
+      .split("\n").filter(Boolean);
+  } catch (e) {
+    // git grep exits 1 when nothing matches: no file mentions the helper.
+    if ((e as { status?: number }).status === 1) return [];
+    throw e;
+  }
+})();
 
 /**
  * An EMPTY helper: `credential.helper=` with nothing after it but a closing quote

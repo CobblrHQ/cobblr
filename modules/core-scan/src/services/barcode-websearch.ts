@@ -117,6 +117,46 @@ export function cleanTitle(raw: string, upc: string): string {
   return t.replace(/\s+/g, " ").trim();
 }
 
+/**
+ * A listing's title as a product's, for the text a card OFFERS as a tap (a
+ * web guess held for want of a second source, #2918): a storefront's name
+ * off the end on a plain hyphen, the way a search engine writes a listing
+ * ("… Cable (6ft) with ... - eBay"), by name or as a domain, never an
+ * arbitrary last segment, which is how "iPhone 13 - 128GB - Midnight"
+ * would lose its colour; then the engine's own mid-title cut and whatever
+ * it left dangling: a connective ("with", "for"), a bracket it opened and
+ * never closed ("Fisherman (3Pk"), a trailing dash or comma.
+ *
+ * Deliberately NOT part of cleanTitle, which feeds the consensus count
+ * (pickHeuristicNameWithSupport): tidying the titles there would let two
+ * shops' copies of one manufacturer's string agree and NAME the thing
+ * outright, and one source never names a thing, it may ask. This runs on
+ * the one title already chosen, after the count, so the naming threshold
+ * is exactly what it was.
+ */
+export function productTitle(raw: string): string {
+  let t = raw.replace(/\s+/g, " ").trim();
+  t = t
+    .replace(TRAILING_STOREFRONT, "")
+    .replace(/\s+-\s+[\w'&. -]{1,30}\.(?:com|net|org|ca|de|co\.uk|uk|au)\s*$/i, "")
+    .trim();
+  if (/(?:\.{2,}|…)\s*$/.test(t)) {
+    t = t.replace(/\s*(?:\.{2,}|…)\s*$/, "").trim();
+    t = t.replace(/\s+(?:with|for|and|or|of|in|to|by|the|an?|from|at|on|&|,|-)\s*$/i, "").trim();
+    const open = t.lastIndexOf("(");
+    if (open > 0 && !t.includes(")", open)) t = t.slice(0, open).trim();
+    t = t.replace(/[\s,;:-]+$/, "").trim();
+  }
+  return t.replace(/\s+/g, " ").trim() || raw.trim();
+}
+
+/** The marketplaces and big-box sites a search result's title ends with,
+ *  after a plain hyphen. Named, not guessed: a last segment on a hyphen is
+ *  as often a colour or a size as it is a shop, and a shop whose name is a
+ *  plain word (Very, Wish, Boots, Catch) is left out for the same reason. */
+const TRAILING_STOREFRONT =
+  /\s+-\s+(?:ebay|amazon(?:\.com|\.co\.uk|\.ca|\.de)?|walmart(?:\.com)?|etsy|aliexpress|target|best buy|home depot|lowe'?s|michaels|joann|hobby lobby|walgreens|cvs|kroger|newegg|b&h(?: photo)?|adorama|ubuy|desertcart|fruugo|onbuy|kogan|mercari|poshmark|facebook marketplace|google shopping|argos|currys|tesco|asda|sainsbury'?s|screwfix|toolstation|b&q|wickes|dunelm|john lewis|ao\.com|bunnings|kmart|jb hi-fi|officeworks|canadian tire|office depot|costco|sam'?s club|bj'?s|dollar general|family dollar|five below|ace hardware|harbor freight|northern tool|tractor supply|petco|petsmart|chewy|sephora|ulta|zappos|shein|temu)\s*$/i;
+
 // Fraction of a string's letters that are Latin a–z. DDG mixes in
 // foreign-market listings; the heuristic prefers English titles.
 function latinRatio(s: string): number {

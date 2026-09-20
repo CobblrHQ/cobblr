@@ -10,7 +10,7 @@ import { ArrowLeft, ArrowRight, Moon, Sun } from "lucide-react";
 import { useNavLayout } from "../lib/nav-mode";
 import { useTheme } from "../theme/ThemeContext";
 import { LayoutPreview } from "../components/LayoutPreview";
-import { LAYOUT_OPTIONS, type TourStep } from "./tour.config";
+import { LAYOUT_OPTIONS, tourStepsFor, type TourStep } from "./tour.config";
 import { OverlayLayer } from "@cobblr/platform-web";
 
 const PAD = 8; // breathing room around the spotlit element
@@ -33,8 +33,14 @@ function findVisible(target: string | string[]): HTMLElement | null {
   return null;
 }
 
-export function GuidedTour({ steps, onClose }: { steps: TourStep[]; onClose: () => void }) {
-  const [i, setI] = useState(0);
+export function GuidedTour({ steps: allSteps, onClose }: { steps: TourStep[]; onClose: () => void }) {
+  // Decided once, at open: a tour does not change shape mid-way if the window
+  // is resized. A phone starts on the first step it can show.
+  const [steps] = useState(() => tourStepsFor(allSteps, window.innerWidth));
+  const [i, setI] = useState(() => {
+    const first = steps.findIndex((s) => s.kind !== "spotlight" || findVisible(s.target));
+    return first < 0 ? 0 : first;
+  });
   const [rect, setRect] = useState<DOMRect | null>(null);
   const [cardPos, setCardPos] = useState<{ left: number; top: number } | null>(null);
   const cardRef = useRef<HTMLDivElement>(null);
@@ -199,7 +205,11 @@ export function GuidedTour({ steps, onClose }: { steps: TourStep[]; onClose: () 
               ))}
             </div>
             <button type="button" className={skip} onClick={onClose}>Skip</button>
-            <button type="button" className={ghost} onClick={() => move(-1)} aria-keyshortcuts="ArrowLeft"><ArrowLeft size={14} /> Back</button>
+            {/* On the first card there is nothing to go back to: past the
+                start `move` closes the tour, so a Back there was a second
+                Skip wearing the wrong word (a phone's first card, since the
+                layout question is dropped there). */}
+            {i > 0 && <button type="button" className={ghost} onClick={() => move(-1)} aria-keyshortcuts="ArrowLeft"><ArrowLeft size={14} /> Back</button>}
             <button type="button" className={pri} onClick={() => move(1)} aria-keyshortcuts="ArrowRight">Next <ArrowRight size={14} /></button>
           </div>
         </div>

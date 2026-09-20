@@ -12,7 +12,7 @@
 // the card offers the remedy that fits (a name field for "the AI saw no
 // single item", a retry for a provider that errored, the setup link for no
 // provider) instead of one sentence for every reason at once.
-import type { IdentifyFailure } from "@cobblr/platform-contract/scan-fallback";
+import { identifyFailureWords, identifyNeverTried, type IdentifyFailure } from "@cobblr/platform-contract/scan-fallback";
 
 export type NamelessReason =
   /** Nothing here can identify a photo: the setup sentence. */
@@ -43,7 +43,29 @@ export function namelessReason(
   if (unresolvedCode) return "unresolved-code";
   if (status && status.identify_available === false) return "no-identify";
   if (failure?.code === "no_item") return "no-item";
-  if (failure?.code === "ai_unavailable" && failure.ai === "no-provider") return "no-identify";
+  if (failure && identifyNeverTried(failure)) return "no-identify";
   if (failure?.code === "ai_unavailable" || failure?.code === "no_answer") return "ai-failed";
   return "did-not-answer";
+}
+
+/** The phone row's line under a nameless photo, beside the note that is the
+ *  reason: the remedy the contract names, with its button, or nothing.
+ *
+ *  Nothing when nothing tried. A workspace with no AI read two verdicts at
+ *  once, "no AI provider is connected" and "The AI could not read this one"
+ *  with a Retry that did the same nothing again (#3233): "we did not try"
+ *  rendered as "we tried and failed". The note is the one sentence there,
+ *  and the Connect AI line above the list is the door. Nothing either when
+ *  the model looked and saw no one item, or a code no catalog knows: the
+ *  sentence is the verdict, and a retry would look again at the same thing.
+ *  Otherwise the button is the contract's (identifyFailureWords): connect
+ *  when the connection itself is the problem, retry when asking again can
+ *  answer, with the contract's remedy as the words beside it. */
+export function namelessRemedy(why: NamelessReason, failure: IdentifyFailure | null | undefined): { text: string; recovery: "retry" | "connect" } | null {
+  if (why !== "ai-failed" && why !== "did-not-answer") return null;
+  if (!failure) return { text: "The AI could not read this one.", recovery: "retry" };
+  const words = identifyFailureWords(failure);
+  if (words.connect) return { text: words.detail, recovery: "connect" };
+  if (words.retry) return { text: words.detail, recovery: "retry" };
+  return null;
 }

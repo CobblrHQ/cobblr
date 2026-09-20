@@ -14,6 +14,7 @@ import { requireAuth } from "../auth/middleware.js";
 import { withTenant } from "../middleware/tenant.js";
 import * as activity from "../platform/activity.js";
 import * as notifications from "../platform/notifications.js";
+import { createAccount } from "../platform/accounts.js";
 import { sendAuthEmail, hasAuthEmailSender } from "../platform/hosted-seams.js";
 import type { OrgRole } from "../db/schema.js";
 import { hashPassword } from "../auth/password.js";
@@ -700,12 +701,7 @@ invitesRootRouter.post("/invites/:token/accept-signup", async (req, res, next) =
 
     // Create the user (no own-org provisioning) + the membership.
     const password_hash = await hashPassword(parsed.data.password);
-    const userRow = await meta
-      .insertInto("users")
-      .values({ email, password_hash, display_name: parsed.data.display_name.trim() })
-      .returning("id")
-      .executeTakeFirstOrThrow();
-    const userId = userRow.id;
+    const userId = await createAccount(meta, { email, password_hash, display_name: parsed.data.display_name.trim() }, { via: "invite" });
     await meta
       .insertInto("org_memberships")
       .values({ user_id: userId, org_id: invite.org_id, role: invite.role })

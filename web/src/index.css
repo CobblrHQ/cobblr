@@ -209,12 +209,15 @@
 
   .input {
     /* dark: fields take the page tone (slate-800) — a step darker
-       than the slate-900 card they sit on, so they read as inset. */
+       than the slate-900 card they sit on, so they read as inset. The
+       placeholder is the faint token in both themes: --c-faint already
+       flips for the dark ground, and the dark:slate-500 override that sat
+       here forced it back down to a ghost on a phone (#3222). */
     @apply w-full rounded-md border border-line dark:border-slate-700
            bg-surface dark:bg-slate-800
            px-3 py-2 text-sm
            text-content dark:text-mortar-100
-           placeholder:text-faint dark:placeholder:text-slate-500
+           placeholder:text-faint
            focus:outline-none focus:border-cobble-400 focus:ring-2 focus:ring-cobble-200 dark:focus:ring-cobble-700
            transition;
   }

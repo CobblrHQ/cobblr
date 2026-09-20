@@ -38,6 +38,7 @@ import { AuthPage, MagicConsumePage, IdentityCallbackPage } from "./pages/AuthPa
 import { PairPage } from "./pages/PairPage";
 import { SandboxLanding } from "./pages/SandboxLanding";
 import { SandboxEnded } from "./pages/SandboxEnded";
+import { EndingPreview } from "./pages/EndingPreview";
 import { useSandboxEnded } from "./lib/sandbox-session";
 import { StartAppPage } from "./pages/StartAppPage";
 import { FeedbackWidget } from "./components/FeedbackWidget";
@@ -314,6 +315,8 @@ function PublicRoutes() {
           desktop minted and signs the phone in to that workspace. Reached
           unauthenticated (the code is the secret). */}
       <Route path="/pair" element={<PairPage />} />
+      {/* The sandbox's ending, to look at: test-door boxes only. */}
+      <Route path="/try/ended" element={<EndingPreview />} />
       {/* /p/:token is the un-auth'd public surface render. Reachable
           signed-in or signed-out — the token is the secret. */}
       <Route path="/p/:token" element={<PublicSurfacePage />} />
@@ -386,7 +389,7 @@ function WorkspaceRoutes({ urlHandle }: { urlHandle: string }) {
   // it; it is gone. The whole shell goes with it: no cached dashboard, no
   // strip, no tour, no modal, nothing left to press but the doors out.
   const sandboxOver = useSandboxEnded();
-  if (sandboxOver) return <SandboxEnded />;
+  if (sandboxOver) return <SandboxEnded kind={sandboxOver} slug={urlHandle} />;
   if (!user) return <AuthPage />;
   // Force-password-reset gate: if the admin minted this account with
   // a temp password, the user must pick a new one before anything

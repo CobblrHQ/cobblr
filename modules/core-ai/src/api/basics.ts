@@ -11,14 +11,14 @@ import { Router } from "express";
 import { groupWritesByRequest } from "./group-writes.js";
 import { z } from "zod";
 import { sql } from "kysely";
-import { platform, pluralise } from "@cobblr/platform-contract";
+import { PLATFORM_OWNER, platform, pluralise } from "@cobblr/platform-contract";
 import { tenantDb, tenantContext, sessionUserId } from "../db.js";
 import { asyncHandler, badBody, requireRole } from "./util.js";
 import { matchBasics, normalize } from "../basics-match.js";
 import { CONTROL_KEYS, actReply, resolveControlAct } from "../control-context.js";
 import { COMPUTED_COMMANDS, computedCommandFor } from "../computed-commands.js";
 import { getTool, type WorkspaceApi } from "@cobblr/workspace-tools";
-import { bindCommand, deriveCommand, type LearnedCommand, type Operation, writeOf } from "../learned-commands.js";
+import { bindCommand, deriveCommand, fillSlots, slotValues, type LearnedCommand, type Operation, writeOf } from "../learned-commands.js";
 import { readQuestionOf, MIN_PEEK_LENGTH, type KindWords } from "../live-answers.js";
 import { countQuestionOf, phraseCountText, phraseMostOf, type KindFields, type CountResult } from "../count-answers.js";
 import { performWrite, performWrites, bulkMessage, touchedBy, type WriteOutcome } from "./chat-ledger.js";
@@ -150,12 +150,14 @@ basicsRouter.post(
         key: null,
         score: 99,
         candidates: [],
-        reply: `I can do that: **${command.template}**.`,
+        // Said in the person's words when the command has them ("Add Aran to
+        // the yarn weight choices"), the template's blanks otherwise.
+        reply: `I can do that: **${command.summary ?? command.template}**.`,
         command: {
           id: command.id,
           template: command.template,
           operations: command.operations.length,
-          summary: describeOps(command.operations),
+          summary: command.summary ?? describeOps(command.operations),
         },
       });
       return;
@@ -508,7 +510,7 @@ interface ShippedCommandRow {
   repeat_shape: string | null;
 }
 
-/** Commands the workspace's ENABLED modules ship.
+/** Commands the workspace's ENABLED modules ship, and the platform's own.
  *
  *  Teaching a command by watching an AI only helps somebody who had an AI. A
  *  brand-new workspace with none at all should already be able to be asked for
@@ -516,7 +518,9 @@ interface ShippedCommandRow {
  *  manifests and registry-sync compiles them into entity_commands at boot.
  *
  *  Filtered by what this workspace has ENABLED, or a workspace would be offered
- *  a command that writes to tables it does not have. */
+ *  a command that writes to tables it does not have. The platform's commands
+ *  (api/src/platform/platform-commands.ts) run the kernel's own actions on the
+ *  workspace's own fields, so every workspace has them. */
 async function loadShippedCommands(orgId: string): Promise<ShippedCommandRow[]> {
   const meta = platform().db.meta as {
     selectFrom: (t: string) => {
@@ -527,29 +531,37 @@ async function loadShippedCommands(orgId: string): Promise<ShippedCommandRow[]> 
           };
         };
       };
+      select: (cols: string[]) => {
+        where: (c: string, op: string, v: unknown) => {
+          execute: () => Promise<ShippedCommandRow[]>;
+        };
+      };
     };
   };
+  const columns = [
+    "entity_commands.id as id",
+    "entity_commands.module_name as module_name",
+    "entity_commands.template as template",
+    "entity_commands.description as description",
+    "entity_commands.pattern as pattern",
+    "entity_commands.slots as slots",
+    "entity_commands.plan as plan",
+    "entity_commands.repeat_field as repeat_field",
+    "entity_commands.repeat_shape as repeat_shape",
+  ];
   try {
-    return await meta
+    const ofModules = await meta
       .selectFrom("entity_commands")
       .innerJoin("org_modules", "org_modules.module_name", "entity_commands.module_name")
-      .select([
-        "entity_commands.id as id",
-        "entity_commands.module_name as module_name",
-        "entity_commands.template as template",
-        "entity_commands.description as description",
-        "entity_commands.pattern as pattern",
-        "entity_commands.slots as slots",
-        "entity_commands.plan as plan",
-        "entity_commands.repeat_field as repeat_field",
-        "entity_commands.repeat_shape as repeat_shape",
-      ])
+      .select(columns)
       // A row in org_modules IS enablement; there is no `enabled` column, and
       // asking for one threw, which the catch below turned into "this
       // workspace has no shipped commands". Silent-empty-on-error is how a
       // broken query looks exactly like an empty world.
       .where("org_modules.org_id", "=", orgId)
       .execute();
+    const ofPlatform = await meta.selectFrom("entity_commands").select(columns).where("entity_commands.module_name", "=", PLATFORM_OWNER).execute();
+    return [...ofModules, ...ofPlatform];
   } catch (e) {
     // An instance whose platform migration has not run yet genuinely has none.
     // Anything else is a bug, and must not read as an empty world.
@@ -628,9 +640,18 @@ export async function matchCommand(
     // A workspace can turn a shipped command off by adopting it and disabling
     // that copy; a disabled row with the same template wins here.
     const ops = bindCommand(asLearned(row), message);
-    if (ops?.length) return { id: `shipped:${row.id}`, template: row.template, operations: ops };
+    if (ops?.length) return { id: `shipped:${row.id}`, template: row.template, operations: ops, ...shippedSummary(row, message) };
   }
   return null;
+}
+
+/** A shipped command whose description carries the template's blanks says
+ *  what it will do in the person's own words ("Add Aran to the yarn weight
+ *  choices"); one without is described from its operations as before. */
+function shippedSummary(row: ShippedCommandRow, message: string): { summary?: string } {
+  if (!row.description || !/\{[a-z0-9_]+\}/i.test(row.description)) return {};
+  const values = slotValues({ pattern: row.pattern, slots: row.slots as LearnedCommand["slots"] }, message);
+  return values ? { summary: fillSlots(row.description, values) } : {};
 }
 
 // POST /basics/commands/match — "does anything I know fit what is being typed?"

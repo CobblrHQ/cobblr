@@ -14,6 +14,9 @@ export interface ImportRowError {
 
 /** One normalized item, translated per §3 of the interop doc — ready to become
  *  a core_scan_inbox_items row + suggested_metadata payload. */
+/** A picture as an export carries it: a fetchable link, or the bytes inline. */
+export type ImportPhotoRef = { url: string } | { embed: { mime: string; data: string } };
+
 export interface NormalizedImportItem {
   /** 1-based data-row index in the source file (for error reporting). */
   row: number;
@@ -35,6 +38,18 @@ export interface NormalizedImportItem {
    *  LAN-only import still gets its images. Preferred over the *_url when both. */
   photo_identify_embedded: { mime: string; data: string } | null;
   photo_display_embedded: { mime: string; data: string } | null;
+  /** The group shot a split child was cut from (#3127): the parent's photo,
+   *  carried on the child because the parent is usually not in the export.
+   *  Restored into the child's own `group_image_file_id` in metadata, which
+   *  the inbox serves when the parent is not here (services/group-image.ts). */
+  photo_group_url: string | null;
+  photo_group_embedded: { mime: string; data: string } | null;
+  /** The rest of the row's pictures from a Cobblr export's x_cobblr: the
+   *  gallery and the crop cut from a screenshot, each a link or bytes. The
+   *  router stores them and writes the NEW ids into metadata; the source's
+   *  ids never survive, since on the destination they point at nothing. */
+  x_extra_photos: ImportPhotoRef[];
+  x_screenshot_crop: ImportPhotoRef | null;
   /** Everything hint-shaped rides in suggested_metadata: hint_category,
    *  user_hint (matchmaker prior), barcode_aliases, source pack/box states,
    *  notes/research_hint, originally_captured_at, import_provenance. */
@@ -185,6 +200,7 @@ const CANONICAL_HEADERS: Record<string, string> = {
   source_url: "source_url",
   identify_photo_url: "identify_photo_url",
   display_photo_url: "display_photo_url",
+  group_photo_url: "group_photo_url",
   created_at: "created_at",
   updated_at: "updated_at",
 };
@@ -215,7 +231,8 @@ function normalize(raw: Record<string, unknown>, row: number, sourceInstance: st
   const sourceUrl = asStr(raw.source_url);
   const identify = asStr(raw.identify_photo_url) ?? asStr((raw.photo_urls as { identify?: unknown } | undefined)?.identify);
   const display = asStr(raw.display_photo_url) ?? asStr((raw.photo_urls as { display?: unknown } | undefined)?.display);
-  const embedded = raw.photos_embedded as { identify?: unknown; display?: unknown } | undefined;
+  const group = asStr(raw.group_photo_url) ?? asStr((raw.photo_urls as { group?: unknown } | undefined)?.group);
+  const embedded = raw.photos_embedded as { identify?: unknown; display?: unknown; group?: unknown } | undefined;
   const asEmbed = (v: unknown): { mime: string; data: string } | null => {
     if (!v || typeof v !== "object") return null;
     const o = v as { mime?: unknown; data?: unknown };
@@ -223,8 +240,17 @@ function normalize(raw: Record<string, unknown>, row: number, sourceInstance: st
     const data = asStr(o.data);
     return mime && data && mime.startsWith("image/") ? { mime, data } : null;
   };
+  const asRef = (v: unknown): ImportPhotoRef | null => {
+    if (!v || typeof v !== "object") return null;
+    const o = v as { url?: unknown; embed?: unknown };
+    const embed = asEmbed(o.embed);
+    if (embed) return { embed };
+    const url = asStr(o.url);
+    return url ? { url } : null;
+  };
   const identifyEmbedded = asEmbed(embedded?.identify);
   const displayEmbedded = asEmbed(embedded?.display);
+  const groupEmbedded = asEmbed(embedded?.group);
 
   // quantity: the filed-quantity rule (services/filed-quantity.ts), default
   // 1; a bad value is a row error but the row still imports with 1 — a wrong
@@ -302,6 +328,15 @@ function normalize(raw: Record<string, unknown>, row: number, sourceInstance: st
   // Never carry the SOURCE instance's provenance stamp across - this import's
   // own provenance is what dedupe matches on.
   if (xMeta && !provenance) delete merged.import_provenance;
+  // Nor the source's picture ids: the gallery, the screenshot crop and the
+  // group shot are file ids of the instance that exported them, and on this
+  // one they point at nothing (a broken tile for every added photo, #3127).
+  // The router writes the ids of the files it stores from the carriers below.
+  delete merged.extra_photos;
+  delete merged.screenshot_crop_file_id;
+  delete merged.group_image_file_id;
+  const xExtras = x && Array.isArray(x.extra_photos) ? (x.extra_photos as unknown[]).map(asRef).filter((r): r is ImportPhotoRef => !!r) : [];
+  const xScreenshot = x ? asRef(x.screenshot_crop) : null;
   // The interop `user_hint` above is SYNTHESISED from the source's category
   // ("source system categorised as Clothing"). A Cobblr export already carries
   // the hint the user actually TYPED ("black"), and that is the one the
@@ -341,6 +376,10 @@ function normalize(raw: Record<string, unknown>, row: number, sourceInstance: st
     photo_display_url: display,
     photo_identify_embedded: identifyEmbedded,
     photo_display_embedded: displayEmbedded,
+    photo_group_url: group,
+    photo_group_embedded: groupEmbedded,
+    x_extra_photos: xExtras,
+    x_screenshot_crop: xScreenshot,
     metadata: merged,
     x_manufacturer: x ? asStr(x.suggested_manufacturer) : null,
     x_location_note: x ? asStr(x.suggested_location_note) : null,

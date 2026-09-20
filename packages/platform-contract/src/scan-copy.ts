@@ -51,6 +51,13 @@ export const SPLIT_SIBLINGS_DOUBT = "The pieces split from one photo disagree on
 /** A row nothing could name. */
 export const NO_NAME_SENTENCE = "No name yet. Name it to file it.";
 
+/** A nameless row whose web guess was held for want of a second source
+ *  (#2918): the card asks, with the guess as its one tap. The prompt, the
+ *  tap's source and the why, read by the contract's question and the card. */
+export const HELD_GUESS_PROMPT = "Is this it?";
+export const HELD_GUESS_SOURCE = "found on the web, not confirmed";
+export const HELD_GUESS_BECAUSE = "One page on the web says so; nothing confirmed it.";
+
 /** A row whose lookup was throttled and has not answered. */
 export const THROTTLED_SENTENCE = "The lookup was throttled. Wait, or name it yourself.";
 

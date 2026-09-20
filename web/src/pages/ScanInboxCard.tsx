@@ -37,7 +37,7 @@ import { catalogCaption, leadYours, rowPictures, scanFileUrl, yourPictures } fro
 import { } from "../components/ReceiptPeek";
 import { fieldsStillOnTable, fieldsNoLongerOnTable, isQuietDefault, isImpliedByPeer, isStatedByReceipt } from "../lib/scanCandidateFields";
 import { canRerunLookup } from "../lib/scanRerun";
-import { namelessReason } from "../lib/identifySentence";
+import { namelessReason, namelessRemedy } from "../lib/identifySentence";
 import { namelessCard } from "../lib/namelessCard";
 import { fallbackChip, type IdentifyFailure } from "@cobblr/platform-contract/scan-fallback";
 import { TrackedMatchBanner, TrackedMatchLine } from "../components/TrackedMatchBanner";
@@ -915,6 +915,11 @@ export function InboxCard({
   const identifyFailure =
     (item.suggested_metadata as { identify_failure?: IdentifyFailure } | null)?.identify_failure ?? null;
   const namelessWhy = namelessReason(cardAiStatus, storeCode, identifyFailure, heldWebGuess);
+  // The remedy under a photo the identify step could not name, or null when
+  // nothing tried (no AI here) or a retry would only look again (#3233): the
+  // phone row's line and its tool button read this, so neither says the AI
+  // failed when it was never asked.
+  const namelessFix = identifyFailed ? namelessRemedy(namelessWhy, identifyFailure) : null;
   // The matchmaker fell to the keyword floor although this workspace HAS
   // working AI — the model call failed and the code silently downgraded. Say
   // so, with a one-tap retry, instead of letting a lexical guess sit there
@@ -1592,17 +1597,27 @@ export function InboxCard({
     return q.choices.length ? `Check ${label.toLowerCase()}` : `${label} is not set`;
   };
   const answerQuestion = useMutation({
-    mutationFn: ({ field, value }: { field: string; value: string }) => {
+    mutationFn: ({ field, value, names }: { field: string | null; value: string; names?: true }) => {
+      // The answer is the row's name (a held web guess taken, #2918): written
+      // the way a typed name is, a person's choice, never a table field.
+      if (names || !field) return api.updateScanItem(activeSlug, item.id, { name: value.trim() });
       const last = questions.length === 1 && questions[0]?.field === field;
       const kind = (item.suggested_candidates?.[0] as { kind?: string } | undefined)?.kind;
       return api.updateScanItem(activeSlug, item.id, { fields: { [field]: value }, ...(kind ? { fields_kind: kind } : {}), ...(last ? { reviewed: true } : {}) });
     },
     onSuccess: (_r, v) => {
-      toast.success(`${v.field.replace(/_/g, " ")}: ${v.value}`);
+      toast.success(v.names || !v.field ? "Got it - finding the right table…" : `${v.field.replace(/_/g, " ")}: ${v.value}`);
       invalidateInbox();
     },
     onError: onErr,
   });
+  /** The held web guess as the question's one tap (contract: a `names`
+   *  question), for the name field on the open card. */
+  const nameGuess = (() => {
+    const q = questions.find((x) => x.names);
+    const c = q?.choices[0];
+    return q && c ? { value: c.value, source: c.source, prompt: q.prompt } : null;
+  })();
 
   const ddg = (q: string) => `https://duckduckgo.com/?q=${encodeURIComponent(q)}`;
 
@@ -2240,7 +2255,7 @@ export function InboxCard({
   const phoneWarning = notesPlacement.amber ? notesPlacement.amberText : flaggedForReview && item.suggested_name ? reviewReason : null;
   // The card asks its question instead of reading the sentence; the item
   // screen keeps the sentence, where the evidence is.
-  const phoneRowWarning = questions.length > 0 && item.suggested_name ? null : phoneWarning;
+  const phoneRowWarning = questions.length > 0 && (item.suggested_name || questions[0]?.names) ? null : phoneWarning;
   const phoneWorking = rerunning
     ? replayNoAi ? "Replaying the latest processing…" : "Re-running the lookup…"
     : serverMatching ? "AI is reading the details…"
@@ -2315,7 +2330,7 @@ export function InboxCard({
                   prompt: q ? questionPrompt(q) : rowState.sentence ?? "Check this item",
                   because: q ? rowState.sentence ?? q.because ?? "" : "",
                   busy: answerQuestion.isPending || markReviewed.isPending,
-                  choices: (q?.choices ?? []).map((c) => ({ value: c.value, source: c.source, onPick: () => q?.field && answerQuestion.mutate({ field: q.field, value: c.value }) })),
+                  choices: (q?.choices ?? []).map((c) => ({ value: c.value, source: c.source, onPick: () => q && (q.field || q.names) && answerQuestion.mutate({ field: q.field, value: c.value, ...(q.names ? { names: true as const } : {}) }) })),
                   actions: [
                     ...(typed && !formOpen ? [{ label: "Type it", hint: "Set the value on the form below", onClick: () => openForm(topCand ?? undefined) }] : []),
                     { label: "Looks fine", hint: "A person looked; stop flagging it", busy: markReviewed.isPending, onClick: () => markReviewed.mutate() },
@@ -2434,13 +2449,14 @@ export function InboxCard({
           onViewImage={thumb ? () => openZoom(catalogImg ? "catalog" : "yours") : null}
           subtitle={[item.barcode_text, phoneSubtitle].filter(Boolean).join(" · ")}
           question={
-            cardQuestions[0] && item.suggested_name
+            cardQuestions[0] && (item.suggested_name || cardQuestions[0].names)
               ? {
                   prompt: questionPrompt(cardQuestions[0]),
                   because: cardQuestions[0].because,
                   busy: answerQuestion.isPending,
-                  choices: cardQuestions[0].choices.map((c) => ({ value: c.value, source: c.source, onPick: () => cardQuestions[0]?.field && answerQuestion.mutate({ field: cardQuestions[0].field, value: c.value }) })),
-                  onType: cardQuestions[0].field && topCand ? () => openForm(topCand) : null,
+                  choices: cardQuestions[0].choices.map((c) => ({ value: c.value, source: c.source, onPick: () => cardQuestions[0] && (cardQuestions[0].field || cardQuestions[0].names) && answerQuestion.mutate({ field: cardQuestions[0].field, value: c.value, ...(cardQuestions[0].names ? { names: true as const } : {}) }) })),
+                  // A names question is typed on the item screen, where the name field is.
+                  onType: cardQuestions[0].field && topCand ? () => openForm(topCand) : cardQuestions[0].names && onOpenSheet ? () => onOpenSheet(dest) : null,
                 }
               : null
           }
@@ -2461,7 +2477,7 @@ export function InboxCard({
                 : matchFailed
                   ? { text: "Matching failed; the AI did not answer.", recovery: "retry" as const }
                   : identifyFailed
-                    ? { text: "The AI could not read this one.", recovery: "retry" as const }
+                    ? namelessFix && { ...namelessFix, connectHref: `/w/${activeSlug}/ai` }
                     : null
           }
           quantity={{ value: Math.max(1, item.quantity ?? 1), busy: qtyPatch.isPending, onChange: (n) => qtyPatch.mutate(Math.max(1, n)) }}
@@ -2504,7 +2520,7 @@ export function InboxCard({
                 : `Possible match: ${trackedMatch.title}`
               : null
           }
-          rerun={{ running: aiWorking, replaying: replayNoAi, failed: !aiWorking && (matchFailed || identifyFailed || aiDowngraded), can: canRerunLookup(item), onRun: () => rerun.mutate(undefined) }}
+          rerun={{ running: aiWorking, replaying: replayNoAi, failed: !aiWorking && (matchFailed || namelessFix?.recovery === "retry" || aiDowngraded), can: canRerunLookup(item), onRun: () => rerun.mutate(undefined) }}
           onCapture={() => setCaptureSheet("add")}
           more={more}
           toolHints={item.tool_hints}
@@ -2681,7 +2697,8 @@ export function InboxCard({
             ) : cantIdentify && namelessWhy === "unresolved-code" ? (
               // No catalog knows the code and the web guess was held back
               // (the amber line under this says which); the name is yours.
-              <span className="text-muted">Nothing found for this {idNoun} - name it:</span>
+              // When there is a guess, the name field offers it as a tap.
+              <span className="text-muted">{nameGuess ? `No catalog knows this ${idNoun}. Take the guess, or name it:` : `Nothing found for this ${idNoun} - name it:`}</span>
             ) : cantIdentify && namelessWhy === "no-item" ? (
               // The model looked and saw no one thing to name: a group shot,
               // a document, a receipt it did not call one. The two ways out
@@ -2901,7 +2918,7 @@ export function InboxCard({
                         <button
                           type="button"
                           disabled={answerQuestion.isPending}
-                          onClick={() => q.field && answerQuestion.mutate({ field: q.field, value: c.value })}
+                          onClick={() => (q.field || q.names) && answerQuestion.mutate({ field: q.field, value: c.value, ...(q.names ? { names: true as const } : {}) })}
                           className="rounded-md border border-amber-400/60 bg-amber-50 dark:bg-amber-900/20 px-1.5 py-0.5 font-medium text-amber-800 dark:text-amber-200 hover:bg-amber-100 dark:hover:bg-amber-900/40 transition disabled:opacity-50"
                           title={`Set ${q.field?.replace(/_/g, " ")} to ${c.value}: ${c.source}`}
                         >
@@ -3061,7 +3078,7 @@ export function InboxCard({
               }}
             />
           )}
-          {cantIdentify && <NameItInline slug={activeSlug} itemId={item.id} />}
+          {cantIdentify && <NameItInline slug={activeSlug} itemId={item.id} guess={nameGuess} />}
           {/* One-tap correction: a barcode whose name looks wrong (always
               available, nudged for low-trust short codes). Renaming reports the
               fix to the shared Barcode Intelligence DB so the next scan is right. */}

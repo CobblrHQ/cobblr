@@ -20,7 +20,7 @@ export interface KindRec {
    *  (`<instance>:item`): endpoints are then relative to
    *  /instances/<instance_name>, not /modules/<module_name>. */
   instance_name?: string;
-  fields?: Array<{ name: string; type?: string; role?: string; required?: boolean; readOnly?: boolean }>;
+  fields?: Array<{ name: string; type?: string; role?: string; required?: boolean; readOnly?: boolean; choices?: string[] }>;
   /** What "the same place" means for this kind when looking for duplicates:
    *  a field name, or "workspace". Absent = this kind is never deduplicated. */
   duplicate_scope?: string | null;
@@ -119,6 +119,8 @@ export function summarizeKind(k: KindRec): Record<string, unknown> {
       ...(f.readOnly ? { read_only: true } : {}),
       ...(f.required || f.role === "title" ? { required: true } : {}),
       ...(f.role ? { role: f.role } : {}),
+      // A native field's fixed values, the way a custom dropdown's show.
+      ...(f.choices?.length ? { choices: f.choices } : {}),
     })),
     // User-defined fields — settable like native ones (values land in the
     // record's metadata; the API folds unknown keys there on write).

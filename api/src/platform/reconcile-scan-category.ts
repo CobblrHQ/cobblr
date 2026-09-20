@@ -10,6 +10,18 @@
 // workspace was created, so a change every workspace needs must reconcile at
 // boot. A user must never have to run anything.
 //
+// BORN WITH: reconcileScanCategoryFor (from enableModuleForOrg when the
+// module's primary kind is physical, which is the moment a workspace gains a
+// table a scan lands in, through every door: signup, a later enable, an app
+// being provisioned). A workspace
+// that only the boot pass served was born without its axis and stayed so
+// until the next deploy (#3252, found on a first-run walk): its scans landed
+// on the fallback table with no category grouping, and the form that asks
+// "Category" twice (#3148) only ever appeared on a workspace older than the
+// last restart. The boot pass stays as the heal for workspaces made before
+// the seam, and for a change to the words; the per-org call is the same plan
+// on one workspace.
+//
 // Scoped deliberately to the module's DEFAULT instance when it is the fallback. A specialised table (Yarn,
 // Vehicles) is already one kind of thing — a category axis there is noise. The
 // catch-all is the one table that holds many kinds and therefore needs to tell
@@ -31,7 +43,9 @@ const CATEGORY_FIELD = "category";
  *  field on bundle install. */
 export const SCAN_CATEGORY_SOURCE = "@scan-category";
 
-export async function reconcileScanCategoryFields(): Promise<void> {
+/** The tables a scan lands in, per module, and which of them keep their own
+ *  categories: from the loaded manifests, which are eager. */
+export function scanFallbackKinds(): { scanByModule: Map<string, string>; ownCategoryKinds: Set<string> } {
   // Each domain module's PRIMARY entity kind is the table a scan lands in
   // (inventory:part, machines:machine, assets:asset). Derive it from the loaded
   // MANIFESTS — which are eager — NOT from the runtime scan registry.
@@ -44,6 +58,7 @@ export async function reconcileScanCategoryFields(): Promise<void> {
   // inert in production. The manifest is the boot-safe source of truth (the §8.1
   // rule: a boot reconcile reads eager manifest data, not a lazy runtime registry).
   const scanByModule = new Map<string, string>();
+  const ownCategoryKinds = new Set<string>();
   for (const e of listEntries()) {
     const primary = e.manifest.provides?.entityKinds?.find((k) => k.primary);
     // PHYSICAL kinds only — a scan is of a physical thing. inventory:part /
@@ -53,26 +68,59 @@ export async function reconcileScanCategoryFields(): Promise<void> {
     // tangibility off the kind's declared profile.
     const profile = primary?.profile as PresetName | undefined;
     const physical = profile ? TRAIT_PRESETS[profile]?.tangibility === "physical" : false;
-    if (primary && physical) scanByModule.set(e.manifest.name, primary.id);
+    if (primary && physical) {
+      scanByModule.set(e.manifest.name, primary.id);
+      if (primary.categoryAxis) ownCategoryKinds.add(primary.id);
+    }
   }
+  return { scanByModule, ownCategoryKinds };
+}
+
+/** Whether enabling this module gives a workspace a table a scan lands in,
+ *  and so a table that needs the axis. */
+export function moduleHasScanFallback(moduleName: string): boolean {
+  return scanFallbackKinds().scanByModule.has(moduleName);
+}
+
+/** The same plan, for ONE workspace, at the moment it gains a scan fallback
+ *  table: what enabling such a module calls, so a workspace is born with its
+ *  axis rather than waiting for a restart (#3252). Never throws: the axis is
+ *  a self-heal, and an enable must not fail on it; the boot pass catches up
+ *  on anything it missed. */
+export async function reconcileScanCategoryFor(orgId: string): Promise<void> {
+  try {
+    await reconcileScanCategoryFields({ onlyOrgId: orgId });
+  } catch (err) {
+    console.error(`[reconcile] scan category axis for org ${orgId} failed (the boot pass will retry):`, (err as Error)?.message ?? err);
+  }
+}
+
+/** `onlyOrgId` scopes the pass to one workspace: the per-org door above, and
+ *  the test-support door (behind which a pass that walks every workspace
+ *  relabels fields in every other test's workspace mid-flight,
+ *  lint:test-support-doors-scoped). Boot never passes it. */
+export async function reconcileScanCategoryFields(opts: { onlyOrgId?: string } = {}): Promise<void> {
+  const { scanByModule, ownCategoryKinds } = scanFallbackKinds();
   if (scanByModule.size === 0) return;
 
   // ONE pass over every instance + every existing category field. A workspace
   // that's already complete costs no extra query and opens no tenant pool.
-  const instances = await meta
+  let instancesQ = meta
     .selectFrom("workspace_module_instances")
     .select(["org_id", "module_name", "instance_name", "is_default", "is_scan_fallback"])
-    .where("module_name", "in", [...scanByModule.keys()])
-    .execute();
+    .where("module_name", "in", [...scanByModule.keys()]);
+  if (opts.onlyOrgId) instancesQ = instancesQ.where("org_id", "=", opts.onlyOrgId);
+  const instances = await instancesQ.execute();
   if (instances.length === 0) return;
 
-  const existing = await meta
+  let existingQ = meta
     .selectFrom("module_field_defs")
-    .select(["org_id", "entity_kind", "name", "field_role", "source_module"])
-    .where((eb) => eb.or([eb("field_role", "=", "category"), eb("name", "=", CATEGORY_FIELD)]))
-    .execute();
+    .select(["org_id", "entity_kind", "name", "field_role", "source_module", "display_label"])
+    .where((eb) => eb.or([eb("field_role", "=", "category"), eb("name", "=", CATEGORY_FIELD)]));
+  if (opts.onlyOrgId) existingQ = existingQ.where("org_id", "=", opts.onlyOrgId);
+  const existing = await existingQ.execute();
 
-  const plan = planScanCategoryAxes(instances, existing, scanByModule, CATEGORY_FIELD, SCAN_CATEGORY_SOURCE);
+  const plan = planScanCategoryAxes(instances, existing, scanByModule, CATEGORY_FIELD, SCAN_CATEGORY_SOURCE, ownCategoryKinds);
 
   let healed = 0;
   for (const { org_id, kind } of plan.adopt) {
@@ -93,7 +141,7 @@ export async function reconcileScanCategoryFields(): Promise<void> {
       console.error(`[reconcile] scan category axis failed for ${org_id}::${kind}:`, (err as Error)?.message ?? err);
     }
   }
-  for (const { org_id, kind } of plan.add) {
+  for (const { org_id, kind, label, help } of plan.add) {
     try {
       await meta
         .insertInto("module_field_defs")
@@ -101,7 +149,7 @@ export async function reconcileScanCategoryFields(): Promise<void> {
           org_id,
           entity_kind: kind,
           name: CATEGORY_FIELD,
-          display_label: "Category",
+          display_label: label,
           // Text + choices: the choices ARE the taxonomy, and they grow from the
           // user's own data. The kernel never ships a list of categories.
           type: "text",
@@ -113,7 +161,7 @@ export async function reconcileScanCategoryFields(): Promise<void> {
           // org that also auto-created it collided) and (b) lets it be
           // reconciled/cleaned as platform state, not user data.
           source_module: SCAN_CATEGORY_SOURCE,
-          help: "What KIND of thing this is. Scans group by it, and a category that outgrows this table can be promoted into its own.",
+          help,
         })
         .onConflict((oc) => oc.doNothing())
         .execute();
@@ -144,6 +192,31 @@ export async function reconcileScanCategoryFields(): Promise<void> {
       console.error(`[reconcile] scan category axis withdraw failed for ${org_id}::${kind}:`, (err as Error)?.message ?? err);
     }
   }
+  // A placeholder on a kind whose module keeps its own categories wears
+  // scanning's word, so a form does not ask "Category" twice (the module's
+  // own is the list's filter; the axis is what scans group by). Only one
+  // still wearing the bare word is touched: a person's rename is theirs.
+  // DONE WHEN the two are one axis and the placeholder no longer exists on
+  // such a kind (#3223): this pass and axisWords(true) go with it.
+  let relabelled = 0;
+  for (const { org_id, kind, label, help } of plan.relabel) {
+    try {
+      await meta
+        .updateTable("module_field_defs")
+        .set({ display_label: label, help })
+        .where("org_id", "=", org_id)
+        .where("entity_kind", "=", kind)
+        .where("name", "=", CATEGORY_FIELD)
+        .where("source_module", "=", SCAN_CATEGORY_SOURCE)
+        .where("display_label", "=", "Category")
+        .execute();
+      relabelled++;
+      console.log(`[reconcile] scan category axis: org ${org_id} kind ${kind} reads "${label}"`);
+    } catch (err) {
+      console.error(`[reconcile] scan category axis relabel failed for ${org_id}::${kind}:`, (err as Error)?.message ?? err);
+    }
+  }
   if (withdrawn) console.log(`[reconcile] scan category axis: withdrawn from ${withdrawn} specialised table(s)`);
   if (healed) console.log(`[reconcile] scan category axis: added to ${healed} table(s)`);
+  if (relabelled) console.log(`[reconcile] scan category axis: relabelled on ${relabelled} table(s) that keep their own categories`);
 }

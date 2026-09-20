@@ -146,6 +146,9 @@ const MCP_READ_PATHS: Array<string | RegExp> = [
   // beside the pairings, so a relayed "what's in Bin 7" sees the bin's contents
   "/modules/core-placement/contents",
   "/modules/core-placement/of",
+  // the locations tree: a garage holds its bins through core-locations' own
+  // parent_id, which placement does not carry, so list_related reads it too
+  "/modules/core-locations/locations",
   // what needs me / what happened / what is coming
   "/attention",
   "/activity",

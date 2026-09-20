@@ -69,6 +69,20 @@ const LOCATION_KIND = "core-locations:location";
  *  One level only, deliberately: "the fridge is in the kitchen" is the relation
  *  worth forgiving, while a suitable box three rooms deep says nothing about
  *  where the item actually is. */
+// Locations nest through core-locations' own parent_id, which placement
+// does not carry (placement-and-containment.md keeps the tree there). So
+// "what is in this place" and "what is this place in" are BOTH reads: what
+// placement holds, and the tree. Read through placement alone, a Kitchen
+// with a Fridge made as a sub-location looked like a kitchen with nothing
+// cold in it, and Shelf 2 inside that Fridge had no fridge above it; the
+// same blindness answered "what's in the garage?" with "empty" (#3250).
+
+/** The sub-locations directly under a location, by the tree. */
+async function subLocationsOf(orgId: string, containerId: string): Promise<Array<{ id: string; title: string }>> {
+  const res = await platform().entities.list(orgId, LOCATION_KIND, { filter: { parent_id: containerId }, limit: 40 });
+  return (res.items ?? []).map((e) => ({ id: e.id, title: e.title })).filter((e) => !!e.title);
+}
+
 async function hasSuitableChild(
   orgId: string,
   containerId: string,
@@ -82,6 +96,9 @@ async function hasSuitableChild(
     for (const kid of kids.slice(0, 40)) {
       const resolved = await platform().entities.lookup(orgId, kid.kind, kid.id);
       if (resolved?.title && storageMismatch(requirement, resolved.title) === null) return true;
+    }
+    for (const sub of await subLocationsOf(orgId, containerId)) {
+      if (storageMismatch(requirement, sub.title) === null) return true;
     }
   } catch {
     // Unreadable contents must not invent a warning OR silence a real one:
@@ -98,8 +115,10 @@ async function ancestorNames(orgId: string, containerId: string): Promise<string
     if (resolved?.title) names.push(resolved.title);
     const up = await platform().placement.containerOf({ orgId, containee: ref });
     // Only keep walking through LOCATIONS. A location inside a machine is not a
-    // temperature statement about the machine.
-    ref = up && up.kind === LOCATION_KIND ? { kind: up.kind, id: up.id } : null;
+    // temperature statement about the machine. A location placed nowhere may
+    // still sit inside another by the tree.
+    const parentId = typeof resolved?.fields?.parent_id === "string" ? resolved.fields.parent_id : null;
+    ref = up && up.kind === LOCATION_KIND ? { kind: up.kind, id: up.id } : parentId ? { kind: LOCATION_KIND, id: parentId } : null;
   }
   return names;
 }

@@ -8,6 +8,8 @@ import { retireReceiptFailurePlaceholders } from "../platform/retire-receipt-fai
 import { migrateBookshelfToInstance } from "../platform/migrate-bookshelf-to-instance.js";
 import { retireGroceriesBaseKindTwin } from "../platform/migrate-groceries-twin-to-instance.js";
 import { rehomeAssetsInstanceToRecords } from "../platform/rehome-instance.js";
+import { reconcileScanCategoryFields } from "../platform/reconcile-scan-category.js";
+import { runTenantSweep } from "../platform/tenant-sweeps.js";
 import { setSubscriberDelayForTests } from "../platform/events.js";
 import { registerHandler } from "../platform/actions.js";
 import { ActionRefusal } from "@cobblr/platform-contract";
@@ -57,20 +59,30 @@ testSupportRouter.get("/test-support/pool-status", async (_req, res, next) => {
 //
 // Named per-migration on purpose: a blanket "run all historical passes" would
 // sweep every OTHER test's pooled org, which is the exact thing that skip flag
-// is there to prevent. Test-only — this router is mounted only when
-// COBBLR_TEST_ORG_POOL is set (see the header).
-testSupportRouter.post("/test-support/run-migration/bookshelf", async (_req, res, next) => {
+// is there to prevent. And SCOPED to the caller's org for the same reason: a
+// pass that walks every workspace relabels or moves rows in every other
+// test's workspace mid-flight (the scan-category door did, 2026-09-20, and
+// two unrelated tests failed on ordering). Every door here reads org_id and
+// hands its pass { onlyOrgId }; lint:test-support-doors-scoped holds it.
+// Test-only — this router is mounted only when COBBLR_TEST_ORG_POOL is set
+// (see the header).
+const onlyOrg = (req: { body?: unknown }): { onlyOrgId?: string } => {
+  const { org_id } = (req.body ?? {}) as { org_id?: string };
+  return org_id ? { onlyOrgId: org_id } : {};
+};
+
+testSupportRouter.post("/test-support/run-migration/bookshelf", async (req, res, next) => {
   try {
-    res.json(await migrateBookshelfToInstance({ force: true }));
+    res.json(await migrateBookshelfToInstance({ force: true, ...onlyOrg(req) }));
   } catch (err) {
     next(err);
   }
 });
 
 // Same reason, for the pass that retires the Groceries base-kind twin (#2860).
-testSupportRouter.post("/test-support/run-migration/groceries-twin", async (_req, res, next) => {
+testSupportRouter.post("/test-support/run-migration/groceries-twin", async (req, res, next) => {
   try {
-    res.json(await retireGroceriesBaseKindTwin({ force: true }));
+    res.json(await retireGroceriesBaseKindTwin({ force: true, ...onlyOrg(req) }));
   } catch (err) {
     next(err);
   }
@@ -81,8 +93,40 @@ testSupportRouter.post("/test-support/run-migration/groceries-twin", async (_req
 // pass on the placeholder it seeded and touches nobody else's workspace.
 testSupportRouter.post("/test-support/run-migration/receipt-placeholders", async (req, res, next) => {
   try {
-    const { org_id } = (req.body ?? {}) as { org_id?: string };
-    res.json(await retireReceiptFailurePlaceholders(org_id ? { onlyOrgId: org_id } : {}));
+    res.json(await retireReceiptFailurePlaceholders(onlyOrg(req)));
+  } catch (err) {
+    next(err);
+  }
+});
+
+// Same reason, for the boot pass that gives every scan fallback table its
+// category axis and relabels the axis on a table that keeps its own categories
+// (#3148): the words a form shows are decided by the module registry, which
+// only the api process has.
+testSupportRouter.post("/test-support/run-migration/scan-category-axis", async (req, res, next) => {
+  try {
+    await reconcileScanCategoryFields(onlyOrg(req));
+    res.json({ ok: true });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// Run ONE registered tenant sweep on ONE workspace, now, so a test can press
+// the real pass (the expiry sweeper, the arrival sweep) rather than a mirror
+// of its rule. Body: { name, org_id }. org_id is REQUIRED for the same reason
+// the run-migration doors take it: a pass walks every workspace, and 500
+// other tests hold workspaces in this database. The result is the walk's own
+// (visited, failed, per-workspace results), so a test can read what the pass
+// itself reported for that workspace.
+testSupportRouter.post("/test-support/run-sweep", async (req, res, next) => {
+  try {
+    const { name, org_id } = (req.body ?? {}) as { name?: string; org_id?: string };
+    if (!name || !org_id) {
+      res.status(400).json({ error: { code: "bad_request", message: "body needs { name, org_id }" } });
+      return;
+    }
+    res.json(await runTenantSweep(name, { orgIds: [org_id] }));
   } catch (err) {
     next(err);
   }

@@ -1,5 +1,7 @@
 // PERMANENT RECONCILE: a managed app's own table is where its unmatched scans land.
 //
+// BORN WITH: pointScanFallbackAtApp (provisioning points a managed app's scan fallback at its own table as it makes the workspace)
+//
 // A locked app has ONE table the person knows about (Groceries, Home
 // Inventory, Yarn). The scan matchmaker sends an item that matches no table in
 // particular to the module's fallback, and absent a pick that is the module's

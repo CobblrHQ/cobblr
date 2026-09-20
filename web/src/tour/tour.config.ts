@@ -70,6 +70,18 @@ export const DASHBOARD_TOUR: TourStep[] = [
   },
 ];
 
+/** Below this width the shell is the phone menu and no desktop layout applies. */
+export const PHONE_MAX_WIDTH = 768;
+
+/** The steps a tour on this width can ask. A phone is never asked which
+ *  desktop layout it wants: the three answers mean nothing to the phone in
+ *  hand, and it was the first thing a visitor signing up on one met (#3231).
+ *  What a phone's welcome step should say instead is a product decision that
+ *  keeps its issue; this only drops the question that cannot apply. */
+export function tourStepsFor(steps: TourStep[], viewportWidth: number): TourStep[] {
+  return viewportWidth < PHONE_MAX_WIDTH ? steps.filter((s) => s.kind !== "chooseLayout") : steps;
+}
+
 // The layouts the welcome step offers: all three, with the names, blurbs and
 // pictures Appearance uses (NAV_LAYOUTS), so the tour and the settings page
 // describe one model and a person already on the middle one is shown as

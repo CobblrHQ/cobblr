@@ -19,6 +19,7 @@
 // Run: npx tsx scripts/lint-manifests.ts
 
 import { readdirSync, statSync, existsSync } from "node:fs";
+import { PLATFORM_OWNER } from "../packages/platform-contract/src/platform-commands.js";
 import { join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 
@@ -54,7 +55,7 @@ async function main(): Promise<void> {
       // (api/src/platform/platform-actions.ts) — registry-sync seeds
       // entity_actions rows under that name from the kernel side. A module
       // claiming it would collide in the registry and shadow kernel actions.
-      if (mod.default.name === "platform") {
+      if (mod.default.name === PLATFORM_OWNER) {
         failures.push({
           module: m,
           reason:

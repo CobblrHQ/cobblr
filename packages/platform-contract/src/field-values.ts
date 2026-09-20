@@ -14,6 +14,14 @@
 // promised. Only the types with a single honest reading are cast; anything
 // that does not parse is left exactly as it came, never dropped, so a
 // person's entry is not lost to a stricter rule than the field deserved.
+//
+// A date is cast to the day field-day.ts reads from it, so a month-only
+// best-before ("2028-02", as the box prints it) is stored as the last day of
+// that month and every reader agrees on it. Stored as it came, one such
+// value threw the kernel's date query for a whole workspace and every expiry
+// reminder in it went quiet for twelve days (#3279).
+
+import { fieldDay } from "@cobblr/platform-contract/field-day";
 
 /** One field's declared shape, as `fieldsFor` reports it. */
 export interface TypedField {
@@ -24,6 +32,7 @@ export interface TypedField {
 /** The value cast to its field type where the reading is unambiguous. */
 export function castFieldValue(type: string, value: unknown): unknown {
   if (value === null || value === undefined) return value;
+  if (type === "date") return fieldDay(value) ?? value;
   if (type === "number") {
     if (typeof value === "number") return value;
     if (typeof value === "string" && value.trim() !== "") {

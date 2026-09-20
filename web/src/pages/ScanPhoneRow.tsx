@@ -206,6 +206,23 @@ export function ScanPhoneRow(p: ScanPhoneRowProps) {
                   >
                     {c.value}
                   </button>
+                  {/* One answer on offer is a guess, and where it came from
+                      is what makes taking it honest (a held web guess: "found
+                      on the web, not confirmed"), so it reads beside the tap,
+                      with the way to type something else instead. */}
+                  {p.question!.choices.length === 1 && (
+                    <>
+                      <span className="ml-1 text-faint">{c.source}</span>
+                      {p.question!.onType && (
+                        <>
+                          <span className="mx-1 text-faint">or</span>
+                          <button type="button" onClick={p.question!.onType} className="underline decoration-dotted underline-offset-2">
+                            Type it
+                          </button>
+                        </>
+                      )}
+                    </>
+                  )}
                 </span>
               ))
             ) : (

@@ -12,6 +12,7 @@ import { ChatRefChip, ChatRefName, PermanentTag } from "./ChatRefChip";
 import { PlanNote } from "./PlanNote";
 import { PlanSections, sectionsLeft, type SectionRuns } from "./PlanSections";
 import { historyToSend, slimForStore } from "../lib/chat-store";
+import { commandOrigin } from "../lib/command-origin";
 import { growToContent } from "../lib/useAutoGrowTextarea";
 import { PlanLines } from "./PlanLines";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
@@ -2027,6 +2028,9 @@ export function ChatPanel({ open: railOpen, setOpen }: { open: boolean; setOpen:
                           className="rounded-full border border-cobble-300 dark:border-cobble-700 bg-cobble-50 dark:bg-cobble-950/40 text-accent hover:bg-cobble-100 dark:hover:bg-cobble-900/60 text-xs font-medium px-2.5 py-1 transition disabled:opacity-50"
                         >
                           {c.label}
+                          {/* What the turn READ about this one, so the fact
+                              that would settle it is on the tap. */}
+                          {c.note && <span className="ml-1 font-normal text-muted">({c.note})</span>}
                         </button>
                       ))}
                     </div>
@@ -2061,7 +2065,7 @@ export function ChatPanel({ open: railOpen, setOpen }: { open: boolean; setOpen:
                   {m.command && (m.command.sections?.length ?? 0) > 1 && (
                     <div className="mt-2">
                       <div className="text-[11px] text-muted dark:text-slate-400">
-                        {m.command.summary} · {m.command.id.startsWith("computed:") ? "worked out from the page, no AI used" : `learned from “${m.command.template}”`}
+                        {m.command.summary} · {commandOrigin(m.command.id, m.command.template)}
                       </div>
                       <PlanSections
                         sections={m.command.sections!}
@@ -2088,7 +2092,7 @@ export function ChatPanel({ open: railOpen, setOpen }: { open: boolean; setOpen:
                   {m.command && !((m.command.sections?.length ?? 0) > 1) && !m.resolved && (
                     <div className="mt-2">
                       <div className="text-[11px] text-muted dark:text-slate-400">
-                        {m.command.summary} · {m.command.id.startsWith("computed:") ? "worked out from the page, no AI used" : `learned from “${m.command.template}”`}
+                        {m.command.summary} · {commandOrigin(m.command.id, m.command.template)}
                       </div>
                       {m.command.lines && <PlanLines lines={m.command.lines} />}
                       <PlanNote note={m.command.note} leftHeading={m.command.leftHeading} also={m.command.also} slug={activeSlug ?? ""} routeFor={detailRoute} onGo={goTo} />
@@ -2239,7 +2243,7 @@ export function ChatPanel({ open: railOpen, setOpen }: { open: boolean; setOpen:
                       says everything. A command the workspace was TAUGHT still
                       says where it learned it, the way the command card does. */}
                   {!suggestion.id.startsWith("computed:") && (
-                    <div className="text-[11px] text-emerald-700/80 dark:text-emerald-400/70 break-words">taught from “{suggestion.template}”</div>
+                    <div className="text-[11px] text-emerald-700/80 dark:text-emerald-400/70 break-words">{commandOrigin(suggestion.id, suggestion.template)}</div>
                   )}
                   <div className="mt-1.5 flex items-center gap-2">
                     <button

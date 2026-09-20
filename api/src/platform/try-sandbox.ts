@@ -21,8 +21,10 @@
 import { randomBytes } from "node:crypto";
 import { sql } from "kysely";
 import { meta } from "../db/meta.js";
+import { announceSandboxKept, announceSandboxStarted, createAccount } from "./accounts.js";
 import { env } from "../env.js";
-import { expiredSandboxesQuery } from "./try-sandbox-query.js";
+import { expiredSandboxesQuery, reapCutoff } from "./try-sandbox-query.js";
+import { DEFAULT_TRIAL_LENGTH, type TrialLengthDays } from "@cobblr/platform-contract/trial-length";
 import { hashToken } from "./try-sandbox-token.js";
 import { mintSandboxToken } from "./try-sandbox-token.js";
 import { hashPassword } from "../auth/password.js";
@@ -35,6 +37,13 @@ export function sandboxEnabled(): boolean {
 
 export function sandboxTtlMs(): number {
   return env.TRY_SANDBOX_TTL_MINUTES * 60_000;
+}
+
+/** How long a sandbox past its hour is held, frozen, so the person can still
+ *  keep it from the ending page (#3254). The door 410s from the hour; this is
+ *  only how long the reaper waits before the delete. */
+export function sandboxDecisionMs(): number {
+  return env.TRY_SANDBOX_DECISION_HOURS * 3600_000;
 }
 
 // The token helpers live in their own module so they can be tested without a
@@ -145,19 +154,21 @@ export async function pruneOrphanSandboxUsers(): Promise<number> {
 
 async function createSandboxUser(handle: string): Promise<string> {
   const password_hash = await hashPassword(randomBytes(32).toString("base64"));
-  const row = await meta
-    .insertInto("users")
-    .values({
+  // Born through the one account door, but not announced as an account: a
+  // sandbox is made ahead of a visitor, and the hand-over says so on its own
+  // event.
+  return createAccount(
+    meta,
+    {
       email: `sandbox-${handle}@${SANDBOX_EMAIL_DOMAIN}`,
       password_hash,
       display_name: "Guest",
       // Nothing will ever be sent here, and an unverified flag would make the
       // app nag a visitor about an address that is not theirs.
       email_verified_at: new Date(),
-    })
-    .returning("id")
-    .executeTakeFirstOrThrow();
-  return row.id;
+    },
+    { via: "sandbox" },
+  );
 }
 
 /** Build the workspace, and STOP before the clock starts.
@@ -221,6 +232,9 @@ export async function handOverSandbox(
     .insertInto("try_sandbox_tokens")
     .values({ org_id: ws.orgId, user_id: ws.userId, token_hash: hash, expires_at: expiresAt })
     .execute();
+  // Somebody arrived. Its own event, apart from real signups: at a booth
+  // this is everybody who stops walking.
+  announceSandboxStarted({ slug: ws.slug });
   return { ...ws, token: plain, expiresAt };
 }
 
@@ -306,10 +320,11 @@ export async function keepSandbox(
   userId: string,
   email: string,
   sendKeepLink?: SendKeepLink,
+  days: TrialLengthDays = DEFAULT_TRIAL_LENGTH,
 ): Promise<KeepResult> {
   const org = await meta
     .selectFrom("orgs")
-    .select(["sandbox"])
+    .select(["sandbox", "slug"])
     .where("id", "=", orgId)
     .executeTakeFirst();
   if (!org?.sandbox) return { ok: false, reason: "not_sandbox" };
@@ -322,7 +337,9 @@ export async function keepSandbox(
     .executeTakeFirst();
   if (taken) return { ok: false, reason: "email_taken" };
 
-  const expiresAt = new Date(Date.now() + env.TRY_TTL_DAYS * 86_400_000);
+  // The length the person chose, from the bounded set (#3254): the trial on
+  // the demo box is short on purpose, and there is no unbounded answer.
+  const expiresAt = new Date(Date.now() + days * 86_400_000);
   await meta.transaction().execute(async (trx) => {
     // The person was "Guest" in a workspace called "Sandbox", which was true
     // for an hour and stops being true here. Keeping is the moment it becomes
@@ -389,6 +406,9 @@ export async function keepSandbox(
         `the sandbox link is the only way back in and stays open for the grace window`,
     );
   }
+  // A trial that became somebody's: the second thing the operator wants to
+  // know after "a visitor arrived".
+  announceSandboxKept({ email, slug: org.slug, days });
   return { ok: true, kind: "trial", expiresAt, emailed };
 }
 
@@ -447,8 +467,11 @@ export interface ExpiredSandbox {
 /** Sandboxes past their hour. The query itself lives in try-sandbox-query.ts
  *  so the test that guards WHAT GETS DELETED can compile the real statement
  *  without a database. */
+/** The sandboxes the reaper may delete: past their hour AND past the decision
+ *  window that follows it. Inside the window the workspace is frozen (410 at
+ *  the door) but still keepable. */
 export async function expiredSandboxes(limit: number, now: number = Date.now()): Promise<ExpiredSandbox[]> {
-  return expiredSandboxesQuery(meta, limit, new Date(now)).execute();
+  return expiredSandboxesQuery(meta, limit, reapCutoff(now, sandboxDecisionMs())).execute();
 }
 
 /** Best-effort cleanup of token rows whose org is long gone. The FK cascades on

@@ -20,7 +20,7 @@ import { browserImageHeaders } from "./image-fetch-headers.js";
 import { platform } from "@cobblr/platform-contract";
 import { isShortBarcode } from "@cobblr/platform-contract/scan-triage";
 import { durableOutcome, lookupBarcode, type BarcodeHit, type DurableBarcodeOutcome } from "./barcode-lookup.js";
-import { resolveBarcodeViaWebSearch } from "./barcode-websearch.js";
+import { resolveBarcodeViaWebSearch, productTitle } from "./barcode-websearch.js";
 import { reportBarcodeCorrection } from "./barcode-corrections.js";
 import { BookDoorUnavailable, classifyScanCode, resolveIsbn, resolveAsin, isbnFieldsForHit, ISBN_DECODER_ID, type ScanCodeType } from "./scan-router.js";
 import { crossCheckScanPhoto, identifyImage, parsePackSize, refreshCatalogImageByName } from "./enrich-photo.js";
@@ -781,8 +781,10 @@ export async function enrichBarcodeItem(ctx: EnrichContext): Promise<void> {
       //    product that then survived the hedge (a shipping-label serial coming
       //    back as women's boots). The photo — which nameFromPhoto above
       //    already got first shot at — is the identifier there, never the web.
-      // Hold the name in metadata as a hint; say why it's blank.
-      const heldName = withBrandPrefix(web.name, web.brand);
+      // Hold the name in metadata as a hint; say why it's blank. The card
+      // offers it as a tap, so it reads like a product, not a listing
+      // (productTitle: the shop's name and the engine's cut off the end).
+      const heldName = withBrandPrefix(productTitle(web.name), web.brand);
       await ctx.db
         .updateTable("core_scan_inbox_items")
         .set({

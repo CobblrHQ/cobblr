@@ -7,7 +7,7 @@ import { defineModule } from "@cobblr/platform-contract";
 
 export default defineModule({
   name: "purchases",
-  version: "0.10.15",
+  version: "0.10.16",
   displayName: "Purchases",
   description:
     "Orders, line items, and cost rollup. Each order is a vendor purchase; line items can link to inventory parts and to whatever consumed them: printer mods, projects, anything.",
@@ -138,9 +138,13 @@ export default defineModule({
     // workspace can say who each kind is for (Configuration > Who gets told).
     notifications: [
       { eventType: "purchases.order.due", label: "An order that should have arrived", description: "A purchase order past its expected arrival, with a Yes it turned up button." },
+      { eventType: "purchases.order.return", label: "A return moved", description: "A return on one of your orders was started, dropped off, received, or refunded, read from the store's own email." },
     ],
     events: [
       "purchases.order.created",
+      // A return step recorded from the store's email: requested, dropped
+      // off, received, refunded.
+      "purchases.order.return_recorded",
       "purchases.order.status_changed",
       "purchases.order.arrived",
       "purchases.order_item.received",

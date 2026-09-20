@@ -134,10 +134,10 @@ export function subjectOf(row: { vendor: string | null; label: string | null }):
  *  directly rather than through the pass's walk: it is not a walk, and the
  *  walk's lock may be held by the hourly round at that moment. */
 export async function receiptTrackingTick(
-  opts: { orgId?: string; now?: Date; number?: string; force?: boolean } = {},
+  opts: { orgId?: string; now?: Date; number?: string; batchId?: string; force?: boolean } = {},
 ): Promise<{ checked: number; notified: number }> {
   const now = opts.now ?? new Date();
-  if (opts.orgId && (opts.number || opts.force)) {
+  if (opts.orgId && (opts.number || opts.batchId || opts.force)) {
     const orgId = opts.orgId;
     return platform().tenants.withDb(orgId, (raw) => visitWorkspace(orgId, raw as Kysely<unknown>, now, opts));
   }
@@ -161,7 +161,7 @@ async function visitWorkspace(
   orgId: string,
   tdb: Kysely<unknown>,
   now: Date,
-  opts: { number?: string; force?: boolean },
+  opts: { number?: string; batchId?: string; force?: boolean },
 ): Promise<{ checked: number; notified: number }> {
   let checked = 0;
   let notified = 0;
@@ -187,10 +187,13 @@ async function visitWorkspace(
                  b.shipment_checked_at,
                  b.shipment_notified_state,
                  b.purchases_order_id,
-                 max(i.suggested_metadata->>'expected_arrival') as expected_arrival,
+                 coalesce(max(i.suggested_metadata->>'expected_arrival'), b.expected_arrival::text) as expected_arrival,
                  count(i.id) filter (where i.status in ('pending','enriching')) as pending_items
             from core_scan_batches b
-            join core_scan_inbox_items i on i.scan_batch_id = b.id
+            -- LEFT: a parcel known only from its shipping notice has no
+            -- lines yet (read_state 'awaiting'), and an inner join made it
+            -- invisible to the very sweep meant to announce its arrival.
+            left join core_scan_inbox_items i on i.scan_batch_id = b.id
            -- A confirmed parcel is FINISHED — the user said it is in hand.
            where b.shipment_confirmed_at is null
            group by b.id
@@ -199,7 +202,7 @@ async function visitWorkspace(
                    count(i.id) filter (where i.status in ('pending','enriching')) > 0
                    and (
                      nullif(btrim(coalesce(b.tracking_number, '')), '') is not null
-                     or max(i.suggested_metadata->>'expected_arrival') <= ${today}
+                     or coalesce(max(i.suggested_metadata->>'expected_arrival'), b.expected_arrival::text) <= ${today}
                    )
                  )
                  -- or its lines are filed but the parcel is still in the air.
@@ -208,6 +211,13 @@ async function visitWorkspace(
                  or (
                    nullif(btrim(coalesce(b.tracking_number, '')), '') is not null
                    and coalesce(b.shipment_state, '') <> 'delivered'
+                 )
+                 -- or a shipping notice is following it with no carrier number
+                 -- at all (Amazon's own vans): the emails ARE the carrier, and
+                 -- each one is announced the same way a poll result would be.
+                 or (
+                   b.read_state = 'awaiting'
+                   or (b.shipment_state is not null and count(i.id) filter (where i.status in ('pending','enriching')) > 0)
                  )
         `.compile(tdb);
 
@@ -223,6 +233,7 @@ async function visitWorkspace(
         for (const row of rows) {
           // A pushed re-check is about ONE parcel; leave the rest on cadence.
           if (opts.number && row.tracking_number !== opts.number) continue;
+          if (opts.batchId && row.id !== opts.batchId) continue;
           try {
             // Ask the carrier only when there is a number to ask about. A
             // receipt with just a date skips straight to the question below.

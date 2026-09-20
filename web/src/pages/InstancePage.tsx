@@ -264,20 +264,24 @@ function CreatedSuccessStrip() {
     setParams(next, { replace: true });
   };
   return (
-    <div className="rounded-lg border border-emerald-300 dark:border-emerald-800 bg-emerald-50 dark:bg-emerald-900/20 px-3 py-2.5 flex items-center gap-2.5 text-sm">
+    // On a phone the two actions wrap under the sentence: beside it they left
+    // the sentence a 140px column, eight lines tall (#3222).
+    <div className="rounded-lg border border-emerald-300 dark:border-emerald-800 bg-emerald-50 dark:bg-emerald-900/20 px-3 py-2.5 flex flex-wrap items-center gap-2.5 text-sm">
       <CheckCircle2 size={16} className="text-emerald-600 dark:text-emerald-400 shrink-0" />
-      <div className="flex-1 min-w-0 text-content dark:text-mortar-100">
-        <strong>{created}</strong> is set up{count > 0 ? <> — {count} item{count === 1 ? "" : "s"} filed from your capture{count === 1 ? "" : "s"}</> : null}. This is its home now.
+      <div className="flex-1 min-w-0 basis-52 text-content dark:text-mortar-100">
+        <strong>{created}</strong> is set up{count > 0 ? <>, {count} item{count === 1 ? "" : "s"} filed from your capture{count === 1 ? "" : "s"}</> : null}. This is its home now.
       </div>
-      <Link to="/scan/camera" onClick={clear} className="shrink-0 inline-flex items-center gap-1 rounded-md border border-emerald-300 dark:border-emerald-700 px-2 py-1 text-xs font-medium text-content dark:text-mortar-100 hover:border-emerald-400 transition">
-        <Camera size={12} /> Scan more
-      </Link>
-      <Link to="/dashboard" onClick={clear} className="shrink-0 inline-flex items-center gap-1 rounded-md border border-emerald-300 dark:border-emerald-700 px-2 py-1 text-xs font-medium text-content dark:text-mortar-100 hover:border-emerald-400 transition">
-        <Plus size={12} /> Add more
-      </Link>
-      <button type="button" onClick={clear} aria-label="Dismiss" className="shrink-0 rounded p-1 text-faint hover:text-content transition">
-        <X size={13} />
-      </button>
+      <div className="ml-auto flex items-center gap-2.5">
+        <Link to="/scan/camera" onClick={clear} className="shrink-0 inline-flex items-center gap-1 rounded-md border border-emerald-300 dark:border-emerald-700 px-2 py-1 text-xs font-medium text-content dark:text-mortar-100 hover:border-emerald-400 transition">
+          <Camera size={12} /> Scan more
+        </Link>
+        <Link to="/dashboard" onClick={clear} className="shrink-0 inline-flex items-center gap-1 rounded-md border border-emerald-300 dark:border-emerald-700 px-2 py-1 text-xs font-medium text-content dark:text-mortar-100 hover:border-emerald-400 transition">
+          <Plus size={12} /> Add more
+        </Link>
+        <button type="button" onClick={clear} aria-label="Dismiss" className="shrink-0 rounded p-1 text-faint hover:text-content transition">
+          <X size={13} />
+        </button>
+      </div>
     </div>
   );
 }

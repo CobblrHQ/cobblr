@@ -4,6 +4,8 @@
 // has module_name = 'core-discussion', on prod + staging + dev consistently; then
 // delete this file and its boot call.
 //
+// BORN WITH: nothing (rows a bug wrote; the writer is fixed)
+//
 // A notification stores what it is ABOUT as three columns, and the Discord
 // interactions endpoint rebuilds `${module_name}:${entity_type}` to decide where
 // a typed reply goes. Discussion filled two of the three from the conversation's

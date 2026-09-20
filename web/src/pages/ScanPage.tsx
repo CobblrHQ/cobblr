@@ -2714,7 +2714,7 @@ className="ml-1.5 sm:ml-0 rounded px-1 py-0.5 text-[12.5px] hover:bg-subtle dark
         <div className="rounded-md border border-dashed border-line dark:border-slate-700 p-8 text-center">
           <ScanLine size={28} className="mx-auto text-faint dark:text-slate-600 mb-2" />
           <div className="text-sm text-muted dark:text-slate-400">
-            Nothing pending. Open the camera or add a UPC / photo above.
+            Nothing pending. Open the camera, upload a photo, or paste a UPC into the search above.
           </div>
           {/* The receipt door, in the open: one photo of a paper receipt puts
               the whole trip here. It lived only inside the "..." menu, which a

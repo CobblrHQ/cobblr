@@ -4,6 +4,8 @@
 // super-admin UI, so a category can be silenced if it doubles up with, say, a
 // separate git-commit feed.
 //
+// BORN WITH: nothing (process-wide: it logs where announcements route; nothing is written for a workspace)
+//
 // Generalizes the old single-purpose feedback ping. Per category we store
 // { enabled, webhook_url }; webhook_url NULL falls back to the default channel
 // (COBBLR_FEEDBACK_DISCORD_WEBHOOK). Posting is fire-and-forget — an event is

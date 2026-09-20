@@ -12,6 +12,8 @@
 // vending dot and the sweeper's event cannot drift apart on what "spoiled"
 // means.
 
+import { fieldDay } from "@cobblr/platform-contract/field-day";
+
 export type ExpiryState =
   /** No deadline pressure yet. */
   | "fresh"
@@ -51,9 +53,13 @@ export function expiryState(
   graceDays: unknown,
   now: Date = new Date(),
 ): ExpiryReading | null {
-  if (expiresOn === null || expiresOn === undefined || expiresOn === "") return null;
-  const ts = expiresOn instanceof Date ? expiresOn.getTime() : Date.parse(String(expiresOn));
-  if (Number.isNaN(ts)) return null;
+  // The day is the one rule's (field-day.ts): a month-only best-before is the
+  // last day of its month here as everywhere, and a value that names no day
+  // is null, never a guess. Date.parse read "2028-02" as the first of the
+  // month while the sweeper's SQL threw on it (#3279).
+  const day = fieldDay(expiresOn);
+  if (day === null) return null;
+  const ts = Date.parse(`${day}T00:00:00Z`);
   // Number.isFinite, not truthiness: Infinity survives `|| 0` and would make
   // food immortal.
   const gn = Number(graceDays);

@@ -100,6 +100,24 @@ export interface LexicalEvidence {
  *  whose item noun is one of these (Lego "set", a generic "item") must carry
  *  scan_keywords to be routable; the noun alone would claim every "sheet set"
  *  and every "3-piece". Stemmed, lowercase. */
+/** Light stemming so plural/singular pairs match ("Netflix subscription" hits
+ *  a "subscriptions" table; "screws" hits a "screw" choice): trailing
+ *  -ies→y, -es, -s stripped (conservative; ≥4 chars so "gas"/"its" survive). */
+const stem = (w: string): string => {
+  if (w.length >= 5 && w.endsWith("ies")) return w.slice(0, -3) + "y";
+  if (w.length >= 5 && w.endsWith("es")) return w.slice(0, -2);
+  if (w.length >= 4 && w.endsWith("s")) return w.slice(0, -1);
+  return w;
+};
+
+/** A table whose noun says what its things ARE (spice, plant, tea, book),
+ *  against an aisle whose noun says nothing (Groceries' "item", a catch-all's
+ *  "part"). The category naming the first is a statement about the thing;
+ *  naming the second is only where the source system shelved it. */
+export function nounSaysWhatItIs(t: FitTable): boolean {
+  return !!t.noun && !t.is_fallback && !GENERIC_NOUNS.has(stem(t.noun.toLowerCase()));
+}
+
 export const GENERIC_NOUNS = new Set([
   "set", "item", "thing", "unit", "piece", "pack", "record", "entry", "object", "product",
   // A word that says how something is put together, not what it is: a
@@ -125,12 +143,6 @@ export function makeLexicalScorer(item: FitItem): {
   // a "subscriptions" table; "screws" hits a "screw" choice): compare tokens by
   // their stem — trailing -ies→y, -es, -s stripped (conservative; ≥4 chars so
   // "gas"/"its" survive).
-  const stem = (w: string): string => {
-    if (w.length >= 5 && w.endsWith("ies")) return w.slice(0, -3) + "y";
-    if (w.length >= 5 && w.endsWith("es")) return w.slice(0, -2);
-    if (w.length >= 4 && w.endsWith("s")) return w.slice(0, -1);
-    return w;
-  };
   const tokens = new Set(hay.split(/[^a-z0-9]+/).filter((t) => t.length >= 3).map(stem));
   // The short VALUES in the metadata, keys left out: what a catalog states as
   // an attribute, not the name of the slot it states it in, and not a
@@ -491,6 +503,21 @@ export function orderFits<T extends FitTable>(a: RankedFit<T>, b: RankedFit<T>):
     //    named tables the order below stands (Spices at the head over the
     //    Groceries aisle the catalog names).
     Number(!!a.table.is_fallback && b.evidence.categoryNames) - Number(!!b.table.is_fallback && a.evidence.categoryNames) ||
+    // 1. A SPECIFIC table the category names outranks a table named only by
+    //    a keyword at the head of the name. "Cumin seeds 100g" with the
+    //    catalog category Spices routed to Plants because "seeds" is a Plants
+    //    keyword at the head, while Spices, which the category names and
+    //    whose keyword "cumin" is in the name, sat second (#3155, the wide
+    //    form; coriander, mustard and fennel seeds the same). The category
+    //    is asserted evidence about the thing; a keyword at the head is a
+    //    guess about the words. Two exceptions, both about what the thing
+    //    IS: a table whose own NOUN is in the name keeps it ("spice blend"
+    //    is called a spice), and a category that names only an AISLE, a
+    //    table whose noun says nothing (Groceries' "item"), yields to the
+    //    head as it always did: "21 Seasoning Salute" the catalog shelves
+    //    under Groceries is a seasoning, and the Spice Rack declares the word.
+    Number(b.evidence.categoryNames && nounSaysWhatItIs(b.table) && !a.evidence.nounHit) -
+      Number(a.evidence.categoryNames && nounSaysWhatItIs(a.table) && !b.evidence.nounHit) ||
     Number(b.evidence.headNamed) - Number(a.evidence.headNamed) ||
     Number(nameNames(b.evidence)) - Number(nameNames(a.evidence)) ||
     Number(b.evidence.categoryNames) - Number(a.evidence.categoryNames) ||

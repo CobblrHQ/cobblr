@@ -1,5 +1,7 @@
 // A workspace that approved an AI and never switched it on.
 //
+// BORN WITH: nothing (heals rows an older approval wrote inactive; a new approval writes the active shape)
+//
 // DONE WHEN: no `user_credential_orgs` row anywhere is (mode workspace-default,
 // approved, self-approved, active=false) in a workspace with no active AI —
 // checked on prod, staging and dev. Then delete this file and its boot call.

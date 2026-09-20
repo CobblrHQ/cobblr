@@ -7,7 +7,7 @@
 //   the rest  → nothing; the ordinary header speaks
 // A failed receipt used to read "not read yet · 1 item · 1 finishing…" for
 // ever, its only retry an icon with a tooltip (#2892).
-import { AlertTriangle, Loader2, RotateCcw } from "lucide-react";
+import { AlertTriangle, Loader2, RotateCcw, Mail } from "lucide-react";
 import { Link } from "react-router-dom";
 import type { SessionVerdict } from "@cobblr/platform-contract/scan-session";
 
@@ -36,6 +36,26 @@ export function SessionReadVerdict({
         className="inline-flex items-center gap-1 rounded-full border border-cobble-300 dark:border-cobble-700 bg-cobble-50 dark:bg-cobble-900/30 px-1.5 py-0.5 text-[10px] font-medium text-accent"
       >
         <Loader2 size={9} className="animate-spin" /> Reading the receipt…
+      </span>
+    );
+  }
+  if (verdict.kind === "awaiting") {
+    // A parcel we know from its shipping notice; the receipt with the lines
+    // has not been forwarded. Grey, not amber: nothing failed and nobody is
+    // needed. The session header already shows the parcel's own status.
+    const sentence = "Followed from its shipping notice. Forward the order confirmation and its lines will read into this receipt.";
+    return (
+      <span
+        data-testid="session-awaiting"
+        title={sentence}
+        className={
+          compact
+            ? "shrink-0 inline-flex items-center gap-1 rounded-full border border-line bg-subtle px-1.5 py-0.5 text-[10px] font-medium text-muted"
+            : "basis-full mt-1 inline-flex items-center gap-2 rounded-md border border-line bg-subtle px-2 py-1.5 text-[12px] text-muted"
+        }
+        onClick={(e) => e.stopPropagation()}
+      >
+        <Mail size={compact ? 9 : 12} className="shrink-0" /> {compact ? "Awaiting the receipt" : sentence}
       </span>
     );
   }

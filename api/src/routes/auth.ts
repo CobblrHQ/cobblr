@@ -48,6 +48,7 @@ import {
 import { isPlatformAdmin, requireAuth } from "../auth/middleware.js";
 import { publicSignupEnabled, managedAppSignupEnabled, selfServeInvitesEnabled } from "../auth/signup-gate.js";
 import { dispatch } from "../platform/notifications.js";
+import { createAccount } from "../platform/accounts.js";
 import { isUndeliverableTestAddress } from "../platform/email-send.js";
 import * as activity from "../platform/activity.js";
 import { fireSignup, sendAuthEmail } from "../platform/hosted-seams.js";
@@ -483,17 +484,13 @@ authRouter.post("/signup", async (req, res, next) => {
     const password_hash = await hashPassword(body.password);
 
     // Phase 1: user row only (org provisioning is its own helper now,
-    // so signup and POST /orgs share the same code path).
-    const userRow = await meta
-      .insertInto("users")
-      .values({
-        email,
-        password_hash,
-        display_name: body.display_name.trim(),
-      })
-      .returning("id")
-      .executeTakeFirstOrThrow();
-    const userId = userRow.id;
+    // so signup and POST /orgs share the same code path). The row is born
+    // through the one door that also tells the operator (platform/accounts.ts).
+    const userId = await createAccount(
+      meta,
+      { email, password_hash, display_name: body.display_name.trim() },
+      { via: "signup", how: invite ? "invite" : isManagedAppSignup ? "app" : "open", ...(isManagedAppSignup ? { app: String(body.app) } : {}) },
+    );
 
     // Attribute the consumed invite to the new user (the claim above only
     // stamped consumed_at, before the user existed).
@@ -876,17 +873,13 @@ async function adoptOrProvisionIdentity(
   // would have to be excluded by every comparison site forever, which is one forgotten
   // call site away from a login that succeeds on a fake password.
   const password_hash = await hashPassword(randomBytes(32).toString("base64"));
-  const created = await meta
-    .insertInto("users")
-    .values({
-      email: profile.email,
-      password_hash,
-      display_name: profile.displayName,
-      identity_id: identityId,
-      email_verified_at: new Date(),
-    })
-    .returning("id")
-    .executeTakeFirstOrThrow();
+  const created = {
+    id: await createAccount(
+      meta,
+      { email: profile.email, password_hash, display_name: profile.displayName, identity_id: identityId, email_verified_at: new Date() },
+      { via: "identity" },
+    ),
+  };
 
   // The fourth create path agrees with the other three: asked for from
   // /start/<app>, a new account's first workspace IS the app, the way the
@@ -1205,18 +1198,17 @@ authRouter.post("/magic/consume", async (req, res, next) => {
       // be magic-only unless they later use POST /me/password).
       // Display name defaults to the email's local-part.
       const defaultName = row.email.split("@")[0] ?? "user";
-      const inserted = await meta
-        .insertInto("users")
-        .values({
+      userId = await createAccount(
+        meta,
+        {
           email: row.email,
           password_hash: "", // empty; verifyPassword will reject all
           display_name: defaultName,
           // Clicking the magic link proves control of the email → verified.
           email_verified_at: new Date(),
-        })
-        .returning("id")
-        .executeTakeFirstOrThrow();
-      userId = inserted.id;
+        },
+        { via: "magic-link" },
+      );
       // Give them a starter workspace named after them.
       try {
         await provisionOrgForUser(userId, `${defaultName}'s workspace`);

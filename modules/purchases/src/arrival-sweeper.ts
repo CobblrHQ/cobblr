@@ -57,6 +57,22 @@ export function startArrivalSweeper(): void {
       });
     });
   });
+
+  // A shipping EMAIL said where the parcel is (core-scan read it and wrote
+  // the state onto this order through the orders PATCH). Nothing to fetch —
+  // the state is already on the row — so this is the ask for ONE order, now,
+  // rather than at the next hourly walk: the delivered card arrives with the
+  // email, not an hour after it.
+  platform().events.on("core-scan.shipment.observed", "purchases", async (payload: unknown) => {
+    const p = payload as { orgId?: string; orderId?: string };
+    if (!p.orgId || !p.orderId) return;
+    const { orgId, orderId } = p;
+    setImmediate(() => {
+      arrivalTick({ orgId, orderId }).catch((err: unknown) => {
+        console.error("[purchases] shipment-observed ask failed:", (err as Error).message);
+      });
+    });
+  });
 }
 
 /** What we know about an order's ask history when deciding whether to ask. */
@@ -215,10 +231,10 @@ export function askStateFromRow(row: DueRow, today: string): AskState {
  *  directly rather than through the pass's walk: it is not a walk, and the
  *  walk's lock may be held by the hourly round at that moment. */
 export async function arrivalTick(
-  opts: { orgId?: string; now?: Date; number?: string; force?: boolean } = {},
+  opts: { orgId?: string; now?: Date; number?: string; orderId?: string; force?: boolean } = {},
 ): Promise<{ due: number; asked: number }> {
   const now = opts.now ?? new Date();
-  if (opts.orgId && (opts.number || opts.force)) {
+  if (opts.orgId && (opts.number || opts.orderId || opts.force)) {
     const orgId = opts.orgId;
     const r = await platform().tenants.withDb(orgId, (raw) => visitWorkspace(orgId, raw, now, opts));
     return r ?? { due: 0, asked: 0 };
@@ -241,7 +257,7 @@ async function visitWorkspace(
   orgId: string,
   raw: unknown,
   now: Date,
-  opts: { number?: string; force?: boolean },
+  opts: { number?: string; orderId?: string; force?: boolean },
 ): Promise<{ due: number; asked: number } | void> {
   const org = { id: orgId };
   let due = 0;
@@ -301,6 +317,7 @@ async function visitWorkspace(
           if (!row.tracking_number?.trim()) continue;
           // A pushed re-check is about ONE parcel; leave the rest on cadence.
           if (opts.number && row.tracking_number !== opts.number) continue;
+          if (opts.orderId && row.id !== opts.orderId) continue;
           try {
             const res = (await platform().actions.invoke("core-shipments:track", {
               orgId: org.id,
@@ -386,9 +403,12 @@ async function visitWorkspace(
         const today = arrivedEverywhere(now);
         const askable = rows.filter(
           (r) =>
-            r.shipment_state === "delivered" ||
-            r.shipment_state === "out_for_delivery" ||
-            (r.expected_arrival !== null && r.expected_arrival <= today),
+            // A shipment-observed ask is about ONE order, the one the email
+            // named; the rest keep their own cadence.
+            (!opts.orderId || r.id === opts.orderId) &&
+            (r.shipment_state === "delivered" ||
+              r.shipment_state === "out_for_delivery" ||
+              (r.expected_arrival !== null && r.expected_arrival <= today)),
         );
         due += askable.length;
 

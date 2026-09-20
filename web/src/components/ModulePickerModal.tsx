@@ -498,6 +498,7 @@ function Row({
   const blocked = missingDeps.length > 0;
   return (
     <div
+      data-testid={`module-row-${m.name}`}
       className={
         (compact
           ? "rounded-md border border-line dark:border-slate-700 bg-mortar-25 dark:bg-slate-800/40 p-2.5"

@@ -37,8 +37,9 @@ import { resolveRequirement, storageRequirementFor } from "../services/storage-r
 import { applyReceiptFacts } from "../services/receipt-candidate-facts.js";
 import { alignStorageFields } from "../services/align-storage-fields.js";
 import { moveQuantity, scanTargetOf, scanTargetsRegistered, startingCount, type QuantityMove } from "../services/scan-target.js";
+import { withGroupImages as groupImagesFor } from "../services/group-image.js";
 import { retargetByCategory } from "../services/retarget-by-category.js";
-import { lineQuantity } from "../services/receipt-shared.js";
+import { lineQuantity, sameOrder } from "../services/receipt-shared.js";
 import { FiledQuantity, filedQuantityOf } from "../services/filed-quantity.js";
 import { expiryDefaults } from "../services/shelf-life.js";
 import { Router, type Request } from "express";
@@ -1063,27 +1064,56 @@ inboxRouter.post(
     // items. origin="email" makes the inbox add "emailed <when>". (Falls back to a
     // batch-less group only if the batch insert somehow fails.)
     const batchLabel = receiptSessionLabel(receipt.vendor, orderRef);
-    const batch = await db
-      .insertInto("core_scan_batches")
-      .values({
-        created_by_user_id: session.id,
-        label: batchLabel,
-        origin: parsed.data.origin ?? null,
-        // Remember the original so the session can offer "View original" + "Re-parse".
-        source_file_id: parsed.data.file_id,
-        // Vendor + order # as their own fields so the order # is editable later.
-        vendor: receipt.vendor,
-        order_ref: orderRef,
-        content_key: contentKey,
-        read_state: "read",
-        read_at: new Date(),
-        // Which way round the numeric date was read, and by what (#2917).
-        date_convention: result.date_reading?.convention ?? null,
-        date_decided_by: result.date_reading?.decided_by ?? null,
-        date_printed: result.date_reading?.printed ?? null,
-      })
-      .returning("id")
-      .executeTakeFirst();
+    // A shipping notice may have arrived BEFORE this receipt and left a
+    // row-less session in read_state 'awaiting' for the same store + order
+    // (api/shipment-event.ts). The receipt reads INTO that session — its
+    // parcel state, tracking number and ownership carry over — rather than
+    // opening a second session for one order. The duplicate guard above never
+    // sees it: an awaiting session has no lines, and the guard keys on lines.
+    // Matched on the order number, with the store as the tiebreak
+    // (sameOrder): the notice said "Amazon", the receipt says "Amazon.com".
+    const awaiting = dupKey
+      ? sameOrder(
+          await db
+            .selectFrom("core_scan_batches")
+            .select(["id", "vendor", "tracking_number", "shipment_state", "shipment_checked_at", "shipment_next_poll_at", "shipment_location", "expected_arrival"])
+            .where("read_state", "=", "awaiting")
+            .where("order_ref", "=", dupKey.orderRef)
+            .orderBy("created_at", "desc")
+            .limit(10)
+            .execute(),
+          receipt.vendor,
+          dupKey.orderRef,
+        )
+      : undefined;
+    const sessionFields = {
+      label: batchLabel,
+      origin: parsed.data.origin ?? null,
+      // Remember the original so the session can offer "View original" + "Re-parse".
+      source_file_id: parsed.data.file_id,
+      // Vendor + order # as their own fields so the order # is editable later.
+      vendor: receipt.vendor,
+      order_ref: orderRef,
+      content_key: contentKey,
+      read_state: "read",
+      read_at: new Date(),
+      // Which way round the numeric date was read, and by what (#2917).
+      date_convention: result.date_reading?.convention ?? null,
+      date_decided_by: result.date_reading?.decided_by ?? null,
+      date_printed: result.date_reading?.printed ?? null,
+    };
+    const batch = awaiting
+      ? await db
+          .updateTable("core_scan_batches")
+          .set(sessionFields as never)
+          .where("id", "=", awaiting.id)
+          .returning("id")
+          .executeTakeFirst()
+      : await db
+          .insertInto("core_scan_batches")
+          .values({ created_by_user_id: session.id, ...sessionFields } as never)
+          .returning("id")
+          .executeTakeFirst();
     const batchId = batch?.id ?? null;
 
     // One inbox row per line item (shared receipt_group_id, attached to the
@@ -1131,9 +1161,19 @@ inboxRouter.post(
         vendor: receipt.vendor,
         orderRef,
         orderedAt: receipt.date,
-        trackingNumber: null, // nobody has had a chance to add one yet
-        knownShipment: null,
-        expectedArrival: receipt.expected_arrival ?? null,
+        // Nobody has typed one yet — unless a shipping notice got here first
+        // and left the session awaiting, in which case its parcel (number,
+        // state, promised day) carries into the order it now makes.
+        trackingNumber: awaiting?.tracking_number ?? null,
+        knownShipment: awaiting?.shipment_state
+          ? {
+              state: awaiting.shipment_state,
+              checkedAt: awaiting.shipment_checked_at ?? null,
+              nextPollAt: awaiting.shipment_next_poll_at ?? null,
+              location: awaiting.shipment_location ?? null,
+            }
+          : null,
+        expectedArrival: receipt.expected_arrival ?? awaiting?.expected_arrival ?? null,
         total: receipt.total,
         groupId: receiptGroupId,
         sourceFileId: parsed.data.file_id,
@@ -1564,7 +1604,10 @@ async function sessionsWithoutRows(db: ReturnType<typeof tenantDb>, present: Set
   const rows = await db
     .selectFrom("core_scan_batches")
     .select(["id", "label", "origin", "source_file_id", "order_ref", "tracking_number", "shipment_state", "shipment_description", "shipment_location", "read_state", "read_failure", "read_started_at", "created_at", "date_convention", "date_decided_by", "date_printed"])
-    .where("read_state", "in", ["failed", "in_flight"])
+    // 'awaiting': a parcel known from its shipping notice, no lines yet. On
+    // the page for the same reason a failed read is: the inbox groups by
+    // item, and a session with none would otherwise not exist.
+    .where("read_state", "in", ["failed", "in_flight", "awaiting"])
     .orderBy("created_at", "desc")
     .limit(50)
     .execute();
@@ -2715,6 +2758,33 @@ inboxRouter.post(
       }
     }
 
+    // What the person did, kept: "scanned six things" is an intent the
+    // activity log can read back later (#3254), where the target's own
+    // create row says only that a part was made. Everything a replay would
+    // need to make this item again, the normal way: where it went, what it
+    // was filed as, and which pictures are its (file ids, so the image can
+    // travel with it). Best-effort, like every other touch after the create.
+    try {
+      await platform().activity.log({
+        orgId: ctx.org.id,
+        userId: sessionUser(req)?.id ?? null,
+        action: "scan_committed",
+        ref: { module: "core-scan", entityType: "inbox_item", entityId: id },
+        diff: {
+          entity_kind: kindKey,
+          entity_id: created.id,
+          ...(parsed.data.instance ? { instance: parsed.data.instance } : {}),
+          name: String(body.name ?? filingName(row) ?? "").trim() || null,
+          ...(row.barcode_text ? { barcode: row.barcode_text } : {}),
+          ...(resolvedRow.catalog_image_url ? { catalog_image_url: resolvedRow.catalog_image_url } : {}),
+          photo_file_ids: userPhotos,
+          ...(row.catalog_image_file_id ? { catalog_image_file_id: row.catalog_image_file_id } : {}),
+        },
+      });
+    } catch (err) {
+      console.warn("[core-scan] activity log for the commit failed:", (err as Error).message);
+    }
+
     void platform().events.emit("core-scan.scan.confirmed", {
       orgId: ctx.org.id,
       itemId: id,
@@ -3226,36 +3296,12 @@ async function servedAll<T extends ScanTriageRow & {
 }
 
 /** A split child's group shot, served on the child as `group_image_file_id`
- *  (the parent's own photo), so the pictures resolver (the contract's
- *  scan-pictures) can list it beside the child's crop without any surface
- *  fetching the parent (#3046). One read for however many rows; a row that
- *  is not a split child, or whose parent is gone, carries null. */
+ *  (services/group-image.ts is the one place that says which file it is). */
 async function withGroupImages<T extends { suggested_metadata?: unknown }>(
   req: Request,
   rows: T[],
 ): Promise<Array<T & { group_image_file_id: string | null }>> {
-  const parentOf = (r: T): string | null => {
-    const from = (r.suggested_metadata as { split_from?: unknown } | null)?.split_from;
-    return typeof from === "string" && from ? from : null;
-  };
-  const parents = [...new Set(rows.map(parentOf).filter((id): id is string => !!id))];
-  const images = new Map<string, string | null>();
-  if (parents.length) {
-    try {
-      const found = await tenantDb(req)
-        .selectFrom("core_scan_inbox_items")
-        .select(["id", "image_file_id"])
-        .where("id", "in", parents)
-        .execute();
-      for (const p of found) images.set(p.id, p.image_file_id);
-    } catch (err) {
-      console.error("[core-scan] group images read failed:", (err as Error).message);
-    }
-  }
-  return rows.map((r) => {
-    const parent = parentOf(r);
-    return { ...r, group_image_file_id: parent ? (images.get(parent) ?? null) : null };
-  });
+  return groupImagesFor(tenantDb(req), rows);
 }
 
 /** The workspace's tables, read once per request however many rows it serves. */

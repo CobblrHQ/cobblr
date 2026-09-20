@@ -118,18 +118,28 @@ function onScreen(
 /** The cases held out of the floor, by sentence: the issue each one cannot
  *  pass without. Named by the corpus owner from the outcome-scored pass
  *  (2026-09-17). A sentence here that is not in the corpus is a dead marker,
- *  refused at load (below), so the list cannot drift from the cases. */
+ *  refused at load (below), so the list cannot drift from the cases.
+ *
+ *  A marker COSTS: a held-out case is asked live on every bench run, never
+ *  answered from the cache (it is held out to be watched), so each line
+ *  here is one ask per run for as long as it stands and one slot of the
+ *  merge run's budget of 40 before the run starts. lint:corpus-known-red-live
+ *  refuses more than ten; past that the lever is the issue. */
 const KNOWN_RED: Record<string, string> = {
+  // #3142: the door says which arguments it requires (section; the hours)
+  // and nothing shows the model that, so the call arrives without them two
+  // asks in three. A pass on either is the model's dice, not evidence, until
+  // it can see what the door requires (one pass in seven, 2026-09-19).
+  "put purchase date and supplier under Buying on parts": "#3142 (the door requires section and nothing shows the model that; a pass is not evidence until it can)",
+  "the Rostock Max ran four hours yesterday": "#3142 (the door requires the hours and nothing shows the model that; a pass is not evidence until it can)",
 };
 
 /** The cases that left the gate for the trend, by sentence: the reason each
- *  cannot be made deterministic, after a real attempt. */
-const TREND: Record<string, string> = {
-  // #3159: the door works for the model's call; the miss is the model's
-  // choice between the action and a pointer to Fields & forms, two in three
-  // either way.
-  "add Aran to the yarn weight choices": "the model chooses between the action and a pointer to Fields & forms, two in three either way (#3159)",
-};
+ *  cannot be made deterministic, after a real attempt. Empty since #3159:
+ *  "add Aran to the yarn weight choices" was the model's dice (the action or
+ *  a pointer to Fields & forms, two in three either way) until the platform
+ *  shipped the sentence as a command, so code answers it before any model. */
+const TREND: Record<string, string> = {};
 
 const RAW_CORPUS: CorpusCase[] = [
   // ── greetings & meta ──────────────────────────────────────────────────────
@@ -316,8 +326,15 @@ const RAW_CORPUS: CorpusCase[] = [
   ]),
   ...ph("workspace", neverOffer, "action:platform:edit-field", [
     "hide the manufacturer field on parts", "make Purchase Date required",
-    "add Aran to the yarn weight choices",
     "remove tea category from inventory, it is no longer a valid option",
+  ]),
+  // A choice added to or taken off a dropdown, said the one way people say
+  // it, is a platform command (platform-commands.ts in the contract): the
+  // same edit-field door, bound by code, no model asked. The tea sentence
+  // above is the same door in words no template claims, and stays the model's.
+  ...ph("workspace", command, "action:platform:edit-field", [
+    "add Aran to the yarn weight choices",
+    "remove Coffee from the category choices",
   ]),
   ...ph("workspace", neverOffer, "action:platform:group-fields", [
     "put purchase date and supplier under Buying on parts",

@@ -20,13 +20,18 @@
  *                      (no AI provider yet). A replay after fixing it wins
  *   nothing_to_import  we read it and there was no receipt. A replay does the
  *                      same thing forever
+ *   shipment           a shipping notification, applied to its parcel. No
+ *                      items by design (Amazon's carry none); NOT a failure,
+ *                      and a replay would only re-stamp the same state
  */
 export function outcomeStatus(o: {
   parsedCount: number;
   duplicate: boolean;
   bodyFailure: "ai_unavailable" | "no_line_items" | "unreadable" | null;
-}): "imported" | "duplicate" | "degraded" | "nothing_to_import" {
+  shipment?: boolean;
+}): "imported" | "duplicate" | "degraded" | "nothing_to_import" | "shipment" {
   if (o.parsedCount > 0) return "imported";
+  if (o.shipment) return "shipment";
   if (o.duplicate) return "duplicate";
   // `unreadable` needs a different INPUT, not another attempt at these bytes,
   // so it is not degraded either: replaying it changes nothing.

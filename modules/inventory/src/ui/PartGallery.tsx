@@ -240,9 +240,10 @@ export function PartGallery({ partId, coverImagePath, onSetCover }: Props) {
                     cover
                   </div>
                 )}
-            {/* TOUCH-OK: a caption gradient over a tappable thumbnail. The
-                thumbnail is the control, this only labels it on a desktop. */}
-                <div className="absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/60 to-transparent p-1 flex items-center justify-between gap-1 opacity-0 group-hover:opacity-100 transition">
+                {/* The tile's three actions live in this strip, so it is
+                    never hover-only: on a tablet the cover, cut-out and
+                    remove buttons were unreachable (#3239). */}
+                <div className="hover-reveal absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/60 to-transparent p-1 flex items-center justify-between gap-1">
                   {!isCover && (
                     <button
                       type="button"

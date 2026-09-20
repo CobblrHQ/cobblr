@@ -13,19 +13,38 @@
 // A "lossless carrier for a future importer" is how that started. This check is
 // what stops the next field from waiting years for its future.
 //
+// AND EVERY PICTURE THE ROW SHOWS. The pictures a row draws are what the
+// contract's resolver lists (packages/platform-contract/src/scan-pictures.ts:
+// its own photo, a split child's group shot, the screenshot crop, the gallery,
+// the catalog picture). The export carried the first and the last; the rest
+// crossed only as the SOURCE's file ids in the metadata blob, which on the
+// destination point at nothing (#3127, 2026-09-20: every split child in a
+// moved workspace lost its group shot). So every key the resolver reads off a
+// row or its metadata must be named by the exporter (it carries the file) AND
+// by the importer (it stores the file and rewrites the id): a picture the
+// resolver learns to draw is one the move must learn to carry, or this is red.
+//
+// PROVE IT RED: COBBLR_LINT_ROOT=<a checkout at or before f8b200d63> points it
+// at another tree; there it reports four losses (the exporter not asking the
+// resolver, and group_image_file_id, screenshot_crop_file_id and extra_photos
+// unnamed by the importer).
+//
 //   npx tsx scripts/lint-scan-export-fidelity.ts   (npm run lint:scan-export-fidelity)
 
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { dirname, join, relative } from "node:path";
 
-const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
+const ROOT = process.env.COBBLR_LINT_ROOT || join(dirname(fileURLToPath(import.meta.url)), "..");
 const EXPORT_SVC = join(ROOT, "modules", "core-scan", "src", "services", "export.ts");
 const IMPORT_SVC = join(ROOT, "modules", "core-scan", "src", "services", "import.ts");
 const IMPORT_API = join(ROOT, "modules", "core-scan", "src", "api", "import.ts");
 
+const PICTURES = join(ROOT, "packages", "platform-contract", "src", "scan-pictures.ts");
+
 const exportSrc = readFileSync(EXPORT_SVC, "utf8");
 const importSrc = readFileSync(IMPORT_SVC, "utf8") + "\n" + readFileSync(IMPORT_API, "utf8");
+const picturesSrc = readFileSync(PICTURES, "utf8");
 
 /** Field names declared inside a `interface X { ... }` or a nested block. */
 function blockKeys(src: string, header: string): string[] {
@@ -87,6 +106,28 @@ for (const k of batchKeys) {
   }
 }
 
+// Every picture key the resolver reads: the PictureRow columns and the
+// metadata keys rowPictures dereferences (`meta.<key>`), less the ones that
+// are not pictures (split_from names the parent, not a file).
+const NOT_A_PICTURE = new Set(["split_from", "suggested_metadata"]);
+const pictureKeys = [
+  ...blockKeys(picturesSrc, "export interface PictureRow {"),
+  ...[...picturesSrc.matchAll(/\bmeta\.([a-z_][a-z0-9_]*)/g)].map((m) => m[1]!),
+].filter((k, i, all) => !NOT_A_PICTURE.has(k) && all.indexOf(k) === i);
+if (pictureKeys.length < 4) {
+  errors.push("could not read the picture keys from scan-pictures.ts (PictureRow + meta.<key>) — if it was reshaped, update this lint");
+}
+// The exporter asks the resolver, so it carries every picture by construction
+// (and reads no key itself, which is lint:row-pictures-resolved's rule); the
+// importer writes each key back, so it must name each one.
+const named = (src: string, key: string): boolean => new RegExp(`\\b${key}\\b`).test(src);
+if (!/\browPictures\(/.test(exportSrc)) {
+  errors.push("the exporter does not ask the pictures resolver (rowPictures) — a picture the resolver draws is one the export would not carry");
+}
+for (const k of pictureKeys) {
+  if (!named(importSrc, k)) errors.push(`the row shows a picture read from \`${k}\` but the importer never names it — the source's file id would arrive, pointing at nothing`);
+}
+
 // The envelope's batches block must be parsed at all.
 if (exportSrc.includes("x_cobblr_batches") && !importSrc.includes("x_cobblr_batches")) {
   errors.push("the envelope carries x_cobblr_batches but the importer never parses it — sessions would be lost");
@@ -95,7 +136,7 @@ if (exportSrc.includes("x_cobblr_batches") && !importSrc.includes("x_cobblr_batc
 if (errors.length === 0) {
   console.log(
     `[lint:scan-export-fidelity] ✓ every exported field is consumed on import ` +
-      `(${xKeys.length} x_cobblr, ${batchKeys.length} session fields).`,
+      `(${xKeys.length} x_cobblr, ${batchKeys.length} session fields), and every picture the row shows is carried (${pictureKeys.length} keys).`,
   );
   process.exit(0);
 }

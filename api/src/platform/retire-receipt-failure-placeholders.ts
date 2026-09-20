@@ -4,6 +4,8 @@
 // and no pending placeholder row is left anywhere; core-scan no longer writes
 // one); then delete this file and its boot call.
 //
+// BORN WITH: nothing (rows a bug wrote; the writer is fixed)
+//
 // Until 2026-09-13 a receipt whose read failed was kept as a NOTE ITEM under a
 // batch labelled "Receipt · not read yet": a row named "Receipt couldn't be
 // read - …" with `receipt_parse_failure` in its metadata. The inbox derived

@@ -8,15 +8,18 @@
 // sends its own day so a workspace in another timezone is not "overdue" a few
 // hours early.
 
-import { arrivedEverywhere } from "@cobblr/platform-contract";
+import { arrivedEverywhere, fieldDay } from "@cobblr/platform-contract";
 
 export type DueState = "overdue" | "today" | "upcoming" | "later" | "none";
 
 /** `date` and `today` are YYYY-MM-DD (any ISO timestamp's first ten
  *  characters). `windowDays` bounds "upcoming". */
 export function dueState(date: string | null | undefined, today: string, windowDays: number): DueState {
-  const day = typeof date === "string" ? date.slice(0, 10) : "";
-  if (!/^\d{4}-\d{2}-\d{2}$/.test(day)) return "none";
+  // The day is the one rule's (field-day): a month-only date is the last day
+  // of its month, the same day the sweeper and the vending wall read. This
+  // used to take the first ten characters and call "2028-02" none (#3279).
+  const day = fieldDay(date);
+  if (day === null) return "none";
   if (day < today) return "overdue";
   if (day === today) return "today";
   const end = new Date(`${today}T00:00:00Z`);

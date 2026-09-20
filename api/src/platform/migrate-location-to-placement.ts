@@ -8,6 +8,8 @@
 // drift table and deletes this file in that same change.
 // Skip with `COBBLR_SKIP_HISTORICAL_MIGRATIONS=1`.
 //
+// BORN WITH: ensurePlacementSyncIfLocated (from enableModuleForOrg: a module with a location field gets its placement sync as it is enabled)
+//
 // Placement subsumes location_id (docs/design-decisions/placement-and-containment.md):
 // "what is this thing inside of?" — a Location is just one KIND of container.
 // The location-bearing tables each get one placement row per

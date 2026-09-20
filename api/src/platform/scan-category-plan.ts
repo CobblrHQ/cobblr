@@ -22,14 +22,36 @@ export interface AxisFieldDef {
   name: string;
   field_role: string | null;
   source_module: string | null;
+  /** What the field reads as on a form; the placeholder's default is the
+   *  axis's own word, and a person may have renamed it. */
+  display_label?: string | null;
 }
 export interface AxisPlan {
-  /** Create the platform placeholder on this kind. */
-  add: Array<{ org_id: string; kind: string }>;
+  /** Create the platform placeholder on this kind, with these words. */
+  add: Array<{ org_id: string; kind: string; label: string; help: string }>;
   /** A bundle's own `category` field exists on this kind: adopt it as the axis. */
   adopt: Array<{ org_id: string; kind: string }>;
   /** A platform placeholder sits on a specialised table: withdraw it. */
   remove: Array<{ org_id: string; kind: string }>;
+  /** A placeholder on a kind that keeps its own categories still wears the
+   *  bare word: give it scanning's, so a form does not ask twice. */
+  relabel: Array<{ org_id: string; kind: string; label: string; help: string }>;
+}
+
+/** The words the platform's category axis wears on a form. On a kind whose
+ *  module keeps its own categories (inventory's tree, with a filter in the
+ *  list), the axis is a second question with the same name, so it says whose
+ *  it is; the two are joined into one axis later, and this wording goes then. */
+export function axisWords(ownCategories: boolean): { label: string; help: string } {
+  return ownCategories
+    ? {
+        label: "Scan category",
+        help: "What kind of thing a scan read this as; scans are grouped by it. Separate from this table's own categories, which the list filters by.",
+      }
+    : {
+        label: "Category",
+        help: "What KIND of thing this is. Scans group by it, and a category that outgrows this table can be promoted into its own.",
+      };
 }
 
 export function planScanCategoryAxes(
@@ -38,10 +60,12 @@ export function planScanCategoryAxes(
   moduleKind: Map<string, string>,
   categoryField: string,
   placeholderSource: string,
+  /** The kinds whose module keeps its own category records. */
+  ownCategoryKinds: ReadonlySet<string> = new Set(),
 ): AxisPlan {
   const hasRole = new Set(existing.filter((f) => f.field_role === "category").map((f) => `${f.org_id}::${f.entity_kind}`));
   const named = new Set(existing.filter((f) => f.name === categoryField).map((f) => `${f.org_id}::${f.entity_kind}`));
-  const plan: AxisPlan = { add: [], adopt: [], remove: [] };
+  const plan: AxisPlan = { add: [], adopt: [], remove: [], relabel: [] };
 
   // The fallback per (org, module): the pick, else the module's default.
   const fallback = new Map<string, AxisInstance>();
@@ -56,13 +80,21 @@ export function planScanCategoryAxes(
     if (!kind || !inst.is_default) continue;
     const kindKey = `${inst.org_id}::${kind}`;
     if (hasRole.has(kindKey)) continue;
-    (named.has(kindKey) ? plan.adopt : plan.add).push({ org_id: inst.org_id, kind });
+    if (named.has(kindKey)) plan.adopt.push({ org_id: inst.org_id, kind });
+    else plan.add.push({ org_id: inst.org_id, kind, ...axisWords(ownCategoryKinds.has(kind)) });
   }
   // Withdraw the placeholder from every kind that is not a module's default kind.
   const defaultKinds = new Set(moduleKind.values());
   for (const f of existing) {
-    if (f.source_module === placeholderSource && f.name === categoryField && !defaultKinds.has(f.entity_kind)) {
+    if (f.source_module !== placeholderSource || f.name !== categoryField) continue;
+    if (!defaultKinds.has(f.entity_kind)) {
       plan.remove.push({ org_id: f.org_id, kind: f.entity_kind });
+      continue;
+    }
+    // Only a placeholder still wearing the bare word is relabelled: a person
+    // who renamed it keeps their name.
+    if (ownCategoryKinds.has(f.entity_kind) && (f.display_label ?? "Category") === "Category") {
+      plan.relabel.push({ org_id: f.org_id, kind: f.entity_kind, ...axisWords(true) });
     }
   }
   return plan;

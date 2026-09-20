@@ -548,7 +548,7 @@ export function MachinesPage({
         ) : (
           <div className="rounded-xl border border-line dark:border-slate-700 bg-surface dark:bg-slate-900 px-3 py-10 text-center text-xs text-faint italic">
             {allRows.length === 0
-              ? `No ${pluralise(noun)} yet. Click + new to add one.`
+              ? `No ${pluralise(noun)} yet. Add one with New ${noun}.`
               : "No matches with the current filters."}
           </div>
         )

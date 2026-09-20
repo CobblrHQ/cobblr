@@ -18,7 +18,7 @@ import type { AiFallback, ProviderErrorReason } from "./scan-fallback.js";
 /** What the batch row stores. `null` on a session that is not a receipt read
  *  (a walk with the camera), and on receipt sessions from before this state
  *  existed, which are judged by their lines. */
-export type SessionReadState = "in_flight" | "read" | "failed";
+export type SessionReadState = "in_flight" | "read" | "failed" | "awaiting";
 
 export interface ReceiptReadAttempt {
   at: string;
@@ -62,7 +62,11 @@ export type SessionVerdict =
   /** Read once, and every line has been dealt with. */
   | { kind: "empty" }
   /** The read failed; the sentence says why and what to do. */
-  | { kind: "failed"; failure: ReceiptReadFailure; sentence: string; retry: boolean; connect: boolean };
+  | { kind: "failed"; failure: ReceiptReadFailure; sentence: string; retry: boolean; connect: boolean }
+  /** A shipping notice arrived before the receipt did: the parcel is known
+   *  and followed, its lines are not. The order confirmation, when it is
+   *  forwarded, reads into THIS session rather than a second one. */
+  | { kind: "awaiting" };
 
 /** The words for a failed read: what happened and what to do about it. The
  *  router's reason decides; the parser's own reasons cover the rest. */
@@ -118,6 +122,7 @@ export function sessionVerdict(
   if (row.read_state === "failed" && row.read_failure) {
     return { kind: "failed", failure: row.read_failure, ...receiptReadWords(row.read_failure) };
   }
+  if (row.read_state === "awaiting") return lines.ever > 0 ? { kind: "read" } : { kind: "awaiting" };
   if (row.read_state === "read" || (row.read_state == null && row.source_file_id && lines.ever > 0)) {
     return lines.pending > 0 || lines.ever === 0 ? { kind: "read" } : { kind: "empty" };
   }

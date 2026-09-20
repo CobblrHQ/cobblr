@@ -183,7 +183,7 @@ export const PLACEMENT: PlacementRow[] = [
     dir: "api/src/platform/",
     exemplar: "api/src/platform/heal-approved-ai.ts",
     why: "Signup only enables and migrates what existed the day a workspace was made, so anything an OLDER workspace also needs is silently missing there and the platform, not the user, has to close that gap.",
-    lints: ["lint:heal-shims"],
+    lints: ["lint:heal-shims", "lint:test-support-doors-scoped", "lint:boot-pass-born-with"],
     notes: [
       "Wire it into `boot()` in api/src/index.ts, in the existing reconcile chain.",
       "Head the file with `DONE WHEN: <the checkable condition>` for a one-shot, or `PERMANENT RECONCILE`. Delete a one-shot once its condition reads true on prod, staging and dev.",
@@ -295,7 +295,7 @@ export const PLACEMENT: PlacementRow[] = [
     dir: "scripts/",
     exemplar: "scripts/lint-background-loops.ts",
     why: "Bespoke scripts enforce invariants a general linter cannot express; there is deliberately no ESLint here.",
-    lints: ["lint:placement", "lint:lints-are-wired", "lint:scripts-typecheck", "lint:shipped-script-imports", "lint:corpus-known-red-live", "lint:dns-probe-unpinned"],
+    lints: ["lint:placement", "lint:lints-are-wired", "lint:scripts-typecheck", "lint:shipped-script-imports", "lint:corpus-known-red-live", "lint:dns-probe-unpinned", "lint:tick-problems-keyed", "lint:box-cron-offsets"],
     notes: [
       "Start with scripts/new-lint.sh <slug> --row <row> --rule \"<sentence>\": it writes the file from scripts/templates/lint.template.ts, registers lint:<slug> in package.json, claims the row, and runs it once (skill: writing-a-lint).",
       "A 'one implementation only' rule is a ROW in scripts/capabilities.ts, not a new script.",
@@ -338,10 +338,25 @@ export const PLACEMENT: PlacementRow[] = [
     dir: "e2e/",
     exemplar: "e2e/mobile-overflow.mjs",
     why: "The nightly yardstick batch runs these on the shared box; a screenshot-only script proves nothing and belongs to the demos instead.",
-    lints: ["lint:ci-sink"],
+    lints: ["lint:ci-sink", "lint:driver-hooks-live"],
     notes: [
       "Add it to scripts/run-e2e-yardsticks.sh to make it gate; otherwise nobody runs it.",
       "Seed the data the assertion needs. A sweep over an empty list passes vacuously — assert a positive control first.",
+      "Reach a control by a hook the product declares (data-testid, a placeholder), never by its tag or styling: the hook is checked against the source at PR time, the tag is not.",
+    ],
+  },
+  {
+    id: "guided-tour",
+    what: "a narrated recording of the product: a guided tour or a marketing clip",
+    keywords: ["tour", "guided", "video", "recording", "kiosk", "clip", "narrat", "webm", "poster"],
+    dir: "kiosk/",
+    exemplar: "kiosk/guided-yarn.mjs",
+    why: "A recording is shown to people, not read by a machine: a stale step films the wrong product and looks fine. The yarn tour is the quality floor (kiosk/GOLDEN.md) and the nightly records it.",
+    lints: ["lint:kiosk-golden", "lint:driver-hooks-live", "lint:driver-hooks-live"],
+    notes: [
+      "Read docs/walkthroughs/guided-video-recording.md first; every trap in it cost a take.",
+      "Drive the product by hooks it declares (data-testid, placeholders) and wrap every optional beat in softly(): a miss is a [skip] the nightly fails on, not sixteen seconds of dead air.",
+      "Never call a take good off the run log. scripts/nightly-tour-take.sh fetches the night's take and lays out its frames; look at them.",
     ],
   },
   {
@@ -404,7 +419,7 @@ export const PLACEMENT: PlacementRow[] = [
     dir: "deploy/selfhost/standalone/",
     exemplar: "deploy/selfhost/standalone/docker-compose.yml",
     why: "Self-hosters curl these straight from the public mirror, so a change here lands on machines nobody here can log into or fix.",
-    lints: ["lint:autoupdate-warns-env-drift", "lint:backup-guards"],
+    lints: ["lint:autoupdate-warns-env-drift", "lint:backup-guards", "lint:env-booleans-are-loud"],
     notes: [
       "The README beside the compose file is the only documentation most self-hosters read. If a change needs explaining, explain it there.",
       "An updater re-creates a container by cloning the old environment, so it never re-reads .env. Anything shipping one has to say so and point at check-env-drift.sh.",

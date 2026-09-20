@@ -5,10 +5,12 @@
 // Channel registry is process-static — channels can't be added at
 // runtime (and don't need to be in Phase 0).
 
+import { sql } from "kysely";
 import { meta } from "../db/meta.js";
 import { orgMemberIds } from "./memberships.js";
 import { inAudience } from "./notification-audience.js";
 import { isMember } from "@cobblr/platform-contract/membership";
+import { env } from "../env.js";
 import { inAppChannel } from "./channels/in-app.js";
 import { browserPushChannel } from "./channels/browser-push.js";
 import { discordChannel } from "./channels/discord.js";
@@ -573,7 +575,7 @@ export interface NotificationListItem {
   /** The substance behind the one-liner, when there is any — same card the
    *  Discord DM renders as an embed, so the bell is not the one surface left
    *  saying "something happened" without saying what. */
-  card: { heading?: string; body?: string; context?: string } | null;
+  card: NotificationCard | null;
   read_at: Date | null;
   created_at: Date;
 }
@@ -706,4 +708,68 @@ export async function markAllReadAcrossOrgs(userId: string): Promise<number> {
     .returning("id")
     .execute();
   return updated.length;
+}
+
+/**
+ * Tell the deployment's OPERATORS that something happened, rather than telling a
+ * tenant. `dispatch` is org+user scoped, which is right for "your print finished"
+ * and useless for "a stranger just signed up": the new account's own org is the one
+ * place nobody wants that notice.
+ *
+ * So this fans the event out to every address in SUPERADMIN_EMAILS, dispatching under
+ * each admin's own first org, exactly as the invite-accepted path already does for the
+ * inviter. Each admin then routes it wherever they like through the ordinary
+ * notification-channel settings, Discord included, with no special-cased webhook.
+ *
+ * Failure here must never break the thing being reported, so every admin is attempted
+ * independently and errors are logged rather than thrown.
+ */
+export async function notifyPlatformAdmins(p: {
+  eventType: string;
+  message: string;
+  /** Where the operator acts on it: an admin console page ("/admin/users"). */
+  link_url: string;
+  priority?: NotificationPriority;
+  payload?: unknown;
+}): Promise<number> {
+  const emails = (env.SUPERADMIN_EMAILS ?? "")
+    .split(",")
+    .map((e) => e.trim().toLowerCase())
+    .filter(Boolean);
+  if (emails.length === 0) return 0;
+
+  let delivered = 0;
+  for (const email of emails) {
+    try {
+      const admin = await meta
+        .selectFrom("users")
+        .select("id")
+        .where(sql`lower(email)`, "=", email)
+        .executeTakeFirst();
+      if (!admin) continue; // configured but never signed in yet
+
+      // Their first org, same rule the invite path uses to pick a home for the notice.
+      const org = await meta
+        .selectFrom("org_memberships")
+        .select("org_id")
+        .where("user_id", "=", admin.id)
+        .orderBy("joined_at", "asc")
+        .executeTakeFirst();
+      if (!org) continue;
+
+      await dispatch({
+        orgId: org.org_id,
+        userId: admin.id,
+        eventType: p.eventType,
+        message: p.message,
+        link_url: p.link_url,
+        priority: p.priority ?? "normal",
+        payload: p.payload,
+      });
+      delivered++;
+    } catch (err) {
+      console.error(`[notify-admins] ${p.eventType} to ${email} failed:`, err);
+    }
+  }
+  return delivered;
 }

@@ -4,7 +4,8 @@
 //
 // Modules will compose this onto their own routers in later phases.
 
-import { sandboxIsOver } from "../platform/sandbox-over.js";
+import { sandboxIsOver, trialIsOver } from "../platform/sandbox-over.js";
+import { sandboxEnabled } from "../platform/try-sandbox.js";
 import type { NextFunction, Request, Response } from "express";
 import type { Kysely } from "kysely";
 import { sql } from "kysely";
@@ -148,7 +149,15 @@ export async function withTenant(
   // every tenant route: 410, with the code the web turns into the ending.
   if (sandboxIsOver(row)) {
     res.status(410).json({
-      error: { code: "sandbox_expired", message: "This sandbox's hour is up. Nothing in it is kept." },
+      error: { code: "sandbox_expired", message: "This sandbox's hour is up." },
+    });
+    return;
+  }
+  // A kept trial past the length the person chose, on the box that hands out
+  // sandboxes only (#3254). Its own code: the web draws a different ending.
+  if (sandboxEnabled() && trialIsOver(row)) {
+    res.status(410).json({
+      error: { code: "trial_expired", message: "This trial has ended." },
     });
     return;
   }

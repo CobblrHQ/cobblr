@@ -22,6 +22,7 @@ import { Router } from "express";
 import { z } from "zod";
 import { randomBytes } from "node:crypto";
 import { meta } from "../db/meta.js";
+import { createAccount } from "../platform/accounts.js";
 import { requireAuth } from "../auth/middleware.js";
 import { withTenant } from "../middleware/tenant.js";
 import { hashPassword } from "../auth/password.js";
@@ -119,17 +120,19 @@ adminUsersRouter.post(
       // Insert + attach to workspace in one transaction so we can't
       // end up with a created-but-unattached user.
       const userId = await meta.transaction().execute(async (trx) => {
-        const u = await trx
-          .insertInto("users")
-          .values({
-            email,
-            password_hash: passwordHash,
-            display_name: parsed.data.display_name,
-            must_reset_password: true,
-            created_by: req.session!.id,
-          })
-          .returning("id")
-          .executeTakeFirstOrThrow();
+        const u = {
+          id: await createAccount(
+            trx,
+            {
+              email,
+              password_hash: passwordHash,
+              display_name: parsed.data.display_name,
+              must_reset_password: true,
+              created_by: req.session!.id,
+            },
+            { via: "admin", byUserId: req.session!.id },
+          ),
+        };
         await trx
           .insertInto("org_memberships")
           .values({

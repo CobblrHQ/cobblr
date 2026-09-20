@@ -5,6 +5,8 @@
 // delete this file, its boot call, the /modules/core-labels-qr mount alias,
 // and migration 0004's compat views in the same change.
 //
+// BORN WITH: nothing (a merge of the retired core-labels-qr module's rows into labels; a new workspace enables labels, which carries both)
+//
 // The core-labels-qr module merged into labels (labels 0.6.0). This pass
 // converts each workspace's enablement:
 //   - labels already enabled → the core-labels-qr row is redundant: DELETE.

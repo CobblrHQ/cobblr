@@ -1,6 +1,8 @@
 // Sweep orphaned per-tenant Postgres ROLES — the ones a deleted workspace left
 // behind.
 //
+// BORN WITH: nothing (a cluster-wide sweep of roles deleted workspaces left behind; provisioning makes a new workspace's role)
+//
 // PERMANENT RECONCILE. Provisioning creates a `tenant_<id>_user` role alongside
 // each tenant database (db/provision.ts). Roles are CLUSTER-GLOBAL, so
 // `DROP DATABASE` does not remove them: for a long time `hardDeleteOrg` dropped

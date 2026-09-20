@@ -101,7 +101,7 @@ export async function groupFields(
     return { ok: true, section: renameTo, moved: [], before: [], renamed_from: hit.label };
   }
   const defs = await ownDefs(orgId, entityKind);
-  if (defs.length === 0) return { ok: false, message: `"${entityKind}" has no custom fields to group` };
+  if (defs.length === 0) return { ok: false, message: `"${entityKind}" has no custom fields yet, so there is nothing to put under a heading` };
   const resolved = resolveNames(fieldNames, defs);
   if ("message" in resolved) return { ok: false, message: resolved.message };
 

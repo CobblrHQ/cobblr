@@ -179,7 +179,7 @@ export function MeNotificationsPage() {
                     <div className="text-sm text-content dark:text-mortar-100 line-clamp-2">
                       {n.message}
                     </div>
-                    {n.card?.body && (
+                    {n.card?.body && !(n.card.rows?.length && n.actions?.length) && (
                       <div className="mt-0.5 border-l-2 border-line dark:border-slate-700 pl-2 text-xs text-muted dark:text-slate-400 line-clamp-2 break-words">
                         {n.card.body}
                       </div>

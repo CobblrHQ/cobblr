@@ -25,7 +25,7 @@ import {
   ShieldCheck,
   Trash2,
 } from "lucide-react";
-import { Modal, useToast, useConfirm, usePageTitle } from "@cobblr/platform-web";
+import { Modal, relativeTime, useToast, useConfirm, usePageTitle } from "@cobblr/platform-web";
 import {
   ApiError,
   api,
@@ -232,6 +232,15 @@ function EmailInSection() {
     enabled: !!activeSlug,
   });
   const address = addrQ.data?.configured && addrQ.data.address ? addrQ.data.address : null;
+  // The mailboxes feeding this workspace: an admin sees that one is
+  // connected and whose; only its owner can open or disconnect it.
+  const boxesQ = useQuery({
+    queryKey: ["workspace-mail-sources", activeSlug],
+    queryFn: () => api.workspaceMailSources(activeSlug),
+    enabled: !!activeSlug,
+  });
+  const mailboxes = boxesQ.data?.items ?? [];
+  const mineFeeds = mailboxes.some((b) => b.mine && b.approved);
 
   return (
     <SettingsSection
@@ -242,7 +251,44 @@ function EmailInSection() {
     >
       <div className="space-y-4">
         <div>
+          <div className="text-sm font-medium mb-1">A mailbox Cobblr reads</div>
+          {mailboxes.length > 0 ? (
+            <ul className="text-sm text-muted space-y-1 mb-2">
+              {mailboxes.map((b) => (
+                <li key={b.id} className="flex flex-wrap items-center gap-x-2">
+                  <span className="text-content dark:text-mortar-100">{b.provider_id === "gmail" ? "Gmail" : b.provider_id}</span>
+                  <span>connected by {b.mine ? "you" : b.owner_name ?? "a member"}</span>
+                  {!b.approved && <span className="text-amber-600 dark:text-amber-500">awaiting the owner's approval</span>}
+                  {b.approved && b.status === "ok" && <span>{b.last_synced_at ? `last checked ${relativeTime(b.last_synced_at)}` : "not checked yet"}</span>}
+                  {b.approved && b.status === "failing" && <span className="text-amber-600 dark:text-amber-500">not answering</span>}
+                  {b.approved && b.status === "needs_reconnect" && <span className="text-ember-600 dark:text-ember-400">stopped, needs reconnecting</span>}
+                  {b.mine && (
+                    <Link to="/me/connections" className="text-accent hover:underline">
+                      open
+                    </Link>
+                  )}
+                </li>
+              ))}
+            </ul>
+          ) : (
+            <p className="text-sm text-muted mb-2">
+              Connect your Gmail under{" "}
+              <Link to="/me/connections/new" className="text-accent hover:underline">
+                Connections
+              </Link>{" "}
+              and your orders, parcels and returns track themselves: Cobblr reads mail from stores and carriers only, read-only, and
+              keeps no message body. Nothing to forward.
+            </p>
+          )}
+        </div>
+        <div className="border-t dark:border-slate-800 pt-3">
           <div className="text-sm font-medium mb-1">Forward a receipt by email</div>
+          {mineFeeds && (
+            <p className="text-[12px] text-faint mb-1">
+              Your mailbox is connected, so a forwarding rule for your stores is no longer needed. Leaving one in place is harmless:
+              both doors apply the same event once.
+            </p>
+          )}
           {address ? (
             <>
               <p className="text-sm text-muted mb-2">

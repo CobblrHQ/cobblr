@@ -4,6 +4,8 @@
 // pass reports orgsTouched=0); then delete this file, its boot call and its
 // test-support trigger.
 //
+// BORN WITH: nothing (a one-shot heal of Groceries installs that carried a base-kind twin; a new install has no twin)
+//
 // The Groceries bundle carried a second copy of its food fields on the BASE
 // kind inventory:part (shelf life, expiry, bought-on, storage, food category),
 // kept "for workspaces whose food still lived in plain Inventory" before
@@ -191,19 +193,22 @@ async function retireOne(
 
 /** Boot-time entry point. Cheap on the happy path: one indexed meta read, and
  *  no tenant pool is opened unless a workspace still carries the twin. */
-export async function retireGroceriesBaseKindTwin(opts?: { force?: boolean }): Promise<{
+export async function retireGroceriesBaseKindTwin(opts?: { force?: boolean; onlyOrgId?: string }): Promise<{
   orgsTouched: number;
   rowsMoved: number;
   defsDropped: number;
 }> {
+  // `onlyOrgId` is for the test-support trigger ONLY, so the pass runs on that
+  // test's workspace and nobody else's (lint:test-support-doors-scoped).
   if (!opts?.force && process.env.COBBLR_SKIP_HISTORICAL_MIGRATIONS === "1") {
     return { orgsTouched: 0, rowsMoved: 0, defsDropped: 0 };
   }
-  const installs = await meta
+  let installsQ = meta
     .selectFrom("bundles")
     .select(["id", "org_id", "manifest"])
-    .where("external_id", "=", GROCERIES_EXTERNAL_ID)
-    .execute();
+    .where("external_id", "=", GROCERIES_EXTERNAL_ID);
+  if (opts?.onlyOrgId) installsQ = installsQ.where("org_id", "=", opts.onlyOrgId);
+  const installs = await installsQ.execute();
   if (installs.length === 0) return { orgsTouched: 0, rowsMoved: 0, defsDropped: 0 };
   const twins = await meta
     .selectFrom("module_field_defs")

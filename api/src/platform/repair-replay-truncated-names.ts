@@ -4,6 +4,8 @@
 // fixes in core-scan mean no new ones can be created); then delete this file
 // and its boot call.
 //
+// BORN WITH: nothing (rows a bug wrote; the writer is fixed)
+//
 // Between the keyword fallback's rename path shipping and 2026-08-12, a Replay
 // that found nothing in the AI cache degraded to the keyword heuristic, and that
 // heuristic's candidate name was written back over the row's real name. The

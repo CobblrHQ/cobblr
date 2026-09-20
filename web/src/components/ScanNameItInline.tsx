@@ -11,12 +11,28 @@ import { api, ApiError, type ScanInboxItem } from "../lib/api";
  *  photo with no vision provider). Naming it triggers a server re-match, so the
  *  heuristic (or AI) suggests a table + fills fields — a one-field entry instead
  *  of a dead end. Stops click propagation so typing doesn't expand the card. */
-export function ScanNameItInline({ slug, itemId, onNamed, autoFocus }: { slug: string; itemId: string; onNamed?: (item: ScanInboxItem) => void; autoFocus?: boolean }) {
+export function ScanNameItInline({
+  slug,
+  itemId,
+  onNamed,
+  autoFocus,
+  guess,
+}: {
+  slug: string;
+  itemId: string;
+  onNamed?: (item: ScanInboxItem) => void;
+  autoFocus?: boolean;
+  /** A name the lookup found and would not assert (a web guess held for
+   *  want of a second source, #2918): offered as a tap above the field,
+   *  with where it came from, so the right name is never retyped by hand.
+   *  The tap writes the name exactly as typing it would. */
+  guess?: { value: string; source: string; prompt: string } | null;
+}) {
   const qc = useQueryClient();
   const toast = useToast();
   const [name, setName] = useState("");
   const mut = useMutation({
-    mutationFn: () => api.updateScanItem(slug, itemId, { name: name.trim() }),
+    mutationFn: (value: string) => api.updateScanItem(slug, itemId, { name: value.trim() }),
     onSuccess: (row) => {
       void qc.invalidateQueries({ queryKey: ["scan-inbox", slug] });
       toast.success("Got it - finding the right table…");
@@ -25,26 +41,43 @@ export function ScanNameItInline({ slug, itemId, onNamed, autoFocus }: { slug: s
     onError: (e) => toast.error(e instanceof ApiError ? e.message : String(e)),
   });
   return (
-    <div className="mt-1.5 flex items-center gap-1.5" onClick={(e) => e.stopPropagation()}>
-      <input
-        value={name}
-        onChange={(e) => setName(e.target.value)}
-        placeholder="What is this? e.g. blue worsted yarn"
-        aria-label="Name this item"
-        autoFocus={autoFocus}
-        className="input !py-1 text-xs flex-1"
-        onKeyDown={(e) => {
-          if (e.key === "Enter" && name.trim()) mut.mutate();
-        }}
-      />
-      <button
-        type="button"
-        disabled={!name.trim() || mut.isPending}
-        onClick={() => mut.mutate()}
-        className="shrink-0 rounded bg-cobble-600 text-white text-xs font-medium px-2.5 py-1 hover:bg-cobble-700 transition disabled:opacity-50"
-      >
-        Identify
-      </button>
+    <div className="mt-1.5" onClick={(e) => e.stopPropagation()}>
+      {guess && (
+        <div className="mb-1 flex flex-wrap items-center gap-x-1.5 gap-y-0.5 text-[11px] text-amber-700 dark:text-amber-400" data-testid="name-guess">
+          <span className="font-medium">{guess.prompt}</span>
+          <button
+            type="button"
+            disabled={mut.isPending}
+            onClick={() => mut.mutate(guess.value)}
+            className="rounded-md border border-amber-400/60 bg-amber-50 dark:bg-amber-900/20 px-1.5 py-0.5 font-medium text-amber-800 dark:text-amber-200 hover:bg-amber-100 dark:hover:bg-amber-900/40 transition disabled:opacity-50"
+            title={`Name it "${guess.value}": ${guess.source}`}
+          >
+            {guess.value}
+          </button>
+          <span className="text-faint">{guess.source}</span>
+        </div>
+      )}
+      <div className="flex items-center gap-1.5">
+        <input
+          value={name}
+          onChange={(e) => setName(e.target.value)}
+          placeholder={guess ? "Or name it yourself" : "What is this? e.g. blue worsted yarn"}
+          aria-label="Name this item"
+          autoFocus={autoFocus}
+          className="input !py-1 text-xs flex-1"
+          onKeyDown={(e) => {
+            if (e.key === "Enter" && name.trim()) mut.mutate(name);
+          }}
+        />
+        <button
+          type="button"
+          disabled={!name.trim() || mut.isPending}
+          onClick={() => mut.mutate(name)}
+          className="shrink-0 rounded bg-cobble-600 text-white text-xs font-medium px-2.5 py-1 hover:bg-cobble-700 transition disabled:opacity-50"
+        >
+          Identify
+        </button>
+      </div>
     </div>
   );
 }

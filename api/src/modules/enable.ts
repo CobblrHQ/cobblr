@@ -22,6 +22,7 @@ import { clearServerManagedCache, clearEnabledModulesCache } from "../platform/e
 import { clearRelationDefsCache } from "../platform/relation-fields.js";
 import { clearMemberFieldCaches } from "../platform/member-fields.js";
 import { clearFieldLabelDefsCache } from "../platform/field-labels.js";
+import { moduleHasScanFallback, reconcileScanCategoryFor } from "../platform/reconcile-scan-category.js";
 
 /** Maintainer-curated foundational set. A module manifest can declare
  *  `band: "foundational"`, but the kernel only TREATS it as foundational
@@ -306,6 +307,11 @@ export async function enableModuleForOrg(
   }
 
   await ensurePlacementSyncIfLocated(orgId, moduleName);
+
+  // The module's default instance is now a table a scan can land in, so it
+  // gets the scan category axis here, the moment the workspace gains it,
+  // rather than at the api's next restart (#3252).
+  if (moduleHasScanFallback(moduleName)) await reconcileScanCategoryFor(orgId);
 
   void sql; // re-export kept in case future cleanup needs it
   return { alreadyEnabled: false, migrationsApplied: migrationsApplied.length, lastMigration };

@@ -13,6 +13,7 @@ import { entityImageRouter } from "./entity-image.js";
 import { qrRulesRouter } from "./qr-rules.js";
 import { decodeRouter } from "./decode.js";
 import { duplicatesRouter } from "./duplicates.js";
+import { shipmentEventRouter } from "./shipment-event.js";
 import { registerScanHandlers } from "./handlers.js";
 import { registerEmailInbound } from "../services/email-inbound.js";
 
@@ -28,6 +29,7 @@ startPicturesSweeper();
 
 const router = Router({ mergeParams: true });
 router.use("/", inboxRouter);
+router.use("/", shipmentEventRouter);
 router.use("/", organizeRouter); // Guided Organize: batch put-away plan + apply
 router.use("/", duplicatesRouter); // find + merge records that are the same thing twice
 router.use("/", putawayRouter); // put-away sessions: the shared execution engine (walk + Live Sort)

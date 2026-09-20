@@ -122,11 +122,15 @@ export function WorkspaceStateBar({ slug }: { slug: string }) {
   // hint and the server are the others); the shell above replaces everything,
   // this strip included, so there is no ended branch to draw here.
   const over = state?.kind === "sandbox" && state.expiresAt != null && state.expiresAt - now <= 0;
+  // A kept trial's chosen length running out is the other ending (#3254):
+  // the door refuses it from that minute, and the clock here says so first.
+  const trialOver = state?.kind === "trial" && state.expiresAt != null && state.expiresAt - now <= 0;
   useEffect(() => {
-    if (over) markSandboxEnded();
-  }, [over]);
+    if (over) markSandboxEnded("sandbox");
+    else if (trialOver) markSandboxEnded("trial");
+  }, [over, trialOver]);
 
-  if (state == null || over) return null;
+  if (state == null || over || trialOver) return null;
 
   // ── trial ────────────────────────────────────────────────────────────────
   // One modal element, rendered at the same place in the tree whichever
@@ -158,14 +162,13 @@ export function WorkspaceStateBar({ slug }: { slug: string }) {
   );
 
   if (state.kind === "trial") {
-    const ended = state.expiresAt != null && state.expiresAt <= now;
     const until = state.expiresAt == null ? null : untilDate(state.expiresAt, now);
     return (
       <>
         <FloatingChrome anchor="bottom" className={BAR + QUIET} data-testid="workspace-state">
           <span className="text-muted">
-            {ended ? `Your trial ended ${until}.` : until ? `Yours until ${until}.` : "Yours."}
-            {!ended && state.linkOpen && state.email && (
+            {until ? `Yours until ${until}.` : "Yours."}
+            {state.linkOpen && state.email && (
               <>
                 {" "}
                 {state.emailed === false ? "We could not send your sign-in link to " : "Sign-in link sent to "}
@@ -173,7 +176,7 @@ export function WorkspaceStateBar({ slug }: { slug: string }) {
               </>
             )}
           </span>
-          {!ended && state.linkOpen && (
+          {state.linkOpen && (
             <>
               <button
                 type="button"

@@ -13,7 +13,7 @@ import { defineModule } from "@cobblr/platform-contract";
 
 export default defineModule({
   name: "inventory",
-  version: "0.21.26",
+  version: "0.21.27",
   displayName: "Inventory",
   description:
     "Parts, locations, categories, stock tracking, polymorphic allocations. The generalised toolkit you'd otherwise Frankenstein from a spreadsheet.",
@@ -38,6 +38,9 @@ export default defineModule({
         // people actually store them.
         duplicateScope: "location_id",
         primary: true,
+        // inventory_categories is this kind's own taxonomy (category_id, the
+        // list's filter, the sync engine's mirror); see categoryAxis.
+        categoryAxis: "inventory:category",
         listEndpoint: "/parts",
         createEndpoint: "/parts",
         updateEndpoint: "/parts/{id}",

@@ -300,7 +300,7 @@ export function NotificationsBell({ panelOnly = false, asRow = false }: { panelO
                       comment you were mentioned in, not just the fact of it.
                       The DM got this first, and the bell saying less than a
                       chat app about the app's own conversation was backwards. */}
-                  {n.card?.body && (
+                  {n.card?.body && !(n.card.rows?.length && n.actions?.length) && (
                     <div className="mt-1 border-l-2 border-line dark:border-slate-700 pl-2 text-[13px] text-muted dark:text-slate-400 line-clamp-3 break-words">
                       {n.card.body}
                     </div>

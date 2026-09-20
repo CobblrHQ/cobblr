@@ -3,6 +3,8 @@
 // inventory:part (the boot pass reports orgsTouched=0 on prod + staging +
 // dev consistently); then delete this file and its boot call.
 //
+// BORN WITH: nothing (a one-shot heal of Bookshelf installs made before instances; a new workspace's install is made in the instance shape)
+//
 // The Bookshelf bundle (<=0.1.x) put its fields — author / isbn / year /
 // read_status / rating — straight onto `inventory:part`, i.e. onto the
 // workspace's DEFAULT inventory instance. That instance is ALWAYS stock (it IS
@@ -204,21 +206,24 @@ async function migrateOne(
 /** Boot-time entry point. Converts every still-old-shape Bookshelf install to
  *  the instance shape. Cheap on the happy path: one indexed meta read, and no
  *  tenant pool is opened unless a workspace actually needs healing. */
-export async function migrateBookshelfToInstance(opts?: { force?: boolean }): Promise<{
+export async function migrateBookshelfToInstance(opts?: { force?: boolean; onlyOrgId?: string }): Promise<{
   orgsTouched: number;
   booksMoved: number;
 }> {
-  // `force` is for the test-support trigger ONLY: CI sets the skip flag for the
-  // whole job (boot passes must not sweep the shared test DB), and this pass's
-  // own integration test needs it to actually run. Boot never passes it.
+  // `force` and `onlyOrgId` are for the test-support trigger ONLY: CI sets the
+  // skip flag for the whole job (boot passes must not sweep the shared test
+  // DB), this pass's own integration test needs it to actually run, and it
+  // must run on that test's workspace alone (lint:test-support-doors-scoped).
+  // Boot never passes either.
   if (!opts?.force && process.env.COBBLR_SKIP_HISTORICAL_MIGRATIONS === "1") {
     return { orgsTouched: 0, booksMoved: 0 };
   }
-  const rows = await meta
+  let rowsQ = meta
     .selectFrom("bundles")
     .select(["id", "org_id", "manifest"])
-    .where("external_id", "=", BOOKSHELF_EXTERNAL_ID)
-    .execute();
+    .where("external_id", "=", BOOKSHELF_EXTERNAL_ID);
+  if (opts?.onlyOrgId) rowsQ = rowsQ.where("org_id", "=", opts.onlyOrgId);
+  const rows = await rowsQ.execute();
   // Filter to the old shape BEFORE opening any tenant pool.
   const targets = rows
     .map((r) => ({ ...r, parsed: parseManifest(r.manifest) }))

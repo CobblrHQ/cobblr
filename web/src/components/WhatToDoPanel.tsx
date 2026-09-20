@@ -19,8 +19,7 @@
 // a ready-made tracker → "set it up & drop me in"; a blank slate → "add a
 // blank one" / "name a new category". Build-it-yourself is a CTA, not a lane.
 
-import { useEffect, useMemo, useRef, useState } from "react";
-import { photoOrder } from "../lib/scanPhoto";
+import { useMemo, useRef, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { changeWorkspaceShape, useToast } from "@cobblr/platform-web";
@@ -37,7 +36,9 @@ import { isSandboxSession } from "../lib/sandbox-session";
 import { DEMO_BARCODE } from "../lib/demo-barcode";
 import { useIsTouch } from "../lib/useIsTouch";
 import { AddPhotosTile } from "./AddPhotosTile";
+import { CaptureTile } from "./CaptureTile";
 import { itemEnriching } from "../pages/scan-status";
+import { materializeLanding, type MaterializeResult } from "../lib/materializeLanding";
 
 function firstSentence(s: string): string {
   const m = s.match(/^.*?[.!?](\s|$)/);
@@ -91,57 +92,6 @@ function NameIt({ slug, itemId }: { slug: string; itemId: string }) {
       >
         Identify
       </button>
-    </div>
-  );
-}
-
-/** One scanned item as a small square tile — the photo IS the identifier for
- *  scans. LADDERS through candidate sources on failure (catalog file →
- *  catalog URL → own scan photo → initials) — the ScanPage lesson: a cached
- *  catalog file or hotlink-blocked URL must fall through, not go blank. */
-function CaptureTile({ slug, it }: { slug: string; it: { catalog_image_file_id: string | null; catalog_image_url: string | null; image_file_id: string | null; suggested_name: string | null; suggested_candidates: Array<{ name: string }>; suggested_metadata?: unknown } }) {
-  // Order comes from the shared rule (unverified catalog art must not lead);
-  // the fallback WALK past broken URLs stays here, since this tile advances an
-  // index on each onError rather than keeping a broken-set.
-  const candidates = useMemo(() => {
-    const file = (id: string) => `/api/v1/orgs/${slug}/modules/core-files/files/${id}/raw?variant=thumb`;
-    const byRole = {
-      catalog: [it.catalog_image_file_id ? file(it.catalog_image_file_id) : null, it.catalog_image_url],
-      yours: [it.image_file_id ? file(it.image_file_id) : null],
-      frame: [],
-    };
-    return photoOrder(it).flatMap((r) => byRole[r]).filter((u): u is string => !!u);
-  }, [slug, it]);
-  const [idx, setIdx] = useState(0);
-  const [src, setSrc] = useState<string | null>(null);
-  useEffect(() => {
-    const url = candidates[idx];
-    if (!url) { setSrc(null); return; }
-    const internal = url.startsWith("/api/v1/");
-    if (!internal) { setSrc(url); return; } // external → <img onError> advances
-    let cancelled = false;
-    let blobUrl: string | null = null;
-    const token = localStorage.getItem("cobblr.token");
-    fetch(url, { headers: token ? { Authorization: `Bearer ${token}` } : {} })
-      .then((r) => { if (!r.ok) throw new Error(String(r.status)); return r.blob(); })
-      .then((b) => { if (cancelled) return; blobUrl = URL.createObjectURL(b); setSrc(blobUrl); })
-      .catch(() => { if (!cancelled) setIdx((i) => i + 1); });
-    return () => { cancelled = true; if (blobUrl) URL.revokeObjectURL(blobUrl); };
-  }, [candidates, idx]);
-  const name = it.suggested_candidates?.[0]?.name || it.suggested_name || "item";
-  return (
-    <div
-      title={name}
-      className="flex-1 min-w-14 max-w-24 aspect-square rounded-md border border-line dark:border-slate-700 overflow-hidden bg-surface dark:bg-slate-900 grid place-items-center"
-    >
-      {src ? (
-        // EXTERNAL-IMAGE-OK: `src` is already resolved by this tile's own effect, which
-        // token-fetches internal paths to a blob: URL. It does not use useImageSrc because it
-        // must WALK to the next candidate when one fails, which the shared hook does not do.
-        <img src={src} alt={name} loading="lazy" className="max-w-full max-h-full object-contain" onError={() => { setSrc(null); setIdx((i) => i + 1); }} />
-      ) : (
-        <span className="text-[11px] font-medium text-faint dark:text-slate-500 uppercase">{name.slice(0, 2)}</span>
-      )}
     </div>
   );
 }
@@ -385,11 +335,13 @@ export function WhatToDoPanel({
     onError: (e) => toast.error(e instanceof Error ? e.message : "Couldn't add that"),
   });
   // Landing after a materialize: the ?created strip powers the one-time success
-  // banner (A3). Shared by the one-shot path and the post-modal commit.
-  const landAfterMaterialize = (r: { route?: string | null; label?: string | null; created: number }) => {
+  // banner (A3). Shared by the one-shot path and the post-modal commit. The
+  // banner and the toast never both speak (materializeLanding).
+  const landAfterMaterialize = (r: MaterializeResult) => {
     void qc.invalidateQueries();
-    toast.success(`Created your ${r.label ?? "bundle"} with ${r.created} item${r.created === 1 ? "" : "s"}.`);
-    if (r.route) navigate(`${r.route}${r.route.includes("?") ? "&" : "?"}created=${encodeURIComponent(r.label ?? "Your bundle")}&count=${r.created}`);
+    const land = materializeLanding(r);
+    if (land.toast) toast.success(land.toast);
+    if (land.to) navigate(land.to);
   };
   const materializeMut = useMutation({
     mutationFn: (bundleId: string) => api.materializeQuickstart(slug, bundleId),
@@ -720,8 +672,8 @@ export function WhatToDoPanel({
                       {needsName ? (
                         <NameIt slug={slug} itemId={it.id} />
                       ) : (
-                        <div className="mt-1.5 flex items-center gap-2">
-                          <span className="flex-1 min-w-0 truncate text-xs text-faint dark:text-slate-400">
+                        <div className="mt-1.5 flex flex-wrap items-center gap-2">
+                          <span className="flex-1 min-w-0 basis-40 truncate text-xs text-faint dark:text-slate-400">
                             {enriching ? (
                               <span className="inline-flex items-center gap-1" data-testid="captured-item-progress">
                                 <Loader2 size={11} className="animate-spin" />
@@ -939,8 +891,8 @@ export function WhatToDoPanel({
           </div>
           <p className="text-[11px] text-faint dark:text-slate-500 mt-2">
             {isTouch
-              ? "Scan barcodes or snap photos with your camera — they file themselves. Nothing to hand? "
-              : "No camera here? Pair your phone — scan with it and the items land in this workspace. Or "}
+              ? "Scan barcodes or snap photos with your camera and they file themselves. Nothing to hand? "
+              : "No camera here? Pair your phone and scan with it; the items land in this workspace. Or "}
             <button
               type="button"
               data-tour="sample-scan"
@@ -1131,7 +1083,9 @@ export function WhatToDoPanel({
         below the guided panel (typed things stay in col 3). Capped preview;
         heavy review lives on /scan (sessions, gallery, bulk tools). */}
     {scanned.length > 0 && (
-      <section className="space-y-1.5">
+      // The id is the landing spot for the dashboard's suggestions pointer
+      // ("Show me"); scroll-mt keeps the sticky header off the heading.
+      <section id="from-your-scanner" data-testid="scanner-lane" className="space-y-1.5 scroll-mt-20">
         <div className="flex items-center gap-2">
           <span className="text-[10px] font-mono uppercase tracking-widest text-faint dark:text-slate-500">// from your scanner - waiting to file ({scanned.length})</span>
           <div className="flex-1" />

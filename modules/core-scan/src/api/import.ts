@@ -33,6 +33,7 @@ import { trimCatalogMarginsWithVerdict, type TrimVerdict } from "../services/tri
 import {
   parseCsvImport,
   parseJsonImport,
+  type ImportPhotoRef,
   type ImportRowError,
   type NormalizedImportBatch,
   type NormalizedImportItem,
@@ -112,7 +113,10 @@ interface ExistingImported {
   id: string;
   image_file_id: string | null;
   catalog_image_file_id: string | null;
-  photo_hashes: { identify?: string; display?: string };
+  /** identify/display/group: the content hash the last import stored for that
+   *  slot. others: content hash (or link) -> the file id stored for it, for
+   *  the gallery and the screenshot crop, so a re-sync reuses those too. */
+  photo_hashes: { identify?: string; display?: string; group?: string; others?: Record<string, string> };
 }
 
 /** The rows a re-import might already be looking at, keyed both ways. */
@@ -137,9 +141,13 @@ async function existingProvenance(db: ReturnType<typeof tenantDb>): Promise<Exis
   for (const r of rows) {
     const meta = r.suggested_metadata as {
       import_provenance?: { source_id?: unknown; source_instance?: unknown };
-      import_photo_hashes?: { identify?: unknown; display?: unknown };
+      import_photo_hashes?: { identify?: unknown; display?: unknown; group?: unknown; others?: unknown };
     } | null;
     const h = meta?.import_photo_hashes ?? {};
+    const others: Record<string, string> = {};
+    if (h.others && typeof h.others === "object") {
+      for (const [k, v] of Object.entries(h.others as Record<string, unknown>)) if (typeof v === "string") others[k] = v;
+    }
     const entry: ExistingImported = {
       id: r.id,
       image_file_id: (r.image_file_id as string | null) ?? null,
@@ -147,6 +155,8 @@ async function existingProvenance(db: ReturnType<typeof tenantDb>): Promise<Exis
       photo_hashes: {
         ...(typeof h.identify === "string" ? { identify: h.identify } : {}),
         ...(typeof h.display === "string" ? { display: h.display } : {}),
+        ...(typeof h.group === "string" ? { group: h.group } : {}),
+        ...(Object.keys(others).length ? { others } : {}),
       },
     };
     byId.set(r.id, entry);
@@ -334,7 +344,7 @@ async function fetchPhotoToFile(orgId: string, url: string, role: PhotoRole): Pr
  *  mirrored from another workspace kept a product adrift in a white field
  *  while the same code scanned here was trimmed (#3002). The verdict rides
  *  back so the row can say what happened. */
-type PhotoRole = "identify" | "display" | "document";
+type PhotoRole = "identify" | "display" | "document" | "group" | "extra" | "screenshot";
 interface StoredPhoto {
   fileId: string;
   /** What the display trim did; null for the roles that are not trimmed. */
@@ -564,7 +574,7 @@ importRouter.post(
         ["identify", fetchPhotos ? i.photo_identify_url : null, i.photo_identify_embedded],
         ["display", fetchPhotos ? i.photo_display_url : null, i.photo_display_embedded],
       ] as const;
-      const hashes: Record<string, string> = {};
+      const hashes: { identify?: string; display?: string; group?: string; others?: Record<string, string> } = {};
       for (const [role, url, embed] of roles) {
         if (!embed && !url) continue;
         try {
@@ -589,6 +599,65 @@ importRouter.post(
           errors.push({ row: i.row, field: embed ? `${role}_photo_embedded` : `${role}_photo_url`, message: (e as Error).message });
         }
       }
+      // The rest of the row's pictures (#3127): the group shot a split child
+      // was cut from, the gallery, the screenshot crop. Each lands as a NEW
+      // file whose id is written into the row's metadata, where the pictures
+      // resolver reads it; the source's ids were dropped at parse. A picture
+      // already here from a previous sync (same bytes, or the same link) is
+      // reused, so a nightly re-sync does not grow the file store.
+      const priorOthers = p.action === "replace" ? (p.prior?.photo_hashes.others ?? {}) : {};
+      const others: Record<string, string> = {};
+      const keyOf = (ref: ImportPhotoRef): string => ("embed" in ref ? photoHash(ref.embed) : ref.url);
+      const place = async (ref: ImportPhotoRef, role: PhotoRole, field: string): Promise<string | null> => {
+        if ("url" in ref && !fetchPhotos) return null;
+        const key = keyOf(ref);
+        const kept = priorOthers[key];
+        if (kept) {
+          others[key] = kept;
+          return kept;
+        }
+        try {
+          const stored = await withStorageRetry(() =>
+            "embed" in ref ? storeEmbeddedToFile(ctx.org.id, ref.embed, role) : fetchPhotoToFile(ctx.org.id, ref.url, role),
+          );
+          others[key] = stored.fileId;
+          photosFetched++;
+          return stored.fileId;
+        } catch (e) {
+          photosFailed++;
+          errors.push({ row: i.row, field, message: (e as Error).message });
+          return null;
+        }
+      };
+      const groupRef: ImportPhotoRef | null = i.photo_group_embedded
+        ? { embed: i.photo_group_embedded }
+        : i.photo_group_url
+          ? { url: i.photo_group_url }
+          : null;
+      if (groupRef) {
+        // A child that kept the group shot as its own photo carries the same
+        // picture in both slots; it is one file here too.
+        const sameAsOwn =
+          ("embed" in groupRef && i.photo_identify_embedded && photoHash(groupRef.embed) === photoHash(i.photo_identify_embedded)) ||
+          ("url" in groupRef && i.photo_identify_url === groupRef.url);
+        const own = photoIds.get(i.row)?.identify ?? null;
+        const groupId = sameAsOwn && own ? own : await place(groupRef, "group", "embed" in groupRef ? "group_photo_embedded" : "group_photo_url");
+        if (groupId) {
+          i.metadata.group_image_file_id = groupId;
+          if ("embed" in groupRef) hashes.group = photoHash(groupRef.embed);
+        }
+      }
+      const extraIds: string[] = [];
+      for (const ref of i.x_extra_photos) {
+        const id = await place(ref, "extra", "embed" in ref ? "extra_photo_embedded" : "extra_photo_url");
+        if (id) extraIds.push(id);
+      }
+      if (extraIds.length) i.metadata.extra_photos = extraIds;
+      if (i.x_screenshot_crop) {
+        const id = await place(i.x_screenshot_crop, "screenshot", "embed" in i.x_screenshot_crop ? "screenshot_crop_embedded" : "screenshot_crop_url");
+        if (id) i.metadata.screenshot_crop_file_id = id;
+      }
+      if (Object.keys(others).length) hashes.others = others;
       // The hashes ride in the row's metadata so the NEXT sync can recognise
       // unchanged bytes. Written into i.metadata here, before the transaction
       // builds its values from it.

@@ -55,7 +55,7 @@ import * as wires from "./platform/wires.js";
 import * as health from "./platform/health.js";
 import * as recurrenceRegistry from "./platform/recurrence-registry.js";
 import * as calendarRegistry from "./platform/calendar-registry.js";
-import { registerDateFieldSource, queryDateField } from "./platform/date-field-calendar.js";
+import { registerDateFieldSource, queryDateField, unreadableDateField } from "./platform/date-field-calendar.js";
 import { registerDefaultRequestGuard } from "./platform/default-request-guard.js";
 import { registerTrialMode } from "./platform/trial.js";
 import * as computedFields from "./platform/computed-fields.js";
@@ -111,6 +111,8 @@ import {
 import { runOnBoot, runOnShutdown } from "./modules/lifecycle.js";
 import { registerBackupCron, seedBackupSchedules } from "./platform/backup-destinations.js";
 import { navSurface } from "./platform/nav-surface.js";
+import { registerGmailProvider } from "./platform/mail-source/provider.js";
+import { registerMailSourceSweep } from "./platform/mail-source/sync.js";
 import { completeApp, createApp } from "./server.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -324,6 +326,7 @@ async function boot() {
       registerDateFieldSource,
       collect: calendarRegistry.collect,
       queryDateField,
+      unreadableDateField,
     },
     queue: {
       enqueue: queue.enqueue,
@@ -1349,6 +1352,12 @@ async function boot() {
   // per-destination cron worker, then re-arm any due schedules. Before
   // startWorker so the handler is in place when the loop begins.
   registerBackupCron();
+  // A connected mailbox (the Gmail door of receipts-by-email): the provider
+  // appears under /me/connections only with a Google client configured; the
+  // sweep is registered regardless, since a grant made under one config
+  // outlives a restart without it and must at least say so.
+  registerGmailProvider();
+  registerMailSourceSweep();
 
   // Platform-owned background work — the queue worker loop. Started
   // AFTER onBoot so modules have had a chance to register their

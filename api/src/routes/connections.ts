@@ -275,6 +275,12 @@ connectionsRouter.post("/me/connections", requireAuth, async (req, res, next) =>
       res.status(400).json({ error: { code: "unknown_provider", message: "No such provider." } });
       return;
     }
+    // A consent-screen provider has no typed grant: its own start route makes
+    // the connection, and a row made here would hold no grant and sync nothing.
+    if (provider.connect) {
+      res.status(400).json({ error: { code: "connect_through_provider", message: `${provider.label} is connected from its Connect button, not a form.`, start: provider.connect.start } });
+      return;
+    }
     const routedOrgs = routedOrgIds(parsed.data);
     if (routedOrgs.length) {
       const mine = await memberOrgIds(req.session!.id);
@@ -395,6 +401,17 @@ connectionsRouter.delete("/me/connections/:id", requireAuth, async (req, res, ne
     if (!id) {
       res.status(400).json({ error: { code: "missing_id", message: "id required" } });
       return;
+    }
+    // A grant is ended at its issuer before it is forgotten here, so a
+    // Disconnect is a revoke and not a secret left live on the other side.
+    const stored = await storedUserCredentials(req.session!.id, id);
+    const provider = stored ? connectionProviders.getProvider(stored.provider_id) : null;
+    if (stored && provider?.onDelete) {
+      try {
+        await provider.onDelete(stored.credentials);
+      } catch (err) {
+        console.warn(`[connections] ${provider.id} onDelete failed; deleting anyway:`, (err as Error).message);
+      }
     }
     const ok = await deleteUserCredential(req.session!.id, id);
     if (!ok) {

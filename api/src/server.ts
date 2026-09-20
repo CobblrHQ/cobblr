@@ -52,6 +52,7 @@ import { superAdminRouter } from "./routes/super-admin.js";
 import { feedbackRouter, feedbackInboundRouter } from "./routes/feedback.js";
 import { receiptInboundRouter, receiptAddressRouter } from "./routes/receipt-ingest.js";
 import { inboundEmailRouter } from "./routes/inbound-email.js";
+import { mailSourcesRouter, workspaceMailSourcesRouter } from "./routes/mail-sources.js";
 import { sandboxInstallRouter } from "./routes/sandbox-install.js";
 import { registryRouter, registryPublicRouter, externalRegistry } from "./routes/registry.js";
 import { listFlagshipManifests } from "./lib/flagship-bundles.js";
@@ -283,6 +284,7 @@ export function createApp(): AppHandles {
   // THIS routes by address prefix (reply+ → feedback, else → receipt). See
   // routes/inbound-email.ts + docs/operations/email-inbound-capture.md.
   v1.use(inboundEmailRouter);
+  v1.use(mailSourcesRouter);
   // The two single-purpose inbound routes are kept for direct/legacy callers and
   // as the handlers the dispatcher reuses; both authenticate with the same
   // COBBLR_INBOUND_EMAIL_SECRET. See routes/feedback.ts + routes/receipt-ingest.ts.
@@ -297,6 +299,7 @@ export function createApp(): AppHandles {
   v1.use("/orgs", calendarOrgRouter);
   // The caller's per-workspace receipt-forwarding address (authed).
   v1.use("/orgs", receiptAddressRouter);
+  v1.use("/orgs", workspaceMailSourcesRouter);
   // Member portal config + per-action capability grants.
   v1.use("/orgs", portalRouter);
   v1.use("/orgs", diagnosticsRouter);

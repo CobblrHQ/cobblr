@@ -24,7 +24,8 @@ import { inboundSecretOk } from "../platform/inbound-secret.js";
 import { landedSomething } from "../platform/inbound-dedupe.js";
 import { notifyAccount } from "../platform/notifications.js";
 import { absoluteAppUrl } from "../platform/public-url.js";
-import { planBodyCapture } from "../platform/receipt-body.js";
+import { planBodyCapture, planEmptyRead } from "../platform/receipt-body.js";
+import { classifyOrderNotice, classifyReturnEmail, classifyShipmentEmail, isAutomatedStoreSender, isForwardingVerification } from "../platform/shipment-email.js";
 import { outcomeStatus } from "../platform/inbound-outcome.js";
 import { bestReceiptBody, receiptReplyHeaders } from "../platform/inbound-email-body.js";
 import {
@@ -80,6 +81,14 @@ export interface ReceiptEmailInput {
   /** Original Message-ID — reserved for threading the reply (Phase 2). */
   message_id?: string;
   attachments: Array<{ filename?: string; content_type?: string; content_base64: string }>;
+  /** Who this is for, when the caller already knows: a message read from the
+   *  person's own connected mailbox names its owner and the workspace it is
+   *  routed to, and carries no receipt address to resolve. The membership
+   *  check below still runs; only the address step is skipped. */
+  resolved?: { userId: string; orgId: string };
+  /** Which door it came through, for the outcome and the reply: a mailbox
+   *  read is news the person did not send us, so it earns no reply. */
+  source?: "forward" | "gmail";
 }
 
 /** Core of receipt-by-email: resolve (user, workspace) from the token/sender,
@@ -102,7 +111,10 @@ export async function ingestReceiptEmail(
   let userId: string | null = null;
   let orgId: string | null = null;
   const tok = token ?? extractReceiptToken(to);
-  if (tok) {
+  if (input.resolved) {
+    userId = input.resolved.userId;
+    orgId = input.resolved.orgId;
+  } else if (tok) {
     const decoded = verifyReceiptToken(tok);
     if (!decoded) return { status: 200, body: { ignored: true, reason: "bad_token" } };
     userId = decoded.userId;
@@ -142,6 +154,32 @@ export async function ingestReceiptEmail(
   if (!membership) return { status: 200, body: { ignored: true, reason: "not_a_member" } };
 
   const slug = membership.slug;
+
+  // A mail provider asking whether this address may receive forwarded mail.
+  // Gmail sends the confirmation link HERE, to the receipt address, where no
+  // person reads — so the one email that activates a zero-click forwarding
+  // rule is exactly the one that never reaches the person setting it up.
+  // Relay it to their own inbox, verbatim, and stop: it is not a receipt.
+  const verification = isForwardingVerification({ subject, text, from_email });
+  if (verification) {
+    await notifyAccount({
+      originChannel: "email",
+      userId,
+      representativeOrgId: orgId,
+      notificationType: "core-scan.email.forwarding_verification",
+      message: "Your mail provider wants you to confirm forwarding to Cobblr. Its confirmation email is in your own inbox now — open it and click the link.",
+      link_url: `/w/${slug}/configuration/integrations`,
+      email: {
+        subject: `Action needed: confirm forwarding to Cobblr${subject ? ` (${subject.slice(0, 80)})` : ""}`,
+        text:
+          "Your mail provider sent this to your Cobblr receipt address to confirm it may forward mail there. " +
+          "Click the confirmation link or use the code below, and the forwarding rule turns on.\n\n" +
+          "----- forwarded verbatim -----\n" +
+          bodyText.slice(0, 6000),
+      },
+    }).catch(() => {});
+    return { status: 200, body: { relayed: "forwarding_verification", provider: verification.provider, workspace: slug }, orgId, userId };
+  }
 
   // Idempotency: the SAME email delivered twice (a provider retry / double-send
   // — identical Message-ID) must not re-import + re-notify. A genuine re-FORWARD
@@ -249,7 +287,66 @@ export async function ingestReceiptEmail(
   //    the email always lands SOMETHING and a real multi-line receipt is never
   //    flattened into one useless item.
   const body = bodyText.trim();
-  if (parsedCount === 0 && planBodyCapture(body) === "receipt") {
+
+  // A SHIPPING NOTIFICATION is a carrier event, not a receipt. Amazon's carry
+  // no line items any more — a status line, the order number, a button — so
+  // the parser would either save them as a useless note or, on a "Shipped:"
+  // that still lists items, re-import the order. Read the status the email
+  // announces and apply it to the parcel instead (core-scan's shipment-event
+  // route finds the order, or opens an awaiting session for one it has not
+  // seen). The parcel moves, the owner gets the card, nobody clicked.
+  let shipment: Record<string, unknown> | null = null;
+  // A RETURN is the reverse: requested, dropped off, received, refunded. It
+  // goes to the order it came from (purchases' own door), or to the person as
+  // a card when no order matches. Read before shipments, because "return
+  // received" must never be mistaken for a parcel arriving.
+  const returned = parsedCount === 0 ? classifyReturnEmail({ subject, text: body, html, from_email }) : null;
+  if (returned) {
+    try {
+      const r = await post(`/modules/core-scan/scan/receipt/return-event`, {
+        stage: returned.stage,
+        vendor: returned.vendor,
+        order_ref: returned.orderRef,
+        item: returned.item,
+        refund_amount: returned.refundAmount,
+        description: returned.description,
+      });
+      const rb = (await r.json().catch(() => ({}))) as Record<string, unknown>;
+      shipment = { ...rb, kind: "return", http: r.status };
+      results.push({ source: "return-event", ...rb });
+    } catch (err) {
+      results.push({ source: "return-event", error: "exception", message: (err as Error).message });
+    }
+  }
+  const observed = parsedCount === 0 && !returned ? classifyShipmentEmail({ subject, text: body, html, from_email }) : null;
+  if (observed) {
+    try {
+      const r = await post(`/modules/core-scan/scan/receipt/shipment-event`, {
+        state: observed.state,
+        vendor: observed.vendor,
+        order_ref: observed.orderRef,
+        tracking_number: observed.trackingNumber,
+        description: observed.description,
+        expected_arrival: observed.expectedArrival,
+        expected_arrival_date: observed.expectedArrivalDate,
+      });
+      const rb = (await r.json().catch(() => ({}))) as Record<string, unknown>;
+      shipment = { ...rb, http: r.status };
+      results.push({ source: "shipment-event", ...rb });
+    } catch (err) {
+      results.push({ source: "shipment-event", error: "exception", message: (err as Error).message });
+    }
+  }
+  let appliedShipment = Boolean(shipment && shipment.applied === true);
+  const orderNotice = classifyOrderNotice({ subject, text: body, html, from_email });
+
+  // A store's or carrier's MACHINE sent something this file could not read —
+  // a promotion, a survey, "free music with your order". A mail rule forwards
+  // those too, and the never-vanish fallback would file each as an inbox note.
+  // Those notes are noise nobody asked for, so the sender decides: a machine's
+  // unreadable email is archived and dropped, a person's is kept as before.
+  const machineNoise = parsedCount === 0 && !appliedShipment && !returned && !orderNotice && isAutomatedStoreSender(from_email);
+  if (parsedCount === 0 && !appliedShipment && !machineNoise && planBodyCapture(body) === "receipt") {
     try {
       const written = await platform().files.write(orgId, new TextEncoder().encode(body), {
         filename: "emailed-receipt.txt",
@@ -285,14 +382,44 @@ export async function ingestReceiptEmail(
     } catch (err) {
       results.push({ source: "body", error: "exception", message: (err as Error).message });
     }
-    if (parsedCount === 0 && !duplicate) {
-      // The parser found nothing usable (e.g. a real receipt but no AI to split it)
-      // — capture the whole body as one note item so it never silently disappears.
-      const r = await post(`/modules/core-scan/scan/note`, { text: body.slice(0, 2000) });
-      if (r.ok) {
-        noteCreated = true;
-        results.push({ source: "body-note", ok: true });
-      }
+  }
+  // The parser took nothing. Decided OUTSIDE the body-length branch above,
+  // because an Amazon "Ordered: 1 Electronics item" has a body too short to
+  // parse and still names the order the shipping notices need (planEmptyRead).
+  const empty = planEmptyRead({
+    text: body,
+    parsedCount,
+    duplicate: Boolean(duplicate),
+    appliedShipment,
+    orderNotice: Boolean(orderNotice && orderNotice.vendor && orderNotice.orderRef),
+    machineNoise,
+  });
+  if (empty === "order-notice" && orderNotice) {
+    // Open it as an awaiting session (state "ordered": no carrier state, just
+    // the parcel and its promised day). Never a note, which would be a receipt
+    // for nothing with the order number buried in it.
+    try {
+      const r = await post(`/modules/core-scan/scan/receipt/shipment-event`, {
+        state: "ordered",
+        vendor: orderNotice.vendor,
+        order_ref: orderNotice.orderRef,
+        description: (subject ?? "").slice(0, 200) || null,
+        expected_arrival_date: orderNotice.expectedArrivalDate,
+      });
+      const rb = (await r.json().catch(() => ({}))) as Record<string, unknown>;
+      shipment = { ...rb, kind: "order", http: r.status };
+      appliedShipment = rb.applied === true;
+      results.push({ source: "order-notice", ...rb });
+    } catch (err) {
+      results.push({ source: "order-notice", error: "exception", message: (err as Error).message });
+    }
+  } else if (empty === "note") {
+    // The parser found nothing usable (e.g. a real receipt but no AI to split it)
+    // — capture the whole body as one note item so it never silently disappears.
+    const r = await post(`/modules/core-scan/scan/note`, { text: body.slice(0, 2000) });
+    if (r.ok) {
+      noteCreated = true;
+      results.push({ source: "body-note", ok: true });
     }
   }
 
@@ -313,12 +440,22 @@ export async function ingestReceiptEmail(
   const subj = (subject ?? "").trim();
   const reSubject = (base: string) => (subj ? `Re: ${subj}` : base);
   const replyHeaders = receiptReplyHeaders(mintReceiptAddress(userId, orgId), message_id);
+  // A message READ from the person's own mailbox was never sent to us, so
+  // there is nobody to answer: "we could not find a receipt in your email"
+  // would be a reply to a store. What landed is still worth the bell (a
+  // receipt imported), on that channel alone; a duplicate or a miss is not.
+  const readFromMailbox = input.source === "gmail";
 
-  if (parsedCount > 0) {
+  if (appliedShipment || machineNoise || (readFromMailbox && parsedCount === 0 && !noteCreated)) {
+    // The parcel's own notification (the sweep's card, to the parcel's owner)
+    // is the answer. A "we got your email" on top of it is the double-send
+    // this file has already been cured of once (2026-08-24). And a store's
+    // promotion earns no reply at all: nobody wrote to us.
+  } else if (parsedCount > 0) {
     await notifyAccount({
       // An emailed receipt is answered by email - the bell records it, Discord
       // stays quiet. The double-send this ends was reported 2026-08-24.
-      originChannel: "email",
+      originChannel: readFromMailbox ? "in_app" : "email",
       userId,
       representativeOrgId: orgId,
       notificationType: "core-scan.email.imported",
@@ -357,7 +494,7 @@ export async function ingestReceiptEmail(
     await notifyAccount({
       // An emailed receipt is answered by email - the bell records it, Discord
       // stays quiet. The double-send this ends was reported 2026-08-24.
-      originChannel: "email",
+      originChannel: readFromMailbox ? "in_app" : "email",
       userId,
       representativeOrgId: orgId,
       notificationType: "core-scan.email.received",
@@ -393,8 +530,10 @@ export async function ingestReceiptEmail(
       workspace: slug,
       item_count: parsedCount,
       note: noteCreated,
+      shipment: appliedShipment ? shipment : null,
+      machine_noise: machineNoise,
       duplicate: !!duplicate,
-      status: outcomeStatus({ parsedCount, duplicate: !!duplicate, bodyFailure }),
+      status: outcomeStatus({ parsedCount, duplicate: !!duplicate, bodyFailure, shipment: appliedShipment }),
       results,
     },
     orgId,

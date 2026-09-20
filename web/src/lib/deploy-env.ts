@@ -76,8 +76,14 @@ export const DEFAULT_HEADER =
  * Reads the instance's deploy env from /healthz once (cached forever).
  * Unauthenticated, so it works on the login screen too. Falls back to
  * production (no badge) on any error — fail safe, never cry-wolf a badge.
+ *
+ * `testDoors` reads false until the answer is in, which is the right default
+ * for SHOWING a door and the wrong one for deciding a page has no business
+ * being open: a redirect keyed on it fires on the first render, before the
+ * box has said anything (the ending preview did exactly that). A page that
+ * would send someone away on false waits for `ready` first.
  */
-export function useDeployEnv(): { env: string; badge: EnvBadge | null; testDoors: boolean } {
+export function useDeployEnv(): { env: string; badge: EnvBadge | null; testDoors: boolean; ready: boolean } {
   const q = useQuery({
     queryKey: ["deploy-env"],
     queryFn: async (): Promise<{ env: string; testDoors: boolean }> => {
@@ -98,5 +104,5 @@ export function useDeployEnv(): { env: string; badge: EnvBadge | null; testDoors
     retry: false,
   });
   const env = q.data?.env ?? "production";
-  return { env, badge: ENV_BADGES[env] ?? null, testDoors: q.data?.testDoors ?? false };
+  return { env, badge: ENV_BADGES[env] ?? null, testDoors: q.data?.testDoors ?? false, ready: q.data !== undefined };
 }

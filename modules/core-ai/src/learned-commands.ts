@@ -23,7 +23,7 @@
 // reason to derive NOTHING. A missed generalisation costs a person one more
 // question to an AI; a wrong one costs them their data.
 
-import { compileTemplate, type CommandSlot } from "@cobblr/platform-contract";
+import { compileTemplate, PLATFORM_COMMANDS, type CommandSlot } from "@cobblr/platform-contract";
 
 export { compileTemplate };
 
@@ -243,7 +243,10 @@ export function deriveCommand(message: string, ops: Operation[]): LearnedCommand
  * Match a new message against a learned command and produce the operations it
  * means. Null when it does not apply — never a guess.
  */
-export function bindCommand(cmd: LearnedCommand, message: string): Operation[] | null {
+/** What the person typed into each of the command's blanks, or null when
+ *  the sentence does not fit. The same match bindCommand makes, exposed so
+ *  a command's description can be filled with the same words. */
+export function slotValues(cmd: Pick<LearnedCommand, "pattern" | "slots">, message: string): Record<string, string> | null {
   let re: RegExp;
   try {
     re = new RegExp(cmd.pattern, "i");
@@ -256,9 +259,19 @@ export function bindCommand(cmd: LearnedCommand, message: string): Operation[] |
   cmd.slots.forEach((s, i) => {
     values[s.name] = (m[i + 1] ?? "").trim();
   });
+  return values;
+}
 
-  const fill = (v: unknown): unknown =>
-    typeof v === "string" ? v.replace(/\{([a-z0-9_]+)\}/gi, (_, k: string) => values[k] ?? `{${k}}`) : v;
+/** `{blank}`s in a string, filled from the values; an unknown blank stays. */
+export function fillSlots(text: string, values: Record<string, string>): string {
+  return text.replace(/\{([a-z0-9_]+)\}/gi, (_, k: string) => values[k] ?? `{${k}}`);
+}
+
+export function bindCommand(cmd: LearnedCommand, message: string): Operation[] | null {
+  const values = slotValues(cmd, message);
+  if (!values) return null;
+
+  const fill = (v: unknown): unknown => (typeof v === "string" ? fillSlots(v, values) : v);
 
   const base = cmd.plan[0]!;
   if (!cmd.repeatField) {
@@ -290,4 +303,33 @@ export function bindCommand(cmd: LearnedCommand, message: string): Operation[] |
     ops.push({ ...base, payload });
   }
   return ops;
+}
+
+/** The platform's own commands, compiled once, as the matcher sees them:
+ *  what a sentence binds to with no api and no workspace, so the corpus can
+ *  assert "this sentence is a command" the way it does for a computed one.
+ *  The live match runs through entity_commands (registry-sync compiles the
+ *  same declarations there), so this is the same rule, not a second copy. */
+const PLATFORM_LEARNED: LearnedCommand[] = PLATFORM_COMMANDS.flatMap((c) => {
+  const compiled = compileTemplate(c.template);
+  if (!compiled) return [];
+  return [
+    {
+      template: c.template,
+      pattern: compiled.pattern,
+      slots: compiled.slots,
+      plan: c.plan.map((op) => ({ tool: op.tool, entity_kind: op.entityKind ?? "", ...(op.actionId ? { action_id: op.actionId } : {}), payload: op.payload })),
+      ...(c.repeatField ? { repeatField: c.repeatField } : {}),
+      ...(c.repeatShape ? { repeatShape: c.repeatShape } : {}),
+    },
+  ];
+});
+
+/** The platform command a sentence binds to, and its operations, or null. */
+export function platformCommandFor(message: string): { id: string; operations: Operation[] } | null {
+  for (const [i, cmd] of PLATFORM_LEARNED.entries()) {
+    const ops = bindCommand(cmd, message);
+    if (ops?.length) return { id: PLATFORM_COMMANDS[i]!.id, operations: ops };
+  }
+  return null;
 }

@@ -12,7 +12,9 @@ import type { DateFieldDirection } from "@cobblr/platform-contract/date-field-di
 export type { DateFieldDirection } from "@cobblr/platform-contract/date-field-direction";
 export { dateFieldDirection, canBeOverdue, dateEventTitle } from "@cobblr/platform-contract/date-field-direction";
 export { pluralise, countOf, itemNounFor } from "@cobblr/platform-contract/plural";
+export { PLATFORM_OWNER, PLATFORM_COMMANDS, PLATFORM_COMMANDS_VERSION } from "@cobblr/platform-contract/platform-commands";
 export { expiryState, expiryPhrase, EXPIRING_WITHIN_DAYS, type ExpiryState, type ExpiryReading } from "@cobblr/platform-contract/expiry-grace";
+export { fieldDay, fieldDayUnreadable } from "@cobblr/platform-contract/field-day";
 export { keepMembers, isMember, parcelAudience } from "@cobblr/platform-contract/membership";
 export { splitEntityKind, entityKindOf, type EntityKindParts } from "@cobblr/platform-contract/entity-kind";
 export { actionRunsUnconfirmed, type ActionConsent } from "@cobblr/platform-contract/action-consent";
@@ -388,6 +390,13 @@ const EntityField = z.object({
   // succeeded, and nothing moved (2026-08-18). Anything that describes a kind
   // for writing (the AI tool registry, form builders) must leave these out.
   readOnly: z.boolean().optional(),
+  // The fixed set of values a text field takes, when it takes one (a
+  // location's `kind` is "container" or "area"). Declared, the assistant's
+  // kind summary shows it the way a custom dropdown's choices show, and the
+  // model sends one of them; undeclared, it saw `kind: text` and proposed a
+  // bin with kind "bin", refused on confirm with a raw enum error
+  // (2026-09-20). A writer may still validate more tightly than this says.
+  choices: z.array(z.string().min(1)).min(1).optional(),
   role: EntityFieldRole.optional(),
   /** The trait value this native field belongs to, real or trial (`qty` is
    *  `fungible`, `serial_number` is `unique`, `assigned_to` is `lendable`).
@@ -988,6 +997,13 @@ const EntityKind = z
     // the guess that deletes somebody's work, so a kind opts IN by saying how
     // it should be read.
     duplicateScope: z.union([z.literal("workspace"), z.string().min(1)]).optional(),
+    // The kind whose records are THIS kind's own categories (inventory:part's
+    // is inventory:category: a table of categories, a category_id on the
+    // record, a filter in its list). The platform's scan category axis on such
+    // a kind is a second question with the same name; it is labelled as
+    // scanning's so a form does not ask "Category" twice, until the two are
+    // joined into one axis that reads and grows these records.
+    categoryAxis: z.string().min(1).optional(),
     exposableFields: z.array(z.string().min(1)).optional(),
     // Per-field read-scope (H2): map a field name to the capability
     // (action_id) a viewer must hold to read it. Layered ON TOP of
@@ -1196,6 +1212,7 @@ const ActionAppliesTo = z.union([
 
 export const ActionIdRegex = /^[a-z][a-z0-9_-]*:[a-z][a-z0-9_-]*$/;
 
+
 // A COMMAND a module ships: a sentence its users would type, and what to do
 // when they type it.
 //
@@ -1216,7 +1233,11 @@ const ModuleCommand = z.object({
   // {parent}". `from`/`to` are the range pair by convention and the only slots
   // that match digits.
   template: z.string().min(3).max(300),
-  // One line for the settings list: what it does, in words.
+  // One line for the settings list: what it does, in words. It may carry the
+  // template's {blanks}: "Add {choice} to the {field} choices" reads as a
+  // description in the list and, filled with what the person typed, is the
+  // offer's own summary ("Add Aran to the yarn weight choices") instead of
+  // the generic "Runs edit field".
   description: z.string().max(300).optional(),
   // What to do, with {slot} references. Same shape a learned command stores, so
   // shipped and learned commands run through exactly one code path.
@@ -3398,6 +3419,11 @@ export interface PlatformCalendar {
     fromISO: string,
     toISO: string,
   ): Promise<Array<{ id: string; name: string; value: string }>>;
+  /** The rows of `kind` whose `field` holds a value that names no day (see
+   *  field-day.ts). queryDateField leaves them out and hides nothing else;
+   *  a reader that found nothing due asks here so it can SAY which record
+   *  needs a person, rather than go quiet (#3279). */
+  unreadableDateField(orgId: string, kind: string, field: string): Promise<Array<{ id: string; name: string; value: string }>>;
 }
 
 /** core-queue v0.1: persistent background work for modules.
@@ -3405,10 +3431,23 @@ export interface PlatformCalendar {
  *  the handler that the api process's worker loop will invoke when
  *  the job's run_at has arrived. See api/src/platform/queue.ts. */
 /** One thing a person can do about a notification, straight from the message. */
+/** One line of a notification card and the actions that are about it. */
+export interface NotificationCardRow {
+  /** The line, plain text with light markdown (bold), e.g. "**Milk** — expires today". */
+  text: string;
+  /** Ids from the notification's `actions`, in the order to offer them. The
+   *  first is the one a channel puts beside the line when it can hold only one. */
+  actions?: string[];
+}
+
 export interface NotificationAction {
   /** Stable within one notification; this is what a client sends back. */
   id: string;
   label: string;
+  /** The label when the button sits beside the line it is about (a card
+   *  row), where the item's name is already on the line: "Used up" rather
+   *  than "Used up · Baby Carrots". Falls back to `label`. */
+  short?: string;
   /** A registered action id, e.g. "purchases:mark-arrived". Prefer an
    *  IDEMPOTENT action: a card can be pressed twice, from two devices, or
    *  long after the fact. */
@@ -3470,8 +3509,17 @@ export interface PlatformNotifications {
      * so `message` has to stand alone and `link_url` reaches the same place.
      * Pass PLAIN TEXT — a body with entity tokens still in it will show a uuid
      * to whoever reads the notification.
+     *
+     * `rows` is the body as LINES, each naming the actions (by their id in
+     * `actions`) that are about that line, for a channel that can put a
+     * button beside the line it answers: a Discord DM lays each row out as a
+     * section with its button as the accessory, and the in-app card renders
+     * each row with its own buttons. A digest of fifteen groceries used to
+     * arrive as a list and then fifteen buttons in a block beneath it, each
+     * repeating the name so it could be matched back to its line (#3282).
+     * `body` still stands alone for a channel that cannot pair them.
      */
-    card?: { heading?: string; body?: string; context?: string };
+    card?: { heading?: string; body?: string; context?: string; rows?: NotificationCardRow[] };
     /**
      * How urgent this is. Defaults to `normal`.
      *
@@ -4256,6 +4304,23 @@ export interface ConnectionProviderDef {
   rank?: number;
   /** One line under the picker, for a kind whose purpose isn't self-evident. */
   blurb?: string;
+  /** A provider whose credentials come from a consent screen, not a form: a
+   *  mailbox, a calendar, anything OAuth. The page renders a Connect button
+   *  that opens `start` (a route of the provider's own, which redirects to
+   *  the consent screen and stores the grant on the way back); the typed
+   *  credential fields are the non-secret ones the card may edit afterwards
+   *  (an allowlist, a label), never the grant itself. */
+  connect?: {
+    kind: "oauth";
+    /** API path the Connect button posts to with `{ org_id }`; answers `{ url }`. */
+    start: string;
+  };
+  /** Called with the decrypted credentials before a connection of this
+   *  provider is deleted, so a grant is revoked at its issuer and not merely
+   *  forgotten here. A failure is logged and the delete proceeds: the
+   *  person asked for it gone, and a revoke that cannot reach its issuer is
+   *  not a reason to keep the secret. */
+  onDelete?: (credentials: Record<string, unknown>) => Promise<void>;
 }
 
 /** A personal connection that applies to a call, with the secret decrypted. */

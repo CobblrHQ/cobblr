@@ -35,8 +35,10 @@ import {
   parsePress,
   pressMayAct,
   cardOf,
+  isComponentsV2Message,
   originalOf,
   settledMessage,
+  settledRow,
   verifySignature,
   type StoredNotification,
 } from "../platform/discord-interaction.js";
@@ -113,7 +115,7 @@ async function handlePress(req: Request, res: Response): Promise<void> {
     data?: { custom_id?: string };
     member?: { user?: { id?: string } };
     user?: { id?: string };
-    message?: { content?: string };
+    message?: { content?: string; flags?: number; components?: unknown[] };
   };
 
   if (body.type === INTERACTION.PING) {
@@ -131,10 +133,17 @@ async function handlePress(req: Request, res: Response): Promise<void> {
   }
 
   const original = originalOf(body.message);
-  const ref = parsePress(String(body.data?.custom_id ?? ""));
+  // A message laid out as rows (Components V2) settles the pressed ROW and
+  // keeps the rest pressable; a classic card is replaced whole. The message
+  // says which it is, and every answer below goes through this one door.
+  const pressedId = String(body.data?.custom_id ?? "");
+  const v2 = isComponentsV2Message(body.message);
+  const settle = (outcome: string, echo?: string | null, card?: ReturnType<typeof cardOf>) =>
+    v2 ? settledRow(body.message?.components, pressedId, outcome) : settledMessage(original, outcome, echo, card);
+  const ref = parsePress(pressedId);
   if (!ref) {
     // Someone else's component, or a probe. Say nothing useful.
-    res.json(settledMessage(original, "This button is no longer valid."));
+    res.json(settle("This button is no longer valid."));
     return;
   }
 
@@ -195,7 +204,7 @@ async function handlePress(req: Request, res: Response): Promise<void> {
       const owns =
         notification && conn?.user_id && (notification as StoredNotification).user_id === conn.user_id;
       if (!owns || !mayAct) {
-        res.json(settledMessage(original, "This button is no longer valid."));
+        res.json(settle("This button is no longer valid."));
         return;
       }
       res.json(
@@ -215,7 +224,7 @@ async function handlePress(req: Request, res: Response): Promise<void> {
     if (isModalSubmit && !typed) {
       // Submitted empty. Discord already enforces min_length, so this is a
       // client that did not, and there is nothing to post.
-      res.json(settledMessage(original, "Nothing to send."));
+      res.json(settle("Nothing to send."));
       return;
     }
 
@@ -242,8 +251,7 @@ async function handlePress(req: Request, res: Response): Promise<void> {
       // Deliberately one message for every refusal. Distinguishing "not yours"
       // from "no such notification" tells a prober which ids exist.
       res.json(
-        settledMessage(
-          original,
+        settle(
           outcome.reason === "failed"
             ? "That did not go through. Open it in Cobblr to finish."
             : "This button is no longer valid.",
@@ -253,9 +261,9 @@ async function handlePress(req: Request, res: Response): Promise<void> {
     }
 
     res.json(
-      settledMessage(
-        original,
-        isModalSubmit ? "✅ Sent." : `✅ ${outcome.label}`,
+      settle(
+        // Beside its own line the verb is enough; the flat card names the item.
+        isModalSubmit ? "✅ Sent." : `✅ ${v2 ? (outcome.short ?? outcome.label) : outcome.label}`,
         // Only a reply has anything to echo; a plain action press does not.
         typed,
         // With a card, the reply is written INTO it, under the message it
@@ -267,6 +275,6 @@ async function handlePress(req: Request, res: Response): Promise<void> {
     console.error("[discord-interactions]", (err as Error).message);
     // The press was real and we failed it. Say so rather than pretending, and
     // leave the message's link as the way through.
-    res.json(settledMessage(original, "Something went wrong. Open Cobblr to finish this."));
+    res.json(settle("Something went wrong. Open Cobblr to finish this."));
   }
 }

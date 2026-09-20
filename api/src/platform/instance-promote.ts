@@ -28,7 +28,7 @@ import { sql } from "kysely";
 import { meta } from "../db/meta.js";
 import { getEntry } from "../modules/registry.js";
 import { getTenantDb } from "../db/tenant.js";
-import { createInstance, getInstance, tearDownInstance, type ModuleInstance } from "./instances.js";
+import { createInstance, getInstance, logInstanceCreated, tearDownInstance, type ModuleInstance } from "./instances.js";
 import { upsertOverride } from "./entity-kind-overrides.js";
 import { singularize, pluralize } from "../lib/inflect.js";
 import { normaliseCategory } from "@cobblr/platform-contract/category-reconcile";
@@ -186,6 +186,7 @@ export async function promoteCategory(args: {
       category: args.category,
     });
 
+    await logInstanceCreated(args.orgId, instance, { source: "promoted", category: args.category });
     return { instance, moved };
   } catch (err) {
     await tearDownInstance(args.orgId, args.instanceName).catch(() => {});

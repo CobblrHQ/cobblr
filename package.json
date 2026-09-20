@@ -325,7 +325,13 @@
     "lint:test-doors-gated": "tsx scripts/lint-test-doors-gated.ts",
     "lint:gated-state-has-a-producer": "tsx scripts/lint-gated-state-has-a-producer.ts",
     "lint:corpus-known-red-live": "tsx scripts/lint-corpus-known-red-live.ts",
-    "lint:dns-probe-unpinned": "tsx scripts/lint-dns-probe-unpinned.ts"
+    "lint:dns-probe-unpinned": "tsx scripts/lint-dns-probe-unpinned.ts",
+    "lint:tick-problems-keyed": "tsx scripts/lint-tick-problems-keyed.ts",
+    "lint:box-cron-offsets": "tsx scripts/lint-box-cron-offsets.ts",
+    "lint:test-support-doors-scoped": "tsx scripts/lint-test-support-doors-scoped.ts",
+    "lint:driver-hooks-live": "tsx scripts/lint-driver-hooks-live.ts",
+    "lint:boot-pass-born-with": "tsx scripts/lint-boot-pass-born-with.ts",
+    "lint:env-booleans-are-loud": "tsx scripts/lint-env-booleans-are-loud.ts"
   },
   "devDependencies": {
     "jsdom": "^30.0.1",

@@ -14,9 +14,9 @@
   },
   "dependencies": {
     "@cobblr/core-authoring": "workspace:*",
-    "@cobblr/platform-net": "workspace:*",
     "@cobblr/core-scan": "workspace:*",
     "@cobblr/platform-contract": "workspace:*",
+    "@cobblr/platform-net": "workspace:*",
     "@cobblr/workspace-tools": "workspace:*",
     "@types/nodemailer": "^8.0.0",
     "archiver": "^8.0.0",
@@ -36,6 +36,7 @@
     "pino-http": "^10.3.0",
     "rrule": "^2.8.1",
     "sharp": "^0.33.5",
+    "ts-tracking-number": "^1.0.17",
     "undici": "^6.27.0",
     "unzipper": "^0.12.3",
     "zod": "^3.24.1"

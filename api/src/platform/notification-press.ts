@@ -26,7 +26,7 @@ import { resolvePress, pressMayAct, type StoredNotification } from "./discord-in
 import { assertActingRoleClearsActionFloor, ActionRoleFloorError } from "./platform-actions.js";
 
 export type PressOutcome =
-  | { ok: true; label: string }
+  | { ok: true; label: string; short?: string }
   | { ok: false; reason: "refused" | "failed" };
 
 /**
@@ -118,5 +118,5 @@ export async function pressNotificationAction(args: {
     console.error("[notification-press]", (err as Error).message);
     return { ok: false, reason: "failed" };
   }
-  return { ok: true, label: resolved.label };
+  return { ok: true, label: resolved.label, ...(resolved.short ? { short: resolved.short } : {}) };
 }

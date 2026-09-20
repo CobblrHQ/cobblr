@@ -195,6 +195,7 @@ export function LocationTreePicker({
       <>
         <OverlayLayer className="z-[60]" onClick={() => setOpen(false)} />
         <PopoverLayer
+          data-testid="location-tree-picker-panel"
           className="z-[61] flex flex-col overflow-hidden rounded-lg border border-line dark:border-slate-700 bg-surface dark:bg-slate-900 shadow-xl"
           style={{
             top: rect.bottom + 4,

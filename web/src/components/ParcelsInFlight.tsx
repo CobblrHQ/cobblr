@@ -68,7 +68,18 @@ interface Parcel {
   unfiled: boolean;
 }
 
-export function ParcelsInFlight({ slug }: { slug: string }): React.ReactElement | null {
+export function ParcelsInFlight({
+  slug,
+  hasPurchases,
+}: {
+  slug: string;
+  /** Whether the purchases module is enabled here. Its router is not mounted
+   *  otherwise, and asking it for orders answered 409 on every dashboard load
+   *  of a workspace that never enabled it, which is every fresh one (#3227
+   *  re-walk, 2026-09-21). The dashboard already knows the enabled set; the
+   *  receipts side needs no gate because core-scan is always on. */
+  hasPurchases: boolean;
+}): React.ReactElement | null {
   // Both lists are already fetched elsewhere in the app, so these mostly hit
   // the query cache. Kept separate so one module being disabled or erroring
   // cannot take the other's parcels off the board.
@@ -81,6 +92,7 @@ export function ParcelsInFlight({ slug }: { slug: string }): React.ReactElement 
     queryKey: ["orders", slug],
     queryFn: () => api.listOrders(slug),
     staleTime: 60_000,
+    enabled: hasPurchases,
   });
 
   const parcels: Parcel[] = [

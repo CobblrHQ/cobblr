@@ -23,3 +23,29 @@ export function planBodyCapture(text: string | undefined): "receipt" | "skip" {
   if (body.length < MIN_BODY_CHARS) return "skip";
   return "receipt";
 }
+
+/** What to do with an email the parser took NO line from: open the order its
+ *  subject and link name, keep the whole body as a note, or nothing.
+ *
+ *  Decided here, apart from the body's length, because it was once decided
+ *  inside the "is the body long enough to parse" branch: an Amazon "Ordered: 1
+ *  Electronics item" is 27 characters of plain text and a link, so it was too
+ *  short to parse, and the order that the shipping notices needed to attach
+ *  to was never opened. The order number comes from the subject and the html
+ *  link, and a body of any length, or none, is enough to open it. The note is
+ *  the last resort and only for a body worth keeping. */
+export function planEmptyRead(input: {
+  text: string | undefined;
+  parsedCount: number;
+  duplicate: boolean;
+  appliedShipment: boolean;
+  /** The classifier read a store and an order number out of the email. */
+  orderNotice: boolean;
+  /** A store's machine sent something unreadable: archived and dropped. */
+  machineNoise: boolean;
+}): "order-notice" | "note" | "nothing" {
+  if (input.parsedCount > 0 || input.duplicate || input.appliedShipment) return "nothing";
+  if (input.orderNotice) return "order-notice";
+  if (input.machineNoise) return "nothing";
+  return planBodyCapture(input.text) === "receipt" ? "note" : "nothing";
+}

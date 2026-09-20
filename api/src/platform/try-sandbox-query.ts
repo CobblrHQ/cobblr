@@ -29,6 +29,14 @@ export interface ReapableOrgs {
  *  Nothing else. In particular never a slug or name match: the day someone
  *  "improves" this by looking for workspaces that seem like sandboxes is the
  *  day it deletes one called Sandbox. */
+/** The moment before which a sandbox may be deleted: its hour is up AND the
+ *  decision window that follows it (#3254) has run out. Inside the window the
+ *  workspace is frozen (410 at the door) but the ending page can still keep
+ *  it, so the reaper's `now` is this, not the clock. */
+export function reapCutoff(now: number, decisionMs: number): Date {
+  return new Date(now - Math.max(0, decisionMs));
+}
+
 export function expiredSandboxesQuery(db: unknown, limit: number, now: Date) {
   return (db as Kysely<ReapableOrgs>)
     .selectFrom("orgs")

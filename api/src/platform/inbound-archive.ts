@@ -46,6 +46,61 @@ export async function archiveInboundEmail(p: InboundPayload): Promise<string | n
   }
 }
 
+/** The ENVELOPE of a message read from a person's own mailbox: who sent it,
+ *  what it was called, when, and its id at the source. No body, by the shape
+ *  of the argument: a mailbox door keeps nothing Google would call restricted
+ *  data on this side, and a replay re-fetches the message by `source_ref`
+ *  from the mailbox where it still is. The forwarding door's raw archive
+ *  above exists because a forwarded copy has nowhere else to be fetched
+ *  from; a mailbox read has. */
+export interface InboundEnvelope {
+  source: string;
+  source_ref: string;
+  from_email?: string;
+  subject?: string;
+  message_id?: string;
+  org_id?: string | null;
+  user_id?: string | null;
+}
+
+export async function archiveInboundEnvelope(e: InboundEnvelope): Promise<string | null> {
+  try {
+    const row = await meta
+      .insertInto("inbound_emails")
+      .values({
+        to_addr: null,
+        from_email: e.from_email ?? null,
+        text_body: null,
+        html_body: null,
+        subject: e.subject ?? null,
+        message_id: e.message_id ?? null,
+        attachments: sql`'[]'::jsonb`,
+        source: e.source,
+        source_ref: e.source_ref,
+        org_id: e.org_id ?? null,
+        user_id: e.user_id ?? null,
+        handler: null,
+      })
+      .returning("id")
+      .executeTakeFirstOrThrow();
+    return row.id;
+  } catch {
+    return null;
+  }
+}
+
+/** Whether a message from this source was already read: the archive is the
+ *  memory that makes a cursor overlap safe, and a replay of an old id a no-op. */
+export async function inboundSourceSeen(source: string, sourceRef: string): Promise<boolean> {
+  const row = await meta
+    .selectFrom("inbound_emails")
+    .select("id")
+    .where("source", "=", source)
+    .where("source_ref", "=", sourceRef)
+    .executeTakeFirst();
+  return Boolean(row);
+}
+
 /** Record how a dispatch attempt resolved, on the archived row. */
 export async function recordInboundOutcome(id: string, o: InboundOutcome): Promise<void> {
   try {
@@ -64,6 +119,18 @@ export async function recordInboundOutcome(id: string, o: InboundOutcome): Promi
   } catch {
     // A bookkeeping failure must never surface to the sender.
   }
+}
+
+/** Where an archived message came from, when it was READ rather than sent:
+ *  the replay re-fetches it there instead of finding an empty body here. */
+export async function getInboundSourceRef(id: string): Promise<{ source: string; source_ref: string; user_id: string | null; org_id: string | null } | null> {
+  const row = await meta
+    .selectFrom("inbound_emails")
+    .select(["source", "source_ref", "user_id", "org_id"])
+    .where("id", "=", id)
+    .executeTakeFirst();
+  if (!row?.source || !row.source_ref) return null;
+  return { source: row.source, source_ref: row.source_ref, user_id: row.user_id, org_id: row.org_id };
 }
 
 /** Load an archived message's raw payload for replay. */

@@ -14,6 +14,7 @@ import { providerReasonOf } from "@cobblr/platform-contract/provider-reason";
 import { missingActionArgs, reconcileActionArgs } from "./action-args-guard.js";
 import { groundingNudgeFor } from "./groundless-answer.js";
 import { movedNotCreated } from "./move-not-create.js";
+import { outsideChoices } from "./field-choices.js";
 import { noneFromOneList } from "./none-from-one-list.js";
 import { answeredNotProposed } from "./answer-dont-propose.js";
 import { askDontRank } from "./ask-dont-rank.js";
@@ -666,6 +667,9 @@ async function answerTurn(
   // (ask-dont-rank.ts). When they did not, the turn carries the candidates
   // as taps; the reply below says so.
   const ambiguity = askDontRank(askedFor);
+  // The kinds, read once per turn and only when a record write needs them.
+  let kindsForWrites: Promise<KindRec[]> | null = null;
+  const kindsOnce = () => (kindsForWrites ??= fetchKinds(wsApi).catch(() => [] as KindRec[]));
   let outcome: AgentLoopOutcome;
   try {
     outcome = await runAgentLoop(parsed.data.messages as ChatTurn[], {
@@ -745,6 +749,12 @@ async function answerTurn(
         // turn carries them as taps. See ask-dont-rank.ts.
         const ranked = ambiguity.validate(call);
         if (ranked) return ranked;
+        // A value a field cannot take ("bin" for a location's kind) is handed
+        // back with the values it can, before any card. See field-choices.ts.
+        if (call.name === "create_record" || call.name === "update_record") {
+          const off = outsideChoices(call, await kindsOnce());
+          if (off) return off;
+        }
         if (call.name !== "invoke_action") return null;
         const a = call.args ?? {};
         const typed = String(a.action_id ?? "");

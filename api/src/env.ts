@@ -126,10 +126,21 @@ const Schema = z.object({
 
   // ── the no-account sandbox (docs/design-decisions/try-sandbox.md) ──────────
   // OFF unless COBBLR_TRY_SANDBOX=true, so prod / staging / self-host never
-  // hand out an anonymous workspace even if the other keys drift in.
-  COBBLR_TRY_SANDBOX: z.coerce.boolean().default(false),
+  // hand out an anonymous workspace even if the other keys drift in. An enum,
+  // not z.coerce.boolean(): that read "false" as ON, because Boolean("false")
+  // is true, and the self-hoster who set it explicitly got a sandbox handed
+  // out (#3303). A wrong value now refuses boot by name.
+  COBBLR_TRY_SANDBOX: z
+    .enum(["true", "false"])
+    .default("false")
+    .transform((v) => v === "true"),
   /** How long a sandbox lives. Minutes, not days: this is the whole point. */
   TRY_SANDBOX_TTL_MINUTES: z.coerce.number().int().positive().default(60),
+  /** After the hour, how long a frozen sandbox is held so the person can
+   *  still keep it (the ending page's first door, #3254). It answers 410 on
+   *  every workspace route from the minute; only the keep route works. 0 =
+   *  deleted at the hour, as before. The owner approved 24 (2026-09-20). */
+  TRY_SANDBOX_DECISION_HOURS: z.coerce.number().int().min(0).default(24),
   /** Refuse to provision past this many LIVE sandboxes. The control that
    *  protects the box whatever the rate limits miss — db-per-tenant means every
    *  sandbox is a real Postgres database. */
@@ -311,5 +322,5 @@ function loadEnv(): Env {
 
 export const env = loadEnv();
 
-export { withoutEmpties as _withoutEmpties };
+export { withoutEmpties as _withoutEmpties, Schema as _Schema };
 export { assertNoDevSecretsInProd as _assertNoDevSecretsInProd };

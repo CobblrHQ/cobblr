@@ -1,0 +1,10 @@
+{
+  "match": "out of the garage",
+  "rounds": [
+    { "tool_calls": [{ "name": "list_records", "args": { "kind": "machines:machine", "q": "CubePro" } }] },
+    { "tool_calls": [{ "name": "list_records", "args": { "kind": "core-locations:location", "q": "Garage" } }] },
+    { "tool_calls": [{ "name": "list_related", "args": { "kind": "core-locations:location", "id": "$prev.data.items[0].id" } }] },
+    { "tool_calls": [{ "name": "invoke_action", "args": { "action_id": "core-placement:remove", "entity_kind": "machines:machine", "entity_id": "$result.list_related.data.items[0].id" } }] },
+    { "content": "Which CubePro do you mean: CubePro #9 or CubePro #10?" }
+  ]
+}

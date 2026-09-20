@@ -394,3 +394,51 @@ export function receiptDedupKey(
   if (!orderKey) return null;
   return { vendor: normalizeVendorKey(vendor), orderRef: orderKey };
 }
+
+/** Two spellings of one store agree when one's key begins the other's. A
+ *  shipping notice names the store by its sender domain ("Amazon"); the
+ *  receipt names it by its own first line ("Amazon.com", "Amazon.com, Inc.").
+ *  Equal keys would call those two stores, and the order they share would be
+ *  two sessions. An unknown store agrees with anything: it is the order number
+ *  that identifies the order, the store only tells two stores' numbers apart. */
+export function vendorsAgree(a: string | null | undefined, b: string | null | undefined): boolean {
+  const ka = normalizeVendorKey(a);
+  const kb = normalizeVendorKey(b);
+  if (!ka || !kb || ka === kb) return true;
+  const [short, long] = ka.length <= kb.length ? [ka, kb] : [kb, ka];
+  return short.length >= 4 && long.startsWith(short);
+}
+
+/** An order number long enough to be its own identity, whatever the store
+ *  reads as: Amazon's 3-7-7, a Shopify "#1001-A" is not. Ten characters with
+ *  a digit, since a short number ("#4271") recurs across every small shop. */
+export function isStrongOrderRef(orderRef: string | null | undefined): boolean {
+  const r = (orderRef ?? "").trim();
+  return r.length >= 10 && /\d/.test(r);
+}
+
+/** Of the sessions that carry this order number, the one this email is about:
+ *  the newest whose store agrees, else the newest at all when the number alone
+ *  is strong enough to say. Rows arrive newest first. */
+export function sameOrder<T extends { vendor: string | null }>(
+  rows: T[],
+  vendor: string | null | undefined,
+  orderRef: string | null | undefined,
+): T | undefined {
+  return rows.find((r) => vendorsAgree(r.vendor, vendor)) ?? (isStrongOrderRef(orderRef) ? rows[0] : undefined);
+}
+
+/** Whether a cancellation ends a session that is still waiting for its receipt.
+ *
+ *  A session opened from "Ordered: 1 Electronics item" holds nothing but the
+ *  promise of a parcel; when the store then says the item is cancelled, the
+ *  promise is withdrawn and the session would sit on the page awaiting a
+ *  receipt that will never come. It ends when nothing has shipped (a parcel in
+ *  transit is still coming, whatever else was cancelled) and the order was a
+ *  single item, or its size is unknown: a "3 items" order with one cancelled
+ *  still has two on the way. */
+export function cancellationEndsSession(session: { shipment_state: string | null; shipment_description: string | null }): boolean {
+  if (session.shipment_state) return false;
+  const m = /^(?:fwd?:\s*)?ordered:\s*(\d+)\b/i.exec(session.shipment_description ?? "");
+  return !m || Number(m[1]) <= 1;
+}

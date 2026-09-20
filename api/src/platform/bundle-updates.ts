@@ -1,5 +1,7 @@
 // PERMANENT RECONCILE — installed bundles catch up to the catalog on their own.
 //
+// BORN WITH: nothing (a new install writes the catalog's current version; this pass moves installs the catalog has since passed)
+//
 // The patch/minor auto-apply lived in the dashboard: each update row fired an
 // install when it MOUNTED, once per tab. So a workspace whose owner never
 // opens Home never updated, two tabs raced the same install, and six bundles

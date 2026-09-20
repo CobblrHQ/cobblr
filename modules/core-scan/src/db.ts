@@ -95,6 +95,7 @@ export interface CoreScanBatchesTable {
   tracking_number: ColumnType<string | null, string | null | undefined, string | null | undefined>;
   tracking_added_by_user_id: ColumnType<string | null, string | null | undefined, string | null | undefined>;
   shipment_confirmed_at: ColumnType<Date | null, Date | string | null | undefined, Date | string | null | undefined>;
+  expected_arrival: ColumnType<string | null, string | null | undefined, string | null | undefined>;
   /** vendor|date|total|line-count fingerprint for receipts with no order
    *  number, so the same paper scanned twice is caught. Null when the parse
    *  established too little to fingerprint. */

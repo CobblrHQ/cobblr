@@ -63,9 +63,16 @@ export function samplePoints(rect: { x: number; y: number; width: number; height
 
 /** True while this chrome is covering something pressable.
  *
- *  Recomputed on scroll and resize only — both rAF-coalesced — so it costs a
- *  handful of hit tests per frame at most, and nothing at all while the page is
- *  still. */
+ *  Recomputed on scroll, on resize, and when the page changes under the chrome
+ *  (a node added or removed anywhere in the body), all rAF-coalesced, so it
+ *  costs a handful of hit tests per frame at most and nothing at all while
+ *  the page is still. The change case is the one a scroll never covers: the
+ *  dashboard grew a row after "Add it" and the Locations card slid under the
+ *  feedback bubble with nothing scrolled, so the bubble sat opaque on the
+ *  card's arrow (#3222). A ResizeObserver on the body was the first answer
+ *  and never fired: html, body and the app root are all viewport-height and
+ *  the content overflows them, so nothing the observer could watch grows.
+ *  Content arriving is a DOM mutation, and that is what is watched (#3239). */
 export function useYieldToContent<T extends HTMLElement>(ref: RefObject<T | null>): boolean {
   const [covering, setCovering] = useState(false);
 
@@ -105,11 +112,17 @@ export function useYieldToContent<T extends HTMLElement>(ref: RefObject<T | null
     // `true` captures scrolls inside any nested scroller, not just the window.
     window.addEventListener("scroll", schedule, true);
     window.addEventListener("resize", schedule);
+    // Content arriving or leaving moves everything after it. Nodes coming and
+    // going is the signal; attribute churn (a class toggle, a live clock) is
+    // not watched, and the rAF coalesces a render's burst into one measure.
+    const changed = typeof MutationObserver !== "undefined" ? new MutationObserver(schedule) : null;
+    changed?.observe(document.body, { childList: true, subtree: true });
     return () => {
       alive = false;
       if (frame) cancelAnimationFrame(frame);
       window.removeEventListener("scroll", schedule, true);
       window.removeEventListener("resize", schedule);
+      changed?.disconnect();
     };
   }, [ref]);
 

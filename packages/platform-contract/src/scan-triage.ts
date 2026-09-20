@@ -23,6 +23,7 @@
 
 import { scanSourceConflict, sourceConflictWords, type SourceConflict } from "@cobblr/platform-contract/acquisition-source";
 import { evidenceConflictWords, scanEvidenceConflicts } from "@cobblr/platform-contract/scan-evidence";
+import { identifyNeverTried, type IdentifyFailure } from "@cobblr/platform-contract/scan-fallback";
 import {
   ACTION_ADD,
   ACTION_BLOCKED,
@@ -32,6 +33,9 @@ import {
   AI_FAILED_SENTENCE,
   BLOCKED_SENTENCE,
   DUPLICATE_SENTENCE,
+  HELD_GUESS_BECAUSE,
+  HELD_GUESS_PROMPT,
+  HELD_GUESS_SOURCE,
   INSTALL_SENTENCE,
   INSTALL_BLOCKED_SENTENCE,
   KEYWORD_ROUTE_SENTENCE,
@@ -119,6 +123,10 @@ interface TriageMeta {
   rate_limited?: boolean;
   /** The identify pass was asked and did not answer (coded, #2916). */
   identify_failure?: unknown;
+  /** A web-search name held back for want of a second source (#2918): the
+   *  row stays nameless and the guess rides here, so the card can ASK. */
+  held_name?: string;
+  held_reason?: string;
   reviewed?: boolean;
   photo_wanted?: boolean;
   split_review?: string;
@@ -279,7 +287,9 @@ export function scanReviewReason(
   const meta = metaOf(row);
   if (!isNamed(row)) return meta.code_type === "store-code" ? STORE_CODE_NOTE : NO_NAME_SENTENCE;
   if (meta.rate_limited) return THROTTLED_SENTENCE;
-  if (meta.identify_failure) return AI_FAILED_SENTENCE;
+  // A row nothing tried to read (no provider here) was not one the AI could
+  // not read: the reason it is flagged is the next one down (#3233).
+  if (meta.identify_failure && !identifyNeverTried(meta.identify_failure as IdentifyFailure)) return AI_FAILED_SENTENCE;
   // Said before the trust and confidence reasons: it names the exact value
   // to look at, where those only say "check it".
   const conflict = scanSourceConflict(row);
@@ -306,6 +316,10 @@ export interface ScanQuestionChoice {
  *  the question is about the identification as a whole. */
 export interface ScanQuestion {
   field: string | null;
+  /** The answer is the row's NAME, not a table field: a tap names the row
+   *  the way a typed name does (a person's choice, stamped person), never
+   *  the lookup's own confidence. Set with `field: null`. */
+  names?: true;
   /** "Check weight class", "Fiber is not set", "Check the name". */
   prompt: string;
   /** Tap answers; empty when the answer has to be typed. */
@@ -331,7 +345,18 @@ export function scanReviewQuestions(row: ScanTriageRow): ScanQuestion[] {
   const answered = (field: string) => typed[field] != null && String(typed[field]).trim() !== "";
   const out: ScanQuestion[] = [];
   if (!isNamed(row)) {
-    out.push({ field: null, prompt: "Name it", choices: [], because: "nothing could name this" });
+    // A web guess held for want of a second source is shown as a guess a
+    // tap can take. It used to be prose in the note beside an empty name
+    // field, so a person read the right name and typed it back by hand
+    // (five of fourteen codes from a visitor's pocket, 2026-09-20). One
+    // source never NAMES a thing; it may ASK. A store's own code has no
+    // web guess worth asking about (#3017).
+    const held = typeof meta.held_name === "string" ? meta.held_name.trim() : "";
+    if (held && meta.code_type !== "store-code") {
+      out.push({ field: null, names: true, prompt: HELD_GUESS_PROMPT, choices: [{ value: held, source: HELD_GUESS_SOURCE }], because: HELD_GUESS_BECAUSE });
+    } else {
+      out.push({ field: null, prompt: "Name it", choices: [], because: "nothing could name this" });
+    }
     return out;
   }
   const conflict = scanSourceConflict(row);

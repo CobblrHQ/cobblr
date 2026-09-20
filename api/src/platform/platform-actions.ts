@@ -20,11 +20,14 @@
 // handler would fail at invoke time, in front of a user (the exact half-wire
 // class lint:dead-exports caught in #1938).
 
+import { PLATFORM_OWNER } from "@cobblr/platform-contract";
 import { roleSatisfies } from "@cobblr/platform-contract/org-roles";
 import type { OrgRoleName } from "@cobblr/platform-contract/org-roles";
 
-/** The reserved owner. lint-manifests refuses a module named this. */
-export const PLATFORM_ACTION_OWNER = "platform";
+/** The reserved owner. lint-manifests refuses a module named this. One
+ *  constant, in the contract, so the registry, the assistant's loader and
+ *  the lint cannot disagree on the spelling. */
+export const PLATFORM_ACTION_OWNER = PLATFORM_OWNER;
 
 /** Shape-compatible with the rows registry-sync builds from module manifests. */
 export interface PlatformActionDecl {

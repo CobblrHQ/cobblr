@@ -86,11 +86,11 @@ export interface StoredNotification {
   id: string;
   org_id: string;
   user_id: string;
-  actions: { id: string; label: string; action: string; args?: Record<string, unknown> }[] | null;
+  actions: { id: string; label: string; short?: string; action: string; args?: Record<string, unknown> }[] | null;
 }
 
 export type Resolution =
-  | { ok: true; orgId: string; userId: string; action: string; args: Record<string, unknown>; label: string }
+  | { ok: true; orgId: string; userId: string; action: string; args: Record<string, unknown>; label: string; short?: string }
   | { ok: false; reason: "unknown" | "not-yours" | "no-such-action" };
 
 /**
@@ -120,6 +120,7 @@ export function resolvePress(
     action: action.action,
     args: action.args ?? {},
     label: action.label,
+    ...(action.short ? { short: action.short } : {}),
   };
 }
 
@@ -257,4 +258,86 @@ export function originalOf(
   if (content) return content;
   const e = message?.embeds?.[0];
   return [e?.title, e?.description].filter((x): x is string => !!x && x.trim().length > 0).join("\n");
+}
+
+// ── A press on a message laid out as Components V2 settles ITS ROW ─────────
+//
+// A classic card is REPLACED on a press (settledMessage): the message reads
+// as settled, and a pressed button cannot be pressed again from scrollback.
+// That was right for a card with one question on it, and wrong for a digest
+// of fifteen: one "Used up" and the other fourteen buttons vanished, on the
+// one message that exists so a batch can be dealt with (#3282). A message
+// laid out as rows (discord-card.ts componentsV2For) is settled row by row:
+// the pressed row's section becomes its text with the outcome under it, the
+// answer beneath it (if any) goes, and every other row stays pressable. The
+// message itself carries the state: the interaction arrives with the current
+// tree, so nothing has to be remembered between presses.
+
+/** The IS_COMPONENTS_V2 flag, as Discord sets it on the message. */
+const COMPONENTS_V2 = 1 << 15;
+
+export function isComponentsV2Message(message: { flags?: number | null } | null | undefined): boolean {
+  return !!message && ((message.flags ?? 0) & COMPONENTS_V2) !== 0;
+}
+
+interface V2Node {
+  type?: number;
+  content?: string;
+  components?: V2Node[];
+  accessory?: { type?: number; custom_id?: string } | null;
+  custom_id?: string;
+  [k: string]: unknown;
+}
+
+const hasButton = (row: V2Node, customId: string): boolean =>
+  Array.isArray(row.components) && row.components.some((c) => c.type === 2 && c.custom_id === customId);
+
+/** The row's text with the outcome written under it, as a text display. */
+function settledText(section: V2Node, outcome: string): V2Node {
+  const text = (section.components ?? []).map((c) => c.content ?? "").filter(Boolean).join("\n");
+  return { type: 10, content: `${text}\n-# ${outcome}`.slice(0, 4000) };
+}
+
+/** Settle the row the pressed button belongs to, in place, in ONE list of
+ *  siblings. True when the button was found here. */
+function settleIn(siblings: V2Node[], customId: string, outcome: string): boolean {
+  for (let i = 0; i < siblings.length; i++) {
+    const node = siblings[i]!;
+    // The button beside the line: a section's accessory.
+    if (node.type === 9 && node.accessory?.custom_id === customId) {
+      siblings[i] = settledText(node, outcome);
+      // The answer under the line, an action row that is this row's second
+      // button, goes with it. A following SECTION is the next row and stays.
+      if (siblings[i + 1]?.type === 1) siblings.splice(i + 1, 1);
+      return true;
+    }
+    // The button under the line: an action row right after its section.
+    if (node.type === 1 && hasButton(node, customId)) {
+      const above = siblings[i - 1];
+      if (above?.type === 9) siblings[i - 1] = settledText(above, outcome);
+      siblings.splice(i, 1);
+      return true;
+    }
+    // A container holds the rows.
+    if (node.type === 17 && Array.isArray(node.components) && settleIn(node.components, customId, outcome)) return true;
+  }
+  return false;
+}
+
+/** What a V2 message becomes after a press on `customId`: the same tree with
+ *  that row settled. A button the tree does not hold (a stale message) gets
+ *  the outcome as a last line, so the press is still answered. */
+export function settledRow(
+  components: unknown[] | null | undefined,
+  customId: string,
+  outcome: string,
+): { type: number; data: { components: unknown[]; flags: number } } {
+  const tree = JSON.parse(JSON.stringify(components ?? [])) as V2Node[];
+  if (!settleIn(tree, customId, outcome)) {
+    const note: V2Node = { type: 10, content: `-# ${outcome}` };
+    const container = tree.find((n) => n.type === 17 && Array.isArray(n.components));
+    if (container) container.components!.push(note);
+    else tree.push(note);
+  }
+  return { type: RESPONSE.UPDATE_MESSAGE, data: { components: tree, flags: COMPONENTS_V2 } };
 }

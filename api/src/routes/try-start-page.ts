@@ -24,14 +24,17 @@
 //
 // Lives in its own file so the page can be rendered and its script exercised
 // in a test without booting the router (which needs a database).
+import { brandHeaderCss, brandHeaderHtml } from "../lib/brand-header.js";
+
 export function startHtml(siteKey: string): string {
   return `<!doctype html><html lang="en"><head><meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
 <meta name="robots" content="noindex" /><title>Cobblr - starting your sandbox</title>
 <script src="https://challenges.cloudflare.com/turnstile/v0/api.js" async defer></script>
 <style>
- body{margin:0;min-height:100vh;display:grid;place-items:center;background:#F6F2EA;color:#2b3038;
-      font:16px/1.55 Inter,system-ui,-apple-system,Segoe UI,Roboto,sans-serif;padding:24px}
+ body{margin:0;min-height:100vh;display:flex;flex-direction:column;background:#F6F2EA;color:#2b3038;
+      font:16px/1.55 Inter,system-ui,-apple-system,Segoe UI,Roboto,sans-serif}
+ main{flex:1;display:grid;place-items:center;padding:24px}
  .card{max-width:30rem;text-align:center}
  h1{font-size:1.6rem;color:#3D4451;margin:0 0 .6rem}
  p{margin:0 0 1.2rem;color:#5d5647}
@@ -53,7 +56,8 @@ export function startHtml(siteKey: string): string {
  button.primary{background:#8B7355;color:#fff;box-shadow:4px 4px 0 #3D4451;margin-right:.5rem}
  [hidden]{display:none!important}
  noscript p{color:#8B3A3A}
-</style></head><body><div class="card">
+ ${brandHeaderCss()}
+</style></head><body>${brandHeaderHtml()}<main><div class="card">
 <h1 id="h">Setting up your sandbox</h1>
 <p id="lede">It lasts an hour, and you do not need an account.</p>
 <div class="w"><div class="cf-turnstile" data-sitekey="${siteKey}" data-callback="cobblrGo" data-error-callback="cobblrFail" data-expired-callback="cobblrExpired"></div></div>
@@ -68,7 +72,7 @@ export function startHtml(siteKey: string): string {
 </div>
 <noscript><p>This needs JavaScript to check you are not a robot.</p>
 <a href="/?mode=signup">Make an account instead</a></noscript>
-</div>
+</div></main>
 <script>
  // Between the challenge passing and the workspace appearing the server is
  // making a database, running migrations, installing two bundles and fetching

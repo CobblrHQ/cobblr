@@ -147,7 +147,10 @@ export function DesignFiles({ designId }: { designId: string }) {
   const belowFloor = state?.status === "ready" && state.extracted > 0 && state.hero_index === null && state.used_index === null;
 
   return (
-    <div className="rounded-xl border border-line dark:border-slate-700 bg-surface dark:bg-slate-900 p-5">
+    <div
+      className="rounded-xl border border-line dark:border-slate-700 bg-surface dark:bg-slate-900 p-5"
+      data-testid="design-files-panel"
+    >
       <div className="flex items-center justify-between mb-3">
         <div className="text-[10px] font-mono uppercase tracking-widest text-accent">
           // pattern &amp; photos

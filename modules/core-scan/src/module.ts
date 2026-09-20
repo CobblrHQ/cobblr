@@ -16,7 +16,7 @@ import { defineModule } from "@cobblr/platform-contract";
 
 export default defineModule({
   name: "core-scan",
-  version: "0.47.67",
+  version: "0.47.69",
   displayName: "Scan",
   description:
     "Scan a barcode or take a photo of a thing; end up with a draft inventory row, pre-filled with the resolved name + brand + catalog photo. One tap to commit.",
@@ -83,6 +83,7 @@ export default defineModule({
     // The KINDS of workspace notification this module sends, so the
     // workspace can say who each kind is for (Configuration > Who gets told).
     notifications: [
+      { eventType: "core-scan.return.update", label: "A return moved (no order matched)", description: "A store's return notice that could not be tied to an order: started, dropped off, received, or refunded." },
       { eventType: "core-scan.parcel.update", label: "Parcel updates", description: "A tracked delivery moved, or arrived." },
       { eventType: "core-scan.storage.mismatch", label: "Stored in the wrong place", description: "Something that must be kept cold was put somewhere warm." },
     ],
@@ -92,6 +93,10 @@ export default defineModule({
       // whoever keeps a consumption ledger can listen; core-scan does not
       // know who that is.
       "core-scan.stock.observed",
+      // A shipping notification said where an order's parcel is: shipped,
+      // out for delivery, delivered. Announced so the module that owns the
+      // order can ask its own question now rather than at its next walk.
+      "core-scan.shipment.observed",
       "core-scan.scan.enriched",
       "core-scan.scan.confirmed",
       "core-scan.scan.unconfirmed",

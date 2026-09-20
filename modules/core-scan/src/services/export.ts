@@ -11,6 +11,8 @@
 // the destination to reach this instance; an `embed` ref is self-contained (works
 // LAN-only / air-gapped) at the cost of size. `none` → the resolver returns null.
 
+import { rowPictures } from "@cobblr/platform-contract/scan-pictures";
+
 /** How the caller chose to carry each photo. `url` = a fetchable link (link
  *  mode); `embed` = the bytes inline as base64 (baked-in mode). */
 export type PhotoRef = { url: string } | { embed: EmbeddedPhoto };
@@ -30,6 +32,9 @@ export interface ScanRowForExport {
   image_file_id: string | null;
   catalog_image_file_id: string | null;
   catalog_image_url: string | null;
+  /** A split child's group shot, as the inbox serves it (services/group-image.ts):
+   *  the parent's own photo, which is usually not in the export itself. */
+  group_image_file_id?: string | null;
   suggested_name: string | null;
   suggested_manufacturer: string | null;
   suggested_sku: string | null;
@@ -102,11 +107,12 @@ export interface ExportItem {
   research_hint: string | null;
   source_url: string | null;
   /** `link`-mode / external-catalog photos as fetchable URLs (null in a
-   *  baked-in export). */
-  photo_urls: { identify: string | null; display: string | null };
+   *  baked-in export). `group` is the shot a split child was cut from (#3127);
+   *  a consumer that knows only the two v1 slots ignores it. */
+  photo_urls: { identify: string | null; display: string | null; group: string | null };
   /** `embed`-mode photos: raw bytes base64'd inline, so the export needs no
    *  network to restore them. Null unless at least one photo was baked in. */
-  photos_embedded: { identify: EmbeddedPhoto | null; display: EmbeddedPhoto | null } | null;
+  photos_embedded: { identify: EmbeddedPhoto | null; display: EmbeddedPhoto | null; group: EmbeddedPhoto | null } | null;
   created_at: string;
   updated_at: string;
   /** Cobblr-native richness the interop schema has no slot for — routing
@@ -144,6 +150,20 @@ export interface ExportItem {
      * imported blank (reported 2026-07-31: "they were showing in prod").
      */
     catalog_image_url: string | null;
+    /**
+     * The rest of the row's own pictures, each carried like the item photo.
+     *
+     * The pictures a row shows are what the contract's resolver lists
+     * (scan-pictures.ts): its own photo, a split child's group shot, the crop
+     * cut from a screenshot, the photos added to its gallery, the catalog
+     * picture. The export used to carry the first and the last and the
+     * metadata blob carried the others as SOURCE file ids, which on the
+     * destination point at nothing: a moved inbox showed a broken tile for
+     * every added photo and no group shot at all (#3127). The importer stores
+     * these and rewrites the ids.
+     */
+    extra_photos: PhotoRef[];
+    screenshot_crop: PhotoRef | null;
   };
 }
 
@@ -202,8 +222,28 @@ export function rowToItem(
     : row.catalog_image_url
       ? { url: str(row.catalog_image_url)! }
       : null;
+  // The rest of the row's pictures, as the one resolver lists them: the
+  // group shot a split child was cut from, the crop from a screenshot, the
+  // gallery. Asking the resolver rather than reading the keys is what keeps
+  // the export's picture set the UI's (lint:row-pictures-resolved's rule).
+  const pictures = rowPictures({
+    image_file_id: row.image_file_id,
+    catalog_image_file_id: row.catalog_image_file_id,
+    catalog_image_url: row.catalog_image_url,
+    group_image_file_id: row.group_image_file_id ?? null,
+    suggested_metadata: row.suggested_metadata,
+  });
+  const groupId = pictures.find((p) => p.role === "group" && p.fileId && p.fileId !== row.image_file_id)?.fileId ?? null;
+  const groupRef = groupId ? resolve(groupId) : null;
+  const extraRefs = pictures
+    .filter((p) => p.role === "extra" && p.fileId)
+    .map((p) => resolve(p.fileId!))
+    .filter((r): r is PhotoRef => !!r);
+  const shotId = pictures.find((p) => p.role === "crop" && p.cropOf === "screenshot" && p.fileId)?.fileId ?? null;
+  const screenshotRef = shotId ? resolve(shotId) : null;
   const embedId = refEmbed(idRef);
   const embedDisplay = refEmbed(dispRef);
+  const embedGroup = refEmbed(groupRef);
   return {
     source_id: row.id,
     status: row.status,
@@ -225,9 +265,9 @@ export function rowToItem(
     notes: str(meta.notes),
     research_hint: str(meta.research_hint),
     source_url: str(row.source_url),
-    photo_urls: { identify: refUrl(idRef), display: refUrl(dispRef) },
+    photo_urls: { identify: refUrl(idRef), display: refUrl(dispRef), group: refUrl(groupRef) },
     photos_embedded:
-      embedId || embedDisplay ? { identify: embedId, display: embedDisplay } : null,
+      embedId || embedDisplay || embedGroup ? { identify: embedId, display: embedDisplay, group: embedGroup } : null,
     created_at: iso(row.created_at),
     updated_at: iso(row.updated_at),
     x_cobblr: {
@@ -238,6 +278,8 @@ export function rowToItem(
       scan_batch_id: str(row.scan_batch_id),
       target_location_name: row.target_location_id && locationName ? locationName(row.target_location_id) : null,
       catalog_image_url: str(row.catalog_image_url),
+      extra_photos: extraRefs,
+      screenshot_crop: screenshotRef,
     },
   };
 }
@@ -295,7 +337,7 @@ export const CSV_HEADERS = [
   "category_domain", "category_sub", "ai_confidence", "ai_notes", "quantity",
   "pack_size", "pack_state", "filament_state", "scan_area", "box_state",
   "notes", "research_hint", "source_url", "identify_photo_url",
-  "display_photo_url", "created_at", "updated_at",
+  "display_photo_url", "group_photo_url", "created_at", "updated_at",
 ] as const;
 
 /** RFC 4180: quote a cell only if it contains comma, quote, CR or LF; double
@@ -339,6 +381,7 @@ export function buildCsv(rows: ScanRowForExport[], photoUrl: (fileId: string) =>
       source_url: it.source_url,
       identify_photo_url: it.photo_urls.identify,
       display_photo_url: it.photo_urls.display,
+      group_photo_url: it.photo_urls.group,
       created_at: it.created_at,
       updated_at: it.updated_at,
     };

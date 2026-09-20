@@ -21,7 +21,7 @@ import { defineModule } from "@cobblr/platform-contract";
 
 export default defineModule({
   name: "core-locations",
-  version: "0.5.3",
+  version: "0.5.4",
   displayName: "Locations",
   description:
     "Workspace-wide hierarchical tree of physical places (rooms, shelves, bins). Every module's location-bearing entities reference rows here via polymorphic location_id.",
@@ -63,7 +63,7 @@ export default defineModule({
         fields: [
           { name: "name", type: "text", role: "title" },
           { name: "short_name", type: "text", role: "subtitle" },
-          { name: "kind", type: "text" },
+          { name: "kind", type: "text", choices: ["container", "area"] },
           { name: "parent_id", type: "text" },
           { name: "depth", type: "number", readOnly: true },
           // Manual sibling order set by drag (the `position` column). Declared

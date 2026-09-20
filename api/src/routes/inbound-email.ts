@@ -24,9 +24,11 @@ import { isNoReplyAddress, replyTokenFrom } from "../platform/inbound-email-addr
 import { stripQuoted } from "../platform/inbound-email-body.js";
 import { ingestReceiptEmail } from "./receipt-ingest.js";
 import { appendFeedbackReply } from "./feedback.js";
+import { replayFromMailbox } from "../platform/mail-source/sync.js";
 import {
   archiveInboundEmail,
   getInboundPayload,
+  getInboundSourceRef,
   listReprocessable,
   recordInboundOutcome,
   type InboundPayload,
@@ -144,6 +146,14 @@ inboundEmailRouter.post("/inbound-email/:id/reprocess", async (req, res, next) =
       return;
     }
     const id = req.params.id;
+    // A message READ from a mailbox was archived as an envelope; the replay
+    // fetches it again from where it still is.
+    const fromSource = await getInboundSourceRef(id);
+    if (fromSource) {
+      const out = await replayFromMailbox(fromSource);
+      res.status("error" in out ? 409 : 200).json({ reprocessed: id, ...out });
+      return;
+    }
     const payload = await getInboundPayload(id);
     if (!payload) {
       res.status(404).json({ error: { code: "not_found", message: "No archived inbound email with that id." } });

@@ -418,11 +418,22 @@ export const ESCORT_DESTINATIONS: EscortDestination[] = [
 ];
 
 /** The relationship list_related reports a placement under: a thing points at the container it is in. */
-const PLACED_IN = "placed_in";
+export const PLACED_IN = "placed_in";
+/** The kind whose records nest through their own parent_id (core-locations),
+ *  read into a location's contents beside what placement holds. */
+const LOCATION_KIND = "core-locations:location";
 /** A relationship filter that means placement, in the words a model reaches
  *  for ("location", "stored_in", "contains", "inside"): the exact name is not
  *  what a model asks with. */
 const PLACEMENT_WORDS = /placed|placement|locat|stored|contain|inside|within|holds/i;
+/** Whether a list_related call asked about placement: no relationship filter,
+ *  the placement relationship itself, or a word that means it. Exported so a
+ *  reader of the tool's result can tell "it looked and found no container"
+ *  from "it did not look" by the same rule the tool decides by. */
+export function placementAsked(relationship: unknown): boolean {
+  const rel = typeof relationship === "string" ? relationship.trim() : "";
+  return !rel || rel === PLACED_IN || PLACEMENT_WORDS.test(rel);
+}
 
 export const WORKSPACE_TOOLS: WorkspaceTool[] = [
   {
@@ -605,7 +616,7 @@ export const WORKSPACE_TOOLS: WorkspaceTool[] = [
   {
     name: "list_related",
     description:
-      "List the records LINKED to one record: which project a part belongs to, what is inside a location, bin or box (placed_in), what a build consumed. Returns each link's relationship kind, direction, and the other record's kind + id + title (fetch the rest with get_record). Call with just kind + id first to discover what relationships exist.",
+      "List the records LINKED to one record: which project a part belongs to, what is inside a location, bin or box (placed_in), what a build consumed. A location's contents include its sub-locations (a garage holds its bins; ask a bin to see inside it). Returns each link's relationship, direction, and the other record's kind + id + title. Kind + id alone lists every link.",
     mode: "read",
     params: {
       kind: z.string().describe("The record's entity kind id"),
@@ -654,8 +665,7 @@ export const WORKSPACE_TOOLS: WorkspaceTool[] = [
       // not a pairing. A tool that promises what is stored in a location and
       // reads pairings alone answers "empty" for every bin a person filled by
       // placing things in it, which is how they fill bins.
-      const relName = typeof args.relationship === "string" ? args.relationship.trim() : "";
-      const wantsPlacement = !relName || relName === PLACED_IN || PLACEMENT_WORDS.test(relName);
+      const wantsPlacement = placementAsked(args.relationship);
       type Placed = { kind: string; id: string; title?: string };
       const placedRow = (side: "out" | "in", e: Placed) => ({
         relationship: PLACED_IN,
@@ -682,6 +692,25 @@ export const WORKSPACE_TOOLS: WorkspaceTool[] = [
         const c = res.body?.container as Placed | null | undefined;
         return c ? [placedRow("out", c)] : [];
       };
+      // Locations nest through core-locations' own parent_id, which placement
+      // does not carry, so a garage's contents were only what was placed
+      // straight into it and never its shelves and bins: "what's in the
+      // garage?" read "The Garage is empty" over a shelf and two full bins
+      // (2026-09-20). The tree is one read of the locations list.
+      const tree = async (): Promise<Array<ReturnType<typeof placedRow>>> => {
+        if (kind !== LOCATION_KIND) return [];
+        const res = await api.request("GET", "/modules/core-locations/locations");
+        if (res.status >= 400) return [];
+        type Loc = { id: string; name?: string; parent_id?: string | null };
+        const rows = (res.body?.items as Loc[] | undefined) ?? [];
+        const me = rows.find((r) => r.id === id);
+        const parent = me?.parent_id ? rows.find((r) => r.id === me.parent_id) : undefined;
+        const asPlaced = (r: Loc): Placed => ({ kind: LOCATION_KIND, id: r.id, ...(r.name ? { title: r.name } : {}) });
+        return [
+          ...(dir !== "out" ? rows.filter((r) => r.parent_id === id).map((r) => placedRow("in", asPlaced(r))) : []),
+          ...(dir !== "in" && parent ? [placedRow("out", asPlaced(parent))] : []),
+        ];
+      };
       try {
         const items = (
           await Promise.all([
@@ -694,6 +723,7 @@ export const WORKSPACE_TOOLS: WorkspaceTool[] = [
             // asked IN, the Garage asked OUT, both told "nothing").
             wantsPlacement ? containerOf() : Promise.resolve([]),
             wantsPlacement ? contents() : Promise.resolve([]),
+            wantsPlacement ? tree() : Promise.resolve([]),
           ])
         ).flat();
         return toolOk({ items });
@@ -1370,12 +1400,17 @@ export const WORKSPACE_TOOLS: WorkspaceTool[] = [
  *  action, the way back for another. The prompt's rail and list_actions
  *  both go through here, so they cannot disagree.
  *
- *  NOT `user_invokable`: that is the button flag ("no button on the
- *  record's page") and is false on plenty of actions the assistant runs
- *  every day (placing a thing in a bin, tagging it, adjusting stock).
- *  Reading it as wire-only took twelve of those off the rail for one
- *  build (#2995, 2026-09-14). */
-export function offerableToAssistant(a: { wire_only?: boolean; internal?: boolean; user_invokable?: boolean }): boolean {
+ *  The button flag (`user_invokable`, "no button on the record's page") is
+ *  deliberately NOT a field this function accepts. It is false on plenty of
+ *  actions the assistant runs every day (placing a thing in a bin, tagging
+ *  it, adjusting stock), and reading it as wire-only took twelve of those
+ *  off the rail for one build (#2995, 2026-09-14). It was then declared in
+ *  this signature and never read, which reads as an invitation to wire it
+ *  (#3195); now the type refuses it, so the mistake cannot be written here.
+ *  A whole action still passes (structural typing), and the test beside
+ *  this holds a `@ts-expect-error` on the flag that fails the typecheck the
+ *  day it is added back. */
+export function offerableToAssistant(a: { wire_only?: boolean; internal?: boolean }): boolean {
   return a.wire_only !== true && a.internal !== true;
 }
 

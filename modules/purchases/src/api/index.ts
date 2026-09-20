@@ -5,6 +5,7 @@ import { Router } from "express";
 import { sql, type Kysely } from "kysely";
 import { platform } from "@cobblr/platform-contract";
 import { ordersRouter } from "./orders.js";
+import { returnsRouter } from "./returns.js";
 import { itemsRouter } from "./items.js";
 import { vendorsRouter } from "./vendors.js";
 import { registerPurchasesResolvers } from "./resolvers.js";
@@ -29,6 +30,7 @@ platform().instances.registerItemCounter("purchases", async (orgId, instance) =>
 
 const router = Router({ mergeParams: true });
 
+router.use("/", returnsRouter);
 router.use("/orders", ordersRouter);
 router.use("/items", itemsRouter);
 router.use("/vendors", vendorsRouter);

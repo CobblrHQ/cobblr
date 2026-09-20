@@ -3,6 +3,8 @@
 // (every install's claims ledger is populated); then delete this file and its
 // boot call.
 //
+// BORN WITH: recordClaims (a bundle install writes its claims as it applies; this pass replays installs from before the ledger)
+//
 // Existing workspaces predate the ledger, so a bundle uninstall couldn't refcount
 // (it would either orphan resources or risk disabling a shared/user module).
 // This replays each installed bundle's manifest into claims, and 'user'-claims any

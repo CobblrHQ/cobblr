@@ -38,6 +38,7 @@ import { meta } from "../db/meta.js";
 import { env } from "../env.js";
 import { signSession, signImpersonation } from "../auth/jwt.js";
 import { ImpersonationRefused, startImpersonation, describeSession } from "../platform/impersonation.js";
+import { isPlatformAdmin } from "../auth/middleware.js";
 
 const AGENT_PREFIX = "[agent] ";
 
@@ -76,8 +77,13 @@ async function list(): Promise<void> {
     .innerJoin("users as u", "u.id", "m.user_id")
     .select(["m.org_id", "m.role", "u.id as user_id", "u.email", "u.display_name"])
     .execute();
-  const byOrg = new Map<string, typeof members>();
-  for (const m of members) byOrg.set(m.org_id, [...(byOrg.get(m.org_id) ?? []), m]);
+  // A platform admin cannot be viewed as (hygiene: no tier-internal
+  // impersonation), and the team's own accounts are all admins, so the first
+  // member somebody reaches for is often one. Say so in the list, not at the
+  // refusal, so an operator starts with an ordinary member.
+  const rows = members.map((m) => ({ ...m, platform_admin: isPlatformAdmin(m.email) }));
+  const byOrg = new Map<string, typeof rows>();
+  for (const m of rows) byOrg.set(m.org_id, [...(byOrg.get(m.org_id) ?? []), m]);
   out(JSON.stringify({ workspaces: orgs.map((o) => ({ ...o, members: byOrg.get(o.id) ?? [] })) }, null, 2) + "\n");
 }
 

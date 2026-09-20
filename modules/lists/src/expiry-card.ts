@@ -10,8 +10,17 @@
 // notification button uses.
 //
 // Pure: takes the rows, returns what dispatch needs. Tested without a network.
+//
+// The card carries its lines as ROWS, each naming its own pair of answers, so
+// a channel that can put a button beside the line it is about does (a Discord
+// DM lays each row out as a section with "Used up" as its accessory and
+// "Threw out" under it; the in-app card renders each row with its buttons).
+// The list-then-a-block-of-fifteen-buttons shape, each button repeating the
+// name so it could be matched back to its line, is what the owner asked to
+// lose (#3282). A channel that cannot pair them still has the body and the
+// flat actions, whose labels carry the name for exactly that reason.
 
-import type { NotificationAction } from "@cobblr/platform-contract";
+import type { NotificationAction, NotificationCardRow } from "@cobblr/platform-contract";
 
 export interface ExpiryLine {
   id: string;
@@ -30,7 +39,7 @@ const NAME_IN_LABEL = 40;
 
 export interface ExpiryDigest {
   message: string;
-  card: { heading: string; body: string; context?: string };
+  card: { heading: string; body: string; context?: string; rows: NotificationCardRow[] };
   actions: NotificationAction[];
 }
 
@@ -45,24 +54,33 @@ export function expiryDigest(lines: readonly ExpiryLine[], opts: { workspace?: s
   const message = lines.length === 1 ? `${lines[0]!.name} — ${lines[0]!.tone}` : `${heading}:\n${lines.map((l) => `${l.name} — ${l.tone}`).join("\n")}`;
 
   const actions: NotificationAction[] = [];
+  const rows: NotificationCardRow[] = [];
   const pairs = lines.length <= PAIR_LIMIT;
   for (const l of lines) {
-    if (actions.length >= BUTTON_CAP) break;
-    actions.push({
+    const row: NotificationCardRow = { text: `**${l.name}** — ${l.tone}`, actions: [] };
+    rows.push(row);
+    if (actions.length >= BUTTON_CAP) continue;
+    const used: NotificationAction = {
       id: `used-${actions.length}`,
       label: `Used up · ${shortName(l.name)}`,
+      short: "Used up",
       action: "inventory:use-up",
       args: { partId: l.id },
       style: "primary",
-    });
+    };
+    actions.push(used);
+    row.actions!.push(used.id);
     if (pairs && actions.length < BUTTON_CAP) {
-      actions.push({
+      const tossed: NotificationAction = {
         id: `tossed-${actions.length}`,
         label: `Threw out · ${shortName(l.name)}`,
+        short: "Threw out",
         action: "inventory:mark-spoiled",
         args: { partId: l.id },
         style: "danger",
-      });
+      };
+      actions.push(tossed);
+      row.actions!.push(tossed.id);
     }
   }
 
@@ -71,6 +89,7 @@ export function expiryDigest(lines: readonly ExpiryLine[], opts: { workspace?: s
     card: {
       heading,
       body,
+      rows,
       ...(opts.workspace ? { context: opts.workspace } : {}),
     },
     actions,
