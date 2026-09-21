@@ -2,6 +2,20 @@
 
 User-facing changes, newest first. Dates are release dates.
 
+## 2026-09-21
+
+### Improvements
+- Recent activity says what an automation did, in words. A row for something an automation ran used to read as an event id and a reactor name in monospace ("ran an automation core-scan.scan.received → identify-photo"), which on a phone truncated to something that looked like an error, and three of the first six rows a new workspace showed were like that. The row now carries the action's own sentence for what it did, or its name, and an automation that found nothing to do no longer appears on the dashboard (it stays on the full activity page). An update whose record cannot be read any more names the field and the value that changed instead of a bare word like "type".
+- When your scans fit a table you have not set up yet, the dashboard now shows them once, at the top, with your photos and one press per table ("2 look like Groceries, Create Groceries & file all 2"). The summary card that pointed at them is gone, and the put-away card counts only the scans that still have nowhere to go.
+
+### Fixes
+- The dashboard's "you've scanned things that fit a table you don't have yet" card no longer grows a row per suggestion. The chips are shorter (the bundle and how many scans fit it), they wrap into a box about two rows tall, and past that the box scrolls down, so a workspace with eight matching bundles keeps its dashboard where it was.
+- Two small things from the first two minutes of a new workspace: setting up a table from a scan no longer says so twice (the banner on the new table speaks, the toast that used to cover the first row stays quiet), and the dashboard no longer asks the purchases module for orders on a workspace that has not enabled it.
+- The scanned-item tiles on the dashboard no longer show a white square while a picture is still arriving; the tile shows the item's initials until the photo paints, and the photos load as soon as the page does rather than waiting for a scroll.
+- The morning something expires, the reminder now arrives. The "expires today" line was being prepared and then dropped whenever nothing new was coming up in the same hour, which is most mornings, so since early September it only reached you when a new heads-up happened to ride along. A reminder that could not be delivered is also no longer marked as sent; it comes back on the next hourly check instead of being lost.
+- Scanning something you already have: the three answers are one size on a phone, and the confirmation says which one you pressed. The re-buy card used to draw "Replaced the one that ran out" large and filled with "+1, still had some" and "Old one went bad" small beside it, and every tap confirmed as "+1 → … (now ×3)" whichever button it was. Now all three are the same size and one tap each, the card is no taller, and the confirmation starts with the words of the button you pressed and ends with the new count.
+- When your scans fit a table you have not installed yet, the dashboard says so once. The card at the top now reads "3 scans fit Groceries and Bookshelf" with a Show me button that jumps to your scanner queue, where the one press that creates the table and files the scans already lives; the put-away card beside it no longer counts those same scans as homeless.
+
 ## 2026-09-20
 
 ### Features

@@ -233,6 +233,7 @@
     "e2e:try-captcha-recovery": "node --experimental-strip-types e2e/try-start-captcha-recovery.mjs",
     "e2e:sandbox-strip-foot": "node e2e/sandbox-strip-foot.mjs",
     "e2e:sandbox-ended": "node e2e/sandbox-ended.mjs",
+    "e2e:csp-enforced": "node e2e/csp-enforced.mjs",
     "e2e:scan-menu": "node e2e/scan-menu-fit.mjs",
     "e2e:scan-mobile": "node e2e/scan-mobile-intake.mjs",
     "e2e:scan-card": "node e2e/scan-card-photo-column.mjs",
@@ -331,7 +332,10 @@
     "lint:test-support-doors-scoped": "tsx scripts/lint-test-support-doors-scoped.ts",
     "lint:driver-hooks-live": "tsx scripts/lint-driver-hooks-live.ts",
     "lint:boot-pass-born-with": "tsx scripts/lint-boot-pass-born-with.ts",
-    "lint:env-booleans-are-loud": "tsx scripts/lint-env-booleans-are-loud.ts"
+    "lint:env-booleans-are-loud": "tsx scripts/lint-env-booleans-are-loud.ts",
+    "lint:doc-shots-prod-look": "tsx scripts/lint-doc-shots-prod-look.ts",
+    "lint:walkthrough-twins": "tsx scripts/lint-walkthrough-twins.ts",
+    "lint:csp-no-inline-scripts": "tsx scripts/lint-csp-no-inline-scripts.ts"
   },
   "devDependencies": {
     "jsdom": "^30.0.1",

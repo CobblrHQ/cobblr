@@ -68,14 +68,6 @@
     "link": "../../bundles/kitchen-fitness.json"
   },
   {
-    "file": "docs/walkthroughs/home-life-full-walkthrough.md",
-    "link": "../../bundles/food-cluster.json"
-  },
-  {
-    "file": "docs/walkthroughs/home-life-full-walkthrough.md",
-    "link": "../../bundles/kitchen-fitness.json"
-  },
-  {
     "file": "docs/walkthroughs/homebox-migration.md",
     "link": "./homebox-migration/01-blank-dashboard.png"
   },

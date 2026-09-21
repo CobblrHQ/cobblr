@@ -69,17 +69,25 @@ const pill = {
     "border border-emerald-400 dark:border-emerald-700 text-emerald-700 dark:text-emerald-300 hover:bg-emerald-100/60 dark:hover:bg-emerald-900/30",
 };
 
+export type RepurchaseLayout = "pills" | "stack";
+
 export function RepurchaseAnswers({
   itemId,
   match,
   quantity,
   onDone,
+  layout = "pills",
 }: {
   itemId: string;
   match: TrackedMatch;
   /** How many this scan is adding. */
   quantity: number;
   onDone?: (result: AttachResult, match: TrackedMatch, mode: RepurchaseMode) => void;
+  /** `pills`: the desk's wrapping row. `stack`: a phone's grid, the three
+   *  answers one height and one affordance, the lead first and full width,
+   *  the other two side by side and no smaller (#3339: the two that were not
+   *  the default were the two hardest to hit, one-handed, at a stand). */
+  layout?: RepurchaseLayout;
 }) {
   const { activeSlug } = useActiveOrg();
   const qc = useQueryClient();
@@ -104,7 +112,7 @@ export function RepurchaseAnswers({
   const daysLeft = cad?.days_until_runout != null ? Math.round(cad.days_until_runout) : null;
 
   const attach = useMutation({
-    mutationFn: (vars: { mode: RepurchaseMode; resolution?: Resolution }) =>
+    mutationFn: (vars: { mode: RepurchaseMode; resolution?: Resolution; label: string }) =>
       api.scanAttach(activeSlug, itemId, {
         kind: match.kind,
         entity_id: match.id,
@@ -114,14 +122,13 @@ export function RepurchaseAnswers({
       }),
     onSuccess: (r, vars) => {
       void qc.invalidateQueries({ queryKey: ["scan-inbox", activeSlug] });
+      // The toast leads with the exact label of the button pressed, then the
+      // record and the count: three buttons lead here, and "+1 → …" was one
+      // button's wording shown for all three, so a person who pressed Replaced
+      // read a toast that described a different button (#3339). The label is
+      // the button's own, so the two cannot drift.
       const now = r.new_qty != null ? ` (now ×${r.new_qty})` : "";
-      toast.success(
-        vars.mode === "replace"
-          ? `${r.entity_title}: replaced${now}`
-          : face?.stock
-            ? `+${quantity} → ${r.entity_title}${now}`
-            : `${quantity === 1 ? "Another copy" : `${quantity} more copies`} of ${r.entity_title}${now}`,
-      );
+      toast.success(`${vars.label}: ${r.entity_title}${now}`);
       onDone?.(r, match, vars.mode);
     },
     onError: (e) => toast.error(e instanceof ApiError ? e.message : String(e)),
@@ -135,47 +142,65 @@ export function RepurchaseAnswers({
   const lead = led === "went_bad" && !words.wentBad ? "replaced" : led;
   if (!lead) return null;
   const busy = attach.isPending;
+  const stacked = layout === "stack";
+  // One size for all three on a phone: the same height, padding, type and
+  // shape; the lead keeps its fill, the others their outline, and none is a
+  // smaller target than another. No icons and 13px type in the stack, so
+  // every label fits its row on one line and the rows stay at the 40px
+  // floor: the card must not grow (the owner's constraint, #3339).
   const cls = (primary: boolean) =>
-    `inline-flex items-center gap-1 rounded-full px-2.5 py-1 text-xs font-medium disabled:opacity-50 ${primary ? pill.primary : pill.secondary}`;
-
+    `inline-flex items-center gap-1 font-medium disabled:opacity-50 ${primary ? pill.primary : pill.secondary} ${
+      stacked ? "justify-center rounded-lg px-2 py-1.5 text-[13px] leading-tight min-h-10 text-center" : "rounded-full px-2.5 py-1 text-xs"
+    }`;
+  const answers = [
+    words.replace && {
+      key: "replaced" as const,
+      label: words.replace.label,
+      title: words.replace.title,
+      icon: stacked ? null : <RefreshCw size={12} />,
+      run: () => attach.mutate({ mode: "replace", resolution: "consumed", label: words.replace!.label }),
+    },
+    {
+      key: "add" as const,
+      label: words.add.label,
+      title: words.add.title || undefined,
+      icon: stacked ? null : <PackagePlus size={12} />,
+      run: () => attach.mutate({ mode: "add-qty", ...(hasSome ? { resolution: "over_buy" as const } : {}), label: words.add.label }),
+    },
+    words.wentBad && {
+      key: "went_bad" as const,
+      label: words.wentBad.label,
+      title: words.wentBad.title,
+      icon: null,
+      run: () => attach.mutate({ mode: "replace", resolution: "discarded", label: words.wentBad!.label }),
+    },
+  ].filter((a): a is NonNullable<typeof a> => !!a);
+  // Stacked: the lead first and full width, the rest side by side; with two
+  // answers, side by side; with one, full width.
+  const span = (i: number) => (!stacked ? "" : answers.length === 3 ? (i === 0 ? "col-span-2" : "col-span-1") : answers.length === 2 ? "col-span-1" : "col-span-2");
+  const ordered = stacked ? [...answers].sort((a, b) => Number(b.key === lead) - Number(a.key === lead)) : answers;
+  const buttons = ordered.map((a, i) => (
+    <button key={a.key} type="button" disabled={busy} title={a.title} onClick={a.run} className={`${cls(lead === a.key)} ${span(i)}`.trim()}>
+      {a.icon} {a.label}
+    </button>
+  ));
+  const ledger = words.ledgerLine && hasSome && daysLeft != null && daysLeft > 0 && (
+    <span className={`self-center text-[11px] text-muted ${stacked ? "col-span-2" : ""}`} title="What the cadence ledger expects from your past buys">
+      ~{daysLeft} {daysLeft === 1 ? "day" : "days"} of the last one left
+    </span>
+  );
+  if (stacked) {
+    return (
+      <div className="grid w-full grid-cols-2 auto-rows-fr gap-1" data-testid="repurchase-stack">
+        {buttons}
+        {ledger}
+      </div>
+    );
+  }
   return (
     <>
-      {words.replace && (
-        <button
-          type="button"
-          disabled={busy}
-          title={words.replace.title}
-          onClick={() => attach.mutate({ mode: "replace", resolution: "consumed" })}
-          className={cls(lead === "replaced")}
-        >
-          <RefreshCw size={12} /> {words.replace.label}
-        </button>
-      )}
-      <button
-        type="button"
-        disabled={busy}
-        title={words.add.title || undefined}
-        onClick={() => attach.mutate({ mode: "add-qty", ...(hasSome ? { resolution: "over_buy" as const } : {}) })}
-        className={cls(lead === "add")}
-      >
-        <PackagePlus size={12} /> {words.add.label}
-      </button>
-      {words.wentBad && (
-        <button
-          type="button"
-          disabled={busy}
-          title={words.wentBad.title}
-          onClick={() => attach.mutate({ mode: "replace", resolution: "discarded" })}
-          className={cls(lead === "went_bad")}
-        >
-          {words.wentBad.label}
-        </button>
-      )}
-      {words.ledgerLine && hasSome && daysLeft != null && daysLeft > 0 && (
-        <span className="self-center text-[11px] text-muted" title="What the cadence ledger expects from your past buys">
-          ~{daysLeft} {daysLeft === 1 ? "day" : "days"} of the last one left
-        </span>
-      )}
+      {buttons}
+      {ledger}
     </>
   );
 }

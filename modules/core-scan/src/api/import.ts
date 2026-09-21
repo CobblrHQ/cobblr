@@ -865,12 +865,23 @@ importRouter.post(
             console.error("[core-scan] import: routing threw for one row:", (err as Error).message);
           }
         }
+        // Two stamps, because the inbox reads two: ai_suggested_at says
+        // identification finished, matched_at says routing did. A row with a
+        // name and no candidate (a workspace with no table to offer yet, or a
+        // name the heuristic cannot place) carried only the first, and the
+        // inbox showed "finding the best table..." on every such row for the
+        // three minutes its give-up allows (#3344 found it on a fresh
+        // workspace's whole import). The same stamp matchItem writes, set
+        // only where the row has none: a Cobblr export restores the source's
+        // own matched_at (when ITS routing ran), and the keyword-heal pass
+        // reads that date to find rows routed before a rule changed.
         try {
           await db
             .updateTable("core_scan_inbox_items")
             .set({
               ai_suggested_at: stampedAt,
               updated_at: stampedAt,
+              suggested_metadata: sql`jsonb_build_object('matched_at', ${stampedAt.toISOString()}::text) || coalesce(suggested_metadata, '{}'::jsonb)` as never,
               ...(candidates.length > 0
                 ? { suggested_candidates: sql`${JSON.stringify(candidates)}::jsonb` as never }
                 : {}),

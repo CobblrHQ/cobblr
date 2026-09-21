@@ -34,19 +34,20 @@
 //     placeholder="search anything"   // vocab-lint-ok: cross-kind global picker
 // Put a real reason after the colon.
 //
-// BASELINE — like the sibling ui-jargon lint, current hits live in a committed
-// baseline (scripts/workspace-vocab-baseline.json) so the tree passes clean
-// today; every NEW hit fails. To retire a baselined offender, fix the string
-// (the baseline key stops matching — harmless) or, if it turns out legitimately
-// generic, add a `// vocab-lint-ok:` suppression and re-run --write-baseline.
-// Add a new genuinely-technical/legit literal with --write-baseline.
+// BASELINE — the hits that predate the rule live in a committed baseline
+// (scripts/workspace-vocab-baseline.json), a triage list that can only
+// SHRINK: every NEW hit fails, and the only doors out for a new one are to
+// derive the word or to say why it is generic with `// vocab-lint-ok:`. When a
+// baselined string is fixed or annotated, its entry fails as stale and gets
+// deleted, so the list is read down, never around. There is no bulk write: the
+// old `--write-baseline` recorded the whole current found-set, and a red build
+// that recommended it baselined every unmarked offence at once (#3336).
 //
 //   cd <repo> && npx tsx scripts/lint-workspace-vocab.ts
-//   cd <repo> && npx tsx scripts/lint-workspace-vocab.ts --write-baseline
 //
 // Local + CI, free, zero deps.
 
-import { readdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
+import { readdirSync, readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
 
 const ROOTS = ["web/src", "modules"];
@@ -171,13 +172,6 @@ for (const root of ROOTS) {
   }
 }
 
-if (process.argv.includes("--write-baseline")) {
-  const keys = [...new Set(found.map((f) => f.key))].sort();
-  writeFileSync(BASELINE, JSON.stringify(keys, null, 2) + "\n");
-  console.log(`[lint:workspace-vocab] wrote baseline with ${keys.length} entr${keys.length === 1 ? "y" : "ies"}.`);
-  process.exit(0);
-}
-
 let baseline: Set<string>;
 try {
   baseline = new Set(JSON.parse(readFileSync(BASELINE, "utf8")) as string[]);
@@ -185,6 +179,8 @@ try {
   baseline = new Set();
 }
 const violations = found.filter((f) => !baseline.has(f.key));
+const present = new Set(found.map((f) => f.key));
+const stale = [...baseline].filter((k) => !present.has(k));
 
 if (process.argv.includes("--all")) {
   // Diagnostic: print every current hit (baselined or not) for triage.
@@ -193,6 +189,12 @@ if (process.argv.includes("--all")) {
     console.log(`  ${f.file}:${f.line} - ${f.snippet.slice(0, 120)} - suggestion: derive from workspace vocab`);
   }
   process.exit(0);
+}
+
+if (stale.length > 0) {
+  console.error(`✗ workspace-vocab lint: ${stale.length} entr${stale.length === 1 ? "y" : "ies"} in scripts/workspace-vocab-baseline.json name${stale.length === 1 ? "s" : ""} a string that is gone (fixed, or now annotated). The list only shrinks: delete ${stale.length === 1 ? "it" : "them"}:\n`);
+  for (const k of stale) console.error(`  ${k.slice(0, 140)}`);
+  console.error("");
 }
 
 if (violations.length > 0) {
@@ -205,9 +207,10 @@ if (violations.length > 0) {
   console.error(`\nA placeholder / empty-state / CTA shown to a user must read in the SPACE'S OWN nouns
 (its enabled modules / instance display names / the kinds that exist), not a hardcoded
 "task"/"part"/"item"/… Derive it: kindLabel(entity_kind), the module's noun, or a neutral
-word ("anything", "an entry"). If this string is legitimately generic, add an inline
-'// vocab-lint-ok: <reason>' on the line or the line above, then:
-  npx tsx scripts/lint-workspace-vocab.ts --write-baseline`);
-  process.exit(1);
+word ("anything", "an entry"). If this string is legitimately generic, say why on the line
+or the line above: // vocab-lint-ok: <reason>. The baseline is a triage list of what predates
+the rule; nothing is added to it.`);
 }
-console.log(`✓ workspace-vocab lint: no new hardcoded generic nouns in UI copy (${baseline.size} baselined).`);
+
+if (stale.length > 0 || violations.length > 0) process.exit(1);
+console.log(`✓ workspace-vocab lint: no new hardcoded generic nouns in UI copy (${baseline.size} baselined, to fix).`);

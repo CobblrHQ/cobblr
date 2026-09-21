@@ -338,7 +338,7 @@ export const PLACEMENT: PlacementRow[] = [
     dir: "e2e/",
     exemplar: "e2e/mobile-overflow.mjs",
     why: "The nightly yardstick batch runs these on the shared box; a screenshot-only script proves nothing and belongs to the demos instead.",
-    lints: ["lint:ci-sink", "lint:driver-hooks-live"],
+    lints: ["lint:ci-sink", "lint:driver-hooks-live", "lint:doc-shots-prod-look"],
     notes: [
       "Add it to scripts/run-e2e-yardsticks.sh to make it gate; otherwise nobody runs it.",
       "Seed the data the assertion needs. A sweep over an empty list passes vacuously — assert a positive control first.",
@@ -366,7 +366,7 @@ export const PLACEMENT: PlacementRow[] = [
     dir: "docs/",
     exemplar: "docs/design-decisions/canary-channel.md",
     why: "docs/README.md routes a change to the doc it touches; a design record explains a decision, the runbook owns how the thing actually runs.",
-    lints: ["lint:docs", "lint:doc-owned-facts", "lint:no-emdash", "lint:doc-status-honest"],
+    lints: ["lint:docs", "lint:doc-owned-facts", "lint:no-emdash", "lint:doc-status-honest", "lint:walkthrough-twins"],
     notes: [
       "Do not restate a fact another doc owns — link it. Two copies means one of them is quietly wrong.",
     ],
@@ -419,7 +419,7 @@ export const PLACEMENT: PlacementRow[] = [
     dir: "deploy/selfhost/standalone/",
     exemplar: "deploy/selfhost/standalone/docker-compose.yml",
     why: "Self-hosters curl these straight from the public mirror, so a change here lands on machines nobody here can log into or fix.",
-    lints: ["lint:autoupdate-warns-env-drift", "lint:backup-guards", "lint:env-booleans-are-loud"],
+    lints: ["lint:autoupdate-warns-env-drift", "lint:backup-guards", "lint:env-booleans-are-loud", "lint:csp-no-inline-scripts"],
     notes: [
       "The README beside the compose file is the only documentation most self-hosters read. If a change needs explaining, explain it there.",
       "An updater re-creates a container by cloning the old environment, so it never re-reads .env. Anything shipping one has to say so and point at check-env-drift.sh.",

@@ -21,6 +21,8 @@ import { LiveBox } from "./LiveBox";
 import { WorkspaceSwitcher } from "./WorkspaceSwitcher";
 import { ModuleNav } from "./ModuleNav";
 import { SidebarNav } from "./SidebarNav";
+import { isFullSidebar } from "../lib/nav-layout";
+import { useIsDesktopWidth } from "../lib/useIsDesktopWidth";
 import { HeaderActions } from "./HeaderActions";
 import { UserMenu } from "./UserMenu";
 import { MobileNav } from "./MobileNav";
@@ -290,9 +292,13 @@ export function AppLayout({ activeSlug }: { activeSlug: string }) {
 
   // "Completely sidebar" (Notion/Linear shape): nav in the sidebar AND the top
   // bar hidden — brand/workspace move to the sidebar head, the quick-action
-  // cluster to its foot. Desktop-only; the mobile header always stays. A
-  // managed app keeps its top bar (its chrome is deliberately minimal already).
-  const fullSide = navMode === "side" && !navTopBar && !appMode;
+  // cluster to its foot. Desktop-only; below md the sidebar is hidden and the
+  // phone shell takes over, so the foot's pieces (the verify card, Feedback,
+  // the toast stack's home) must get their ordinary mounts back; the width is
+  // part of the decision, not only the choice (#3326). A managed app keeps
+  // its top bar (its chrome is deliberately minimal already).
+  const desktopWidth = useIsDesktopWidth();
+  const fullSide = isFullSidebar({ navMode, navTopBar, appMode: !!appMode, desktopWidth });
   // DEV-chip toast tester: each click on the env chip fires
   // the next toast kind, so toast styling/placement is one click to eyeball.
   // Inherently non-prod: the chip only renders when envBadge exists.

@@ -188,6 +188,18 @@ function inlineConsts(line: string, consts: Map<string, string>): string {
   return line.replace(/\$\{([A-Za-z_$][\w$]*)\}/g, (whole, name: string) => consts.get(name) ?? whole);
 }
 
+/** Controls a driver keeps calling selectOption on although the product retired
+ *  the <select>. selectOption on anything else never becomes actionable, so it
+ *  burns the whole actionTimeout and, inside a .catch, leaves no trace: the
+ *  lego tour did it for weeks (#3181), and the bjorn walkthrough's location
+ *  beat created "Bin Wall A" at top level, shot a closed picker and passed an
+ *  assert that only checked the rows existed (#3341). The same two controls,
+ *  both times. */
+const RETIRED_SELECTS: Array<{ re: RegExp; what: string }> = [
+  { re: /getByLabel\(\/kind\/i\)\s*\.selectOption/, what: "the location modal's KIND control is two <button>s (\"things go INTO it\"), not a dropdown" },
+  { re: /getByLabel\(\/parent\/i\)\s*\.selectOption/, what: "the location modal's PARENT control is the tree picker (a role=button that opens data-testid=location-tree-picker-panel), not a dropdown" },
+];
+
 /** The check. Return every violation in one file; an empty array is a pass. */
 function check(file: string, src: string): Violation[] {
   const out: Violation[] = [];
@@ -199,6 +211,9 @@ function check(file: string, src: string): Violation[] {
     const code = raw.trim();
     if (code.startsWith("//") || code.startsWith("*") || code.startsWith("/*")) continue;
     const line = inlineConsts(raw, consts);
+    for (const { re, what } of RETIRED_SELECTS) {
+      if (re.test(code)) out.push({ file, line: i + 1, what: `selectOption on a control that is not a <select>: ${what}` });
+    }
     const refs = refsOn(line).filter((r) => !(typeof r.needle === "string" && r.needle.includes("${")));
     if (!refs.length) continue;
     const allow = /\/\/\s*hook-lint:\s*allow\s+(.+)$/.exec(line);

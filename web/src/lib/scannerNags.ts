@@ -8,18 +8,16 @@
 // person's own photos). Two of the three offered the same one-tap install, and
 // the nag counted the very scans its neighbour was offering to file (#3298).
 //
-// So: the scanner lane owns the install; the suggestions card is a pointer to
-// it; the put-away nag counts only the scans nothing else on the screen is
-// already offering a home.
-
-import type { QuickstartSuggestion } from "./api";
+// So: the scanner queue owns the install, at the top of the dashboard with the
+// person's own photos; the card that summarised it is gone; and the put-away
+// nag counts only the scans the queue cannot place.
 
 export interface PutAwayInputs {
   unfiled: number;
   ready: number;
   failedReads: number;
-  /** Scans another card on the same screen offers to file (the sum of the
-   *  bundle suggestions' counts). Zero when there is no such card. */
+  /** Scans the queue beside this card offers a home (its groups' items).
+   *  Zero when the queue is empty. */
   offeredElsewhere: number;
 }
 
@@ -34,29 +32,4 @@ export function putAwayParts(i: PutAwayInputs): string[] {
   if (i.ready > 0) parts.push(`${i.ready} ready to put away`);
   if (i.failedReads > 0) parts.push(`${i.failedReads} receipt${i.failedReads === 1 ? "" : "s"} that couldn't be read`);
   return parts;
-}
-
-export interface SuggestionsPointer {
-  /** Scans the suggestions account for, in total. */
-  count: number;
-  /** "Groceries and Bookshelf" / "Groceries, Bookshelf and 2 other tables". */
-  tables: string;
-  sentence: string;
-}
-
-/** One sentence for however many suggestions there are, so the card is the
- *  same height at one and at forty and never becomes a second set of install
- *  buttons. */
-export function suggestionsPointer(suggestions: readonly Pick<QuickstartSuggestion, "bundle_name" | "count">[]): SuggestionsPointer | null {
-  if (suggestions.length === 0) return null;
-  const count = suggestions.reduce((n, s) => n + s.count, 0);
-  const names = suggestions.map((s) => s.bundle_name);
-  const shown = names.slice(0, 2);
-  const rest = names.length - shown.length;
-  const tables =
-    rest > 0
-      ? `${shown.join(", ")} and ${rest} other table${rest === 1 ? "" : "s"}`
-      : shown.join(" and ");
-  const scans = `${count} scan${count === 1 ? "" : "s"}`;
-  return { count, tables, sentence: `${scans} ${count === 1 ? "fits" : "fit"} ${tables}. Create ${names.length === 1 ? "it" : "them"} from your scanner queue below.` };
 }

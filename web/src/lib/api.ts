@@ -3673,9 +3673,6 @@ export const api = {
   /** File every pending line of a receipt at once. `into` names one instance
    *  for all of them (the grocery app's "all of this goes in the pantry");
    *  absent, each line goes to its own best match. */
-  // Pending captures grouped by the bundle they fit ("These look like yarn (3)").
-  quickstart: (slug: string) =>
-    request<QuickstartSuggestions>("GET", `/orgs/${slug}/quickstart`),
   // Install a flagship bundle + batch-commit the captures that fit it.
   materializeQuickstart: (
     slug: string,
@@ -5914,18 +5911,6 @@ export interface TrackedMatch {
   matched_label?: string | null;
 }
 
-/** Capture-first: pending captures grouped by the flagship bundle they fit. */
-export interface QuickstartSuggestion {
-  bundle_external_id: string;
-  bundle_name: string;
-  noun: string;
-  count: number;
-  sample_names: string[];
-}
-export interface QuickstartSuggestions {
-  pending_total: number;
-  suggestions: QuickstartSuggestion[];
-}
 /** What installing a bundle changed. See api/src/lib/bundle-install-summary.ts. */
 export interface BundleInstallSummary {
   bundle: string;

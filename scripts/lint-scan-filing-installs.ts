@@ -17,8 +17,13 @@
 //   1. resolveInstanceForFiling (install, then file each line into the
 //      instance the install actually created), or
 //   2. its own materializeQuickstart call (the server installs AND files in
-//      one shot - the WhatToDoPanel pattern).
-// A file with neither is filing candidates verbatim.
+//      one shot), or
+//   3. useMaterializeCapture (web/src/lib/useMaterializeCapture.tsx), the one
+//      shared implementation of shape 2 that the dashboard's scanner queue and
+//      the What-do-you-want-to-do panel both press; a file that routes bundle
+//      candidates through it and confirms only existing-table candidates
+//      itself is the same shape with the install behind a seam.
+// A file with none of the three is filing candidates verbatim.
 //
 // Run: npx tsx scripts/lint-scan-filing-installs.ts
 
@@ -36,6 +41,7 @@ for (const f of globSync("web/src/**/*.{ts,tsx}")) {
   if (!/suggested_candidates/.test(s)) continue;
   if (/resolveInstanceForFiling/.test(s)) continue;
   if (/materializeQuickstart\s*\(/.test(s)) continue;
+  if (/useMaterializeCapture\s*\(/.test(s)) continue;
   offenders.push(f);
 }
 
@@ -46,8 +52,9 @@ if (offenders.length) {
     "\n  A candidate carrying bundle_external_id may name a bundle the workspace has\n" +
       "  not installed, and for a skinning bundle its `instance` is a synthetic token\n" +
       "  that never resolves. Route the confirm through resolveInstanceForFiling\n" +
-      "  (web/src/pages/scanInstall.ts), or hand the item ids to materializeQuickstart\n" +
-      "  and let the server install and file in one shot.",
+      "  (web/src/pages/scanInstall.ts), hand the item ids to materializeQuickstart\n" +
+      "  and let the server install and file in one shot, or press through\n" +
+      "  useMaterializeCapture, which does that for you.",
   );
   process.exit(1);
 }

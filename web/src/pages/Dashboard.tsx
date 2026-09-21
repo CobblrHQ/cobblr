@@ -19,13 +19,15 @@
 
 import { Fragment, useCallback, useEffect, useMemo, useState } from "react";
 import { activityKind } from "../lib/activityKind";
+import { AUTOMATION_ACTIONS, actorWords, automationWords, hiddenFromDashboard, updatedFieldsWords } from "../lib/activity-words";
 import { useKindLabels } from "../lib/useKindLabels";
 import { useMutation, useQueries, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link, useNavigate } from "react-router-dom";
-import { ArrowDown, ArrowLeft, ArrowRight, ArrowUp, ArrowUpCircle, CheckCircle2, ChevronDown, Compass, Eye, EyeOff, GripVertical, LayoutList, Maximize2, Minimize2, Pin, Sliders, Sparkles, X } from "lucide-react";
+import { ArrowDown, ArrowLeft, ArrowRight, ArrowUp, ArrowUpCircle, CheckCircle2, ChevronDown, Compass, Eye, EyeOff, GripVertical, LayoutList, Maximize2, Minimize2, Pin, Sliders, X } from "lucide-react";
 import { countOf, itemNounFor, pluralise } from "@cobblr/platform-contract";
 import { roleSatisfies } from "@cobblr/platform-contract/org-roles";
-import { putAwayParts, suggestionsPointer } from "../lib/scannerNags";
+import { putAwayParts } from "../lib/scannerNags";
+import { ScannerQueue, useScannerQueue } from "../components/ScannerQueue";
 import { offerMoves } from "../lib/table-move-offer";
 import { choosePinnedViews, navNamesWithViewCards } from "../lib/dashboard-pinned";
 import { useBundleUpdates, type BundleUpdate } from "../lib/useBundleUpdates";
@@ -59,7 +61,6 @@ import {
   type ActivityEntry,
   type DashboardLayout,
   type OrgModuleListItem,
-  type QuickstartSuggestion,
   type SavedView,
   type CalendarEvent,
 } from "../lib/api";
@@ -198,7 +199,7 @@ export function Dashboard() {
           content in a 149px box — more than half of it empty (reported
           2026-08-11: "the left half is stretched way too tall for its short
           message"). Each card now costs only its own height. */}
-      <ScannerNagRow slug={activeSlug} role={activeOrg.role} />
+      <ScannerNagRow slug={activeSlug} />
 
       {/* Quick links to the things this workspace uses most (Scan Inbox, Yarn,
           …). High up + big tap targets so a phone user isn't forced to find the
@@ -228,33 +229,21 @@ export function Dashboard() {
  *  Live Sort deliberately does NOT appear here; it lives where scanning
  *  starts (scan page header, camera Sort chip, the empty-workspace
  *  mission). Hidden at zero. */
-/** The nag row. One read of the bundle suggestions feeds both cards, so the
- *  nag can leave out the scans the pointer beside it already accounts for
- *  (scannerNags.ts). */
-function ScannerNagRow({ slug, role }: { slug: string; role?: string }) {
-  const { suggestions } = useBundleSuggestions(slug, role);
-  const offeredElsewhere = suggestions.reduce((n, s) => n + s.count, 0);
+/** The scanner band above the dashboard. One read of the pending inbox
+ *  feeds both: the queue offers every scan that has somewhere to go, and the
+ *  put-away nag counts only what the queue cannot place (scannerNags.ts), so
+ *  the two never describe the same scan twice (#3298). */
+function ScannerNagRow({ slug }: { slug: string }) {
+  const queue = useScannerQueue(slug);
   return (
-    <div className="flex flex-col md:flex-row gap-3 md:items-start empty:hidden">
-      <PutAwayCard slug={slug} offeredElsewhere={offeredElsewhere} />
-      <MoveIntoTablesCard slug={slug} />
-      <BundleSuggestionsCard suggestions={suggestions} />
-    </div>
+    <>
+      <ScannerQueue slug={slug} queue={queue} />
+      <div className="flex flex-col md:flex-row gap-3 md:items-start empty:hidden">
+        <PutAwayCard slug={slug} offeredElsewhere={queue.offered} />
+        <MoveIntoTablesCard slug={slug} />
+      </div>
+    </>
   );
-}
-
-/** Captures that fit a bundle this workspace does not have, for an owner or
- *  admin of a workspace that has something in it. Empty otherwise. */
-function useBundleSuggestions(slug: string, role?: string): { suggestions: QuickstartSuggestion[] } {
-  const canInstall = roleSatisfies(role, ["owner", "admin"]);
-  const { hasContent } = useWorkspaceContentProbe(slug);
-  const qs = useQuery({
-    queryKey: ["quickstart", slug],
-    queryFn: () => api.quickstart(slug),
-    enabled: canInstall && hasContent,
-    staleTime: 60_000,
-  });
-  return { suggestions: canInstall && hasContent ? (qs.data?.suggestions ?? []) : [] };
 }
 
 function PutAwayCard({ slug, offeredElsewhere }: { slug: string; offeredElsewhere: number }) {
@@ -438,47 +427,6 @@ function MoveIntoTablesCard({ slug }: { slug: string }) {
  *  bundle AND files every fitting capture into it (the capture-first materialize
  *  path). Owner/admin only (install changes composition). Hidden on empty
  *  workspaces (the first-run hero owns that) and when there's nothing to suggest. */
-function BundleSuggestionsCard({ suggestions }: { suggestions: QuickstartSuggestion[] }) {
-  const navigate = useNavigate();
-  const pointer = suggestionsPointer(suggestions);
-  if (!pointer) return null;
-  // The scanner lane below owns the install: it has the person's own photos
-  // and a sentence that says what will happen ("2 look like Groceries, create
-  // it & file all 2"). This card used to carry a second set of install
-  // buttons above it, and a third card counted the same scans as homeless;
-  // three voices for three scans, and nothing said which to press (#3298).
-  // The lane is an arrangeable section, so when it is hidden the pointer
-  // goes to the inbox, where the same groups are offered.
-  const showMe = () => {
-    const lane = document.getElementById("from-your-scanner");
-    if (lane) lane.scrollIntoView({ behavior: "smooth", block: "start" });
-    else navigate("/scan");
-  };
-  return (
-    <section
-      className="md:flex-1 md:min-w-0 rounded-lg border border-accent/40 bg-accent/[0.06] dark:bg-accent/10 px-4 py-3 flex flex-col items-start gap-2 sm:flex-row sm:items-center"
-      data-testid="bundle-suggestions"
-    >
-      <div className="flex min-w-0 flex-1 items-start gap-2">
-        <Sparkles size={15} className="text-accent shrink-0 mt-0.5" />
-        <div className="min-w-0">
-          <div className="text-sm font-semibold text-content dark:text-mortar-100">
-            You've scanned things that fit a table you don't have yet
-          </div>
-          <div className="text-xs text-muted dark:text-slate-400">{pointer.sentence}</div>
-        </div>
-      </div>
-      <button
-        type="button"
-        onClick={showMe}
-        className="inline-flex items-center gap-1.5 rounded-lg border border-accent/50 text-accent hover:bg-accent/10 px-3 py-1.5 text-sm font-medium transition shrink-0"
-      >
-        Show me <ArrowDown size={14} />
-      </button>
-    </section>
-  );
-}
-
 // "What needs me" — the dashboard's attention feed (redesign B2). Every row is
 // one tap to act; severity-ordered (overdue → low stock → captures → upcoming).
 function AttentionFeed({ slug }: { slug: string }) {
@@ -2068,8 +2016,11 @@ function RecentActivity({ slug, editing = false }: { slug: string; editing?: boo
     queryFn: () => api.orgActivity(slug, 50),
     staleTime: 30_000,
   });
+  // A row with no words a member can read (an automation row that carries
+  // only ids, an action that found nothing to do) is not shown here; the
+  // full /activity log keeps it (#3299).
   const items = (q.data?.items ?? []).filter(
-    (e) => !ACTIVITY_NOISE.has(e.entity_type ?? ""),
+    (e) => !ACTIVITY_NOISE.has(e.entity_type ?? "") && !hiddenFromDashboard(e),
   );
   const groups = groupActivity(items);
   // A workspace with no content has no activity by definition: hide the whole
@@ -2131,16 +2082,21 @@ function groupActivity(items: ActivityEntry[]): ActivityGroup[] {
 type KindLabels = ReturnType<typeof useKindLabels>;
 
 function ActivityRow({ entry: e, labels }: { entry: ActivityEntry; labels: KindLabels }) {
+  // An automation row is one sentence in the action's own words; the verb
+  // column would only repeat "ran an automation" in front of it.
+  const auto = AUTOMATION_ACTIONS.has(e.action) ? automationWords(e) : null;
   return (
     <li className="px-3 py-2 flex items-baseline gap-1.5 text-sm">
       <span className="text-muted dark:text-slate-400 shrink-0">
         {actorLabel(e)}
       </span>
-      <span className="text-content dark:text-mortar-200 shrink-0">
-        {humanAction(e.action)}
-      </span>
+      {!auto && (
+        <span className="text-content dark:text-mortar-200 shrink-0">
+          {humanAction(e.action)}
+        </span>
+      )}
       <span className="text-content dark:text-mortar-100 truncate min-w-0">
-        {activityTitle(e, labels)}
+        {auto ? (auto.hidden ? null : auto.said) : activityTitle(e, labels)}
       </span>
       <span className="flex-1" />
       <span className="font-mono text-[10px] text-faint shrink-0">
@@ -2163,7 +2119,8 @@ function ActivityGroupRow({ group, labels }: { group: ActivityGroup; labels: Kin
   // with length > 1.
   const first = group.items[0]!;
   const last = group.items[group.items.length - 1]!;
-  const action = humanAction(first.action);
+  const auto = AUTOMATION_ACTIONS.has(first.action) ? automationWords(first) : null;
+  const action = auto ? "" : humanAction(first.action);
   const actor = actorLabel(first);
   // The summary must not LIE: "created K1 Max ×2" for two different machines
   // read as two copies of K1 Max. Distinct identities → summarize by entity kind
@@ -2177,7 +2134,11 @@ function ActivityGroupRow({ group, labels }: { group: ActivityGroup; labels: Kin
   // about a shelf of books, 2026-09-12).
   const noun = labels.noun(activityKind(first));
   const distinct = [...new Set(ids.filter(Boolean))];
-  const summary = allSame ? (
+  const summary = auto ? (
+    // A burst of one automation: its label once, the count beside it, never
+    // six sentences or one event id ("Looked up photos" for 6 items).
+    <>{auto.hidden ? null : (auto.label ?? auto.said)}</>
+  ) : allSame ? (
     <>{activityTitle(first, labels)}</>
   ) : (
     <>
@@ -2194,12 +2155,14 @@ function ActivityGroupRow({ group, labels }: { group: ActivityGroup; labels: Kin
       <span className="text-muted dark:text-slate-400 shrink-0">
         {actor}
       </span>
-      <span className="text-content dark:text-mortar-200 shrink-0">
-        {action}
-      </span>
+      {action && (
+        <span className="text-content dark:text-mortar-200 shrink-0">
+          {action}
+        </span>
+      )}
       <span className="text-content dark:text-mortar-100 truncate min-w-0">
         {summary}
-        {allSame && (
+        {(allSame || auto) && (
           <span className="ml-1.5 inline-flex items-center text-[10px] font-mono uppercase tracking-widest text-accent dark:text-cobble-400 bg-cobble-50 dark:bg-cobble-900/40 rounded px-1.5 py-0.5">
             ×{group.items.length}
           </span>
@@ -2255,57 +2218,48 @@ function pickString(
   return null;
 }
 
-// Actions the system performs on its own — no human did them, so "someone" is
-// wrong. They get an "Automation" actor instead.
-const AUTOMATION_ACTIONS = new Set(["wire_fired", "wire_failed"]);
 
 /** Who to credit a row to: the real user, else "Automation" for system actions,
  *  else a neutral "someone". */
 function actorLabel(e: ActivityEntry): string {
-  return e.actor?.display_name ?? (AUTOMATION_ACTIONS.has(e.action) ? "Automation" : "someone");
+  return actorWords(e);
 }
 
-/** Drop a "module:" namespace from an id for display (core-notifications:notify → notify). */
-function shortActionId(id: string): string {
-  const i = id.indexOf(":");
-  return i >= 0 ? id.slice(i + 1) : id;
-}
 
-/** The "what" cell. Wires carry no name/title, so build an "<event> → <action>"
- *  summary from their diff (e.g. "inventory.part.low_stock → notify") instead of
- *  the bare "binding" entity_type. Everything else uses its create-time title,
- *  falling back to the entity_type. */
+/** The "what" cell. A wire's row is the action's own sentence for what it did
+ *  (activity-words.ts); an id is never printed. Everything else uses its
+ *  create-time title, then the live record's, then the changed fields. */
 function activityTitle(e: ActivityEntry, labels: KindLabels): React.ReactNode {
   const diff = (e.diff ?? {}) as Record<string, unknown>;
   if (AUTOMATION_ACTIONS.has(e.action)) {
-    const event = pickString(diff, ["event"]);
-    const act = pickString(diff, ["action"]);
-    if (event || act) {
-      return (
-        <span className="font-mono text-xs">
-          {event ?? "event"}
-          <span className="text-faint"> → </span>
-          {act ? shortActionId(act) : "action"}
-        </span>
-      );
-    }
+    const w = automationWords(e);
+    return w.hidden ? null : w.said;
   }
   // Diff title (creates carry one) → server-resolved live-record title (updates)
-  // → bare entity_type (deleted / unresolvable).
+  // → the field and value that changed (an update whose record could not be
+  // read: "updated type" read as a bug) → bare noun (deleted / unresolvable).
   const title = pickString(diff, ["name", "title", "label"]) ?? e.entity_title;
-  return title ?? <span className="text-xs text-faint">{labels.noun(activityKind(e))}</span>;
+  if (title) return title;
+  const changed = /_updated$|^updated$/.test(e.action) ? updatedFieldsWords(diff) : null;
+  const noun = labels.noun(activityKind(e));
+  return changed ? (
+    <span className="text-xs text-faint">a {noun}: {changed}</span>
+  ) : (
+    <span className="text-xs text-faint">{noun}</span>
+  );
 }
 
 /** A stable plain-text identity for burst summarization — the string form of
- *  what activityTitle() renders. Wires have no title/name/label, so their
- *  identity is the "<event> → <action>" path; everything else falls back to its
+ *  what activityTitle() renders. A wire's identity is its action's label, so
+ *  one wire firing six times collapses; everything else falls back to its
  *  create-time title. Empty when neither exists (never counts as "same"). */
 function activityIdentity(e: ActivityEntry): string {
   const diff = (e.diff ?? {}) as Record<string, unknown>;
   if (AUTOMATION_ACTIONS.has(e.action)) {
-    const event = pickString(diff, ["event"]);
-    const act = pickString(diff, ["action"]);
-    if (event || act) return `${event ?? "event"} → ${act ? shortActionId(act) : "action"}`;
+    // One wire firing six times is one thing done six times: its label is
+    // the identity, so the burst collapses; the ids stay internal.
+    const w = automationWords(e);
+    return w.hidden ? "" : (w.label ?? w.said);
   }
   return pickString(diff, ["name", "title", "label"]) ?? "";
 }

@@ -1,27 +1,142 @@
 [
-  "modules/core-file-preview/src/ui/renderers/OcctRenderer.tsx::const label = kind.toUpperCase();",
-  "modules/inventory/src/ui/ImportDialog.tsx::{commit.isPending ? \"…\" : `Import ${preview.rows.length} rows`}",
-  "modules/knowledge/src/ui/index.tsx::{e.kind}",
-  "web/src/components/BundleDetailModal.tsx::under <code className=\"font-mono\">{providesLens.entity_kind}</code>.",
-  "web/src/components/BundleDetailModal.tsx::{f.entity_kind}",
-  "web/src/components/FieldDefDetail.tsx::Renders on every <code className=\"font-mono text-accent\">{fieldDef.entity_kind}</code>{\" \"}",
-  "web/src/components/FloorPlan.tsx::<span className=\"font-mono text-[10px] uppercase tracking-widest text-faint\">{loc.kind}</span>",
-  "web/src/components/ImportLocationsDialog.tsx::<td className=\"px-2 py-1 text-faint\">{r.kind}</td>",
-  "web/src/components/PinnedTab.tsx::{entry.kind}",
-  "web/src/components/QuickAccess.tsx::{e.kind}",
-  "web/src/features/edge/DriverPackages.tsx::<span className=\"font-medium text-content dark:text-mortar-100\">{d.kind}</span>",
-  "web/src/pages/AppsConfigPage.tsx::{views.map((v) => (<option key={v.id} value={v.id}>{v.name} ({v.entity_kind})</option>))}",
-  "web/src/pages/BackupPage.tsx::toast.success(`Restored ${r?.rows ?? 0} rows, ${r?.files ?? 0} files.`);",
-  "web/src/pages/BundleComposerPage.tsx::{f.entity_kind}",
-  "web/src/pages/DigifabPage.tsx::<span className=\"text-[10px] font-mono text-faint\">{d.kind}</span>",
-  "web/src/pages/DigifabPage.tsx::<span className=\"uppercase font-mono\">{item.kind}</span>",
-  "web/src/pages/FieldsPage.tsx::<div className=\"font-mono text-xs text-accent dark:text-cobble-300 mb-2\">{kind}</div>",
-  "web/src/pages/LocationDetailPage.tsx::{c.kind}",
-  "web/src/pages/LocationDetailPage.tsx::{l.kind}",
-  "web/src/pages/LocationsPage.tsx::{node.kind}",
-  "web/src/pages/PortalConfigPage.tsx::({v.entity_kind})",
-  "web/src/pages/QrTokensPage.tsx::{t.entity_kind}",
-  "web/src/pages/ScanInboxCard.tsx::No AI to read this {idNoun} yet (<Link to={`/w/${activeSlug}/ai`} className=\"underline hover:text-content\" onClick={(e) => e.stopPropagation()}>set it up</Link>) - or name it:",
-  "web/src/pages/ScanRulesPage.tsx::<code className=\"text-faint\">{result.entity_kind}</code>",
-  "web/src/pages/SurfacesPage.tsx::{v.name} ({v.entity_kind})"
+  {
+    "key": "modules/core-file-preview/src/ui/renderers/OcctRenderer.tsx::const label = kind.toUpperCase();",
+    "why": "The kind here is a CAD file format (step, iges, brep), and a file format's name is its acronym in capitals; STEP is the word, not a routing key."
+  },
+  {
+    "key": "modules/inventory/src/ui/ImportDialog.tsx::{commit.isPending ? \"…\" : `Import ${preview.rows.length} rows`}",
+    "why": "A CSV import's rows are rows of the file the person just pasted, counted before anything becomes an item; the noun of the table they will become is not known until the import commits."
+  },
+  {
+    "key": "modules/knowledge/src/ui/index.tsx::{e.kind}",
+    "why": "A knowledge entry's kind is a word the person picked from the vault's own chips (note, reference, SOP, prompt, paper), never a module:kind id; the lint cannot tell a plain word called kind from a routing key by its name."
+  },
+  {
+    "key": "web/src/components/BundleDetailModal.tsx::under <code className=\"font-mono\">{providesLens.entity_kind}</code>.",
+    "why": "The details section of a bundle's page, read by somebody deciding whether to install it or auditing what they did: the kind in <code> is the table the bundle's view attaches to, the manifest's own identifier, beside the view's display name in words."
+  },
+  {
+    "key": "web/src/components/BundleDetailModal.tsx::{f.entity_kind}",
+    "why": "The bundle's field list under the details toggle, one manifest row per line: the kind is the table the field lands on, printed in <code> because a bundle author matching it against their manifest needs the id, not a translation of it."
+  },
+  {
+    "key": "web/src/components/BundleDetailModal.tsx::{w.action_id}",
+    "why": "The bundle's automation list under the details toggle: source kind, arrow, action id, as the manifest wires them; there is no fired row here to carry the action's words, and the person reading a manifest needs the id they would write."
+  },
+  {
+    "key": "web/src/components/FieldDefDetail.tsx::Renders on every <code className=\"font-mono text-accent\">{fieldDef.entity_kind}</code>{\" \"}",
+    "why": "A field definition's own page, where the sentence goes on to name the template variable the field is reachable as; the kind is the table the definition is bound to, which is what a person editing templates has to type."
+  },
+  {
+    "key": "web/src/components/FloorPlan.tsx::<span className=\"font-mono text-[10px] uppercase tracking-widest text-faint\">{loc.kind}</span>",
+    "why": "A location's kind is one of two plain words (area, container) from the locations vocabulary, not a module:kind id; the floor plan shows it small beside the name so a container is not mistaken for a room."
+  },
+  {
+    "key": "web/src/components/ImportLocationsDialog.tsx::<td className=\"px-2 py-1 text-faint\">{r.kind}</td>",
+    "why": "The locations import preview echoes the kind column the person typed in their CSV (area or container, the dialog's own instructions name both); the word shown is theirs."
+  },
+  {
+    "key": "web/src/components/PinnedTab.tsx::{entry.kind}",
+    "why": "A pinned knowledge entry's kind is the vault chip the person chose (note, reference, SOP, prompt, paper), a word and not a routing key; the lint matches the property name, not the value."
+  },
+  {
+    "key": "web/src/components/QuickAccess.tsx::{e.kind}",
+    "why": "Quick access lists pinned knowledge entries, and an entry's kind is the vault chip the person chose (note, reference, SOP, prompt, paper); a plain word that happens to be stored under a property called kind."
+  },
+  {
+    "key": "web/src/components/WireDetailModal.tsx::{binding.action_id}",
+    "why": "The automation's own detail modal, the row labelled Action for the person who composed it: the action id is what the automation is bound to and what they would pick again in the composer; the id is the object on this surface."
+  },
+  {
+    "key": "web/src/components/WireDetailModal.tsx::{d.event}",
+    "why": "The run history inside an automation's detail modal, where each row already reads fired or failed in words; the event id in small monospace beside the time is the trigger that fired it, for the person debugging why."
+  },
+  {
+    "key": "web/src/features/edge/DriverPackages.tsx::<span className=\"font-medium text-content dark:text-mortar-100\">{d.kind}</span>",
+    "why": "A driver package's kind is the driver's own name as the person declared it on this page (the field they typed it into is beside the list), not a module:kind id; the list echoes the declaration back."
+  },
+  {
+    "key": "web/src/pages/AdminConsole.tsx::{x.event} <b>{x.d7}</b>",
+    "why": "The operator console's seven-day event counts, an operator surface: the event id is the thing being counted and the name an operator greps the log for; translating it would hide what they came to read."
+  },
+  {
+    "key": "web/src/pages/AppsConfigPage.tsx::members with: {g.label} ({g.action_id})",
+    "why": "The app builder's access picker, where the label already reads in words and the action id follows in parentheses because two grants can share a label and the id is what the permission is checked against."
+  },
+  {
+    "key": "web/src/pages/AppsConfigPage.tsx::{views.map((v) => (<option key={v.id} value={v.id}>{v.name} ({v.entity_kind})</option>))}",
+    "why": "The app builder's view picker: the view's name comes first and the kind in parentheses tells two views with the same name apart, for the person composing an app who knows which table they mean."
+  },
+  {
+    "key": "web/src/pages/BackupPage.tsx::toast.success(`Restored ${r?.rows ?? 0} rows, ${r?.files ?? 0} files.`);",
+    "why": "A database restore reports rows because rows are what it wrote, across every table at once; there is no single noun for a whole workspace's worth of restored data."
+  },
+  {
+    "key": "web/src/pages/BindingsPage.tsx::<span className=\"font-mono text-[10px] text-accent\">{d.event ?? \"?\"}</span>",
+    "why": "The run log at the foot of the automations page, where each row already reads fired or failed in words; the event and action ids beside the time are for the person who wrote the binding and is checking which one fired."
+  },
+  {
+    "key": "web/src/pages/BindingsPage.tsx::<span className=\"font-mono text-xs text-accent dark:text-cobble-300\">{b.action_id}</span>",
+    "why": "The automations page lists each binding as source kind, arrow, action id: it is the composer's own list, and the id is what the person chose when they made the binding and what they would edit."
+  },
+  {
+    "key": "web/src/pages/BuildPage.tsx::<span className=\"font-mono text-xs\">{label(w.source_kind)}</span> → <span className=\"font-medium\">{w.action_id}</span>{\" \"}",
+    "why": "The builder's preview of the bundle it is about to install lists the automations the manifest will carry; nothing has fired yet, so there is no row with the action's words, and the id is what the manifest will say."
+  },
+  {
+    "key": "web/src/pages/BundleComposerPage.tsx::{f.entity_kind}",
+    "why": "The bundle composer's field list, where the person is writing the manifest: the kind is the table the field lands on and the id they will see in the exported bundle file."
+  },
+  {
+    "key": "web/src/pages/BundleComposerPage.tsx::{w.action_id}",
+    "why": "The bundle composer's automation list, where the person is writing the manifest: source kind, arrow, action id, exactly as the bundle file will carry them."
+  },
+  {
+    "key": "web/src/pages/DigifabPage.tsx::<span className=\"text-[10px] font-mono text-faint\">{d.kind}</span>",
+    "why": "The installed drivers list on the digital fabrication page: a driver's kind is the driver family it belongs to as the package declared it, shown small beside the driver's name and key for the person managing installs."
+  },
+  {
+    "key": "web/src/pages/DigifabPage.tsx::<span className=\"uppercase font-mono\">{item.kind}</span>",
+    "why": "A print library item's kind is its file format (stl, gcode, 3mf), and a file format reads in capitals beside the plate count and size; it is the format, not a module:kind id."
+  },
+  {
+    "key": "web/src/pages/FieldsPage.tsx::<div className=\"font-mono text-xs text-accent dark:text-cobble-300 mb-2\">{kind}</div>",
+    "why": "The fields page groups definitions by the table they belong to; a scope already reads in words (the branch above), and a plain kind is shown as its id because this is the configuration surface where a person binds a field to a table and needs the id the API and templates use."
+  },
+  {
+    "key": "web/src/pages/LocationDetailPage.tsx::{c.kind}",
+    "why": "A child location's kind is one of two plain words (area, container) from the locations vocabulary, shown small under the name; not a module:kind id, the lint matches the property name."
+  },
+  {
+    "key": "web/src/pages/LocationDetailPage.tsx::{l.kind}",
+    "why": "A location's kind is one of two plain words (area, container) from the locations vocabulary, shown as a small chip beside the heading; not a module:kind id, the lint matches the property name."
+  },
+  {
+    "key": "web/src/pages/LocationsPage.tsx::{node.kind}",
+    "why": "A location tree node's kind is one of two plain words (area, container) from the locations vocabulary, hidden on a phone already because the icon carries it; not a module:kind id."
+  },
+  {
+    "key": "web/src/pages/PortalConfigPage.tsx::({v.entity_kind})",
+    "why": "The portal's view picker: the view's name comes first and the kind in parentheses tells two views with the same name apart, for the person configuring the portal who knows which table they mean."
+  },
+  {
+    "key": "web/src/pages/QrTokensPage.tsx::{t.entity_kind}",
+    "why": "The QR tokens ledger lists every minted code by its payload, kind and id, beside its mode (navigate, action) and auth pills; a person here is matching a printed label against a row to revoke it, and the payload is what they are matching."
+  },
+  {
+    "key": "web/src/pages/RolesPage.tsx::<div className=\"text-[10px] font-mono text-faint truncate\">{a.action_id}</div>",
+    "why": "The roles editor lists each permission with its label in words on the first line and the action id small underneath, because two actions can share a label and the id is what the role is checked against."
+  },
+  {
+    "key": "web/src/pages/ScanInboxCard.tsx::No AI to read this {idNoun} yet (<Link to={`/w/${activeSlug}/ai`} className=\"underline hover:text-content\" onClick={(e) => e.stopPropagation()}>set it up</Link>) - or name it:",
+    "why": "The one place this sentence may appear, guarded by identify_available so it reads only for a person with no way to identify a photo (#2845); the lint exists to stop a second copy that reads the deployment switch instead."
+  },
+  {
+    "key": "web/src/pages/ScanRulesPage.tsx::<code className=\"text-faint\">{result.entity_kind}</code>",
+    "why": "The scan rules tester shows what a trial scan matched: the entity's label in words as the link, then the rule's name, then the kind in <code> because a person writing rules routes by kind and needs to see which one the rule chose."
+  },
+  {
+    "key": "web/src/pages/SurfacesPage.tsx::{v.name} ({v.entity_kind})",
+    "why": "The surfaces page's saved-view picker: the view's name comes first and the kind in parentheses tells two views with the same name apart, for the person composing a surface who knows which table they mean."
+  }
 ]

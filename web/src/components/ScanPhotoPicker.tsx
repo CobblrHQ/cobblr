@@ -137,8 +137,11 @@ export function useScanIntake(slug: string, opts: ScanIntakeOptions): ScanIntake
         }
         if (multi) setUploadProgress({ done: ok, total: files.length });
       }
-      if (ok === 1) toast.success("Photo added - AI is identifying it");
-      else if (ok > 1) toast.success(`${ok} photos added as one batch - AI is identifying them`);
+      // Only a workspace that has said it cannot look at an image is told so;
+      // a status still loading reads as "on its way to be looked at".
+      const looking = opts.identifyAvailable !== false;
+      if (ok === 1) toast.success(looking ? "Photo added - AI is identifying it" : "Photo added - name it in the inbox");
+      else if (ok > 1) toast.success(looking ? `${ok} photos added as one batch - AI is identifying them` : `${ok} photos added as one batch - name them in the inbox`);
     } finally {
       setUploading(false);
       setUploadProgress(null);

@@ -86,6 +86,7 @@ export function ScanImportModal({ slug, open, onClose, onImported }: {
             <label className="block">
               <input
                 type="file"
+                data-testid="scan-import-file"
                 accept=".json,.csv,application/json,text/csv"
                 onChange={(e) => {
                   const f = e.target.files?.[0];

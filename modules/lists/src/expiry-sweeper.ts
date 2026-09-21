@@ -11,6 +11,21 @@
 // Modelled on core-maintenance's sweeper. Only sweeps orgs that have BOTH
 // lists and inventory enabled — others have no table / no expiry field and
 // are skipped, so non-food workspaces pay nothing.
+//
+// TWO RULES THE ORDER OF THIS FILE ENFORCES (#3349):
+//   · Every line the sweep decides to say is sent. The day-of lines were
+//     computed, stamped in the ledger and then dropped by an early return
+//     that only knew about heads-ups, so from the day the day-of notice was
+//     added, "expires today" reached a person only when a new heads-up
+//     happened to ride along in the same sweep. The one dispatch is behind
+//     `lines.length > 0` and nothing returns between the lines and it.
+//   · The ledger is stamped AFTER the message is sent, never before. A stamp
+//     first meant a dispatch that failed for every member was recorded as
+//     sent and never retried; a duplicate on a failed stamp is the smaller
+//     harm. Nobody to tell (an empty audience) is a send.
+//   · The clock is the walk's (`now`), never Date.now(), so the day a thing
+//     expires can be pressed in a test after its heads-up went out on an
+//     earlier day.
 
 import { Kysely, sql } from "kysely";
 import { platform, expiryState, expiryPhrase } from "@cobblr/platform-contract";
@@ -29,7 +44,7 @@ export function startExpirySweeper(): void {
     name: EXPIRY_PASS,
     everyMs: TICK_MS,
     module: "lists",
-    visit: ({ orgId, db }) => visitWorkspace(orgId, db),
+    visit: ({ orgId, db, now }) => visitWorkspace(orgId, db, now),
   });
   console.log(`[lists] expiry sweeper registered — every ${TICK_MS / 60_000} min, threshold ${EXPIRY_SOON_DAYS}d`);
 }
@@ -44,8 +59,9 @@ interface ExpiringRow {
 }
 
 /** One workspace, the pool already open: the pass's visit. `org` and `raw`
- *  keep their names so the body reads as it did when it was the loop's. */
-async function visitWorkspace(orgId: string, raw: unknown): Promise<{ scanned: number; alerted: number; unreadable: number } | void> {
+ *  keep their names so the body reads as it did when it was the loop's.
+ *  Exported for its tests, which hand it a fake db and a fixed clock. */
+export async function visitWorkspace(orgId: string, raw: unknown, now: Date = new Date()): Promise<{ scanned: number; alerted: number; unreadable: number; undelivered?: number } | void> {
   const org = { id: orgId };
   let scanned = 0;
   let alerted = 0;
@@ -53,7 +69,7 @@ async function visitWorkspace(orgId: string, raw: unknown): Promise<{ scanned: n
     // Parts expiring within the window, via the kernel date-field query — no raw
     // inventory_parts read, no inventory table name here. queryDateField no-ops
     // (returns []) when inventory/expires_on is absent.
-    const toISO = new Date(Date.now() + EXPIRY_SOON_DAYS * 86_400_000)
+    const toISO = new Date(now.getTime() + EXPIRY_SOON_DAYS * 86_400_000)
       .toISOString()
       .slice(0, 10);
     const candidates = await platform().calendar.queryDateField(
@@ -98,7 +114,7 @@ async function visitWorkspace(orgId: string, raw: unknown): Promise<{ scanned: n
       } catch (err) {
         if (!(err as Error).message.includes("does not exist")) throw err;
       }
-      const todayISO = new Date().toISOString().slice(0, 10);
+      const todayISO = now.toISOString().slice(0, 10);
       due = candidates
         .filter((c) => alreadyAtDate.get(c.id) !== c.value.slice(0, 10))
         .map((c) => ({ id: c.id, name: c.name, expires_on: c.value }));
@@ -136,24 +152,14 @@ async function visitWorkspace(orgId: string, raw: unknown): Promise<{ scanned: n
     // composing one message is not a preference, it is what a batch job owes
     // the person it is writing to.
     const lines: ExpiryLine[] = [];
-    for (const row of dueToday) {
-      lines.push({ id: row.id, name: row.name, tone: "expires today" });
-      try {
-        const up = sql`
-          update lists_expiry_notifications set today_notified_on = ${row.expires_on}::date where part_id = ${row.id}
-        `.compile(tdb);
-        await tdb.executeQuery(up);
-      } catch (err) {
-        console.error("[lists] expiry day-of ledger write failed:", (err as Error).message);
-      }
-      alerted += 1;
-    }
+    for (const row of dueToday) lines.push({ id: row.id, name: row.name, tone: "expires today" });
 
     scanned += due.length;
-    if (due.length === 0) return { scanned, alerted, unreadable: unreadable.length };
-
+    // What each heads-up row says, and the events a wire hears. Nothing is
+    // written yet: the ledger is stamped once the message has gone.
+    const headsUp: Array<{ row: ExpiringRow; dayOfCovered: boolean }> = [];
     for (const row of due) {
-      const daysUntil = Math.ceil((new Date(row.expires_on).getTime() - Date.now()) / 86_400_000);
+      const daysUntil = Math.ceil((new Date(row.expires_on).getTime() - now.getTime()) / 86_400_000);
       // The item's own grace: food does not go bad at midnight, and the item
       // says how long past its date is still fine. Read through the entities
       // door so an instance row (a Groceries table's milk) answers too - the
@@ -168,7 +174,7 @@ async function visitWorkspace(orgId: string, raw: unknown): Promise<{ scanned: n
           // silently-extended one.
         }
       }
-      const reading = expiryState(row.expires_on, graceDays);
+      const reading = expiryState(row.expires_on, graceDays, now);
       const tone = reading ? expiryPhrase(reading) : `expires in ${daysUntil}d`;
 
       // Event → food-cluster wire turns this into a shopping-list line. The
@@ -201,11 +207,80 @@ async function visitWorkspace(orgId: string, raw: unknown): Promise<{ scanned: n
       if (reading?.state === "spoiled") void platform().events.emit("lists.item.expired", payload);
 
       lines.push({ id: row.id, name: row.name, tone });
-
-      // Stamp the ledger (upsert: re-dated parts overwrite the prior alert).
       // A heads-up sent ON the day is the day-of notice too, so that date's
       // second line is spent as well; a re-dated part clears it.
-      const dayOfCovered = daysUntil <= 0;
+      headsUp.push({ row, dayOfCovered: daysUntil <= 0 });
+    }
+
+    if (lines.length === 0) return { scanned, alerted, unreadable: unreadable.length };
+
+    // The one message. A date arriving is a line in somebody's list, never an
+    // interruption at whatever hour the sweep ran, so this stays at the default
+    // priority and joins a configured delivery window like anything else.
+    //
+    // A CARD with the answers on it (expiry-card.ts): one line per item and
+    // a "Used up" / "Threw out" pair each, running the inventory module's
+    // own actions. The plain message still stands alone for a channel that
+    // cannot render either.
+    const digest = expiryDigest(lines, {
+      workspace: await platform().notifications.orgName(org.id).catch(() => null),
+    });
+    // WHERE IT TAKES YOU. One item → the item, instance-aware (a jar in a
+    // Groceries table is not on the base inventory page). Several → the
+    // calendar on the earliest date, because "everything dated" is exactly
+    // what that surface is. It used to carry no link, so a list of six things
+    // going bad was six names and no way through to any of them.
+    const all = [...dueToday, ...due];
+    const earliest = all
+      .map((r) => r.expires_on.slice(0, 10))
+      .sort()[0];
+    let link = `/calendar?date=${earliest}`;
+    if (all.length === 1) {
+      link =
+        (await platform()
+          .entities.detailPathForEntity(org.id, "inventory:part", all[0]!.id)
+          .catch(() => undefined)) ?? link;
+    }
+    let delivered = 0;
+    for (const userId of memberIds) {
+      try {
+        await platform().notifications.dispatch({
+          orgId: org.id,
+          userId,
+          eventType: "lists.expiring",
+          triggeredBy: "schedule",
+          message: digest.message,
+          card: digest.card,
+          actions: digest.actions,
+          link_url: link,
+          module: "lists",
+          payload: { count: lines.length },
+        });
+        delivered += 1;
+      } catch (err) {
+        console.error("[lists] expiry notify failed:", (err as Error).message);
+      }
+    }
+    // Sent, or nobody to send to: the ledger remembers it. Reached nobody
+    // while there was somebody to reach: the ledger stays as it was and the
+    // next sweep says it again.
+    if (delivered === 0 && memberIds.length > 0) {
+      console.warn(`[lists] expiry digest for workspace ${org.id} reached none of ${memberIds.length} member(s); it will be sent again next sweep`);
+      return { scanned, alerted, unreadable: unreadable.length, undelivered: lines.length };
+    }
+    for (const row of dueToday) {
+      try {
+        const up = sql`
+          update lists_expiry_notifications set today_notified_on = ${row.expires_on}::date where part_id = ${row.id}
+        `.compile(tdb);
+        await tdb.executeQuery(up);
+      } catch (err) {
+        console.error("[lists] expiry day-of ledger write failed:", (err as Error).message);
+      }
+      alerted += 1;
+    }
+    for (const { row, dayOfCovered } of headsUp) {
+      // Stamp the ledger (upsert: re-dated parts overwrite the prior alert).
       try {
         const up = sql`
           insert into lists_expiry_notifications (part_id, expires_on, notified_at, today_notified_on)
@@ -217,53 +292,6 @@ async function visitWorkspace(orgId: string, raw: unknown): Promise<{ scanned: n
         console.error("[lists] expiry ledger write failed:", (err as Error).message);
       }
       alerted += 1;
-    }
-
-    // The one message. A date arriving is a line in somebody's list, never an
-    // interruption at whatever hour the sweep ran, so this stays at the default
-    // priority and joins a configured delivery window like anything else.
-    if (lines.length > 0) {
-      // A CARD with the answers on it (expiry-card.ts): one line per item and
-      // a "Used up" / "Threw out" pair each, running the inventory module's
-      // own actions. The plain message still stands alone for a channel that
-      // cannot render either.
-      const digest = expiryDigest(lines, {
-        workspace: await platform().notifications.orgName(org.id).catch(() => null),
-      });
-      // WHERE IT TAKES YOU. One item → the item, instance-aware (a jar in a
-      // Groceries table is not on the base inventory page). Several → the
-      // calendar on the earliest date, because "everything dated" is exactly
-      // what that surface is. It used to carry no link, so a list of six things
-      // going bad was six names and no way through to any of them.
-      const all = [...dueToday, ...due];
-      const earliest = all
-        .map((r) => r.expires_on.slice(0, 10))
-        .sort()[0];
-      let link = `/calendar?date=${earliest}`;
-      if (all.length === 1) {
-        link =
-          (await platform()
-            .entities.detailPathForEntity(org.id, "inventory:part", all[0]!.id)
-            .catch(() => undefined)) ?? link;
-      }
-      for (const userId of memberIds) {
-        try {
-          await platform().notifications.dispatch({
-            orgId: org.id,
-            userId,
-            eventType: "lists.expiring",
-            triggeredBy: "schedule",
-            message: digest.message,
-            card: digest.card,
-            actions: digest.actions,
-            link_url: link,
-            module: "lists",
-            payload: { count: lines.length },
-          });
-        } catch (err) {
-          console.error("[lists] expiry notify failed:", (err as Error).message);
-        }
-      }
     }
   return { scanned, alerted, unreadable: unreadable.length };
 }

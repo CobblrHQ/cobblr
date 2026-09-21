@@ -11,19 +11,38 @@
 
 import { NAV_LAYOUTS, setNavLayout, type NavLayout } from "../lib/nav-mode";
 
+/** What a step says on a PHONE instead, where the desktop's words do not
+ *  apply (a layout to choose, a row of places, ⌘K, a phone to pair). A step
+ *  without one reads the same on both. `target` re-points a spotlight at the
+ *  phone's own anchor (the menu that holds every place). */
+export interface PhoneVariant {
+  title?: string;
+  body: string;
+  target?: string | string[];
+}
+
 export type TourStep =
-  | { kind: "chooseLayout"; title: string; body: string }
+  | { kind: "chooseLayout"; title: string; body: string; phone: PhoneVariant }
+  // The welcome a phone gets: the greeting, the theme toggle and the way in,
+  // with no layout to choose. Made by tourStepsFor from chooseLayout's phone
+  // variant; never written into the tour by hand.
+  | { kind: "welcome"; title: string; body: string }
   // `target` is a CSS selector, or an ORDERED list of them: the tour uses the
   // first one that is on screen (prefer anchor A, fall back to anchor B). A step
   // whose target(s) are all absent is skipped.
-  | { kind: "spotlight"; target: string | string[]; title: string; body: string }
-  | { kind: "done"; title: string; body: string };
+  | { kind: "spotlight"; target: string | string[]; title: string; body: string; phone?: PhoneVariant }
+  | { kind: "done"; title: string; body: string; phone?: PhoneVariant };
 
 export const DASHBOARD_TOUR: TourStep[] = [
   {
     kind: "chooseLayout",
     title: "Welcome to Cobblr",
     body: "First, how do you want to get around? Try each; you can change it any time under Your account, Appearance.",
+    // A phone has one way around and is not asked to choose one (#3231): its
+    // welcome says where things are and offers the look.
+    phone: {
+      body: "This is your workspace. On a phone the menu at the top right holds every place, and the camera beside it captures anything with a barcode or a label. Have a quick look around, or skip straight in.",
+    },
   },
   {
     kind: "spotlight",
@@ -36,12 +55,19 @@ export const DASHBOARD_TOUR: TourStep[] = [
     target: '[data-tour="nav"]',
     title: "Your places",
     body: "Home is where you start. Locations is where things live, and the Scan Inbox is what your camera captured. Everything else in this row is a collection you set up.",
+    phone: {
+      target: '[data-tour="menu"]',
+      body: "Every place is behind this menu: Home is where you start, Locations is where things live, the Scan Inbox is what your camera captured, and each collection you set up gets a row. Your account and settings are at its foot.",
+    },
   },
   {
     kind: "spotlight",
     target: '[data-tour="do-box"]',
     title: "Start here",
     body: "Type what you've got and Cobblr finds or builds the right home for it - the fastest way to fill a new workspace. Or scan it. A few ready-made setups sit under the box; everything else is behind More ways to start. Press ⌘K any time to jump anywhere.",
+    phone: {
+      body: "Type what you've got and Cobblr finds or builds the right home for it - the fastest way to fill a new workspace. Or scan it. A few ready-made setups sit under the box; everything else is behind More ways to start.",
+    },
   },
   {
     kind: "spotlight",
@@ -56,6 +82,9 @@ export const DASHBOARD_TOUR: TourStep[] = [
     target: ['[data-tour="capture-scan"]', 'a[href$="/scan/camera"]'],
     title: "Scan to capture",
     body: "Rather not type it? Scan a barcode or label with your phone and it files itself. No camera on this computer? Pair your phone in a tap and scan with that. Not now? Try a sample scan and watch one land.",
+    phone: {
+      body: "Rather not type it? Point the camera at a barcode or a label and it files itself. Not now? Try a sample scan and watch one land.",
+    },
   },
   {
     kind: "spotlight",
@@ -67,6 +96,9 @@ export const DASHBOARD_TOUR: TourStep[] = [
     kind: "done",
     title: "You are all set",
     body: "That is the tour. Replay it any time from the account menu, and switch layout whenever you like.",
+    phone: {
+      body: "That is the tour. Replay it any time from Your account, in the menu.",
+    },
   },
 ];
 
@@ -76,10 +108,17 @@ export const PHONE_MAX_WIDTH = 768;
 /** The steps a tour on this width can ask. A phone is never asked which
  *  desktop layout it wants: the three answers mean nothing to the phone in
  *  hand, and it was the first thing a visitor signing up on one met (#3231).
- *  What a phone's welcome step should say instead is a product decision that
- *  keeps its issue; this only drops the question that cannot apply. */
+ *  Instead its welcome says where things are, and every step that talked to a
+ *  desktop (a row of places, ⌘K, a phone to pair) says the phone's version,
+ *  pointing at the phone's own anchors. A desktop reads the steps as written. */
 export function tourStepsFor(steps: TourStep[], viewportWidth: number): TourStep[] {
-  return viewportWidth < PHONE_MAX_WIDTH ? steps.filter((s) => s.kind !== "chooseLayout") : steps;
+  if (viewportWidth >= PHONE_MAX_WIDTH) return steps;
+  return steps.map((s): TourStep => {
+    if (s.kind === "chooseLayout") return { kind: "welcome", title: s.phone.title ?? s.title, body: s.phone.body };
+    if (s.kind === "welcome" || !s.phone) return s;
+    if (s.kind === "spotlight") return { ...s, target: s.phone.target ?? s.target, title: s.phone.title ?? s.title, body: s.phone.body };
+    return { ...s, title: s.phone.title ?? s.title, body: s.phone.body };
+  });
 }
 
 // The layouts the welcome step offers: all three, with the names, blurbs and

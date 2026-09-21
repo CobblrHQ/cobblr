@@ -800,8 +800,14 @@ async function answerTurn(
       // running it. Needs a write tool to exist for the answer to be "run it".
       ...(prefs.write_mode !== "off" && toolDefs.length > 0
         ? {
+            // A question the ambiguity guard asked for is the act, not a
+            // description of one: once a write has been handed back with
+            // the candidates, the model's "which one?" is what the person
+            // needs, and nudging it to act instead sends it back through the
+            // same door (a label proposed, bounced, asked, nudged, proposed
+            // again; 2026-09-21).
             actNudge: async (said: string, reply: string, reads: string[]) =>
-              describedInsteadOfActing(said, reply, await actionLabels(c), reads.includes("list_actions")),
+              ambiguity.choices ? null : describedInsteadOfActing(said, reply, await actionLabels(c), reads.includes("list_actions")),
           }
         : {}),
       ...(onEvent ? { onEvent } : {}),

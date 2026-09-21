@@ -141,7 +141,7 @@ export function GuidedTour({ steps: allSteps, onClose }: { steps: TourStep[]; on
   return createPortal(
     <OverlayLayer className="z-[200]" role="dialog" aria-modal data-tour-card>
       {step.kind !== "spotlight" && (
-        <div className="absolute inset-0" style={{ background: step.kind === "chooseLayout" ? "rgba(6,10,20,0.4)" : SCRIM }} />
+        <div className="absolute inset-0" style={{ background: step.kind === "chooseLayout" || step.kind === "welcome" ? "rgba(6,10,20,0.4)" : SCRIM }} />
       )}
       {step.kind === "spotlight" && spotBox && (
         <div
@@ -150,10 +150,12 @@ export function GuidedTour({ steps: allSteps, onClose }: { steps: TourStep[]; on
         />
       )}
 
-      {step.kind === "chooseLayout" && (
-        <div ref={cardRef} className={`absolute z-[210] left-1/2 -translate-x-1/2 bottom-[6%] w-[500px] max-w-[calc(100vw-24px)] rounded-2xl ${surface} shadow-2xl p-5`}>
+      {(step.kind === "chooseLayout" || step.kind === "welcome") && (
+        <div ref={cardRef} data-testid={step.kind === "welcome" ? "tour-welcome" : "tour-choose-layout"} className={`absolute z-[210] left-1/2 -translate-x-1/2 bottom-[6%] w-[500px] max-w-[calc(100vw-24px)] rounded-2xl ${surface} shadow-2xl p-5`}>
           {/* Live theme toggle — flips the whole app AND this card (they share the
-              app's dark class), same set-your-preference spirit as the layout chooser. */}
+              app's dark class), same set-your-preference spirit as the layout chooser.
+              A phone's welcome keeps it: the look is the one preference a phone
+              can set here. */}
           <button
             type="button"
             onClick={toggleTheme}
@@ -166,7 +168,7 @@ export function GuidedTour({ steps: allSteps, onClose }: { steps: TourStep[]; on
           <div className={`text-center ${kicker}`}>Cobblr</div>
           <h3 className="text-center text-lg font-bold">{step.title}</h3>
           <p className={`text-center text-sm mt-1.5 ${muted}`}>{step.body}</p>
-          <div className="flex flex-col gap-2 mt-4" role="radiogroup" aria-label="Desktop layout">
+          {step.kind === "chooseLayout" && <div className="flex flex-col gap-2 mt-4" role="radiogroup" aria-label="Desktop layout">
             {LAYOUT_OPTIONS.map((o) => {
               const sel = navLayout === o.id;
               return (
@@ -186,7 +188,7 @@ export function GuidedTour({ steps: allSteps, onClose }: { steps: TourStep[]; on
                 </button>
               );
             })}
-          </div>
+          </div>}
           <div className="flex items-center justify-center gap-3 mt-4">
             <button type="button" className={skip} onClick={onClose}>Skip tour</button>
             <button type="button" className={pri} onClick={() => move(1)} aria-keyshortcuts="ArrowRight">Take the tour <ArrowRight size={14} /></button>

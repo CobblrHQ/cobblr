@@ -17,6 +17,7 @@ import { useToast } from "@cobblr/platform-web";
 import { api, ApiError, type ScanInboxItem, type TrackedMatch } from "../lib/api";
 import { useActiveOrg } from "../auth/ActiveOrgContext";
 import { RepurchaseAnswers, useBestTrackedMatch } from "./RepurchaseControls";
+import { useHandheld } from "../lib/useHandheld";
 import { TrackedMatchNudges } from "./TrackedMatchNudges";
 import { scanRowState, scanTrackedMatch } from "@cobblr/platform-contract/scan-triage";
 
@@ -149,6 +150,7 @@ export function TrackedMatchBanner({
   const qc = useQueryClient();
   const toast = useToast();
   const navigate = useNavigate();
+  const handheld = useHandheld();
   const [dismissed, setDismissed] = useState(false);
 
   const matches = useQuery({
@@ -221,16 +223,37 @@ export function TrackedMatchBanner({
     : [];
   const canMerge = best.matched_by === "name" && mergeEntries.length > 0;
 
+  // On a phone the card must not grow (#3339): the "same barcode" tag that
+  // wrapped alone onto its own line rides in the tick's label instead, Open
+  // flows at the end of the heading's own text rather than on a line of its
+  // own (in the header it narrowed the heading and cost a wrap instead), and
+  // the three answers stack at one size in the room those two lines gave back.
+  const matchedHow = best.matched_by === "identifier" ? `same ${best.matched_label || "identifier"}` : exact ? "same barcode" : "matched by name";
   return (
     <div className="rounded-lg border border-emerald-300 dark:border-emerald-700/60 bg-emerald-50/70 dark:bg-emerald-950/20 px-3 py-2.5 space-y-2">
       <div className="flex items-start gap-2">
-        <CheckCircle2 size={15} className="text-emerald-600 dark:text-emerald-400 shrink-0 mt-0.5" />
+        <CheckCircle2 size={15} className="text-emerald-600 dark:text-emerald-400 shrink-0 mt-0.5" aria-label={matchedHow} role="img" />
         <div className="min-w-0 flex-1 text-sm">
           <MatchTitle match={best} where={where} title={best.title} sameOne={canMerge} />
-          <span className="text-[11px] text-faint">
-            {" "}
-            · {best.matched_by === "identifier" ? `same ${best.matched_label || "identifier"}` : exact ? "same barcode" : "matched by name"}
-          </span>
+          {!handheld && (
+            <span className="text-[11px] text-faint">
+              {" "}
+              · {matchedHow}
+            </span>
+          )}
+          {handheld && best.detail_url && (
+            <>
+              <span className="text-muted"> · </span>
+              <button
+                type="button"
+                title="Open the record"
+                onClick={() => navigate(best.detail_url!)}
+                className="inline-flex items-center gap-0.5 align-baseline text-xs text-muted underline decoration-dotted underline-offset-2 hover:text-content"
+              >
+                Open <ExternalLink size={11} />
+              </button>
+            </>
+          )}
         </div>
         <button
           type="button"
@@ -285,6 +308,7 @@ export function TrackedMatchBanner({
           match={best}
           quantity={Math.max(1, item.quantity || 1)}
           onDone={(r, m, mode) => onAttached?.(r, m, mode)}
+          layout={handheld ? "stack" : "pills"}
         />
         {locationId && best.location_id !== locationId && (
           <button type="button" disabled={busy} onClick={() => attach.mutate({ m: best, mode: "move" })} className={pill}>
@@ -307,7 +331,7 @@ export function TrackedMatchBanner({
             Link barcode
           </button>
         )}
-        {best.detail_url && (
+        {!handheld && best.detail_url && (
           <button
             type="button"
             onClick={() => navigate(best.detail_url!)}

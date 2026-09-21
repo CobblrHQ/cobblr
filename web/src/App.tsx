@@ -146,6 +146,8 @@ import { PortalLayout } from "./components/PortalLayout";
 import { ToastProvider, ConfirmProvider } from "@cobblr/platform-web";
 import { api, getToken } from "./lib/api";
 import { useNavMode, useNavTopBar } from "./lib/nav-mode";
+import { isFullSidebar } from "./lib/nav-layout";
+import { useIsDesktopWidth } from "./lib/useIsDesktopWidth";
 import { useQuery } from "@tanstack/react-query";
 import { InstancePage } from "./pages/InstancePage";
 import { inManagedAppSurface } from "./lib/managed-apps";
@@ -479,11 +481,12 @@ function ActiveOrgScopedRoutes() {
   // See business-models/docs/18-managed-vertical-apps.md.
   const appMode = activeOrg?.app_mode ?? null;
   // Full-sidebar mode hosts Feedback as a row in the sidebar foot (AppLayout),
-  // so the floating pill would double up — suppress it there. Same derivation
-  // AppLayout uses. Any other mode keeps the pill.
+  // so the floating pill would double up — suppress it there. The one rule
+  // AppLayout uses, width included: below md there is no foot to host it.
   const navMode = useNavMode();
   const navTopBar = useNavTopBar();
-  const fullSide = navMode === "side" && !navTopBar && !appMode;
+  const desktopWidth = useIsDesktopWidth();
+  const fullSide = isFullSidebar({ navMode, navTopBar, appMode: !!appMode, desktopWidth });
   const shouldRedirectToAppHome = !!appMode && !inManagedAppSurface(location.pathname);
 
   return (

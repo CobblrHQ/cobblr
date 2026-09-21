@@ -114,19 +114,27 @@ testSupportRouter.post("/test-support/run-migration/scan-category-axis", async (
 
 // Run ONE registered tenant sweep on ONE workspace, now, so a test can press
 // the real pass (the expiry sweeper, the arrival sweep) rather than a mirror
-// of its rule. Body: { name, org_id }. org_id is REQUIRED for the same reason
-// the run-migration doors take it: a pass walks every workspace, and 500
-// other tests hold workspaces in this database. The result is the walk's own
-// (visited, failed, per-workspace results), so a test can read what the pass
-// itself reported for that workspace.
+// of its rule. Body: { name, org_id, now? }. org_id is REQUIRED for the same
+// reason the run-migration doors take it: a pass walks every workspace, and
+// 500 other tests hold workspaces in this database. `now` (ISO) is the clock
+// the walk hands the pass, so a test can run the heads-up on one day and the
+// day-of on a later one (#3349: the day-of line was never pressed because the
+// sweeper read the wall clock). The result is the walk's own (visited,
+// failed, per-workspace results), so a test can read what the pass itself
+// reported for that workspace.
 testSupportRouter.post("/test-support/run-sweep", async (req, res, next) => {
   try {
-    const { name, org_id } = (req.body ?? {}) as { name?: string; org_id?: string };
+    const { name, org_id, now } = (req.body ?? {}) as { name?: string; org_id?: string; now?: string };
     if (!name || !org_id) {
-      res.status(400).json({ error: { code: "bad_request", message: "body needs { name, org_id }" } });
+      res.status(400).json({ error: { code: "bad_request", message: "body needs { name, org_id, now? }" } });
       return;
     }
-    res.json(await runTenantSweep(name, { orgIds: [org_id] }));
+    const at = now ? new Date(now) : undefined;
+    if (at && Number.isNaN(at.getTime())) {
+      res.status(400).json({ error: { code: "bad_request", message: "now must be an ISO date" } });
+      return;
+    }
+    res.json(await runTenantSweep(name, { orgIds: [org_id], ...(at ? { now: at } : {}) }));
   } catch (err) {
     next(err);
   }

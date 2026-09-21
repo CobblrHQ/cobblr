@@ -322,6 +322,13 @@ export async function effectiveAppliesTo(
 // not add a triggering-user capability check here — it breaks legitimate
 // automation. If finer control is wanted, gate wire CREATION by the target
 // action's capability, not wire FIRING.
+/** The action's own words for what it does ("Identify a scanned photo"),
+ *  for a surface that has only its id. Null for an unknown action. */
+export async function actionLabelOf(actionId: string): Promise<string | null> {
+  const row = await meta.selectFrom("entity_actions").select("label").where("id", "=", actionId).executeTakeFirst();
+  return row?.label?.trim() || null;
+}
+
 export async function invoke(
   actionId: string,
   ctx: ActionInvokeContext,

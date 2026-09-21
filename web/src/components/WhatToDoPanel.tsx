@@ -36,9 +36,8 @@ import { isSandboxSession } from "../lib/sandbox-session";
 import { DEMO_BARCODE } from "../lib/demo-barcode";
 import { useIsTouch } from "../lib/useIsTouch";
 import { AddPhotosTile } from "./AddPhotosTile";
-import { CaptureTile } from "./CaptureTile";
 import { itemEnriching } from "../pages/scan-status";
-import { materializeLanding, type MaterializeResult } from "../lib/materializeLanding";
+import { useMaterializeCapture } from "../lib/useMaterializeCapture";
 
 function firstSentence(s: string): string {
   const m = s.match(/^.*?[.!?](\s|$)/);
@@ -194,9 +193,6 @@ export function WhatToDoPanel({
   const [selectedModule, setSelectedModule] = useState<string | null>(null);
   const [selectedRecipe, setSelectedRecipe] = useState<CatalogBundle | null>(null);
   const [picked, setPicked] = useState<CatalogBundle | null>(null); // "details" modal only
-  // A capture whose matched bundle carries optional capabilities → open the
-  // feature-picker modal first (like the recipe path), then file the captures.
-  const [captureBundle, setCaptureBundle] = useState<CatalogBundle | null>(null);
 
   // ── data ────────────────────────────────────────────────────────────────
   const { registry, catalog } = useBundleCatalog();
@@ -334,30 +330,9 @@ export function WhatToDoPanel({
     },
     onError: (e) => toast.error(e instanceof Error ? e.message : "Couldn't add that"),
   });
-  // Landing after a materialize: the ?created strip powers the one-time success
-  // banner (A3). Shared by the one-shot path and the post-modal commit. The
-  // banner and the toast never both speak (materializeLanding).
-  const landAfterMaterialize = (r: MaterializeResult) => {
-    void qc.invalidateQueries();
-    const land = materializeLanding(r);
-    if (land.toast) toast.success(land.toast);
-    if (land.to) navigate(land.to);
-  };
-  const materializeMut = useMutation({
-    mutationFn: (bundleId: string) => api.materializeQuickstart(slug, bundleId),
-    onSuccess: landAfterMaterialize,
-    onError: (e) => toast.error(e instanceof Error ? e.message : "Couldn't set that up"),
-  });
-  // A matched capture's "Create X": if the bundle carries optional capabilities,
-  // open the feature-picker modal first (consistent with the recipe path) — its
-  // install runs, then onInstalled commits the captures (skip_install). A bundle
-  // with nothing to choose (or one not in the catalog) keeps the one-shot
-  // install+file materialize.
-  const startMaterialize = (bundleId: string) => {
-    const cb = catalog.find((b) => b.manifest.id === bundleId);
-    if (cb?.manifest.features?.length) setCaptureBundle(cb);
-    else materializeMut.mutate(bundleId);
-  };
+  // Setting a bundle up from a capture, the shared way (useMaterializeCapture):
+  // the picker first when there is something to choose, the landing rule after.
+  const materialize = useMaterializeCapture(slug);
   const discardMut = useMutation({
     mutationFn: (id: string) => api.discardScanItem(slug, id),
     onSuccess: () => void qc.invalidateQueries({ queryKey: ["capture-inbox", slug] }),
@@ -547,46 +522,6 @@ export function WhatToDoPanel({
   // and stay in col 3; SCANNED ones (barcode/photo/url/receipt) are a batch
   // stream and get their own queue section BELOW the whole panel.
   const typed = items.filter((i) => i.source_kind === "note");
-  const scanned = items.filter((i) => i.source_kind !== "note");
-  // Consolidate the scanner stream by its match (the author): "20 look like Filament
-  // Stash → create it & file all 20" beats 20 cards. Sorted biggest-first;
-  // unmatched/still-reading collapse to one review link at the end.
-  const scanGroups = useMemo(() => {
-    const map = new Map<string, { key: string; label: string; bundleId?: string; target?: { module: string; kind: string; instance?: string }; items: typeof scanned }>();
-    let residual = 0;
-    for (const it of scanned) {
-      const c = it.suggested_candidates?.[0];
-      if (!c) { residual++; continue; }
-      const key = c.bundle_external_id ? `b:${c.bundle_external_id}` : `i:${c.module}:${c.instance ?? ""}`;
-      const g = map.get(key) ?? {
-        key,
-        label: c.label,
-        ...(c.bundle_external_id
-          ? { bundleId: c.bundle_external_id }
-          : { target: { module: c.module, kind: c.kind, ...(c.instance ? { instance: c.instance } : {}) } }),
-        items: [] as typeof scanned,
-      };
-      g.items.push(it);
-      map.set(key, g);
-    }
-    return { groups: [...map.values()].sort((a, b) => b.items.length - a.items.length), residual };
-  }, [scanned]);
-  // "Add all N to <existing tracker>" — sequential confirms (small groups; no
-  // bulk endpoint needed).
-  const confirmGroupMut = useMutation({
-    mutationFn: async (g: { label: string; target: { module: string; kind: string; instance?: string }; ids: string[] }) => {
-      for (const id of g.ids) {
-        await api.confirmScanItem(slug, id, { target_module: g.target.module, target_kind: g.target.kind, ...(g.target.instance ? { instance: g.target.instance } : {}) });
-      }
-      return g;
-    },
-    onSuccess: (g) => {
-      void qc.invalidateQueries();
-      toast.success(`Filed ${g.ids.length} into ${g.label}.`);
-      if (g.target.instance) navigate(`/instances/${g.target.instance}`);
-    },
-    onError: (e) => toast.error(e instanceof Error ? e.message : "Couldn't file those"),
-  });
   // Collapse only when there's content AND no TYPED capture pending — scans
   // live below the panel, so they don't force it open.
   const hasPending = typed.length > 0;
@@ -651,7 +586,7 @@ export function WhatToDoPanel({
                   const enriching = itemEnriching(it);
                   const removing = discardMut.isPending && discardMut.variables === it.id;
                   const filing = confirmMut.isPending && confirmMut.variables?.id === it.id;
-                  const making = !!c?.bundle_external_id && materializeMut.isPending && materializeMut.variables === c.bundle_external_id;
+                  const making = !!c?.bundle_external_id && materialize.busy(c.bundle_external_id);
                   const ctaCls = "shrink-0 inline-flex items-center gap-1 rounded-md text-xs font-medium px-2.5 py-1 transition disabled:opacity-50";
                   return (
                     <li key={it.id} data-testid="captured-item" className="rounded-lg border border-line dark:border-slate-800 bg-surface dark:bg-slate-900 px-3 py-2">
@@ -684,7 +619,7 @@ export function WhatToDoPanel({
                               : <span className="inline-flex items-center gap-1"><Loader2 size={11} className="animate-spin" /> finding a home…</span>}
                           </span>
                           {c?.bundle_external_id ? (
-                            <button type="button" disabled={making} onClick={() => startMaterialize(c.bundle_external_id!)} className={ctaCls + " bg-cobble-600 text-white hover:bg-cobble-700"}>
+                            <button type="button" disabled={making} onClick={() => materialize.start(c.bundle_external_id!)} className={ctaCls + " bg-cobble-600 text-white hover:bg-cobble-700"}>
                               {making ? <Loader2 size={12} className="animate-spin" /> : <ArrowRight size={12} />} Create {c.label}
                             </button>
                           ) : c ? (
@@ -1056,100 +991,10 @@ export function WhatToDoPanel({
       {picked && (
         <BundleDetailModal key={picked.manifest.id} open onClose={() => setPicked(null)} slug={slug} mode="featured" manifest={picked.manifest} glyph={picked.glyph} blurb={picked.blurb} nextSteps={picked.next_steps} autoLand />
       )}
-      {captureBundle && (
-        <BundleDetailModal
-          key={`capture:${captureBundle.manifest.id}`}
-          open
-          onClose={() => setCaptureBundle(null)}
-          slug={slug}
-          mode="featured"
-          manifest={captureBundle.manifest}
-          glyph={captureBundle.glyph}
-          blurb={captureBundle.blurb}
-          nextSteps={captureBundle.next_steps}
-          // The modal installs with the chosen capabilities; then we file the
-          // captures that matched this bundle onto the tables it just created.
-          onInstalled={async () => {
-            const r = await api.materializeQuickstart(slug, captureBundle.manifest.id, { skip_install: true });
-            setCaptureBundle(null);
-            landAfterMaterialize(r);
-          }}
-        />
-      )}
+      {materialize.modal}
       </>)}
     </section>
 
-    {/* Scanned captures — the batch stream from your scanner/phone, OWN queue
-        below the guided panel (typed things stay in col 3). Capped preview;
-        heavy review lives on /scan (sessions, gallery, bulk tools). */}
-    {scanned.length > 0 && (
-      // The id is the landing spot for the dashboard's suggestions pointer
-      // ("Show me"); scroll-mt keeps the sticky header off the heading.
-      <section id="from-your-scanner" data-testid="scanner-lane" className="space-y-1.5 scroll-mt-20">
-        <div className="flex items-center gap-2">
-          <span className="text-[10px] font-mono uppercase tracking-widest text-faint dark:text-slate-500">// from your scanner - waiting to file ({scanned.length})</span>
-          <div className="flex-1" />
-          <Link to="/scan" className="text-xs text-accent hover:underline shrink-0">
-            review all in the Scan Inbox →
-          </Link>
-        </div>
-        <ul className="space-y-1.5">
-          {scanGroups.groups.map((g) => {
-            const busy = g.bundleId
-              ? materializeMut.isPending && materializeMut.variables === g.bundleId
-              : confirmGroupMut.isPending && confirmGroupMut.variables?.label === g.label;
-            return (
-              <li key={g.key} className="rounded-lg border border-cobble-300 dark:border-cobble-700 bg-cobble-50/50 dark:bg-cobble-900/15 px-3 py-2.5 space-y-1.5">
-                {/* Header row: count/label + a COMPACT inline CTA — the tile
-                    strip below gets the full card width (the author). */}
-                <div className="flex items-center gap-3 flex-wrap">
-                  <div className="flex-1 min-w-0 text-sm text-content dark:text-mortar-100">
-                    <strong>{g.items.length}</strong> look{g.items.length === 1 ? "s" : ""} like <span className="text-accent font-medium">{g.label}</span>
-                  </div>
-                  {g.bundleId ? (
-                    <button
-                      type="button"
-                      disabled={busy}
-                      onClick={() => startMaterialize(g.bundleId!)}
-                      className="shrink-0 inline-flex items-center gap-1 rounded-md bg-cobble-600 hover:bg-cobble-700 text-white text-xs font-medium px-2.5 py-1 transition disabled:opacity-50"
-                    >
-                      {busy ? <Loader2 size={12} className="animate-spin" /> : <ArrowRight size={12} />}
-                      Create {g.label} & file all {g.items.length}
-                    </button>
-                  ) : (
-                    <button
-                      type="button"
-                      disabled={busy}
-                      onClick={() => confirmGroupMut.mutate({ label: g.label, target: g.target!, ids: g.items.map((i) => i.id) })}
-                      className="shrink-0 inline-flex items-center gap-1 rounded-md bg-cobble-600 hover:bg-cobble-700 text-white text-xs font-medium px-2.5 py-1 transition disabled:opacity-50"
-                    >
-                      {busy ? <Loader2 size={12} className="animate-spin" /> : <ArrowRight size={12} />}
-                      Add all {g.items.length} to {g.label}
-                    </button>
-                  )}
-                </div>
-                {/* Full-width tile strip. */}
-                <div className="flex gap-1.5 overflow-x-auto pb-0.5">
-                  {g.items.slice(0, 12).map((i) => (
-                    <CaptureTile key={i.id} slug={slug} it={i} />
-                  ))}
-                  {g.items.length > 12 && (
-                    <Link to="/scan" className="flex-1 min-w-14 max-w-24 aspect-square rounded-md border border-line dark:border-slate-700 bg-subtle dark:bg-slate-800 grid place-items-center text-xs font-medium text-muted dark:text-slate-300 hover:border-accent hover:text-accent transition">
-                      +{g.items.length - 12}
-                    </Link>
-                  )}
-                </div>
-              </li>
-            );
-          })}
-        </ul>
-        {scanGroups.residual > 0 && (
-          <Link to="/scan" className="block rounded-lg border border-line dark:border-slate-800 bg-surface dark:bg-slate-900 px-3 py-2 text-xs text-faint dark:text-slate-400 hover:text-accent hover:border-accent transition">
-            {scanGroups.residual} unidentified or still reading - review in the Scan Inbox →
-          </Link>
-        )}
-      </section>
-    )}
     </>
   );
 }

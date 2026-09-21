@@ -10,19 +10,29 @@
 // the kind instead (e.g. `entity_kind.split(":")[1]` -> "machine").
 //
 // Runs against a committed BASELINE (scripts/ui-jargon-baseline.json) of
-// genuinely-technical uses where "rows" is honest (a DB-restore row count, a
-// CSV-file row count). Clear one and drop it from the baseline, or add a new
-// legitimately-technical one with `--write-baseline`. Any NEW jargon fails.
+// genuinely-technical uses where the id IS the object (a DB-restore row
+// count, a bundle composer's manifest rows, an operator console). Every entry
+// is `{ key, why }`, the reason a sentence somebody can disagree with, and the
+// lint refuses to run when one has no reason (scripts/lib/reasoned-baseline.ts).
+// A red build is answered with the ONE entry to add, never a bulk write: the
+// old `--write-baseline` recorded the whole current found-set, so somebody
+// with three new offences who followed the message in front of them
+// baselined all three plus whatever anybody added since (#3336). Clear a
+// line and delete its entry; an entry whose line is gone fails too.
 //
 //   cd <repo> && npx tsx scripts/lint-ui-jargon.ts
 //
-// Local + CI, free, zero deps.
+// Local + CI, free, zero deps. COBBLR_LINT_ROOT points it at a fixture tree
+// (the lint's own test).
 
-import { readdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
+import { readdirSync, readFileSync, statSync } from "node:fs";
+import { join, relative } from "node:path";
+import { entryToAdd, readReasonedBaseline, staleKeys } from "./lib/reasoned-baseline.js";
 
+const ROOT = process.env.COBBLR_LINT_ROOT ?? ".";
 const ROOTS = ["web/src", "modules"];
-const BASELINE = join("scripts", "ui-jargon-baseline.json");
+const BASELINE = join(ROOT, "scripts", "ui-jargon-baseline.json");
+const BASELINE_SHOWN = "scripts/ui-jargon-baseline.json";
 // A `}` closing a JSX expr / template `${}`, then the jargon noun, NOT followed
 // by `=` (a `rows={8}` attribute) or `.`/`[` (a `.rows` / `["rows"]` access).
 const COUNT_OFFENSE = /\}\s*(rows|records|entities)\b(?!\s*[=.[])/;
@@ -65,8 +75,23 @@ const PHRASE_OFFENSE = /ran a wire|wire failed|INVENTORY:PART|\bVENDING\b|\bGALL
 // then the same for `f`.
 const COUNT_SHAPE_OFFENSE = /(\d+|\})\s*w\s*[·•|/]\s*(\d+|\$\{[^}]*\})\s*f\b/;
 
+// An EVENT id or an ACTION id printed as text: the same routing-key mistake as
+// a kind id, one row down. The dashboard's activity feed printed
+// "core-scan.scan.received → identify-photo" in monospace as a first-timer's
+// row, and on a phone the truncation read "ran an automation core-scan...."
+// (#3299). A wire's row carries the action's own words (`said`,
+// `action_label`, written by the module) and web/src/lib/activity-words.ts
+// reads them; an id is never a word. So a JSX text slot printing a diff's
+// `event` / `action` / an `event_name` / `action_id` / `actionId` /
+// `eventName`, and `shortActionId(` printed as text, are offenses. Property
+// access and attributes are fine, as for kind ids.
+// (`{{event}}` inside a template string is a placeholder, not a slot: a
+// slot is not preceded by another brace.)
+const EVENT_ACTION_ID_OFFENSE =
+  /(?<![=$\w{])\{[\w.?!]*\b(event|eventName|event_name|action_id|actionId|reactor|reactor_id)\b(\s*\?\?\s*"[^"]*")?\}(?!\})|\{shortActionId\(/;
+
 const OFFENSE = new RegExp(
-  `${COUNT_OFFENSE.source}|${KIND_ID_OFFENSE.source}|${PHRASE_OFFENSE.source}|${COUNT_SHAPE_OFFENSE.source}`,
+  `${COUNT_OFFENSE.source}|${KIND_ID_OFFENSE.source}|${PHRASE_OFFENSE.source}|${COUNT_SHAPE_OFFENSE.source}|${EVENT_ACTION_ID_OFFENSE.source}`,
 );
 
 function tsxFiles(dir: string): string[] {
@@ -94,9 +119,19 @@ interface Finding {
   key: string;
 }
 
+// The baseline is read BEFORE any source file: a list that cannot be audited
+// guards nothing, so it does not get to.
+const baseline = readReasonedBaseline(BASELINE, BASELINE_SHOWN);
+if (!baseline.ok) {
+  console.error(`✗ ui-jargon lint: ${BASELINE_SHOWN} does not state its case, so the lint will not run:\n`);
+  for (const p of baseline.problems) console.error(`  ${p}`);
+  console.error(`\nEvery entry is { "key": "<file>::<line>", "why": "<a sentence somebody can disagree with>" }.`);
+  process.exit(1);
+}
+
 const found: Finding[] = [];
 for (const root of ROOTS) {
-  for (const file of tsxFiles(root)) {
+  for (const file of tsxFiles(join(ROOT, root))) {
     readFileSync(file, "utf8")
       .split("\n")
       .forEach((l, i) => {
@@ -104,34 +139,35 @@ for (const root of ROOTS) {
         if (/^\s*(\/\/|\*|\{\/\*|\/\*)/.test(l)) return;
         if (!OFFENSE.test(l)) return;
         const snippet = l.trim();
-        found.push({ file, line: i + 1, snippet, key: `${file}::${snippet}` });
+        const rel = relative(ROOT, file).split("\\").join("/");
+        found.push({ file: rel, line: i + 1, snippet, key: `${rel}::${snippet}` });
       });
   }
 }
 
-if (process.argv.includes("--write-baseline")) {
-  const keys = [...new Set(found.map((f) => f.key))].sort();
-  writeFileSync(BASELINE, JSON.stringify(keys, null, 2) + "\n");
-  console.log(`[lint:ui-jargon] wrote baseline with ${keys.length} entr${keys.length === 1 ? "y" : "ies"}.`);
-  process.exit(0);
-}
+const violations = found.filter((f) => !baseline.entries.has(f.key));
+const stale = staleKeys(baseline.entries, new Set(found.map((f) => f.key)));
 
-let baseline: Set<string>;
-try {
-  baseline = new Set(JSON.parse(readFileSync(BASELINE, "utf8")) as string[]);
-} catch {
-  baseline = new Set();
+if (stale.length > 0) {
+  console.error(`✗ ui-jargon lint: ${stale.length} entr${stale.length === 1 ? "y" : "ies"} in ${BASELINE_SHOWN} allow${stale.length === 1 ? "s" : ""} a line that no longer exists. Delete ${stale.length === 1 ? "it" : "them"}; an allowance for nothing is a habit:\n`);
+  for (const k of stale) console.error(`  ${k.slice(0, 140)}`);
 }
-const violations = found.filter((f) => !baseline.has(f.key));
 
 if (violations.length > 0) {
-  console.error(`✗ ui-jargon lint: ${violations.length} NEW user-facing string(s) that are DB-speak, a kind id, or a renderer id:\n`);
+  console.error(`✗ ui-jargon lint: ${violations.length} NEW user-facing string(s) that are DB-speak, a kind id, a renderer id, or an event/action id:\n`);
   for (const v of violations) console.error(`  ${v.file}:${v.line}  ${v.snippet.slice(0, 110)}`);
   console.error(`\nA count shown to a user must read in the item's OWN noun ("5 machines"), not "5 rows".
 A kind or renderer id is a routing key, not a word: use useKindLabels(slug).collection(kind) /
-.noun(kind) / .viewType(t) (web) or @cobblr/platform-contract/kind-label. If this is a
-genuinely technical string (a DB-restore row count, a config code), add it with:
-  npx tsx scripts/lint-ui-jargon.ts --write-baseline`);
-  process.exit(1);
+.noun(kind) / .viewType(t) (web) or @cobblr/platform-contract/kind-label. An event or action id
+is the same mistake one row down: a wire's activity row carries the action's own words
+(diff.said, diff.action_label); read them through web/src/lib/activity-words.ts.
+
+If, and only if, the id IS the object on this surface (a DB-restore row count, a bundle
+composer's manifest rows, an operator console), add exactly ${violations.length === 1 ? "this entry" : "these entries"} to
+${BASELINE_SHOWN}, in key order, each with a reason somebody can disagree with:
+`);
+  for (const v of violations) console.error(`${entryToAdd(v.key, "why the id is the object here, not a word the person reads")},`);
 }
-console.log(`✓ ui-jargon lint: no new DB-speak in user-facing counts (${baseline.size} baselined).`);
+
+if (stale.length > 0 || violations.length > 0) process.exit(1);
+console.log(`✓ ui-jargon lint: no new DB-speak in user-facing counts (${baseline.entries.size} baselined, each with a reason).`);

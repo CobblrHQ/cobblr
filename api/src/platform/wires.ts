@@ -19,8 +19,9 @@
 
 import { AsyncLocalStorage } from "node:async_hooks";
 import { sourceIdKey, type ActionInvokeActor, type WireEffect } from "@cobblr/platform-contract";
+import { actionActed } from "@cobblr/platform-contract/action-result";
 import { meta } from "../db/meta.js";
-import { invoke } from "./actions.js";
+import { actionLabelOf, invoke } from "./actions.js";
 import { baseKindOf, lookup, walkPairings } from "./entities.js";
 import { render } from "./templates.js";
 import { log as logActivity } from "./activity.js";
@@ -288,7 +289,7 @@ async function fireBindings(
         if (!ledger.claim({ action_id: b.action_id, target_kind: targetBaseKind, target_id: t.id, args: renderedArgs, template: rendered })) {
           continue;
         }
-        await invoke(b.action_id, {
+        const result = await invoke(b.action_id, {
           orgId,
           userId: actor.user_id,
           entity: { kind: t.kind, id: t.id, fields: entityFields },
@@ -308,8 +309,16 @@ async function fireBindings(
         });
         // Log a successful firing so the /wires "recent firings" panel
         // can show what's running, not just what's failing. The user
-        // can filter by action=wire_fired on /activity.
+        // can filter by action=wire_fired on /activity. The row carries
+        // WORDS beside the ids: the action's own sentence for what it did
+        // (`said`, the result's summary) and its declared label, so a feed
+        // reads "Identified a photo of Black PLA" rather than an event id
+        // and a reactor name (#3299). A declined action (nothing to do) is
+        // said as such, so a feed can leave it out.
         try {
+          const acted = actionActed(result);
+          const r = (result ?? {}) as { summary?: unknown; error?: unknown; skipped?: unknown };
+          const said = acted && typeof r.summary === "string" && r.summary.trim() && !r.summary.trim().startsWith("{") ? r.summary.trim().slice(0, 200) : null;
           await logActivity({
             orgId,
             userId: null,
@@ -318,6 +327,9 @@ async function fireBindings(
             diff: {
               event: eventName,
               action: b.action_id,
+              action_label: await actionLabelOf(b.action_id).catch(() => null),
+              ...(said ? { said } : {}),
+              ...(!acted ? { declined: true, ...(typeof r.error === "string" ? { reason: r.error.slice(0, 200) } : {}) } : {}),
               source_kind: b.source_kind,
               source_id: sourceId,
               target_kind: t.kind,
@@ -340,7 +352,7 @@ async function fireBindings(
           userId: null,
           action: "wire_failed",
           ref: { module: null, entityType: "binding", entityId: b.id },
-          diff: { event: eventName, action: b.action_id, error: message },
+          diff: { event: eventName, action: b.action_id, action_label: await actionLabelOf(b.action_id).catch(() => null), error: message },
         });
       } catch {
         /* swallow — already in error path */
