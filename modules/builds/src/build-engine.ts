@@ -192,8 +192,6 @@ export async function consumeComponents(
           trigger_type: "event",
         },
         args: { partId: c.part_id, delta: -dec, reason: `build:${buildId}` },
-        entityKind: "inventory:part",
-        entityId: c.part_id,
       })
       .catch((e) => console.error("[builds] adjust-stock failed:", (e as Error).message));
     consumed.push({ part_id: c.part_id, quantity: dec });

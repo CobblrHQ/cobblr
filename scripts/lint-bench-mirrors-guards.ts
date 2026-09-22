@@ -33,6 +33,9 @@ const GUARD_MODULES = [
   "action-args-guard",
   "act-dont-escort",
   "act-dont-describe",
+  "answer-dont-propose",
+  "ask-dont-rank",
+  "field-choices",
   "groundless-answer",
   "move-not-create",
   "reported-truthfully",
@@ -43,8 +46,6 @@ const GUARD_MODULES = [
 const NOT_IN_THE_BENCH: Record<string, string> = {
   "reported-truthfully":
     "the bench never APPLIES a write - it records the proposal and stops - so a turn there can never have a ledger to misdescribe",
-  "move-not-create":
-    "the bench's create path is terminal (a create IS the verdict), so there is no round after it for a bounce to change; no corpus case can reach it",
 };
 
 const chat = readFileSync(CHAT, "utf8");

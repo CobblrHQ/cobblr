@@ -20,6 +20,20 @@ export interface DevicePayload {
   delta?: number | null;
 }
 
+/** The connection a record is linked to, or "" when it is linked to none.
+ *  The mirror of applyToLinkedEntity's (connection, device) → entity read:
+ *  one table, both directions. */
+async function connectionFor(orgId: string, entity: { kind: string; id: string }): Promise<string> {
+  const db = (await platform().tenants.getDb(orgId)) as Kysely<CoreDevicesDB>;
+  const link = await db
+    .selectFrom("core_devices_links")
+    .select(["connection_id"])
+    .where("entity_kind", "=", entity.kind)
+    .where("entity_id", "=", entity.id)
+    .executeTakeFirst();
+  return link?.connection_id ?? "";
+}
+
 /** Resolve (connection, device) → entity link, then perform the link's `mode`
  *  by invoking the entity-owning module's action. Pure no-op (never throws to the
  *  caller's flow) when there's no link or the mode isn't supported yet. */
@@ -54,8 +68,6 @@ export async function applyToLinkedEntity(
         trigger_type: "event",
       },
       args,
-      entityKind: link.entity_kind,
-      entityId: link.entity_id,
     });
 
   // Ask the entity-OWNING module how this reading's mode maps to one of its
@@ -96,10 +108,22 @@ export function registerActionHandlers(): void {
   // module owns connections.
   platform().actions.registerHandler("core-devices.run-command", async (ctx) => {
     const args = (ctx.args as Record<string, unknown> | null) ?? {};
-    const connection = typeof args.connection === "string" ? args.connection : "";
     const command = typeof args.command === "string" ? args.command : "";
-    if (!connection || !command) {
-      return { ok: false, skipped: true, reason: "missing `connection` or `command` arg" };
+    // Run ON a record ("open the valve on the greenhouse bed"), the record
+    // says which connection: core-devices holds the link both ways, and
+    // reading it here is what lets the action be asked for rather than only
+    // wired (#3378). The wire's own `connection` arg still wins.
+    const named = typeof args.connection === "string" ? args.connection : "";
+    const linked = named || !ctx.entity ? "" : await connectionFor(ctx.orgId, ctx.entity);
+    const connection = named || linked;
+    if (!command) return { ok: false, error: "which command? pass `command` (what to send to the device)" };
+    if (!connection) {
+      return {
+        ok: false,
+        error: ctx.entity
+          ? "no device connection is linked to this record; pass `connection` (its id or name)"
+          : "which connection? run this on a record linked to a device, or pass `connection`",
+      };
     }
     // Everything except the two control args is the command's params.
     const { connection: _c, command: _cmd, ...params } = args;

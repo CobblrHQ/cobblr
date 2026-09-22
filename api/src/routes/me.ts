@@ -2,6 +2,7 @@
 // the shape /auth/login returns so the web can reuse the same hook.
 
 import { OPERATOR_ONLY_ACTIONS } from "../platform/activity.js";
+import { forgetTimeZone } from "../platform/person-day.js";
 import { TITLE_FORMATS, type TitleFormat } from "@cobblr/platform-contract/display-identity";
 import { Router } from "express";
 import { randomBytes } from "node:crypto";
@@ -21,16 +22,17 @@ import * as activity from "../platform/activity.js";
 import { listMembershipsForUser } from "../platform/memberships.js";
 import { hasAuthEmailSender, sendAuthEmail } from "../platform/hosted-seams.js";
 import { selfServeInvitesEnabled, inviteExpiresAt } from "../auth/signup-gate.js";
+import { browserBase, identityCallbackEnabled } from "../auth/identity-client.js";
+import { hardDeleteUser, SoleOwnerRefusal, soleOwnedWorkspaces } from "../platform/delete-user.js";
 import { issueAndSendVerifyEmail } from "./auth.js";
 import { captureBlueprint } from "./blueprint.js";
 import {
   discordOAuthConfigured,
-  discordInviteUrl,
   signOAuthState,
   verifyOAuthState,
   discordAuthorizeUrl,
   exchangeCodeForIdentity, discordAppId } from "../platform/discord-oauth.js";
-import { communityLinks } from "../platform/community.js";
+import { communityLinks, discordInviteUrl } from "../platform/community.js";
 import { sendDiscordDm } from "../platform/discord-bot-trigger.js";
 import { discordConnectionState, needsAppStamp } from "../platform/discord-connection.js";
 import { publicBaseUrl } from "../platform/public-url.js";
@@ -59,7 +61,7 @@ meRouter.get("/me", requireAuth, async (req, res) => {
       api_token_id: req.session!.api_token_id,
       is_platform_admin: req.session!.is_platform_admin,
       // Community link for the signed-in chrome (account menu, feedback modal);
-      // null unless DISCORD_INVITE_URL is configured.
+      // null unless the community invite is configured.
       discord_invite_url: discordInviteUrl() || null,
       community_links: communityLinks(),
     },
@@ -356,6 +358,89 @@ meRouter.post("/me/sign-out-everywhere", requireAuth, async (req, res, next) => 
   }
 });
 
+// DELETE /me — the person deletes their own account. Confirmed with the
+// current password; an account that came through the central identity
+// hand-off and has no password of its own is sent to the account service,
+// whose deletion calls back here (POST /auth/identity/deleted). Refused while
+// the person is the only owner of a live workspace, with the list, so no
+// shared workspace vanishes because one member left; the operator door can
+// take the workspaces along, this one deliberately cannot. Every token dies
+// with the account. There was no door at all for this until #3276: a
+// throwaway account could only be removed by hand-written SQL.
+// AI-REACH: exempt — a person ending their own account, as themselves, with
+// their password; never on behalf of a workspace, never by an agent.
+const DeleteMeBody = z.object({ current_password: z.string().optional() });
+meRouter.delete("/me", requireAuth, async (req, res, next) => {
+  try {
+    if (req.session!.auth_method !== "session") {
+      res.status(403).json({ error: { code: "session_required", message: "Sign in with your account, not a token, to delete it." } });
+      return;
+    }
+    const parsed = DeleteMeBody.safeParse(req.body ?? {});
+    if (!parsed.success) {
+      res.status(400).json({ error: { code: "invalid_body", message: "Bad request body." } });
+      return;
+    }
+    const userId = req.session!.id;
+    const row = await meta
+      .selectFrom("users")
+      .select(["id", "email", "password_hash", "identity_id"])
+      .where("id", "=", userId)
+      .executeTakeFirstOrThrow();
+    const hasPassword = row.password_hash.length > 0;
+    if (!hasPassword && row.identity_id && identityCallbackEnabled()) {
+      // The account of record is upstream; deleting there deletes here (that
+      // is what POST /auth/identity/deleted is for). The message names the
+      // operator as well as the portal on purpose: the portal's own delete is
+      // CobblrHQ/identity#29 and is not shipped yet, so linking only the portal
+      // sends this person to look for a button that does not exist. Both
+      // sentences stay true once it does land.
+      res.status(409).json({
+        error: {
+          code: "delete_at_identity",
+          message:
+            "This account is managed by your Cobblr account, so it is deleted there and removed here too. If you cannot find that option yet, ask whoever runs this instance to remove your account.",
+          details: { portal: browserBase() },
+        },
+      });
+      return;
+    }
+    // The refusals come before the password so the page can ask with an
+    // empty body and learn which of the three it is about to show, without
+    // making the person type their password to be told "not yet".
+    const sole = await soleOwnedWorkspaces(userId);
+    if (sole.length > 0) {
+      res.status(409).json({
+        error: {
+          code: "sole_owner",
+          message: "You are the only owner of a workspace. Delete it, or make somebody else an owner, first.",
+          details: { workspaces: sole.map((w) => ({ slug: w.slug, name: w.name })) },
+        },
+      });
+      return;
+    }
+    if (!parsed.data.current_password || !(await verifyPassword(parsed.data.current_password, row.password_hash))) {
+      res.status(403).json({ error: { code: "bad_current_password", message: "Current password is incorrect." } });
+      return;
+    }
+    try {
+      const result = await hardDeleteUser(userId);
+      console.log(`[me/delete] account ${userId} ${result.mode}`);
+    } catch (err) {
+      if (err instanceof SoleOwnerRefusal) {
+        res.status(409).json({
+          error: { code: "sole_owner", message: "You are the only owner of a workspace. Delete it, or make somebody else an owner, first.", details: { workspaces: err.workspaces.map((w) => ({ slug: w.slug, name: w.name })) } },
+        });
+        return;
+      }
+      throw err;
+    }
+    res.status(204).end();
+  } catch (err) {
+    next(err);
+  }
+});
+
 // M3 from BACKLOG: per-user activity feed unioned across every
 // workspace the caller is a member of. The activity_log table has
 // the (user_id, org_id) shape already, so this is one indexed query.
@@ -549,6 +634,10 @@ meRouter.put("/me/delivery-windows", requireAuth, async (req, res, next) => {
         }),
       )
       .execute();
+    // Their zone is what the day rule reads (person-day.ts caches it for a
+    // minute); a person who just corrected it must not get yesterday's answer
+    // for the next sixty seconds.
+    forgetTimeZone(req.session!.id);
     res.json({ ok: true, channel: b.channel, mode: b.mode });
   } catch (err) {
     next(err);

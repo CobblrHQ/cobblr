@@ -18,8 +18,15 @@
 // same invoke_action rail - so Cobb and MCP keep it. That is the fix, not
 // deleting the action.
 //
-// Wire-only actions (`userInvokable: false`) are exempt: they are event
-// targets, never buttons.
+// Wire-only actions (`wireOnly: true`) and internal ones are exempt: they
+// are event targets, never buttons and never offered to the assistant.
+// `userInvokable: false` used to be the exemption, as "wire-only", and since
+// #3195 that is not what it means: such an action is not a button but IS
+// offered to the assistant, which invokes it ON a record. The exemption
+// outlived its reason and hid machines:record-usage, whose handler read
+// `args.machineId` and never `ctx.entity`, so "the Rostock Max ran four
+// hours yesterday" was refused as "no machineId" on every bench run for a
+// week while its marker blamed the prompt (#3142, the 2026-09-22 nightly).
 
 import ts from "typescript";
 import { readdirSync, readFileSync, statSync } from "node:fs";
@@ -66,7 +73,11 @@ for (const f of files) {
       const uses =
         /\bctx\.entity\b/.test(body) ||
         /\{[^}]*\bentity\b[^}]*\}\s*=\s*ctx\b/.test(body) ||
-        /\brequireActionEntity\s*\(/.test(body);
+        /\brequireActionEntity\s*\(/.test(body) ||
+        // Hands the WHOLE context on, record included: a deprecated alias
+        // delegating to its canonical action (digifab:run-command). Read as
+        // "ignores the record", it accused the one shape that cannot (#3378).
+        /\binvoke\([^)]*,\s*ctx\s*\)/.test(body);
       handlerUsesEntity.set(name, uses || (handlerUsesEntity.get(name) ?? false));
     }
     ts.forEachChild(n, visit);
@@ -82,7 +93,21 @@ const prop = (o: ts.ObjectLiteralExpression, key: string): ts.Expression | null 
 };
 const text = (e: ts.Expression | null): string => (e ? e.getText().replace(/["']| as const/g, "") : "");
 
+/** Actions the narrowed exemption exposed (2026-09-22) that are not yet
+ *  resolved, each with the call it needs; #3378 retires them one by one.
+ *  A name here is a known debt with an owner, never a reason to add
+ *  another: a new violation is a red, whatever this list says. */
+/** Actions the narrowed exemption exposed (2026-09-22) that are not yet
+ *  resolved, each with the call it needs; #3378 retires them one by one.
+ *  A name here is a known debt with an owner, never a reason to add
+ *  another: a new violation is a red, whatever this list says.
+ *  Emptied 2026-09-22: four handlers took the record they run on, four
+ *  kind-wide sweeps said `scope: "workspace"`, and the ninth was this
+ *  check not knowing that handing the whole ctx on carries the record. */
+const STILL_IGNORING_THE_RECORD: Record<string, string> = {};
+
 const violations: Array<{ file: string; line: number; id: string; handler: string }> = [];
+const carried: string[] = [];
 
 for (const f of files.filter((x) => x.endsWith("module.ts"))) {
   const sf = parse(f);
@@ -92,12 +117,16 @@ for (const f of files.filter((x) => x.endsWith("module.ts"))) {
       const handler = prop(n, "invokeHandler");
       if (id && handler) {
         const scope = text(prop(n, "scope")) || "entity";
-        const invokable = text(prop(n, "userInvokable"));
+        const wireOnly = text(prop(n, "wireOnly")) === "true";
+        const internal = text(prop(n, "internal")) === "true";
         const name = text(handler);
         const known = handlerUsesEntity.has(name);
-        if (scope === "entity" && invokable !== "false" && known && !handlerUsesEntity.get(name)) {
-          const { line } = sf.getLineAndCharacterOfPosition(n.getStart(sf));
-          violations.push({ file: relative(ROOT, f), line: line + 1, id: text(id), handler: name });
+        if (scope === "entity" && !wireOnly && !internal && known && !handlerUsesEntity.get(name)) {
+          if (STILL_IGNORING_THE_RECORD[text(id)]) carried.push(text(id));
+          else {
+            const { line } = sf.getLineAndCharacterOfPosition(n.getStart(sf));
+            violations.push({ file: relative(ROOT, f), line: line + 1, id: text(id), handler: name });
+          }
         }
       }
     }
@@ -115,9 +144,20 @@ if (violations.length > 0) {
     'If it operates on the workspace rather than one record, declare\n' +
       '`scope: "workspace"`: it stops rendering as an entity-detail button and\n' +
       "stays reachable through invoke_action, so Cobb and MCP keep it.\n" +
-      "If it is a wire target, set `userInvokable: false`.\n",
+      "If it is only ever a wire target, set `wireOnly: true` (`userInvokable: false`\n" +
+      "still offers it to the assistant, which runs it on a record).\n",
   );
   process.exit(1);
 }
 
-console.log(`lint:entity-action-uses-entity ✓ ${handlerUsesEntity.size} handlers checked; every record button uses its record.`);
+// A name on the list that no longer violates is a debt paid: say so, and
+// make its line go, so the list only ever shrinks.
+const paid = Object.keys(STILL_IGNORING_THE_RECORD).filter((id) => !carried.includes(id));
+if (paid.length) {
+  console.error(`lint:entity-action-uses-entity - ${paid.length} name(s) on STILL_IGNORING_THE_RECORD no longer violate; remove them: ${paid.join(", ")}`);
+  process.exit(1);
+}
+console.log(
+  `lint:entity-action-uses-entity ✓ ${handlerUsesEntity.size} handlers checked; every record button uses its record` +
+  (carried.length ? ` (${carried.length} carried on #3378: ${carried.join(", ")})` : "") + ".",
+);

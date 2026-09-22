@@ -48,6 +48,10 @@ export interface OwnsCapability extends Base {
   also?: RegExp;
   /** What to do instead. */
   use: string;
+  /** Files in `scope` that do a DIFFERENT thing with the same shape, each with
+   *  why. Named one by one, never a pattern, so an exemption is a decision
+   *  somebody wrote down, and one whose file is gone fails as a stale scope. */
+  except?: Record<string, string>;
 }
 
 /** Every render site of a component must pass props it needs to be correct. */
@@ -913,5 +917,27 @@ export const CAPABILITIES: Capability[] = [
     ],
     detect: /\.sharedCache\.put\(\s*BARCODE_NS\b/,
     use: "return the outcome to enrich.ts; a new writer goes beside cacheDurable/cacheHit there and takes DurableBarcodeOutcome (durableOutcome(result) is the one filter). A workspace's own photo-proven identity is rememberLocalIdentity, tenant cache only",
+  },
+  {
+    kind: "owns",
+    id: "lints:strip-comments",
+    what: "blanking comments out of source before a lint matches it: one scanner, lib/source-scan.ts's stripComments, which knows where a comment starts",
+    why:
+      "a regex pair (block comments first, then line comments) cannot tell a `/*` inside a string or a line comment from a real one, so it " +
+      "opens a comment that runs to the next `*/` anywhere in the file: it blanked 419 lines of ScanPage.tsx and the capability rules " +
+      "reported clean over code they had never read (2026-08-22). The scanner replaced it there; three lints kept private copies and were " +
+      "blind to hundreds of lines of the code they guard, rule C of module isolation to 59 lines of server.ts (#3476)",
+    owner: "scripts/lib/source-scan.ts",
+    scope: ["scripts/lint-*.ts", "scripts/lib/*.ts", "scripts/lib/*.mjs"],
+    // The regex pair's opening half (a lazy block match), or a private stripper
+    // by name. A bare `/\/\*$/` (a route's `/*` suffix) is not a stripper.
+    detect: /\bfunction\s+stripComments\b|\bconst\s+stripComments\s*=|\.replace\(\/\\\/\\\*\[(?:\\s\\S|\^)\]\*\?/,
+    except: {
+      "scripts/lint-deprecated-table-fks.ts": "strips SQL (`--` and block comments) from migrations; SQL is not the language the scanner reads",
+      "scripts/lint-migration-additive.ts": "strips SQL, dollar-quoted bodies and quoted literals from migrations; not TypeScript",
+      "scripts/lint-fixed-chrome.ts": "the regex here is checkCss, over stylesheets: CSS has no `//` comments, and a `url(http://…)` would read as one to the TS scanner",
+      "scripts/lint-inline-style-overrides.ts": "strips comments from CSS, which has only block comments; the TS scanner would take `//` in a url() for a line comment",
+    },
+    use: 'import { stripComments } from "./lib/source-scan.js" (from scripts/lib: "./source-scan.js")',
   },
 ];

@@ -11,7 +11,7 @@ import { Router } from "express";
 import { sql } from "kysely";
 import { platform } from "@cobblr/platform-contract";
 import { z } from "zod";
-import { tenantContext, tenantDb } from "../db.js";
+import { tenantContext, tenantDb, sessionUser } from "../db.js";
 import { asyncHandler, badBody, requireRole } from "./util.js";
 import { logMeasurement } from "./record.js";
 
@@ -97,6 +97,13 @@ metricsRouter.post(
       .returningAll()
       .executeTakeFirstOrThrow();
     void platform().events.emit("tracking.metric.created", { orgId: ctx.org.id, metricId: row.id });
+    await platform().activity.log({
+      orgId: ctx.org.id,
+      userId: sessionUser(req)?.id ?? null,
+      action: "metric_created",
+      ref: { module: "tracking", entityType: "metric", entityId: row.id },
+      diff: { name: row.name },
+    });
     res.status(201).json({ ...row, goal_value: num(row.goal_value), latest_value: null, measurement_count: 0, progress: null });
   }),
 );
@@ -155,6 +162,12 @@ metricsRouter.delete(
     const ctx = tenantContext(req);
     await db.deleteFrom("tracking_metrics").where("id", "=", req.params.id!).execute();
     void platform().events.emit("tracking.metric.deleted", { orgId: ctx.org.id, metricId: req.params.id });
+    await platform().activity.log({
+      orgId: ctx.org.id,
+      userId: sessionUser(req)?.id ?? null,
+      action: "metric_deleted",
+      ref: { module: "tracking", entityType: "metric", entityId: req.params.id! },
+    });
     res.status(204).end();
   }),
 );
@@ -180,6 +193,7 @@ metricsRouter.post(
     const row = await logMeasurement({
       db,
       orgId: ctx.org.id,
+      userId: sessionUser(req)?.id ?? null,
       metric,
       value: parsed.data.value,
       note: parsed.data.note ?? null,

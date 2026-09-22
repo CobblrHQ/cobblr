@@ -101,7 +101,7 @@ export const PLACEMENT: PlacementRow[] = [
     dir: "packages/platform-web/src/",
     exemplar: "packages/platform-web/src/fieldControl.ts",
     why: "The shared consumers (CustomFieldsPanel, FieldRenderer, Modal) live in @cobblr/platform-web, and that package cannot import web/src. A primitive put in web/src/components would be unreachable from the very panel that every record page renders, so a second copy appears there. The rule has one home where both the app and the package import it.",
-    lints: ["lint:field-pack", "lint:hooks-after-return", "lint:no-emdash", "lint:ui-jargon", "lint:phone-input-font", "lint:fixed-chrome", "lint:sticky-under-header", "lint:field-pack"],
+    lints: ["lint:field-pack", "lint:hooks-after-return", "lint:no-emdash", "lint:ui-jargon", "lint:phone-input-font", "lint:fixed-chrome", "lint:sticky-under-header", "lint:field-pack", "lint:dark-line-reads"],
     notes: [
       "Not every generic component belongs here: only one a package component must reach. A widget only pages render is a generic-web-component in web/src/components.",
       "Pair the pure rule (a .ts file with tests) with the component that renders it (a .tsx), the way field-pack.ts and FieldPack.tsx are paired.",
@@ -133,7 +133,7 @@ export const PLACEMENT: PlacementRow[] = [
     dir: "modules/<name>/",
     exemplar: "modules/core-locations/src/module.ts",
     why: "Band, capability-vs-domain naming and instanceability are decided BEFORE any code, because renaming touches the package, tablePrefix, every id, routes and bundles.",
-    lints: ["lint:manifests", "lint:isolation", "lint:versions", "lint:ai-reach"],
+    lints: ["lint:manifests", "lint:isolation", "lint:versions", "lint:ai-reach", "lint:kind-create-logs"],
     notes: ["Load the `authoring-a-module` skill first — it owns those three decisions."],
   },
   {
@@ -143,7 +143,7 @@ export const PLACEMENT: PlacementRow[] = [
     dir: "packages/platform-contract/src/",
     exemplar: "packages/platform-contract/src/scan-triage.ts",
     why: "A rule two surfaces would otherwise each derive lives once in @cobblr/platform-contract, where the api, the web app, a module and the assistant all import it; a surface RENDERS the answer and never derives its own.",
-    lints: ["lint:contract-sibling-imports", "lint:gated-state-has-a-producer", "lint:scan-doubt-from-contract"],
+    lints: ["lint:contract-sibling-imports", "lint:gated-state-has-a-producer", "lint:scan-doubt-from-contract", "lint:one-day-rule"],
     notes: [
       "Every optional field on the resolver's context must be PRODUCED by a surface before it is read; a field nothing sets is coverage that is not there (lint:gated-state-has-a-producer).",
       "The surface that calls the resolver builds its context in ONE place (web/src/pages/scanViewer.ts is the shape), and a surface test takes it from there, never from a hand-built object.",
@@ -225,7 +225,7 @@ export const PLACEMENT: PlacementRow[] = [
     dir: "modules/<name>/src/",
     exemplar: "modules/labels/src/api/handlers.ts",
     why: "An action is the only door that both a person, a wire and the assistant can come through, so capability belongs there rather than in a bespoke route.",
-    lints: ["lint:ai-reach", "lint:ai-reach-routes", "lint:ai-coverage", "lint:action-predicates"],
+    lints: ["lint:ai-reach", "lint:ai-reach-routes", "lint:ai-coverage", "lint:action-predicates", "lint:action-copy-no-internal-nouns", "lint:list-args-take-arrays"],
     notes: ["A mutating route with no action must carry `// AI-REACH: <reason>` at the route."],
   },
   {
@@ -280,7 +280,7 @@ export const PLACEMENT: PlacementRow[] = [
     dir: ".forgejo/workflows/",
     exemplar: ".forgejo/workflows/ci.yml",
     why: "Forgejo keeps no job logs and parses each job on its own: a step that ships no log is unreadable after the fact, a label nobody carries never runs, and a YAML anchor across jobs invalidates the whole file.",
-    lints: ["lint:ci-sink", "lint:ci-runner-labels", "lint:ci-lanes", "lint:workflow-yaml", "lint:latest-monotonic", "lint:ci-pr-any-base", "lint:forgejo-pagination", "lint:main-runs-complete", "lint:catalog-replay", "lint:ci-exit-read-under-set-e"],
+    lints: ["lint:ci-sink", "lint:ci-runner-labels", "lint:ci-lanes", "lint:workflow-yaml", "lint:latest-monotonic", "lint:ci-pr-any-base", "lint:forgejo-pagination", "lint:main-runs-complete", "lint:catalog-replay", "lint:ci-exit-read-under-set-e", "lint:dockerfile-copies-ship"],
     notes: [
       "A step's log is a pipe (`| tee`): a harness that prints a child's captured output must end by process.exitCode, never process.exit(), or the failing run's log stops at 64 KiB with no failing test in it (#3167; lint:cli-flush-before-exit).",
       "The `test` and `test-full` jobs are one job in two places; edit the gate, copy its env+steps over the tracker.",
@@ -295,7 +295,7 @@ export const PLACEMENT: PlacementRow[] = [
     dir: "scripts/",
     exemplar: "scripts/lint-background-loops.ts",
     why: "Bespoke scripts enforce invariants a general linter cannot express; there is deliberately no ESLint here.",
-    lints: ["lint:placement", "lint:lints-are-wired", "lint:scripts-typecheck", "lint:shipped-script-imports", "lint:corpus-known-red-live", "lint:dns-probe-unpinned", "lint:tick-problems-keyed", "lint:box-cron-offsets"],
+    lints: ["lint:placement", "lint:lints-are-wired", "lint:scripts-typecheck", "lint:shipped-script-imports", "lint:corpus-known-red-live", "lint:dns-probe-unpinned", "lint:tick-problems-keyed", "lint:box-cron-offsets", "lint:no-inline-script-quotes"],
     notes: [
       "Start with scripts/new-lint.sh <slug> --row <row> --rule \"<sentence>\": it writes the file from scripts/templates/lint.template.ts, registers lint:<slug> in package.json, claims the row, and runs it once (skill: writing-a-lint).",
       "A 'one implementation only' rule is a ROW in scripts/capabilities.ts, not a new script.",
@@ -338,7 +338,7 @@ export const PLACEMENT: PlacementRow[] = [
     dir: "e2e/",
     exemplar: "e2e/mobile-overflow.mjs",
     why: "The nightly yardstick batch runs these on the shared box; a screenshot-only script proves nothing and belongs to the demos instead.",
-    lints: ["lint:ci-sink", "lint:driver-hooks-live", "lint:doc-shots-prod-look"],
+    lints: ["lint:ci-sink", "lint:driver-hooks-live", "lint:doc-shots-prod-look", "lint:scan-fixture-category"],
     notes: [
       "Add it to scripts/run-e2e-yardsticks.sh to make it gate; otherwise nobody runs it.",
       "Seed the data the assertion needs. A sweep over an empty list passes vacuously — assert a positive control first.",
@@ -378,7 +378,7 @@ export const PLACEMENT: PlacementRow[] = [
     dir: "web/src/lib/featured-bundles.ts",
     exemplar: "bundles/computers.json",
     why: "featured-bundles.ts is the ONE source; bundles/*.json is GENERATED from it. Editing the json directly is the drift this pair already suffered once, and lint:bundles-synced now catches it.",
-    lints: ["lint:bundles-synced", "lint:bundle-schema", "lint:bundle-content", "lint:bundle-quality", "lint:bundle-id-noun", "lint:bundle-keyword-collisions", "lint:versions", "lint:platform-owned-roles", "lint:bundle-fields-on-own-kinds", "lint:identifier-fields-declared"],
+    lints: ["lint:bundles-synced", "lint:bundle-schema", "lint:bundle-content", "lint:bundle-quality", "lint:bundle-id-noun", "lint:bundle-keyword-collisions", "lint:versions", "lint:platform-owned-roles", "lint:bundle-fields-on-own-kinds", "lint:identifier-fields-declared", "lint:view-group-by-bare"],
     notes: [
       "Author the entry in web/src/lib/featured-bundles.ts, then run `npx tsx scripts/sync-bundles.ts` to regenerate bundles/<slug>.json. Never hand-edit the json.",
       "Then `npx tsx scripts/lint-bundle-content.ts --write` to record it in bundles/bundle-versions.lock.json, or lint:bundle-content fails on a new bundle.",

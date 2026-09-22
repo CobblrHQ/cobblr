@@ -25,6 +25,7 @@ import { usePlatformWeb, useFlowHost } from "./context";
 import { printDirectiveOf, runPrintDirective } from "./print-directive";
 import { printNextStep, refusalKind, verdictOf } from "./action-outcome-compose";
 import { runAction } from "./run-action";
+import { useLater } from "./use-later";
 
 export interface InvokeTarget {
   entityKind: string;
@@ -51,6 +52,8 @@ export function useInvokeEntityAction({ entityKind, entityId }: InvokeTarget) {
   const [note, setNote] = useState<string | null>(null);
   // Why the last run did not happen, in the action's own words, until dismissed.
   const [failure, setFailure] = useState<string | null>(null);
+  // Every clear-it-later below dies with the surface (use-later.ts, #3463).
+  const later = useLater();
 
   const invoke = useMutation({
     // Through the one door (run-action.ts), which refreshes every query
@@ -65,7 +68,7 @@ export function useInvokeEntityAction({ entityKind, entityId }: InvokeTarget) {
     onSuccess: (data) => {
       setFailure(null);
       setFlash("ok");
-      setTimeout(() => setFlash(null), 1200);
+      later.after("flash", 1200, () => setFlash(null));
       void qc.invalidateQueries({ queryKey: ["labels-queue"] });
       // The verdict is the handler's own sentence when it wrote one ("Queued,
       // 3 in the queue"); it stays until the next press or a later step
@@ -73,7 +76,7 @@ export function useInvokeEntityAction({ entityKind, entityId }: InvokeTarget) {
       const verdict = verdictOf((data as { result?: unknown })?.result, "");
       if (verdict) {
         setNote(verdict);
-        setTimeout(() => setNote((cur) => (cur === verdict ? null : cur)), 6000);
+        later.after("note", 6000, () => setNote((cur) => (cur === verdict ? null : cur)));
       }
 
       // A result may carry a `ui` directive asking the shell to open a
@@ -104,16 +107,16 @@ export function useInvokeEntityAction({ entityKind, entityId }: InvokeTarget) {
           .then((r) => {
             if (r.printed) void qc.invalidateQueries({ queryKey: ["labels-queue"] });
             const next = printNextStep({ result: r });
-            if (next) {
+            if (next && later.alive) {
               setNote((cur) => (cur ? `${cur}. ${next}` : next));
-              setTimeout(() => setNote(null), 8000);
+              later.after("note", 8000, () => setNote(null));
             }
           })
           .catch((e: unknown) => {
             const next = printNextStep({ error: e });
-            if (next) {
+            if (next && later.alive) {
               setNote((cur) => (cur ? `${cur}. ${next}` : next));
-              setTimeout(() => setNote(null), 8000);
+              later.after("note", 8000, () => setNote(null));
             }
           });
       }
@@ -127,12 +130,12 @@ export function useInvokeEntityAction({ entityKind, entityId }: InvokeTarget) {
       const { kind, words } = refusalKind(err);
       if (kind === "declined") {
         setNote(words);
-        setTimeout(() => setNote((cur) => (cur === words ? null : cur)), 6000);
+        later.after("note", 6000, () => setNote((cur) => (cur === words ? null : cur)));
         return;
       }
       setFailure(words);
       setFlash("err");
-      setTimeout(() => setFlash(null), 2400);
+      later.after("flash", 2400, () => setFlash(null));
     },
   });
 

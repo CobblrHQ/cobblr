@@ -14,6 +14,7 @@
 
 import { readFileSync, readdirSync, statSync } from "node:fs";
 import { join } from "node:path";
+import { stripComments } from "./lib/source-scan.js";
 
 const ROOTS = ["api/src", "modules"];
 const ALLOW = ["api/src/platform/feedback-reply-text.ts"]; // defines the defaults
@@ -43,11 +44,15 @@ const hits: string[] = [];
 for (const root of ROOTS) {
   for (const file of walk(root)) {
     if (ALLOW.some((a) => file.endsWith(a) || file === a)) continue;
-    const lines = readFileSync(file, "utf8").split("\n");
+    const raw = readFileSync(file, "utf8");
+    const lines = raw.split("\n");
+    // Stripped as a FILE, not line by line: a block comment's middle lines
+    // have no `/*` of their own to be recognised by.
+    const code = stripComments(raw).split("\n");
     lines.forEach((line, i) => {
       // Only a string LITERAL counts. A comment explaining the history is fine
       // and the fix itself carries one.
-      const withoutComment = line.replace(/\/\/.*$/, "").replace(/\/\*[\s\S]*?\*\//g, "");
+      const withoutComment = code[i] ?? "";
       if (!/["'`]/.test(withoutComment)) return;
       if (CLAIMS.some((c) => c.test(withoutComment))) hits.push(`${file}:${i + 1}  ${line.trim().slice(0, 100)}`);
     });

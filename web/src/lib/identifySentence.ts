@@ -69,3 +69,15 @@ export function namelessRemedy(why: NamelessReason, failure: IdentifyFailure | n
   if (words.retry) return { text: words.detail, recovery: "retry" };
   return null;
 }
+
+/** Whether the nameless card's heading already says the whole thing, so
+ *  the note need not repeat it in amber under it (#3322: the desk card read
+ *  "No AI to read this photo yet (set it up)" over "Couldn't identify this
+ *  photo: no AI provider is connected", one fact twice, the second in
+ *  warning colour). No AI, and a store's own code: the heading names the
+ *  cause and the remedy. Every other reason keeps its note, which carries
+ *  something the heading does not (the held guess, which AI failed and
+ *  how, that the model saw no one item). */
+export function headingSaysItAll(why: NamelessReason): boolean {
+  return why === "no-identify" || why === "store-code";
+}

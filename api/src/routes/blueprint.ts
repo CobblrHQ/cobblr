@@ -271,6 +271,7 @@ export async function captureBlueprint(orgId: string): Promise<BlueprintManifest
     .select(["name", "slug"])
     .where("id", "=", orgId)
     .executeTakeFirstOrThrow();
+  // UTC-DAY OK: the manifest's capture stamp, not a claim about anybody's calendar.
   const stamp = new Date().toISOString().slice(0, 10);
   return {
     kind: "cobblr.blueprint",
@@ -445,7 +446,7 @@ export async function applyBlueprint(
           position: f.position ?? 0,
           bundle_id: null,
           source_module: null,
-          choices: f.choices ? (sql`${JSON.stringify(f.choices)}::jsonb` as unknown as string[]) : null,
+          choices: f.choices ? JSON.stringify(f.choices) : null,
           renderer: f.renderer ?? null,
           template: f.type === "computed" ? f.template ?? null : null,
           help: f.help ?? null,

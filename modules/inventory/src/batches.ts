@@ -148,21 +148,6 @@ export function batchesFrom(
   return [];
 }
 
-/** Today, as a calendar date, where the PERSON is.
- *
- *  A date here is a calendar fact, not an instant. Taking the UTC day means a
- *  tap at 9pm Eastern stamps tomorrow's date - the container would be recorded
- *  as arriving on a day the user was asleep, and every derived deadline shifts
- *  with it. The delivery-window work already had to solve this; batches borrow
- *  the same approach rather than re-learning it. */
-export function localToday(now: Date, timezone: string): string {
-  try {
-    return new Intl.DateTimeFormat("en-CA", { timeZone: timezone }).format(now);
-  } catch {
-    return now.toISOString().slice(0, 10);
-  }
-}
-
 /** The date `+` should stamp: today plus however long this keeps. Null when the
  *  item does not declare a shelf life, so nothing is invented. */
 export function expiryFor(receivedOn: string, shelfLifeDays: number | null | undefined): string | null {

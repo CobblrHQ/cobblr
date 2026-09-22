@@ -32,6 +32,8 @@ import { api, ApiError } from "../lib/api";
 import { useAuth } from "../auth/AuthContext";
 import { sandboxKeptAtTheEnd, type EndingKind } from "../lib/sandbox-session";
 import { TrialLengthPicker, trialLengthPhrase } from "../components/TrialLengthPicker";
+import { BuiltHere } from "../components/BuiltHere";
+import type { SandboxLedger } from "../lib/api";
 
 const PRIMARY = "rounded-md bg-cobble-600 hover:bg-cobble-700 disabled:opacity-50 text-white font-medium px-4 py-2 transition";
 const SECONDARY = "rounded-md border border-line dark:border-slate-700 px-4 py-2 font-medium hover:bg-subtle transition";
@@ -51,7 +53,18 @@ export function holdPhrase(hours: number): string {
   return `${hours} hours`;
 }
 
-export function SandboxEnded({ kind = "sandbox", slug, preview }: { kind?: EndingKind; slug?: string; preview?: EndingPaths }) {
+export function SandboxEnded({
+  kind = "sandbox",
+  slug,
+  preview,
+  ledgerPreview,
+}: {
+  kind?: EndingKind;
+  slug?: string;
+  preview?: EndingPaths;
+  /** The preview route's ledger; `null` shows the page as a box that cannot answer. */
+  ledgerPreview?: SandboxLedger | null;
+}) {
   const { logout } = useAuth();
   const [paths, setPaths] = useState<EndingPaths | null>(preview ?? null);
 
@@ -104,6 +117,10 @@ export function SandboxEnded({ kind = "sandbox", slug, preview }: { kind?: Endin
             </p>
           </>
         )}
+
+        {/* What they built, read back: for both endings, whether or not the
+            carry door is lit. The doors below decide what happens to it. */}
+        <BuiltHere preview={preview ? (ledgerPreview ?? null) : undefined} />
 
         <div className="mt-6 space-y-3">
           {held && <KeepDoor />}
@@ -244,7 +261,7 @@ function CarryDoor({ slug }: { slug?: string }) {
   return (
     <section className="rounded-xl border border-line dark:border-slate-700 bg-surface dark:bg-slate-900 p-4" data-testid="door-carry">
       <h2 className="text-[11px] font-mono uppercase tracking-widest text-accent">Bring what I built to a real account</h2>
-      <p className="mt-1.5 text-sm text-muted">Your scans, lists and setups come with you into a new account on Cobblr.</p>
+      <p className="mt-1.5 text-sm text-muted">What you built here, as listed above, comes with you into a new account on Cobblr.</p>
       <form
         className="mt-3 flex flex-wrap gap-2"
         onSubmit={(e) => {

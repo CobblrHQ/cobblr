@@ -50,6 +50,16 @@ function safe(url: string): string {
   }
 }
 
+/** The community Discord invite, "" when unset. The ONE reading of its two
+ *  env names: the community list and the signed-in chrome (and the hint when a
+ *  test DM bounces) all ask here, because they once read the names in opposite
+ *  orders and, with both set, linked two different servers (#3475).
+ *
+ *  COBBLR_-prefixed first, bare name kept because deployments already set it. */
+export function discordInviteUrl(): string {
+  return safe(firstUrl("COBBLR_DISCORD_INVITE_URL", "DISCORD_INVITE_URL"));
+}
+
 /** The community places this deployment offers, in the order to show them.
  *
  *  Chat first: it is the fastest answer for a question. Forum second: it is
@@ -60,8 +70,7 @@ export function communityLinks(): CommunityLink[] {
   // fallback for an older server reads the same words (#3039).
   const place = (id: CommunityLinkId, url: string): CommunityLink => ({ id, label: COMMUNITY_LINK_LABELS[id], url, blurb: COMMUNITY_LINK_BLURBS[id] });
   const defs: CommunityLink[] = [
-    // COBBLR_-prefixed first, bare name kept because deployments already set it.
-    place("chat", firstUrl("COBBLR_DISCORD_INVITE_URL", "DISCORD_INVITE_URL")),
+    place("chat", discordInviteUrl()),
     place("forum", firstUrl("COBBLR_FORUM_URL")),
     // Self-hosters can point this at their own fork. Unset means this
     // deployment does not offer a tracker, which is a real answer: a

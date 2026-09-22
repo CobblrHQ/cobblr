@@ -38,6 +38,7 @@ import { applyReceiptFacts } from "../services/receipt-candidate-facts.js";
 import { alignStorageFields } from "../services/align-storage-fields.js";
 import { moveQuantity, scanTargetOf, scanTargetsRegistered, startingCount, type QuantityMove } from "../services/scan-target.js";
 import { withGroupImages as groupImagesFor } from "../services/group-image.js";
+import { applyAxisValue, readAxisValue, type AxisTarget } from "@cobblr/platform-contract/category-axis";
 import { retargetByCategory } from "../services/retarget-by-category.js";
 import { lineQuantity, sameOrder } from "../services/receipt-shared.js";
 import { FiledQuantity, filedQuantityOf } from "../services/filed-quantity.js";
@@ -2007,40 +2008,37 @@ inboxRouter.patch(
  *
  * A no-op for a table with no category axis, or a value already in the list.
  */
-async function growCategoryChoices(
-  baseUrl: string,
-  slug: string,
-  token: string,
+/** The confirmed category, through the seam (#3223).
+ *
+ *  The taxonomy grows from what a person actually confirms, never from what a
+ *  model merely proposed: a brand-new value joins the vocabulary HERE, at the
+ *  moment a human accepted it, so the next scan of an electrical part finds
+ *  "Electrical" already there and reuses it instead of coining a synonym.
+ *
+ *  This used to list the kind's field defs and PATCH `choices` itself, which
+ *  meant the scan pipeline knew where a category is STORED. It does not need
+ *  to: `commit` grows the vocabulary and says what to write, `applyAxisValue`
+ *  writes it, and neither answer changes for a kind whose module owns its own
+ *  taxonomy. `commit` never throws and returns null when it cannot store the
+ *  value, which is the same answer the old field-def PATCH gave when it came
+ *  back non-ok: filing the thing matters more than filing it under a name. */
+async function commitCategoryAxis(
+  orgId: string,
   kind: string,
-  extras: Record<string, unknown> | undefined,
+  instance: string | null,
+  into: AxisTarget,
+  /** The candidate's own `category`: the chosen NAME, which the matchmaker
+   *  sets beside the field value (resolveCategoryInto writes both). It is the
+   *  authoritative carrier — a kind whose module owns its taxonomy has no
+   *  field key to put a name under, so after #3223 step 3 this is the only
+   *  place the draft's choice survives. Fields first all the same, because a
+   *  value there is a person's typed answer and beats a proposal. */
+  proposed?: string | null,
 ): Promise<void> {
-  if (!extras) return;
-  const auth = { Authorization: `Bearer ${token}`, "Content-Type": "application/json" };
-  const res = await fetch(`${baseUrl}/api/v1/orgs/${slug}/field-defs?kind=${encodeURIComponent(kind)}`, {
-    headers: auth,
-  });
-  if (!res.ok) return;
-  const defs = ((await res.json()) as {
-    items?: Array<{ id: string; name: string; choices?: string[] | null; field_role?: string | null }>;
-  }).items ?? [];
-  const axis = defs.find((d) => d.field_role === "category");
-  if (!axis) return;
-  const value = extras[axis.name];
-  if (typeof value !== "string" || !value.trim()) return;
-  const chosen = value.trim();
-  const choices = axis.choices ?? [];
-  // The SHARED reconciler, not a local normalizer: a local one compared
-  // "Figurines" against "Figurine" and called them different, so confirming the
-  // nine character jugs would have grown TWO entries for one kind - permanently,
-  // and every later scan could then "reuse an existing value" and pick either.
-  // The vocabulary meant to make scans converge was what split them.
-  const key = normaliseCategory(chosen);
-  if (key && choices.some((c) => normaliseCategory(c) === key)) return; // already in the vocabulary
-  await fetch(`${baseUrl}/api/v1/orgs/${slug}/field-defs/${axis.id}`, {
-    method: "PATCH",
-    headers: auth,
-    body: JSON.stringify({ choices: [...choices, chosen].sort((a, b) => a.localeCompare(b)) }),
-  });
+  const axis = await platform().categoryAxis.for({ orgId, kind, instance });
+  const chosen = readAxisValue(axis, into) || (typeof proposed === "string" ? proposed.trim() : "");
+  if (!chosen) return;
+  applyAxisValue(await platform().categoryAxis.commit({ orgId, kind, value: chosen, instance }), into);
 }
 
 export const ConfirmBody = z.object({
@@ -2336,7 +2334,10 @@ inboxRouter.post(
             category: (meta as { category?: unknown }).category as string | undefined,
             name: row.suggested_name,
             acquiredOn: typeof (meta as { receipt_date?: unknown }).receipt_date === "string" ? ((meta as { receipt_date: string }).receipt_date) : null,
-            today: new Date().toISOString().slice(0, 10),
+            // The day it is where the person filing this is: a grocery scanned
+            // at 6pm in the Americas was dated tomorrow, and its shelf life
+            // counted from tomorrow (#3351).
+            today: await platform().accounts.dayFor(sessionUser(req)?.id ?? null),
             expiryField,
           }) ?? {};
       }
@@ -2466,6 +2467,28 @@ inboxRouter.post(
     const createUrl = parsed.data.instance
       ? `${baseUrl}/api/v1/orgs/${ctx.org.slug}/instances/${parsed.data.instance}/items`
       : `${baseUrl}/api/v1/orgs/${ctx.org.slug}/modules/${createPath}`;
+    // THE CONFIRMED CATEGORY, through the seam (#3223), BEFORE the create.
+    //
+    // Before the create because a kind whose module owns its taxonomy is
+    // handed a record id to write on the row it is about to create, rather
+    // than a patch afterwards; the seam says which, and this does not ask.
+    //
+    // And read off `body.metadata`, which is what is actually being written to
+    // the record. The old code read `extras[name]` — the TOP level of extras —
+    // while both confirm doors post a table's custom fields under
+    // `extras.metadata` (the card's one-tap Add and its form, both). The axis
+    // IS a custom field, so the lookup missed it every time and the vocabulary
+    // this comment promises to grow has not grown from a confirm on either
+    // door. Filed as its own finding; fixed here by reading where the value is.
+    const fieldKind = parsed.data.instance ? `${parsed.data.instance}:item` : kindKey;
+    await commitCategoryAxis(
+      ctx.org.id,
+      fieldKind,
+      parsed.data.instance ?? null,
+      { fields: (body.metadata as Record<string, unknown> | undefined) ?? {}, row: body },
+      (matchedCandidate as { category?: unknown } | undefined)?.category as string | undefined,
+    );
+
     const doCreate = () =>
       fetch(createUrl, {
         method: "POST",
@@ -2709,18 +2732,6 @@ inboxRouter.post(
       }
     }
 
-    // The taxonomy grows from what the user actually confirms — never from what a
-    // model merely proposed. A brand-new category value becomes one of the field's
-    // choices HERE, at the moment a human accepted it, so the next scan of an
-    // electrical part finds "Electrical" already in the vocabulary and reuses it
-    // instead of coining a synonym. Best-effort: a failure to grow the list must
-    // never fail a confirm the user already committed to.
-    // Field-defs are keyed by the INSTANCE's kind when routing into one.
-    const fieldKind = parsed.data.instance ? `${parsed.data.instance}:item` : kindKey;
-    void growCategoryChoices(baseUrl, ctx.org.slug, token, fieldKind, parsed.data.extras).catch((err) =>
-      console.error("[core-scan] grow category choices failed:", (err as Error).message),
-    );
-
     // Mark the inbox row resolved.
     const resolvedRow = await db
       .updateTable("core_scan_inbox_items")
@@ -2866,7 +2877,7 @@ inboxRouter.post(
 
     if (parsed.data.save_eval_case && sess.is_platform_admin) {
       try {
-        const menu = await assembleMergedMenu(baseUrl, ctx.org.slug, token);
+        const menu = await assembleMergedMenu(baseUrl, ctx.org.slug, token, ctx.org.id);
         await db
           .insertInto("core_scan_eval_cases")
           .values({
@@ -3283,7 +3294,7 @@ async function served<T extends ScanTriageRow & {
   return withTitle(withResolvedOffers(withGroup!, await liveTablesFor(req)), await containerKindsFor(req), titleFormatFor(req));
 }
 
-async function servedAll<T extends ScanTriageRow & {
+export async function servedAll<T extends ScanTriageRow & {
   suggested_name: string | null;
   suggested_manufacturer?: string | null;
   suggested_candidates?: unknown;
@@ -7373,7 +7384,7 @@ async function matchItem(opts: MatchItemOpts): Promise<unknown[] | null> {
       }
     }
 
-    const baseMenu = await assembleMergedMenu(opts.baseUrl, opts.orgSlug, opts.token);
+    const baseMenu = await assembleMergedMenu(opts.baseUrl, opts.orgSlug, opts.token, opts.orgId);
     // What this item's OWN batch has already proposed, offered as ordinary axis
     // values. Without it every item in a bulk scan invents in isolation and a
     // run of like things scatters across synonyms of one category — see
@@ -7913,7 +7924,7 @@ inboxRouter.get(
     }
     const ctx = tenantContext(req);
     const baseUrl = (req.headers["x-cobblr-base-url"] as string | undefined) ?? INTERNAL_API;
-    const items = await assembleScanMenu(baseUrl, ctx.org.slug, token);
+    const items = await assembleScanMenu(baseUrl, ctx.org.slug, token, ctx.org.id);
     // Stamp which entries are UNIQUE-tracked kinds (declared traits — a vehicle,
     // a machine) so the combine banner can say "the same vehicle — merge details"
     // instead of promising a ×2 that a one-of-a-kind thing must never get.

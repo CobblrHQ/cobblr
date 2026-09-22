@@ -19,6 +19,7 @@
 import { readFileSync, readdirSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
+import { stripComments } from "./lib/source-scan.js";
 
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
@@ -38,7 +39,7 @@ function codeTypes(): string[] {
     process.exit(1);
   }
   // Strip comments before pulling literals, or a type named in prose counts.
-  const body = m[1]!.replace(/\/\/[^\n]*/g, "").replace(/\/\*[\s\S]*?\*\//g, "");
+  const body = stripComments(m[1]!);
   return (body.match(/"([a-z-]+)"/g) ?? []).map((x) => x.slice(1, -1));
 }
 

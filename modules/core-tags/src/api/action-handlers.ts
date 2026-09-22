@@ -29,7 +29,8 @@ export function registerTagActionHandlers(): void {
     const tagName = String((ctx.args as { tag_name?: unknown } | null)?.tag_name ?? "").trim();
     if (!tagName) return { ok: false, error: "tag_name required" };
     const src = splitKind(entity.kind);
-    if (!src) return { ok: false, error: `bad entity kind "${entity.kind}"` };
+    // ALLOW-INTERNAL-NOUN: echoes the caller's own word for a kind that is not here; there are no words for it
+    if (!src) return { ok: false, error: `no kind of record called "${entity.kind}" here` };
     const db = (await platform().tenants.getDb(ctx.orgId)) as Kysely<CoreTagsDB>;
 
     // Resolve to a tag id — create on the fly if no such tag yet (the same
@@ -85,7 +86,8 @@ export function registerTagActionHandlers(): void {
     const tagName = String((ctx.args as { tag_name?: unknown } | null)?.tag_name ?? "").trim();
     if (!tagName) return { ok: false, error: "tag_name required" };
     const src = splitKind(entity.kind);
-    if (!src) return { ok: false, error: `bad entity kind "${entity.kind}"` };
+    // ALLOW-INTERNAL-NOUN: echoes the caller's own word for a kind that is not here; there are no words for it
+    if (!src) return { ok: false, error: `no kind of record called "${entity.kind}" here` };
     const db = (await platform().tenants.getDb(ctx.orgId)) as Kysely<CoreTagsDB>;
 
     const tag = await db

@@ -14,7 +14,7 @@ import { defineModule } from "@cobblr/platform-contract";
 
 export default defineModule({
   name: "tracking",
-  version: "0.3.6",
+  version: "0.1.6",
   displayName: "Tracking",
   description:
     "Log a number over time toward a goal, and see the trend. Weight, runs, habits, budgets, mood, any measurement with a target. Ships a trend-chart view.",

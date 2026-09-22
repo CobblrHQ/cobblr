@@ -11,6 +11,7 @@
 
 import { registerOrgForTeardown } from "./setup-teardown.js";
 import { fetchTransient } from "./fetch-transient.js";
+import { arrivedEverywhere } from "@cobblr/platform-contract/day";
 
 export { registerOrgForTeardown };
 
@@ -298,4 +299,18 @@ export async function invokeAction(
     // A refusal the route turned into a status code is still a refusal.
     return { ok: false, error: err instanceof Error ? err.message : String(err) };
   }
+}
+
+/** A calendar day, `daysFromToday` from the day the platform takes as TODAY
+ *  for a person who never told it their timezone (a fresh test signup): the
+ *  day that has arrived everywhere (@cobblr/platform-contract/day, #3351).
+ *
+ *  Never the UTC day of the live clock. Between 00:00 and 12:00 UTC the two
+ *  differ, so a test comparing the product's date with the UTC one goes red
+ *  for half of every day; main went red that way at 00:14 UTC on 2026-09-23
+ *  in three expiry tests. lint:one-day-rule refuses the UTC form, api/tests
+ *  included. */
+export function personDay(daysFromToday = 0, now: Date = new Date()): string {
+  const base = arrivedEverywhere(now);
+  return new Date(Date.parse(`${base}T00:00:00Z`) + daysFromToday * 86_400_000).toISOString().slice(0, 10);
 }

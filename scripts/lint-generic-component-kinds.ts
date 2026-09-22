@@ -20,6 +20,10 @@
 
 import { readdirSync, readFileSync, existsSync } from "node:fs";
 import { join, relative } from "node:path";
+// The shared scanner: the regex pair this file carried ("good enough for a
+// lint") blanked 76 lines of web/src/components, a `/*` inside a string
+// swallowing everything to the next `*/` (#3476).
+import { stripComments } from "./lib/source-scan.js";
 
 const ROOT = join(import.meta.dirname, "..");
 const COMPONENTS_DIR = join(ROOT, "web", "src", "components");
@@ -40,14 +44,6 @@ const baseline: BaselineEntry[] = existsSync(BASELINE_PATH)
   ? (JSON.parse(readFileSync(BASELINE_PATH, "utf8")) as BaselineEntry[])
   : [];
 const baselined = new Set(baseline.map((b) => `${b.file}|${b.token}`));
-
-function stripComments(src: string): string {
-  // Block comments → keep line count (replace with newlines); line comments →
-  // cut to end of line. Good enough for a lint (no need for a full parser).
-  return src
-    .replace(/\/\*[\s\S]*?\*\//g, (m) => m.replace(/[^\n]/g, ""))
-    .replace(/\/\/[^\n]*/g, "");
-}
 
 function* walk(dir: string): Generator<string> {
   for (const e of readdirSync(dir, { withFileTypes: true })) {

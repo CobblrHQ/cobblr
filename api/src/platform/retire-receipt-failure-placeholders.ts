@@ -26,6 +26,7 @@
 import { sql } from "kysely";
 import { meta } from "../db/meta.js";
 import { getTenantDb, evictTenantPool } from "../db/tenant.js";
+import { noteHealShim } from "./heal-shim-log.js";
 
 export async function retireReceiptFailurePlaceholders(opts: { onlyOrgId?: string } = {}): Promise<{ orgsTouched: number; rowsRetired: number }> {
   if (process.env.COBBLR_SKIP_HISTORICAL_MIGRATIONS === "1" && !opts.onlyOrgId) return { orgsTouched: 0, rowsRetired: 0 };
@@ -39,6 +40,7 @@ export async function retireReceiptFailurePlaceholders(opts: { onlyOrgId?: strin
 
   let orgsTouched = 0;
   let rowsRetired = 0;
+  let failed = 0;
 
   for (const { org_id } of orgs) {
     try {
@@ -85,11 +87,15 @@ export async function retireReceiptFailurePlaceholders(opts: { onlyOrgId?: strin
       }
     } catch (err) {
       // One workspace's failure never blocks the rest.
+      failed++;
       console.warn(`[reconcile] org ${org_id}: receipt placeholder retirement failed:`, (err as Error)?.message ?? err);
     } finally {
       evictTenantPool(org_id);
     }
   }
 
+  // Every pending placeholder is retired, so what it retired is what it
+  // found. A pass scoped to one workspace did not look at the others.
+  if (!opts.onlyOrgId) await noteHealShim("api/src/platform/retire-receipt-failure-placeholders.ts", rowsRetired, failed);
   return { orgsTouched, rowsRetired };
 }

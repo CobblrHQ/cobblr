@@ -1,0 +1,6 @@
+{
+  "lint": "lint:root-walk-skips-git",
+  "ms": 417,
+  "recorded": "2026-09-14",
+  "source": "split from scripts/lint-durations.json (recorded 2026-09-14)"
+}

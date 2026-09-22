@@ -19,6 +19,7 @@
 // attributes rather than props held in a context.
 
 import { useState, type ReactNode } from "react";
+import { useLater } from "./use-later";
 import { useQuery } from "@tanstack/react-query";
 import { AskCobbAbout } from "./AskCobbAbout";
 import { usePlatformWeb } from "./context";
@@ -118,6 +119,7 @@ function RowBindings({ kind, id }: { kind: string; id: string }) {
 function RowActionButton({ kind, id, binding }: { kind: string; id: string; binding: PlatformActionBinding }) {
   const { run, flash, note, failure, dismissFailure, pending } = useInvokeEntityAction({ entityKind: kind, entityId: id });
   const [armed, setArmed] = useState(false);
+  const later = useLater();
   const needsConfirm = rowActionNeedsConfirm(binding);
   // The module's own words, because only it knows what its action does. "Print
   // label" does not say whether paper comes out now or a line joins a queue;
@@ -133,7 +135,7 @@ function RowActionButton({ kind, id, binding }: { kind: string; id: string; bind
           e.preventDefault();
           if (needsConfirm && !armed) {
             setArmed(true);
-            setTimeout(() => setArmed(false), 3000);
+            later.after("armed", 3000, () => setArmed(false));
             return;
           }
           setArmed(false);

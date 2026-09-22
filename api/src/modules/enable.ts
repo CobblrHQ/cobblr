@@ -23,6 +23,7 @@ import { clearRelationDefsCache } from "../platform/relation-fields.js";
 import { clearMemberFieldCaches } from "../platform/member-fields.js";
 import { clearFieldLabelDefsCache } from "../platform/field-labels.js";
 import { moduleHasScanFallback, reconcileScanCategoryFor } from "../platform/reconcile-scan-category.js";
+import { recordClaim } from "../platform/bundle-claims.js";
 
 /** Maintainer-curated foundational set. A module manifest can declare
  *  `band: "foundational"`, but the kernel only TREATS it as foundational
@@ -43,6 +44,13 @@ const FOUNDATIONAL_ALLOWLIST = new Set([
 ]);
 
 const warnedNonCuratedFoundational = new Set<string>();
+/** A module a workspace is born with, no decision asked: foundational or
+ *  autoEnable. Everything else is a person's choice (and carries their
+ *  claim when they make it). */
+export function isDefaultModule(entry: { manifest: { name: string; band: string; autoEnable?: boolean } }): boolean {
+  return isFoundational(entry) || entry.manifest.autoEnable === true;
+}
+
 function isFoundational(entry: { manifest: { name: string; band: string } }): boolean {
   if (entry.manifest.band !== "foundational") return false;
   if (FOUNDATIONAL_ALLOWLIST.has(entry.manifest.name)) return true;
@@ -120,10 +128,16 @@ async function ensurePlacementSyncIfLocated(orgId: string, moduleName: string): 
   }
 }
 
+/** `claimedBy` pins the module with a resource claim in that source's name
+ *  (USER_SOURCE for a person turning it on by hand, on the screen, by asking
+ *  the assistant, or in CI's pool bake), so a later bundle uninstall never
+ *  auto-disables it. Recorded on the already-enabled path too: asking for a
+ *  module you have still says you want it. A bundle install claims for its
+ *  own external id through recordClaims and leaves this unset. */
 export async function enableModuleForOrg(
   orgId: string,
   moduleName: string,
-  options: { userId?: string } = {},
+  options: { userId?: string; claimedBy?: string } = {},
 ): Promise<EnableResult> {
   const entry = getEntry(moduleName);
   if (!entry) {
@@ -163,6 +177,7 @@ export async function enableModuleForOrg(
     .executeTakeFirst();
   if (existing) {
     await ensurePlacementSyncIfLocated(orgId, moduleName);
+    if (options.claimedBy) await recordClaim(orgId, options.claimedBy, "module", moduleName);
     return {
       alreadyEnabled: true,
       migrationsApplied: 0,
@@ -240,9 +255,7 @@ export async function enableModuleForOrg(
         required: fd.required ?? false,
         position: fd.position ?? 0,
         source_module: moduleName,
-        choices: fd.choices
-          ? (sql`${JSON.stringify(fd.choices)}::jsonb` as unknown as string[])
-          : null,
+        choices: fd.choices ? JSON.stringify(fd.choices) : null,
         renderer: (fd as { renderer?: string | null }).renderer ?? null,
         server_managed: (fd as { server_managed?: boolean }).server_managed ?? false,
         ref_kind: (fd as { ref_kind?: string | null }).ref_kind ?? null,
@@ -312,6 +325,8 @@ export async function enableModuleForOrg(
   // gets the scan category axis here, the moment the workspace gains it,
   // rather than at the api's next restart (#3252).
   if (moduleHasScanFallback(moduleName)) await reconcileScanCategoryFor(orgId);
+
+  if (options.claimedBy) await recordClaim(orgId, options.claimedBy, "module", moduleName);
 
   void sql; // re-export kept in case future cleanup needs it
   return { alreadyEnabled: false, migrationsApplied: migrationsApplied.length, lastMigration };
@@ -393,6 +408,26 @@ export async function disableModuleForOrg(orgId: string, moduleName: string): Pr
  *  Returns the total number of (org, module) pairs that had at
  *  least one migration applied. */
 export async function syncTenantMigrations(): Promise<number> {
+  // The version marker first, meta-side and per MODULE, not per workspace: a
+  // manifest bump with no new migration left every existing workspace's
+  // org_modules.version at whatever it was when the module was enabled, so
+  // the modules list said 0.40.0 on a workspace running 0.40.1 and a pooled
+  // org disagreed with a fresh signup on the same module (the parity test's
+  // catch, #3268). One UPDATE per module that moved; no tenant DB is opened.
+  // BORN WITH: enableModuleForOrg (writes the manifest version at enable).
+  for (const entry of listEntries()) {
+    try {
+      await meta
+        .updateTable("org_modules")
+        .set({ version: entry.manifest.version })
+        .where("module_name", "=", entry.manifest.name)
+        .where("version", "<>", entry.manifest.version)
+        .execute();
+    } catch (err) {
+      console.error(`[migrate-sync] version marker for ${entry.manifest.name}:`, (err as Error).message);
+    }
+  }
+
   const rows = await meta
     .selectFrom("org_modules")
     .select(["org_id", "module_name", "last_migration", "migration_count"])
@@ -573,9 +608,7 @@ export async function enableDefaultModulesForOrg(
 ): Promise<string[]> {
   const enabled: string[] = [];
   const foundationals = listEntries().filter(
-    (e) =>
-      (isFoundational(e) || e.manifest.autoEnable === true) &&
-      !isTrialDenied(e.manifest.name),
+    (e) => isDefaultModule(e) && !isTrialDenied(e.manifest.name),
   );
 
   // Sort foundationals so any with deps run AFTER their deps. (Today

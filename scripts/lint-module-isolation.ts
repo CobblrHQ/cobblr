@@ -27,6 +27,11 @@
 import { readFileSync, readdirSync, statSync, existsSync, writeFileSync } from "node:fs";
 import { join, relative } from "node:path";
 import { fileURLToPath } from "node:url";
+// Comments are blanked (line numbers kept) so prose like "this reads
+// inventory_parts" does not trip the SQL matcher. The shared scanner, never a
+// regex pair: the pair this file carried blanked 303 lines of api/src code,
+// every line after a `/*` inside a string or a line comment (#3476).
+import { stripComments } from "./lib/source-scan.js";
 
 const ROOT = join(fileURLToPath(new URL(".", import.meta.url)), "..");
 const MODULES_DIR = join(ROOT, "modules");
@@ -83,14 +88,6 @@ function ownPrefixOf(file: string): string | null {
   if (!m) return null;
   for (const [pfx, mod] of byPrefix) if (mod === m[1]) return pfx;
   return null;
-}
-
-// Blank out // and /* */ comments (preserving newlines for line numbers) so
-// prose like "this reads inventory_parts" doesn't trip the SQL matcher.
-function stripComments(src: string): string {
-  return src
-    .replace(/\/\*[\s\S]*?\*\//g, (m) => m.replace(/[^\n]/g, " "))
-    .replace(/\/\/[^\n]*/g, (m) => m.replace(/[^\n]/g, " "));
 }
 
 // ── Rule A: cross-module table access ────────────────────────────────────────

@@ -185,7 +185,7 @@ async function menuFor(orgId: string): Promise<ScanMenuEntry[] | null> {
   const who = await workspaceIdentity(orgId);
   if (!who) return null;
   const token = await platform().auth.mintSession({ userId: who.userId });
-  return assembleMergedMenu(INTERNAL_API, who.slug, token);
+  return assembleMergedMenu(INTERNAL_API, who.slug, token, orgId);
 }
 
 export interface RerouteAudit {

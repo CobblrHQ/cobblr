@@ -359,9 +359,7 @@ export async function createFieldDef(
         type: input.type,
         required: input.required ?? false,
         position: input.position ?? 0,
-        choices: input.choices
-          ? (sql`${JSON.stringify(input.choices)}::jsonb` as unknown as string[])
-          : null,
+        choices: input.choices ? JSON.stringify(input.choices) : null,
         renderer: input.renderer ?? null,
         template: input.type === "computed" ? input.template ?? null : null,
         unit: input.type === "number" ? input.unit ?? null : null,

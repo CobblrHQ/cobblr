@@ -89,8 +89,6 @@ export function registerBuildsActionHandlers(): void {
             trigger_type: "event",
           },
           args: { partId: build.output_part_id, delta: made, reason: `build-output:${buildId}` },
-          entityKind: "inventory:part",
-          entityId: build.output_part_id,
         })
         .catch((e) => console.error("[builds] output adjust-stock failed:", (e as Error).message));
     }
@@ -145,8 +143,6 @@ export function registerBuildsActionHandlers(): void {
             trigger_type: "event",
           },
           args: { partId: c.part_id, delta: inc, reason: `build-reversed:${buildId}` },
-          entityKind: "inventory:part",
-          entityId: c.part_id,
         })
         .catch((e) => console.error("[builds] reverse adjust-stock failed:", (e as Error).message));
       returned.push({ part_id: c.part_id, quantity: inc });
@@ -178,8 +174,6 @@ export function registerBuildsActionHandlers(): void {
             trigger_type: "event",
           },
           args: { partId: build.output_part_id, delta: -unmade, reason: `build-output-reversed:${buildId}` },
-          entityKind: "inventory:part",
-          entityId: build.output_part_id,
         })
         .catch((e) => console.error("[builds] output reverse adjust-stock failed:", (e as Error).message));
     }

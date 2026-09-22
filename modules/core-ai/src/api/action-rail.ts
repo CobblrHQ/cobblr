@@ -39,7 +39,7 @@ export interface RailAction {
   description?: string;
   scope?: string;
   matched_kinds?: string[];
-  args_schema?: Record<string, { label?: string; type?: string }> | null;
+  args_schema?: Record<string, { label?: string; type?: string; required?: boolean; oneOf?: string }> | null;
   examples?: string[];
 }
 
@@ -48,11 +48,20 @@ export type RailMode = "full" | "brief" | "index";
 const saidLike = (a: RailAction): string =>
   a.examples?.length ? ` — said like: ${a.examples.map((e) => `"${e}"`).join(", ")}` : "";
 
+/** What an argument is, in the rail's own shorthand: its type, what it
+ *  describes, and whether the door will refuse the call without it. The
+ *  markers existed from #3137 and four readers used them; the model met
+ *  them only in a hand-back, one round late, so it learned what an action
+ *  needs by being refused (#3142). FULL mode only, so no run in brief or
+ *  index mode is re-keyed by this (scripts/lib/bench-prints.ts). */
 const argsHint = (a: RailAction): string => {
   const entries = Object.entries(a.args_schema ?? {});
   if (!entries.length) return "";
   return ` — args: ${entries
-    .map(([n, spec]) => `${n} (${spec?.type ?? "text"}${spec?.label ? `, ${spec.label}` : ""})`)
+    .map(([n, spec]) => {
+      const notes = [spec?.type ?? "text", ...(spec?.label ? [spec.label] : []), ...(spec?.required ? ["required"] : []), ...(spec?.oneOf ? [`one of: ${spec.oneOf}`] : [])];
+      return `${n} (${notes.join(", ")})`;
+    })
     .join("; ")}`;
 };
 

@@ -10,6 +10,7 @@
 
 import type { EntityKindRecord, ScannableInfo, ScannableKind } from "@cobblr/platform-contract";
 import { listKindsForOrg } from "./entities.js";
+import { assertModulesMounted } from "../modules/mount-state.js";
 
 const scannable = new Map<string, ScannableInfo>();
 
@@ -36,6 +37,7 @@ export function getScannableForModule(module: string): ScannableInfo | null {
 }
 
 export function listScannable(): Array<{ kind: string } & ScannableInfo> {
+  assertModulesMounted("The scannable registry");
   return [...scannable.entries()].map(([kind, info]) => ({ kind, ...info }));
 }
 

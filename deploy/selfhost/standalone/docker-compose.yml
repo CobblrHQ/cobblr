@@ -107,41 +107,22 @@ services:
       # MUST be listed here: the entrypoint reads ${BACKUP_MIN_BYTES:-...} and a
       # value in .env reaches this container only if compose passes it.
       BACKUP_MIN_BYTES: ${BACKUP_MIN_BYTES:-10000}
+      # The hour the dump happens, in this machine's local time. It used to be
+      # "24 h after this container last started", so it drifted with every
+      # `compose pull` and nobody could say when their backup ran (#3307). Set
+      # it to a quiet hour for your box; BACKUP_AT=interval keeps the old
+      # behaviour. A completed dump touches data/backups/last-dump, so your own
+      # off-box copy (rsync, restic, a cloud sync) can run after it instead of
+      # guessing.
+      BACKUP_AT: ${BACKUP_AT:-03:00}
+      BACKUP_PREFIX: ${BACKUP_PREFIX:-cobblr}
     volumes:
       - ${COBBLR_DATA_ROOT:-./data}/backups:/backups
-    entrypoint:
-      - /bin/sh
-      - -c
-      - |
-        set -euo pipefail
-        mkdir -p /backups/daily /backups/weekly
-        while true; do
-          STAMP=$$(date -u +%Y%m%dT%H%M%SZ)
-          OUT="/backups/daily/cobblr-$$STAMP.sql.gz"
-          echo "[backup] $$STAMP -> pg_dumpall -> $$OUT"
-          ok=1
-          pg_dumpall --clean --if-exists | gzip > "$$OUT" || ok=0
-          SZ=$$(stat -c%s "$$OUT" 2>/dev/null || echo 0)
-          if [ "$$ok" = "1" ] && [ "$$SZ" -ge "$${BACKUP_MIN_BYTES:-100000}" ]; then
-            echo "[backup] $$STAMP done — $$SZ bytes"
-            [ "$$(date +%u)" = "7" ] && cp "$$OUT" /backups/weekly/ && echo "[backup] weekly copy"
-            SLEEP=86400
-          else
-            echo "[backup] $$STAMP FAILED — $$SZ bytes; kept for triage, retrying within the hour"
-            SLEEP=3600
-          fi
-          # Retention counts only USABLE dumps: letting 20-byte failures occupy slots
-          # means a bad week quietly evicts the good backups underneath them.
-          find /backups/daily -name '*.sql.gz' -size -$$(( $${BACKUP_MIN_BYTES:-100000} / 1024 ))k -mmin +2880 -delete 2>/dev/null || true
-          # `|| true` is load-bearing: a `while` returns its LAST test's status, so a
-          # final undersized file would make the pipeline non-zero and set -e would
-          # kill the container.
-          { ls -1t /backups/daily/*.sql.gz 2>/dev/null \
-            | while read -r f; do [ "$$(stat -c%s "$$f")" -ge "$${BACKUP_MIN_BYTES:-100000}" ] && echo "$$f"; done \
-            | tail -n +$$((BACKUP_DAILY_RETENTION + 1)) | xargs -r rm -f; } || true
-          { ls -1t /backups/weekly/*.sql.gz 2>/dev/null | tail -n +$$((BACKUP_WEEKLY_RETENTION + 1)) | xargs -r rm -f; } || true
-          sleep $$SLEEP
-        done
+    # The loop lives in the image (docker/backup-loop.sh in core, tested by
+    # scripts/backup-loop.test.ts) rather than inline here: it existed in four
+    # compose files, and the copy nobody read still called a refused connection
+    # a successful backup.
+    entrypoint: ["/usr/local/bin/backup-loop.sh"]
 
   web:
     image: ghcr.io/cobblrhq/cobblr-web:${COBBLR_VERSION:-latest}

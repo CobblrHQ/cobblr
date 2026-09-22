@@ -12,6 +12,7 @@ import { Camera, Scissors, Star, Trash2, Upload, X } from "lucide-react";
 import { useConfirm, useImageSrc, useToast } from "@cobblr/platform-web";
 import { useInventory } from "./context";
 import { cutoutPlainBackground } from "./remove-background";
+import { isCoverFile } from "./gallery-cover";
 
 interface AttachmentRow {
   id: string;
@@ -216,39 +217,48 @@ export function PartGallery({ partId, coverImagePath, onSetCover }: Props) {
           No photos yet. Drag-and-drop or click "add" above.
         </div>
       )}
+      {/* Two across on a phone, not three: the row under each photo holds
+          three labelled actions, and at 390px a third of the width is 97px,
+          ten short of what "cover", "cut out" and the bin need on one line. */}
       {items.length > 0 && (
-        <div className="grid grid-cols-3 sm:grid-cols-4 md:grid-cols-6 gap-2">
+        <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6 gap-2">
           {items.map((att) => {
-            const isCover = !!coverImagePath && coverImagePath.endsWith(att.file_id);
+            const isCover = isCoverFile(coverImagePath, att.file_id);
             return (
               <div
                 key={att.id}
                 className={
-                  "relative group rounded-md overflow-hidden border " +
+                  "group rounded-md overflow-hidden border flex flex-col " +
                   (isCover
                     ? "border-accent dark:border-cobble-500 ring-2 ring-cobble-300/40"
                     : "border-line dark:border-slate-700")
                 }
               >
-                <GalleryImg
-                  thumb={thumbUrl(att.file_id)}
-                  full={fullUrl(att.file_id)}
-                  alt={att.filename}
-                />
-                {isCover && (
-                  <div className="absolute top-1 left-1 text-[9px] font-mono uppercase tracking-widest bg-cobble-600 text-white rounded px-1.5 py-0.5">
-                    cover
-                  </div>
-                )}
-                {/* The tile's three actions live in this strip, so it is
-                    never hover-only: on a tablet the cover, cut-out and
-                    remove buttons were unreachable (#3239). */}
-                <div className="hover-reveal absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/60 to-transparent p-1 flex items-center justify-between gap-1">
+                <div className="relative">
+                  <GalleryImg
+                    thumb={thumbUrl(att.file_id)}
+                    full={fullUrl(att.file_id)}
+                    alt={att.filename}
+                  />
+                  {isCover && (
+                    <div className="absolute top-1 left-1 text-[9px] font-mono uppercase tracking-widest bg-cobble-600 text-white rounded px-1.5 py-0.5">
+                      cover
+                    </div>
+                  )}
+                </div>
+                {/* The tile's actions sit UNDER the photo, always shown, never
+                    over it. Over it they were hover-only (unreachable on a
+                    tablet, #3239), then a scrim across the photo's bottom edge,
+                    which is where a product prints its own words: white
+                    "cut out" over a white "4KG PLA BLACK" (#3325). A scrim dark
+                    enough for that blackens every photo's bottom on every touch
+                    screen; a row of its own depends on nothing in the photo. */}
+                <div className="flex items-center gap-1 px-1 py-1 border-t border-line dark:border-slate-700 bg-surface dark:bg-slate-900 text-[10px] leading-none text-muted dark:text-slate-400 whitespace-nowrap">
                   {!isCover && (
                     <button
                       type="button"
                       onClick={() => onSetCover(fullUrl(att.file_id))}
-                      className="text-[10px] text-white/90 hover:text-white inline-flex items-center gap-0.5"
+                      className="inline-flex items-center gap-0.5 hover:text-accent dark:hover:text-cobble-300"
                       title="Set as cover"
                     >
                       <Star size={10} /> cover
@@ -258,7 +268,7 @@ export function PartGallery({ partId, coverImagePath, onSetCover }: Props) {
                     type="button"
                     onClick={() => void handleCutout(att)}
                     disabled={cutting === att.id}
-                    className="text-[10px] text-white/90 hover:text-white inline-flex items-center gap-0.5 disabled:opacity-60"
+                    className="inline-flex items-center gap-0.5 hover:text-accent dark:hover:text-cobble-300 disabled:opacity-60"
                     title="Remove background (cut out the item)"
                   >
                     <Scissors size={10} className={cutting === att.id ? "animate-pulse" : ""} />
@@ -275,8 +285,9 @@ export function PartGallery({ partId, coverImagePath, onSetCover }: Props) {
                       });
                       if (ok) detach.mutate(att.id);
                     }}
-                    className="text-[10px] text-white/80 hover:text-white inline-flex items-center gap-0.5 ml-auto"
+                    className="inline-flex items-center gap-0.5 ml-auto hover:text-red-600 dark:hover:text-red-400"
                     title="Remove"
+                    aria-label="Remove photo"
                   >
                     <Trash2 size={10} />
                   </button>

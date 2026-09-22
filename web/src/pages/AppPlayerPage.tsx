@@ -21,6 +21,7 @@ import { useAuth } from "../auth/AuthContext";
 import { useRunAction, EntityActionsBar, EntityThumb, usePageTitle, useToast, OverlayLayer, BackdropLayer } from "@cobblr/platform-web";
 import { NewPartDialog, InventoryProvider } from "@cobblr/inventory/ui";
 import { api, getToken, type AppBlock, type AppTheme } from "../lib/api";
+import { frameDocUrl } from "../lib/frame-doc";
 import { createCapabilityForKind } from "@cobblr/platform-contract/create-capability";
 import { AskForItButton } from "../components/AskForItButton";
 // Per-surface theme → CSS variables. Shared with the member portal so the
@@ -855,21 +856,47 @@ export function CustomBlock({
       : "system-ui,-apple-system,sans-serif";
   const fontFace = fontFaceCss(theme) ?? "";
   const srcDoc = `<!doctype html><html><head><meta charset="utf-8"><style>${fontFace}body{font-family:${bodyFont};margin:0;padding:14px;color:${bodyText};background:${bodyBg};font-size:14px}</style>${SDK_SCRIPT}</head><body>${html}</body></html>`;
+  // FROM A URL, NOT srcdoc (#3300). A srcdoc document inherits this page's
+  // Content-Security-Policy, so with `script-src 'self'` enforced the SDK and
+  // the author's scripts are both refused and every custom block goes blank.
+  // The api hands back a one-shot URL whose RESPONSE carries a sandboxed
+  // policy that permits inline script inside that document and nothing else.
+  const [frameUrl, setFrameUrl] = useState<string | null>(null);
+  const [frameError, setFrameError] = useState(false);
+  useEffect(() => {
+    let alive = true;
+    setFrameError(false);
+    setFrameUrl(null);
+    frameDocUrl(srcDoc, "app-block")
+      .then((u) => alive && setFrameUrl(u))
+      .catch(() => alive && setFrameError(true));
+    return () => {
+      alive = false;
+    };
+  }, [srcDoc]);
   const frameClass = theme ? "w-full border" : "w-full rounded-xl border border-line dark:border-slate-700 bg-surface";
   const frameStyle: React.CSSProperties = theme
     ? { height: `${height ?? 360}px`, background: "var(--app-bg)", borderColor: "var(--app-border)", borderRadius: "var(--app-radius)" }
     : { height: `${height ?? 360}px` };
-  if (!ready)
+  if (!ready || (!frameUrl && !frameError))
     return (
       <div className={frameClass + " flex items-center justify-center text-xs text-faint italic"} style={frameStyle}>
         Loading…
       </div>
     );
+  if (frameError || !frameUrl)
+    return (
+      <div className={frameClass + " flex items-center justify-center text-xs text-faint italic"} style={frameStyle}>
+        This block could not be prepared.
+      </div>
+    );
   return (
     <iframe
       ref={iframeRef}
+      // Kept alongside the response's own `sandbox` policy: two ways of saying
+      // opaque origin, so a browser honouring either one is safe.
       sandbox="allow-scripts"
-      srcDoc={srcDoc}
+      src={frameUrl}
       title="custom app"
       className={frameClass}
       style={frameStyle}

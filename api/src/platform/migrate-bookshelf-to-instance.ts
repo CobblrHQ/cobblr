@@ -56,6 +56,9 @@ import { meta } from "../db/meta.js";
 import { getTenantDb, evictTenantPool } from "../db/tenant.js";
 import { createInstance, getInstance } from "./instances.js";
 import { upsertOverride } from "./entity-kind-overrides.js";
+import { noteHealShim } from "./heal-shim-log.js";
+
+const SHIM = "api/src/platform/migrate-bookshelf-to-instance.ts";
 
 const BOOKSHELF_EXTERNAL_ID = "cobblr.community.bookshelf";
 const INSTANCE_NAME = "bookshelf";
@@ -230,10 +233,17 @@ export async function migrateBookshelfToInstance(opts?: { force?: boolean; onlyO
     .filter(
       (r) => r.parsed && !(Array.isArray(r.parsed.provides_instances) && r.parsed.provides_instances.length > 0),
     );
-  if (targets.length === 0) return { orgsTouched: 0, booksMoved: 0 };
+  // A pass scoped to one workspace did not look at the others: only the
+  // whole-deployment pass speaks for DONE WHEN.
+  const record = (found: number, failed: number) => (opts?.onlyOrgId ? Promise.resolve() : noteHealShim(SHIM, found, failed));
+  if (targets.length === 0) {
+    await record(0, 0);
+    return { orgsTouched: 0, booksMoved: 0 };
+  }
 
   const orgs = new Set<string>();
   let booksMoved = 0;
+  let failed = 0;
   for (const t of targets) {
     try {
       const out = await migrateOne(t.org_id, t.id, t.parsed!);
@@ -246,6 +256,7 @@ export async function migrateBookshelfToInstance(opts?: { force?: boolean; onlyO
       }
     } catch (err) {
       // Per-org: one broken workspace must never block the rest.
+      failed++;
       console.error(`[migrate-bookshelf] org ${t.org_id} failed:`, (err as Error).message);
     } finally {
       // Boot-time sweeps must not hold a pool per tenant — that exhausts
@@ -253,5 +264,7 @@ export async function migrateBookshelfToInstance(opts?: { force?: boolean; onlyO
       evictTenantPool(t.org_id);
     }
   }
+  // Found = every install still on the old shape when it looked.
+  await record(targets.length, failed);
   return { orgsTouched: orgs.size, booksMoved };
 }

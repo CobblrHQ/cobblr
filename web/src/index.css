@@ -40,7 +40,10 @@
     --c-surface: 51 65 85;    /* slate-900 #334155 — the elevated card tone dark cards use */
     --c-canvas: 30 41 59;     /* slate-800 #1E293B — the dark page background */
     --c-subtle: 30 41 59;     /* slate-800 — subtle fills / hovers sit on a card */
-    --c-line: 38 43 51;       /* slate-700 #262B33 — the border dark components pair */
+    --c-line: 71 85 105;      /* #475569 — a hairline on BOTH dark grounds: 1.9:1 on the
+                                 page, 1.4:1 on a card. slate-700 (#262B33) was 1.03:1 on
+                                 the page, so a field or outline button there had no box
+                                 (#3232); lint:dark-line-reads holds both numbers. */
     --c-content: 244 239 229; /* mortar-100 #F4EFE5 — primary text */
     --c-muted: 180 186 194;   /* #B4BAC2 — secondary (matches the muted-lift below) */
     --c-faint: 156 162 172;   /* #9CA2AC — faint */
@@ -58,7 +61,7 @@
     --c-surface: 51 65 85;
     --c-canvas: 30 41 59;
     --c-subtle: 30 41 59;
-    --c-line: 38 43 51;
+    --c-line: 71 85 105;
     --c-content: 244 239 229;
     --c-muted: 180 186 194;
     --c-faint: 156 162 172;
@@ -213,7 +216,7 @@
        placeholder is the faint token in both themes: --c-faint already
        flips for the dark ground, and the dark:slate-500 override that sat
        here forced it back down to a ghost on a phone (#3222). */
-    @apply w-full rounded-md border border-line dark:border-slate-700
+    @apply w-full rounded-md border border-line
            bg-surface dark:bg-slate-800
            px-3 py-2 text-sm
            text-content dark:text-mortar-100
@@ -233,6 +236,16 @@
 html.dark .dark\:text-slate-500 { color: #9CA2AC; }
 html.dark .dark\:text-slate-400 { color: #B4BAC2; }
 html.dark .dark\:text-slate-600 { color: #6B7280; }
+
+/* ── Dark-mode line lift ─────────────────────────────────────────
+   The same for the borders components pair (500 spots use
+   dark:border-slate-700, 470 dark:border-slate-600): against the
+   slate-800 page those are 1.03:1 and 1.24:1, so a field or an outline
+   button on the page ground drew no box (#3232). Both lifted to the
+   dark --c-line token's colour, one hairline on both grounds;
+   lint:dark-line-reads keeps the three equal. */
+html.dark .dark\:border-slate-700,
+html.dark .dark\:border-slate-600 { border-color: #475569; }
 
 /* ── iOS focus-zoom guard ────────────────────────────────────────
    Mobile Safari auto-zooms the page when a focused form control's

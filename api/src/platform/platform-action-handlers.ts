@@ -11,14 +11,15 @@
 
 import { isFieldScope, pluralise, readListArg, type ActionInvokeContext } from "@cobblr/platform-contract";
 import { matchByLabel, splitNames } from "@cobblr/platform-contract/said-names";
+import { kindWordsFrom, type KindWords } from "@cobblr/platform-contract/kind-label";
 import { disableModuleForOrg, enableModuleForOrg } from "../modules/enable.js";
 import { listEntries } from "../modules/registry.js";
 import { meta } from "../db/meta.js";
-import { registerHandler, registerPlanner, registerUndo } from "./actions.js";
+import { actionLabelOf, registerHandler, registerPlanner, registerUndo } from "./actions.js";
 import { getMover, instancesHolding, moveRecords } from "./move-records.js";
 import * as activity from "./activity.js";
 import { upsertNativeFieldOverride } from "./native-field-overrides.js";
-import { USER_SOURCE, recordClaim } from "./bundle-claims.js";
+import { USER_SOURCE } from "./bundle-claims.js";
 import { listKindsForOrg, lookup } from "./entities.js";
 import {
   FieldDefCreate,
@@ -145,7 +146,7 @@ function choicesEdited(
   const add = namesOf(args.add_choices);
   const remove = namesOf(args.remove_choices);
   if (add.length === 0 && remove.length === 0) return undefined;
-  if (str(args.choices) || args.choices === null) {
+  if (namesOf(args.choices).length || args.choices === null) {
     return { error: "pass either choices (the whole list) or add_choices / remove_choices, not both" };
   }
   const same = (a: string, b: string) => a.trim().toLowerCase() === b.trim().toLowerCase();
@@ -197,6 +198,14 @@ function str(v: unknown): string {
  *  call again ("parts (inventory:part), machines (machines:machine)"). A
  *  refusal used to say "check list_record_kinds", a tool name a person cannot
  *  do anything with, and on a card it read as something broken (#3237). */
+/** The words a summary uses for a kind ("parts", "Spices"): every sentence a
+ *  handler returns is the line a person reads on the card after Do it, and
+ *  seven of them wrote the kind id into it (#3237). One rule over the
+ *  workspace's own kinds list (kind-label.ts, kindWordsFrom). */
+async function kindWords(orgId: string, kind: string): Promise<KindWords> {
+  return kindWordsFrom(kind, await listKindsForOrg(orgId).catch(() => []), pluralise);
+}
+
 function kindsInWords(kinds: Array<{ id: string; display_name_plural?: string | null }>): string {
   const named = kinds.map((k) => (k.display_name_plural ? `${k.display_name_plural} (${k.id})` : k.id));
   const shown = named.slice(0, 8);
@@ -213,12 +222,7 @@ export function registerPlatformActionHandlers(): void {
     }
     const typeWord = str(args.type).toLowerCase() || "text";
     const mapped = FIELD_TYPE_WORDS[typeWord] ?? { type: typeWord };
-    const choices = str(args.choices)
-      ? str(args.choices)
-          .split(",")
-          .map((c) => c.trim())
-          .filter(Boolean)
-      : undefined;
+    const choices = namesOf(args.choices).length ? namesOf(args.choices) : undefined;
     // The kind must exist (unless it's a trait scope like @physical, which the
     // service resolves itself) — a field on a kind nobody has saves fine and
     // then applies to nothing, a failure found much later.
@@ -227,6 +231,7 @@ export function registerPlatformActionHandlers(): void {
       if (!kinds.some((k) => k.id === entityKind)) {
         return {
           ok: false,
+          // ALLOW-INTERNAL-NOUN: echoes the caller's own word for a kind that is not here; there are no words for it, and the kinds that are come in words beside it
           error: `this workspace has no kind of record called "${entityKind}" to put a field on; it has ${kindsInWords(kinds)} (or a trait scope like @physical puts it on a whole class)`,
         };
       }
@@ -253,7 +258,7 @@ export function registerPlatformActionHandlers(): void {
     if (!result.ok) return { ok: false, error: result.message };
     return {
       ok: true,
-      summary: `"${result.def.display_label}" (${result.def.type}) added to ${result.def.entity_kind}`,
+      summary: `"${result.def.display_label}" (${result.def.type}) added to ${(await kindWords(ctx.orgId, result.def.entity_kind)).many}`,
       data: {
         id: result.def.id,
         entity_kind: result.def.entity_kind,
@@ -274,7 +279,7 @@ export function registerPlatformActionHandlers(): void {
   ): Promise<{ id: string; name: string; label: string; scopeLabel: string | null } | { error: string }> => {
     const defs = await resolveFieldDefsForKind(orgId, entityKind);
     if (defs.length === 0) {
-      return { error: `"${entityKind}" has no custom fields yet` };
+      return { error: `${(await kindWords(orgId, entityKind)).many} have no custom fields yet` };
     }
     const byName = defs.filter((d) => d.name === said.trim().toLowerCase());
     if (byName.length === 1) {
@@ -294,7 +299,7 @@ export function registerPlatformActionHandlers(): void {
     );
     if (!hit) {
       return {
-        error: `no field called "${said}" on ${entityKind}. It has: ${defs.map((d) => d.display_label).join(", ")}`,
+        error: `no field called "${said}" on ${(await kindWords(orgId, entityKind)).many}. It has: ${defs.map((d) => d.display_label).join(", ")}`,
       };
     }
     if ("ambiguous" in hit) {
@@ -309,14 +314,14 @@ export function registerPlatformActionHandlers(): void {
    *  refusal is the feature: a quiet workspace-wide edit is found much later. */
   const scopeRefusal = (
     found: { label: string; scopeLabel: string | null },
-    entityKind: string,
+    kind: KindWords,
     verb: string,
   ): { ok: false; error: string } | null =>
     found.scopeLabel
       ? {
           ok: false,
           error:
-            `"${found.label}" is not just ${entityKind}'s — it is on ${found.scopeLabel}, so a ` +
+            `"${found.label}" is not just on ${kind.many} — it is on ${found.scopeLabel}, so a ` +
             `${verb} here would land on all of them. Do that one on the Fields screen.`,
         }
       : null;
@@ -434,8 +439,8 @@ export function registerPlatformActionHandlers(): void {
       if (gone.length) lines.push(`Take off: ${gone.join(", ")}`);
       if (added.length) lines.push(`Add: ${added.join(", ")}`);
       lines.push(`Choices after: ${edited.choices.length ? edited.choices.join(", ") : "none"}`);
-    } else if (str(args.choices)) {
-      lines.push(`Choices: ${str(args.choices)}`);
+    } else if (namesOf(args.choices).length) {
+      lines.push(`Choices: ${namesOf(args.choices).join(", ")}`);
     } else if (args.choices === null) {
       lines.push("Choices cleared");
     }
@@ -474,11 +479,8 @@ export function registerPlatformActionHandlers(): void {
         ? edited.choices
         : args.choices === null
           ? null
-          : str(args.choices)
-            ? str(args.choices)
-                .split(",")
-                .map((c) => c.trim())
-                .filter(Boolean)
+          : namesOf(args.choices).length
+            ? namesOf(args.choices)
             : undefined;
       if (label === undefined && hidden === undefined && choices === undefined) {
         return { ok: false, error: `"${native.label}" is built in. You can rename it, hide it, or set its choices` };
@@ -497,7 +499,7 @@ export function registerPlatformActionHandlers(): void {
         .join(", ");
       return {
         ok: true,
-        summary: `"${native.label}" on ${entityKind}: ${said2}`,
+        summary: `"${native.label}" on ${(await kindWords(ctx.orgId, entityKind)).many}: ${said2}`,
         data: {
           name: native.name,
           built_in: true,
@@ -507,7 +509,7 @@ export function registerPlatformActionHandlers(): void {
         },
       };
     }
-    const wide = scopeRefusal(found, entityKind, "change");
+    const wide = scopeRefusal(found, await kindWords(ctx.orgId, entityKind), "change");
     if (wide) return wide;
 
     // What the def and its override say now, kept with the result so the
@@ -537,17 +539,12 @@ export function registerPlatformActionHandlers(): void {
     if (edited && "error" in edited) return { ok: false, error: edited.error };
     if (edited) patch.choices = edited.choices;
     else if (args.choices === null) patch.choices = null;
-    else if (str(args.choices)) {
-      patch.choices = str(args.choices)
-        .split(",")
-        .map((c) => c.trim())
-        .filter(Boolean);
-    }
+    else if (namesOf(args.choices).length) patch.choices = namesOf(args.choices);
     if (Object.keys(patch).length === 0) {
       if (hidden !== undefined) {
         return {
           ok: true,
-          summary: `"${found.label}" on ${entityKind} is ${hidden ? "hidden" : "showing again"}`,
+          summary: `"${found.label}" on ${(await kindWords(ctx.orgId, entityKind)).many} is ${hidden ? "hidden" : "showing again"}`,
           data: { name: found.name, entity_kind: entityKind, before, changed: { hidden: true } },
         };
       }
@@ -567,7 +564,7 @@ export function registerPlatformActionHandlers(): void {
         ? choicesSentence(found.label, edited)
         : onlyChoices && Array.isArray(patch.choices)
           ? `"${found.label}" choices are now: ${(patch.choices as string[]).join(", ") || "none"}`
-          : `"${found.label}" on ${entityKind}: ${changed}`;
+          : `"${found.label}" on ${(await kindWords(ctx.orgId, entityKind)).many}: ${changed}`;
     return {
       ok: true,
       summary,
@@ -624,14 +621,14 @@ export function registerPlatformActionHandlers(): void {
     }
     const found = await findField(ctx.orgId, entityKind, said);
     if ("error" in found) return { ok: false, error: found.error };
-    const wide = scopeRefusal(found, entityKind, "remove");
+    const wide = scopeRefusal(found, await kindWords(ctx.orgId, entityKind), "remove");
     if (wide) return wide;
     const result = await deleteFieldDef(ctx.orgId, found.id);
     if (!result.ok) return { ok: false, error: result.message };
     return {
       ok: true,
       // Said out loud, because "removed" reads as "deleted my data" and it is not.
-      summary: `"${found.label}" removed from ${entityKind}. Values already recorded are kept.`,
+      summary: `"${found.label}" removed from ${(await kindWords(ctx.orgId, entityKind)).many}. Values already recorded are kept.`,
       data: { name: result.def.name },
     };
   });
@@ -646,7 +643,12 @@ export function registerPlatformActionHandlers(): void {
     const entityKind = str(args.entity_kind);
     const section = str(args.section);
     const renameTo = str(args.rename_to);
-    const fields = splitNames(str(args.fields));
+    // A list argument arrives as a comma string, a JSON array or a JSON
+    // string of one; namesOf reads all three. This read `str(args.fields)`,
+    // which is nothing for an array, so a model that supplied every argument
+    // right was told three times that fields were "required" (the 2026-09-22
+    // nightly's transcript, #3142).
+    const fields = namesOf(args.fields);
     if (!entityKind || !section || (fields.length === 0 && !renameTo)) {
       return { error: "entity_kind and section are required, plus either fields or rename_to" };
     }
@@ -662,6 +664,7 @@ export function registerPlatformActionHandlers(): void {
     if ("error" in read) return { error: read.error };
     const kinds = await listKindsForOrg(ctx.orgId);
     const kind = kinds.find((k) => k.id === read.entityKind);
+    // ALLOW-INTERNAL-NOUN: echoes the caller's own word for a kind that is not here; there are no words for it, and the kinds that are come in words beside it
     if (!kind) return { error: `"${read.entityKind}" is not a kind of record here; the workspace has ${kindsInWords(kinds)}` };
     const lines: string[] = [];
     for (const f of read.fields) {
@@ -715,7 +718,7 @@ export function registerPlatformActionHandlers(): void {
   registerHandler("platform.ungroup-fields", async (ctx: ActionInvokeContext) => {
     const args = (ctx.args ?? {}) as Record<string, unknown>;
     const entityKind = str(args.entity_kind);
-    const fields = splitNames(str(args.fields));
+    const fields = namesOf(args.fields);
     if (!entityKind || fields.length === 0) {
       return { ok: false, error: "entity_kind and fields are required" };
     }
@@ -758,7 +761,7 @@ export function registerPlatformActionHandlers(): void {
     if (!result.ok) return { ok: false, error: result.message };
     return {
       ok: true,
-      summary: `"${displayName}" created — its records are ${instanceName}:item`,
+      summary: `"${displayName}" created, a list of its own`,
       // The kind id is what every other tool needs to act on the new list.
       data: {
         instance: result.instance.instance_name,
@@ -793,13 +796,12 @@ export function registerPlatformActionHandlers(): void {
     if ("error" in found) return { ok: false, error: found.error };
     let result;
     try {
-      result = await enableModuleForOrg(ctx.orgId, found.name, { userId: ctx.userId ?? undefined });
+      // The same 'user' claim the screen records, so a later bundle uninstall
+      // never auto-disables a feature someone asked for by name.
+      result = await enableModuleForOrg(ctx.orgId, found.name, { userId: ctx.userId ?? undefined, claimedBy: USER_SOURCE });
     } catch (err) {
       return { ok: false, error: err instanceof Error ? err.message : `couldn't turn on ${found.label}` };
     }
-    // The same 'user' claim the screen records, so a later bundle uninstall
-    // never auto-disables a feature someone asked for by name.
-    await recordClaim(ctx.orgId, USER_SOURCE, "module", found.name);
     // Already on is declined, not acted: nothing was enabled. Said as ok it
     // read as a pass on every seed that turns everything on (#3141).
     if (result.alreadyEnabled) {
@@ -1348,7 +1350,7 @@ export function registerPlatformActionHandlers(): void {
     if (!result.ok) return { ok: false, error: result.message };
     return {
       ok: true,
-      summary: `automation ${result.wire.action_id} is now ${result.wire.enabled ? "on" : "off"}`,
+      summary: `automation "${(await actionLabelOf(result.wire.action_id).catch(() => null)) ?? result.wire.action_id.split(":").pop()?.replace(/[-_]/g, " ")}" is now ${result.wire.enabled ? "on" : "off"}`,
       data: { id: result.wire.id, enabled: result.wire.enabled, before: was?.enabled ?? result.wire.enabled },
     };
   });

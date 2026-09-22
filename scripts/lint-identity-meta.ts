@@ -16,17 +16,13 @@
 // object sets `source` must be identityMeta instead.
 import { readFileSync } from "node:fs";
 import { sourceFiles } from "./lib/glob-exclude.mjs";
+// Comments are stripped before scanning: without that the lint flagged
+// mergeMeta's OWN doc-comment example. The shared scanner, not a regex pair:
+// the pair blanked 255 lines of module code it was meant to read (#3476).
+import { stripComments } from "./lib/source-scan.js";
 
 const files = sourceFiles("modules/**/src/**/*.ts");
 const bad: string[] = [];
-
-/** Strip comments before scanning. Without this the lint flagged mergeMeta's OWN
- *  doc-comment example — a lint matching its own prose, which is how a guardrail
- *  turns into noise and then gets disabled. */
-function stripComments(s: string): string {
-  return s.replace(/\/\*[\s\S]*?\*\//g, (m) => m.replace(/[^\n]/g, " "))
-          .replace(/(^|[^:])\/\/[^\n]*/g, (m, p1) => p1 + " ".repeat(m.length - p1.length));
-}
 
 for (const file of files) {
   const src = stripComments(readFileSync(file, "utf8"));

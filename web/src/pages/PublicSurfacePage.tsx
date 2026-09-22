@@ -144,7 +144,7 @@ export function PublicSurfacePage() {
   // scope_type "app" renders a full-bleed, themed, read-only App Player —
   // its own header/theme, no PublicShell chrome.
   if (data.surface.scope_type === "app" && data.app && data.data) {
-    return <PublicAppPlayer app={data.app} data={data.data} epaper={!!rawTheme.epaper} />;
+    return <PublicAppPlayer app={data.app} data={data.data} epaper={!!rawTheme.epaper} surfaceToken={token} />;
   }
 
   return (

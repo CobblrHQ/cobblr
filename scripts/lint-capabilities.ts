@@ -5,7 +5,7 @@
 // reads the same way: what the capability is, why it has one owner, and what to
 // use instead.
 
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, globSync, readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
 import { CAPABILITIES, type Capability } from "./capabilities.js";
@@ -24,6 +24,23 @@ interface Failure {
 const failures: Failure[] = [];
 /** A scope that stops existing is a check that silently stopped running. */
 const missing: string[] = [];
+
+/** A scope entry is a file, or a glob for a family of files that grows (every
+ *  lint, say), so a rule covers the next member without anyone editing the
+ *  row. A glob that matches nothing is a scope that stopped existing. */
+function expand(scope: string[]): string[] {
+  const out: string[] = [];
+  for (const rel of scope) {
+    if (!rel.includes("*")) {
+      out.push(rel);
+      continue;
+    }
+    const hits = globSync(rel, { cwd: ROOT }).map(String).sort();
+    if (hits.length === 0) missing.push(`${rel} (matches no file)`);
+    out.push(...hits);
+  }
+  return out;
+}
 
 function read(rel: string): string | null {
   const abs = join(ROOT, rel);
@@ -76,9 +93,13 @@ function usedAsLabel(line: string, phrase: RegExp): boolean {
 for (const cap of CAPABILITIES) {
   if (cap.kind === "owns") {
     if (!existsSync(join(ROOT, cap.owner))) missing.push(cap.owner);
-    for (const rel of cap.scope) {
+    for (const rel of Object.keys(cap.except ?? {})) {
+      if (!existsSync(join(ROOT, rel))) missing.push(`${rel} (an exemption for ${cap.id} whose file is gone)`);
+    }
+    for (const rel of expand(cap.scope)) {
+      if (rel === cap.owner || cap.except?.[rel]) continue;
       const code = read(rel);
-      if (code === null || rel === cap.owner) continue;
+      if (code === null) continue;
       // A two-line copy: the per-line hit counts only where the other half is.
       if (cap.also && !cap.also.test(code)) continue;
       code.split("\n").forEach((line, i) => {
@@ -87,7 +108,7 @@ for (const cap of CAPABILITIES) {
       });
     }
   } else if (cap.kind === "requires-prop") {
-    for (const rel of cap.scope) {
+    for (const rel of expand(cap.scope)) {
       const code = read(rel);
       if (code === null) continue;
       const tags = openingTags(code, cap.component);
@@ -109,7 +130,7 @@ for (const cap of CAPABILITIES) {
       }
     }
   } else {
-    for (const rel of cap.scope) {
+    for (const rel of expand(cap.scope)) {
       const code = read(rel);
       if (code === null) continue;
       code.split("\n").forEach((line, i) => {

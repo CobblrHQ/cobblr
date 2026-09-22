@@ -1271,6 +1271,7 @@ bundlesRouter.get(
         .select(["name", "slug"])
         .where("id", "=", orgId)
         .executeTakeFirstOrThrow();
+      // UTC-DAY OK: the manifest's capture stamp, not a claim about anybody's calendar.
       const stamp = new Date().toISOString().slice(0, 10);
       const manifest = {
         id: `cobblr.export.${orgRow.slug}.${stamp}`,
@@ -1443,7 +1444,7 @@ function fieldDefRow(orgId: string, entityKind: string, f: z.infer<typeof FieldD
     bundle_id: bundleId,
     // Dropdown choices when the bundle supplies them (specialisation bundles
     // use this for hotend / firmware / spindle etc.).
-    choices: f.choices ? (sql`${JSON.stringify(f.choices)}::jsonb` as unknown as string[]) : null,
+    choices: f.choices ? JSON.stringify(f.choices) : null,
     renderer: (f as { renderer?: string | null }).renderer ?? null,
     template: f.type === "computed" ? f.template ?? null : null,
     help: f.help ?? null,
@@ -2172,8 +2173,6 @@ export async function applyValidatedBundle(
           entity: { kind: "inventory:part", id: "" },
           event: { name: "bundle.upgraded", payload: {}, actor, timestamp: new Date().toISOString(), trigger_type: "event" },
           args: mig.args,
-          entityKind: "inventory:part",
-          entityId: "",
         });
         migrationsRun.push({ to_version: mig.to_version, action: mig.action, result });
       } catch (err) {

@@ -331,6 +331,13 @@ catalogsRouter.post(
       catalogId: created.id,
       name: created.name,
     });
+    await platform().activity.log({
+      orgId: ctx.org.id,
+      userId: sessionUser(req)?.id ?? null,
+      action: "catalog_created",
+      ref: { module: "core-catalogs", entityType: "catalog", entityId: created.id },
+      diff: { name: created.name },
+    });
     res.status(201).json(created);
   }),
 );

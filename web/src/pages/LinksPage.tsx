@@ -4,6 +4,7 @@
 // initiate a new link from one of their owned workspaces to another
 // (or to a workspace they're invited to). Accept/revoke per row.
 
+import { dayHere } from "@cobblr/platform-contract/day";
 import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { ArrowRight, Check, Clock, Plus, X } from "lucide-react";
@@ -283,7 +284,9 @@ function EditExpiryModal({
             type="date"
             value={dateStr}
             onChange={(e) => setDateStr(e.target.value)}
-            min={new Date().toISOString().slice(0, 10)}
+            // The earliest day this person may pick is THEIR today; the UTC
+            // day locked out today itself all evening in the Americas (#3351).
+            min={dayHere()}
             className="w-full px-2 py-1 text-sm border border-line dark:border-slate-600 rounded bg-surface dark:bg-slate-900"
           />
           <div className="text-[11px] text-faint mt-1">

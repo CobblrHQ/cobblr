@@ -647,9 +647,6 @@ platformOrgRouter.post(
         },
         rendered,
         args,
-        // Deprecated compat aliases (absent for workspace-scoped actions).
-        entityKind: isWorkspaceAction ? undefined : parsed.data.entityKind,
-        entityId: isWorkspaceAction ? undefined : parsed.data.entityId,
         });
       } catch (err) {
         // A refusal is a sentence written for the person; it is repeated as

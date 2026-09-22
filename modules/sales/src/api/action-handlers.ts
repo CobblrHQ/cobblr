@@ -103,6 +103,13 @@ export function registerSalesActionHandlers(): void {
         customerId = (c as { id: string }).id;
         customerName = customerName ?? (c as { name: string }).name;
         void platform().events.emit("sales.customer.created", { orgId: ctx.orgId, customerId, userId: ctx.userId });
+        await platform().activity.log({
+          orgId: ctx.orgId,
+          userId: ctx.userId ?? null,
+          action: "customer_created",
+          ref: { module: "sales", entityType: "customer", entityId: customerId },
+          diff: { name: customerName ?? null },
+        });
       }
     }
 
@@ -137,6 +144,13 @@ export function registerSalesActionHandlers(): void {
     }
 
     void platform().events.emit("sales.order.created", { orgId: ctx.orgId, orderId });
+    await platform().activity.log({
+      orgId: ctx.orgId,
+      userId: ctx.userId ?? null,
+      action: "order_created",
+      ref: { module: "sales", entityType: "order", entityId: orderId },
+      diff: { name: customerName ?? orderId },
+    });
     return { ok: true, orderId, customerId };
   });
 }

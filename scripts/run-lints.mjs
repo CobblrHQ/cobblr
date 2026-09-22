@@ -16,6 +16,7 @@
 //   COBBLR_LINT_CONCURRENCY=4 pnpm run lint:all
 
 import { readFileSync } from "node:fs";
+import { readQuietMs, writeQuietMs } from "./lib/lint-durations.mjs";
 import { execFileSync } from "node:child_process";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -59,13 +60,10 @@ function main() {
   // --record: write this run's per-lint times as the quiet baseline the budget
   // judges against. Refused for a partial run or a contended one (below).
   const record = process.argv.includes("--record");
-  const SNAPSHOT = join(ROOT, "scripts", "lint-durations.json");
-  let quietMs = {};
-  try {
-    quietMs = JSON.parse(readFileSync(SNAPSHOT, "utf8")).ms ?? {};
-  } catch {
-    /* no snapshot: every lint is "unknown" and the budget says so */
-  }
+  // One file per lint (scripts/lint-durations/), read through the one module
+  // so the shape cannot drift: a shared map let a merge drop an entry in
+  // silence, and its pressure valve is what hid it (#3447).
+  const quietMs = readQuietMs();
 
   const { run, scripts } = discoverLints();
   const names = only ? run.filter((n) => only.has(n) || only.has(n.slice("lint:".length))) : run;
@@ -223,15 +221,9 @@ function main() {
         process.exitCode = 1;
         return;
       }
-      const ms = Object.fromEntries(results.map((r) => [r.name, r.ms]).sort(([a], [b]) => a.localeCompare(b)));
-      const doc = {
-        recorded: new Date().toISOString().slice(0, 10),
-        source: `run-lints.mjs --record (${results.length} lints, ${(wall / 1000).toFixed(1)}s wall, ${concurrency} at a time)`,
-        note: "Quiet per-lint wall time in ms. Refresh: node scripts/run-lints.mjs --record on an idle machine (refused when the run is contended). Read by scripts/lib/lint-budget.mjs.",
-        ms,
-      };
-      writeFileSync(SNAPSHOT, JSON.stringify(doc, null, 2) + "\n");
-      console.log(`[lints] recorded ${results.length} quiet baselines to scripts/lint-durations.json`);
+      const source = `run-lints.mjs --record (${results.length} lints, ${(wall / 1000).toFixed(1)}s wall, ${concurrency} at a time)`;
+      for (const r of results) writeQuietMs(r.name, r.ms, source);
+      console.log(`[lints] recorded ${results.length} quiet baselines to scripts/lint-durations/`);
       if (scripts["lint:lint-durations"]) {
         const [again] = await runParallel([{ name: "lint:lint-durations", cmd: scripts["lint:lint-durations"], cwd: ROOT }], { concurrency: 1 });
         if (again.code !== 0) {

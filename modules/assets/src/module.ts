@@ -7,7 +7,7 @@ import { defineModule } from "@cobblr/platform-contract";
 
 export default defineModule({
   name: "assets",
-  version: "0.4.4",
+  version: "0.4.5",
   displayName: "Assets",
   description:
     "Physical things you own that aren't fungible stock and aren't machines. Appliances, tools, collections, anything you'd want to track individually.",
@@ -122,7 +122,10 @@ export default defineModule({
         label: "Move a place field into Location",
         description:
           "Bundle-migration engine (the assets mirror of inventory:field-to-location): retire a bundle's bespoke place field (e.g. a 'Location' text field) into the platform's canonical Location: for each asset with a value, find-or-create a matching Location AREA, file the asset into it (location_id), then clear the field. Idempotent + safe: never invents a place, never overwrites an already-filed asset, re-uses an existing same-named area. Args: { field, instance }.",
-        appliesTo: { kinds: ["assets:asset"] },
+        // A kind-wide migration (every asset in an instance with that
+        // field), not something done TO one asset: workspace scope says so,
+        // and the assistant still reaches it through invoke_action (#3378).
+        scope: "workspace",
         invokeHandler: "assets.field-to-location",
         // Migration-only: run by the bundle-upgrade flow, never a detail button.
         userInvokable: false,

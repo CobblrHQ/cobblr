@@ -126,12 +126,13 @@ function onScreen(
  *  merge run's budget of 40 before the run starts. lint:corpus-known-red-live
  *  refuses more than ten; past that the lever is the issue. */
 const KNOWN_RED: Record<string, string> = {
-  // #3142: the door says which arguments it requires (section; the hours)
-  // and nothing shows the model that, so the call arrives without them two
-  // asks in three. A pass on either is the model's dice, not evidence, until
-  // it can see what the door requires (one pass in seven, 2026-09-19).
-  "put purchase date and supplier under Buying on parts": "#3142 (the door requires section and nothing shows the model that; a pass is not evidence until it can)",
-  "the Rostock Max ran four hours yesterday": "#3142 (the door requires the hours and nothing shows the model that; a pass is not evidence until it can)",
+  // Empty since 2026-09-22. The two #3142 markers ("put purchase date and
+  // supplier under Buying on parts", "the Rostock Max ran four hours
+  // yesterday") were named for a cause their transcripts disproved: the
+  // model supplied every argument correctly and the DOOR refused it, once
+  // for reading a list argument as a string and once for ignoring the
+  // record the action was run on. Both doors were fixed; the two-pass rule
+  // asks each case live until it has passed twice.
 };
 
 /** The cases that left the gate for the trend, by sentence: the reason each
@@ -298,6 +299,15 @@ const RAW_CORPUS: CorpusCase[] = [
     "set the drill's location to Bin 4",
     "move the multimeter to the electronics bin",
   ]),
+  // A move whose destination is not there is a question that names it,
+  // never a silent create of the place (#3255). The seed has no Bin 9.
+  {
+    say: "move the multimeter into Bin 9",
+    cat: "write",
+    no_ai: neverOffer,
+    ai: "clarify",
+    says: ["Bin 9"],
+  },
   ...ph("write", neverOffer, "action:platform:edit-field|update", [
     "rename the Colour field to Shade",
   ]),

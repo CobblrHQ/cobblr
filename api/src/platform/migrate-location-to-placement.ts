@@ -6,6 +6,9 @@
 // prod + staging + dev for the soak window (no unconverted location_id
 // writers remain), THEN step 4 drops location_id + these triggers + the
 // drift table and deletes this file in that same change.
+// NOT RECORDED: its condition is the drift sweep over a soak window, and it
+// retires inside a contract migration, so this pass finding nothing is not
+// evidence either way (lint:heal-shims).
 // Skip with `COBBLR_SKIP_HISTORICAL_MIGRATIONS=1`.
 //
 // BORN WITH: ensurePlacementSyncIfLocated (from enableModuleForOrg: a module with a location field gets its placement sync as it is enabled)

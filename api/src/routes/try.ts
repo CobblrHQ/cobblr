@@ -24,27 +24,29 @@ import { enableDefaultModulesForOrg } from "../modules/enable.js";
 import { hashPassword } from "../auth/password.js";
 import { signSession } from "../auth/jwt.js";
 import {
+  handOverSandbox,
   keepSandbox,
   keptSandboxForUser,
-  provisionSandbox,
+  provisionSandboxWorkspace,
   setKeptSandboxPassword,
   redeemSandboxToken,
   sandboxCapacity,
   sandboxEnabled,
+  type SandboxResult,
 } from "../platform/try-sandbox.js";
 import { seedSandbox } from "../platform/try-sandbox-seed.js";
+import { trialLedger } from "../platform/trial-ledger.js";
 import { emptySandboxRecords } from "../platform/try-sandbox-records.js";
 import { takeFromPool } from "../platform/try-sandbox-pool.js";
 import { issueSignInLink } from "../platform/sign-in-link.js";
 import { createSandboxExport, fetchSandboxExport } from "../platform/try-sandbox-export.js";
 import { takeYourWorkEmail } from "../platform/try-sandbox-export-copy.js";
 import { sendAuthEmail } from "../platform/hosted-seams.js";
-import { startHtml } from "./try-start-page.js";
+import { startHtml, startNonce, startPolicy } from "./try-start-page.js";
 import { goneHtml } from "./try-gone-page.js";
 
 /** Not an error: a pooled sandbox was filled before it was handed over, so the
  *  seed step is skipped rather than run a second time and double everything. */
-class PooledAlready extends Error {}
 
 export const tryRouter = Router();
 
@@ -75,7 +77,20 @@ tryRouter.get(
       res.redirect(303, "/api/v1/try/start");
       return;
     }
-    res.type("html").send(startHtml(key));
+    // This page carries its OWN policy, not the app's: it needs Turnstile's
+    // script, a frame of it and two hosts to call home to, and the app's
+    // `script-src 'self'` would refuse every one of them the day it is
+    // enforced -- which would mean nobody could get a sandbox at all (#3434).
+    // The nonce is minted here and handed to both halves, so the header and
+    // the script tag cannot disagree.
+    //
+    // nginx does not add its own CSP to this URI (docker/nginx.conf maps it to
+    // the empty string, which nginx skips) -- two Content-Security-Policy
+    // headers are enforced as their INTERSECTION, so an inherited strict one
+    // would block the widget however wide this policy is.
+    const nonce = startNonce();
+    res.setHeader("Content-Security-Policy", startPolicy(nonce));
+    res.type("html").send(startHtml(key, nonce));
   },
 );
 
@@ -121,45 +136,40 @@ tryRouter.get(
       // A ready-made one if the pool has any: instant, and its book covers are
       // already in place rather than filling in while somebody watches.
       const pooled = await takeFromPool();
-      const sandbox =
-        pooled ??
-        (await provisionSandbox({
+      let sandbox: SandboxResult;
+      if (pooled) {
+        sandbox = pooled;
+        console.log(`[try-sandbox] handed over ${sandbox.slug} from the pool`);
+      } else {
+        const ws = await provisionSandboxWorkspace({
           provisionOrg: async (userId, name) => {
             const r = await provisionOrgForUser(userId, name);
             return { orgId: r.orgId, slug: r.slug };
           },
           enableDefaults: (orgId, userId) => enableDefaultModulesForOrg(orgId, userId),
-        }));
-
-      // An empty workspace is a poor first impression - the lesson the demo
-      // taught. Best-effort: a seed that fails leaves a usable empty sandbox
-      // rather than no sandbox.
-      try {
-        if (pooled) {
-          console.log(`[try-sandbox] handed over ${sandbox.slug} from the pool`);
-          throw new PooledAlready();
-        }
-        const seed = await seedSandbox(
-          sandbox.orgId,
-          sandbox.userId,
-          env.TRY_SANDBOX_SEED,
-          sandbox.slug,
-        );
-        // Say what landed, not that it ran. "seeded" with nothing in it is the
-        // empty table this seed exists to prevent, and it should be legible in
-        // the log the first time it happens rather than found by a visitor.
-        const r = seed.contents;
-        console.log(
-          `[try-sandbox] seed ${seed.seeded ? seed.name : `skipped (${seed.reason})`}` +
-            (r ? `: ${r.created} records${r.failed ? `, ${r.failed} FAILED` : ""}` : ""),
-        );
-        // Covers are still arriving; say so when they have, rather than holding
-        // the visitor at a loading page for them.
-        void r?.images.then((n) => console.log(`[try-sandbox] covers landed: ${n}`));
-      } catch (err) {
-        if (!(err instanceof PooledAlready)) {
+        });
+        // An empty workspace is a poor first impression - the lesson the demo
+        // taught. Best-effort: a seed that fails leaves a usable empty sandbox
+        // rather than no sandbox. Seeded BEFORE the hand-over, as the pool
+        // does, so the stock sits on the platform's side of the ledger's
+        // starting line on both paths (trial-ledger.ts).
+        try {
+          const seed = await seedSandbox(ws.orgId, ws.userId, env.TRY_SANDBOX_SEED, ws.slug);
+          // Say what landed, not that it ran. "seeded" with nothing in it is the
+          // empty table this seed exists to prevent, and it should be legible in
+          // the log the first time it happens rather than found by a visitor.
+          const r = seed.contents;
+          console.log(
+            `[try-sandbox] seed ${seed.seeded ? seed.name : `skipped (${seed.reason})`}` +
+              (r ? `: ${r.created} records${r.failed ? `, ${r.failed} FAILED` : ""}` : ""),
+          );
+          // Covers are still arriving; say so when they have, rather than holding
+          // the visitor at a loading page for them.
+          void r?.images.then((n) => console.log(`[try-sandbox] covers landed: ${n}`));
+        } catch (err) {
           console.error("[try-sandbox] seed failed (continuing empty):", (err as Error).message);
         }
+        sandbox = await handOverSandbox(ws);
       }
 
       console.log(
@@ -509,6 +519,40 @@ tryRouter.post(
         return;
       }
       res.json(await emptySandboxRecords(membership.slug, bearer));
+    } catch (err) {
+      next(err);
+    }
+  },
+);
+
+// ── GET /try/ledger — what the person built here ──────────────────────────
+//
+// The list the ending page shows under "What you built here", and later the
+// picker for bringing it along (docs/design-decisions/trial-ledger.md). Their
+// own sandbox or kept trial, found through their sandbox link rather than the
+// workspace: past the hour every workspace route answers 410, and this has to
+// read at exactly that moment.
+tryRouter.get(
+  "/try/ledger",
+  requireAuth,
+  async (req: Request, res: Response, next: NextFunction): Promise<void> => {
+    try {
+      if (!sandboxEnabled()) {
+        res.status(404).json({ error: { code: "not_found", message: "Not found" } });
+        return;
+      }
+      const own = await meta
+        .selectFrom("try_sandbox_tokens as t")
+        .innerJoin("orgs as o", "o.id", "t.org_id")
+        .select(["o.id as org_id"])
+        .where("t.user_id", "=", req.session!.id)
+        .orderBy("t.expires_at", "desc")
+        .executeTakeFirst();
+      if (!own) {
+        res.status(400).json({ error: { code: "not_sandbox", message: "This is not a sandbox workspace." } });
+        return;
+      }
+      res.json(await trialLedger(own.org_id));
     } catch (err) {
       next(err);
     }

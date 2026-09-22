@@ -18,7 +18,8 @@ import { WEEKDAYS, MONTHS, isoLocal, buildMonthGrid, shiftMonth } from "../lib/m
 import { useMutation } from "@tanstack/react-query";
 import { ApiError, api, type SavedView } from "../lib/api";
 import { useActiveOrg } from "../auth/ActiveOrgContext";
-import { Modal, useToast, useConfirm, usePageTitle, BulkActionBar, useFlowHost, useImageSrc, useRunAction } from "@cobblr/platform-web";
+import { Modal, useToast, useConfirm, usePageTitle, BulkActionBar, useFlowHost, useImageSrc, useRunAction, LOCATION_GROUP_KEY, makeAreaResolver } from "@cobblr/platform-web";
+import { groupKeyOf, fieldVal } from "../lib/view-group-key";
 import {
   useKindFields,
   FieldSelect,
@@ -233,6 +234,29 @@ function ViewDataModal({
     <Modal open onClose={onClose} title={view.name} size="lg">
       <SavedViewBody view={view} items={items} isLoading={data.isLoading} collectionEmpty={data.data?.collection_empty} />
     </Modal>
+  );
+}
+
+/** The workspace's rooms, once, for the location rollup; a renderer that
+ *  never groups by location pays for nothing (the query is off). */
+function useAreaResolver(enabled: boolean) {
+  const { activeSlug } = useActiveOrg();
+  const locs = useQuery({
+    queryKey: ["inventory-locations", activeSlug],
+    queryFn: () => api.listLocations(activeSlug),
+    enabled: enabled && !!activeSlug,
+    staleTime: 60_000,
+  });
+  return useMemo(
+    () =>
+      makeAreaResolver(locs.data?.items ?? [], {
+        id: (l) => l.id,
+        parentId: (l) => l.parent_id,
+        position: () => 0,
+        name: (l) => l.name,
+        isContainer: (l) => l.kind === "container",
+      }),
+    [locs.data],
   );
 }
 
@@ -884,16 +908,11 @@ function KanbanRenderer({
   items: ViewRow[];
   groupBy: string;
 }) {
-  // Group rows by config.group_by — try direct field first, then
-  // fields[group_by], then fall back to subtitle. Unrecognised /
-  // null values bucket under "(none)".
+  // Group rows by config.group_by through the one rule (groupKeyOf).
+  const areaOf = useAreaResolver(groupBy === LOCATION_GROUP_KEY);
   const buckets = new Map<string, ViewRow[]>();
   for (const r of items) {
-    const raw =
-      (r as unknown as Record<string, unknown>)[groupBy] ??
-      fieldVal(r.fields, groupBy) ??
-      (groupBy === "subtitle" ? r.subtitle : undefined);
-    const key = typeof raw === "string" && raw.length > 0 ? raw : "(none)";
+    const key = groupKeyOf(r, groupBy, areaOf);
     const arr = buckets.get(key) ?? [];
     arr.push(r);
     buckets.set(key, arr);
@@ -953,16 +972,13 @@ function TableRenderer({
   const selectCols = selection ? cols.length + 1 : cols.length;
 
   // When group_by is set, split rows into ordered sections with a header
-  // row each. Reuses fieldVal so the group key reaches custom fields too.
+  // row each, through the one rule (groupKeyOf).
+  const areaOf = useAreaResolver(groupBy === LOCATION_GROUP_KEY);
   const groups: Array<{ key: string; rows: ViewRow[] }> = [];
   if (groupBy) {
     const byKey = new Map<string, ViewRow[]>();
     for (const r of items) {
-      const raw =
-        (r as unknown as Record<string, unknown>)[groupBy] ??
-        fieldVal(r.fields, groupBy) ??
-        (groupBy === "subtitle" ? r.subtitle : undefined);
-      const key = typeof raw === "string" && raw.length > 0 ? raw : "(none)";
+      const key = groupKeyOf(r, groupBy, areaOf);
       const arr = byKey.get(key) ?? [];
       arr.push(r);
       byKey.set(key, arr);
@@ -1033,15 +1049,6 @@ function TableRenderer({
  *  `fields.metadata.mileage`, not `fields.mileage`. Try the top level first
  *  (native columns + computed fields), then fall back to metadata, so a
  *  saved view's `visible_fields`/`group_by` reaches custom fields too. */
-function fieldVal(fields: Record<string, unknown> | undefined, key: string): unknown {
-  if (!fields) return undefined;
-  const top = fields[key];
-  if (top !== undefined && top !== null) return top;
-  const meta = fields.metadata;
-  if (meta && typeof meta === "object") return (meta as Record<string, unknown>)[key];
-  return undefined;
-}
-
 function formatCell(col: string, row: ViewRow): string {
   if (col === "title") return row.title;
   if (col === "subtitle") return row.subtitle ?? "";

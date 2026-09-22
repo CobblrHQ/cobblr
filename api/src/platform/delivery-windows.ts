@@ -32,6 +32,7 @@
 // the same way priority is.
 
 import { Kysely, sql, type Generated } from "kysely";
+import { dayIn } from "@cobblr/platform-contract/day";
 
 /** low < normal < high < urgent. Mirrors notifications.ts; kept local so the
  *  pure half of this file has no imports to stub in a test. */
@@ -125,14 +126,10 @@ export function localMinuteOfDay(at: Date, timezone: string): number {
   }
 }
 
-/** The local calendar day for an instant in a zone, as YYYY-MM-DD. */
-export function localDay(at: Date, timezone: string): string {
-  try {
-    return new Intl.DateTimeFormat("en-CA", { timeZone: timezone }).format(at);
-  } catch {
-    return at.toISOString().slice(0, 10);
-  }
-}
+/** The local calendar day for an instant in a zone, as YYYY-MM-DD. The rule
+ *  is the platform's (`@cobblr/platform-contract/day`): one answer to "whose
+ *  day is it", here and in every surface that claims a day (#3351). */
+export const localDay = (at: Date, timezone: string): string => dayIn(at, timezone);
 
 /**
  * Is this bucket due to be flushed right now?

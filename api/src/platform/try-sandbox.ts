@@ -29,6 +29,14 @@ import { hashToken } from "./try-sandbox-token.js";
 import { mintSandboxToken } from "./try-sandbox-token.js";
 import { hashPassword } from "../auth/password.js";
 import { signSession } from "../auth/jwt.js";
+import * as activity from "./activity.js";
+
+/** The activity row that marks the moment a sandbox became somebody's. The
+ *  trial ledger (trial-ledger.ts) starts here: the stock, the defaults and
+ *  the provisioning are the platform's and come before it, and they are made
+ *  through the same doors as the person's own work, by the same guest, so
+ *  nothing else in a row can tell them apart. */
+export const SANDBOX_HANDED_OVER = "sandbox_handed_over";
 
 /** True only on a box that opted in. */
 export function sandboxEnabled(): boolean {
@@ -232,18 +240,25 @@ export async function handOverSandbox(
     .insertInto("try_sandbox_tokens")
     .values({ org_id: ws.orgId, user_id: ws.userId, token_hash: hash, expires_at: expiresAt })
     .execute();
+  // Where the person's ledger begins. Written before the link is handed out,
+  // so nothing they do can come first; a system row, not the guest's.
+  try {
+    await activity.log({
+      orgId: ws.orgId,
+      userId: null,
+      action: SANDBOX_HANDED_OVER,
+      ref: { module: null, entityType: "org", entityId: ws.orgId },
+      diff: { expires_at: expiresAt.toISOString() },
+    });
+  } catch (err) {
+    console.error(`[try-sandbox] hand-over row for ${ws.slug} failed:`, (err as Error).message);
+  }
   // Somebody arrived. Its own event, apart from real signups: at a booth
   // this is everybody who stops walking.
   announceSandboxStarted({ slug: ws.slug });
   return { ...ws, token: plain, expiresAt };
 }
 
-/** Provision one sandbox and hand it straight over. The path taken when no
- *  ready-made one is waiting. */
-export async function provisionSandbox(deps: ProvisionDeps): Promise<SandboxResult> {
-  const ws = await provisionSandboxWorkspace(deps);
-  return handOverSandbox(ws, deps.now?.() ?? Date.now());
-}
 
 // ── redeeming ─────────────────────────────────────────────────────────────
 

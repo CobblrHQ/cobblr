@@ -8,6 +8,7 @@
 // validated against a JSON Schema the feature supplies.
 
 import { useEffect, useId, useState } from "react";
+import { useLater } from "./use-later";
 import Ajv from "ajv";
 
 // One shared, lenient compiler. strict:false so a feature's schema can carry
@@ -86,6 +87,7 @@ export function JsonField({
   const [text, setText] = useState(() => serialize(value));
   const [errors, setErrors] = useState<string[]>(() => evaluateJson(serialize(value), { schema, required }).errors);
   const [copied, setCopied] = useState(false);
+  const later = useLater();
 
   // Re-seed when the parent pushes a genuinely different value (reset / connector
   // switch), without clobbering an in-progress edit that parses to the same thing.
@@ -115,8 +117,9 @@ export function JsonField({
 
   const copy = () => {
     void navigator.clipboard.writeText(text).then(() => {
+      if (!later.alive) return;
       setCopied(true);
-      setTimeout(() => setCopied(false), 1500);
+      later.after("copied", 1500, () => setCopied(false));
     });
   };
 

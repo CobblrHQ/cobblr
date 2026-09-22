@@ -54,6 +54,12 @@ export interface UsersTable {
    *  backfill reconcile once IDENTITY_URL is wired. A verified central token's `sub`
    *  maps to this row through this column. NULL = not yet linked (or identity off). */
   identity_id: string | null;
+  /** Set when the account was deleted but the row had to stay as an anonymised
+   *  tombstone because something without a delete rule still references it
+   *  (feedback filed, invites created, an operator session run). NULL = a live
+   *  account. A deleted account is also inactive with no password and no
+   *  identity link, so nothing can sign in as it. */
+  deleted_at: Date | null;
 }
 
 export interface OrgsTable {
@@ -871,8 +877,14 @@ export interface ModuleFieldDefsTable {
    *  `contributes.fieldDefs`. Cleaned up on module disable. */
   source_module: string | null;
   /** When type='text', renders as a dropdown of these choices. The
-   *  "+ add new" affordance in the UI PATCHes this array. */
-  choices: string[] | null;
+   *  "+ add new" affordance in the UI PATCHes this array.
+   *
+   *  Reads as an array, WRITES as a JSON string, because node-pg renders a
+   *  JS array as a Postgres array literal (`{a,b}`) and jsonb rejects it at
+   *  runtime. Spelling the write side as a string is what makes the bug
+   *  impossible to express: pass `JSON.stringify(values)`, and a bare array
+   *  stops compiling instead of failing in front of a user. */
+  choices: ColumnType<string[] | null, string | null | undefined, string | null>;
   /** Built-in renderer id for displaying this field's value in
    *  list rows + detail pages. Same fixed set as
    *  CatalogSchema.field_renderers — color-hex, image-url,
@@ -1164,6 +1176,17 @@ export interface EdgeRelayJobsTable {
   expires_at: Date;
 }
 
+/** What a one-shot heal shim found, the last time it ran on this deployment.
+ *  `zero_since` is when it first found nothing and kept finding nothing, so a
+ *  shim's `DONE WHEN:` is answerable without reading a boot log (#3453). */
+export interface HealShimRunsTable {
+  shim: string;
+  last_run_at: Date;
+  last_found: number;
+  last_failed: Generated<number>;
+  zero_since: Date | null;
+}
+
 export interface MetaDB {
   feedback: FeedbackTable;
   edge_bridges: EdgeBridgesTable;
@@ -1196,6 +1219,7 @@ export interface MetaDB {
   notification_audiences: NotificationAudiencesTable;
   notification_account_prefs: NotificationAccountPrefsTable;
   notification_delivery_windows: NotificationDeliveryWindowsTable;
+  heal_shim_runs: HealShimRunsTable;
   notification_deferred: NotificationDeferredTable;
   discord_connections: DiscordConnectionsTable;
   browser_drive_grants: BrowserDriveGrantsTable;

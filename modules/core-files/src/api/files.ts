@@ -169,6 +169,13 @@ filesRouter.post(
         kind: stored.kind,
         size_bytes: stored.size_bytes,
       });
+      await platform().activity.log({
+        orgId: ctx.org.id,
+        userId: sessionUser(req)?.id ?? null,
+        action: "file_created",
+        ref: { module: "core-files", entityType: "file", entityId: row.id },
+        diff: { name: row.filename, kind: stored.kind },
+      });
 
       // Best-effort attach if requested. If the attach row fails we
       // still return the file (so the user has the upload), with the
@@ -376,6 +383,12 @@ filesRouter.delete(
     await platform().events.emit("core-files.file.deleted", {
       orgId: ctx.org.id,
       fileId: id,
+    });
+    await platform().activity.log({
+      orgId: ctx.org.id,
+      userId: sessionUser(req)?.id ?? null,
+      action: "file_deleted",
+      ref: { module: "core-files", entityType: "file", entityId: id },
     });
     res.status(204).end();
   }),

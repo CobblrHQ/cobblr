@@ -85,6 +85,61 @@ export function itemNounPluralForKind(
   return pluralise(itemNounForKind(kind, instances));
 }
 
+// ─── A kind in a sentence, from the workspace's kinds list ────────────────
+//
+// An action handler's summary is the sentence a person reads on the card
+// after Do it, and seven of them wrote the kind id into it: `"Colour" (text)
+// added to inventory:part`, `"Spices" created, its records are spices:item`
+// (walked on the rig 2026-09-20, #3237). The handlers hold the workspace's
+// kinds list (listKindsForOrg), which already carries the words: a module
+// kind's registry name and plural, an instance kind's chosen name. So one
+// rule over that list, and the sentence says "on parts" and "Spices".
+
+export interface KindForWords {
+  id: string;
+  display_name?: string | null;
+  display_name_plural?: string | null;
+  /** Set on a kind synthesised from a workspace instance (`spices:item`). */
+  instance_name?: string | null;
+}
+
+export interface KindWords {
+  /** One of them, mid-sentence: "part", "machine", "Spices" (an instance's
+   *  chosen name is a proper name and keeps its case). */
+  one: string;
+  /** Several, mid-sentence: "parts", "machines", "Spices". */
+  many: string;
+}
+
+const naivePlural = (w: string): string => (/(s|x|z|ch|sh)$/i.test(w) ? `${w}es` : /[^aeiou]y$/i.test(w) ? `${w.slice(0, -1)}ies` : `${w}s`);
+
+/** The words a sentence uses for a kind. A module kind reads by its registry
+ *  name, lowercased for the middle of a sentence; an instance kind reads by
+ *  the name the person gave it, as given. A kind the list does not hold reads
+ *  by its type suffix, humanised, never by its id. */
+export function kindWordsFrom(
+  kind: string | null | undefined,
+  kinds: readonly KindForWords[] | null | undefined,
+  pluralise: (noun: string) => string = naivePlural,
+): KindWords {
+  const row = kinds?.find((k) => k.id === kind) ?? null;
+  if (row?.instance_name && row.display_name?.trim()) {
+    const name = row.display_name.trim();
+    return { one: name, many: row.display_name_plural?.trim() || name };
+  }
+  if (row?.display_name?.trim()) {
+    const one = row.display_name.trim().toLowerCase();
+    return { one, many: (row.display_name_plural?.trim() || pluralise(one)).toLowerCase() };
+  }
+  const tail = (kind ?? "").split(":")[1]?.trim();
+  const head = (kind ?? "").split(":")[0]?.trim();
+  // An instance kind the list does not hold: its slug names the collection
+  // already ("spices"), one word for one and for many.
+  if (tail === "item" && head) return { one: head.replace(/[_-]/g, " "), many: head.replace(/[_-]/g, " ") };
+  const one = (tail || head || "record").replace(/[_-]/g, " ").toLowerCase();
+  return { one, many: pluralise(one) };
+}
+
 /** The plain word for a view renderer. The id names an implementation; the
  *  word names what the person sees. */
 export const VIEW_TYPE_LABELS: Record<string, string> = {

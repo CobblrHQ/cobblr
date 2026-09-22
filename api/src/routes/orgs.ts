@@ -28,7 +28,7 @@ import { applyBlueprint, BlueprintManifest } from "./blueprint.js";
 import { provisionAppWorkspace, ProvisionAppError, refreshManagedApp, importAppData, pointScanFallbackAtApp } from "../platform/provision-app.js";
 import { checkEntitlement } from "../platform/hosted-seams.js";
 import { disableModuleForOrg, enableModuleForOrg } from "../modules/enable.js";
-import { recordClaim, USER_SOURCE } from "../platform/bundle-claims.js";
+import { USER_SOURCE } from "../platform/bundle-claims.js";
 import { lookup as lookupEntity } from "../platform/entities.js";
 
 /** The kind a resolved record is FILED under: `<instance>:item` for a record
@@ -172,12 +172,12 @@ orgsRouter.post(
         });
         return;
       }
+      // Pinned with a 'user' claim so a later bundle uninstall never
+      // auto-disables a module the user turned on themselves.
       const result = await enableModuleForOrg(req.tenant!.org.id, name, {
         userId: req.session!.id,
+        claimedBy: USER_SOURCE,
       });
-      // Pin the module with a 'user' claim so a later bundle uninstall never
-      // auto-disables a module the user turned on themselves. Idempotent.
-      await recordClaim(req.tenant!.org.id, USER_SOURCE, "module", name);
       res.status(result.alreadyEnabled ? 200 : 201).json({
         module: name,
         already_enabled: result.alreadyEnabled,

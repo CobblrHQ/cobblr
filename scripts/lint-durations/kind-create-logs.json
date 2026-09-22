@@ -1,0 +1,6 @@
+{
+  "lint": "lint:kind-create-logs",
+  "ms": 529,
+  "recorded": "2026-09-22",
+  "source": "CI typecheck run 24934 (974229bf2, status success)"
+}

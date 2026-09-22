@@ -31,6 +31,7 @@ import { meta } from "../db/meta.js";
 import { instanceKindName } from "./instance-kind.js";
 import { INSTANCE_ITEM_DETAIL, resolveDetailPath } from "./instance-detail.js";
 import { getEntry } from "../modules/registry.js";
+import { assertModulesMounted } from "../modules/mount-state.js";
 
 // Re-export so callers reaching detail-path logic through `entities` keep working
 // while the ONE decision lives in the DB-free instance-detail module.
@@ -400,6 +401,7 @@ export async function getEntityWriterFor(
   orgId: string,
   kind: string,
 ): Promise<EntityWriter | undefined> {
+  assertModulesMounted("An entity writer");
   const exact = entityWriters.get(kind);
   if (exact) return exact;
   const base = await baseKindOf(orgId, kind);

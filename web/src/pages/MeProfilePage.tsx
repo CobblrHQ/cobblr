@@ -24,6 +24,7 @@ import { useTheme } from "../theme/ThemeContext";
 import { useToast, usePageTitle } from "@cobblr/platform-web";
 import { NAV_LAYOUTS, setNavLayout, useNavLayout } from "../lib/nav-mode";
 import { LayoutPreview } from "../components/LayoutPreview";
+import { DeleteAccountSection } from "../components/DeleteAccountSection";
 import {
   DEFAULT_TITLE_FORMAT,
   TITLE_FORMATS,
@@ -160,6 +161,7 @@ export function MeIdentityPage() {
         />
       )}
       <PasswordSection onChanged={() => toast.success("Password updated - you stay signed in.")} />
+      <DeleteAccountSection />
     </div>
   );
 }

@@ -21,6 +21,7 @@
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { dirname, join, relative } from "node:path";
+import { stripComments } from "./lib/source-scan.js";
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
 const FILE = join(ROOT, "web", "src", "pages", "ScanPage.tsx");
@@ -42,9 +43,7 @@ const errors: string[] = [];
 // match its OWN prose: the comment documenting this anchor names both the
 // attribute and "Set location", and searching the raw file found the comment
 // first - which made the slice start above the row and every check nonsense.
-const withoutComments = whole
-  .replace(/\/\*[\s\S]*?\*\//g, (m) => m.replace(/[^\n]/g, " "))
-  .replace(/(^|[^:])\/\/[^\n]*/g, (m, p1: string) => p1 + m.slice(p1.length).replace(/./g, " "));
+const withoutComments = stripComments(whole);
 
 const ANCHOR = "data-session-header";
 const anchorAt = withoutComments.indexOf(ANCHOR);
@@ -225,6 +224,57 @@ if (LOCATION !== -1 && FILE_ALL !== -1) {
       "the session header row must carry `overflow-hidden` - without it a row " +
         "that does not fit pushes the whole page sideways.",
     );
+  }
+}
+
+// THE FILING BUTTON SPELLS ITSELF SHORT ON A PHONE.
+//
+// The row clips, and the only thing on it allowed to truncate is the identity -
+// so every character the filing verb takes comes off the merchant's name. The
+// label grew from "File 1" to "Install & file 1" on 2026-09-16 and a
+// fourteen-character shop read "STITCH & S…" on the booth's own phone (#3393).
+// Nothing failed: the row still fitted, by clipping the one thing it is allowed
+// to clip, which is why this is a lint and not a type.
+//
+// So the button renders the contract's TWO spellings, each scoped to its width:
+// `shortLabel` ("File N") below sm, `label` (which carries the install word)
+// from sm up. Both come from one scanSessionAction call, so they cannot
+// disagree about what the tap covers, and a future growth of the desk label
+// cannot reach the phone. `shortLabel` itself is held to "File N" by the
+// contract's own test ("the merchant's name never pays for a longer verb").
+if (FILE_ALL !== -1 && OPEN !== -1) {
+  const trio = src.slice(FILE_ALL, OPEN);
+  /** The className of the span that wraps this expression, or null. */
+  const wrapperClass = (at: number): string | null => {
+    const open = trio.lastIndexOf("<span", at);
+    if (open === -1) return null;
+    const tag = trio.slice(open, at);
+    return tag.match(/className="([^"]*)"/)?.[1] ?? "";
+  };
+  const spellings: Array<[string, string, (c: string) => boolean, string]> = [
+    ["sessionAction.shortLabel", "the phone spelling", (c) => /\bsm:hidden\b/.test(c) && !/\bmax-sm:hidden\b/.test(c), "a span classed sm:hidden"],
+    ["sessionAction.label", "the desk spelling", (c) => /\bmax-sm:hidden\b/.test(c) || /\bhidden sm:(inline|block|flex)\b/.test(c), "a span classed max-sm:hidden"],
+  ];
+  for (const [expr, what, ok, want] of spellings) {
+    const hits = [...trio.matchAll(new RegExp(expr.replace(".", "\\."), "g"))];
+    if (hits.length === 0) {
+      errors.push(
+        `the filing button does not render ${expr} - ${what} is missing, so one width is ` +
+          `saying the other's words. The phone gets ${want}: "Install & file 1" costs the ` +
+          `merchant beside it about a third of its name (#3393).`,
+      );
+      continue;
+    }
+    for (const h of hits) {
+      const cls = wrapperClass(h.index!);
+      if (cls === null || !ok(cls)) {
+        const line = withoutComments.slice(0, anchorAt + FILE_ALL + h.index!).split("\n").length;
+        errors.push(
+          `${expr} is rendered at ${REL}:${line} outside ${want} (found ${cls === null ? "no wrapping span" : `className="${cls}"`}) - ` +
+            `${what} must be scoped to its width, or the other width reads it too.`,
+        );
+      }
+    }
   }
 }
 

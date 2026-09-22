@@ -19,6 +19,7 @@
 
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
+import { stripComments } from "./lib/source-scan.js";
 
 const ROOT = join(import.meta.dirname, "..");
 
@@ -32,9 +33,6 @@ const CAMERA_SURFACES = [
 /** A toast call, or the hook that mints one. Comments are stripped first, so
  *  the file may keep explaining WHY it does not use them. */
 const TOAST = /\b(useToast\s*\(|toast\s*\.\s*(success|error|info|warning)\s*\()/;
-
-const stripComments = (src: string): string =>
-  src.replace(/\/\*[\s\S]*?\*\//g, "").replace(/^\s*\/\/.*$/gm, "");
 
 const problems: string[] = [];
 

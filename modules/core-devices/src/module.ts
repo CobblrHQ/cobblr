@@ -12,7 +12,7 @@ import { defineModule } from "@cobblr/platform-contract";
 
 export default defineModule({
   name: "core-devices",
-  version: "0.2.4",
+  version: "0.2.5",
   displayName: "Devices",
   description:
     "The device substrate. Link a physical device (a scale, an RFID reader, a relay) to the Cobblr thing it feeds, in one place. Plumbing under digifab, core-print, and edge firmware connectors.",

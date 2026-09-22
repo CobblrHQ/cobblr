@@ -12,7 +12,7 @@ import { sql } from "kysely";
 import { platform } from "@cobblr/platform-contract";
 import { z } from "zod";
 import multer from "multer";
-import { tenantDb, tenantContext } from "../db.js";
+import { tenantDb, tenantContext, sessionUser } from "../db.js";
 import { asyncHandler, badBody, requireRole } from "./util.js";
 
 export const entriesRouter = Router({ mergeParams: true });
@@ -70,6 +70,13 @@ entriesRouter.post(
       .returningAll()
       .executeTakeFirstOrThrow();
     void platform().events.emit("knowledge.entry.created", { orgId: ctx.org.id, entryId: row.id });
+    await platform().activity.log({
+      orgId: ctx.org.id,
+      userId: sessionUser(req)?.id ?? null,
+      action: "entry_created",
+      ref: { module: "knowledge", entityType: "entry", entityId: row.id },
+      diff: { name: row.title, kind: row.kind },
+    });
     res.status(201).json(row);
   }),
 );
@@ -127,6 +134,12 @@ entriesRouter.delete(
       .executeTakeFirst();
     if (!row) return void res.status(404).json({ error: { code: "not_found", message: "Entry not found." } });
     void platform().events.emit("knowledge.entry.deleted", { orgId: ctx.org.id, entryId: row.id });
+    await platform().activity.log({
+      orgId: ctx.org.id,
+      userId: sessionUser(req)?.id ?? null,
+      action: "entry_deleted",
+      ref: { module: "knowledge", entityType: "entry", entityId: row.id },
+    });
     res.status(204).end();
   }),
 );

@@ -187,6 +187,7 @@ async function locationNamer(orgId: string): Promise<(id: string) => string | nu
   return (id) => byId.get(id) ?? null;
 }
 
+// UTC-DAY OK: an export filename's stamp, not a claim about anybody's calendar.
 const stamp = () => new Date().toISOString().slice(0, 10);
 
 // The export modal's config: what photo mode to pre-select + the TTL choices.

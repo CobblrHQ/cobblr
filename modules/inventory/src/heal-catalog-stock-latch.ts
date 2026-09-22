@@ -87,6 +87,8 @@ async function candidatesByOrg(meta: MetaDb): Promise<Map<string, Candidate[]>> 
   return byOrg;
 }
 
+const SHIM = "modules/inventory/src/heal-catalog-stock-latch.ts";
+
 /** Returns the number of instances actually returned to the catalog face. */
 export async function healCatalogStockLatch(): Promise<number> {
   const meta = platform().db.meta as unknown as MetaDb;
@@ -94,12 +96,20 @@ export async function healCatalogStockLatch(): Promise<number> {
   try {
     byOrg = await candidatesByOrg(meta);
   } catch (err) {
+    // Nothing recorded: a scan that failed did not find zero.
     console.error("[inventory.heal-latch] candidate scan failed:", (err as Error).message);
     return 0;
   }
-  if (byOrg.size === 0) return 0;
+  // Found = every latched instance not yet checked, which is exactly the DONE
+  // WHEN: each one this pass gets through is marked checked either way.
+  const found = [...byOrg.values()].reduce((n, c) => n + c.length, 0);
+  if (byOrg.size === 0) {
+    await platform().health.noteHealShim(SHIM, 0, 0);
+    return 0;
+  }
 
   let unlatched = 0;
+  let failed = 0;
   for (const [orgId, candidates] of byOrg) {
     // Per-org try/catch: one workspace's failure never blocks the rest.
     // withDb releases the tenant pool for us — a boot sweep that holds one pool
@@ -142,8 +152,10 @@ export async function healCatalogStockLatch(): Promise<number> {
         }
       }
     } catch (err) {
+      failed++;
       console.error(`[inventory.heal-latch] org ${orgId} skipped:`, (err as Error).message);
     }
   }
+  await platform().health.noteHealShim(SHIM, found, failed);
   return unlatched;
 }

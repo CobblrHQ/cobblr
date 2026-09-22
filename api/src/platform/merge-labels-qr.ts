@@ -28,6 +28,9 @@
 
 import { sql } from "kysely";
 import { meta } from "../db/meta.js";
+import { noteHealShim } from "./heal-shim-log.js";
+
+const SHIM = "api/src/platform/merge-labels-qr.ts";
 
 export async function mergeLabelsQr(): Promise<{ renamed: number; deleted: number; wiresRewritten: number }> {
   if (process.env.COBBLR_SKIP_HISTORICAL_MIGRATIONS === "1") {
@@ -41,6 +44,7 @@ export async function mergeLabelsQr(): Promise<{ renamed: number; deleted: numbe
 
   let renamed = 0;
   let deleted = 0;
+  let failed = 0;
   for (const { org_id } of rows) {
     try {
       const hasLabels = await meta
@@ -81,6 +85,7 @@ export async function mergeLabelsQr(): Promise<{ renamed: number; deleted: numbe
         deleted++;
       }
     } catch (err) {
+      failed++;
       console.error(`[merge-labels-qr] org ${org_id} failed:`, (err as Error).message);
     }
   }
@@ -93,12 +98,15 @@ export async function mergeLabelsQr(): Promise<{ renamed: number; deleted: numbe
     })
     .where("trigger_event", "like", "core-labels-qr.%")
     .executeTakeFirst();
-  await meta
+  const resourced = await meta
     .updateTable("entity_action_bindings")
     .set({ source_module: "labels" }) // HISTORICAL DATA MIGRATION names the module it heals
     .where("source_module", "=", "core-labels-qr")
-    .execute();
+    .executeTakeFirst();
 
   const wiresRewritten = Number(rewrote?.numUpdatedRows ?? 0n);
+  // Found = every enablement row it met plus both halves of the wire
+  // rewrite: the DONE WHEN names all three.
+  await noteHealShim(SHIM, rows.length + wiresRewritten + Number(resourced?.numUpdatedRows ?? 0n), failed);
   return { renamed, deleted, wiresRewritten };
 }

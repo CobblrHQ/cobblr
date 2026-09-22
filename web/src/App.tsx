@@ -84,6 +84,7 @@ const MeNotificationsPage = lazy(() => import("./pages/MeNotificationsPage").the
 const MeNotificationChannelsPage = lazy(() => import("./pages/MeNotificationChannelsPage").then((m) => ({ default: m.MeNotificationChannelsPage })));
 const MeProfilePage = lazy(() => import("./pages/MeProfilePage").then((m) => ({ default: m.MeProfilePage })));
 const AccountSectionPage = lazy(() => import("./pages/AccountSectionPage").then((m) => ({ default: m.AccountSectionPage })));
+const NoWorkspacePage = lazy(() => import("./pages/NoWorkspacePage").then((m) => ({ default: m.NoWorkspacePage })));
 const MeIdentityPage = lazy(() => import("./pages/MeProfilePage").then((m) => ({ default: m.MeIdentityPage })));
 const PrintPageLazy = lazy(() => import("./pages/PrintPage").then((m) => ({ default: m.PrintPage })));
 const MeAppearancePage = lazy(() => import("./pages/MeProfilePage").then((m) => ({ default: m.MeAppearancePage })));
@@ -112,6 +113,7 @@ const TemplatesPage = lazy(() => import("./pages/TemplatesPage").then((m) => ({ 
 const AssistantSettingsPage = lazy(() => import("./pages/AssistantSettingsPage").then((m) => ({ default: m.AssistantSettingsPage })));
 const ScanPage = lazy(() => import("./pages/ScanPage").then((m) => ({ default: m.ScanPage })));
 const ScanCameraPage = lazy(() => import("./pages/ScanCameraPage").then((m) => ({ default: m.ScanCameraPage })));
+const ScanLivePage = lazy(() => import("./pages/ScanLivePage").then((m) => ({ default: m.ScanLivePage })));
 const BundleComposerPage = lazy(() => import("./pages/BundleComposerPage").then((m) => ({ default: m.BundleComposerPage })));
 const CatalogsPage = lazy(() => import("./pages/CatalogsPage").then((m) => ({ default: m.CatalogsPage })));
 const CatalogDetailPage = lazy(() => import("./pages/CatalogDetailPage").then((m) => ({ default: m.CatalogDetailPage })));
@@ -357,17 +359,13 @@ function LandingRedirect() {
   if (user.must_reset_password) return <ForcePasswordResetPage />;
   const org = pickDefaultOrg(orgs);
   if (!org) {
-    // No workspace yet (admin-minted account with no org). A platform admin
-    // can still operate — the console is instance-wide, not workspace-bound.
+    // No workspace (an admin-minted account, or the only one was just
+    // deleted). A page with doors, not a line: make one, sign out, delete the
+    // account; a platform admin also gets the console, which is instance-wide.
     return (
-      <div className="min-h-full flex flex-col items-center justify-center gap-3 text-faint font-mono text-xs">
-        <span>no workspace yet - ask an admin to add you to one.</span>
-        {user.is_platform_admin && (
-          <a href="/admin" className="text-accent underline">
-            open the operator console
-          </a>
-        )}
-      </div>
+      <Suspense fallback={<BootScrim />}>
+        <NoWorkspacePage />
+      </Suspense>
     );
   }
   const { pathname, search, hash } = window.location;
@@ -781,6 +779,8 @@ function ActiveOrgScopedRoutes() {
           <Route path="/locations/:id" element={<LocationDetailPage />} />
           <Route path="/scan" element={<ScanPage />} />
           <Route path="/scan/camera" element={<ScanCameraPage />} />
+          {/* The bench display: the last few scans, big, no controls. */}
+          <Route path="/scan/live" element={<ScanLivePage />} />
           {/* QR-label resolve inside the workspace: the in-app scanner
               navigates here on a label hit, and LandingRedirect rewrites
               bare /qr/<token> URLs into /w/<default>/qr/<token>. */}
@@ -886,9 +886,17 @@ function ActiveOrgScopedRoutes() {
   );
 }
 
+// The app before it has anything to show: auth still bootstrapping, or a
+// full-document redirect on its way out. The testid is the seam e2e/shot-guard
+// waits on — a screenshot taken here is a centred grey ellipsis on an empty
+// page, which looks like a capture and is worth nothing. Seven of them shipped
+// with the docs on 2026-09-22 (#3396).
 function BootScrim() {
   return (
-    <div className="min-h-full flex items-center justify-center text-faint font-mono text-xs">
+    <div
+      data-testid="app-boot-scrim"
+      className="min-h-full flex items-center justify-center text-faint font-mono text-xs"
+    >
       …
     </div>
   );

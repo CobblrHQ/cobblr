@@ -147,12 +147,11 @@ export async function queryDateField(
 ): Promise<Array<{ id: string; name: string; value: string }>> {
   const spec = specsByKind.get(kind);
   if (!spec) return [];
-  let tdb: Kysely<unknown>;
-  try {
-    tdb = (await getTenantDb(orgId)) as Kysely<unknown>;
-  } catch {
-    return [];
-  }
+  // A pool that will not open is "could not ask", never "nothing dated":
+  // read as empty, the expiry sweep reported nothing due for a workspace it
+  // never looked at (#3350, the class #3279 was in). Thrown, the sweep's
+  // visit fails visibly and the calendar's collect drops this one source.
+  const tdb = (await getTenantDb(orgId)) as Kysely<unknown>;
   const { read } = await readDatedRows(tdb, spec, field);
   const inWindow = read.filter((r) => r.day >= fromISO && r.day <= toISO).sort((a, b) => (a.day < b.day ? -1 : a.day > b.day ? 1 : 0));
   return (await withSomethingOnHand(orgId, spec, inWindow)).map((r) => ({ id: r.id, name: r.name, value: r.day }));
@@ -164,12 +163,7 @@ export async function queryDateField(
 export async function unreadableDateField(orgId: string, kind: string, field: string): Promise<UnreadableDateRow[]> {
   const spec = specsByKind.get(kind);
   if (!spec) return [];
-  let tdb: Kysely<unknown>;
-  try {
-    tdb = (await getTenantDb(orgId)) as Kysely<unknown>;
-  } catch {
-    return [];
-  }
+  const tdb = (await getTenantDb(orgId)) as Kysely<unknown>;
   return (await readDatedRows(tdb, spec, field)).unreadable;
 }
 

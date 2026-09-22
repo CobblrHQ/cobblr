@@ -87,6 +87,13 @@ buildsRouter.post(
       .returningAll()
       .executeTakeFirstOrThrow();
     await platform().events.emit("builds.build.created", { orgId: ctx.org.id, buildId: row.id });
+    await platform().activity.log({
+      orgId: ctx.org.id,
+      userId: sessionUser(req)?.id ?? null,
+      action: "build_created",
+      ref: { module: "builds", entityType: "build", entityId: row.id },
+      diff: { name: row.name },
+    });
     res.status(201).json(row);
   }),
 );
@@ -658,8 +665,6 @@ buildsRouter.post(
             trigger_type: "event",
           },
           args: { partId: build.output_part_id, delta: made, reason: `build-output:${build.id}` },
-          entityKind: "inventory:part",
-          entityId: build.output_part_id,
         })
         .catch((e) => console.error("[builds] output adjust-stock failed:", (e as Error).message));
     }

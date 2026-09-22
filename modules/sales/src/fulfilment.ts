@@ -35,8 +35,6 @@ export async function decrementForFulfilment(
           trigger_type: "event",
         },
         args: { partId: line.part_id, delta: -line.qty, reason: `sale:${orderId}` },
-        entityKind: "inventory:part",
-        entityId: line.part_id,
       })
       .catch((e) => console.error("[sales] fulfilment adjust-stock failed:", (e as Error).message));
     decremented.push({ part_id: line.part_id, qty: line.qty });

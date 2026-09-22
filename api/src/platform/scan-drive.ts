@@ -69,8 +69,6 @@ export async function routeScanToDrive(opts: {
             orgId: opts.orgId,
             userId: opts.userId,
             entity: { kind: r.entity_kind, id: r.entity_id },
-            entityKind: r.entity_kind,
-            entityId: r.entity_id,
             event: {
               name: null,
               payload: {},

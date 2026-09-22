@@ -10,7 +10,7 @@ import { ArrowLeft, ArrowRight, Moon, Sun } from "lucide-react";
 import { useNavLayout } from "../lib/nav-mode";
 import { useTheme } from "../theme/ThemeContext";
 import { LayoutPreview } from "../components/LayoutPreview";
-import { LAYOUT_OPTIONS, tourStepsFor, type TourStep } from "./tour.config";
+import { LAYOUT_OPTIONS, tourStepsFor, type StepContext, type TourStep } from "./tour.config";
 import { OverlayLayer } from "@cobblr/platform-web";
 
 const PAD = 8; // breathing room around the spotlit element
@@ -42,6 +42,10 @@ export function GuidedTour({ steps: allSteps, onClose }: { steps: TourStep[]; on
     return first < 0 ? 0 : first;
   });
   const [rect, setRect] = useState<DOMRect | null>(null);
+  // What the shell looks like where this step points, re-read whenever the
+  // rect is: a body that derives (the places step) must answer for the width
+  // the reader has, not the one the copy was written at (#3256).
+  const [ctx, setCtx] = useState<StepContext>({ folded: false });
   const [cardPos, setCardPos] = useState<{ left: number; top: number } | null>(null);
   const cardRef = useRef<HTMLDivElement>(null);
   const navLayout = useNavLayout();
@@ -71,6 +75,10 @@ export function GuidedTour({ steps: allSteps, onClose }: { steps: TourStep[]; on
     const measure = () => {
       const el = findVisible(step.target);
       setRect(el ? el.getBoundingClientRect() : null);
+      setCtx((was) => {
+        const folded = !!el?.querySelector("[data-tour-fold]");
+        return folded === was.folded ? was : { folded };
+      });
     };
     measure();
     window.addEventListener("resize", measure);
@@ -199,7 +207,7 @@ export function GuidedTour({ steps: allSteps, onClose }: { steps: TourStep[]; on
       {step.kind === "spotlight" && (
         <div ref={cardRef} className={card} style={cardPos ? { left: cardPos.left, top: cardPos.top } : { left: "50%", top: "44%", transform: "translate(-50%,-50%)" }}>
           <h3 className="text-base font-bold">{step.title}</h3>
-          <p className={`text-sm mt-1.5 leading-relaxed ${muted}`}>{step.body}</p>
+          <p className={`text-sm mt-1.5 leading-relaxed ${muted}`}>{typeof step.body === "function" ? step.body(ctx) : step.body}</p>
           <div className="flex items-center gap-2 mt-3.5">
             <div className="flex gap-1.5 mr-auto">
               {Array.from({ length: spots }).map((_, n) => (

@@ -35,8 +35,8 @@ export function registerListActionHandlers(): void {
 
     // 1. Resolve the title — explicit arg, else the source entity's title.
     let title = args.title?.trim();
-    if (!title && ctx.entityKind && ctx.entityId) {
-      const resolved = await platform().entities.lookup(ctx.orgId, ctx.entityKind, ctx.entityId).catch(() => null);
+    if (!title && ctx.entity) {
+      const resolved = await platform().entities.lookup(ctx.orgId, ctx.entity.kind, ctx.entity.id).catch(() => null);
       title = resolved?.title?.trim();
     }
     if (!title) return { ok: true, skipped: "no title to add" };
@@ -70,13 +70,20 @@ export function registerListActionHandlers(): void {
     // what lets checking the item off close the loop back to stock (see the
     // food-cluster `item.checked → inventory:adjust-stock` wire).
     const metadata =
-      ctx.entityKind && ctx.entityId ? { source_ref: { kind: ctx.entityKind, id: ctx.entityId } } : {};
+      ctx.entity ? { source_ref: { kind: ctx.entity.kind, id: ctx.entity.id } } : {};
     const row = await db
       .insertInto("lists_items")
       .values({ list_id: listId, title, qty: args.qty ?? null, note: args.note ?? null, metadata: sql`${JSON.stringify(metadata)}::jsonb` as never })
-      .returning(["id", "list_id"])
+      .returning(["id", "list_id", "title"])
       .executeTakeFirstOrThrow();
     void platform().events.emit("lists.item.added", { orgId: ctx.orgId, listId: row.list_id, itemId: row.id, viaWire: true });
+    await platform().activity.log({
+      orgId: ctx.orgId,
+      userId: ctx.userId ?? null,
+      action: "item_created",
+      ref: { module: "lists", entityType: "item", entityId: row.id },
+      diff: { name: row.title, list_id: row.list_id },
+    });
     return { ok: true, added: true, itemId: row.id, listId };
   });
 

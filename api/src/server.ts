@@ -10,6 +10,8 @@
 // makes the boot sequence explicit.
 
 import { pendingMigrationSummary } from "./modules/enable.js";
+import { failingTenantSweeps } from "./platform/tenant-sweeps.js";
+import { healShimRuns } from "./platform/heal-shim-log.js";
 import { metaPool } from "./db/meta.js";
 import { tenantPoolStats } from "./db/tenant.js";
 import { poolCounts } from "./db/pool-stats.js";
@@ -26,6 +28,7 @@ import { sandboxEnabled } from "./platform/try-sandbox.js";
 import { requestGuardMiddleware } from "./platform/hosted-seams.js";
 import { publicRouter } from "./routes/public.js";
 import { changelogRouter } from "./routes/changelog.js";
+import { frameDocsRouter } from "./routes/frame-docs.js";
 import { meRouter } from "./routes/me.js";
 import { discordInteractionsRouter } from "./routes/discord-interactions.js";
 import { testSupportRouter } from "./routes/test-support.js";
@@ -200,12 +203,40 @@ export function createApp(): AppHandles {
       dbOk = false;
       console.error("[healthz] the database did not answer:", (err as Error).message, JSON.stringify(pools));
     }
+    // Asked only of a database that just answered: a starving pool must not
+    // make this reply wait a second time (#3033).
+    const shims = dbOk ? await healShimRuns() : null;
     res.json({
       ok: true,
       db_ok: dbOk,
       pools,
       migrations_pending: pending,
       errors_5xx_5m: errors5xxRecent(),
+      // The cross-tenant passes whose LAST round failed for at least one
+      // workspace, with the first few named. A visit that throws every hour
+      // used to be failed++ on a result nothing read (#3350); this is read
+      // by the same deploy readers that read the two numbers above. Empty
+      // is healthy. In-process: the rounds this api ran.
+      sweeps_failing: failingTenantSweeps().map((f) => ({
+        name: f.name,
+        at: new Date(f.at).toISOString(),
+        visited: f.visited,
+        failed: f.failed,
+        failures: f.failures,
+      })),
+      // Every one-shot heal shim's last pass here: what it still found, how
+      // many workspaces it could not read, and since when it has found
+      // nothing (#3453). The deletion condition each shim states, readable
+      // on every deployment without a log. null = could not read; [] = no
+      // shim has recorded on this deployment yet. Neither is "all clean".
+      heal_shims:
+        shims?.map((r) => ({
+          shim: r.shim,
+          last_run_at: new Date(r.last_run_at).toISOString(),
+          found: r.last_found,
+          failed: r.last_failed,
+          zero_since: r.zero_since ? new Date(r.zero_since).toISOString() : null,
+        })) ?? null,
       service: "cobblr-api",
       env: env.NODE_ENV,
       // Deploy label (staging/production/development) for the web's env
@@ -250,6 +281,13 @@ export function createApp(): AppHandles {
   // in prod — the route mints tokens). See routes/test-support.ts.
   if (env.COBBLR_TEST_ORG_POOL) v1.use(testSupportRouter);
   v1.use(meRouter);
+  // A one-shot URL for a document that must run inline scripts (a custom app
+  // block, an installed renderer). The GET is unauthenticated on purpose --
+  // an iframe carries no bearer token, so the 32-byte ticket is the
+  // capability -- and serves its own strict, sandboxed policy. See
+  // platform/frame-docs.ts for why srcdoc cannot survive an enforced
+  // script-src (#3300).
+  v1.use(frameDocsRouter);
   // Public + unauthenticated by necessity: Discord carries no session. The
   // Ed25519 signature is the gate, checked inside the route before anything
   // is looked at. Mounted here so it sits under /api/v1 with everything else.

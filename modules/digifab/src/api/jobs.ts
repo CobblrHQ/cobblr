@@ -9,7 +9,7 @@
 import { Router } from "express";
 import { z } from "zod";
 import { platform } from "@cobblr/platform-contract";
-import { tenantDb, tenantContext } from "../db.js";
+import { tenantDb, tenantContext, sessionUser } from "../db.js";
 import { asyncHandler, badBody, requireRole } from "./util.js";
 import { pollJob, sendJob, assignJob, buildDriverById, reverseBuildIfCommitted, TERMINAL, markJobTerminal } from "../jobs-core.js";
 import { enqueuePoll, reconcilePolls } from "../poll-worker.js";
@@ -166,6 +166,13 @@ jobsRouter.post(
       })
       .returning(JOB_COLS)
       .executeTakeFirstOrThrow();
+    await platform().activity.log({
+      orgId: tenantContext(req).org.id,
+      userId: sessionUser(req)?.id ?? null,
+      action: "job_created",
+      ref: { module: "digifab", entityType: "job", entityId: row.id },
+      diff: { name: row.file_ref },
+    });
     // Drip pool jobs onto a free printer as soon as possible.
     if (pool) {
       const { kickAssign } = await import("../assign-worker.js");
@@ -361,6 +368,13 @@ jobsRouter.post(
       })
       .returning(JOB_COLS)
       .executeTakeFirstOrThrow();
+    await platform().activity.log({
+      orgId: tenantContext(req).org.id,
+      userId: sessionUser(req)?.id ?? null,
+      action: "job_created",
+      ref: { module: "digifab", entityType: "job", entityId: clone.id },
+      diff: { name: clone.file_ref, cloned_from: src.id },
+    });
     if (src.target_pool) {
       const { kickAssign } = await import("../assign-worker.js");
       await kickAssign(ctx.org.id);

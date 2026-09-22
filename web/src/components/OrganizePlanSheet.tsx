@@ -39,6 +39,7 @@ import { installToastLine } from "../lib/installSummary";
 import { organizeApplyToast } from "../lib/organizeApplyToast";
 import { useAiStatus, AiOffNotice } from "./AiStatusNotice";
 import { planErrorView } from "./organizePlanError";
+import { filingSummary, splitForFiling, type FilingFailure } from "./organizeFiling";
 
 // Unaccepted tweaks per plan (splits, renames, overrides, the typed hint),
 // keyed by plan_id — the server's draft cache returns the SAME plan on
@@ -512,33 +513,31 @@ export function SortingPlanView({
         ? g.destination.location_name
         : "its bin";
     const filed: string[] = [];
-    let skipped = 0;
-    let failed = 0;
-    let lastErr: string | null = null;
+    const failed: FilingFailure[] = [];
     // An item the user split out of this group is not this group's to file.
     const excluded = splitOut.get(g.id) ?? new Set<string>();
+    // The plan covers up to 200 items; the inbox query pages by 50 and the
+    // plan view never scrolls the list that loads the rest. An item the page
+    // has not loaded is NOT unidentified: fetch it, then split again. A fetch
+    // that fails is a failure with its error, never a nameless row (#3291).
+    const first = splitForFiling(g.item_ids, itemsById, excluded);
+    const fetched = new Map<string, ScanInboxItem>();
+    for (const id of first.needsFetch) {
+      try {
+        fetched.set(id, await api.getScanItem(slug, id));
+      } catch (e) {
+        failed.push({ id, error: e instanceof Error ? e.message : String(e) });
+      }
+    }
+    const second = splitForFiling(first.needsFetch.filter((id) => fetched.has(id)), fetched, excluded);
+    const blocked = [...first.blocked, ...second.blocked];
     // Which bundles these candidates need, installed ONCE before the loop.
     // This surface skipped the install and re-created the 2026-08-22 Groceries
     // failure: every line 404'd against a bundle nobody had installed.
     const instanceByBundle = new Map<string, string | undefined>();
-    for (const id of g.item_ids) {
-      if (excluded.has(id)) continue;
-      // The plan covers up to 200 items; the inbox query pages by 50 and the
-      // plan view never scrolls the list that loads the rest. An item the page
-      // has not loaded is NOT unidentified - fetch it.
-      let it = itemsById.get(id);
-      if (!it) {
-        try {
-          it = await api.getScanItem(slug, id);
-        } catch {
-          /* falls through to skipped below */
-        }
-      }
-      const cand = it?.suggested_candidates?.[0];
-      if (!it || !cand || !it.suggested_name) {
-        skipped++;
-        continue;
-      }
+    for (const it of [...first.ready, ...second.ready]) {
+      const id = it.id;
+      const cand = it.suggested_candidates![0]!;
       const bundleId = (cand as { bundle_external_id?: string }).bundle_external_id ?? null;
       let instance = cand.instance ?? undefined;
       if (bundleId) {
@@ -558,15 +557,14 @@ export function SortingPlanView({
           target_module: cand.module,
           target_kind: cand.kind,
           instance,
-          name: it.suggested_name,
+          name: it.suggested_name!,
           quantity: it.quantity ?? cand.quantity ?? undefined,
           extras: cand.fields,
           location_id: overrideLoc ?? it.target_location_id ?? undefined,
         });
         filed.push(id);
       } catch (e) {
-        failed++;
-        lastErr = e instanceof Error ? e.message : String(e);
+        failed.push({ id, error: e instanceof Error ? e.message : String(e) });
       }
     }
     setReadyBusy(null);
@@ -578,12 +576,9 @@ export function SortingPlanView({
     if (filed.length === attempted && attempted > 0) {
       setReadyDone((prev) => new Set([...prev, g.id]));
     }
-    const parts: string[] = [];
-    if (filed.length) parts.push(`${filed.length} filed to ${destName}`);
-    if (skipped) parts.push(`${skipped} need identifying first`);
-    if (failed) parts.push(`${failed} failed${lastErr ? ` - ${lastErr}` : ""}`);
-    if (filed.length) toast.success(parts.join(" · "));
-    else toast.error(parts.join(" · ") || "Nothing to file yet");
+    const line = filingSummary({ filed: filed.length, blocked, failed, destName });
+    if (filed.length) toast.success(line);
+    else toast.error(line);
   };
 
   return (

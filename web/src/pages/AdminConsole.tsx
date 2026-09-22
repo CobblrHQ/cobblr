@@ -31,6 +31,7 @@ import {
   type SignupInvite,
   type WaitlistEntry,
   type SuperAdminAiActivityItem,
+  type SuperAdminUser,
   type SuperAdminBarcodeCacheItem,
   type ScanEvalCase,
   type ActivationFunnel,
@@ -376,6 +377,42 @@ function UsersTab() {
     queryKey: ["super-admin-users"],
     queryFn: () => api.superAdminUsers(),
   });
+  const qc = useQueryClient();
+  const toast = useToast();
+  const confirm = useConfirm();
+  // The operator's door for an account (#3276). A sole owner is refused with
+  // the list unless the operator takes the workspaces along, which is asked
+  // as its own question because it drops tenant databases.
+  const delUser = useMutation({
+    mutationFn: ({ id, withWorkspaces }: { id: string; withWorkspaces: boolean }) => api.superAdminDeleteUser(id, withWorkspaces),
+    onSuccess: (r) => {
+      toast.success(r.mode === "deleted" ? "Account deleted." : "Account deleted; the row stays anonymised because history still references it.");
+      void qc.invalidateQueries({ queryKey: ["super-admin-users"] });
+      void qc.invalidateQueries({ queryKey: ["super-admin-workspaces"] });
+      void qc.invalidateQueries({ queryKey: ["super-admin-overview"] });
+    },
+    onError: (e: unknown) => toast.error(e instanceof ApiError ? e.message : "Couldn't delete."),
+  });
+  async function handleDeleteUser(u: SuperAdminUser) {
+    const sole = u.orgs.filter((o) => o.role === "owner");
+    const ok = await confirm({
+      title: `Delete ${u.display_name}'s account?`,
+      message: `${u.email} is signed out everywhere and everything that is theirs is removed. Workspaces they share stay with their other owners. This cannot be undone.`,
+      confirmLabel: "Delete account",
+      destructive: true,
+    });
+    if (!ok) return;
+    let withWorkspaces = false;
+    if (sole.length > 0) {
+      withWorkspaces = await confirm({
+        title: "Take their workspaces along?",
+        message: `They own ${sole.map((o) => o.org_name).join(", ")}. If nobody else owns one of these, the delete is refused unless the workspace goes too: its tenant database is DROPPED. Yes deletes those workspaces; No refuses if they are the only owner.`,
+        confirmLabel: "Delete their workspaces too",
+        destructive: true,
+      });
+    }
+    delUser.mutate({ id: u.id, withWorkspaces });
+  }
   const needle = search.trim().toLowerCase();
   const items = (q.data?.items ?? []).filter(
     (u) =>
@@ -405,6 +442,7 @@ function UsersTab() {
             <Th>Workspaces</Th>
             <Th>Last login</Th>
             <Th>Status</Th>
+            <Th>{""}</Th>
           </tr>
         </thead>
         <tbody className="divide-y divide-line dark:divide-slate-800">
@@ -445,10 +483,21 @@ function UsersTab() {
                   <span className="text-moss-500">active</span>
                 )}
               </td>
+              <td className="px-3 py-2 text-right">
+                <button
+                  type="button"
+                  onClick={() => void handleDeleteUser(u)}
+                  disabled={delUser.isPending}
+                  title={`Delete ${u.display_name}'s account`}
+                  className="rounded border border-ember-300 dark:border-ember-800 px-2 py-0.5 text-[10px] font-mono text-ember-700 dark:text-ember-300 hover:bg-ember-50 dark:hover:bg-ember-950/40 disabled:opacity-50"
+                >
+                  delete
+                </button>
+              </td>
             </tr>
           ))}
           {!q.isLoading && items.length === 0 && (
-            <tr><td colSpan={4} className="px-3 py-6 text-center text-faint text-xs">No users match.</td></tr>
+            <tr><td colSpan={5} className="px-3 py-6 text-center text-faint text-xs">No users match.</td></tr>
           )}
         </tbody>
       </table>

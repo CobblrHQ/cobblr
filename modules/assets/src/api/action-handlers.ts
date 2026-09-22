@@ -129,14 +129,21 @@ export function registerActionHandlers(): void {
       if (v === "" || v === null || v === undefined) continue;
       updates[k] = coerce(v);
     }
-    if (!assetRef) return { ok: false, skipped: true, reason: "missing `asset` arg" };
+    // Run ON an asset (the assistant's invoke, a wire whose source IS the
+    // asset, the record's own button), the record is the asset: the `asset`
+    // arg is how a target:"none" telemetry wire names one, not the only way
+    // to have one. Without this the handler ignored the record it was run
+    // on and skipped (#3378).
+    const onAsset = ctx.entity?.kind === "assets:asset" ? ctx.entity.id : "";
+    const ref = assetRef || onAsset;
+    if (!ref) return { ok: false, error: "which asset? run this on the asset, or name it in the `asset` arg" };
     if (Object.keys(updates).length === 0) {
-      return { ok: false, skipped: true, reason: "no field values to apply" };
+      return { ok: false, error: "nothing to set: pass the fields to update as arguments" };
     }
 
     const db = (await platform().tenants.getDb(ctx.orgId)) as Kysely<AssetsDB>;
-    const found = await resolveAssetRef(db, assetRef);
-    if ("error" in found) return { ok: false, error: found.error, asset: assetRef };
+    const found = await resolveAssetRef(db, ref);
+    if ("error" in found) return { ok: false, error: found.error, asset: ref };
 
     await db
       .updateTable("assets_assets")
@@ -155,9 +162,15 @@ export function registerActionHandlers(): void {
       userId: ctx.userId ?? null,
       action: "asset_fields_updated",
       ref: { module: "assets", entityType: "asset", entityId: found.id },
-      diff: { via: "wire", event: ctx.event?.name ?? null, updates },
+      diff: { via: ctx.event?.name ? "wire" : "asked", event: ctx.event?.name ?? null, updates },
     });
 
-    return { ok: true, asset_id: found.id, asset_name: found.name, updated: updates };
+    return {
+      ok: true,
+      asset_id: found.id,
+      asset_name: found.name,
+      updated: updates,
+      summary: `${Object.keys(updates).join(", ")} set on "${found.name}"`,
+    };
   });
 }

@@ -19,6 +19,8 @@ import type { Kysely } from "kysely";
 import { createHmac, timingSafeEqual } from "node:crypto";
 import { platform } from "@cobblr/platform-contract";
 import { meta } from "../db/meta.js";
+import { FrameDocTooLarge, putFrameDoc } from "../platform/frame-docs.js";
+import { FrameDocBody } from "./frame-docs.js";
 import { env } from "../env.js";
 
 export const publicRouter = Router();
@@ -137,6 +139,39 @@ function curateItems(items: unknown, token: string): unknown {
   return Array.isArray(items) ? items.map((i) => curateItem(i, token)) : items;
 }
 const UUID_RE = /[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}/g;
+
+// The public twin of POST /frame-docs, for the anonymous page that renders a
+// custom block and holds no session. Gated on the same surface token as the
+// page itself: whoever can read the surface can already see this HTML, so
+// handing it back on a one-shot URL adds no capability (#3300). Registered
+// ABOVE /:token so the literal path is reachable (lint:route-shadowing).
+// AI-REACH: exempt — the same rendering detail, for the anonymous page.
+publicRouter.post("/:token/frame-docs", (req, res, next) => {
+  void (async () => {
+    const tok = await resolveToken(String(req.params.token ?? ""));
+    if (!tok.ok) {
+      res.status(tok.status).json({ error: { code: tok.code, message: tok.message } });
+      return;
+    }
+    const parsed = FrameDocBody.safeParse(req.body);
+    // A public surface renders app blocks and nothing else, so the kind is not
+    // the caller's to choose here.
+    if (!parsed.success || parsed.data.kind !== "app-block") {
+      res.status(400).json({ error: { code: "invalid_body", message: "html and kind:app-block are required." } });
+      return;
+    }
+    try {
+      const id = putFrameDoc(parsed.data.html, "app-block");
+      res.status(201).json({ url: `/api/v1/frame-docs/${id}`, expires_in: 60 });
+    } catch (e) {
+      if (e instanceof FrameDocTooLarge) {
+        res.status(413).json({ error: { code: "too_large", message: "That frame document is too large to render." } });
+        return;
+      }
+      throw e;
+    }
+  })().catch(next);
+});
 
 publicRouter.get("/:token", (req, res, next) => {
   void (async () => {

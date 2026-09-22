@@ -10,7 +10,7 @@ import { defineModule } from "@cobblr/platform-contract";
 
 export default defineModule({
   name: "sales",
-  version: "0.2.6",
+  version: "0.1.5",
   displayName: "Sales",
   description:
     "Outbound order management: customers, sales orders, and line items. Fulfilling an order decrements the sold inventory parts from stock, closing the sale → fulfil → decrement → reorder loop. For makers and small shops selling finished goods.",
@@ -154,7 +154,9 @@ export default defineModule({
         label: "Create order",
         description:
           "Create a sales order programmatically (e.g. importing an order from a connected store). Optionally upserts the customer by email and adds line items. Args: { order_number?, status?, order_date?, notes?, metadata?, customer?: {name,email,phone,address}, items?: [{part_id?, description?, qty, unit_price?, metadata?}] }.",
-        appliesTo: { kinds: ["sales:order"] },
+        // Creates an order; it never operates on an existing one, so it is
+        // not a button on an order (#3378).
+        scope: "workspace",
         invokeHandler: "sales.create-order",
         argsSchema: {
           order_number: { label: "Your reference for the order, generated if you leave it out", type: "text" },

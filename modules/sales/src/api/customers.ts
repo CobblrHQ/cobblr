@@ -80,6 +80,13 @@ customersRouter.post(
       .returningAll()
       .executeTakeFirstOrThrow();
     await platform().events.emit("sales.customer.created", { orgId: ctx.org.id, customerId: row.id, userId: session?.id ?? null });
+    await platform().activity.log({
+      orgId: ctx.org.id,
+      userId: sessionUser(req)?.id ?? null,
+      action: "customer_created",
+      ref: { module: "sales", entityType: "customer", entityId: row.id },
+      diff: { name: row.name, instance: instanceOf(req) },
+    });
     res.status(201).json(row);
   }),
 );

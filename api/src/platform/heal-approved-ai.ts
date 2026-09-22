@@ -70,6 +70,7 @@ export async function healApprovedButInactiveAi(): Promise<HealedAi[]> {
   // Imported lazily: the module-level `meta` opens a pg Pool, and the pure
   // decision above must stay importable by a unit test without one.
   const { meta } = await import("../db/meta.js");
+  const { noteHealShim } = await import("./heal-shim-log.js");
   // Workspaces that HAVE a live AI: everything below is scoped away from them.
   // AI providers only. The table holds every kind of connection a person can
   // attach, and a workspace whose live workspace-default row is a parcel bridge
@@ -101,7 +102,9 @@ export async function healApprovedButInactiveAi(): Promise<HealedAi[]> {
     .execute();
 
   const healed: HealedAi[] = [];
-  for (const row of pickApprovedAiToActivate(idle, live)) {
+  let failed = 0;
+  const picked = pickApprovedAiToActivate(idle, live);
+  for (const row of picked) {
     // A row that fails to write is simply left for the next boot; the pick is
     // deterministic, so the same row comes up again.
     try {
@@ -115,6 +118,7 @@ export async function healApprovedButInactiveAi(): Promise<HealedAi[]> {
       healed.push({ orgId: row.org_id, credentialId: row.credential_id });
     } catch (err) {
       // One workspace's failure never blocks the rest.
+      failed++;
       console.error(`[heal-ai] org ${row.org_id}: ${(err as Error).message}`);
     }
   }
@@ -123,5 +127,6 @@ export async function healApprovedButInactiveAi(): Promise<HealedAi[]> {
       `[heal-ai] switched on an approved-but-idle AI in ${healed.length} workspace(s) that had none`,
     );
   }
+  await noteHealShim("api/src/platform/heal-approved-ai.ts", picked.length, failed);
   return healed;
 }

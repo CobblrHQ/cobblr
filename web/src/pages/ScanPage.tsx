@@ -2257,8 +2257,12 @@ className="ml-1.5 sm:ml-0 rounded px-1 py-0.5 text-[12.5px] hover:bg-subtle dark
                 <b className="font-semibold text-emerald-600 dark:text-emerald-400">
                   {confidentCount}
                 </b>
-                <span className="hidden lg:inline">&nbsp;ready</span>
-                <span className="lg:hidden">&nbsp;✓</span>
+                {/* The word at every width. Under lg these facets dropped
+                    their words for a bare glyph, and on a phone that drew as a
+                    4px wedge a stranger at a stand had to decode (#3321): a
+                    count followed by a symbol says nothing; "1 to review"
+                    costs about 60px the row can spend, since it scrolls. */}
+                <span>&nbsp;ready</span>
               </button>
             </>
           )}
@@ -2281,8 +2285,7 @@ className="ml-1.5 sm:ml-0 rounded px-1 py-0.5 text-[12.5px] hover:bg-subtle dark
                 }
               >
                 <b className="font-semibold text-amber-600 dark:text-amber-400">{reviewCount}</b>
-                <span className="hidden lg:inline">&nbsp;to review</span>
-                <span className="lg:hidden">&nbsp;⚠</span>
+                <span>&nbsp;to review</span>
               </button>
             </>
           )}
@@ -3527,9 +3530,16 @@ className="ml-1.5 sm:ml-0 rounded px-1 py-0.5 text-[12.5px] hover:bg-subtle dark
                         <span className="truncate">{sessionName(g, isReceiptSession) ?? formatSessionTime(g.latest)}</span>
                         {/* PHONE ONLY: the rest of the identity. The order number
                             is still the control it is beside the name from sm up. */}
-                        <span className="sm:hidden shrink-0 whitespace-nowrap font-normal text-faint">
-                          {isReceiptSession && g.batchId && g.orderRef && editingPo !== g.batchId && <span className="font-medium text-muted"> · #{g.orderRef}</span>}
-                          {g.verdict.kind !== "failed" && g.verdict.kind !== "in_flight" && ` · ${g.items.length} item${g.items.length === 1 ? "" : "s"}`}
+                        <span data-session-tail className="sm:hidden shrink-0 whitespace-nowrap font-normal text-faint">
+                          {/* NON-BREAKING space, not a plain one. The name and
+                              this tail are two flex items, and a flex item drops
+                              the whitespace it starts with, so the separator ran
+                              into the name: "STITCH & SPARK\u00b7 #77142". It was
+                              invisible while the name truncated, because the
+                              ellipsis leaves a gap of its own - the row had to
+                              stop clipping before anyone could see it (#3393). */}
+                          {isReceiptSession && g.batchId && g.orderRef && editingPo !== g.batchId && <span className="font-medium text-muted">&nbsp;· #{g.orderRef}</span>}
+                          {g.verdict.kind !== "failed" && g.verdict.kind !== "in_flight" && `\u00a0· ${g.items.length} item${g.items.length === 1 ? "" : "s"}`}
                         </span>
                       </span>
                     </SessionIdentity>
@@ -4189,7 +4199,14 @@ className="ml-1.5 sm:ml-0 rounded px-1 py-0.5 text-[12.5px] hover:bg-subtle dark
                           <span>
                             {bulkProgress ?? (
                               <>
-                                <span data-testid="session-file">{sessionAction.label}</span>
+                                <span data-testid="session-file">
+                                  {/* The phone gets the verb and the count; the
+                                      desk gets the install word too. Both come
+                                      from one resolver call, so they cannot
+                                      disagree about what the tap covers (#3393). */}
+                                  <span className="sm:hidden">{sessionAction.shortLabel}</span>
+                                  <span className="max-sm:hidden">{sessionAction.label}</span>
+                                </span>
                               </>
                             )}
                           </span>
@@ -4210,7 +4227,14 @@ className="ml-1.5 sm:ml-0 rounded px-1 py-0.5 text-[12.5px] hover:bg-subtle dark
                           <span>
                             {bulkProgress ?? (
                               <>
-                                <span data-testid="session-file">{sessionAction.label}</span>
+                                <span data-testid="session-file">
+                                  {/* The phone gets the verb and the count; the
+                                      desk gets the install word too. Both come
+                                      from one resolver call, so they cannot
+                                      disagree about what the tap covers (#3393). */}
+                                  <span className="sm:hidden">{sessionAction.shortLabel}</span>
+                                  <span className="max-sm:hidden">{sessionAction.label}</span>
+                                </span>
                               </>
                             )}
                           </span>
@@ -4278,6 +4302,21 @@ className="ml-1.5 sm:ml-0 rounded px-1 py-0.5 text-[12.5px] hover:bg-subtle dark
                 </div>
                 {!collapsed && (
                   <div className="space-y-2">
+                    {/* WHEN this receipt is from, on a phone. The row carries
+                        the date from md up; below that the identity folds to
+                        name, order number and count, and the date's only other
+                        home was a `title` on the very span the fold hides, so
+                        nothing a person could reach held it and the only way to
+                        the date was to open the session (#3393). A session that
+                        is open has the room, and opening it is the tap a phone
+                        already has. The row itself is untouched: the width
+                        question the truncated merchant raises is a separate
+                        call. */}
+                    {isReceiptSession && receiptDateOf(g) && (
+                      <p className="md:hidden px-2.5 text-[11px] text-faint" data-session-date title={receiptDateWords(g.dateReading) ?? undefined}>
+                        Receipt dated {receiptDateOf(g)} · uploaded {formatSessionTime(g.latest)}
+                      </p>
+                    )}
                     {/* The read's verdict, in the session's own words: a failed
                         read says why, with a Read again you can see and the
                         connect link when a provider is the reason (#2892). The

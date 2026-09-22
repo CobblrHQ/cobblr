@@ -4,6 +4,7 @@
 // fields. You tap-select one or more record types; that selection drives BOTH
 // the code shown below and the scope of the token it mints (records:<target>:
 // <action> + provenance) via the existing token surface.
+import { dayHere } from "@cobblr/platform-contract/day";
 import { useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Copy, Check, KeyRound, Info, Boxes, Terminal, Download } from "lucide-react";
@@ -28,7 +29,7 @@ const LANGS: { id: Lang; label: string }[] = [
 function egValue(f: { name: string; type: string; role?: string }): unknown {
   if (f.type === "number") return 1;
   if (f.type === "boolean") return true;
-  if (f.type === "date") return new Date().toISOString().slice(0, 10);
+  if (f.type === "date") return dayHere();
   if (f.role === "title" || f.name === "name" || f.name === "title") return "Example item";
   if (f.name.includes("serial")) return "SN-0001";
   if (f.name.includes("url")) return "https://example.com";

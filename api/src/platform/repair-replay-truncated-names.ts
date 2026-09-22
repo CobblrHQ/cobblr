@@ -51,6 +51,7 @@ import { sql } from "kysely";
 import { meta } from "../db/meta.js";
 import { getTenantDb, evictTenantPool } from "../db/tenant.js";
 import { TRUNCATED_BY_FALLBACK_SQL } from "./replay-truncation-predicate.js";
+import { noteHealShim } from "./heal-shim-log.js";
 
 export async function repairReplayTruncatedNames(): Promise<{ orgsTouched: number; rowsRepaired: number }> {
   if (process.env.COBBLR_SKIP_HISTORICAL_MIGRATIONS === "1") return { orgsTouched: 0, rowsRepaired: 0 };
@@ -63,6 +64,7 @@ export async function repairReplayTruncatedNames(): Promise<{ orgsTouched: numbe
 
   let orgsTouched = 0;
   let rowsRepaired = 0;
+  let failed = 0;
 
   for (const { org_id } of orgs) {
     try {
@@ -94,11 +96,15 @@ export async function repairReplayTruncatedNames(): Promise<{ orgsTouched: numbe
       }
     } catch (err) {
       // One workspace's failure never blocks the rest.
+      failed++;
       console.warn(`[reconcile] org ${org_id}: replay-name repair failed:`, (err as Error)?.message ?? err);
     } finally {
       evictTenantPool(org_id);
     }
   }
 
+  // The update takes every damaged row it can identify, so what it repaired
+  // is what it found.
+  await noteHealShim("api/src/platform/repair-replay-truncated-names.ts", rowsRepaired, failed);
   return { orgsTouched, rowsRepaired };
 }

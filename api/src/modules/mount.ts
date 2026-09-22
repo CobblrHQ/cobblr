@@ -29,6 +29,7 @@ const mountedNames = new Set<string>();
 /** moduleName → its primary-entity router, for instance-scoped item CRUD. */
 import { applyComputedFields } from "../platform/computed-fields.js";
 import { withServedTitle } from "../platform/served-title.js";
+import { markModulesMounted } from "./mount-state.js";
 
 const primaryRouters = new Map<string, Router>();
 let appRef: Application | null = null;
@@ -175,6 +176,8 @@ export async function mountModules(app: Application): Promise<{
   for (const entry of listEntries()) {
     if (await mountSingleEntry(app, entry)) mounted.push(entry.manifest.name);
   }
+  // From here the registries the bundles fill are known, and "none" means none.
+  markModulesMounted();
   return { mounted };
 }
 

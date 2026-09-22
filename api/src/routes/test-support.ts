@@ -4,6 +4,7 @@
 // exist outside CI / the rig). See db/test-org-pool.ts.
 import { Router } from "express";
 import { checkoutTestOrg, poolStatus } from "../db/test-org-pool.js";
+import { workspaceShape } from "../db/workspace-shape.js";
 import { retireReceiptFailurePlaceholders } from "../platform/retire-receipt-failure-placeholders.js";
 import { migrateBookshelfToInstance } from "../platform/migrate-bookshelf-to-instance.js";
 import { retireGroceriesBaseKindTwin } from "../platform/migrate-groceries-twin-to-instance.js";
@@ -28,14 +29,32 @@ export const testSupportRouter = Router();
 
 // Claim one ready org and get its owner a token. 409 when the pool is empty →
 // the harness falls back to real provisioning.
-testSupportRouter.post("/test-support/checkout-org", async (_req, res, next) => {
+// `?reserved=1` reaches past the pool's reserve (see POOL_RESERVE): the
+// parity test's door, and nobody else's.
+testSupportRouter.post("/test-support/checkout-org", async (req, res, next) => {
   try {
-    const org = await checkoutTestOrg();
+    const org = await checkoutTestOrg({ reserved: req.query.reserved === "1" });
     if (!org) {
       res.status(409).json({ error: { code: "pool_exhausted", message: "test org pool empty" } });
       return;
     }
     res.json(org); // { token, orgId, slug }
+  } catch (err) {
+    next(err);
+  }
+});
+
+// What one workspace carries (db/workspace-shape.ts), for the parity test
+// that diffs a pooled org against a fresh signup. Reads ONE org, named by the
+// caller, and releases its tenant pool on the way out.
+testSupportRouter.get("/test-support/workspace-shape", async (req, res, next) => {
+  try {
+    const orgId = typeof req.query.org_id === "string" ? req.query.org_id : "";
+    if (!orgId) {
+      res.status(400).json({ error: { code: "org_id_required", message: "org_id names the workspace to read" } });
+      return;
+    }
+    res.json(await workspaceShape(orgId));
   } catch (err) {
     next(err);
   }

@@ -55,6 +55,9 @@ import { getTenantDb, evictTenantPool } from "../db/tenant.js";
 import { createInstance, getInstance } from "./instances.js";
 import { upsertOverride } from "./entity-kind-overrides.js";
 import { log as activityLog } from "./activity.js";
+import { noteHealShim } from "./heal-shim-log.js";
+
+const SHIM = "api/src/platform/migrate-groceries-twin-to-instance.ts";
 
 export const GROCERIES_EXTERNAL_ID = "cobblr.flagship.groceries";
 const BASE_KIND = "inventory:part";
@@ -209,7 +212,13 @@ export async function retireGroceriesBaseKindTwin(opts?: { force?: boolean; only
     .where("external_id", "=", GROCERIES_EXTERNAL_ID);
   if (opts?.onlyOrgId) installsQ = installsQ.where("org_id", "=", opts.onlyOrgId);
   const installs = await installsQ.execute();
-  if (installs.length === 0) return { orgsTouched: 0, rowsMoved: 0, defsDropped: 0 };
+  // A pass scoped to one workspace did not look at the others: only the
+  // whole-deployment pass speaks for DONE WHEN.
+  const record = (found: number, failed: number) => (opts?.onlyOrgId ? Promise.resolve() : noteHealShim(SHIM, found, failed));
+  if (installs.length === 0) {
+    await record(0, 0);
+    return { orgsTouched: 0, rowsMoved: 0, defsDropped: 0 };
+  }
   const twins = await meta
     .selectFrom("module_field_defs")
     .select(["org_id", "bundle_id", "name"])
@@ -225,9 +234,12 @@ export async function retireGroceriesBaseKindTwin(opts?: { force?: boolean; only
   let orgsTouched = 0;
   let rowsMoved = 0;
   let defsDropped = 0;
+  let failed = 0;
+  let found = 0;
   for (const inst of installs) {
     const twinFields = twinByBundle.get(inst.id) ?? [];
     if (twinFields.length === 0) continue;
+    found++;
     try {
       const out = await retireOne(inst.org_id, inst.id, twinFields, parseManifest(inst.manifest));
       orgsTouched += 1;
@@ -237,10 +249,12 @@ export async function retireGroceriesBaseKindTwin(opts?: { force?: boolean; only
         `[retire-groceries-twin] org ${inst.org_id}: ${out.rowsMoved} food row(s) moved into Groceries, ${out.defsDropped} base-kind field(s) dropped`,
       );
     } catch (err) {
+      failed++;
       console.error(`[retire-groceries-twin] org ${inst.org_id} failed:`, (err as Error).message);
     } finally {
       evictTenantPool(inst.org_id);
     }
   }
+  await record(found, failed);
   return { orgsTouched, rowsMoved, defsDropped };
 }

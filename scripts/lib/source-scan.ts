@@ -5,6 +5,10 @@
 // copies are how a lint quietly stops matching what it thinks it matches - the
 // scan-session-header lint spent a day matching its OWN comment prose because
 // its file-local stripComments was applied one call too late.
+//
+// Ten private strippers still existed on 2026-09-22 and read none of the lines
+// they blanked (#3476); the `lints:strip-comments` row in capabilities.ts now
+// refuses the next one anywhere in scripts/lint-*.ts and scripts/lib.
 
 /** Blank comments length-preservingly, so line numbers survive and a lint can
  *  never match its own explanatory prose (a real failure, 2026-08-02). */

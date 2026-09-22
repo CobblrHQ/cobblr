@@ -21,6 +21,18 @@ export interface PhoneVariant {
   target?: string | string[];
 }
 
+/** What the engine can see where a step points, for a body that has to say
+ *  something different when the shell folded. Read live from the spotlit
+ *  element, so it is true at the width the reader has, not the width the
+ *  copy was written at (#3256). */
+export interface StepContext {
+  /** The nav folded rows into "more", so the row does not hold them. */
+  folded: boolean;
+}
+
+/** A step's words: fixed, or derived from what is on screen. */
+export type StepBody = string | ((ctx: StepContext) => string);
+
 export type TourStep =
   | { kind: "chooseLayout"; title: string; body: string; phone: PhoneVariant }
   // The welcome a phone gets: the greeting, the theme toggle and the way in,
@@ -30,7 +42,7 @@ export type TourStep =
   // `target` is a CSS selector, or an ORDERED list of them: the tour uses the
   // first one that is on screen (prefer anchor A, fall back to anchor B). A step
   // whose target(s) are all absent is skipped.
-  | { kind: "spotlight"; target: string | string[]; title: string; body: string; phone?: PhoneVariant }
+  | { kind: "spotlight"; target: string | string[]; title: string; body: StepBody; phone?: PhoneVariant }
   | { kind: "done"; title: string; body: string; phone?: PhoneVariant };
 
 export const DASHBOARD_TOUR: TourStep[] = [
@@ -54,7 +66,13 @@ export const DASHBOARD_TOUR: TourStep[] = [
     kind: "spotlight",
     target: '[data-tour="nav"]',
     title: "Your places",
-    body: "Home is where you start. Locations is where things live, and the Scan Inbox is what your camera captured. Everything else in this row is a collection you set up.",
+    // The row folds what does not fit into "more" (ModuleNav), and at a
+    // tablet's width that is everything but Home, so the fixed sentence named
+    // two rows the reader could not see (#3256). It now says where they went.
+    body: (ctx) =>
+      ctx.folded
+        ? "Home is where you start. The rest of your places are behind more, at the end of this row: Locations, where things live, the Scan Inbox, what your camera captured, and a row for each collection you set up."
+        : "Home is where you start. Locations is where things live, and the Scan Inbox is what your camera captured. Everything else in this row is a collection you set up.",
     phone: {
       target: '[data-tour="menu"]',
       body: "Every place is behind this menu: Home is where you start, Locations is where things live, the Scan Inbox is what your camera captured, and each collection you set up gets a row. Your account and settings are at its foot.",

@@ -40,6 +40,7 @@ export async function healCadenceInstanceKinds(): Promise<{ orgs: number; rows: 
 
   let healed = 0;
   let touched = 0;
+  let failed = 0;
   for (const { org_id } of orgs) {
     try {
       await platform().tenants.withDb(org_id, async (raw) => {
@@ -70,10 +71,15 @@ export async function healCadenceInstanceKinds(): Promise<{ orgs: number; rows: 
       });
     } catch (err) {
       // One workspace's failure must never block the rest.
+      failed++;
       console.error(`[core-cadence] heal for org ${org_id} failed:`, (err as Error).message);
     }
   }
   if (healed > 0) console.log(`[core-cadence] heal: ${healed} row(s) across ${touched} workspace(s)`);
+  // Every instance-kind row it meets is folded, so what it folded is what it
+  // found; a "<x>:item" kind that turns out to be a base kind is not the
+  // shape the DONE WHEN names.
+  await platform().health.noteHealShim("modules/core-cadence/src/heal-instance-kinds.ts", healed, failed);
   return { orgs: touched, rows: healed };
 }
 

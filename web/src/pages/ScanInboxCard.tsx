@@ -37,7 +37,7 @@ import { catalogCaption, leadYours, rowPictures, scanFileUrl, yourPictures } fro
 import { } from "../components/ReceiptPeek";
 import { fieldsStillOnTable, fieldsNoLongerOnTable, isQuietDefault, isImpliedByPeer, isStatedByReceipt } from "../lib/scanCandidateFields";
 import { canRerunLookup } from "../lib/scanRerun";
-import { namelessReason, namelessRemedy } from "../lib/identifySentence";
+import { headingSaysItAll, namelessReason, namelessRemedy } from "../lib/identifySentence";
 import { namelessCard } from "../lib/namelessCard";
 import { fallbackChip, type IdentifyFailure } from "@cobblr/platform-contract/scan-fallback";
 import { TrackedMatchBanner, TrackedMatchLine } from "../components/TrackedMatchBanner";
@@ -544,8 +544,14 @@ export function InboxCard({
   // fills nothing. Always keep the top match though (index 0), so a weak-but-
   // best guess still offers somewhere to go; the full table picker in the
   // confirm form still lists every table if the user wants one of the dropped.
-  const candidates = dedupeCandidates(item.suggested_candidates ?? [])
-    .filter((c, i) => i === 0 || Object.keys(c.fields ?? {}).length > 0)
+  // `fields` is non-optional on the type, so every read below takes it on
+  // trust; the DATA can lie. An import door writes an envelope's candidates
+  // verbatim, and one without a fields key took the whole page down with
+  // "Cannot convert undefined or null to object" (#3392). The importer
+  // normalises it now, and this is the guard for rows already stored: one
+  // place, rather than a ?? {} at each read that the next one will forget.
+  const candidates = dedupeCandidates((item.suggested_candidates ?? []).map((c) => (c.fields ? c : { ...c, fields: {} })))
+    .filter((c, i) => i === 0 || Object.keys(c.fields).length > 0)
     .slice(0, 3);
   const topCand = candidates[0] ?? null;
   // The destination is now CHOSEN, not just the top match: the split chip
@@ -2941,7 +2947,7 @@ export function InboxCard({
               ))}
             </div>
           )}
-          {notesPlacement.amber && (expanded || cardQuestions.length === 0 || !item.suggested_name) && !(aiDowngraded && !expanded) && (
+          {notesPlacement.amber && (expanded || cardQuestions.length === 0 || !item.suggested_name) && !(aiDowngraded && !expanded) && !(cantIdentify && headingSaysItAll(namelessWhy)) && (
             <div className={`text-[11px] mt-0.5 text-amber-600 dark:text-amber-400 ${expanded ? "" : "line-clamp-1"}`} data-testid="amber-note">
               {notesPlacement.amberText}
             </div>

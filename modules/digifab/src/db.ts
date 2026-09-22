@@ -441,3 +441,8 @@ export function tenantContext(req: Request) {
   if (!t) throw new Error("digifab route called without tenant context");
   return { org: t.org, role: t.role };
 }
+
+/** The signed-in person, for an activity row's actor; null on a token or a wire. */
+export function sessionUser(req: Request): { id: string } | null {
+  return (req as unknown as { session?: { id: string } }).session ?? null;
+}

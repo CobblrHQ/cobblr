@@ -363,6 +363,10 @@ function MoreMenu({
         type="button"
         onClick={clickTrigger}
         aria-label="More navigation links"
+        // The tour reads this to know the row folded, so a step can say where
+        // the rest of the places went instead of naming rows nobody can see
+        // (#3256). A word match on "more" would be prose, not a contract.
+        data-tour-fold
         className="px-1.5 py-1 rounded text-sm whitespace-nowrap text-muted dark:text-slate-400 hover:text-accent transition flex items-center gap-0.5"
       >
         more

@@ -405,7 +405,10 @@ export const ESCORT_DESTINATIONS: EscortDestination[] = [
     path: "/fields",
     label: "Fields & forms",
     prefill: {},
-    why: "only a field's TYPE and the data behind it need the screen; adding, renaming, hiding, removing and grouping are actions",
+    // The covered_by list below names what an action does instead, so the
+    // why says only what the screen is still FOR (#3378 added two sweeps to
+    // the list and the description hit its cap).
+    why: "only a field's TYPE and the data behind it need the screen",
     covered_by: [
       "platform:add-field",
       "platform:edit-field",
@@ -413,6 +416,10 @@ export const ESCORT_DESTINATIONS: EscortDestination[] = [
       "platform:group-fields",
       "platform:ungroup-fields",
       "platform:set-field-preset",
+      // Kind-wide sweeps over a field, workspace-scoped since #3378: the
+      // screen shows the field, these retire it into the real Location.
+      "inventory:field-to-location",
+      "assets:field-to-location",
     ],
   },
 ];
@@ -752,7 +759,7 @@ export const WORKSPACE_TOOLS: WorkspaceTool[] = [
               module_name?: string;
               matched_kinds?: string[];
               scope?: string;
-              args_schema?: Record<string, { label?: string; type?: string }> | null;
+              args_schema?: Record<string, { label?: string; type?: string; required?: boolean; oneOf?: string }> | null;
               undoable?: boolean;
               user_invokable?: boolean;
               internal?: boolean;
@@ -797,6 +804,14 @@ export const WORKSPACE_TOOLS: WorkspaceTool[] = [
                     {
                       type,
                       ...(spec?.label ? { describes: spec.label } : {}),
+                      // What the door will refuse the call for. #3137 gave
+                      // every argument these markers and four readers use
+                      // them (the plan door, the invoke door, the chat guard,
+                      // the bench); the model saw them only in a hand-back,
+                      // one round late, so it learned what an action needs by
+                      // being refused (#3142).
+                      ...(spec?.required ? { required: true } : {}),
+                      ...(spec?.oneOf ? { one_of: spec.oneOf } : {}),
                       // Spelling out the JSON shape for a list: "type: list"
                       // alone was read as "a comma-separated string" often
                       // enough to matter, and the order inside a list is

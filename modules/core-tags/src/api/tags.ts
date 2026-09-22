@@ -4,7 +4,7 @@ import { Router } from "express";
 import { z } from "zod";
 import { sql } from "kysely";
 import { platform } from "@cobblr/platform-contract";
-import { tenantContext, tenantDb } from "../db.js";
+import { tenantContext, tenantDb, sessionUser } from "../db.js";
 import { asyncHandler, badBody, requireRole } from "./util.js";
 import { isQuiet, quietReason, rankTags, type TagUsage } from "../relevance.js";
 
@@ -94,6 +94,13 @@ tagsRouter.post(
         orgId: ctx.org.id,
         tagId: row.id,
         name: row.name,
+      });
+      await platform().activity.log({
+        orgId: ctx.org.id,
+        userId: sessionUser(req)?.id ?? null,
+        action: "tag_created",
+        ref: { module: "core-tags", entityType: "tag", entityId: row.id },
+        diff: { name: row.name },
       });
       res.status(201).json(row);
     } catch (err) {

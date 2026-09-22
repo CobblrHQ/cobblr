@@ -48,12 +48,25 @@ export const SWEEP_CONCURRENCY = Math.max(1, Number(process.env.COBBLR_SWEEP_CON
  *  never finer than this. */
 export const SWEEP_TICK_MS = Number(process.env.COBBLR_SWEEP_TICK_MS) || 10_000;
 
+/** How a pass's last round went: what /healthz says about it. */
+export interface SweepLastRound {
+  at: number;
+  visited: number;
+  failed: number;
+  failures: Array<{ orgId: string; message: string }>;
+}
+
 interface Registered {
   pass: TenantSweepPass;
   /** Epoch ms of the next round, or null until the scheduler starts. */
   nextDue: number | null;
   running: boolean;
+  /** The last round that actually ran (a skipped round leaves it alone). */
+  last: SweepLastRound | null;
 }
+
+/** Failures kept per round; the count is exact, the names are a sample. */
+const FAILURES_KEPT = 5;
 
 const registry = new Map<string, Registered>();
 let started: { stop: () => void } | null = null;
@@ -68,7 +81,7 @@ export function registerTenantSweep(pass: TenantSweepPass): void {
   if (!/^[a-z0-9-]+\.[a-z0-9-]+$/.test(pass.name)) throw new Error(`tenant sweep: name must be <module>.<pass>, got "${pass.name}"`);
   if (!(pass.everyMs > 0)) throw new Error(`tenant sweep ${pass.name}: everyMs must be > 0`);
   const existing = registry.get(pass.name);
-  registry.set(pass.name, { pass, nextDue: existing?.nextDue ?? (started ? firstDue(pass, Date.now()) : null), running: false });
+  registry.set(pass.name, { pass, nextDue: existing?.nextDue ?? (started ? firstDue(pass, Date.now()) : null), running: false, last: existing?.last ?? null });
 }
 
 /** The first round: `firstAfterMs` when the pass says so, else a random
@@ -77,8 +90,24 @@ function firstDue(pass: TenantSweepPass, now: number): number {
   return now + (pass.firstAfterMs ?? Math.floor(rand() * pass.everyMs));
 }
 
-export function listTenantSweeps(): Array<{ name: string; everyMs: number; nextDue: number | null; running: boolean }> {
-  return [...registry.values()].map((r) => ({ name: r.pass.name, everyMs: r.pass.everyMs, nextDue: r.nextDue, running: r.running }));
+export function listTenantSweeps(): Array<{ name: string; everyMs: number; nextDue: number | null; running: boolean; last: SweepLastRound | null }> {
+  return [...registry.values()].map((r) => ({ name: r.pass.name, everyMs: r.pass.everyMs, nextDue: r.nextDue, running: r.running, last: r.last }));
+}
+
+/** What a scheduled round leaves behind for /healthz. Exported so the seam
+ *  between a round and the health line is held by a test without a clock. */
+export function recordLastRound(name: string, res: TenantSweepRunResult, at: number = Date.now()): void {
+  const r = registry.get(name);
+  if (!r) return;
+  r.last = { at, visited: res.visited, failed: res.failed, failures: res.failures };
+}
+
+/** The passes whose last round failed for at least one workspace: the
+ *  /healthz line. Empty is healthy; a pass that has not run yet is absent. */
+export function failingTenantSweeps(): Array<{ name: string } & SweepLastRound> {
+  return [...registry.values()]
+    .filter((r) => r.last && r.last.failed > 0)
+    .map((r) => ({ name: r.pass.name, ...r.last! }));
 }
 
 /** Start the rounds. `startAfterMs` keeps the first round clear of boot. */
@@ -120,6 +149,7 @@ async function round(now: number): Promise<void> {
       const drain = res && !res.skipped && res.backlog && r.pass.drainMs ? r.pass.drainMs : r.pass.everyMs;
       // A pass another process held is tried again next tick, not a cadence later.
       r.nextDue = res?.skipped ? Date.now() + SWEEP_TICK_MS : Date.now() + drain;
+      if (res && !res.skipped) recordLastRound(r.pass.name, res);
     }
   } finally {
     for (const r of due) r.running = false;
@@ -139,6 +169,11 @@ interface Scoped {
   orgs: Set<string>;
   result: TenantSweepRunResult;
   release: () => Promise<void>;
+}
+
+/** The first few failures by name; the count on the result stays exact. */
+function noteFailure(result: TenantSweepRunResult, orgId: string, message: string): void {
+  if (result.failures.length < FAILURES_KEPT) result.failures.push({ orgId, message: message.slice(0, 300) });
 }
 
 /** What a walk needs from the world, so the walk itself is a unit test. */
@@ -190,7 +225,7 @@ export async function walkWith(
 
   // Every pass's lock, or that pass sits this round out.
   for (const pass of passes) {
-    const result: TenantSweepRunResult = { visited: 0, failed: 0, backlog: false, stopped: false, results: [], skipped: false };
+    const result: TenantSweepRunResult = { visited: 0, failed: 0, backlog: false, stopped: false, results: [], skipped: false, failures: [] };
     out.set(pass.name, result);
     let held: { release: () => Promise<void> } | null = null;
     try {
@@ -239,10 +274,16 @@ export async function walkWith(
       try {
         db = await deps.openDb(orgId);
       } catch (err) {
+        // A workspace being deleted is not a pool that could not open: it
+        // is leaving, and nothing about it needs a pass, a retry or a line
+        // on /healthz. Every other refusal is a full Postgres, failed for
+        // every due pass and backlogged so the drain interval brings it back.
+        if ((err as { code?: string }).code === "workspace_deleting") return;
         poolRefusals++;
         for (const s of here) {
           s.result.failed++;
           s.result.backlog = true;
+          noteFailure(s.result, orgId, `pool: ${(err as Error).message}`);
         }
         if (poolRefusals === 1) console.warn(`[tenant-sweeps] workspace ${orgId} could not be opened; every due pass will come back for it:`, (err as Error).message);
         return;
@@ -258,6 +299,7 @@ export async function walkWith(
             if (r?.stop) s.result.stopped = true;
           } catch (err) {
             s.result.failed++;
+            noteFailure(s.result, orgId, (err as Error).message);
             console.warn(`[tenant-sweeps] ${s.pass.name}: workspace ${orgId} failed:`, (err as Error).message);
           }
         }

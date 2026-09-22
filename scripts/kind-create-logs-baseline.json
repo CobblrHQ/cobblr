@@ -1,0 +1,14 @@
+[
+  {
+    "key": "core-catalogs:entry",
+    "why": "A catalog's entries arrive in bulk from the catalog's source (a pull, an import), thousands at a time; they are reference data the catalog carries, and the catalog itself is the record the person made (catalog_created)."
+  },
+  {
+    "key": "purchases:order_item",
+    "why": "A line inside a purchase order, made and removed as part of editing the order; the order is the record (order_created) and its lines travel with it."
+  },
+  {
+    "key": "sales:order_item",
+    "why": "A line inside a sales order, made and removed as part of editing the order; the order is the record (order_created) and its lines travel with it."
+  }
+]

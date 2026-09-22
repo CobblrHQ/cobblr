@@ -29,13 +29,24 @@ import {
   reconcileToQty,
   visibleFrom,
   expiryFor,
-  localToday,
   type Batch,
 } from "../batches.js";
 import { observation, swapFreshObservations, type StockObservation } from "../observations.js";
 import { arrivedToday, freshLotStamps, shelfLifeDaysOf, startsFreshLot } from "../fresh-lot.js";
 import { isLowStock, modelIsLow, modelOfUnit, onHandCount, openUnitsFor } from "../on-hand.js";
 import { BELOW_ZERO, NOTHING_ON_HAND, floorDelta } from "../stock-floor.js";
+import { dayIn } from "@cobblr/platform-contract/day";
+
+/** The day it is for the person doing this: the zone their client sent, else
+ *  what the platform knows of them (accounts.dayFor: the zone they told us,
+ *  else the day that has arrived everywhere). The SAME rule the shopping row's
+ *  promised date uses, so a lot is stamped with the day the row promised. It
+ *  used to fall back to the UTC day when no zone was sent, so the row said one
+ *  day and the check-off stamped the next, from 00:00 to 12:00 UTC. */
+async function personToday(userId: string | null | undefined, timezone: string | undefined): Promise<string> {
+  if (timezone) return dayIn(new Date(), timezone);
+  return platform().accounts.dayFor(userId ?? null);
+}
 
 let registered = false;
 
@@ -450,7 +461,7 @@ export function registerInventoryActionHandlers(): void {
             if (!startsFreshLot({ delta, qtyBefore, restock })) return batches;
             return addBatch(batches, { received_on: today, expires_on: expiryFor(today, shelfLifeDays) ?? "", qty: delta });
           },
-          typeof args.timezone === "string" ? { timezone: args.timezone } : {},
+          { ...(typeof args.timezone === "string" ? { timezone: args.timezone } : {}), userId: ctx.userId },
         );
       }
       return applyStockDelta(ctx.orgId, {
@@ -484,7 +495,7 @@ async function withBatches(
   reason: string,
   delta: number,
   mutate: (batches: Batch[], ctx: { today: string; shelfLifeDays: number | null; qtyBefore: number }) => Batch[],
-  opts: { timezone?: string } = {},
+  opts: { timezone?: string; userId?: string | null } = {},
 ): Promise<Record<string, unknown>> {
   const db = (await platform().tenants.getDb(orgId)) as Kysely<InventoryDB>;
   const row = await db
@@ -503,7 +514,7 @@ async function withBatches(
   // number field typed on a form arrives as "10", and a `typeof` check here
   // dated no lot while the row promised one.
   const shelfLifeDays = shelfLifeDaysOf(md.shelf_life_days);
-  const today = localToday(new Date(), opts.timezone ?? "UTC");
+  const today = await personToday(opts.userId, opts.timezone);
 
   // The CALLER decides how much stock moves; the lots only describe it. This
   // used to run the other way - the delta was read back out of the mutated
@@ -597,7 +608,7 @@ async function withBatches(
         "used one",
         -1,
         (batches) => consumeOldest(batches, 1).batches,
-        { ...(tz ? { timezone: tz } : {}) },
+        { ...(tz ? { timezone: tz } : {}), userId: ctx.userId },
       );
       await announce(ctx.orgId, ctx.userId, applied, [observation(partId, "consume", -1)]);
       return applied;
@@ -628,7 +639,7 @@ async function withBatches(
             qty: add,
           });
         },
-        { ...(args.timezone ? { timezone: args.timezone } : {}) },
+        { ...(args.timezone ? { timezone: args.timezone } : {}), userId: ctx.userId },
       );
       await announce(ctx.orgId, ctx.userId, applied, [observation(partId, "purchase", add)]);
       return applied;
@@ -701,6 +712,7 @@ async function withBatches(
     ended: "used" | "spoiled",
     timezone: string | undefined,
     reason: string,
+    userId: string | null | undefined,
   ): Promise<Record<string, unknown>> {
     const db = (await platform().tenants.getDb(orgId)) as Kysely<InventoryDB>;
     const row = await db
@@ -710,7 +722,7 @@ async function withBatches(
       .executeTakeFirst();
     if (!row) return { ok: false, error: "missing_part" };
     const md = ((row.metadata as Record<string, unknown> | null) ?? {}) as Record<string, unknown>;
-    const today = localToday(new Date(), timezone ?? "UTC");
+    const today = await personToday(userId, timezone);
     const lots = reconcileToQty(
       batchesFrom(md, Number(row.qty), typeof md.expires_on === "string" ? md.expires_on : null),
       Number(row.qty),
@@ -719,6 +731,7 @@ async function withBatches(
 
     const result = await withBatches(orgId, partId, reason, -1, (batches) => consumeOldest(batches, 1).batches, {
       ...(timezone ? { timezone } : {}),
+      userId,
     });
     // Nothing ended: nothing to learn from. A refused decrement (the record
     // was empty) must not teach a shelf life it never measured.
@@ -793,7 +806,7 @@ async function withBatches(
         .executeTakeFirst();
       if (!row) return { ok: false, error: "missing_part" };
       const md = ((row.metadata as Record<string, unknown> | null) ?? {}) as Record<string, unknown>;
-      const today = localToday(new Date(), args.timezone ?? "UTC");
+      const today = await personToday(ctx.userId, args.timezone);
       const openedDays = shelfLifeDaysOf(md.shelf_life_opened_days);
       // Opening does not change how many you have, so the lot count is untouched.
       // What changes is the DEADLINE on the one you opened: if we know the opened
@@ -819,7 +832,7 @@ async function withBatches(
       const args = (ctx.args as { partId?: string; timezone?: string } | null) ?? {};
       const partId = ctx.entity?.id ?? args.partId;
       if (!partId) return { ok: false, error: "missing_part" };
-      const applied = await endOldestLot(ctx.orgId, partId, "used", args.timezone, "finished it");
+      const applied = await endOldestLot(ctx.orgId, partId, "used", args.timezone, "finished it", ctx.userId);
       await announce(ctx.orgId, ctx.userId, applied, [observation(partId, "consume", -1)]);
       return applied;
     }),
@@ -833,7 +846,7 @@ async function withBatches(
       const args = (ctx.args as { partId?: string; timezone?: string } | null) ?? {};
       const partId = ctx.entity?.id ?? args.partId;
       if (!partId) return { ok: false, error: "missing_part" };
-      const applied = await endOldestLot(ctx.orgId, partId, "spoiled", args.timezone, "threw it out");
+      const applied = await endOldestLot(ctx.orgId, partId, "spoiled", args.timezone, "threw it out", ctx.userId);
       await announce(ctx.orgId, ctx.userId, applied, [observation(partId, "discard", -1)]);
       return applied;
     }),
@@ -859,7 +872,7 @@ async function withBatches(
       // RECORD (does it go off?), so the record decides. A perishable ends its
       // oldest lot and learns from how long it lasted; plain stock just empties.
       if (isPerishable(row.metadata)) {
-        const applied = await endOldestLot(ctx.orgId, partId, "used", args.timezone, "used up");
+        const applied = await endOldestLot(ctx.orgId, partId, "used", args.timezone, "used up", ctx.userId);
         await announce(ctx.orgId, ctx.userId, applied, [observation(partId, "consume", -1)]);
         return applied;
       }

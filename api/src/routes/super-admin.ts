@@ -26,6 +26,7 @@ import { activationOf, cohortFunnel, countsToward } from "../platform/activation
 import { meta } from "../db/meta.js";
 import { getTenantDb } from "../db/tenant.js";
 import { hardDeleteOrg } from "../platform/delete-org.js";
+import { hardDeleteUser, SoleOwnerRefusal } from "../platform/delete-user.js";
 import { provisionDemoForUser, DemoProvisionError } from "../platform/provision-demo.js";
 import { TRIAL_CAPPED_FEATURES } from "../platform/trial.js";
 import { getEntry as getModuleEntry } from "../modules/registry.js";
@@ -280,6 +281,53 @@ superAdminRouter.get("/ai-summary", async (_req, res, next) => {
       }
     }
     res.json({ calls_24h: calls, cost_cents_24h: Math.round(costCents) });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// DELETE /super-admin/users/:id — the operator removes an account: support
+// on somebody's behalf, or test detritus. ?delete_workspaces=1 takes the
+// workspaces the person solely owns along (hardDeleteOrg each); without it,
+// a sole owner is refused with the list, the same answer the person gets
+// from DELETE /me. A platform admin cannot be removed here (the same hygiene
+// rule as view-as), and neither can the operator's own account.
+superAdminRouter.delete("/users/:id", async (req, res, next) => {
+  try {
+    const id = req.params.id!;
+    const user = await meta.selectFrom("users").select(["id", "email", "display_name"]).where("id", "=", id).executeTakeFirst();
+    if (!user) {
+      res.status(404).json({ error: { code: "not_found", message: "User not found." } });
+      return;
+    }
+    if (id === req.session!.id) {
+      res.status(400).json({ error: { code: "self", message: "Delete your own account from your account page." } });
+      return;
+    }
+    if (isPlatformAdmin(user.email)) {
+      res.status(403).json({ error: { code: "target_is_admin", message: "Platform admins are not deleted here." } });
+      return;
+    }
+    const takeWorkspaces = req.query.delete_workspaces === "1" || req.query.delete_workspaces === "true";
+    try {
+      const result = await hardDeleteUser(id, { deleteSoleOwnedWorkspaces: takeWorkspaces });
+      console.log(
+        `[super-admin] operator ${req.session!.id} deleted account ${id} (${result.mode}${result.workspaces_deleted.length ? `, with ${result.workspaces_deleted.map((w) => w.slug).join(", ")}` : ""})`,
+      );
+      res.status(200).json({ mode: result.mode, workspaces_deleted: result.workspaces_deleted.map((w) => w.slug) });
+    } catch (err) {
+      if (err instanceof SoleOwnerRefusal) {
+        res.status(409).json({
+          error: {
+            code: "sole_owner",
+            message: "This account is the only owner of a workspace. Pass delete_workspaces=1 to remove those too, or delete them first.",
+            details: { workspaces: err.workspaces.map((w) => ({ id: w.id, slug: w.slug, name: w.name })) },
+          },
+        });
+        return;
+      }
+      throw err;
+    }
   } catch (err) {
     next(err);
   }

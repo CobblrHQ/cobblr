@@ -767,6 +767,7 @@ partsRouter.get(
       ];
       lines.push(cells.map(csvCell).join(","));
     }
+    // UTC-DAY OK: the CSV filename's stamp, not a claim about anybody's calendar.
     const date = new Date().toISOString().slice(0, 10);
     res.setHeader("Content-Type", "text/csv; charset=utf-8");
     res.setHeader(
@@ -1103,7 +1104,7 @@ partsRouter.post(
       userId: session.id,
       action: "part_created",
       ref: { module: "inventory", entityType: "part", entityId: inserted.id },
-      diff: { name: inserted.name, qty: inserted.qty },
+      diff: { name: inserted.name, qty: inserted.qty, instance: instanceOf(req) },
     });
     platform().events.emit("inventory.part.created", {
       orgId: ctx.org.id,
@@ -1157,8 +1158,6 @@ partsRouter.post(
               relationship_kind: parentCfg.relationship_kind ?? "instance-of",
               source_ids: [inserted.id],
             },
-            entityKind: "inventory:part",
-            entityId: inserted.id,
           })
           .catch((err) => console.error("[inventory] auto-lift to type failed:", (err as Error).message));
       }

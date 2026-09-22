@@ -18,6 +18,7 @@
 // Run: npx tsx scripts/lint-unit-conversion.ts
 import { readFileSync, readdirSync, statSync } from "node:fs";
 import { resolve, join, relative } from "node:path";
+import { stripComments } from "./lib/source-scan.js";
 
 const ROOT = resolve(import.meta.dirname, "..");
 const ROOTS = ["modules", "api/src", "web/src", "packages"];
@@ -41,8 +42,8 @@ function walk(dir: string, out: string[] = []): string[] {
   return out;
 }
 
-// Strip comments so a doc line mentioning a factor isn't flagged as code.
-const stripComments = (s: string) => s.replace(/\/\*[^]*?\*\//g, "").replace(/(^|[^:])\/\/[^\n]*/g, "$1");
+// Comments are stripped (the shared scanner) so a doc line mentioning a
+// factor isn't flagged as code.
 
 // A. conversion-constant identifiers: FOO_TO_BAR.
 const TO_CONST = /\b[A-Z][A-Z0-9]{0,15}_TO_[A-Z][A-Z0-9]{0,15}\b/g;

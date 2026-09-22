@@ -22,7 +22,9 @@ import { hashPassword } from "../auth/password.js";
 import { signSession } from "../auth/jwt.js";
 import { provisionOrgForUser } from "../routes/auth.js";
 import { enableModuleForOrg } from "../modules/enable.js";
+import { USER_SOURCE } from "../platform/bundle-claims.js";
 import { listEntries } from "../modules/registry.js";
+import { isDefaultModule } from "../modules/enable.js";
 
 /** The pool is active only under the flag. A hard guard against ever touching
  *  this in prod (the checkout route mints tokens — it must be unreachable). */
@@ -38,7 +40,10 @@ export function poolEnabled(): boolean {
 }
 
 /** Enable every registered module for an org, in dependency-safe waves —
- *  the internal twin of the test harness's enableAllModulesForTests. */
+ *  the internal twin of the test harness's enableAllModulesForTests, down to
+ *  the 'user' claim the harness's door records: without it a pooled org's
+ *  modules were unpinned and a bundle uninstall could switch one off, where
+ *  a fresh signup's stayed on (the parity test's first catch, #3268). */
 async function enableAllModulesInternal(orgId: string): Promise<void> {
   const already = new Set(
     (await meta.selectFrom("org_modules").select("module_name").where("org_id", "=", orgId).execute()).map(
@@ -52,7 +57,7 @@ async function enableAllModulesInternal(orgId: string): Promise<void> {
     const failed: string[] = [];
     for (const name of remaining) {
       try {
-        await enableModuleForOrg(orgId, name);
+        await enableModuleForOrg(orgId, name, { claimedBy: USER_SOURCE });
       } catch {
         failed.push(name); // usually an unmet dep — retry next wave
       }
@@ -148,11 +153,25 @@ export interface CheckoutResult {
   slug: string;
 }
 
+/** How many pooled orgs an ordinary checkout leaves in the pool for the one
+ *  test that cannot take a fresh signup instead: the parity test compares a
+ *  workspace that EXISTED AT BOOT (and so went through every boot pass) with
+ *  one born in the run, and a pool that ran out an hour earlier would hand
+ *  it nothing to compare, by the same accident of ordering it exists to
+ *  catch (#3268). Two, so a retry of that one test still has one. */
+export const POOL_RESERVE = 2;
+
 /** Atomically claim one available org (race-safe across the 8 test forks) and
  *  mint its owner a token. Returns null when the pool is empty → the caller
- *  falls back to real provisioning. */
-export async function checkoutTestOrg(): Promise<CheckoutResult | null> {
+ *  falls back to real provisioning. An ordinary checkout stops short of the
+ *  last POOL_RESERVE orgs; `reserved: true` is the parity test's door to
+ *  them. */
+export async function checkoutTestOrg(opts: { reserved?: boolean } = {}): Promise<CheckoutResult | null> {
   if (!poolEnabled()) return null;
+  // `offset` counts unlocked rows only (SKIP LOCKED runs before it), so two
+  // ordinary claimers racing on the last three orgs each see one candidate
+  // past the reserve at most, and the reserve is never eaten by a race.
+  const skip = opts.reserved ? 0 : POOL_RESERVE;
   // The join is the SELF-HEAL: a pool baked before the guard above can still
   // hold orgs whose tenant DB never landed, and that artifact is reused across
   // runs. Skipping them here means an already-poisoned pool degrades to "fewer
@@ -164,7 +183,7 @@ export async function checkoutTestOrg(): Promise<CheckoutResult | null> {
       select p.org_id from test_org_pool p
       join orgs o on o.id = p.org_id
       where p.status = 'available' and o.db_credentials_encrypted is not null
-      order by p.baked_at limit 1 for update of p skip locked
+      order by p.baked_at limit 1 offset ${skip} for update of p skip locked
     )
     returning org_id, slug, owner_user_id
   `.execute(meta);
@@ -184,6 +203,27 @@ export async function checkoutTestOrg(): Promise<CheckoutResult | null> {
     await ensurePlacementSyncForOrg(row.org_id);
   } catch (err) {
     console.warn(`[test-org-pool] placement sync for ${row.slug} skipped:`, err);
+  }
+  // The same at-handout self-heal for the 'user' claim: a pool baked before
+  // the bake learned to claim (2026-09-22) hands out orgs whose chosen modules
+  // are unpinned, so a bundle uninstall in a test could switch one off where
+  // it stays on for a fresh signup. Every enabled module outside the set a
+  // workspace is born with gets the claim the harness's enable door records.
+  // Idempotent (ON CONFLICT DO NOTHING); one statement.
+  try {
+    const chosen = listEntries()
+      .filter((e) => !isDefaultModule(e))
+      .map((e) => e.manifest.name);
+    if (chosen.length) {
+      await sql`
+        insert into bundle_resource_claims (org_id, source, resource_type, resource_key)
+        select org_id, ${USER_SOURCE}, 'module', module_name from org_modules
+        where org_id = ${row.org_id} and module_name in (${sql.join(chosen)})
+        on conflict do nothing
+      `.execute(meta);
+    }
+  } catch (err) {
+    console.warn(`[test-org-pool] user claims for ${row.slug} skipped:`, err);
   }
   const token = await signSession(row.owner_user_id);
   return { token, userId: row.owner_user_id, orgId: row.org_id, slug: row.slug };

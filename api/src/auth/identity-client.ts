@@ -8,6 +8,7 @@
 // identity host republishes the JWKS; this surface needs no redeploy.
 
 import { createRemoteJWKSet, jwtVerify, type JWTVerifyGetKey } from "jose";
+import { timingSafeEqual } from "node:crypto";
 import { env } from "../env.js";
 
 export function identityEnabled(): boolean {
@@ -33,6 +34,17 @@ export function identityCallbackEnabled(): boolean {
  *  behaviour, and getting this backwards on one is a public signup nobody opened. */
 export function autoProvisionEnabled(): boolean {
   return env.COBBLR_IDENTITY_AUTOPROVISION === "true";
+}
+
+/** Does a presented deployment secret match this surface's own? The identity
+ *  service proves it is itself with the same secret this surface redeems codes
+ *  with, so an inbound call (an account deleted upstream) needs no second
+ *  credential. Constant-time, and never true for an unset secret. */
+export function deploymentSecretMatches(presented: unknown, own: string | undefined = env.IDENTITY_DEPLOYMENT_SECRET): boolean {
+  if (typeof presented !== "string" || !own) return false;
+  const a = Buffer.from(presented);
+  const b = Buffer.from(own);
+  return a.length === b.length && timingSafeEqual(a, b);
 }
 
 /** This surface's stable id in the identity map (deployment_links). */

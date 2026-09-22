@@ -6,6 +6,7 @@
 // inventory module's orgSlug + getToken. When other modules need
 // the same surface, lift this to platform-web.
 
+import { dayHere } from "@cobblr/platform-contract/day";
 import { useState, type FormEvent } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Calendar, CheckCircle, History, Plus, Trash2 } from "lucide-react";
@@ -270,9 +271,9 @@ function AddEntryModal({
   const [name, setName] = useState("");
   const [description, setDescription] = useState("");
   const [kind, setKind] = useState<"done" | "scheduled" | "both">("done");
-  const [performedAt, setPerformedAt] = useState(
-    new Date().toISOString().slice(0, 10),
-  );
+  // The person's own day, not the UTC one: at 8pm in the Americas this used
+  // to pre-fill tomorrow's date on a form about something done today (#3351).
+  const [performedAt, setPerformedAt] = useState(dayHere());
   const [scheduledAt, setScheduledAt] = useState("");
   const [cost, setCost] = useState("");
   const [busy, setBusy] = useState(false);

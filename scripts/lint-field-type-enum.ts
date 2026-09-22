@@ -17,6 +17,7 @@
 import { readFileSync, readdirSync, statSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { dirname, join, relative } from "node:path";
+import { stripComments } from "./lib/source-scan.js";
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
 const SOURCE = join(ROOT, "packages/platform-contract/src/index.ts");
@@ -59,7 +60,7 @@ for (const root of SCAN) {
     if (file === SOURCE) continue;
     const raw = readFileSync(file, "utf8");
     // Comments carry prose that looks like literals; strip them first.
-    const code = raw.replace(/\/\/[^\n]*/g, "").replace(/\/\*[\s\S]*?\*\//g, "");
+    const code = stripComments(raw);
     const flat = code.replace(/\s+/g, " ");
 
     for (const run of flat.match(RUN) ?? []) {

@@ -1,6 +1,7 @@
 // Thin fetch wrapper for the lists REST surface. Auth via getToken().
 // Routes are mounted at /api/v1/orgs/:slug/modules/lists/...
 
+import { dayHere } from "@cobblr/platform-contract/day";
 import { describeUnreadableBody } from "@cobblr/platform-web";
 
 export interface ListSummary {
@@ -146,7 +147,7 @@ export class ListsApi {
 }
 
 /** "dated today, good until 22 Sep" for the row, or null when nothing is dated. */
-export function willDatePhrase(w: WillDate | null | undefined, today = new Date().toISOString().slice(0, 10)): string | null {
+export function willDatePhrase(w: WillDate | null | undefined, today = dayHere()): string | null {
   if (!w) return null;
   const on = w.on === today ? "today" : w.on;
   const fresh = w.until ? `dated ${on}, good until ${shortDate(w.until)}` : `dated ${on}`;

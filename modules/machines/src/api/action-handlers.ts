@@ -19,7 +19,13 @@ export function registerMachinesActionHandlers(): void {
       prints?: number;
       hours?: number;
     };
-    const machineId = args.machineId ?? ev.machineId ?? ev.linkedMachineId;
+    // The action is declared on machines ("that machine ran four hours"), so
+    // the record it is run on IS the machine. Read from args alone, the
+    // assistant's invoke on the Rostock with {hours: 4} was refused as "no
+    // machineId" on every bench run for a week (the 2026-09-22 nightly's
+    // transcripts, #3142).
+    const onMachine = ctx.entity?.kind === "machines:machine" ? ctx.entity.id : undefined;
+    const machineId = args.machineId ?? onMachine ?? ev.machineId ?? ev.linkedMachineId;
     // A print is counted when there is evidence of one. A wire fires this on
     // an event, and the event IS the print: one per firing when the payload
     // does not count them, which is what every existing wire has meant since
@@ -29,8 +35,14 @@ export function registerMachinesActionHandlers(): void {
     const evidenced = ctx.event?.trigger_type && ctx.event.trigger_type !== "user-invoked" ? 1 : 0;
     const prints = Number(args.prints ?? ev.prints ?? evidenced) || 0;
     const hours = Number(args.hours ?? ev.hours ?? 0) || 0;
-    if (!machineId || (prints === 0 && hours === 0)) {
-      return { ok: true, skipped: true, reason: "no machineId or nothing to add" };
+    // A wire whose event names no machine skips, as it always has; a person
+    // or the assistant is told what was missing, in words they can act on.
+    const pressed = !ctx.event?.trigger_type || ctx.event.trigger_type === "user-invoked";
+    if (!machineId) {
+      return pressed ? { ok: false, error: "which machine? run this on the machine, or pass its id as machineId" } : { ok: true, skipped: true, reason: "no machineId" };
+    }
+    if (prints === 0 && hours === 0) {
+      return pressed ? { ok: false, error: "nothing to add: say the hours or the prints" } : { ok: true, skipped: true, reason: "nothing to add" };
     }
 
     const db = (await platform().tenants.getDb(ctx.orgId)) as Kysely<MachinesDB>;

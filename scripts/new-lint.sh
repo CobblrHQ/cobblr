@@ -110,8 +110,31 @@ s = s.slice(0, close) + `${sep}"lint:${slug}"` + s.slice(close);
 fs.writeFileSync("scripts/placement-registry.ts", s);
 NODE
 
-# 4. it must load and pass empty
+# 4. it must load and pass empty, and that run is its first recorded time.
+#    The budget judges a lint it has never heard of at the snapshot median and
+#    fails it at the ceiling with no re-measure, so an unrecorded lint is a
+#    trap for whoever runs CI next. Recorded HERE, at twice this run (a dev box
+#    is not a quiet CI runner), in its own file — one file per lint, so two
+#    people scaffolding two lints never conflict (#3447). CI's own clock
+#    replaces the number later: node scripts/lint-durations-record-missing.mjs
 if ! npx tsx "$FILE"; then die "the scaffold did not run clean; that is a bug in the template, not in your rule"; fi
+# The SECOND run is the one worth timing: the first pays npx and tsx cold
+# start, which is not what the lint costs in CI, and a 30s estimate would be
+# a hole in the budget rather than a baseline.
+START_MS=$(node -e 'process.stdout.write(String(Date.now()))')
+npx tsx "$FILE" >/dev/null 2>&1 || true
+END_MS=$(node -e 'process.stdout.write(String(Date.now()))')
+START_MS="$START_MS" END_MS="$END_MS" SLUG="$SLUG" node --input-type=module -e "
+  const { writeQuietMs } = await import('./scripts/lib/lint-durations.mjs');
+  const took = Number(process.env.END_MS) - Number(process.env.START_MS);
+  const { CEILING_MS } = await import('./scripts/lib/lint-budget.mjs');
+  // Capped at the budget's own ceiling: a loaded dev box can time a trivial
+  // lint at ten seconds, and doubling that would be a hole rather than a
+  // baseline. The first CI measurement replaces it either way.
+  const guess = Math.min(CEILING_MS, Math.max(500, took * 2));
+  const p = writeQuietMs('lint:' + process.env.SLUG, guess, 'scaffolded by new-lint.sh at twice a local run (a shared box); replaced from its first CI measurement');
+  console.log('new-lint: recorded ' + p.replace(process.cwd() + '/', ''));
+" || die "could not record the lint's quiet time"
 
 cat <<MSG
 
@@ -126,12 +149,8 @@ Next, in this order:
   3. Fix the violation, run it again, green.
   4. pnpm run lint:placement && pnpm run lint:lints-are-wired && pnpm run lint:no-emdash
   5. If it imports a new file of yours, add that file to scripts/publish/manifests/core.json.
-  6. Record its quiet time BY HAND in scripts/lint-durations.json before its first CI run:
-     run it twice on an idle box, take the larger, double it, and add
-     "lint:$SLUG": <ms> plus a note in "source" ("added by hand at twice a quiet
-     dev-box time (<date>), to be replaced from its first CI run"). The budget
-     (scripts/lib/lint-budget.mjs) fails a lint it has never heard of on the first
-     measurement that crosses the ceiling, with no second look; a recorded quiet
-     time is what earns it the re-measure. CI replaces the number later:
+  6. Its quiet time is ALREADY RECORDED, in scripts/lint-durations/$SLUG.json,
+     at twice this scaffold's own run. Nothing to do by hand. CI's own clock
+     replaces that estimate the first time the lint runs there:
      node scripts/lint-durations-record-missing.mjs
 MSG

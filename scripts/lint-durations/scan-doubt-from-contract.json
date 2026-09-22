@@ -1,0 +1,6 @@
+{
+  "lint": "lint:scan-doubt-from-contract",
+  "ms": 598,
+  "recorded": "2026-09-14",
+  "source": "split from scripts/lint-durations.json (recorded 2026-09-14)"
+}

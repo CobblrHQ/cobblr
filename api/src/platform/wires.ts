@@ -302,10 +302,6 @@ async function fireBindings(
           },
           rendered,
           args: renderedArgs,
-          // Deprecated compat aliases — see ActionInvokeContext in
-          // @cobblr/platform-contract.
-          entityKind: t.kind,
-          entityId: t.id,
         });
         // Log a successful firing so the /wires "recent firings" panel
         // can show what's running, not just what's failing. The user

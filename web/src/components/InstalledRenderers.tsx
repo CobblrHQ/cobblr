@@ -9,6 +9,7 @@ import { useQuery } from "@tanstack/react-query";
 import { registerSandboxedRenderer, unregisterFilePreviewRenderer } from "@cobblr/platform-web";
 import { useActiveOrg } from "../auth/ActiveOrgContext";
 import { api } from "../lib/api";
+import { frameDocUrl } from "../lib/frame-doc";
 
 export function InstalledRenderers() {
   const { activeSlug } = useActiveOrg();
@@ -28,7 +29,10 @@ export function InstalledRenderers() {
       registered.current = [];
     }
     for (const r of items ?? []) {
-      registerSandboxedRenderer(r.exts, r.renderer_js);
+      // The third argument is what lets the frame come from a URL instead of
+      // srcdoc, so an enforced `script-src 'self'` does not stop every
+      // installed renderer from drawing (#3300).
+      registerSandboxedRenderer(r.exts, r.renderer_js, (html) => frameDocUrl(html, "renderer"));
       registered.current.push(...r.exts);
     }
     return () => {

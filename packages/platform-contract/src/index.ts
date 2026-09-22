@@ -15,6 +15,7 @@ export { pluralise, countOf, itemNounFor } from "@cobblr/platform-contract/plura
 export { PLATFORM_OWNER, PLATFORM_COMMANDS, PLATFORM_COMMANDS_VERSION } from "@cobblr/platform-contract/platform-commands";
 export { expiryState, expiryPhrase, EXPIRING_WITHIN_DAYS, type ExpiryState, type ExpiryReading } from "@cobblr/platform-contract/expiry-grace";
 export { fieldDay, fieldDayUnreadable } from "@cobblr/platform-contract/field-day";
+export { arrivedEverywhere, dayHere, dayIn, daySaid, theirDay, type Day } from "@cobblr/platform-contract/day";
 export { keepMembers, isMember, parcelAudience } from "@cobblr/platform-contract/membership";
 export { splitEntityKind, entityKindOf, type EntityKindParts } from "@cobblr/platform-contract/entity-kind";
 export { actionRunsUnconfirmed, type ActionConsent } from "@cobblr/platform-contract/action-consent";
@@ -157,35 +158,6 @@ export function fieldNoteKey(name: string): string {
  *  anything enumerating fields for IDENTITY can skip it. */
 export function isFieldNoteKey(key: string): boolean {
   return key.endsWith(FIELD_NOTE_SUFFIX);
-}
-
-/**
- * The day a promised date can be said to have ARRIVED, anywhere.
- *
- * `new Date().toISOString().slice(0, 10)` is the UTC day, and two arrival
- * sweepers compared stored `YYYY-MM-DD` dates against it. At 8pm US Eastern it
- * is already tomorrow in UTC, so a parcel due the 25th was announced as "due
- * today. Did it turn up?" at 8pm on the 24th - a whole evening before the day it
- * names (reported 2026-08-24).
- *
- * These announcements are decided once for a batch or an order and sent to every
- * member, so there is no single recipient whose clock to read. The rule that is
- * right without one: a date has arrived when it has arrived EVERYWHERE. UTC-12
- * is the last zone on earth to enter a date, so waiting for it cannot be early
- * for anybody.
- *
- * The cost is up to half a day of lateness for someone far east, which is the
- * correct direction to err: "did it turn up?" is a question you ask after the
- * postman has been, never before.
- */
-export function arrivedEverywhere(now: Date): string {
-  try {
-    // en-CA formats as YYYY-MM-DD, which is the shape the stored dates use.
-    return new Intl.DateTimeFormat("en-CA", { timeZone: "Etc/GMT+12" }).format(now);
-  } catch {
-    // No zone data: still lag rather than lead.
-    return new Date(now.getTime() - 12 * 60 * 60 * 1000).toISOString().slice(0, 10);
-  }
 }
 
 export const FIELD_ROLE_VALUES = [
@@ -3010,9 +2982,12 @@ export interface ActionInvokeActor {
 
 /** Q2 resolution: namespaced action context. Handlers receive the
  *  target entity, the originating event (or click context), and any
- *  pre-rendered template — each in its own block. The top-level
- *  `entityKind` / `entityId` aliases are deprecated compatibility
- *  shims; new handlers should read `ctx.entity.kind` / `ctx.entity.id`.
+ *  pre-rendered template — each in its own block. ONE spelling for the
+ *  record: `ctx.entity`. The top-level `entityKind` / `entityId` aliases
+ *  are gone (2026-09-22) — a second spelling is a second thing every
+ *  reader has to know about, and the one check that asks "does this
+ *  handler read its record?" knew only the first, so it accused a handler
+ *  that read the record through the alias (#3378).
  *  See docs/architecture/wires-and-bundles.md (Q2). */
 export interface ActionInvokeContext {
   orgId: string;
@@ -3055,18 +3030,12 @@ export interface ActionInvokeContext {
    *  schedule or a webhook run, which have no request; those fall back
    *  to the workspace's configured base and may refuse without one. */
   origin?: string;
-
-  // ─── Deprecated compatibility aliases (remove in v0.3) ──────────
-  /** @deprecated Use `ctx.entity.kind`. Absent for workspace-scoped actions. */
-  entityKind?: string;
-  /** @deprecated Use `ctx.entity.id`. Absent for workspace-scoped actions. */
-  entityId?: string;
 }
 
 /** Assert that an action ran on a record (scope 'entity') and return that
  *  entity, narrowed to non-null. Entity-scoped handlers call this at the top
- *  instead of reaching into `ctx.entity` / the deprecated `ctx.entityKind`
- *  aliases directly: the invoke route always populates `entity` for an
+ *  instead of reaching into `ctx.entity` directly: the invoke route always
+ *  populates `entity` for an
  *  entity-scoped action, so this only throws if a workspace-scoped invocation
  *  somehow reached an entity handler (a wiring mistake) — a clear error beats
  *  a downstream `undefined.id`. Workspace handlers never call it; they read
@@ -3276,6 +3245,17 @@ export interface PlatformHealth {
    *  { status: 'error', message: <err.message> } so the caller
    *  always gets a uniform shape. */
   snapshot(): Promise<Record<string, HealthProbeResult>>;
+  /** A one-shot heal shim (a file carrying `DONE WHEN:`) records what one
+   *  pass found, keyed by its own repo path: `found` is how much of its DONE
+   *  WHEN was still untrue when it looked (candidates, not fixes: one it
+   *  skipped still blocks deletion), `failed` the workspaces it could not
+   *  read. The kernel keeps the date it last went clean (nothing found,
+   *  nothing failed) and /healthz reports every shim, so the deletion
+   *  condition is read over HTTPS on every deployment instead of from boot
+   *  logs that leave with the container. Call it after EVERY whole pass that
+   *  looked, one that found nothing included: silence is not zero. Never
+   *  throws. */
+  noteHealShim(shim: string, found: number, failed?: number): Promise<void>;
 }
 
 /** D3 — per-entity recurrence. Modules register a scanner per kind
@@ -4557,6 +4537,67 @@ export interface PlatformTags {
   of(args: { orgId: string; target: EntityRef }): Promise<string[]>;
 }
 
+/** Where a kind's grouping axis is stored, and so where a chosen value goes.
+ *
+ *  The discriminator lives HERE and nowhere else: a caller ranks against
+ *  `values`, presses `commit`, and applies what comes back. Nothing outside
+ *  this seam asks which storage a kind uses, which is the whole point of it
+ *  (#3223: a value written to one store is invisible to the feature reading
+ *  the other). */
+export type CategoryAxisSlot =
+  /** A custom field def on the kind; the value is the label itself. */
+  | { kind: "extras"; name: string; defId: string }
+  /** A column on the record pointing at the module's own taxonomy; the value
+   *  written is a record id, never the label. */
+  | { kind: "native"; column: string; entityKind: string };
+
+export interface CategoryAxis {
+  /** What to call it on screen ("Category", "Scan category"). */
+  label: string;
+  /** What to RANK against: every value the store holds now, deduplicated by
+   *  `normaliseCategory` so one key never appears twice.
+   *
+   *  NOT "what exists": a caller may rank against this list PLUS proposals of
+   *  its own that are in no store yet (the scan batch's sibling proposals,
+   *  which is what stops five monitors in one run becoming three categories).
+   *  `commit` therefore has to accept a value that was never in this list. */
+  values: string[];
+  /** Where a chosen value is written. */
+  slot: CategoryAxisSlot;
+}
+
+/** What to write for a chosen value, or null when there is nothing to write.
+ *  `value` is the label for an `extras` slot and a record id for a `native`
+ *  one, which is why a caller must apply it through `applyAxisValue` rather
+ *  than reading the slot itself. */
+export interface CategoryAxisAssignment {
+  slot: CategoryAxisSlot;
+  value: string;
+}
+
+export interface PlatformCategoryAxis {
+  /** The axis for a kind, or null when it has none.
+   *
+   *  Memoised briefly per (org, kind, instance): a menu assembly asks once per
+   *  kind per row, and a native read is a taxonomy listing rather than a column
+   *  on a def. `commit` invalidates the entry it grew, so a value confirmed a
+   *  moment ago is in the next caller's `values`. */
+  for(args: { orgId: string; kind: string; instance?: string | null }): Promise<CategoryAxis | null>;
+  /** Grow the vocabulary if this value is new, and return what to write.
+   *
+   *  NEVER throws and never fails the operation that called it: a value that
+   *  cannot be stored (the kind has no axis, the taxonomy refuses the create,
+   *  the value normalises to nothing) comes back as null and is dropped, which
+   *  is what the scan confirm has always done with a field-def PATCH that came
+   *  back non-ok. Filing the thing matters more than filing it under a name. */
+  commit(args: {
+    orgId: string;
+    kind: string;
+    value: string;
+    instance?: string | null;
+  }): Promise<CategoryAxisAssignment | null>;
+}
+
 export interface PlatformPairings {
   /** Insert a pairing. Returns the new row id. Org-scoped: the
    *  caller passes orgId; the function inserts with that org_id. */
@@ -4890,6 +4931,11 @@ export interface TenantSweepRunResult {
   results: Array<{ orgId: string; result: TenantSweepVisitResult | void }>;
   /** Another api process held the pass's lock; nothing ran. */
   skipped: boolean;
+  /** Which workspaces failed and why, the first few: a visit that threw, or
+   *  a pool that would not open. `failed` used to be a bare count nothing
+   *  read, so a workspace failing every hour was silent for as long as it
+   *  liked (#3350); /healthz reports the last round's from here. */
+  failures: Array<{ orgId: string; message: string }>;
 }
 
 export interface PlatformSweeps {
@@ -5106,6 +5152,13 @@ export interface LifecycleHooks {
 }
 export interface PlatformAccounts {
   registerLifecycleHooks(h: LifecycleHooks): void;
+  /** The day it is WHERE THIS PERSON IS, for a module that is about to claim
+   *  one ("dated today", "expires today"). From the zone they stated in their
+   *  communication preferences; `said` (a day their client sent) wins; a
+   *  person who never said gets the day that has arrived everywhere, which is
+   *  late for somebody rather than early for anybody (#3351). The rule itself
+   *  is `@cobblr/platform-contract/day`; this only knows where they are. */
+  dayFor(userId: string | null | undefined, opts?: { said?: unknown; now?: Date }): Promise<string>;
 }
 
 export interface RequestGuardCtx { ip: string; path: string; method: string; userId?: string }
@@ -5379,6 +5432,7 @@ export interface Platform {
   auth: PlatformAuth;
   pairings: PlatformPairings;
   placement: PlatformPlacement;
+  categoryAxis: PlatformCategoryAxis;
   tags: PlatformTags;
   catalogs: PlatformCatalogs;
   files: PlatformFiles;

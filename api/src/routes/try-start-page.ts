@@ -24,13 +24,63 @@
 //
 // Lives in its own file so the page can be rendered and its script exercised
 // in a test without booting the router (which needs a database).
+//
+// THIS PAGE OWNS ITS OWN CONTENT-SECURITY-POLICY (#3434), and it has to. The
+// app's policy is `script-src 'self'`, on its way from report-only to enforced
+// (#3300). This page needs four things that policy forbids: Turnstile's script
+// from challenges.cloudflare.com, a second script it loads from there, an
+// INLINE script of ours, and a frame of challenges.cloudflare.com; the widget
+// also calls home to two Cloudflare hosts. Walking try.cobblr.xyz on
+// 2026-09-22 found all of it in the report-only log -- harmless today, and the
+// moment the policy is enforced NOBODY CAN GET A SANDBOX: not from the button,
+// not from the QR code at a stand, not from a pasted link. The token only ever
+// comes from a Turnstile pass, by design.
+//
+// So the widened policy lives HERE, next to the widget that needs it, rather
+// than in the app's policy where it would open Cloudflare's origin for every
+// page of the product. The inline script gets a per-request NONCE, not a hash:
+// a hash pins the exact bytes of a script that carries prose comments, so the
+// next edit to it silently closes the door again. `startPolicy(nonce)` is what
+// the route sends, and `startHtml(siteKey, nonce)` stamps the same nonce onto
+// the script tag -- one value, two places, from one call.
+import { randomBytes } from "node:crypto";
 import { brandHeaderCss, brandHeaderHtml } from "../lib/brand-header.js";
 
-export function startHtml(siteKey: string): string {
+/** The hosts Turnstile needs. `brunhild.` is the one the widget calls home to;
+ *  it is not guessable from the script URL and was found by reading the
+ *  violations on a real phone. */
+const TURNSTILE = "https://challenges.cloudflare.com";
+const TURNSTILE_CONNECT = `${TURNSTILE} https://brunhild.challenges.cloudflare.com`;
+
+/** A fresh nonce per response. A nonce is worthless if it repeats. */
+export function startNonce(): string {
+  return randomBytes(16).toString("base64");
+}
+
+/** The policy this page is served with: strict everywhere the app is strict,
+ *  widened by exactly what the challenge needs and nothing else. */
+export function startPolicy(nonce: string): string {
+  return [
+    "default-src 'self'",
+    `script-src 'self' 'nonce-${nonce}' ${TURNSTILE}`,
+    `frame-src ${TURNSTILE}`,
+    `connect-src 'self' ${TURNSTILE_CONNECT}`,
+    // The page's own <style> block, and the widget's.
+    "style-src 'self' 'unsafe-inline'",
+    "img-src 'self' data:",
+    "font-src 'self' data:",
+    "base-uri 'none'",
+    "form-action 'self'",
+    "frame-ancestors 'self'",
+    "object-src 'none'",
+  ].join("; ");
+}
+
+export function startHtml(siteKey: string, nonce = ""): string {
   return `<!doctype html><html lang="en"><head><meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
 <meta name="robots" content="noindex" /><title>Cobblr - starting your sandbox</title>
-<script src="https://challenges.cloudflare.com/turnstile/v0/api.js" async defer></script>
+<script src="${TURNSTILE}/turnstile/v0/api.js" async defer></script>
 <style>
  body{margin:0;min-height:100vh;display:flex;flex-direction:column;background:#F6F2EA;color:#2b3038;
       font:16px/1.55 Inter,system-ui,-apple-system,Segoe UI,Roboto,sans-serif}
@@ -57,6 +107,25 @@ export function startHtml(siteKey: string): string {
  [hidden]{display:none!important}
  noscript p{color:#8B3A3A}
  ${brandHeaderCss()}
+ /* The one page in the product the app's stylesheet never reaches: the api
+    serves it before any of that exists, so the dark theme is written here,
+    from the same tokens index.css uses (canvas #1E293B, content #F4EFE5,
+    muted #B4BAC2, line #475569 since #3232). Without it a visitor with a dark
+    phone met a light page with a dark Cloudflare widget pasted into it, on the
+    first Cobblr screen anybody at a stand sees (#3435). */
+ @media (prefers-color-scheme:dark){
+  body{background:#1E293B;color:#F4EFE5}
+  h1{color:#F4EFE5}
+  p,.step{color:#B4BAC2}
+  .bar{background:rgba(244,239,229,.14)}
+  .spin{border-color:rgba(244,239,229,.18);border-top-color:#BD9F77}
+  .bar i,button.primary{background:#BD9F77;color:#1E293B}
+  button.primary{box-shadow:4px 4px 0 #475569}
+  a,button{border-color:#475569;color:#F4EFE5}
+  noscript p{color:#F6B9B9}
+  .brand{background:#1E293B;border-bottom-color:#475569}
+  .brand a,.wordmark{color:#F4EFE5}
+ }
 </style></head><body>${brandHeaderHtml()}<main><div class="card">
 <h1 id="h">Setting up your sandbox</h1>
 <p id="lede">It lasts an hour, and you do not need an account.</p>
@@ -73,7 +142,7 @@ export function startHtml(siteKey: string): string {
 <noscript><p>This needs JavaScript to check you are not a robot.</p>
 <a href="/?mode=signup">Make an account instead</a></noscript>
 </div></main>
-<script>
+<script${nonce ? ` nonce="${nonce}"` : ""}>
  // Between the challenge passing and the workspace appearing the server is
  // making a database, running migrations, installing two bundles and fetching
  // book covers. That is a real few seconds, and with the widget gone and

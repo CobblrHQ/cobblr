@@ -207,7 +207,7 @@ export interface ActivationFunnel {
 }
 
 export interface ChangelogEntry {
-  type: "feature" | "improvement" | "fix" | "change";
+  type: "feature" | "improvement" | "fix" | "selfhost" | "change";
   scope: string | null;
   text: string;
 }
@@ -750,7 +750,28 @@ function primaryBase(slug: string, moduleRoute: string, instance?: string): stri
     : `/orgs/${slug}/modules/${moduleRoute}`;
 }
 
+/** The trial ledger, read back (api/src/platform/trial-ledger.ts). Every line
+ *  has `words` a person can read; the rest is what a replay needs. */
+export interface SandboxLedger {
+  since: string | null;
+  bundles: Array<{ external_id: string; version: string; name: string; words: string }>;
+  modules: Array<{ module_name: string; name: string; words: string }>;
+  instances: Array<{ module_name: string; instance_name: string; display_name: string; words: string }>;
+  fields: Array<{ id: string; entity_kind: string; name: string; display_label: string; type: string; words: string }>;
+  automations: Array<{ id: string; source_kind: string; action_id: string; words: string }>;
+  scans: Array<{ entity_kind: string; entity_id: string; instance: string | null; name: string; photo_file_ids: string[]; words: string }>;
+  records: Array<{ entity_kind: string; label: string; ids: string[]; scanned: number; words: string }>;
+  left_behind: string[];
+}
+
 export const api = {
+  /** A one-shot URL for an iframe document that must run inline script (a
+   *  custom app block, an installed renderer). The browser then applies the
+   *  RESPONSE's policy instead of this page's, which is what lets script-src
+   *  be enforced here at all (#3300). See lib/frame-doc.ts. */
+  createFrameDoc: (html: string, kind: "app-block" | "renderer") =>
+    request<{ url: string; expires_in: number }>("POST", `/frame-docs`, { html, kind }),
+
   /** Escape hatch for ad-hoc reads from pages that don't deserve a
    *  dedicated method (e.g. dashboard snapshot widgets that hit a
    *  module's own routes). Avoid in module code — modules go through
@@ -1858,6 +1879,11 @@ export const api = {
     if (res?.token) setToken(res.token);
     return res;
   },
+  /** Delete this account. Refused (409 sole_owner, with the workspaces) while
+   *  the person is the only owner of a live workspace; 409 delete_at_identity
+   *  for an account that belongs to the central account service. */
+  deleteMyAccount: (currentPassword: string) =>
+    request<void>("DELETE", "/me", { current_password: currentPassword }),
 
   meNotifications: (limit = 25) =>
     request<{ items: CrossOrgNotificationEntry[] }>(
@@ -3135,6 +3161,20 @@ export const api = {
    *  an exact identifier hit above fuzzy text results. */
   resolveOnSurface: (slug: string, value: string, surface: "scan" | "palette" | "search") =>
     request<RegistryResolveOutcome>("POST", `/orgs/${slug}/resolve`, { value, surface }),
+  /** The live feed: the last few CAPTURES, for a screen that is not the
+   *  scanner (a watch, a bench display, a second monitor). `after` is the
+   *  cursor a display holds so it can tell "nothing happened" from "I missed
+   *  three"; `missed` counts what did not fit in the page. */
+  scanFeed: (slug: string, q: { after?: string; limit?: number } = {}) => {
+    const params = new URLSearchParams();
+    if (q.after) params.set("after", q.after);
+    if (q.limit) params.set("limit", String(q.limit));
+    const qs = params.toString();
+    return request<{ scans: ScanInboxItem[]; cursor: string; missed: number }>(
+      "GET",
+      `/orgs/${slug}/modules/core-scan/feed${qs ? `?${qs}` : ""}`,
+    );
+  },
   listScanInbox: (
     slug: string,
     q: {
@@ -3487,6 +3527,12 @@ export const api = {
       /** Whether a real account can carry what was built here (the ledger replay). */
       carry_available: boolean;
     }>("GET", "/try/paths"),
+  /** What the person built in their sandbox, net of what they deleted and
+   *  never the stock: the list the ending page shows, and later the picker
+   *  for bringing it along. Their own sandbox or kept trial, found through
+   *  their link, so it reads past the hour when every workspace route is 410. */
+  sandboxLedger: () => request<SandboxLedger>("GET", "/try/ledger"),
+
   /** "Email me my work": builds the workspace backup, keeps it for a short
    *  window and emails a link. `emailed` false still means the file exists -
    *  the link comes back either way. */
@@ -4672,6 +4718,13 @@ export const api = {
     }>("GET", `/super-admin/overview`),
   superAdminDeleteWorkspace: (id: string) =>
     request<void>("DELETE", `/super-admin/workspaces/${id}`),
+  /** Operator: delete an account. `deleteWorkspaces` takes the workspaces the
+   *  person solely owns along; without it a sole owner is 409 sole_owner. */
+  superAdminDeleteUser: (id: string, deleteWorkspaces: boolean) =>
+    request<{ mode: "deleted" | "tombstoned"; workspaces_deleted: string[] }>(
+      "DELETE",
+      `/super-admin/users/${id}${deleteWorkspaces ? "?delete_workspaces=1" : ""}`,
+    ),
   superAdminSetWorkspacePlan: (id: string, plan: "free" | "paid" | "disabled") =>
     request<{ id: string; slug: string; plan: string }>("PATCH", `/super-admin/workspaces/${id}`, { plan }),
   superAdminAiSummary: () =>

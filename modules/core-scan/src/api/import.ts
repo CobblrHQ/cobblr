@@ -21,6 +21,17 @@ import { platform } from "@cobblr/platform-contract";
 import { sql, type Transaction } from "kysely";
 import { bearer, sessionUser, tenantContext, tenantDb, type CoreScanDB } from "../db.js";
 
+/** A stored candidate always carries `fields`, even empty: the contract's type
+ *  says non-optional and every reader believes it, so a foreign envelope's
+ *  candidate without the key is normalised at the door rather than guarded at
+ *  each read (#3392). Anything else on the candidate is kept verbatim. */
+function withCandidateFields(c: unknown): unknown {
+  if (!c || typeof c !== "object" || Array.isArray(c)) return c;
+  const cand = c as { fields?: unknown };
+  const fields = cand.fields;
+  return fields && typeof fields === "object" && !Array.isArray(fields) ? c : { ...cand, fields: {} };
+}
+
 /** An open transaction on a tenant db. The import does every one of its writes
  *  inside one, so a failure rolls the whole import back. */
 type TenantTrx = Transaction<CoreScanDB>;
@@ -726,8 +737,15 @@ importRouter.post(
             // above needs no cast; only arrays are ambiguous.) The `as never`
             // matches the other jsonb-array writers in this module: the Kysely
             // column type says unknown[], the driver wants text.
+            // Every candidate carries `fields`, even empty. The contract's
+            // type says non-optional, so every reader takes it on trust, and
+            // an envelope's candidate without the key took the whole scan
+            // inbox down with "Cannot convert undefined or null to object"
+            // (#3392, found by guided-organize's walk). Normalised here, at
+            // the one door a foreign candidate comes through, so the ROW is
+            // well-formed and every surface is safe rather than each guarding.
             ...(Array.isArray(i.x_candidates)
-              ? { suggested_candidates: JSON.stringify(i.x_candidates) as never }
+              ? { suggested_candidates: JSON.stringify(i.x_candidates.map(withCandidateFields)) as never }
               : {}),
             ...(i.x_target_location_id ? { target_location_id: i.x_target_location_id } : {}),
           };
@@ -827,7 +845,7 @@ importRouter.post(
       if (token) {
         try {
           const baseUrl = (req.headers["x-cobblr-base-url"] as string | undefined) ?? INTERNAL_API;
-          menu = await assembleScanMenu(baseUrl, ctx.org.slug, token);
+          menu = await assembleScanMenu(baseUrl, ctx.org.slug, token, ctx.org.id);
         } catch (err) {
           // No menu means no routing, which is a worse import, not a failed one.
           console.error("[core-scan] import: could not read the table menu:", (err as Error).message);

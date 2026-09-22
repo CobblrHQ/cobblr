@@ -42,12 +42,6 @@ export function discordAppId(): string {
   return CLIENT_ID;
 }
 
-/** Optional invite link to the Cobblr Discord server — offered when a test DM
- *  bounces (joining a shared server unblocks DMs). "" when unset. */
-export function discordInviteUrl(): string {
-  return process.env.DISCORD_INVITE_URL || process.env.COBBLR_DISCORD_INVITE_URL || "";
-}
-
 /** Sign a short-lived state token binding the OAuth round-trip to one user. */
 export async function signOAuthState(userId: string): Promise<string> {
   const now = Math.floor(Date.now() / 1000);

@@ -1,0 +1,65 @@
+// Signed in, in no workspace. Replaces the whole shell, because there is no
+// workspace to draw one for.
+//
+// This used to be one grey line ("no workspace yet - ask an admin to add you
+// to one.") with nothing on it: no way to make a workspace, no way to sign
+// out, no way to delete the account. It is exactly where a person lands after
+// deleting their only workspace so that they can delete their account (the
+// account page refuses a sole owner and says to delete the workspace first),
+// so the one line stranded them a step from the end (#3276). Three doors now:
+// make a workspace (the same modal the switcher opens), sign out, delete the
+// account. A platform admin also gets the console, which is instance-wide.
+import { useState } from "react";
+import { usePageTitle } from "@cobblr/platform-web";
+import { useAuth } from "../auth/AuthContext";
+import { CobblestoneMark } from "../CobblestoneMark";
+import { CreateWorkspaceModal } from "../components/WorkspaceSwitcher";
+import { DeleteAccountSection } from "../components/DeleteAccountSection";
+
+const PRIMARY = "rounded-md bg-cobble-600 hover:bg-cobble-700 disabled:opacity-50 text-white font-medium px-4 py-2 transition";
+const SECONDARY = "rounded-md border border-line dark:border-slate-700 px-4 py-2 font-medium hover:bg-subtle transition";
+
+export function NoWorkspacePage() {
+  usePageTitle("No workspace");
+  const { user, logout } = useAuth();
+  const [creating, setCreating] = useState(false);
+  return (
+    <main data-testid="no-workspace" className="min-h-full flex items-center justify-center p-6">
+      <div className="w-full max-w-md space-y-6">
+        <div className="flex items-center gap-3">
+          <CobblestoneMark size={32} />
+          <div>
+            <h1 className="text-lg font-semibold text-content dark:text-mortar-100">You are not in a workspace</h1>
+            <div className="text-xs text-muted">{user?.email}</div>
+          </div>
+        </div>
+        <p className="text-sm text-muted">
+          Nothing here is yours yet. Make a workspace of your own, or wait for somebody to add you to theirs, or sign
+          out.
+        </p>
+        <div className="flex flex-wrap gap-2">
+          <button type="button" className={PRIMARY} onClick={() => setCreating(true)}>
+            Make a workspace
+          </button>
+          <button type="button" className={SECONDARY} onClick={() => logout()}>
+            Sign out
+          </button>
+          {user?.is_platform_admin && (
+            <a href="/admin" className={SECONDARY}>
+              Operator console
+            </a>
+          )}
+        </div>
+        <DeleteAccountSection />
+      </div>
+      <CreateWorkspaceModal
+        open={creating}
+        onClose={() => setCreating(false)}
+        onCreated={(slug) => {
+          setCreating(false);
+          window.location.assign(`/w/${slug}`);
+        }}
+      />
+    </main>
+  );
+}

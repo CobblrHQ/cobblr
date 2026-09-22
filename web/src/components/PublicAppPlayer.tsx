@@ -10,8 +10,10 @@
 // It deliberately mirrors the member AppPlayerPage's look (themed,
 // full-bleed) but shares none of its auth/data plumbing.
 
+import { useEffect, useState } from "react";
 import ReactMarkdown from "react-markdown";
 import { EntityTile } from "@cobblr/platform-web";
+import { publicFrameDocUrl } from "../lib/frame-doc";
 import type { AppTheme, AppBlock, AppPage } from "../lib/api";
 import {
   themeWrapperStyle,
@@ -60,6 +62,58 @@ invoke:ro,action:ro,
 mount:function(t,loader,render){var el=typeof t==="string"?document.querySelector(t):t;if(!el)return P();el.textContent="Loading\\u2026";return P().then(loader).then(function(d){el.innerHTML="";render(el,d);}).catch(function(e){el.textContent="\\u26a0 "+((e&&e.message)||e);});}
 };
 })();</script>`;
+
+/** A custom block, served FROM A URL rather than srcdoc (#3300).
+ *
+ *  A srcdoc document inherits this page's Content-Security-Policy, so with
+ *  `script-src 'self'` enforced the injected SDK and the author's scripts are
+ *  both refused and the block renders blank. The api hands back a one-shot URL
+ *  whose own response permits inline script inside that document and nothing
+ *  else; the surface token is the gate, the same one that served this page.
+ *
+ *  Without a token there is nothing to ask with, so the block says so rather
+ *  than showing an empty rectangle. */
+function CustomBlockFrame({ html, height, surfaceToken }: { html: string; height: number; surfaceToken?: string }) {
+  const [url, setUrl] = useState<string | null>(null);
+  const [failed, setFailed] = useState(false);
+  useEffect(() => {
+    let alive = true;
+    setUrl(null);
+    setFailed(false);
+    if (!surfaceToken) {
+      setFailed(true);
+      return;
+    }
+    publicFrameDocUrl(surfaceToken, html)
+      .then((u) => alive && setUrl(u))
+      .catch(() => alive && setFailed(true));
+    return () => {
+      alive = false;
+    };
+  }, [html, surfaceToken]);
+  if (failed)
+    return (
+      <div style={{ width: "100%", height, display: "grid", placeItems: "center", fontSize: 12, opacity: 0.6 }}>
+        This block could not be prepared.
+      </div>
+    );
+  if (!url)
+    return (
+      <div style={{ width: "100%", height, display: "grid", placeItems: "center", fontSize: 12, opacity: 0.6 }}>
+        Loading…
+      </div>
+    );
+  return (
+    <iframe
+      title="custom app"
+      // Alongside the response's own sandbox policy: two ways of saying opaque
+      // origin, so a browser honouring either one is safe.
+      sandbox="allow-scripts"
+      src={url}
+      style={{ width: "100%", height, border: "none" }}
+    />
+  );
+}
 
 function customSrcDoc(html: string, theme: AppTheme | null | undefined, data: PublicAppData): string {
   const bodyBg = theme?.bg ?? "#ffffff";
@@ -131,10 +185,15 @@ export function PublicAppPlayer({
   app,
   data,
   epaper,
+  surfaceToken,
 }: {
   app: PublicAppPayload;
   data: PublicAppData;
   epaper?: boolean;
+  /** The surface's own token, from the URL this page was opened with. A custom
+   *  block needs it to ask for its frame document (#3300); this page holds no
+   *  session, and the token is the same gate that served the page. */
+  surfaceToken?: string;
 }) {
   const theme = epaper ? EPAPER_THEME(app.theme ?? null) : app.theme ?? null;
   const page = app.pages[0] ?? { slug: "", title: "", blocks: [] };
@@ -172,12 +231,11 @@ export function PublicAppPlayer({
           if (b.type === "view") return <ViewBlock key={`b-${i}`} block={b} data={data} theme={theme} />;
           if (b.type === "custom") {
             return (
-              <iframe
+              <CustomBlockFrame
                 key={`b-${i}`}
-                title="custom app"
-                sandbox="allow-scripts"
-                srcDoc={customSrcDoc(b.html, theme, data)}
-                style={{ width: "100%", height: b.height ?? 420, border: "none" }}
+                html={customSrcDoc(b.html, theme, data)}
+                height={b.height ?? 420}
+                surfaceToken={surfaceToken}
               />
             );
           }

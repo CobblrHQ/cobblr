@@ -28,7 +28,7 @@
 //     earlier day.
 
 import { Kysely, sql } from "kysely";
-import { platform, expiryState, expiryPhrase } from "@cobblr/platform-contract";
+import { platform, expiryState, expiryPhrase, arrivedEverywhere } from "@cobblr/platform-contract";
 import { expiryStages } from "./expiry-stages.js";
 import { expiryDigest, type ExpiryLine } from "./expiry-card.js";
 
@@ -69,9 +69,13 @@ export async function visitWorkspace(orgId: string, raw: unknown, now: Date = ne
     // Parts expiring within the window, via the kernel date-field query — no raw
     // inventory_parts read, no inventory table name here. queryDateField no-ops
     // (returns []) when inventory/expires_on is absent.
-    const toISO = new Date(now.getTime() + EXPIRY_SOON_DAYS * 86_400_000)
-      .toISOString()
-      .slice(0, 10);
+    // The window and the day below are the day that has ARRIVED EVERYWHERE,
+    // not the UTC day: this digest is decided once for a workspace and sent to
+    // every member, so there is no single clock to read, and the UTC day says
+    // "expires today" through the whole evening before it, for anybody west of
+    // Greenwich (#3351). Late for somebody beats early for anybody, the same
+    // rule the arrival sweeper uses.
+    const toISO = arrivedEverywhere(new Date(now.getTime() + EXPIRY_SOON_DAYS * 86_400_000));
     const candidates = await platform().calendar.queryDateField(
       org.id,
       "inventory:part",
@@ -112,9 +116,18 @@ export async function visitWorkspace(orgId: string, raw: unknown, now: Date = ne
           if (x.today_notified_on) todayDoneAt.set(x.part_id, x.today_notified_on.slice(0, 10));
         }
       } catch (err) {
-        if (!(err as Error).message.includes("does not exist")) throw err;
+        // The ledger is what stops the digest going out every hour. Without
+        // it (lists enabled, its migration not landed) every candidate is due
+        // every sweep and every write fails quietly: the digest as a stream.
+        // A stream trains a person to mute the channel; a skip is visible.
+        // Thrown, so the walk counts this workspace as failed and /healthz
+        // names the pass, and the pending migration is already on /healthz.
+        if ((err as Error).message.includes("does not exist")) {
+          throw new Error("lists_expiry_notifications is missing (lists' migration has not run here); not sending expiry reminders until it lands");
+        }
+        throw err;
       }
-      const todayISO = now.toISOString().slice(0, 10);
+      const todayISO = arrivedEverywhere(now);
       due = candidates
         .filter((c) => alreadyAtDate.get(c.id) !== c.value.slice(0, 10))
         .map((c) => ({ id: c.id, name: c.name, expires_on: c.value }));
@@ -159,7 +172,7 @@ export async function visitWorkspace(orgId: string, raw: unknown, now: Date = ne
     // written yet: the ledger is stamped once the message has gone.
     const headsUp: Array<{ row: ExpiringRow; dayOfCovered: boolean }> = [];
     for (const row of due) {
-      const daysUntil = Math.ceil((new Date(row.expires_on).getTime() - now.getTime()) / 86_400_000);
+      const daysUntil = Math.ceil((new Date(row.expires_on).getTime() - new Date(`${arrivedEverywhere(now)}T00:00:00Z`).getTime()) / 86_400_000);
       // The item's own grace: food does not go bad at midnight, and the item
       // says how long past its date is still fine. Read through the entities
       // door so an instance row (a Groceries table's milk) answers too - the
@@ -174,7 +187,10 @@ export async function visitWorkspace(orgId: string, raw: unknown, now: Date = ne
           // silently-extended one.
         }
       }
-      const reading = expiryState(row.expires_on, graceDays, now);
+      // Read against the DAY this sweep is claiming, not the instant: a
+      // reading taken at 02:00 UTC called a date twelve hours away "expires
+      // today", which is the same lie the window used to tell (#3351).
+      const reading = expiryState(row.expires_on, graceDays, new Date(`${arrivedEverywhere(now)}T00:00:00Z`));
       const tone = reading ? expiryPhrase(reading) : `expires in ${daysUntil}d`;
 
       // Event → food-cluster wire turns this into a shopping-list line. The

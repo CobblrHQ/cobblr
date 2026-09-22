@@ -38,6 +38,8 @@ export async function logMeasurement(opts: {
   value: number;
   note?: string | null;
   measuredAt?: Date;
+  /** Who logged it, for the activity row; null for a wire or a system path. */
+  userId?: string | null;
 }): Promise<Selectable<MeasurementsTable>> {
   const { db, orgId, metric, value } = opts;
   const row = await db
@@ -52,6 +54,13 @@ export async function logMeasurement(opts: {
     .executeTakeFirstOrThrow();
 
   void platform().events.emit("tracking.measurement.logged", { orgId, metricId: metric.id, value });
+  await platform().activity.log({
+    orgId,
+    userId: opts.userId ?? null,
+    action: "measurement_created",
+    ref: { module: "tracking", entityType: "measurement", entityId: row.id },
+    diff: { name: metric.name, value, metric_id: metric.id },
+  });
 
   const goal = num(metric.goal_value);
   if (goal != null && goalReached(value, goal, metric.goal_direction)) {

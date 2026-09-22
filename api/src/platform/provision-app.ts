@@ -282,8 +282,6 @@ export async function importAppData(
         image_path: image_path ?? undefined,
         fields: customFields,
       },
-      entityKind: kind,
-      entityId: "",
     });
     imported++;
   }

@@ -56,11 +56,22 @@ export function registerTrackingActionHandlers(): void {
       value = coerceNumber(payload[args.valueKey]);
     }
     if (value === undefined && ctx.rendered != null) value = coerceNumber(ctx.rendered);
-    if (value === undefined) return { ok: true, skipped: "no numeric value (set value / valueKey / template)" };
+    if (value === undefined) return ctx.event?.trigger_type && ctx.event.trigger_type !== "user-invoked" ? { ok: true, skipped: "no numeric value (set value / valueKey / template)" } : { ok: false, error: "what number? pass `value` (the reading to log)" };
 
-    // 2. Resolve the metric — by id, else by name (create-on-miss).
+    // 2. Resolve the metric — the record this runs ON, else by id, else by
+    //    name (create-on-miss). Asked on a metric ("record 15 for today"),
+    //    the metric is the record; without this the handler skipped with
+    //    "need metricId or metricName" on the page that named it (#3378).
     let metric: MetricLike | undefined;
-    if (args.metricId) {
+    const onMetric = ctx.entity?.kind === "tracking:metric" ? ctx.entity.id : "";
+    if (onMetric) {
+      metric = await db
+        .selectFrom("tracking_metrics")
+        .select(["id", "name", "unit", "goal_value", "goal_direction"])
+        .where("id", "=", onMetric)
+        .executeTakeFirst();
+    }
+    if (!metric && args.metricId) {
       metric = await db
         .selectFrom("tracking_metrics")
         .select(["id", "name", "unit", "goal_value", "goal_direction"])
@@ -87,12 +98,25 @@ export function registerTrackingActionHandlers(): void {
           .returning(["id", "name", "unit", "goal_value", "goal_direction"])
           .executeTakeFirstOrThrow();
         void platform().events.emit("tracking.metric.created", { orgId: ctx.orgId, metricId: metric.id });
+        await platform().activity.log({
+          orgId: ctx.orgId,
+          userId: ctx.userId ?? null,
+          action: "metric_created",
+          ref: { module: "tracking", entityType: "metric", entityId: metric.id },
+          diff: { name: metric.name },
+        });
       }
     }
-    if (!metric) return { ok: true, skipped: "no metric (need metricId or metricName)" };
+    if (!metric) return { ok: false, error: "which metric? run this on the metric, or name it in `metricName`" };
 
-    const row = await logMeasurement({ db, orgId: ctx.orgId, metric, value, note: args.note ?? null });
-    return { ok: true, metricId: metric.id, value, measurementId: row.id };
+    const row = await logMeasurement({ db, orgId: ctx.orgId, userId: ctx.userId ?? null, metric, value, note: args.note ?? null });
+    return {
+      ok: true,
+      metricId: metric.id,
+      value,
+      measurementId: row.id,
+      summary: `${value}${metric.unit ? ` ${metric.unit}` : ""} logged on "${metric.name}"`,
+    };
   });
 }
 

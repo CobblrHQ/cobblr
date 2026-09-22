@@ -15,6 +15,7 @@
 // This file is the part worth testing on its own: what "late" means, and how a
 // flat list of dated things becomes four buckets.
 
+import { dayHere } from "@cobblr/platform-contract/day";
 import type { CalendarEvent } from "./api";
 
 export type BucketId = "overdue" | "today" | "week" | "later";
@@ -40,10 +41,10 @@ export const AHEAD_WINDOW_DAYS = 90;
  *  workspace's own terms; comparing them against a UTC "today" puts everything
  *  due today into Overdue for anyone west of Greenwich after 5pm, which is the
  *  exact hour someone checks what is left. */
-export function dayKey(d: Date): string {
-  const p = (n: number) => String(n).padStart(2, "0");
-  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`;
-}
+/** The local calendar day. The rule is the platform's
+ *  (`@cobblr/platform-contract/day` dayHere): one answer to "whose day is it",
+ *  here and on the server (#3351). */
+export const dayKey = (d: Date): string => dayHere(d);
 
 export function shiftDays(from: Date, days: number): Date {
   const d = new Date(from);

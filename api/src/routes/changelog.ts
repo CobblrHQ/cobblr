@@ -29,7 +29,7 @@ const roots = [
 const CHANGELOG_PATHS = roots.map((r) => join(r, "CHANGELOG.md"));
 const CHANGESET_DIRS = roots.map((r) => join(r, "changelog.d"));
 
-type EntryType = "feature" | "improvement" | "fix" | "change";
+type EntryType = "feature" | "improvement" | "fix" | "selfhost" | "change";
 interface Entry {
   type: EntryType;
   scope: string | null;
@@ -40,10 +40,22 @@ interface DaySection {
   entries: Entry[];
 }
 
+// The map decides WHETHER a changeset is published as well as what it is
+// called. changelog.d/README.md: `internal` is "announced nowhere", and an
+// unrecognised type is a typo nobody has read yet. Both used to fall through
+// to "change" and go out on the public What's new page, which is how 65
+// entries about CI, lints and worktrees ended up where a stranger could read
+// them (#3444). A type that is not here is dropped, loudly enough that the
+// test below catches a new one.
 const TYPE_MAP: Record<string, EntryType> = {
   feature: "feature",
   improvement: "improvement",
   fix: "fix",
+  // Same audience as the rest of the post, its own heading in it.
+  selfhost: "selfhost",
+  // In the README's user-facing list; they read as fixes on the page.
+  security: "fix",
+  performance: "improvement",
 };
 
 export function parseChangelog(md: string): DaySection[] {
@@ -78,7 +90,7 @@ export function parseChangelog(md: string): DaySection[] {
 
 /** Parse one changeset file's frontmatter + body into a dated Entry. Undated
  *  entries (shouldn't happen — lint requires `date`) bucket under "Unreleased". */
-function parseChangeset(raw: string): { date: string; entry: Entry } {
+export function parseChangeset(raw: string): { date: string; entry: Entry } | null {
   const m = raw.match(/^---\r?\n([\s\S]*?)\r?\n---\r?\n([\s\S]*)$/);
   const fm: Record<string, string> = {};
   if (m) {
@@ -91,9 +103,11 @@ function parseChangeset(raw: string): { date: string; entry: Entry } {
   // is the feature's user manual, published by scripts/docs-flush.mjs at
   // release; it must never leak into the changelog feed.
   const text = (m ? m[2]! : raw).split(/^## docs\s*$/m)[0]!.trim().replace(/\s+/g, " ");
+  const type = TYPE_MAP[(fm.type || "").toLowerCase()];
+  if (!type) return null;                       // internal, or a type nobody has read
   return {
     date: fm.date?.trim() || "Unreleased",
-    entry: { type: TYPE_MAP[(fm.type || "").toLowerCase()] ?? "change", scope: fm.scope?.trim() || null, text },
+    entry: { type, scope: fm.scope?.trim() || null, text },
   };
 }
 
@@ -113,7 +127,9 @@ async function readChangesets(): Promise<DaySection[]> {
   const byDate = new Map<string, Entry[]>();
   for (const f of names) {
     try {
-      const { date, entry } = parseChangeset(await readFile(join(dir, f), "utf8"));
+      const parsed = parseChangeset(await readFile(join(dir, f), "utf8"));
+      if (!parsed) continue;                    // not for anybody outside this repo
+      const { date, entry } = parsed;
       (byDate.get(date) ?? byDate.set(date, []).get(date)!).push(entry);
     } catch {
       /* skip unreadable */

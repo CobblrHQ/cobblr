@@ -24,6 +24,7 @@
 import { meta } from "../db/meta.js";
 import { baseKindOf } from "./entities.js";
 import { canonicalArgs, twinsToDrop } from "./twin-wires-rule.js";
+import { noteHealShim } from "./heal-shim-log.js";
 
 interface Row {
   id: string;
@@ -51,6 +52,7 @@ export async function healTwinBundleWires(): Promise<{ orgsHealed: number; rowsD
   }
 
   let rowsDropped = 0;
+  let failed = 0;
   const healedOrgs = new Set<string>();
   for (const group of groups.values()) {
     if (group.length < 2) continue;
@@ -65,8 +67,11 @@ export async function healTwinBundleWires(): Promise<{ orgsHealed: number; rowsD
       healedOrgs.add(orgId);
       console.log(`[reconcile] org ${orgId}: dropped ${drop.length} twin wire(s) for ${group[0]!.trigger_event} -> ${group[0]!.action_id}`);
     } catch (err) {
+      failed++;
       console.error(`[reconcile] org ${orgId}: twin wires failed:`, (err as Error).message);
     }
   }
+  // Every twin it can identify is dropped, so what it dropped is what it found.
+  await noteHealShim("api/src/platform/heal-twin-bundle-wires.ts", rowsDropped, failed);
   return { orgsHealed: healedOrgs.size, rowsDropped };
 }

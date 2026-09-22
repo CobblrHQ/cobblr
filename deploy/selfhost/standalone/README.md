@@ -102,13 +102,23 @@ Copying that tree while the stack is **stopped** is a complete backup. Do not
 copy a Postgres data directory while the server is running: that is a torn
 snapshot that may not restore.
 
-For a live backup, use the dumps instead. A nightly `pg_dumpall` lands in
+For a live backup, use the dumps instead. A `pg_dumpall` runs every day at
+`BACKUP_AT` (default 03:00, your machine's local time) and lands in
 `${COBBLR_DATA_ROOT}/backups/daily` (Sundays are also copied to `weekly/`),
 kept for 30 days and 12 weeks, and restores anywhere. A dump only counts as
 usable above `BACKUP_MIN_BYTES`, and retention counts only usable dumps —
 otherwise a bad week silently evicts the good backups underneath it. A
-truncated dump is kept for triage and pruned on its own shorter clock. To take
-one by hand:
+truncated dump is kept for triage and pruned on its own shorter clock.
+
+**If you copy the dumps off this machine**, run your copy job after
+`BACKUP_AT`, and have it wait for `${COBBLR_DATA_ROOT}/backups/last-dump`: a
+completed dump writes today's stamp and path there. The hour used to be "24 h
+after the backup container last started", which drifted every time you pulled;
+on the hosted boxes that left the newest dump in off-box storage up to 41 h
+old while every check on the box read it as fresh. Anchoring the hour is what
+makes the pair orderable.
+
+To take one by hand:
 
 ```bash
 docker compose exec db sh -c 'pg_dumpall -U "$POSTGRES_USER"' | gzip > cobblr-$(date +%F).sql.gz

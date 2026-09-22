@@ -503,6 +503,7 @@ export class InventoryApi {
       throw new InventoryApiError(res.status, "csv_export_failed", `HTTP ${res.status}`);
     }
     const blob = await res.blob();
+    // UTC-DAY OK: the download filename's stamp, not a claim about anybody's calendar.
     const date = new Date().toISOString().slice(0, 10);
     downloadBlob(blob, `inventory-${date}.csv`);
   };

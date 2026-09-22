@@ -76,6 +76,8 @@ export async function healDoubledReceiptLines(): Promise<{ orgs: number; rows: n
   const orgs = await meta.selectFrom("org_modules").select("org_id").where("module_name", "=", "purchases").execute();
   let healed = 0;
   let touched = 0;
+  let found = 0;
+  let failed = 0;
   for (const { org_id } of orgs) {
     try {
       await platform().tenants.withDb(org_id, async (raw) => {
@@ -105,6 +107,7 @@ export async function healDoubledReceiptLines(): Promise<{ orgs: number; rows: n
           .execute();
         const drop = doubledLinesToDrop(lines as LineLite[]);
         if (drop.length === 0) return;
+        found += drop.length;
         const r = await db.deleteFrom("purchases_order_items").where("id", "in", drop).executeTakeFirst();
         const n = Number(r.numDeletedRows ?? 0);
         if (n > 0) {
@@ -114,9 +117,11 @@ export async function healDoubledReceiptLines(): Promise<{ orgs: number; rows: n
         }
       });
     } catch (err) {
+      failed++;
       console.error(`[purchases] doubled-lines heal for org ${org_id} failed:`, (err as Error).message);
     }
   }
   if (healed > 0) console.log(`[purchases] heal: ${healed} doubled line(s) across ${touched} workspace(s)`);
+  await platform().health.noteHealShim("modules/purchases/src/heal-doubled-receipt-lines.ts", found, failed);
   return { orgs: touched, rows: healed };
 }

@@ -12,6 +12,7 @@ import { exportRouter } from "./export.js";
 import { entityImageRouter } from "./entity-image.js";
 import { qrRulesRouter } from "./qr-rules.js";
 import { decodeRouter } from "./decode.js";
+import { feedRouter } from "./feed.js";
 import { duplicatesRouter } from "./duplicates.js";
 import { shipmentEventRouter } from "./shipment-event.js";
 import { registerScanHandlers } from "./handlers.js";
@@ -38,5 +39,6 @@ router.use("/", exportRouter); // bulk export (interop v1 envelope: JSON + CSV)
 router.use("/", entityImageRouter);
 router.use("/", qrRulesRouter);
 router.use("/", decodeRouter); // identifier-decoder registry: POST /decode { code }
+router.use("/", feedRouter); // live feed: the last few captures, for a screen that is not the scanner
 
 export default router;

@@ -226,6 +226,7 @@
     "lint:dead-exports": "tsx scripts/lint-dead-exports.ts",
     "lint:auth-rate-limits": "tsx scripts/lint-auth-rate-limits.ts",
     "e2e:scan-header": "node e2e/scan-header-margin.mjs",
+    "e2e:tour-copy": "node e2e/tour-copy-names-what-is-on-screen.mjs",
     "e2e:approval-flow": "node e2e/approval-flow.mjs",
     "e2e:design-reserves-any-yarn": "node e2e/design-reserves-any-yarn.mjs",
     "e2e:two-cubepros-one-label": "node e2e/two-cubepros-one-label.mjs",
@@ -335,7 +336,16 @@
     "lint:env-booleans-are-loud": "tsx scripts/lint-env-booleans-are-loud.ts",
     "lint:doc-shots-prod-look": "tsx scripts/lint-doc-shots-prod-look.ts",
     "lint:walkthrough-twins": "tsx scripts/lint-walkthrough-twins.ts",
-    "lint:csp-no-inline-scripts": "tsx scripts/lint-csp-no-inline-scripts.ts"
+    "lint:csp-no-inline-scripts": "tsx scripts/lint-csp-no-inline-scripts.ts",
+    "lint:dark-line-reads": "tsx scripts/lint-dark-line-reads.ts",
+    "lint:action-copy-no-internal-nouns": "tsx scripts/lint-action-copy-no-internal-nouns.ts",
+    "lint:scan-fixture-category": "tsx scripts/lint-scan-fixture-category.ts",
+    "lint:list-args-take-arrays": "tsx scripts/lint-list-args-take-arrays.ts",
+    "lint:kind-create-logs": "tsx scripts/lint-kind-create-logs.ts",
+    "lint:dockerfile-copies-ship": "tsx scripts/lint-dockerfile-copies-ship.ts",
+    "lint:no-inline-script-quotes": "tsx scripts/lint-no-inline-script-quotes.ts",
+    "lint:one-day-rule": "tsx scripts/lint-one-day-rule.ts",
+    "lint:view-group-by-bare": "tsx scripts/lint-view-group-by-bare.ts"
   },
   "devDependencies": {
     "jsdom": "^30.0.1",

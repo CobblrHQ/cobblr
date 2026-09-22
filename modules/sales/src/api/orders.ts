@@ -122,6 +122,13 @@ ordersRouter.post(
       .returningAll()
       .executeTakeFirstOrThrow();
     await platform().events.emit("sales.order.created", { orgId: ctx.org.id, orderId: row.id });
+    await platform().activity.log({
+      orgId: ctx.org.id,
+      userId: sessionUser(req)?.id ?? null,
+      action: "order_created",
+      ref: { module: "sales", entityType: "order", entityId: row.id },
+      diff: { name: row.order_number ?? row.customer_name ?? row.id, instance: instanceOf(req) },
+    });
     res.status(201).json(row);
   }),
 );

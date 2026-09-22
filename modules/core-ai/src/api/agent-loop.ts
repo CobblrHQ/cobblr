@@ -212,6 +212,15 @@ export async function runAgentLoop(turns: ChatTurn[], deps: AgentLoopDeps): Prom
   // answer DESCRIBES the writes correctly is a different question from whether
   // it should have written at all.
   let nudgedForReport = false;
+  // A write handed back this turn already told the model what to do, and
+  // the words it says next are its answer to the door: "Bin 4 doesn't exist
+  // yet. Would you like me to create it and move the Multimeter there?" is
+  // the question the door asked for, not a description instead of acting.
+  // Nudged to act, the model re-proposed the create the door had refused
+  // and ran out of rounds (2026-09-21, #3255); the ambiguity guard's
+  // question met the same nudge the day before (#3154). So after a
+  // hand-back the reply guards that want a write stand down.
+  let handedBack = false;
   let readsDone = 0;
   /** Which read tools ran this turn - the act guard treats "asked what it
    *  could do, then described it" as the same evidence as naming the action. */
@@ -245,9 +254,11 @@ export async function runAgentLoop(turns: ChatTurn[], deps: AgentLoopDeps): Prom
           const nudge =
             readsDone === 0
               ? (deps.groundingNudge?.(lastUserSaid, r.content) ?? null)
-              : ((await deps.actNudge?.(lastUserSaid, r.content, readNames)) ??
-                deps.absenceNudge?.(lastUserSaid, r.content, readNames) ??
-                null);
+              : handedBack
+                ? null
+                : ((await deps.actNudge?.(lastUserSaid, r.content, readNames)) ??
+                  deps.absenceNudge?.(lastUserSaid, r.content, readNames) ??
+                  null);
           if (nudge) {
             nudgedForReply = true;
             transcript.push({ role: "assistant", content: r.content });
@@ -292,6 +303,10 @@ export async function runAgentLoop(turns: ChatTurn[], deps: AgentLoopDeps): Prom
 
     const pendingProposals: ToolCall[] = [];
     const turnResults: Array<{ call: ToolCall; text: string }> = [];
+    // A write of this round that was handed back or refused. The model
+    // planned the round as one thing; if part of it was refused, the rest is
+    // not the plan it made and is not shown as if it were.
+    let writeFailedThisRound = false;
 
     for (const call of calls) {
       if (!deps.isWrite(call.name)) {
@@ -325,6 +340,8 @@ export async function runAgentLoop(turns: ChatTurn[], deps: AgentLoopDeps): Prom
           bounce = null;
         }
         if (bounce) {
+          handedBack = true;
+          writeFailedThisRound = true;
           emit({ kind: "tool-result", name: call.name, ok: false, summary: bounce.slice(0, 160) });
           turnResults.push({ call, text: clampJson({ ok: false, error: bounce }, maxChars) });
           continue;
@@ -353,6 +370,7 @@ export async function runAgentLoop(turns: ChatTurn[], deps: AgentLoopDeps): Prom
           // and field are required" as a finished step. It goes back to the
           // model as a failed tool result, like a write that threw.
           if (refused(result)) {
+            writeFailedThisRound = true;
             emit({ kind: "tool-result", name: call.name, ok: false, summary: refusalOf(result).slice(0, 160) });
             turnResults.push({ call, text: clampJson({ ok: false, error: refusalOf(result) }, maxChars) });
             continue;
@@ -366,10 +384,27 @@ export async function runAgentLoop(turns: ChatTurn[], deps: AgentLoopDeps): Prom
       pendingProposals.push(call);
     }
 
+    if (pendingProposals.length > 0 && writeFailedThisRound) {
+      // "Yes please" to "make Bin 4 and move the Multimeter in?" came back as
+      // two calls in one round: create Bin 4 (handed back, its kind was
+      // "bin") and place the Multimeter in container "(will be created)".
+      // The create's hand-back went nowhere, since the turn ended on the
+      // proposal, and the person confirmed a card that put the thing in a
+      // container that did not exist (2026-09-21, #3255). A round the model
+      // planned as one thing is not shown in part: every result goes back,
+      // the held proposals told why, and the model plans the round again.
+      transcript.push({ role: "assistant", content: r.content, tool_calls: calls });
+      for (const tr of turnResults) transcript.push({ role: "tool", content: tr.text, tool_call_id: tr.call.id });
+      for (const call of pendingProposals) {
+        const held = "Not proposed: another write in this round was handed back (its result is beside this one). Settle that first, then propose again, all of it, in the order it has to happen; if a later step needs the result of an earlier one, the earlier one has to be confirmed by the person before you can propose the later one, so say so and propose only the first.";
+        emit({ kind: "tool-result", name: call.name, ok: false, summary: held.slice(0, 160) });
+        transcript.push({ role: "tool", content: clampJson({ ok: false, error: held }, maxChars), tool_call_id: call.id });
+      }
+      continue;
+    }
     if (pendingProposals.length > 0) {
       // Some write(s) still need the confirm gate — stop here. Anything already
-      // applied this turn is reported alongside. A bounced write in the same
-      // round rides along as a tool result the model sees next time.
+      // applied this turn is reported alongside.
       return { kind: "writes", calls: pendingProposals, text: r.content, applied };
     }
 

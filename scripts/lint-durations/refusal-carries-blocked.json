@@ -1,0 +1,6 @@
+{
+  "lint": "lint:refusal-carries-blocked",
+  "ms": 480,
+  "recorded": "2026-09-14",
+  "source": "split from scripts/lint-durations.json (recorded 2026-09-14)"
+}

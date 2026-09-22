@@ -73,6 +73,13 @@ listsRouter.post(
       .returningAll()
       .executeTakeFirstOrThrow();
     void platform().events.emit("lists.list.created", { orgId: ctx.org.id, listId: row.id });
+    await platform().activity.log({
+      orgId: ctx.org.id,
+      userId: sessionUser(req)?.id ?? null,
+      action: "list_created",
+      ref: { module: "lists", entityType: "list", entityId: row.id },
+      diff: { name: row.title },
+    });
     res.status(201).json(row);
   }),
 );
@@ -87,6 +94,7 @@ async function willDate(
   orgId: string,
   ref: { kind: string; id: string },
   effects: WireEffect[],
+  actorId: string | null,
 ): Promise<WillDate | null> {
   const restock = effects.find((e) => /:adjust-stock$/.test(e.action_id) && typeof e.args?.delta === "number" && (e.args.delta as number) > 0);
   if (!restock) return null;
@@ -103,7 +111,10 @@ async function willDate(
     restock: restock.args?.restock === true,
   });
   if (!starts) return null;
-  const today = new Date().toISOString().slice(0, 10);
+  // The day it is where the PERSON restocking is. The UTC day dated a lot
+  // bought at 6pm in the Americas as tomorrow, and counted its shelf life from
+  // tomorrow (#3351).
+  const today = await platform().accounts.dayFor(actorId);
   // Custom fields ride under `metadata` on a resolved record; the shelf life
   // is the same key the lots read (batches.ts), through the same reader.
   const md = (fields.metadata as Record<string, unknown> | null) ?? {};
@@ -160,7 +171,7 @@ listsRouter.get(
         effects = await platform().wires.effectsOf(ctx.org.id, "lists.item.checked", ref.kind);
         effectsByKind.set(ref.kind, effects);
       }
-      annotated.push({ ...it, on_check: effects, will_date: await willDate(ctx.org.id, { kind: ref.kind, id: ref.id }, effects) });
+      annotated.push({ ...it, on_check: effects, will_date: await willDate(ctx.org.id, { kind: ref.kind, id: ref.id }, effects, sessionUser(req)?.id ?? null) });
     }
     res.json({ ...list, items: annotated });
   }),
@@ -191,6 +202,12 @@ listsRouter.delete(
     const ctx = tenantContext(req);
     await db.deleteFrom("lists_lists").where("id", "=", req.params.id!).execute();
     void platform().events.emit("lists.list.deleted", { orgId: ctx.org.id, listId: req.params.id });
+    await platform().activity.log({
+      orgId: ctx.org.id,
+      userId: sessionUser(req)?.id ?? null,
+      action: "list_deleted",
+      ref: { module: "lists", entityType: "list", entityId: req.params.id! },
+    });
     res.status(204).end();
   }),
 );
@@ -253,6 +270,13 @@ listsRouter.post(
       .returningAll()
       .executeTakeFirstOrThrow();
     void platform().events.emit("lists.item.added", { orgId: ctx.org.id, listId: row.list_id, itemId: row.id });
+    await platform().activity.log({
+      orgId: ctx.org.id,
+      userId: sessionUser(req)?.id ?? null,
+      action: "item_created",
+      ref: { module: "lists", entityType: "item", entityId: row.id },
+      diff: { name: row.title, list_id: row.list_id },
+    });
     res.status(201).json(row);
   }),
 );
@@ -350,7 +374,15 @@ listsRouter.delete(
     const db = tenantDb(req);
     const ctx = tenantContext(req);
     const row = await db.deleteFrom("lists_items").where("id", "=", req.params.id!).returning(["id", "list_id"]).executeTakeFirst();
-    if (row) void platform().events.emit("lists.item.removed", { orgId: ctx.org.id, listId: row.list_id, itemId: row.id });
+    if (row) {
+      void platform().events.emit("lists.item.removed", { orgId: ctx.org.id, listId: row.list_id, itemId: row.id });
+      await platform().activity.log({
+        orgId: ctx.org.id,
+        userId: sessionUser(req)?.id ?? null,
+        action: "item_deleted",
+        ref: { module: "lists", entityType: "item", entityId: row.id },
+      });
+    }
     res.status(204).end();
   }),
 );

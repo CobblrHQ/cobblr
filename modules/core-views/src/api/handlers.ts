@@ -11,6 +11,7 @@
 // mean one thing when a person saves one and another when the assistant does.
 
 import { platform, readJsonArg } from "@cobblr/platform-contract";
+import { kindWordsFrom, viewTypeLabel } from "@cobblr/platform-contract/kind-label";
 import type { Kysely } from "kysely";
 import { ViewCreate } from "./views.js";
 import type { CoreViewsDB } from "../db.js";
@@ -71,7 +72,8 @@ export function registerViewsHandlers(): void {
     if (!kinds.some((k) => k.id === parsed.data.entity_kind)) {
       return {
         ok: false,
-        error: `this workspace has no "${parsed.data.entity_kind}" to build a view of — check the record kinds first`,
+        // ALLOW-INTERNAL-NOUN: echoes the caller's own word for a kind that is not here; there are no words for it, and the kinds that are come in words beside it
+        error: `this workspace has no "${parsed.data.entity_kind}" to build a view of; it has ${kinds.map((k) => k.display_name_plural ?? k.display_name).join(", ")}`,
       };
     }
 
@@ -99,7 +101,7 @@ export function registerViewsHandlers(): void {
 
     return {
       ok: true,
-      summary: `"${row.name}" saved as a ${row.view_type} view of ${row.entity_kind}${row.pinned ? ", pinned to the dashboard" : ""}`,
+      summary: `"${row.name}" saved as a ${viewTypeLabel(row.view_type).toLowerCase()} view of ${kindWordsFrom(row.entity_kind, kinds).many}${row.pinned ? ", pinned to the dashboard" : ""}`,
       data: { id: row.id, name: row.name, entity_kind: row.entity_kind, view_type: row.view_type },
     };
   });

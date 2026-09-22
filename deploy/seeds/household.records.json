@@ -1,0 +1,410 @@
+{
+  "kind": "cobblr.sandbox.records",
+  "id": "cobblr.sandbox.household.records",
+  "version": "1.0.0",
+  "name": "Household sandbox contents",
+  "description": "The books and food a fresh sandbox opens on. The blueprint beside this file builds the shape; this fills it, because a correct but empty workspace is a spreadsheet you have been asked to imagine.",
+  "requests": [
+    {
+      "instance": "bookshelf",
+      "entity_kind": "bookshelf:item",
+      "body": {
+        "name": "The Hobbit",
+        "qty": 1,
+        "author": "J. R. R. Tolkien",
+        "isbn": "9780547928227",
+        "year": 1937,
+        "read_status": "Read",
+        "rating": 5
+      },
+      "image_url": "https://covers.openlibrary.org/b/isbn/9780547928227-M.jpg"
+    },
+    {
+      "instance": "bookshelf",
+      "entity_kind": "bookshelf:item",
+      "body": {
+        "name": "Dune",
+        "qty": 1,
+        "author": "Frank Herbert",
+        "isbn": "9780441013593",
+        "year": 1965,
+        "read_status": "Read",
+        "rating": 5
+      },
+      "image_url": "https://covers.openlibrary.org/b/isbn/9780441013593-M.jpg"
+    },
+    {
+      "instance": "bookshelf",
+      "entity_kind": "bookshelf:item",
+      "body": {
+        "name": "The Martian",
+        "qty": 1,
+        "author": "Andy Weir",
+        "isbn": "9780553418026",
+        "year": 2011,
+        "read_status": "Read",
+        "rating": 4
+      },
+      "image_url": "https://covers.openlibrary.org/b/isbn/9780553418026-M.jpg"
+    },
+    {
+      "instance": "bookshelf",
+      "entity_kind": "bookshelf:item",
+      "body": {
+        "name": "Project Hail Mary",
+        "qty": 1,
+        "author": "Andy Weir",
+        "isbn": "9780593135204",
+        "year": 2021,
+        "read_status": "Reading"
+      },
+      "image_url": "https://covers.openlibrary.org/b/isbn/9780593135204-M.jpg"
+    },
+    {
+      "instance": "bookshelf",
+      "entity_kind": "bookshelf:item",
+      "body": {
+        "name": "Sapiens",
+        "qty": 1,
+        "author": "Yuval Noah Harari",
+        "isbn": "9780062316097",
+        "year": 2011,
+        "read_status": "Read",
+        "rating": 4
+      },
+      "image_url": "https://covers.openlibrary.org/b/isbn/9780062316097-M.jpg"
+    },
+    {
+      "instance": "bookshelf",
+      "entity_kind": "bookshelf:item",
+      "body": {
+        "name": "The Left Hand of Darkness",
+        "qty": 1,
+        "author": "Ursula K. Le Guin",
+        "isbn": "9780441478125",
+        "year": 1969,
+        "read_status": "To read"
+      },
+      "image_url": "https://covers.openlibrary.org/b/isbn/9780441478125-M.jpg"
+    },
+    {
+      "instance": "bookshelf",
+      "entity_kind": "bookshelf:item",
+      "body": {
+        "name": "The Name of the Wind",
+        "qty": 1,
+        "author": "Patrick Rothfuss",
+        "isbn": "9780756404741",
+        "year": 2007,
+        "read_status": "Read",
+        "rating": 4
+      },
+      "image_url": "https://covers.openlibrary.org/b/isbn/9780756404741-M.jpg"
+    },
+    {
+      "instance": "bookshelf",
+      "entity_kind": "bookshelf:item",
+      "body": {
+        "name": "Piranesi",
+        "qty": 1,
+        "author": "Susanna Clarke",
+        "isbn": "9781635575637",
+        "year": 2020,
+        "read_status": "Read",
+        "rating": 5
+      },
+      "image_url": "https://covers.openlibrary.org/b/isbn/9781635575637-M.jpg"
+    },
+    {
+      "instance": "bookshelf",
+      "entity_kind": "bookshelf:item",
+      "body": {
+        "name": "Klara and the Sun",
+        "qty": 1,
+        "author": "Kazuo Ishiguro",
+        "isbn": "9780571364886",
+        "year": 2021,
+        "read_status": "To read"
+      },
+      "image_url": "https://covers.openlibrary.org/b/isbn/9780571364886-M.jpg"
+    },
+    {
+      "instance": "bookshelf",
+      "entity_kind": "bookshelf:item",
+      "body": {
+        "name": "Educated",
+        "qty": 1,
+        "author": "Tara Westover",
+        "isbn": "9780399590504",
+        "year": 2018,
+        "read_status": "Read",
+        "rating": 4
+      },
+      "image_url": "https://covers.openlibrary.org/b/isbn/9780399590504-M.jpg"
+    },
+    {
+      "instance": "groceries",
+      "entity_kind": "groceries:item",
+      "body": {
+        "name": "Whole milk",
+        "qty": 2,
+        "unit": "each",
+        "storage": "Fridge",
+        "food_category": "Dairy",
+        "shelf_life_days": 10,
+        "expires_on": {
+          "$daysFromNow": 4
+        },
+        "acquired_on": {
+          "$daysFromNow": -6
+        },
+        "location_id": {
+          "$location": "Fridge"
+        }
+      },
+      "image_url": "https://upload.wikimedia.org/wikipedia/commons/thumb/a/a5/Glass_of_Milk_%2833657535532%29.jpg/500px-Glass_of_Milk_%2833657535532%29.jpg?utm_source=en.wikipedia.org&utm_campaign=api&utm_content=thumbnail"
+    },
+    {
+      "instance": "groceries",
+      "entity_kind": "groceries:item",
+      "body": {
+        "name": "Free-range eggs",
+        "qty": 12,
+        "unit": "each",
+        "storage": "Fridge",
+        "food_category": "Dairy",
+        "shelf_life_days": 28,
+        "expires_on": {
+          "$daysFromNow": 16
+        },
+        "acquired_on": {
+          "$daysFromNow": -12
+        },
+        "location_id": {
+          "$location": "Fridge"
+        }
+      },
+      "image_url": "https://upload.wikimedia.org/wikipedia/commons/thumb/5/56/Eierdoosmet10eierengevuld2010.jpg/500px-Eierdoosmet10eierengevuld2010.jpg?utm_source=en.wikipedia.org&utm_campaign=api&utm_content=thumbnail"
+    },
+    {
+      "instance": "groceries",
+      "entity_kind": "groceries:item",
+      "body": {
+        "name": "Sourdough loaf",
+        "qty": 1,
+        "unit": "each",
+        "storage": "Counter",
+        "food_category": "Bakery",
+        "shelf_life_days": 4,
+        "expires_on": {
+          "$daysFromNow": 0
+        },
+        "acquired_on": {
+          "$daysFromNow": -4
+        },
+        "location_id": {
+          "$location": "Counter"
+        }
+      },
+      "image_url": "https://upload.wikimedia.org/wikipedia/commons/thumb/3/3b/Home_made_sour_dough_bread.jpg/500px-Home_made_sour_dough_bread.jpg?utm_source=en.wikipedia.org&utm_campaign=api&utm_content=thumbnail"
+    },
+    {
+      "instance": "groceries",
+      "entity_kind": "groceries:item",
+      "body": {
+        "name": "Cheddar",
+        "qty": 1,
+        "unit": "each",
+        "storage": "Fridge",
+        "food_category": "Dairy",
+        "shelf_life_days": 60,
+        "expires_on": {
+          "$daysFromNow": 21
+        },
+        "acquired_on": {
+          "$daysFromNow": -39
+        },
+        "location_id": {
+          "$location": "Fridge"
+        }
+      },
+      "image_url": "https://upload.wikimedia.org/wikipedia/commons/thumb/1/18/Somerset-Cheddar.jpg/500px-Somerset-Cheddar.jpg?utm_source=en.wikipedia.org&utm_campaign=api&utm_content=thumbnail"
+    },
+    {
+      "instance": "groceries",
+      "entity_kind": "groceries:item",
+      "body": {
+        "name": "Baby spinach",
+        "qty": 1,
+        "unit": "each",
+        "storage": "Fridge",
+        "food_category": "Produce",
+        "shelf_life_days": 7,
+        "expires_on": {
+          "$daysFromNow": 3
+        },
+        "acquired_on": {
+          "$daysFromNow": -4
+        },
+        "location_id": {
+          "$location": "Fridge"
+        }
+      },
+      "image_url": "https://upload.wikimedia.org/wikipedia/commons/thumb/3/37/Spinacia_oleracea_Spinazie_bloeiend.jpg/500px-Spinacia_oleracea_Spinazie_bloeiend.jpg?utm_source=en.wikipedia.org&utm_campaign=api&utm_content=thumbnail"
+    },
+    {
+      "instance": "groceries",
+      "entity_kind": "groceries:item",
+      "body": {
+        "name": "Cherry tomatoes",
+        "qty": 2,
+        "unit": "each",
+        "storage": "Counter",
+        "food_category": "Produce",
+        "shelf_life_days": 9,
+        "expires_on": {
+          "$daysFromNow": 5
+        },
+        "acquired_on": {
+          "$daysFromNow": -4
+        },
+        "location_id": {
+          "$location": "Counter"
+        }
+      },
+      "image_url": "https://upload.wikimedia.org/wikipedia/commons/thumb/1/10/Tomates_cerises_Luc_Viatour.jpg/500px-Tomates_cerises_Luc_Viatour.jpg?utm_source=en.wikipedia.org&utm_campaign=api&utm_content=thumbnail"
+    },
+    {
+      "instance": "groceries",
+      "entity_kind": "groceries:item",
+      "body": {
+        "name": "Chicken thighs",
+        "qty": 1,
+        "unit": "kg",
+        "storage": "Fridge",
+        "food_category": "Meat",
+        "shelf_life_days": 3,
+        "expires_on": {
+          "$daysFromNow": -1
+        },
+        "acquired_on": {
+          "$daysFromNow": -4
+        },
+        "location_id": {
+          "$location": "Fridge"
+        }
+      },
+      "image_url": "https://thumb.wikimedia.org/wikipedia/commons/thumb/4/4e/Raw_chicken_thighs.jpg/500px-Raw_chicken_thighs.jpg?utm_source=commons.wikimedia.org&utm_campaign=imageinfo&utm_content=thumbnail"
+    },
+    {
+      "instance": "groceries",
+      "entity_kind": "groceries:item",
+      "body": {
+        "name": "Frozen peas",
+        "qty": 1,
+        "unit": "each",
+        "storage": "Freezer",
+        "food_category": "Frozen",
+        "shelf_life_days": 365,
+        "expires_on": {
+          "$daysFromNow": 180
+        },
+        "acquired_on": {
+          "$daysFromNow": -185
+        },
+        "location_id": {
+          "$location": "Freezer"
+        }
+      },
+      "image_url": "https://upload.wikimedia.org/wikipedia/commons/thumb/1/11/Peas_in_pods_-_Studio.jpg/500px-Peas_in_pods_-_Studio.jpg?utm_source=en.wikipedia.org&utm_campaign=api&utm_content=thumbnail"
+    },
+    {
+      "instance": "groceries",
+      "entity_kind": "groceries:item",
+      "body": {
+        "name": "Greek yogurt",
+        "qty": 4,
+        "unit": "each",
+        "storage": "Fridge",
+        "food_category": "Dairy",
+        "shelf_life_days": 21,
+        "expires_on": {
+          "$daysFromNow": 9
+        },
+        "acquired_on": {
+          "$daysFromNow": -12
+        },
+        "location_id": {
+          "$location": "Fridge"
+        }
+      },
+      "image_url": "https://upload.wikimedia.org/wikipedia/commons/thumb/b/b8/Joghurt.jpg/500px-Joghurt.jpg?utm_source=en.wikipedia.org&utm_campaign=api&utm_content=thumbnail"
+    },
+    {
+      "instance": "groceries",
+      "entity_kind": "groceries:item",
+      "body": {
+        "name": "Chopped tomatoes",
+        "qty": 6,
+        "unit": "each",
+        "storage": "Pantry",
+        "food_category": "Canned",
+        "shelf_life_days": 730,
+        "expires_on": {
+          "$daysFromNow": 400
+        },
+        "acquired_on": {
+          "$daysFromNow": -330
+        },
+        "location_id": {
+          "$location": "Pantry"
+        }
+      },
+      "image_url": "https://upload.wikimedia.org/wikipedia/commons/thumb/c/c5/Pomidor_turshusu_e-citizen.jpg/500px-Pomidor_turshusu_e-citizen.jpg?utm_source=en.wikipedia.org&utm_campaign=api&utm_content=thumbnail"
+    },
+    {
+      "instance": "groceries",
+      "entity_kind": "groceries:item",
+      "body": {
+        "name": "Olive oil",
+        "qty": 1,
+        "unit": "each",
+        "storage": "Pantry",
+        "food_category": "Pantry",
+        "shelf_life_days": 540,
+        "expires_on": {
+          "$daysFromNow": 300
+        },
+        "acquired_on": {
+          "$daysFromNow": -240
+        },
+        "location_id": {
+          "$location": "Pantry"
+        }
+      },
+      "image_url": "https://upload.wikimedia.org/wikipedia/commons/thumb/0/0e/Oliven_V1.jpg/500px-Oliven_V1.jpg?utm_source=en.wikipedia.org&utm_campaign=api&utm_content=thumbnail"
+    },
+    {
+      "instance": "groceries",
+      "entity_kind": "groceries:item",
+      "body": {
+        "name": "Smoked paprika",
+        "qty": 1,
+        "unit": "each",
+        "storage": "Spice rack",
+        "food_category": "Pantry",
+        "shelf_life_days": 900,
+        "expires_on": {
+          "$daysFromNow": 600
+        },
+        "acquired_on": {
+          "$daysFromNow": -300
+        },
+        "location_id": {
+          "$location": "Spice rack"
+        }
+      },
+      "image_url": "https://upload.wikimedia.org/wikipedia/commons/8/81/Piment%C3%B3n_Tap_de_Cort%C3%AD_%28cropped%29.jpg?utm_source=en.wikipedia.org&utm_campaign=api&utm_content=thumbnail_unscaled"
+    }
+  ]
+}

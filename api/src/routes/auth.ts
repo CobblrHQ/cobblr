@@ -44,7 +44,9 @@ import {
   redeemIdentityCode,
   fetchIdentityProfile,
   browserBase,
+  deploymentSecretMatches,
 } from "../auth/identity-client.js";
+import { hardDeleteUser } from "../platform/delete-user.js";
 import { isPlatformAdmin, requireAuth } from "../auth/middleware.js";
 import { publicSignupEnabled, managedAppSignupEnabled, selfServeInvitesEnabled } from "../auth/signup-gate.js";
 import { dispatch } from "../platform/notifications.js";
@@ -52,8 +54,8 @@ import { createAccount } from "../platform/accounts.js";
 import { isUndeliverableTestAddress } from "../platform/email-send.js";
 import * as activity from "../platform/activity.js";
 import { fireSignup, sendAuthEmail } from "../platform/hosted-seams.js";
-import { discordInviteUrl, discordAppId } from "../platform/discord-oauth.js";
-import { communityLinks, type CommunityLink } from "../platform/community.js";
+import { discordAppId } from "../platform/discord-oauth.js";
+import { communityLinks, discordInviteUrl, type CommunityLink } from "../platform/community.js";
 import { enableDefaultModulesForOrg } from "../modules/enable.js";
 import { provisionAppWorkspace, ProvisionAppError } from "../platform/provision-app.js";
 import { getManagedApp } from "../platform/managed-apps.js";
@@ -152,7 +154,7 @@ interface AuthResponseUser {
   title_pref?: string | null;
   nav_pref: unknown;
   tour_seen_at: Date | string | null;
-  /** Community Discord invite (DISCORD_INVITE_URL) or null; signed-in chrome only. */
+  /** Community Discord invite (see discordInviteUrl) or null; signed-in chrome only. */
   discord_invite_url: string | null;
   /** Every place this deployment offers for questions, in the order to show
    *  them. `discord_invite_url` stays for older clients; it is the chat entry
@@ -917,6 +919,42 @@ async function adoptOrProvisionIdentity(
   console.log(`[identity] provisioned ${wantApp ? `the ${wantApp} app` : "a workspace"} for a central account (${created.id})`);
   return { userId: created.id, provisioned: { slug: provisioned.slug, app: wantApp } };
 }
+
+// POST /auth/identity/deleted — the account service says an identity is gone.
+// Server to server, proven with the deployment secret (the one this surface
+// redeems codes with), so nobody else can delete an account by naming its id.
+// The local user linked to that identity is deleted the way the person asked
+// upstream: with the workspaces they solely owned, since "delete my account"
+// there said so. Idempotent: an identity this surface never met, or already
+// removed, is a 204. Without this a deletion on one side left the other, and
+// an orphan identity-linked user was handed a fresh workspace on the next
+// hand-off (#3276).
+const IdentityDeletedBody = z.object({ identity_id: z.string().uuid(), secret: z.string().min(1) });
+authRouter.post("/identity/deleted", async (req, res, next) => {
+  try {
+    if (!identityCallbackEnabled()) {
+      return res.status(404).json({ error: { code: "identity_disabled", message: "Central identity is not enabled on this surface." } });
+    }
+    if (!identityExchangeLimiter(req.ip ?? "unknown")) {
+      return res.status(429).json({ error: { code: "rate_limited", message: "Too many attempts — wait a moment." } });
+    }
+    const parsed = IdentityDeletedBody.safeParse(req.body);
+    if (!parsed.success) {
+      return res.status(400).json({ error: { code: "invalid_body", message: "identity_id and secret are required." } });
+    }
+    if (!deploymentSecretMatches(parsed.data.secret)) {
+      return res.status(401).json({ error: { code: "bad_secret", message: "Not the account service." } });
+    }
+    const user = await meta.selectFrom("users").select("id").where("identity_id", "=", parsed.data.identity_id).executeTakeFirst();
+    if (user) {
+      const result = await hardDeleteUser(user.id, { deleteSoleOwnedWorkspaces: true });
+      console.log(`[identity/deleted] account ${user.id} ${result.mode} (identity ${parsed.data.identity_id}${result.workspaces_deleted.length ? `, with ${result.workspaces_deleted.map((w) => w.slug).join(", ")}` : ""})`);
+    }
+    return res.status(204).end();
+  } catch (err) {
+    return next(err);
+  }
+});
 
 authRouter.post("/identity/callback", async (req, res, next) => {
   try {

@@ -13,7 +13,7 @@ import { humanizeProviderError, type ProviderFailureDetail } from "./provider-er
 import { providerReasonOf } from "@cobblr/platform-contract/provider-reason";
 import { missingActionArgs, reconcileActionArgs } from "./action-args-guard.js";
 import { groundingNudgeFor } from "./groundless-answer.js";
-import { movedNotCreated } from "./move-not-create.js";
+import { destinationNotThere, movedNotCreated } from "./move-not-create.js";
 import { outsideChoices } from "./field-choices.js";
 import { noneFromOneList } from "./none-from-one-list.js";
 import { answeredNotProposed } from "./answer-dont-propose.js";
@@ -26,6 +26,7 @@ import { buildSystemPrompt, situationalSuffix, type PromptWorkspace, type Prompt
 import { GROUNDING_RULES, PLAIN_ANSWER_RULES, TOOL_USE_RULES } from "./prompt-rules.js";
 import { z } from "zod";
 import { CHAT_HISTORY_MESSAGES, platform } from "@cobblr/platform-contract";
+import { kindWordsFrom } from "@cobblr/platform-contract/kind-label";
 import { matchCommand } from "./basics.js";
 import { replyDespiteRefusal, withPlanCard } from "./plan-card.js";
 import { tenantContext, sessionUserId, sessionDisplayName, tenantDb } from "../db.js";
@@ -469,8 +470,11 @@ async function proposalOf(
       if (!kind || !resolveCreatePath(kind, kinds)) return { error: `I can't create "${kind || "that"}" from chat yet.` };
       const fields = (a.fields as Record<string, unknown>) ?? {};
       const name = String(fields.title ?? fields.name ?? "").trim();
+      // The card's line is what the person confirms: "Create a location:
+      // “Bin 4”", never the kind id (#3237).
+      const words = kindWordsFrom(kind, kinds);
       return {
-        summary: `Create a ${kind}${name ? `: “${name}”` : ""}`,
+        summary: `Create ${/^[aeiou]/i.test(words.one) ? "an" : "a"} ${words.one}${name ? `: “${name}”` : ""}`,
         proposal: { kind: "create", entity_kind: kind, fields },
       };
     }
@@ -743,6 +747,11 @@ async function answerTurn(
         // nothing has to be undone. See move-not-create.ts.
         const dup = movedNotCreated(askedFor, call, seenNames);
         if (dup) return dup;
+        // Asked to MOVE something into a place it did not find, and about to
+        // create the place with nothing said. A missing destination is a
+        // question, never a silent card (#3255). See move-not-create.ts.
+        const gone = destinationNotThere(askedFor, call, seenNames);
+        if (gone) return gone;
         // Aimed at one of several records a search returned, and the person's
         // words do not say which. Two CubePros, one label printed for the
         // first hit (#3154): the write is bounced with both named, and the
@@ -800,14 +809,11 @@ async function answerTurn(
       // running it. Needs a write tool to exist for the answer to be "run it".
       ...(prefs.write_mode !== "off" && toolDefs.length > 0
         ? {
-            // A question the ambiguity guard asked for is the act, not a
-            // description of one: once a write has been handed back with
-            // the candidates, the model's "which one?" is what the person
-            // needs, and nudging it to act instead sends it back through the
-            // same door (a label proposed, bounced, asked, nudged, proposed
-            // again; 2026-09-21).
+            // The loop stands this down after any write was handed back
+            // this turn (agent-loop.ts handedBack): the question a door
+            // asked for is the act, not a description of one.
             actNudge: async (said: string, reply: string, reads: string[]) =>
-              ambiguity.choices ? null : describedInsteadOfActing(said, reply, await actionLabels(c), reads.includes("list_actions")),
+              describedInsteadOfActing(said, reply, await actionLabels(c), reads.includes("list_actions")),
           }
         : {}),
       ...(onEvent ? { onEvent } : {}),

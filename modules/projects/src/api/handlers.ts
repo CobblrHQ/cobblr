@@ -185,14 +185,15 @@ export function registerProjectsHandlers(): void {
   platform().actions.registerHandler(
     "projects.set-dep-satisfied",
     async (ctx) => {
-      if (!ctx.entityKind || !ctx.entityId) {
+      if (!ctx.entity) {
         return { ok: true, flipped: 0, reason: "no entity" };
       }
+      const { kind: sourceKind, id: sourceId } = ctx.entity;
       // entityKind here looks like "inventory:part" (or whatever
       // the wire's source_kind was). We store the dep target as
       // (target_module, target_entity_type, target_entity_id) —
       // split the kind for lookup.
-      const [module, entityType] = ctx.entityKind.split(":");
+      const [module, entityType] = sourceKind.split(":");
       if (!module || !entityType) {
         return { ok: true, flipped: 0, reason: "bad kind" };
       }
@@ -202,7 +203,7 @@ export function registerProjectsHandlers(): void {
         .set({ satisfied: true })
         .where("target_module", "=", module)
         .where("target_entity_type", "=", entityType)
-        .where("target_entity_id", "=", ctx.entityId)
+        .where("target_entity_id", "=", sourceId)
         .where("satisfied", "=", false)
         .returning(["id", "task_id"])
         .execute();
@@ -210,7 +211,7 @@ export function registerProjectsHandlers(): void {
         platform().events.emit("projects.task.unblocked", {
           orgId: ctx.orgId,
           taskId: dep.task_id,
-          via: { kind: ctx.entityKind, id: ctx.entityId },
+          via: { kind: sourceKind, id: sourceId },
         });
       }
       return { ok: true, flipped: updated.length };

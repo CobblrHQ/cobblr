@@ -8,7 +8,7 @@ import { Router } from "express";
 import multer from "multer";
 import { z } from "zod";
 import { platform } from "@cobblr/platform-contract";
-import { tenantDb, tenantContext } from "../db.js";
+import { tenantDb, tenantContext, sessionUser } from "../db.js";
 import { asyncHandler, badBody, requireRole } from "./util.js";
 import { extractThumbnail, isLibraryFile } from "../library/extract-thumbnail.js";
 import { extractPlateMetadata } from "../library/extract-metadata.js";
@@ -141,6 +141,13 @@ libraryRouter.post(
       })
       .returning(["id", "status", "target_pool"])
       .executeTakeFirstOrThrow();
+    await platform().activity.log({
+      orgId,
+      userId: sessionUser(req)?.id ?? null,
+      action: "job_created",
+      ref: { module: "digifab", entityType: "job", entityId: job.id },
+      diff: { name: item.name },
+    });
     if (pool) {
       const { kickAssign } = await import("../assign-worker.js");
       await kickAssign(orgId);

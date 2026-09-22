@@ -51,7 +51,12 @@ export interface FitTable {
   scan_keywords?: string[];
   /** The grouping axis: the field declaring `field_role: "category"`, with
    *  the values it already holds. */
-  category_field?: { name: string; label: string; values: string[] };
+  /** The grouping axis, as the seam answers it (#3223). `name` is the
+   *  custom-field key for a choice-backed axis and ABSENT for a kind whose
+   *  module owns its own taxonomy — the scorer only needs `values`, and the
+   *  one place that compares a field to the axis (line ~415) is asking
+   *  "is this field the axis?", which a nameless axis answers no to. */
+  category_field?: { name?: string; label: string; values: string[] };
   /** The module's designated catch-all: the least specific table there is. */
   is_fallback?: boolean;
 }
@@ -182,6 +187,27 @@ export function makeLexicalScorer(item: FitItem): {
     const p = phrase.toLowerCase();
     if (/\s/.test(p.trim())) return p.length >= 3 && hay.includes(p);
     return p.split(/[^a-z0-9]+/).some((w) => w.length >= 3 && wordHit(w));
+  };
+  /** WHICH tokens of the capture a keyword matched.
+   *
+   *  The plausibility floor is two corroborating keywords, so the question it
+   *  needs answered is "is this the same EVIDENCE twice?", not "is this the
+   *  same keyword twice". Groceries declares both `berry` and `raspberry`;
+   *  "Raspberry Pi Compute Module 4 IO Board" has one word for them to match,
+   *  and counting each keyword separately cleared the floor on its own and made
+   *  a single-board computer a candidate for the pantry (#3411). A phrase is
+   *  its own evidence, so it answers with itself. */
+  const matchedTokens = (term: string): string[] => {
+    const p = term.toLowerCase();
+    if (/\s/.test(p.trim())) return p.length >= 3 && hay.includes(p) ? [p] : [];
+    const out = new Set<string>();
+    for (const w of p.split(/[^a-z0-9]+/)) {
+      if (w.length < 3) continue;
+      const sw = stem(w);
+      if (tokens.has(sw)) out.add(sw);
+      for (const t of tokenList) if ((t.startsWith(sw) || t.endsWith(sw)) && t.length - sw.length >= 3) out.add(t);
+    }
+    return [...out];
   };
   // A table's NOUN says what the thing IS, so it rides no compound: "tea"
   // inside "teaspoon" is not a Tea table's noun, where "screw" inside
@@ -352,18 +378,29 @@ export function makeLexicalScorer(item: FitItem): {
     // supplies). Single words keep stemmed token matching.
     const kwHit = (term: string): boolean =>
       /\s/.test(term.trim()) ? hay.includes(term.toLowerCase()) : hasWord(term);
-    // Two spellings of one word are one hit: a Tea table declares "tea" and
-    // "teas", both stem to "tea", and counting each made a lone compound
-    // graze ("tea" in "teaspoon") read as two corroborating keywords, which
-    // is the whole plausibility floor (#3155).
-    const seenStems = new Set<string>();
+    // ONE WORD OF THE CAPTURE IS ONE CORROBORATION, however many keywords
+    // match it. Dedupe by the tokens a keyword MATCHED, not by the keyword's
+    // own stem: the stem test answered "is this the same keyword twice?" and
+    // caught "tea"/"teas" (#3155), while "berry" and "raspberry" are two
+    // different keywords matching the one word "Raspberry" and sailed through
+    // it, clearing the two-keyword floor on a single-board computer (#3411).
+    // This subsumes the stem test, since two spellings of one keyword match
+    // the same tokens.
+    const usedTokens = new Set<string>();
     for (const term of entry.scan_keywords ?? []) {
       if (term && kwHit(term)) {
-        const key = /\s/.test(term.trim()) ? term.toLowerCase() : stem(term.toLowerCase());
-        if (seenStems.has(key)) continue;
-        seenStems.add(key);
-        score += 2;
-        keywordHits += 1;
+        const matched = matchedTokens(term);
+        // The dedupe suppresses the COUNT, never what the keyword IS. A Tea
+        // table declaring "tea" and "teapot" meets "Ceramic teapot": "tea"
+        // grazes the token first, and skipping "teapot" outright would lose
+        // the head-noun hit that says the thing IS a teapot. So: one
+        // corroboration, and every qualitative signal below still asked.
+        const corroborates = !(matched.length > 0 && matched.every((t) => usedTokens.has(t)));
+        for (const t of matched) usedTokens.add(t);
+        if (corroborates) {
+          score += 2;
+          keywordHits += 1;
+        }
         // A keyword that IS the capture's head noun ("…Bath Towels" → keyword
         // "towel") identifies the thing itself → strong on its own. So does a
         // MULTI-WORD keyword appearing verbatim IN THE NAME: "light bulb" there
@@ -412,7 +449,8 @@ export function makeLexicalScorer(item: FitItem): {
       if (hasWord(f.name) || hasWord(f.label)) score += 1;
       if (f.choices) {
         for (const ch of f.choices) {
-          if (ch && (f.name === entry.category_field?.name ? axisHit(ch) : choiceHitAttr(ch))) {
+          const isAxisField = entry.category_field?.name !== undefined && f.name === entry.category_field.name;
+          if (ch && (isAxisField ? axisHit(ch) : choiceHitAttr(ch))) {
             score += 1; // a fill hint, no longer a 3-point routing vote
             // The choice names the thing itself ("…Nike Hoodie" and a
             // garment_type "Hoodie"). Not when the word is a generic one: a

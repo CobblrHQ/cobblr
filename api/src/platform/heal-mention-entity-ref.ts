@@ -28,7 +28,9 @@
 import { sql } from "kysely";
 import { meta } from "../db/meta.js";
 import { getTenantDb, evictTenantPool } from "../db/tenant.js";
+import { noteHealShim } from "./heal-shim-log.js";
 
+const SHIM = "api/src/platform/heal-mention-entity-ref.ts";
 const STALE_MODULE = "core-discussion";
 const EVENT = "core-discussion.comment.posted";
 
@@ -58,9 +60,16 @@ export async function healMentionEntityRef(): Promise<number> {
   // Once every install is healed this costs a single indexed count per boot,
   // which is the bar §8.1 sets for a reconcile that stays in the chain.
   const byOrg = await staleByOrg();
-  if (byOrg.size === 0) return 0;
+  // Found = every stale row, the ones this pass declines as ambiguous
+  // included: they still carry the old ref, so the DONE WHEN is not true yet.
+  const found = [...byOrg.values()].reduce((n, rows) => n + rows.length, 0);
+  if (byOrg.size === 0) {
+    await noteHealShim(SHIM, 0, 0);
+    return 0;
+  }
 
   let healed = 0;
+  let failed = 0;
   for (const [orgId, rows] of byOrg) {
     let healedHere = 0;
     try {
@@ -113,6 +122,7 @@ export async function healMentionEntityRef(): Promise<number> {
     } catch (err) {
       // One workspace's failure must never block the rest — a tenant whose DB is
       // down simply heals on the next boot.
+      failed++;
       console.error(`[reconcile] mention entity ref failed for org ${orgId}:`, (err as Error)?.message ?? err);
     } finally {
       // Boot-time passes must not hold a pool per tenant; Postgres runs out of
@@ -120,5 +130,6 @@ export async function healMentionEntityRef(): Promise<number> {
       await evictTenantPool(orgId).catch(() => {});
     }
   }
+  await noteHealShim(SHIM, found, failed);
   return healed;
 }

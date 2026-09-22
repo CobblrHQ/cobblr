@@ -810,7 +810,7 @@ export function scanRowState(row: ScanTriageRow, ctx: ScanRowStateContext = {}):
 export function scanSessionAction(
   rows: readonly ScanTriageRow[],
   ctx: ScanRowStateContext,
-): { label: string | null; ids: string[]; installs: number; reviews: number; merges: number; blocked: number } {
+): { label: string | null; shortLabel: string | null; ids: string[]; installs: number; reviews: number; merges: number; blocked: number } {
   const ids: string[] = [];
   let installs = 0;
   let reviews = 0;
@@ -830,7 +830,22 @@ export function scanSessionAction(
   }
   const n = ids.length;
   const label = n === 0 ? null : installs > 0 ? `Install & file ${n}` : `File ${n}`;
-  return { label, ids, installs, reviews, merges, blocked };
+  // The phone spelling: the verb and the count, never the install word.
+  //
+  // The session row is ONE line at every width (#2982), and at 393px it is
+  // out of room: the identity is the only thing on it allowed to truncate, so
+  // every character the verb takes comes off the merchant's name. "Install &
+  // file 1" cost about a third of it, and a fourteen-character shop read
+  // "STITCH & S…" on the booth's own phone (#3393).
+  //
+  // The install is not lost, because it was never this label's fact to hold:
+  // it belongs to a ROW's destination, and each row's own pill says it in
+  // full ("Install & add", the table named, "not set up yet"), on screen
+  // under the row a session opens by default. A session filing six rows into
+  // three tables, one of them new, says "Install & file 6" here and means it
+  // of one. The desk keeps the summary because it has the width to spare.
+  const shortLabel = n === 0 ? null : `File ${n}`;
+  return { label, shortLabel, ids, installs, reviews, merges, blocked };
 }
 
 /** The "More tools" fold, summarised from the same hints the tools come

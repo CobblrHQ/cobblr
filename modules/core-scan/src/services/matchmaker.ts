@@ -10,7 +10,7 @@
 // targets, and the instance's noun/name is the routing signal — so a new bundle
 // becomes scannable just by shipping its fields, no scanner code changes.
 
-import { platform, extractJsonObject, repairJson, parseJsonReply } from "@cobblr/platform-contract";
+import { platform, extractJsonObject, repairJson, parseJsonReply, type CategoryAxisSlot } from "@cobblr/platform-contract";
 import { routingNoteBare, routingNoteWithCategory } from "./routing-note.js";
 import { scanTargetsRegistered } from "./scan-target.js";
 import { fallbackHint, type AiFallback } from "@cobblr/platform-contract/scan-fallback";
@@ -81,7 +81,11 @@ export interface ScanMenuEntry extends FitTable {
    *  plus the values it already holds. It is what lets the model say "this is an
    *  ELECTRICAL part" without reaching for a different TABLE to say it. Absent
    *  when the table declares no category field. */
-  category_field?: { name: string; label: string; values: string[] };
+  /** The grouping axis, from the kernel seam (#3223). `name` is the custom-field
+   *  key for a choice-backed axis and absent for a module-owned taxonomy; `slot`
+   *  says where a chosen value is written, and is applied through
+   *  applyAxisValue rather than read. */
+  category_field?: { name?: string; label: string; values: string[]; slot?: CategoryAxisSlot };
   /** This table's PACK-COUNT field: the field declaring `field_role: "pack"` —
    *  how many base units are in the scanned package. Filled DETERMINISTICALLY
    *  from the observed pack (metadata.pack_size), never a "usual buy" guess.
@@ -353,6 +357,11 @@ export async function assembleScanMenu(
   baseUrl: string,
   slug: string,
   token: string,
+  /** Whose workspace. The category AXIS is read through the kernel seam
+   *  (platform().categoryAxis, #3223), which is keyed by org rather than by
+   *  slug like the HTTP reads around it. Required, because a menu built
+   *  without it would silently offer no category anywhere. */
+  orgId: string,
 ): Promise<ScanMenuEntry[]> {
   const auth = { Authorization: `Bearer ${token}` };
   // Scan targets are DECLARED by the owning modules (registerScannable), not
@@ -462,13 +471,29 @@ export async function assembleScanMenu(
             ...(d.decode_role ? { decode_role: d.decode_role } : {}),
             ...(d.field_role ? { field_role: d.field_role } : {}),
           }));
-        // The table's GROUPING AXIS, declared — never guessed from a field named
-        // "category". Its existing choices ARE the workspace's taxonomy: it grows
-        // from the user's own data, and the kernel never learns the word
-        // "Electrical". At most one per kind (a partial unique index enforces it).
-        const cat = defs.find((d) => d.field_role === "category");
-        if (cat) {
-          categoryField = { name: cat.name, label: cat.display_label, values: cat.choices ?? [] };
+        // The table's GROUPING AXIS comes from the SEAM, not from this def list
+        // (#3223). Where a kind's category lives is the kernel's question: a
+        // choice field for most kinds, a module's own taxonomy for a kind that
+        // declares one, and a caller that picked it out of the defs itself
+        // would be the second implementation the seam exists to remove. Its
+        // values are still the workspace's own vocabulary; the kernel never
+        // learns the word "Electrical".
+        const axis = await platform().categoryAxis.for({
+          orgId,
+          kind,
+          instance: inst.is_default ? null : inst.instance_name,
+        });
+        if (axis) {
+          categoryField = {
+            label: axis.label,
+            values: axis.values,
+            slot: axis.slot,
+            // The key the draft's fields are written under, for a choice-backed
+            // axis. A native-backed kind has no such key and nothing writes one
+            // at draft time; that is step 3's to carry, and it is named in the
+            // seam's doc rather than guessed at here.
+            ...(axis.slot.kind === "extras" ? { name: axis.slot.name } : {}),
+          };
         }
         // The PACK-COUNT axis, declared — filled deterministically from the
         // observed pack, never guessed. At most one per kind.
@@ -511,8 +536,9 @@ export async function assembleMergedMenu(
   baseUrl: string,
   slug: string,
   token: string,
+  orgId: string,
 ): Promise<ScanMenuEntry[]> {
-  const live = await assembleScanMenu(baseUrl, slug, token);
+  const live = await assembleScanMenu(baseUrl, slug, token, orgId);
   // MERGE live tables with the not-yet-installed bundle menu — never shadow.
   // The old `if (live.length) return live` meant ONE item filed into generic
   // Inventory collapsed the whole suggestion engine: every later capture could

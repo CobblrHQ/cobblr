@@ -29,6 +29,14 @@ import {
 export interface SandboxedRendererProps {
   /** The renderer's JS bundle (untrusted). Runs in the opaque-origin frame. */
   rendererJs: string;
+  /** Turn the frame's document into a URL, because a `srcdoc` document
+   *  INHERITS the embedding page's Content-Security-Policy and this one is all
+   *  inline script by nature (#3300). With `script-src 'self'` enforced on the
+   *  app, srcdoc means every installed renderer stops drawing. The host app
+   *  supplies this (it knows how to authenticate); without it the component
+   *  falls back to srcdoc, which still works under a report-only policy and is
+   *  what a caller outside the app gets. */
+  frameUrlFor?: (html: string) => Promise<string>;
   bytes: ArrayBuffer;
   filename: string;
   /** Initial frame height; the renderer can grow it via cobblr.setHeight(). */
@@ -76,7 +84,7 @@ function buildSrcDoc(rendererJs: string, w: number, h: number): string {
 
 const DEADLINE_MS = 12_000;
 
-export function SandboxedRenderer({ rendererJs, bytes, filename, height = 420 }: SandboxedRendererProps) {
+export function SandboxedRenderer({ rendererJs, bytes, filename, height = 420, frameUrlFor }: SandboxedRendererProps) {
   const ref = useRef<HTMLIFrameElement>(null);
   const [frameH, setFrameH] = useState(height);
   const [status, setStatus] = useState<"loading" | "ready" | "error">("loading");
@@ -84,6 +92,30 @@ export function SandboxedRenderer({ rendererJs, bytes, filename, height = 420 }:
 
   // Rebuild the frame whenever the renderer or file changes.
   const srcDoc = buildSrcDoc(rendererJs, 600, height);
+
+  // A URL when the host can mint one (see frameUrlFor): the browser then
+  // applies the RESPONSE's policy to the frame instead of this page's, which
+  // is the only way an inline-script document survives `script-src 'self'`.
+  // Null means "use srcdoc" -- either no supplier, or minting failed, and a
+  // preview that draws under a report-only policy beats no preview at all.
+  // Undefined means "minting": NO frame yet. Mounting the srcdoc while the URL
+  // is on its way loads a document whose scripts the page's policy refuses,
+  // so every preview raised a violation before it drew.
+  const [frameSrc, setFrameSrc] = useState<string | null | undefined>(frameUrlFor ? undefined : null);
+  useEffect(() => {
+    if (!frameUrlFor) {
+      setFrameSrc(null);
+      return;
+    }
+    let alive = true;
+    setFrameSrc(undefined);
+    frameUrlFor(srcDoc)
+      .then((u) => alive && setFrameSrc(u))
+      .catch(() => alive && setFrameSrc(null));
+    return () => {
+      alive = false;
+    };
+  }, [srcDoc, frameUrlFor]);
 
   useEffect(() => {
     setStatus("loading");
@@ -125,22 +157,28 @@ export function SandboxedRenderer({ rendererJs, bytes, filename, height = 420 }:
       window.clearTimeout(deadline);
       window.removeEventListener("message", onMsg);
     };
-  }, [rendererJs, bytes, filename, height]);
+    // frameSrc: the listener binds to the frame's window, and there is no frame
+    // (and so no window) until the URL has arrived.
+  }, [rendererJs, bytes, filename, height, frameSrc]);
 
   return (
     <div className="relative">
       {status === "error" && (
         <div className="text-xs text-faint italic py-6 text-center">Preview failed{errMsg ? `: ${errMsg}` : ""}</div>
       )}
-      <iframe
-        ref={ref}
-        title="file preview"
-        // allow-scripts ONLY — opaque origin, no same-origin, no network.
-        sandbox="allow-scripts"
-        srcDoc={srcDoc}
-        className="w-full border-0 bg-transparent"
-        style={{ height: status === "error" ? 0 : frameH }}
-      />
+      {frameSrc === undefined ? (
+        <div style={{ height: frameH }} />
+      ) : (
+        <iframe
+          ref={ref}
+          title="file preview"
+          // allow-scripts ONLY — opaque origin, no same-origin, no network.
+          sandbox="allow-scripts"
+          {...(frameSrc ? { src: frameSrc } : { srcDoc })}
+          className="w-full border-0 bg-transparent"
+          style={{ height: status === "error" ? 0 : frameH }}
+        />
+      )}
       {status === "loading" && (
         <div className="absolute inset-0 flex items-center justify-center text-xs text-faint pointer-events-none">Rendering…</div>
       )}
@@ -152,11 +190,20 @@ export function SandboxedRenderer({ rendererJs, bytes, filename, height = 420 }:
  *  untrusted JS runs in the sandbox above. The host calls this for each
  *  renderer the workspace has installed; consumers then preview those
  *  extensions exactly like a built-in one. */
-export function registerSandboxedRenderer(exts: string[], rendererJs: string): void {
+export function registerSandboxedRenderer(
+  exts: string[],
+  rendererJs: string,
+  frameUrlFor?: (html: string) => Promise<string>,
+): void {
   registerFilePreviewRenderer(exts, () =>
     Promise.resolve({
       default: (props: PreviewRendererProps) => (
-        <SandboxedRenderer rendererJs={rendererJs} bytes={props.bytes} filename={props.filename} />
+        <SandboxedRenderer
+          rendererJs={rendererJs}
+          bytes={props.bytes}
+          filename={props.filename}
+          frameUrlFor={frameUrlFor}
+        />
       ),
     }),
   );

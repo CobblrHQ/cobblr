@@ -56,6 +56,7 @@ import * as health from "./platform/health.js";
 import * as recurrenceRegistry from "./platform/recurrence-registry.js";
 import * as calendarRegistry from "./platform/calendar-registry.js";
 import { registerDateFieldSource, queryDateField, unreadableDateField } from "./platform/date-field-calendar.js";
+import { dayForPerson } from "./platform/person-day.js";
 import { registerDefaultRequestGuard } from "./platform/default-request-guard.js";
 import { registerTrialMode } from "./platform/trial.js";
 import * as computedFields from "./platform/computed-fields.js";
@@ -66,6 +67,7 @@ import * as unitsImpl from "./platform/units.js";
 import * as instancesImpl from "./platform/instances.js";
 import { registerMover } from "./platform/move-records.js";
 import * as scanResolvers from "./platform/scan-resolvers.js";
+import * as categoryAxis from "./platform/category-axis.js";
 import * as queue from "./platform/queue.js";
 import * as sharedCache from "./platform/shared-cache.js";
 import * as notificationsImpl from "./platform/notifications.js";
@@ -80,6 +82,7 @@ import { registerPlatformActionHandlers } from "./platform/platform-action-handl
 import { registerHostedMcp } from "./platform/hosted-mcp.js";
 import { syncInstalledModules } from "./platform/installed-modules.js";
 import { migrateBookshelfToInstance } from "./platform/migrate-bookshelf-to-instance.js";
+import { noteHealShim } from "./platform/heal-shim-log.js";
 import { retireGroceriesBaseKindTwin } from "./platform/migrate-groceries-twin-to-instance.js";
 import { mergeLabelsQr } from "./platform/merge-labels-qr.js";
 import { backfillPlacements } from "./platform/migrate-location-to-placement.js";
@@ -316,6 +319,7 @@ async function boot() {
     health: {
       registerProbe: health.registerProbe,
       snapshot: health.snapshot,
+      noteHealShim: (shim, found, failed) => noteHealShim(shim, found, failed),
     },
     recurrence: {
       registerScanner: recurrenceRegistry.registerScanner,
@@ -480,6 +484,13 @@ async function boot() {
         );
       },
     },
+    // The one place that knows where a kind's grouping axis is stored: a
+    // choice field with field_role "category", or the module's own taxonomy
+    // when the kind declares one (#3223).
+    categoryAxis: {
+      for: categoryAxis.axisFor,
+      commit: categoryAxis.commitAxisValue,
+    },
     scan: {
       registerUrlResolver: scanResolvers.registerScanUrlResolver,
       resolveUrl: scanResolvers.resolveScanUrl,
@@ -499,6 +510,7 @@ async function boot() {
     },
     accounts: {
       registerLifecycleHooks: hostedSeams.registerLifecycleHooks,
+      dayFor: dayForPerson,
     },
     http: {
       registerRequestGuard: hostedSeams.registerRequestGuard,
@@ -747,6 +759,18 @@ async function boot() {
         }
         if (cteeKind && !canBeContained(cteeKind.traits as Record<string, unknown> | null)) {
           throw new Error(`placement: ${containee.kind} cannot be contained`);
+        }
+        // The container has to exist. Nothing here checked, so a placement
+        // into "(will be created)" was written and confirmed "Done" (an
+        // assistant proposed the move before the bin it had asked to make,
+        // 2026-09-21, #3255); the thing then had a home no list could show.
+        // A kind the registry knows is looked up; an unknown kind is left to
+        // the caller, as the trait gate leaves it.
+        if (ctnrKind) {
+          const there = await entities.lookup(orgId, container.kind, container.id).catch(() => null);
+          if (!there) {
+            throw new Error(`placement: there is no ${(ctnrKind.display_name || container.kind).toLowerCase()} with id ${container.id} to put this in`);
+          }
         }
         const tdb = (await getTenantDb(orgId)) as unknown as Kysely<PlacementDB>;
         // Cycle guard: walk up the container's placement chain (same tenant DB);

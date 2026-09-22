@@ -64,7 +64,12 @@ RUN set -eux; \
 RUN test -f "$(/usr/libexec/postgresql17/pg_config --sharedir)/extension/vector.control"
 
 COPY docker/db-auto-upgrade.sh /usr/local/bin/db-auto-upgrade.sh
-RUN chmod +x /usr/local/bin/db-auto-upgrade.sh
+# The dump loop rides in the same image because the backup sidecar IS this image
+# (it needs pg_dumpall, and a pinned client against a newer server dumps nothing).
+# It used to be a 40-line entrypoint string in each compose file, four copies that
+# had already diverged; see the script's header.
+COPY docker/backup-loop.sh /usr/local/bin/backup-loop.sh
+RUN chmod +x /usr/local/bin/db-auto-upgrade.sh /usr/local/bin/backup-loop.sh
 
 ENTRYPOINT ["/usr/local/bin/db-auto-upgrade.sh"]
 CMD ["postgres"]

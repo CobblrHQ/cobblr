@@ -13,7 +13,7 @@ import { defineModule } from "@cobblr/platform-contract";
 
 export default defineModule({
   name: "inventory",
-  version: "0.21.27",
+  version: "0.9.26",
   displayName: "Inventory",
   description:
     "Parts, locations, categories, stock tracking, polymorphic allocations. The generalised toolkit you'd otherwise Frankenstein from a spreadsheet.",
@@ -544,7 +544,9 @@ export default defineModule({
         label: "Lift items into types",
         description:
           "Bundle-migration engine: lift each item in a SOURCE instance into a TYPE in another instance (deduped by key fields, copying the type-defining fields up, linked via a pairing, optionally converting the qty unit. How a flat single-instance bundle upgrades into a type→instances model on a version bump. Idempotent (skips already-linked items). Generic) the bundle's migration declares the params. Args: { source_instance, type_instance, key_fields[], copy_fields?[], relationship_kind?, convert_qty?: { from_unit, to_unit, factor } }.",
-        appliesTo: { kinds: ["inventory:part"] },
+        // Operates on a SET of parts chosen by its args, never on the one
+        // record it stands on (#3378).
+        scope: "workspace",
         invokeHandler: "inventory.lift-to-type",
         // Migration-only: run by the bundle-upgrade flow, never a detail button.
         userInvokable: false,
@@ -555,7 +557,8 @@ export default defineModule({
         label: "Move a place field into Location",
         description:
           "Bundle-migration engine: retire a bundle's bespoke place field (e.g. a 'Room' text field) into the platform's canonical Location: for each item with a value, find-or-create a matching Location AREA, file the item into it (location_id), then clear the field. How a bundle drops a location-shaped custom field for the real Location on a version bump. Idempotent + safe: never invents a place, never overwrites an already-filed item, re-uses an existing same-named area. Args: { field, instance }.",
-        appliesTo: { kinds: ["inventory:part"] },
+        // A kind-wide migration, not something done TO one part (#3378).
+        scope: "workspace",
         invokeHandler: "inventory.field-to-location",
         // Migration-only: run by the bundle-upgrade flow, never a detail button.
         userInvokable: false,

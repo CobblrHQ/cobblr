@@ -18,6 +18,7 @@
 
 import { meta } from "../db/meta.js";
 import { recordClaim, USER_SOURCE } from "./bundle-claims.js";
+import { noteHealShim } from "./heal-shim-log.js";
 
 export async function backfillBundleClaims(): Promise<number> {
   // One-shot historical self-heal (installs predating the claims ledger). Honours
@@ -74,5 +75,9 @@ export async function backfillBundleClaims(): Promise<number> {
     }
     backfilled++;
   }
+  // Every org without a ledger gets one, so what it backfilled is what it
+  // found. (A throw above leaves nothing recorded, which is right: a pass
+  // that did not finish did not find zero.)
+  await noteHealShim("api/src/platform/backfill-bundle-claims.ts", backfilled);
   return backfilled;
 }
