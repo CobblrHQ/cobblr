@@ -1,7 +1,7 @@
 #!/usr/bin/env tsx
 // No raw control bytes (NUL, etc.) in source files.
 //
-//   npx tsx scripts/lint-no-raw-control-bytes.ts   (npm run lint:control-bytes)
+//   npx tsx scripts/lint-no-raw-control-bytes.ts   (pnpm run lint control-bytes)
 //
 // A literal NUL byte in a .ts file — someone typed a control character as a
 // delimiter instead of writing the `\x00` escape — makes `grep` and `rg` treat

@@ -3,6 +3,7 @@ type: feature
 scope: inventory
 date: 2026-08-23
 docs_target: docs/USER_GUIDE.md#3.1 Inventory
+docs_published: 2026-09-23
 ---
 **Several of the same thing bought on different days now each keep their own use-by date.** Four meals in the fridge, two from Sunday and two from Wednesday, are no longer one date pretending to cover both. You are told about the oldest one, the rest are left alone, and once you have eaten it the warning moves on to the next by itself. Everything you already track carries on working unchanged; nothing needs re-entering.
 

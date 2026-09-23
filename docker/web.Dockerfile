@@ -61,6 +61,10 @@ COPY modules/tracking ./modules/tracking
 COPY modules/core-file-preview ./modules/core-file-preview
 COPY modules/knowledge ./modules/knowledge
 COPY web ./web
+# tsc -b compiles web's tests too, and a test wears its timeouts at the box's
+# load through this helper, so the build needs it beside web/.
+# lint:web-image-reads-what-it-copies names any other file the build reaches for.
+COPY scripts/lib/load-factor.mjs scripts/lib/load-factor.d.mts ./scripts/lib/
 
 # Build web from the workspace ROOT via --filter (NOT `pnpm run build` from inside
 # /app/web, which re-installs/re-downloads the whole store). Just runs the build.

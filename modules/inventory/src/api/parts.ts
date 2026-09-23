@@ -14,7 +14,7 @@ import { applyPartFilters, applyPartSort } from "./part-query.js";
 import { suggestKindsFromPhoto } from "./suggest-kinds.js";
 import { instanceOf, instanceQtyUnit, sessionUser, tenantContext, tenantDb } from "../db.js";
 import { asyncHandler, badBody, requireCapability, requireRole } from "./util.js";
-import { routeUnknownToMetadata, preserveServerManaged, coerceMetadata } from "./route-helpers.js";
+import { routeUnknownToMetadata, preserveServerManaged, coerceMetadata } from "@cobblr/platform-contract/entity-metadata";
 import { castFieldValues } from "@cobblr/platform-contract/field-values";
 import { disclosureHandler, fieldsShowStockSignal, latchInstanceStock } from "./disclosure.js";
 import { computeReconcile } from "../reconcile.js";

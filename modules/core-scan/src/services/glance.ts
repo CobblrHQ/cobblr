@@ -187,8 +187,7 @@ export async function glanceItem(opts: {
       },
       source: { kind: "core-scan:glance", id: opts.itemId },
     });
-    const res = r.result as { text?: string; content?: string };
-    glance = parseGlance(res.text ?? res.content ?? "");
+    glance = parseGlance(r.text);
   } catch (err) {
     console.log(`[core-scan] glance skipped: ${(err as Error)?.message ?? err}`);
     return null;

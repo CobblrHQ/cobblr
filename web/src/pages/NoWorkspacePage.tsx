@@ -15,6 +15,7 @@ import { useAuth } from "../auth/AuthContext";
 import { CobblestoneMark } from "../CobblestoneMark";
 import { CreateWorkspaceModal } from "../components/WorkspaceSwitcher";
 import { DeleteAccountSection } from "../components/DeleteAccountSection";
+import { goneWorkspaceMessage, takeGoneWorkspace } from "../lib/gone-workspace";
 
 const PRIMARY = "rounded-md bg-cobble-600 hover:bg-cobble-700 disabled:opacity-50 text-white font-medium px-4 py-2 transition";
 const SECONDARY = "rounded-md border border-line dark:border-slate-700 px-4 py-2 font-medium hover:bg-subtle transition";
@@ -23,6 +24,7 @@ export function NoWorkspacePage() {
   usePageTitle("No workspace");
   const { user, logout } = useAuth();
   const [creating, setCreating] = useState(false);
+  const [gone] = useState(takeGoneWorkspace);
   return (
     <main data-testid="no-workspace" className="min-h-full flex items-center justify-center p-6">
       <div className="w-full max-w-md space-y-6">
@@ -33,6 +35,11 @@ export function NoWorkspacePage() {
             <div className="text-xs text-muted">{user?.email}</div>
           </div>
         </div>
+        {gone && (
+          <p data-testid="gone-workspace" role="status" className="rounded-md border border-line dark:border-slate-700 bg-subtle px-3 py-2 text-sm text-content dark:text-mortar-100">
+            {goneWorkspaceMessage(gone)}
+          </p>
+        )}
         <p className="text-sm text-muted">
           Nothing here is yours yet. Make a workspace of your own, or wait for somebody to add you to theirs, or sign
           out.

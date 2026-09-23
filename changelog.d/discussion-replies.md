@@ -3,6 +3,7 @@ type: feature
 scope: discussion
 date: 2026-08-23
 docs_target: docs/modules/core-discussion.md#Replies
+docs_published: 2026-09-23
 ---
 You can now reply to a specific comment in a discussion. The reply quotes what it answers, and tapping the quote jumps to the original.
 

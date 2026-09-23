@@ -356,7 +356,7 @@ export async function llmIdentify(
       input: { messages: [{ role: "system", content: system }, { role: "user", content: user }] },
       source: { kind: "core-scan:barcode", id: upc },
     })
-    .then((r) => r.result as { content?: string })
+    .then((r) => ({ content: r.text }))
     .catch(() => null);
 
   const res = await Promise.race([

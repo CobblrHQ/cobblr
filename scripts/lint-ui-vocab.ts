@@ -125,7 +125,7 @@ const fixed = baseline.filter((b) => !violations.some((v) => key(v) === key(b)))
 
 if (fixed.length) {
   console.log(
-    `lint:ui-vocab - ${fixed.length} baselined hit(s) are gone. Run \`pnpm run lint:ui-vocab -- --update\` to shrink the baseline.`,
+    `lint:ui-vocab - ${fixed.length} baselined hit(s) are gone. Run \`pnpm run lint ui-vocab -- --update\` to shrink the baseline.`,
   );
 }
 

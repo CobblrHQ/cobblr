@@ -3,6 +3,7 @@ type: feature
 scope: assistant
 date: 2026-08-21
 docs_target: docs/USER_GUIDE.md#2. Core concepts
+docs_published: 2026-09-23
 ---
 An action you bound to a kind now appears on every row of that kind, not only on each record's own page. Bind label printing to everything physical once and every row has a Print label button.
 

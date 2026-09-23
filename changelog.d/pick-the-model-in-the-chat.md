@@ -3,6 +3,7 @@ type: feature
 scope: assistant
 date: 2026-09-09
 docs_target: docs/modules/core-ai.md#Pick the model from the chat
+docs_published: 2026-09-23
 ---
 A third pill in the chat header lets you switch which AI answers your chat, from a dropdown of what the workspace already has and what has been shared into it, without a trip to the AI page. Each model shows what it costs: on the free Google tier, Flash Lite at 500 a day or Flash at 20, and on a Claude connection, Sonnet, Opus or Haiku. It is your choice for your chat; everyone else keeps the workspace default.
 

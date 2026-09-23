@@ -3,6 +3,7 @@ type: feature
 scope: assistant
 date: 2026-09-08
 docs_target: docs/design-decisions/ai-chat-tool-calling.md#There was no way to move a record between lists (2026-09-08)
+docs_published: 2026-09-23
 ---
 You can now tell the assistant to move things from one list into another: "move all the tea from this page into the Tea section". It works out which records you mean and moves them, keeping their photos, their history and their printed labels. There was no way to do this before, which is why asking used to produce a second copy of everything or an offer to delete it.
 

@@ -8,7 +8,7 @@
 // which a Cobblr bug found on a self-hosted instance reaches the project.
 
 import { useState, useRef, useEffect } from "react";
-import { FloatingChrome } from "@cobblr/platform-web";
+import { useLater, FloatingChrome } from "@cobblr/platform-web";
 import { Modal, useToast } from "@cobblr/platform-web";
 import { BookOpen, Copy, ExternalLink, Github, ImagePlus, MessageCircle, MessageSquare, Users, X, ChevronRight } from "lucide-react";
 import { api, type CommunityLink } from "../lib/api";
@@ -38,6 +38,7 @@ interface Pick {
 // row (full-sidebar mode), matching NotificationsBell/ChatWidget — the pill has
 // no home there and everything else already lives in the foot.
 export function FeedbackWidget({ asRow = false }: { asRow?: boolean } = {}) {
+  const later = useLater();
   // Get out of the way of anything pressable underneath (yield-to-content.ts):
   // fixed chrome does not move, and the page under it does.
 
@@ -219,7 +220,7 @@ export function FeedbackWidget({ asRow = false }: { asRow?: boolean } = {}) {
     try {
       await navigator.clipboard.writeText(reportBody(currentReport()));
       setCopied(true);
-      setTimeout(() => setCopied(false), 2500);
+      later.after("copied", 2500, () => setCopied(false));
     } catch {
       setError("Couldn't reach the clipboard. Select the text below and copy it.");
     }

@@ -12,7 +12,7 @@
 // that motivated it, watch it fail, then fix the violation. A lint that has
 // never failed has never been verified.
 //
-//   npx tsx scripts/lint-fetch-retry.ts   (pnpm run lint:fetch-retry)
+//   npx tsx scripts/lint-fetch-retry.ts   (pnpm run lint fetch-retry)
 import { readFileSync, readdirSync, statSync } from "node:fs";
 import { join } from "node:path";
 

@@ -30,6 +30,7 @@ export function createQuantityWriter(opts: {
   const delay = opts.delayMs ?? 500;
   // Bare setTimeout, not window.setTimeout: identical in the browser and
   // available under the node test runner, so this stays testable without a DOM.
+  // TIMER-OUTLIVES-COMPONENT: a scheduler, not a timer: it hands the handle back, and this debouncer clears it through clearT.
   const setT = opts.setTimer ?? ((fn, ms) => setTimeout(fn, ms) as unknown as number);
   const clearT = opts.clearTimer ?? ((h) => clearTimeout(h as unknown as ReturnType<typeof setTimeout>));
   let pending: { itemId: string; quantity: number } | null = null;

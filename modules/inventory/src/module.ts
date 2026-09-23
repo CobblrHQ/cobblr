@@ -13,7 +13,7 @@ import { defineModule } from "@cobblr/platform-contract";
 
 export default defineModule({
   name: "inventory",
-  version: "0.9.26",
+  version: "0.9.27",
   displayName: "Inventory",
   description:
     "Parts, locations, categories, stock tracking, polymorphic allocations. The generalised toolkit you'd otherwise Frankenstein from a spreadsheet.",
@@ -67,9 +67,12 @@ export default defineModule({
           { name: "image_path", type: "image-path", role: "image" },
           { name: "notes", type: "text" },
           // The category it is filed under, by name (resolved from category_id).
-          { name: "category_name", type: "text" },
-          // Where it lives, by name (resolved from location_id through the platform).
-          { name: "location_name", type: "text" },
+          // Derived on read: a create or update that sends it lands it in
+          // metadata as a stray key, so anything writing a part leaves it out.
+          { name: "category_name", type: "text", readOnly: true },
+          // Where it lives, by name (resolved from location_id through the
+          // platform). Derived on read, like category_name.
+          { name: "location_name", type: "text", readOnly: true },
           // Free-form JSON attribute blob. Declared so we can also
           // include it in exposableFields below — cross-module readers
           // (bricklink-connector reading metadata.lego.color_id, etc.)

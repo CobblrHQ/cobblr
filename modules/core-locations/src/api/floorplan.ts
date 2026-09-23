@@ -183,8 +183,7 @@ export async function runFloorplanSeed(opts: {
       source: { kind: "core-locations:floorplan-seed", id: opts.roomId },
       userId: opts.userId,
     });
-    const result = r.result as { content?: string; text?: string } | string;
-    const text = typeof result === "string" ? result : (result?.content ?? result?.text ?? "");
+    const text = r.text;
     try {
       const parsed = SeedDraft.safeParse(extractJson(text));
       if (parsed.success) return parsed.data;

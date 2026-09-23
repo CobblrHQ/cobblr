@@ -23,7 +23,7 @@
 // (30000) and undo-at-once-voids-the-purchase.test.ts (20_000) as they were;
 // green once each closed with the constant.
 //
-//   npx tsx scripts/lint-test-budget-covers-signup.ts   (pnpm run lint:test-budget-covers-signup)
+//   npx tsx scripts/lint-test-budget-covers-signup.ts   (pnpm run lint test-budget-covers-signup)
 import { readFileSync, readdirSync, statSync } from "node:fs";
 import { join } from "node:path";
 

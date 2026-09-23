@@ -3,6 +3,7 @@ type: feature
 scope: ai
 date: 2026-08-19
 docs_target: docs/USER_GUIDE.md#2. Core concepts
+docs_published: 2026-09-23
 ---
 Cobb answers some questions before you finish typing them. Start writing "how many locations do I have" and the answer appears in a green bubble under the conversation, straight from your workspace, with no AI asked and nothing spent. It works with no AI connected at all. Only questions it can answer exactly are shown, so an unfamiliar word, a request to change something, or anything ambiguous is left alone for the assistant as before.
 

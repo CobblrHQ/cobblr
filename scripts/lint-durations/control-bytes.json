@@ -1,5 +1,6 @@
 {
   "lint": "lint:control-bytes",
+  "run": "tsx scripts/lint-no-raw-control-bytes.ts",
   "ms": 685,
   "recorded": "2026-09-14",
   "source": "split from scripts/lint-durations.json (recorded 2026-09-14)"

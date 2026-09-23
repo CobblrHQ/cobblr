@@ -3,6 +3,7 @@ type: feature
 scope: scan
 date: 2026-09-16
 docs_target: docs/USER_GUIDE.md#3.20 Scan inbox (`core-scan`, stock)
+docs_published: 2026-09-23
 ---
 **A scan row says what it needs once, and every screen agrees.** Each inbox row now reads Add, Install & add, +1 more or Review, with one short sentence naming the problem and what to do, and the phone row, the item screen, the desktop card and the session's File N all show the same words. File N counts only the rows whose own button would file, and says Install & file N when filing installs a table. A destination the system picked is swapped for a better table that appears later; one you picked yourself stays put. Names read with a first capital on every card, without changing what is stored, and a new Titles in another language setting under Your account chooses how a foreign title reads (original with the translation in brackets by default).
 

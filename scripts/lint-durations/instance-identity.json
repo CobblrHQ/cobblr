@@ -1,5 +1,6 @@
 {
   "lint": "lint:instance-identity",
+  "run": "tsx scripts/lint-instance-identity.ts",
   "ms": 980,
   "recorded": "2026-09-14",
   "source": "split from scripts/lint-durations.json (recorded 2026-09-14)"

@@ -54,6 +54,8 @@ const parse = (f: string) =>
 
 /** handler name -> does its body reach for the entity? */
 const handlerUsesEntity = new Map<string, boolean>();
+/** handler name -> does it ASSERT a record (requireActionEntity throws with none)? */
+const handlerRequiresEntity = new Map<string, boolean>();
 
 for (const f of files) {
   const sf = parse(f);
@@ -78,6 +80,7 @@ for (const f of files) {
         // delegating to its canonical action (digifab:run-command). Read as
         // "ignores the record", it accused the one shape that cannot (#3378).
         /\binvoke\([^)]*,\s*ctx\s*\)/.test(body);
+      handlerRequiresEntity.set(name, /\brequireActionEntity\s*\(/.test(body) || (handlerRequiresEntity.get(name) ?? false));
       handlerUsesEntity.set(name, uses || (handlerUsesEntity.get(name) ?? false));
     }
     ts.forEachChild(n, visit);
@@ -107,6 +110,7 @@ const text = (e: ts.Expression | null): string => (e ? e.getText().replace(/["']
 const STILL_IGNORING_THE_RECORD: Record<string, string> = {};
 
 const violations: Array<{ file: string; line: number; id: string; handler: string }> = [];
+const optionalButRequired: string[] = [];
 const carried: string[] = [];
 
 for (const f of files.filter((x) => x.endsWith("module.ts"))) {
@@ -121,6 +125,13 @@ for (const f of files.filter((x) => x.endsWith("module.ts"))) {
         const internal = text(prop(n, "internal")) === "true";
         const name = text(handler);
         const known = handlerUsesEntity.has(name);
+        // `recordOptional: true` says the action runs with no record; a handler
+        // that asserts one (requireActionEntity) throws on exactly that call,
+        // so the door would let through what the handler cannot serve (#3255).
+        if (text(prop(n, "recordOptional")) === "true" && handlerRequiresEntity.get(name)) {
+          const { line } = sf.getLineAndCharacterOfPosition(n.getStart(sf));
+          optionalButRequired.push(`${relative(ROOT, f)}:${line + 1}  ${text(id)} is recordOptional but its handler ${name} calls requireActionEntity, which throws with no record; read ctx.entity when it is there instead`);
+        }
         if (scope === "entity" && !wireOnly && !internal && known && !handlerUsesEntity.get(name)) {
           if (STILL_IGNORING_THE_RECORD[text(id)]) carried.push(text(id));
           else {
@@ -133,6 +144,12 @@ for (const f of files.filter((x) => x.endsWith("module.ts"))) {
     ts.forEachChild(n, visit);
   };
   visit(sf);
+}
+
+if (optionalButRequired.length > 0) {
+  console.error("lint:entity-action-uses-entity - an action that runs with no record, whose handler requires one:\n");
+  for (const v of optionalButRequired) console.error(`  ${v}`);
+  process.exit(1);
 }
 
 if (violations.length > 0) {

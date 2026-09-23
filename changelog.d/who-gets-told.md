@@ -3,6 +3,7 @@ type: feature
 scope: platform
 date: 2026-09-07
 docs_target: docs/USER_GUIDE.md#4.7 Notifications
+docs_published: 2026-09-23
 ---
 **Who gets told.** Every workspace notification (things to use up, maintenance due, an order that should have arrived) used to reach every member. Under **Configuration → People → Who gets told**, an owner or admin now chooses, per kind: everyone, the owners only, or specific people. Everyone stays the default, so nothing changes until you say so.
 

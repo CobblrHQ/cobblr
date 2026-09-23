@@ -3,6 +3,7 @@ type: feature
 scope: notifications
 date: 2026-08-24
 docs_target: docs/USER_GUIDE.md#4.7 Notifications
+docs_published: 2026-09-23
 ---
 Conversation can now reach you as it happens while everything due today waits for one message in the morning, on the same channel.
 

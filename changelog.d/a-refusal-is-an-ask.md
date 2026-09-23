@@ -3,6 +3,7 @@ type: feature
 scope: platform
 date: 2026-09-17
 docs_target: docs/USER_GUIDE.md#Approval requests
+docs_published: 2026-09-23
 ---
 **A refusal now explains what is missing and lets you ask for it.** When something you try needs a permission you do not hold, or a bundle only an owner or admin can install, Cobblr says so in words (not an internal identifier), names who can decide, and offers Ask. The owners and admins get a card with Approve and Deny in the app and, if they have Discord notifications on, as a Discord message; a yes gives exactly what was asked to exactly you, the answer reaches you as a notification, and Finish reopens what you were doing and completes it once. A no tells you why. What cannot be asked for (a read-only role, an owner-only act) is said plainly instead of pretending. Approving never changes anyone's role.
 

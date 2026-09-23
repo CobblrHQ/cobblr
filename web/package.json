@@ -8,6 +8,7 @@
     "build": "tsc -b --noEmit --force && vite build",
     "preview": "vite preview",
     "typecheck": "tsc -b --noEmit --force",
+    "typecheck:fast": "tsgo -b --noEmit",
     "test": "vitest run"
   },
   "dependencies": {

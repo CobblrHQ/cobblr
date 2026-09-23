@@ -1,5 +1,6 @@
 {
   "lint": "lint:provider-labels",
+  "run": "tsx scripts/lint-provider-field-labels.ts",
   "ms": 327,
   "recorded": "2026-09-14",
   "source": "split from scripts/lint-durations.json (recorded 2026-09-14)"

@@ -196,8 +196,7 @@ export function registerScanHandlers(): void {
         input,
         source: { kind: "core-scan:identify", id: fileId ?? "args" },
       });
-      const res = r.result as { text?: string; content?: string };
-      const raw = res.text ?? res.content ?? "";
+      const raw = r.text;
       const m = raw.match(/\{[\s\S]*\}/);
       const parsed = JSON.parse(m ? m[0] : raw) as { name?: string; brand?: string; category?: string; confidence?: number };
       const name = typeof parsed?.name === "string" ? parsed.name.trim() : "";

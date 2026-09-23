@@ -26,7 +26,7 @@
 // PROVE IT RED before you trust it green: against the tree as of fe0f065b1
 // it names api/src/env.ts:130.
 //
-//   npx tsx scripts/lint-env-booleans-are-loud.ts   (pnpm run lint:env-booleans-are-loud)
+//   npx tsx scripts/lint-env-booleans-are-loud.ts   (pnpm run lint env-booleans-are-loud)
 import { readFileSync, readdirSync, statSync } from "node:fs";
 import { join } from "node:path";
 

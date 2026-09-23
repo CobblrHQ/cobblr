@@ -135,6 +135,12 @@ export function readyToFileIds(items: readonly ScanItemLike[], viewer: ScanRowSt
   return items.filter((it) => isReadyToFile(it, viewer)).map((it) => it.id);
 }
 
+/** Where a table keeps its category: the name of the field that holds it, or
+ *  `{ byName: true }` for a table whose module keeps its own categories
+ *  (inventory's tree), where it travels by name. Null: nobody knows yet (no
+ *  menu loaded), and the field is guessed from the value. */
+export type CategoryAxisRef = string | { byName: true } | null;
+
 export interface ConfirmBody {
   target_module: string;
   target_kind: string;
@@ -142,6 +148,8 @@ export interface ConfirmBody {
   name: string;
   quantity?: number;
   extras?: Record<string, unknown>;
+  /** The agreed category by NAME, for a table with no field to carry it. */
+  category?: string;
   location_id?: string;
 }
 
@@ -184,7 +192,7 @@ export function confirmBodyFor(
    *  differs from the candidate's category matches nothing, so the agreed
    *  category silently failed to apply on exactly the rows that needed it.
    *  Optional so a caller with no menu degrades to the guess, not to nothing. */
-  categoryAxis?: string | null,
+  categoryAxis?: CategoryAxisRef,
   /** Who is filing (scanViewer.ts). The WHETHER was decided by the list this
    *  item came from; this re-reads it for the same person. */
   viewer: ScanRowStateContext = {},
@@ -192,11 +200,19 @@ export function confirmBodyFor(
   const cand = it.suggested_candidates?.[0];
   if (!isReadyToFile(it, viewer) || !cand) return null;
   const fields = { ...(cand.fields ?? {}) };
+  // A table whose module keeps its own categories (inventory's tree) has no
+  // field for the agreed category to override; it travels by name instead,
+  // and the server files it wherever that table keeps them (#3223). Only for
+  // an item that has a category to replace, as with the field.
+  let byName: string | undefined;
   if (agreedCategory) {
-    const axis =
-      (categoryAxis && categoryAxis in fields ? categoryAxis : null) ??
-      (cand.category ? Object.keys(fields).find((k) => fields[k] === cand.category) : undefined);
+    const byNameTable = typeof categoryAxis === "object" && categoryAxis !== null;
+    const axis = byNameTable
+      ? undefined
+      : ((typeof categoryAxis === "string" && categoryAxis in fields ? categoryAxis : null) ??
+        (cand.category ? Object.keys(fields).find((k) => fields[k] === cand.category) : undefined));
     if (axis) fields[axis] = agreedCategory;
+    else if (cand.category) byName = agreedCategory;
   }
   return {
     target_module: cand.module,
@@ -205,6 +221,7 @@ export function confirmBodyFor(
     name: it.suggested_name!,
     quantity: it.quantity ?? cand.quantity ?? undefined,
     extras: fields,
+    ...(byName ? { category: byName } : {}),
     // The confirm endpoint never defaults to target_location_id — carry a
     // pre-set home (active-bin filing, an organize apply) or it's dropped.
     //

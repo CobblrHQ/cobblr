@@ -33,25 +33,20 @@ export interface AxisPlan {
   adopt: Array<{ org_id: string; kind: string }>;
   /** A platform placeholder sits on a specialised table: withdraw it. */
   remove: Array<{ org_id: string; kind: string }>;
-  /** A placeholder on a kind that keeps its own categories still wears the
-   *  bare word: give it scanning's, so a form does not ask twice. */
-  relabel: Array<{ org_id: string; kind: string; label: string; help: string }>;
+  /** A placeholder on a kind whose module keeps its own categories: its
+   *  values move into that taxonomy and then it goes (#3223). One question,
+   *  one storage, and the form stops asking "Category" twice. */
+  retire: Array<{ org_id: string; kind: string }>;
 }
 
-/** The words the platform's category axis wears on a form. On a kind whose
- *  module keeps its own categories (inventory's tree, with a filter in the
- *  list), the axis is a second question with the same name, so it says whose
- *  it is; the two are joined into one axis later, and this wording goes then. */
-export function axisWords(ownCategories: boolean): { label: string; help: string } {
-  return ownCategories
-    ? {
-        label: "Scan category",
-        help: "What kind of thing a scan read this as; scans are grouped by it. Separate from this table's own categories, which the list filters by.",
-      }
-    : {
-        label: "Category",
-        help: "What KIND of thing this is. Scans group by it, and a category that outgrows this table can be promoted into its own.",
-      };
+/** The words the platform's category axis wears on a form. Only a kind with
+ *  no categories of its own gets the platform's axis at all (a kind that keeps
+ *  its own answers from its taxonomy, #3223), so there is one wording. */
+export function axisWords(): { label: string; help: string } {
+  return {
+    label: "Category",
+    help: "What KIND of thing this is. Scans group by it, and a category that outgrows this table can be promoted into its own.",
+  };
 }
 
 export function planScanCategoryAxes(
@@ -60,12 +55,14 @@ export function planScanCategoryAxes(
   moduleKind: Map<string, string>,
   categoryField: string,
   placeholderSource: string,
-  /** The kinds whose module keeps its own category records. */
+  /** The kinds whose module keeps its own category records (they declare
+   *  `categoryAxis`): the taxonomy is their axis, so they never get the
+   *  placeholder, and one they were given is retired. */
   ownCategoryKinds: ReadonlySet<string> = new Set(),
 ): AxisPlan {
   const hasRole = new Set(existing.filter((f) => f.field_role === "category").map((f) => `${f.org_id}::${f.entity_kind}`));
   const named = new Set(existing.filter((f) => f.name === categoryField).map((f) => `${f.org_id}::${f.entity_kind}`));
-  const plan: AxisPlan = { add: [], adopt: [], remove: [], relabel: [] };
+  const plan: AxisPlan = { add: [], adopt: [], remove: [], retire: [] };
 
   // The fallback per (org, module): the pick, else the module's default.
   const fallback = new Map<string, AxisInstance>();
@@ -78,10 +75,13 @@ export function planScanCategoryAxes(
   for (const inst of fallback.values()) {
     const kind = moduleKind.get(inst.module_name);
     if (!kind || !inst.is_default) continue;
+    // A kind that keeps its own taxonomy answers from it: no placeholder, and
+    // no adopting a bundle's plain `category` field into a second axis either.
+    if (ownCategoryKinds.has(kind)) continue;
     const kindKey = `${inst.org_id}::${kind}`;
     if (hasRole.has(kindKey)) continue;
     if (named.has(kindKey)) plan.adopt.push({ org_id: inst.org_id, kind });
-    else plan.add.push({ org_id: inst.org_id, kind, ...axisWords(ownCategoryKinds.has(kind)) });
+    else plan.add.push({ org_id: inst.org_id, kind, ...axisWords() });
   }
   // Withdraw the placeholder from every kind that is not a module's default kind.
   const defaultKinds = new Set(moduleKind.values());
@@ -91,11 +91,10 @@ export function planScanCategoryAxes(
       plan.remove.push({ org_id: f.org_id, kind: f.entity_kind });
       continue;
     }
-    // Only a placeholder still wearing the bare word is relabelled: a person
-    // who renamed it keeps their name.
-    if (ownCategoryKinds.has(f.entity_kind) && (f.display_label ?? "Category") === "Category") {
-      plan.relabel.push({ org_id: f.org_id, kind: f.entity_kind, ...axisWords(true) });
-    }
+    // The platform's placeholder on a kind that keeps its own taxonomy is
+    // retired whatever it is called: a rename was a person telling apart two
+    // questions this change makes one, and their values move, not their label.
+    if (ownCategoryKinds.has(f.entity_kind)) plan.retire.push({ org_id: f.org_id, kind: f.entity_kind });
   }
   return plan;
 }

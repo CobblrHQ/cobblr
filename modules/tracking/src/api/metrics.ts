@@ -5,6 +5,7 @@
 //   PATCH  /metrics/:id              edit name/unit/goal
 //   DELETE /metrics/:id              delete (cascades measurements)
 //   POST   /metrics/:id/measurements log a value
+//   GET    /measurements/:id         one data point
 //   DELETE /measurements/:id         remove a data point
 
 import { Router } from "express";
@@ -200,6 +201,18 @@ metricsRouter.post(
       measuredAt: parsed.data.measured_at ? new Date(parsed.data.measured_at) : undefined,
     });
     res.status(201).json({ ...row, value: Number(row.value) });
+  }),
+);
+
+// One reading, at the address its kind declares (getEndpoint
+// "/measurements/{id}"); lint:declared-endpoints-served holds the pair.
+metricsRouter.get(
+  "/measurements/:id",
+  asyncHandler(async (req, res) => {
+    if (!requireRole(req, res, "member")) return;
+    const row = await tenantDb(req).selectFrom("tracking_measurements").selectAll().where("id", "=", req.params.id!).executeTakeFirst();
+    if (!row) return void res.status(404).json({ error: { code: "not_found", message: "Measurement not found." } });
+    res.json({ ...row, value: Number(row.value) });
   }),
 );
 

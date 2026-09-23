@@ -3,6 +3,7 @@ type: feature
 scope: tags
 date: 2026-08-18
 docs_target: docs/USER_GUIDE.md#3.16 Maintenance (foundational)
+docs_published: 2026-09-23
 ---
 
 Ask Cobb can tidy up for you. It can merge two tags that mean the same thing,

@@ -133,8 +133,16 @@ export function navDoorsOf(
  *  top-level nav entry. Once the workspace has NAMED instances, an EMPTY default
  *  is clutter the user never created — so hide the module's entry when it has a
  *  named instance AND its default holds 0 items. count === null (module reports
- *  no count) or > 0 → keep it (never hide live data). Pure for testability. */
-export function defaultModuleEntriesToHide(instances: ModuleInstance[]): Set<string> {
+ *  no count) or > 0 → keep it (never hide live data). Pure for testability.
+ *
+ *  `nestedUnder` names the modules a named instance has opted to nest under
+ *  (presents_as_top_level:false). That entry is the instance's only door in
+ *  the nav, so it stays however empty its default is: hiding it took the
+ *  nested instance out of the nav altogether. */
+export function defaultModuleEntriesToHide(
+  instances: ModuleInstance[],
+  nestedUnder: ReadonlySet<string> = new Set(),
+): Set<string> {
   const byModule = new Map<string, ModuleInstance[]>();
   for (const inst of instances) {
     const arr = byModule.get(inst.module_name) ?? [];
@@ -145,7 +153,7 @@ export function defaultModuleEntriesToHide(instances: ModuleInstance[]): Set<str
   for (const [moduleName, insts] of byModule) {
     const def = insts.find((i) => i.is_default);
     const hasNamed = insts.some((i) => !i.is_default);
-    if (hasNamed && def && def.item_count === 0) hide.add(moduleName);
+    if (hasNamed && def && def.item_count === 0 && !nestedUnder.has(moduleName)) hide.add(moduleName);
   }
   return hide;
 }
@@ -381,7 +389,13 @@ export function useNavModules(activeSlug: string): NavModules {
   );
   // Hide a multi-instance module's own entry when its auto-created default
   // instance is empty and the workspace has named instances (see helper).
-  const hideDefaultModules = defaultModuleEntriesToHide(instances.data?.items ?? []);
+  const nestedUnder = new Set(
+    // registry-filter-ok: names the modules a named instance nests under, only to KEEP their entries; nothing is dropped from the list
+    (instances.data?.items ?? [])
+      .filter((i) => !i.is_default && overridesByKey.get(`instance:${i.module_name}:${i.instance_name}`)?.config?.presents_as_top_level === false)
+      .map((i) => i.module_name),
+  );
+  const hideDefaultModules = defaultModuleEntriesToHide(instances.data?.items ?? [], nestedUnder);
   const childrenByParent = new Map<string, OrgModuleListItem[]>();
   const rawTops: OrgModuleListItem[] = [];
   for (const m of userFacing) {

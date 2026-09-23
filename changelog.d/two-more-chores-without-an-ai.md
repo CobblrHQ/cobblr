@@ -3,6 +3,7 @@ type: feature
 scope: ai
 date: 2026-08-20
 docs_target: docs/USER_GUIDE.md#2. Core concepts
+docs_published: 2026-09-23
 ---
 Two more jobs Cobb can do with no AI connected. "Fix broken links" finds records filed in a place that no longer exists and clears the dead link, leaving the records themselves alone. "Delete empty places" finds places with nothing inside them and nothing filed in them. Both say exactly what they would touch before they touch it, and both are undoable. You have to say the word "empty" for the second one, since everything you number in a run is empty the moment you make it.
 

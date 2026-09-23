@@ -3,6 +3,7 @@ type: feature
 scope: scan
 date: 2026-08-15
 docs_target: docs/USER_GUIDE.md#3.20 Scan inbox (`core-scan`, stock)
+docs_published: 2026-09-23
 ---
 You can now choose a picture already on your device when adding one to a scan item, instead of only taking a fresh photo. A picture you choose is attached to the item without changing its name or its main photo, because a file off your camera roll is often a listing screenshot or a spec sheet rather than a photo of the thing.
 

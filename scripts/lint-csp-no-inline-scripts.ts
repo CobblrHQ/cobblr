@@ -25,7 +25,7 @@
 // Proven red on the index.html that motivated it (two inline blocks), then
 // green once they moved.
 //
-//   npx tsx scripts/lint-csp-no-inline-scripts.ts   (pnpm run lint:csp-no-inline-scripts)
+//   npx tsx scripts/lint-csp-no-inline-scripts.ts   (pnpm run lint csp-no-inline-scripts)
 import { readFileSync, readdirSync, statSync } from "node:fs";
 import { join } from "node:path";
 

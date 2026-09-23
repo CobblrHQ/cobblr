@@ -103,7 +103,7 @@ import { provisionOrgForUser } from "./routes/auth.js";
 import { enableDefaultModulesForOrg } from "./modules/enable.js";
 import { startDbUpgradeHoldWatch } from "./platform/db-upgrade-status.js";
 import { reconcileOrphanTenantRoles } from "./platform/reconcile-tenant-roles.js";
-import { reconcileScanCategoryFields } from "./platform/reconcile-scan-category.js";
+import { reconcileScanCategoryFields, retireScanCategoryPlaceholders } from "./platform/reconcile-scan-category.js";
 import { reconcileAppScanFallback } from "./platform/reconcile-app-scan-fallback.js";
 import { backfillBundleClaims } from "./platform/backfill-bundle-claims.js";
 import { healTwinBundleWires } from "./platform/heal-twin-bundle-wires.js";
@@ -117,6 +117,7 @@ import { navSurface } from "./platform/nav-surface.js";
 import { registerGmailProvider } from "./platform/mail-source/provider.js";
 import { registerMailSourceSweep } from "./platform/mail-source/sync.js";
 import { completeApp, createApp } from "./server.js";
+import { splitEntityKind } from "@cobblr/platform-contract/entity-kind";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
@@ -157,12 +158,12 @@ type TagsDB = {
   };
 };
 
-/** "<module>:<type>" → [module, type]. The rest after the FIRST colon is the
- *  type, so an instance kind ("<instance>:item") splits the same way. */
+/** "<module>:<type>" → [module, type], by the contract's one split, so the
+ *  tag seam and the tag module's actions read a kind the same way. An
+ *  instance kind ("<instance>:item") splits the same way. */
 function splitKind(kind: string): [string, string] {
-  const i = kind.indexOf(":");
-  if (i <= 0 || i === kind.length - 1) throw new Error(`tags: kind must be "<module>:<type>", got "${kind}"`);
-  return [kind.slice(0, i), kind.slice(i + 1)];
+  const { module, type } = splitEntityKind(kind);
+  return [module, type];
 }
 
 async function boot() {
@@ -490,6 +491,7 @@ async function boot() {
     categoryAxis: {
       for: categoryAxis.axisFor,
       commit: categoryAxis.commitAxisValue,
+      keep: categoryAxis.keepAxisValue,
     },
     scan: {
       registerUrlResolver: scanResolvers.registerScanUrlResolver,
@@ -1316,6 +1318,10 @@ async function boot() {
   console.log(`[bootphase] === pre-createApp total: ${Date.now() - bootT0}ms ===`);
   const { app } = createApp();
   await T("mountModules", mountModules(app));
+  // After the mount, not with the axis pass above: the values it moves live in
+  // a module's own table and only that module's writer (registered by its api
+  // bundle, just mounted) may move them. See retireScanCategoryPlaceholders.
+  await T("retireScanCategoryPlaceholders", retireScanCategoryPlaceholders());
   completeApp(app);
 
   // Module-owned background work — core-recurrence starts its

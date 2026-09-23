@@ -3,6 +3,7 @@
 import type { Generated, Kysely } from "kysely";
 import type { Request } from "express";
 import type { OrgRoleName } from "@cobblr/platform-contract/org-roles";
+import { requestInstance } from "@cobblr/platform-contract/request-instance";
 
 export type ProjectStatus = "planning" | "active" | "blocked" | "done" | "abandoned";
 export type Priority = "low" | "med" | "high" | "urgent";
@@ -123,5 +124,5 @@ export function sessionUser(req: Request) {
  *  /instances/:name/items; falls back to "projects" (the DB column
  *  default) on legacy routes. */
 export function instanceOf(req: Request): string {
-  return (req as unknown as { instance?: string }).instance ?? "projects";
+  return requestInstance(req, "projects");
 }

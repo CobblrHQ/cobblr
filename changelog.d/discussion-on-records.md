@@ -3,6 +3,7 @@ type: feature
 scope: discussion
 date: 2026-08-23
 docs_target: docs/USER_GUIDE.md#3.6 Tags (foundational)
+docs_published: 2026-09-23
 ---
 You can now talk about a record with the people you share a workspace with: every part, printer, location or entry has its own conversation, in the panel beside it.
 

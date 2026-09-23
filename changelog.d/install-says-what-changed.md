@@ -3,6 +3,7 @@ type: feature
 scope: bundles
 date: 2026-08-22
 docs_target: docs/USER_GUIDE.md#Install a bundle
+docs_published: 2026-09-23
 ---
 Installing a bundle now tells you what it changed and where it went, including when it adds to a table you already have instead of making one of its own.
 

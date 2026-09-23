@@ -4,6 +4,7 @@
 
 import type { Kysely } from "kysely";
 import { platform, requireActionEntity, ActionRefusal } from "@cobblr/platform-contract";
+import { publicBaseUrl } from "@cobblr/platform-contract/public-url";
 import type { LabelsDB } from "../db.js";
 import { evaluateAutoflush } from "./autoflush.js";
 import { renameCodeGroup, setGroupOverlay } from "../services/codes.js";
@@ -58,7 +59,7 @@ export function registerLabelsHandlers(): void {
     const base =
       (await getQrLabelBaseUrl(qrDb)) ||
       (ctx.origin ?? "").replace(/\/+$/, "") ||
-      (process.env.PUBLIC_BASE_URL || process.env.COBBLR_PUBLIC_URL || "").replace(/\/+$/, "") ||
+      publicBaseUrl() ||
       // Dev/test instances have a truthful origin even with nothing
       // configured: the box itself. Production does not get this crutch —
       // a printed localhost QR would be a permanent dud.

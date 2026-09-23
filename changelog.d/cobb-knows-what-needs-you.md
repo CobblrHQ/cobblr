@@ -3,6 +3,7 @@ type: feature
 scope: core-ai
 date: 2026-08-14
 docs_target: docs/USER_GUIDE.md#3.22 AI providers & the AI kill-switch (operator)
+docs_published: 2026-09-23
 ---
 Ask Cobb can now answer what needs you, what changed, what you missed, what is due for service and what is coming up: he reads your attention feed, activity log, notifications, maintenance and calendar.
 

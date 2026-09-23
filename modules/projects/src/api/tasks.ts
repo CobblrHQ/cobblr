@@ -8,7 +8,7 @@ import { sql } from "kysely";
 import { platform } from "@cobblr/platform-contract";
 import { sessionUser, tenantContext, tenantDb } from "../db.js";
 import { asyncHandler, badBody, requireRole } from "./util.js";
-import { routeUnknownToMetadata } from "./route-helpers.js";
+import { routeUnknownToMetadata } from "@cobblr/platform-contract/entity-metadata";
 
 export const tasksRouter = Router({ mergeParams: true });
 

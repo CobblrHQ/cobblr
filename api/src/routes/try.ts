@@ -8,6 +8,8 @@
 //   GET  /try            → provision, redirect to /t/<token>
 //   GET  /try/redeem     → exchange the token for a session (the SPA calls this)
 //   POST /try/keep       → bind an email, become an ordinary 30-day trial
+//   POST /try/carry      → a kept trial's grant for another deployment to read it
+//   GET  /try/carry/:t   → what that deployment replays (and /files/:id, its pictures)
 //
 // The visitor's journey is one click: the homepage button hits GET /try, the
 // server provisions and redirects to /t/<token>, the SPA there calls redeem,
@@ -36,6 +38,9 @@ import {
 } from "../platform/try-sandbox.js";
 import { seedSandbox } from "../platform/try-sandbox-seed.js";
 import { trialLedger } from "../platform/trial-ledger.js";
+import { carryPackage, mintCarryToken, packageFileIds, resolveCarryToken, CARRY_TOKEN_HOURS, type CarryPackage } from "../platform/trial-carry.js";
+import { platform } from "@cobblr/platform-contract";
+import { publicBaseUrl } from "../platform/public-url.js";
 import { emptySandboxRecords } from "../platform/try-sandbox-records.js";
 import { takeFromPool } from "../platform/try-sandbox-pool.js";
 import { issueSignInLink } from "../platform/sign-in-link.js";
@@ -84,8 +89,8 @@ tryRouter.get(
     // The nonce is minted here and handed to both halves, so the header and
     // the script tag cannot disagree.
     //
-    // nginx does not add its own CSP to this URI (docker/nginx.conf maps it to
-    // the empty string, which nginx skips) -- two Content-Security-Policy
+    // nginx does not add its own CSP to a response that sends one
+    // (docker/nginx.conf keys the exemption on the upstream header) -- two Content-Security-Policy
     // headers are enforced as their INTERSECTION, so an inherited strict one
     // would block the widget however wide this policy is.
     const nonce = startNonce();
@@ -559,6 +564,111 @@ tryRouter.get(
   },
 );
 
+// ── The carry door: "bring what I built" (docs/design-decisions/trial-ledger.md)
+//
+// POST /try/carry mints the person's grant to read their trial from another
+// deployment. Kept trials only: the door keeps the sandbox first, so there is
+// still a workspace to read once the hour is up, and a frozen sandbox answers
+// 410 on every route the package is read through.
+//
+// AI-REACH: hands the person a credential to their own workspace for another
+// server to present; an agent has no business minting one.
+tryRouter.post(
+  "/try/carry",
+  requireAuth,
+  async (req: Request, res: Response, next: NextFunction): Promise<void> => {
+    try {
+      if (!sandboxEnabled() || !env.COBBLR_TRY_CARRY) {
+        res.status(404).json({ error: { code: "not_found", message: "Not found" } });
+        return;
+      }
+      const kept = await keptSandboxForUser(req.session!.id);
+      if (!kept) {
+        res.status(400).json({ error: { code: "not_kept", message: "Keep the workspace first." } });
+        return;
+      }
+      const token = await mintCarryToken(kept.orgId, req.session!.id);
+      // Where the other side reads it back: this box's own public address.
+      const source = (publicBaseUrl() || `${req.protocol}://${req.get("host") ?? ""}`).replace(/\/+$/, "");
+      console.log(`[try-carry] org ${kept.orgId}: carry token minted`);
+      res.json({ token, source, expires_hours: CARRY_TOKEN_HOURS });
+    } catch (err) {
+      next(err);
+    }
+  },
+);
+
+// One read of a package serves the page that previews it and the replay that
+// follows, and every picture in between: a short-lived cache keyed by token,
+// so the file door can check a file against the package without rebuilding
+// it once per picture.
+const PACKAGE_TTL_MS = 10 * 60_000;
+const packages = new Map<string, { at: number; pkg: CarryPackage; orgId: string }>();
+async function packageFor(token: string): Promise<{ pkg: CarryPackage; orgId: string } | null> {
+  const hit = packages.get(token);
+  if (hit && Date.now() - hit.at < PACKAGE_TTL_MS) return hit;
+  const who = await resolveCarryToken(token);
+  if (!who) return null;
+  const pkg = await carryPackage(who.orgId, who.userId);
+  for (const [k, v] of packages) if (Date.now() - v.at >= PACKAGE_TTL_MS) packages.delete(k);
+  const entry = { at: Date.now(), pkg, orgId: who.orgId };
+  packages.set(token, entry);
+  return entry;
+}
+
+// GET /try/carry/:token — the package. No session: the token IS the grant,
+// like the sandbox link, and it is presented by another server.
+tryRouter.get(
+  "/try/carry/:token",
+  async (req: Request, res: Response, next: NextFunction): Promise<void> => {
+    try {
+      if (!sandboxEnabled() || !env.COBBLR_TRY_CARRY) {
+        res.status(404).json({ error: { code: "not_found", message: "Not found" } });
+        return;
+      }
+      const got = await packageFor(String(req.params.token ?? ""));
+      if (!got) {
+        res.status(410).json({ error: { code: "carry_expired", message: "This link to bring your trial along has run out." } });
+        return;
+      }
+      res.json(got.pkg);
+    } catch (err) {
+      next(err);
+    }
+  },
+);
+
+// GET /try/carry/:token/files/:fileId — one picture the package names, and
+// only those: the token reads what the ending listed, not the file store.
+tryRouter.get(
+  "/try/carry/:token/files/:fileId",
+  async (req: Request, res: Response, next: NextFunction): Promise<void> => {
+    try {
+      if (!sandboxEnabled() || !env.COBBLR_TRY_CARRY) {
+        res.status(404).json({ error: { code: "not_found", message: "Not found" } });
+        return;
+      }
+      const got = await packageFor(String(req.params.token ?? ""));
+      const fileId = String(req.params.fileId ?? "");
+      if (!got || !packageFileIds(got.pkg).has(fileId)) {
+        res.status(404).json({ error: { code: "not_found", message: "Not found" } });
+        return;
+      }
+      const file = await platform().files.read(got.orgId, fileId, "original");
+      if (!file) {
+        res.status(404).json({ error: { code: "not_found", message: "Not found" } });
+        return;
+      }
+      res.setHeader("Content-Type", file.mimeType);
+      res.setHeader("Content-Disposition", `attachment; filename="${encodeURIComponent(file.filename)}"`);
+      res.setHeader("X-Content-Type-Options", "nosniff");
+      res.send(Buffer.from(file.bytes));
+    } catch (err) {
+      next(err);
+    }
+  },
+);
+
 tryRouter.get("/try/paths", (_req: Request, res: Response): void => {
   // Empty means "this deployment does not offer that path", and the modal and
   // the email both simply leave it out rather than showing a dead link.
@@ -569,9 +679,9 @@ tryRouter.get("/try/paths", (_req: Request, res: Response): void => {
     // The ending page says exactly how long a frozen sandbox is held (#3254).
     decision_hours: env.TRY_SANDBOX_DECISION_HOURS,
     // Whether "bring what I built" leads to a real account that replays the
-    // person's ledger. False until that replay exists (core is building the
-    // recording half); the web's third door degrades to the second one while
-    // it is false, so no sentence promises a path that is not there.
-    carry_available: false,
+    // person's ledger: the operator says so (COBBLR_TRY_CARRY), because only
+    // the operator knows the cloud side accepts a carry from here. While it is
+    // false the web's third door is one honest line instead.
+    carry_available: env.COBBLR_TRY_CARRY,
   });
 });

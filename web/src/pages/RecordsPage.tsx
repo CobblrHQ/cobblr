@@ -14,6 +14,7 @@ import { ModuleInstanceChooser } from "../components/ModuleInstanceChooser";
 import { useActiveOrg } from "../auth/ActiveOrgContext";
 import { useFieldPresentation } from "../lib/useFieldPresentation";
 import {
+  useLater,
   CustomFieldsPanel,
   EntityActionsBar,
   EntityThumb,
@@ -42,6 +43,7 @@ export function RecordsPage({
   displayName,
   itemNoun,
 }: { instance?: string; displayName?: string; itemNoun?: string } = {}) {
+  const later = useLater();
   // When `instance` is set we render ONE named collection of records (e.g.
   // "Bookshelf"), reached at the clean /<instance> URL — the SAME page as
   // /records (thumbnails, views, detail/edit), just scoped to the instance's
@@ -151,7 +153,7 @@ export function RecordsPage({
       );
       // They land one at a time (a search + download each); refresh as they arrive.
       for (const ms of [4000, 10000, 20000]) {
-        setTimeout(() => void qc.invalidateQueries({ queryKey: ["records", activeSlug] }), ms);
+        later.after(`refresh-${ms}`, ms, () => void qc.invalidateQueries({ queryKey: ["records", activeSlug] }));
       }
     },
     onError: (e: unknown) =>

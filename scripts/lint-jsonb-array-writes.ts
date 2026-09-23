@@ -17,23 +17,34 @@
 // `ColumnType<unknown[], string | undefined, string>` — and passing a JS array
 // stops typechecking at all. That needs no `as never` (which silences every
 // other error on the line too) and no lint. digifab_print_rule_state.fired is
-// the first column to do it. This lint stays for the columns typed the loose
+// the first column to do it; module_field_defs.choices is the second, and the
+// first in the platform schema. This lint stays for the columns typed the loose
 // way, and for the shape it CANNOT see: a literal handed to a helper that
 // writes it, where the value never appears at a `.values(` call at all
 // (2026-08-29 — that hole let an unencoded write through this lint into a
 // review).
 //
-//   npx tsx scripts/lint-jsonb-array-writes.ts   (npm run lint:jsonb-array-writes)
+// IT WATCHES THE PLATFORM SCHEMA TOO, since 2026-09-22. It did not, and that
+// is how module_field_defs.choices shipped broken straight past it: the column
+// list came from `modules/*/src/db.ts` alone, so every jsonb array in
+// `api/src/db/schema.ts` was invisible and so was every writer under
+// `api/src`. The value was dropped inside a catch, nothing logged above debug,
+// and the vocabulary a whole feature depends on simply never grew. See
+// `platformJsonbArrayColumns` for why the platform set is an INTERSECTION with
+// the migrations rather than a second regex over the schema.
+//
+//   npx tsx scripts/lint-jsonb-array-writes.ts   (pnpm run lint jsonb-array-writes)
 
 import { readFileSync, readdirSync, statSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { dirname, join, relative } from "node:path";
+import { blankNonCode, columnAssignments, writeRegions } from "./lib/jsonb-write-scan.js";
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
 
 /** Columns declared as jsonb ARRAYS in any module's Kysely schema. Derived from
  *  the schema itself, so a new one is covered the day it is added. */
-function jsonbArrayColumns(): Set<string> {
+function moduleJsonbArrayColumns(): Set<string> {
   const cols = new Set<string>();
   const modules = join(ROOT, "modules");
   for (const mod of readdirSync(modules)) {
@@ -49,6 +60,59 @@ function jsonbArrayColumns(): Set<string> {
     }
   }
   return cols;
+}
+
+/**
+ * The same columns in the PLATFORM schema, which this lint could not see until
+ * `module_field_defs.choices` shipped broken through it (#3223 step 2).
+ *
+ * It cannot be read the module way. `api/src/db/schema.ts` spells these columns
+ * with their real element type (`string[] | null`, `ApprovalRemedy[]`,
+ * `Generated<NotificationAction[] | null>`), never `unknown[]`, so the module
+ * regex matches none of them. But "array-typed in schema.ts" is not the answer
+ * either: five platform columns (`scopes`, `enabled_features`, `demo_unlocks`,
+ * `delivered_via`, `kinds`) are real Postgres `text[]`, where a JS array is
+ * exactly RIGHT and `JSON.stringify` would be the bug. Flagging those would
+ * break the build for everyone to catch nothing.
+ *
+ * So the set is an intersection of two independent sources: array-typed in
+ * schema.ts AND declared `jsonb` in a platform migration. No column name is
+ * currently declared both jsonb and array, but a name that ever is gets
+ * dropped rather than guessed at — a false positive here costs everybody, a
+ * false negative only leaves the status quo.
+ */
+function platformJsonbArrayColumns(): Set<string> {
+  const jsonb = new Set<string>();
+  const pgArray = new Set<string>();
+  const migrations = join(ROOT, "api", "migrations", "platform");
+  let files: string[] = [];
+  try {
+    files = readdirSync(migrations).filter((f) => f.endsWith(".sql"));
+  } catch {
+    return new Set();
+  }
+  for (const f of files) {
+    const sql = readFileSync(join(migrations, f), "utf8");
+    for (const m of sql.matchAll(/\b([a-z_][a-z0-9_]*)\s+jsonb\b/gi)) jsonb.add(m[1]!.toLowerCase());
+    for (const m of sql.matchAll(/\b([a-z_][a-z0-9_]*)\s+[a-z]+\[\]/gi)) pgArray.add(m[1]!.toLowerCase());
+  }
+  const cols = new Set<string>();
+  const schema = join(ROOT, "api", "src", "db", "schema.ts");
+  let src = "";
+  try {
+    src = readFileSync(schema, "utf8");
+  } catch {
+    return cols;
+  }
+  for (const m of src.matchAll(/^\s*([a-z_][a-z0-9_]*)\??\s*:\s*[^;\n]*\[\]/gim)) {
+    const col = m[1]!.toLowerCase();
+    if (jsonb.has(col) && !pgArray.has(col)) cols.add(col);
+  }
+  return cols;
+}
+
+function jsonbArrayColumns(): Set<string> {
+  return new Set([...moduleJsonbArrayColumns(), ...platformJsonbArrayColumns()]);
 }
 
 const COLUMNS = jsonbArrayColumns();
@@ -72,86 +136,8 @@ function walk(dir: string): string[] {
   return out;
 }
 
-/**
- * Every object literal that can become a row of column values: the argument of
- * `.values(` / `.set(`, and any `const x = { ... }` that is later spread into
- * one. The second case matters as much as the first - this codebase builds the
- * values object separately and spreads it, which is precisely where the bug
- * this lint exists for was written.
- *
- * A `res.json({...})` body or a `z.object({...})` schema is neither, so the
- * same property name there is correctly ignored.
- */
-function writeRegions(src: string): Array<{ start: number; text: string }> {
-  const regions: Array<{ start: number; text: string }> = [];
-  const take = (from: number, open: string, close: string) => {
-    let depth = 0;
-    for (let i = from; i < src.length; i++) {
-      if (src[i] === open) depth++;
-      else if (src[i] === close) {
-        depth--;
-        if (depth === 0) {
-          regions.push({ start: from, text: src.slice(from, i + 1) });
-          return;
-        }
-      }
-    }
-  };
-  for (const m of src.matchAll(/\.(?:values|set)\s*\(/g)) take(m.index! + m[0].length - 1, "(", ")");
-  // `const values = {` / `const row = {` — an object built to be written.
-  for (const m of src.matchAll(/\b(?:const|let)\s+\w*[Vv]alues?\w*\s*(?::[^=]+)?=\s*\{/g)) {
-    take(m.index! + m[0].length - 1, "{", "}");
-  }
-  return regions;
-}
-
-/**
- * Assignments that become COLUMNS of the write.
- *
- * Not simply "depth 1": this codebase adds columns conditionally with
- * `...(cond ? { col: v } : {})`, which nests the key several braces deep while
- * still being a top-level column. A pure depth rule misses exactly that shape -
- * it missed the line this lint was written for.
- *
- * So instead: a key counts unless it sits INSIDE another key's object. That
- * excludes `pre_rerun: { candidates: [...] }` (a property of a value being
- * written into one jsonb column, serialised whole, never at risk) and includes
- * anything reached only through spreads, ternaries and parens.
- */
-function columnAssignments(region: string): Array<{ key: string; value: string; offset: number }> {
-  const out: Array<{ key: string; value: string; offset: number }> = [];
-  // Each open brace is either a VALUE of some key ("owned") or transparent
-  // scaffolding from a spread/ternary.
-  const stack: boolean[] = [];
-  let lastKey: string | null = null;
-  for (let i = 0; i < region.length; i++) {
-    const c = region[i]!;
-    if (c === "{") {
-      // `key: {` means everything inside belongs to that key.
-      const before = region.slice(0, i).replace(/\s+$/, "");
-      stack.push(before.endsWith(":"));
-      lastKey = null;
-      continue;
-    }
-    if (c === "}") {
-      stack.pop();
-      continue;
-    }
-    const m = /^([a-z_][a-z0-9_]*)\s*:\s*([^,\n]+)/i.exec(region.slice(i));
-    if (m && (i === 0 || /[\s{,(?:]/.test(region[i - 1]!))) {
-      lastKey = m[1]!;
-      if (!stack.some(Boolean)) {
-        out.push({ key: m[1]!, value: m[2]!.trim(), offset: i });
-      }
-      i += m[1]!.length; // step past the key only; the value may contain braces
-    }
-  }
-  void lastKey;
-  return out;
-}
-
-for (const file of walk(join(ROOT, "modules"))) {
-  const src = readFileSync(file, "utf8");
+for (const file of [...walk(join(ROOT, "modules")), ...walk(join(ROOT, "api", "src"))]) {
+  const src = blankNonCode(readFileSync(file, "utf8"));
   for (const region of writeRegions(src)) {
     for (const a of columnAssignments(region.text)) {
       if (!COLUMNS.has(a.key)) continue;

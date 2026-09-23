@@ -15,17 +15,14 @@
 
 import { readFileSync, existsSync } from "node:fs";
 import { join } from "node:path";
-import { PLACEMENT, type PlacementRow } from "./placement-registry.js";
+import { PLACEMENT, lintsOf, registeredCommands, type PlacementRow } from "./placement-registry.js";
 
 const ROOT = join(import.meta.dirname, "..");
 
 /** The one-line rule a lint enforces, read from the lint's own header. */
 function ruleOf(lintScript: string): string {
-  const pkg = JSON.parse(readFileSync(join(ROOT, "package.json"), "utf8")) as {
-    scripts: Record<string, string>;
-  };
-  const cmd = pkg.scripts[lintScript];
-  if (!cmd) return "(not a script in package.json)";
+  const cmd = registeredCommands()[lintScript];
+  if (!cmd) return "(not a registered lint)";
   const m = /(scripts\/[\w.-]+\.(?:ts|mjs|js))/.exec(cmd);
   if (!m) return "";
   const file = join(ROOT, m[1]!);
@@ -65,13 +62,14 @@ function show(row: PlacementRow): void {
     console.log("  DECISIONS");
     for (const n of row.notes) console.log(`    · ${n}`);
   }
-  if (row.lints.length) {
+  const lints = lintsOf(row);
+  if (lints.length) {
     console.log("  JUDGED BY");
-    for (const l of row.lints) {
+    for (const l of lints) {
       const rule = ruleOf(l);
       console.log(`    · ${l}${rule ? `\n        ${rule}` : ""}`);
     }
-    console.log(`  CHECK IT    pnpm run ${row.lints[0]}    (all of them: pnpm run lint:all)`);
+    console.log(`  CHECK IT    pnpm lint ${lints[0]!.slice("lint:".length)}    (all of them: pnpm run lint:all)`);
   }
 }
 

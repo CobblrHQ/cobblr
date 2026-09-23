@@ -1,5 +1,6 @@
 {
   "lint": "lint:boot-pass-born-with",
+  "run": "tsx scripts/lint-boot-pass-born-with.ts",
   "ms": 2400,
   "recorded": "2026-09-14",
   "source": "split from scripts/lint-durations.json (recorded 2026-09-14)"

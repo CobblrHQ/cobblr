@@ -124,3 +124,37 @@ export async function commitAxisValue(args: {
     return null;
   }
 }
+
+/** The seam's `keep`: what to write for the value a record's slot already
+ *  holds. Provenance is the slot's, so nothing here guesses whether a string
+ *  is an id or a name from what it looks like: a taxonomy keyed by slugs has
+ *  ids that read like names, and a format check cannot tell them apart. */
+export async function keepAxisValue(args: {
+  orgId: string;
+  kind: string;
+  value: string;
+  instance?: string | null;
+}): Promise<CategoryAxisAssignment | null> {
+  try {
+    const value = args.value.trim();
+    if (!value) return null;
+    const axis = await axisFor(args);
+    if (!axis) return null;
+    if (axis.slot.kind === "extras") {
+      // A name somebody typed into the field. Grown into the vocabulary when
+      // it can be; kept as typed when it cannot, as it always was.
+      return (await commitAxisValue({ ...args, value })) ?? { slot: axis.slot, value };
+    }
+    const writer = await getEntityWriterFor(args.orgId, axis.slot.entityKind);
+    if (!writer) return null;
+    const rows = (await writer.listForMatch?.(args.orgId)) ?? [];
+    if (rows.some((r) => r.id === value)) return { slot: axis.slot, value };
+    console.error(
+      `[category-axis] ${args.kind}: the picked ${axis.slot.entityKind} ${value} is in no store (deleted since it was picked, or read off another kind); filing without it`,
+    );
+    return null;
+  } catch (err) {
+    console.error("[category-axis] keep failed, value dropped:", (err as Error).message);
+    return null;
+  }
+}

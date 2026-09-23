@@ -96,14 +96,21 @@ async function fetchJson(url) {
   return res.json();
 }
 
-function verifyEd25519(publicKeyB64, tarball, signatureB64) {
+// A copy of @cobblr/platform-contract/signature's verifyEd25519: this runs as
+// plain node before anything is built, so it cannot import it.
+// scripts/signature-verdicts-agree.test.ts holds the two to the same verdict.
+export function verifyEd25519(publicKeyB64, data, signature) {
   // public key is a base64-encoded DER SubjectPublicKeyInfo (the
   // shape `openssl pkey -outform DER -pubout` and Node's
-  // KeyObject.export({format:"der",type:"spki"}) produce).
-  const keyDer = Buffer.from(publicKeyB64, "base64");
-  const pubKey = createPublicKey({ key: keyDer, format: "der", type: "spki" });
-  const sig = Buffer.from(signatureB64, "base64");
-  return cryptoVerify(null, tarball, pubKey, sig);
+  // KeyObject.export({format:"der",type:"spki"}) produce). The registry
+  // writes the signature as `ed25519:<base64>`; a bare base64 is accepted.
+  try {
+    const pubKey = createPublicKey({ key: Buffer.from(publicKeyB64, "base64"), format: "der", type: "spki" });
+    const sig = Buffer.from(signature.startsWith("ed25519:") ? signature.slice("ed25519:".length) : signature, "base64");
+    return cryptoVerify(null, typeof data === "string" ? Buffer.from(data, "utf8") : data, pubKey, sig);
+  } catch {
+    return false;
+  }
 }
 
 function extractTarball(tarballBuf, destDir) {
@@ -219,10 +226,7 @@ async function main() {
       if (gotSha !== versionSpec.sha256) {
         fail(`${name}@${version} sha256 mismatch: registry=${versionSpec.sha256} got=${gotSha}`);
       }
-      const sig = versionSpec.signature.startsWith("ed25519:")
-        ? versionSpec.signature.slice("ed25519:".length)
-        : versionSpec.signature;
-      if (!verifyEd25519(modSpec.public_key_ed25519, tarball, sig)) {
+      if (!verifyEd25519(modSpec.public_key_ed25519, tarball, versionSpec.signature)) {
         fail(`${name}@${version} ed25519 signature did NOT verify against public key in registry`);
       }
       log(`${name}@${version}: sha256 + signature ok, extracting to ${kind}`);

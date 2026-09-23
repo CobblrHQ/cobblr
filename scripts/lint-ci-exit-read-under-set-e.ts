@@ -37,7 +37,7 @@
 // retry step as they were on main; the scripts/ half found nothing that day
 // (every `$?` read in a `set -e` script there was already guarded).
 //
-//   npx tsx scripts/lint-ci-exit-read-under-set-e.ts   (pnpm run lint:ci-exit-read-under-set-e)
+//   npx tsx scripts/lint-ci-exit-read-under-set-e.ts   (pnpm run lint ci-exit-read-under-set-e)
 import { readFileSync } from "node:fs";
 import { sourceFiles } from "./lib/glob-exclude.mjs";
 
@@ -54,6 +54,10 @@ const GUARDED = /\|\||^\s*(if|while|until|elif|else|then|do)\b|^\s*!\s|;\s*(then
 // The one idiom that reads $? first thing on purpose: a function opened for
 // a trap (`f() { local rc=$?`), which reads the status the trap fired on.
 const TRAP_IDIOM = /^\s*local\s+\w+=\$\?\s*$/;
+// The same read written inline: `trap 'rc=$?; …' ERR`. The quoted body runs
+// when the trap fires, where $? is the status that fired it, not the status of
+// the line above.
+const TRAP_INLINE = /^\s*trap\s+['"]/;
 const SET_PLUS_E = /^\s*set\s+\+e\b/;
 
 /** A shell script that runs under -e: `set -e`, `set -euo pipefail`, a `#!/…bash -e` line. */
@@ -97,7 +101,7 @@ export function check(file: string, src: string): Violation[] {
       const t = l.trim();
       if (t === "" || t.startsWith("#")) continue;
       if (SET_PLUS_E.test(t)) plusE = true;
-      if (READ.test(t) && !plusE && !(TRAP_IDIOM.test(t) && /\{\s*$/.test(prevCmd))) {
+      if (READ.test(t) && !plusE && !TRAP_INLINE.test(t) && !(TRAP_IDIOM.test(t) && /\{\s*$/.test(prevCmd))) {
         // The command whose status is read: the one before the read on the
         // same line (`has_image "$x"; ic=$?`), else the previous line.
         const readAt = t.search(READ);

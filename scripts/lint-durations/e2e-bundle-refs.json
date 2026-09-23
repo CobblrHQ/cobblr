@@ -1,5 +1,6 @@
 {
   "lint": "lint:e2e-bundle-refs",
+  "run": "tsx scripts/lint-e2e-bundle-refs.ts",
   "ms": 399,
   "recorded": "2026-09-14",
   "source": "split from scripts/lint-durations.json (recorded 2026-09-14)"

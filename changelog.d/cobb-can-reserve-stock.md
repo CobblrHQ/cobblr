@@ -3,6 +3,7 @@ type: feature
 scope: inventory
 date: 2026-08-19
 docs_target: docs/USER_GUIDE.md#3.1 Inventory
+docs_published: 2026-09-23
 ---
 
 Ask Cobb can set stock aside for a job and settle it later. Tell it to reserve

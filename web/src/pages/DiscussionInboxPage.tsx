@@ -16,7 +16,7 @@ import { useMemo, useState } from "react";
 import { Link } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { AtSign, CheckCircle2, RotateCcw } from "lucide-react";
-import { usePageTitle, useToast } from "@cobblr/platform-web";
+import { usePageTitle, useToast, relativeTime } from "@cobblr/platform-web";
 import { api, ApiError, type DiscussionInboxItem } from "../lib/api";
 import { useActiveOrg } from "../auth/ActiveOrgContext";
 import { canResolveConversation } from "../lib/discussionPermissions";
@@ -24,17 +24,6 @@ import { useDetailRoute } from "../lib/useDetailRoute";
 import { isWorkspaceRoom } from "@cobblr/platform-contract/workspace-room";
 
 type Lane = "me" | "new" | "all";
-
-function ago(iso: string | null): string {
-  if (!iso) return "";
-  const mins = Math.max(0, Math.round((Date.now() - new Date(iso).getTime()) / 60000));
-  if (mins < 1) return "just now";
-  if (mins < 60) return `${mins}m ago`;
-  const hrs = Math.round(mins / 60);
-  if (hrs < 24) return `${hrs}h ago`;
-  const days = Math.round(hrs / 24);
-  return days < 30 ? `${days}d ago` : new Date(iso).toLocaleDateString();
-}
 
 /** One row, named by the record rather than by its kind. */
 function InboxRow({ item }: { item: DiscussionInboxItem }) {
@@ -105,7 +94,7 @@ function InboxRow({ item }: { item: DiscussionInboxItem }) {
         <div className="text-[10px] font-mono uppercase tracking-widest text-faint truncate">
           {room ? "the whole workspace" : kind} · {item.comments}{" "}
           {item.comments === 1 ? "comment" : "comments"} ·{" "}
-          {ago(item.latest_at)}
+          {relativeTime(item.latest_at)}
         </div>
       </div>
     </div>

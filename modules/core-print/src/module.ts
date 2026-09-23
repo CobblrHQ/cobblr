@@ -18,7 +18,7 @@ import { defineModule } from "@cobblr/platform-contract";
 
 export default defineModule({
   name: "core-print",
-  version: "0.1.1",
+  version: "0.1.2",
   displayName: "Printing",
   description:
     "Send documents to a print manager (CUPS/IPP). Configure a printer once, then any module or user can print to it. Direct on your LAN, or, on a hosted Cobblr, through an on-site edge bridge.",

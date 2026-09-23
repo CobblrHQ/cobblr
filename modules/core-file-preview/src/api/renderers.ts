@@ -12,21 +12,11 @@
 
 import { Router } from "express";
 import { z } from "zod";
-import { verify as cryptoVerify, createPublicKey } from "node:crypto";
+import { verifyEd25519 } from "@cobblr/platform-contract/signature";
 import { tenantDb } from "../db.js";
 import { asyncHandler, badBody, requireRole } from "./util.js";
 
 export const renderersRouter = Router({ mergeParams: true });
-
-function verifyEd25519(pubkeyB64: string, dataUtf8: string, sigB64: string): boolean {
-  try {
-    const key = createPublicKey({ key: Buffer.from(pubkeyB64, "base64"), format: "der", type: "spki" });
-    const sig = Buffer.from(sigB64.startsWith("ed25519:") ? sigB64.slice(8) : sigB64, "base64");
-    return cryptoVerify(null, Buffer.from(dataUtf8, "utf8"), key, sig);
-  } catch {
-    return false;
-  }
-}
 
 const InstallBody = z.object({
   name: z.string().min(1).max(120).regex(/^[a-z0-9][a-z0-9_-]*$/),

@@ -3,6 +3,7 @@ type: feature
 scope: ai
 date: 2026-08-19
 docs_target: docs/USER_GUIDE.md#2. Core concepts
+docs_published: 2026-09-23
 ---
 Cobblr now remembers which message produced which change, so a thing you asked for once can become something your workspace does on its own. Ask for twelve racks and the twelve records that appear are recorded together with the sentence that asked for them, then generalised into a reusable command with the numbers and names as blanks to fill in.
 

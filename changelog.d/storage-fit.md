@@ -3,6 +3,7 @@ type: feature
 scope: scan
 date: 2026-08-23
 docs_target: docs/USER_GUIDE.md#3.20 Scan inbox (`core-scan`, stock)
+docs_published: 2026-09-23
 ---
 **Cobblr now tells you when something goes somewhere it should not.** Put a thing that has to stay frozen into a cupboard and you hear about it straight away, rather than finding out later. It only speaks up when it actually knows how the thing must be kept, so it stays quiet rather than guessing, and it never comments on shelf-stable things. This one interrupts instead of waiting for a daily summary, because a message about food spoiling is no use tomorrow morning.
 

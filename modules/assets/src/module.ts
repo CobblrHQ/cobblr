@@ -7,7 +7,7 @@ import { defineModule } from "@cobblr/platform-contract";
 
 export default defineModule({
   name: "assets",
-  version: "0.4.5",
+  version: "0.4.6",
   displayName: "Assets",
   description:
     "Physical things you own that aren't fungible stock and aren't machines. Appliances, tools, collections, anything you'd want to track individually.",

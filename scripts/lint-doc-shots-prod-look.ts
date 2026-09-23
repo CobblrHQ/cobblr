@@ -40,7 +40,7 @@
 // capture-first-full, yarn-instances, the inbox-import walkthrough); green
 // once each had a script writing it.
 //
-//   npx tsx scripts/lint-doc-shots-prod-look.ts   (pnpm run lint:doc-shots-prod-look)
+//   npx tsx scripts/lint-doc-shots-prod-look.ts   (pnpm run lint doc-shots-prod-look)
 import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
 import { dirname, join } from "node:path";
 

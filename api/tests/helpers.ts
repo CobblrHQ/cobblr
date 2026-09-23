@@ -11,7 +11,7 @@
 
 import { registerOrgForTeardown } from "./setup-teardown.js";
 import { fetchTransient } from "./fetch-transient.js";
-import { arrivedEverywhere } from "@cobblr/platform-contract/day";
+import { arrivedEverywhere, dayIn } from "@cobblr/platform-contract/day";
 
 export { registerOrgForTeardown };
 
@@ -313,4 +313,42 @@ export async function invokeAction(
 export function personDay(daysFromToday = 0, now: Date = new Date()): string {
   const base = arrivedEverywhere(now);
   return new Date(Date.parse(`${base}T00:00:00Z`) + daysFromToday * 86_400_000).toISOString().slice(0, 10);
+}
+
+/** A zone whose calendar date is NOT the UTC date at `now`, and whose own date
+ *  does not turn over for at least two hours (so a test and the product, both
+ *  reading this zone, agree for the whole run).
+ *
+ *  A test that compares the product's day with the UTC day only catches a
+ *  product path that dates things in UTC when the two dates differ, which with
+ *  no zone stated is 00:00 to 12:00 UTC: half the runs were blind, and the
+ *  ones that were not failed "every evening" instead of at review. A person in
+ *  a zone that is on another date right now makes that state universal: the
+ *  bug fails every run, whatever the hour (run 25414, #3513).
+ *
+ *  Before 10:00 UTC, UTC-12 is still on yesterday (it turns over at 12:00);
+ *  from 10:00, UTC+14 is already on tomorrow (it turns over at 10:00 next
+ *  day). Across UTC midnight no zone stays on another date, so a run that
+ *  straddles it loses the detection for its last minutes, never the
+ *  agreement. */
+export function zoneOnAnotherDay(now: Date = new Date()): string {
+  return now.getUTCHours() < 10 ? "Etc/GMT+12" : "Pacific/Kiritimati";
+}
+
+/** Tell the platform this person's zone, the way a person does (their delivery
+ *  preferences), so every "today" the product works out for them is that
+ *  zone's. Returns the zone, after checking it really is on another day than
+ *  UTC: a test built on a zone that happens to agree with UTC proves nothing. */
+export async function livesOnAnotherDay(s: TestSession, now: Date = new Date()): Promise<string> {
+  const zone = zoneOnAnotherDay(now);
+  const utcDay = now.toISOString().slice(0, 10); // UTC-DAY OK: the frame this test must differ from
+  if (dayIn(now, zone) === utcDay) throw new Error(`${zone} is on the UTC day ${utcDay}; the test would be blind`);
+  await http(s, "/api/v1/me/delivery-windows", { method: "PUT", body: { channel: "in_app", mode: "immediate", timezone: zone } });
+  return zone;
+}
+
+/** A calendar day `daysFromToday` from today in `zone`: the day the product
+ *  takes as today for a person who said they live there. */
+export function dayInZone(zone: string, daysFromToday = 0, now: Date = new Date()): string {
+  return new Date(Date.parse(`${dayIn(now, zone)}T00:00:00Z`) + daysFromToday * 86_400_000).toISOString().slice(0, 10);
 }

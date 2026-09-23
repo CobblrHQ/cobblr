@@ -765,6 +765,10 @@ export interface EntityActionsTable {
   /** Fired by an event and nothing else; never offered to the assistant.
    *  Not the button flag above. */
   wire_only: Generated<boolean>;
+  /** An entity-scoped action that may also run with NO record: its handler
+   *  reads the record when there is one and its arguments when there is not
+   *  (lists:add-item, "put milk on the shopping list", #3255). */
+  record_optional: Generated<boolean>;
   /** Machine-readable arg shape { name: { label, type } } from the action
    *  manifest; null = none. Drives the wire composer's per-arg fields. */
   args_schema: unknown | null;
@@ -1242,6 +1246,7 @@ export interface MetaDB {
   auth_magic_tokens: AuthMagicTokensTable;
   try_sandbox_tokens: TrySandboxTokensTable;
   try_sandbox_exports: TrySandboxExportsTable;
+  try_carry_tokens: TryCarryTokensTable;
   auth_password_reset_tokens: AuthPasswordResetTokensTable;
   auth_email_verify_tokens: AuthEmailVerifyTokensTable;
   auth_pair_codes: AuthPairCodesTable;
@@ -1364,6 +1369,18 @@ interface TrySandboxTokensTable {
 
 /** The one file a sandbox visitor asked us to email them. No FK to orgs: the
  *  org is dropped an hour later and this has to outlive it, which is the point. */
+/** A person's grant to read their trial from another deployment (the replay). */
+interface TryCarryTokensTable {
+  id: Generated<string>;
+  org_id: string;
+  user_id: string;
+  token_hash: string;
+  created_at: Generated<Date>;
+  expires_at: Date;
+  last_read_at: Date | null;
+  read_count: Generated<number>;
+}
+
 interface TrySandboxExportsTable {
   id: Generated<string>;
   org_id: string;

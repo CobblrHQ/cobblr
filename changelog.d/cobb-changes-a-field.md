@@ -3,6 +3,7 @@ type: feature
 scope: ai
 date: 2026-08-24
 docs_target: docs/USER_GUIDE.md#2. Core concepts
+docs_published: 2026-09-23
 ---
 Cobb can now rename a field, make it required, replace a dropdown's choices, or take a field off a kind of record. Name the field the way it appears on the form. A field that applies to a whole class of records (everything physical, say) is refused with a note about where it lives, so a change meant for one list cannot land on all of them.
 

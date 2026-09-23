@@ -1,5 +1,6 @@
 {
   "lint": "lint:deprecated-fks",
+  "run": "tsx scripts/lint-deprecated-table-fks.ts",
   "ms": 389,
   "recorded": "2026-09-14",
   "source": "split from scripts/lint-durations.json (recorded 2026-09-14)"

@@ -23,7 +23,7 @@
 //   1. every `dir` exists;
 //   2. every `exemplar` file exists — the shape you copy is a live file, never
 //      a snippet pasted here that nobody updates;
-//   3. every lint named by a row exists in package.json;
+//   3. every lint named by a row, or claiming one in its record, is registered;
 //   4. a NEW lint script must be claimed by a row or declared GENERAL. That is
 //      the one that matters: enforcement cannot be added to this repo without
 //      saying which kind of work it governs, so the map grows with the rules
@@ -33,6 +33,8 @@
 // judge it and the tool prints their one-line rule from the lint's own header,
 // so there is one copy of every rule and it lives in the thing that enforces
 // it.
+
+import { readRegistry } from "./lib/lint-durations.mjs";
 
 export interface PlacementRow {
   /** Stable id, kebab-case. */
@@ -49,7 +51,10 @@ export interface PlacementRow {
   exemplar: string;
   /** Why here and not the neighbouring place. One sentence. */
   why: string;
-  /** package.json lint scripts that will judge this kind of file. */
+  /** Lints that will judge this kind of file. A NEW lint claims its row in its
+   *  own record instead (scripts/lint-durations/<name>.json, "rows"), so two
+   *  lints claiming one row never edit this array at once (#3455); read a
+   *  row's full set through lintsOf(row). */
   lints: string[];
   /** Anything that is a decision rather than a rule — pick these carefully. */
   notes?: string[];
@@ -89,7 +94,7 @@ export const PLACEMENT: PlacementRow[] = [
     dir: "web/src/components/",
     exemplar: "web/src/components/EntityAttachments.tsx",
     why: "This layer is module-agnostic: it may not name a module's entity kind, because doing so silently excludes every module added later.",
-    lints: ["lint:component-kinds", "lint:hooks-after-return", "lint:no-emdash", "lint:ui-jargon", "lint:authed-image-src", "lint:noun-pluralisation", "lint:dark-mode-ember", "lint:dark-mode-tints", "lint:number-input-commits-a-number", "lint:action-outcome-shown", "lint:actions-run-through-one-door", "lint:shape-changes-run-through-one-door", "lint:sticky-under-header", "lint:fixed-chrome", "lint:phone-input-font", "lint:row-pictures-resolved", "lint:scan-doubt-from-contract"],
+    lints: ["lint:component-kinds", "lint:hooks-after-return", "lint:no-emdash", "lint:ui-jargon", "lint:authed-image-src", "lint:noun-pluralisation", "lint:dark-mode-ember", "lint:dark-mode-tints", "lint:number-input-commits-a-number", "lint:action-outcome-shown", "lint:actions-run-through-one-door", "lint:shape-changes-run-through-one-door", "lint:sticky-under-header", "lint:fixed-chrome", "lint:phone-input-font", "lint:row-pictures-resolved", "lint:scan-doubt-from-contract", "lint:timers-die-with-their-component"],
     notes: [
       "If it names one module's kind, it is not generic — it belongs beside that module's page (see page-level-module-ui).",
     ],
@@ -143,7 +148,7 @@ export const PLACEMENT: PlacementRow[] = [
     dir: "packages/platform-contract/src/",
     exemplar: "packages/platform-contract/src/scan-triage.ts",
     why: "A rule two surfaces would otherwise each derive lives once in @cobblr/platform-contract, where the api, the web app, a module and the assistant all import it; a surface RENDERS the answer and never derives its own.",
-    lints: ["lint:contract-sibling-imports", "lint:gated-state-has-a-producer", "lint:scan-doubt-from-contract", "lint:one-day-rule"],
+    lints: ["lint:contract-sibling-imports", "lint:gated-state-has-a-producer", "lint:scan-doubt-from-contract", "lint:one-day-rule", "lint:public-url-one-reader"],
     notes: [
       "Every optional field on the resolver's context must be PRODUCED by a surface before it is read; a field nothing sets is coverage that is not there (lint:gated-state-has-a-producer).",
       "The surface that calls the resolver builds its context in ONE place (web/src/pages/scanViewer.ts is the shape), and a surface test takes it from there, never from a hand-built object.",
@@ -235,7 +240,7 @@ export const PLACEMENT: PlacementRow[] = [
     dir: "modules/<name>/src/api/ or api/src/routes/",
     exemplar: "modules/core-scan/src/api/inbox.ts",
     why: "Express matches in registration order: a literal path declared after a parameter route on the same prefix is never reached, and the client gets a 400 that nothing reports (the session theme was dead this way for weeks).",
-    lints: ["lint:route-shadowing", "lint:announce-routes-home", "lint:api-client-reachable", "lint:scan-triage-columns", "lint:scan-door-intake", "lint:refusal-carries-blocked", "lint:capability-gates-grantable", "lint:test-doors-gated"],
+    lints: ["lint:route-shadowing", "lint:announce-routes-home", "lint:api-client-reachable", "lint:scan-triage-columns", "lint:scan-door-intake", "lint:refusal-carries-blocked", "lint:capability-gates-grantable", "lint:test-doors-gated", "lint:declared-endpoints-served"],
     notes: [
       "Register literal paths (/inbox/session-theme) ABOVE parameter paths (/inbox/:id) in the same router.",
       "A route's client method in web/src/lib/api.ts is not a feature until something on screen calls it: lint:api-client-reachable refuses a method with no caller (the catalog crop sat reachable-by-curl-only for a month).",
@@ -249,7 +254,7 @@ export const PLACEMENT: PlacementRow[] = [
     dir: "scripts/ (git hooks in scripts/git-hooks/)",
     exemplar: "scripts/merge-pr.sh",
     why: "The same file runs on macOS (bash 3.2, BSD sed) and on the Linux CI box; a construct that is fine on one aborts on the other, after part of the work has already printed as done.",
-    lints: ["lint:bash-portable", "lint:portable-sed", "lint:sigpipe", "lint:deploy-state-in-flow", "lint:shell-lib-git-cwd", "lint:tsbuildinfo-not-shared", "lint:nightly-cut-clock", "lint:empty-array-under-set-u", "lint:scripts-typecheck", "lint:fetch-retry", "lint:porcelain-parse", "lint:alert-lib-sync", "lint:lint-durations", "lint:no-pattern-kill", "lint:forgejo-api-base", "lint:git-pathspec-glob"],
+    lints: ["lint:bash-portable", "lint:portable-sed", "lint:sigpipe", "lint:deploy-state-in-flow", "lint:shell-lib-git-cwd", "lint:tsbuildinfo-not-shared", "lint:nightly-cut-clock", "lint:empty-array-under-set-u", "lint:scripts-typecheck", "lint:fetch-retry", "lint:porcelain-parse", "lint:alert-lib-sync", "lint:lint-durations", "lint:no-pattern-kill", "lint:forgejo-api-base", "lint:git-pathspec-glob", "lint:workstation-tmp-per-run"],
     notes: [
       "Prose (commit messages, PR bodies) goes through a FILE, never a quoted shell string.",
       "Linux-only scripts opt out with `# gnu-sed: <reason>`; that one line covers both sed and bash rules.",
@@ -280,7 +285,7 @@ export const PLACEMENT: PlacementRow[] = [
     dir: ".forgejo/workflows/",
     exemplar: ".forgejo/workflows/ci.yml",
     why: "Forgejo keeps no job logs and parses each job on its own: a step that ships no log is unreadable after the fact, a label nobody carries never runs, and a YAML anchor across jobs invalidates the whole file.",
-    lints: ["lint:ci-sink", "lint:ci-runner-labels", "lint:ci-lanes", "lint:workflow-yaml", "lint:latest-monotonic", "lint:ci-pr-any-base", "lint:forgejo-pagination", "lint:main-runs-complete", "lint:catalog-replay", "lint:ci-exit-read-under-set-e", "lint:dockerfile-copies-ship"],
+    lints: ["lint:ci-sink", "lint:ci-runner-labels", "lint:ci-lanes", "lint:workflow-yaml", "lint:latest-monotonic", "lint:ci-pr-any-base", "lint:forgejo-pagination", "lint:main-runs-complete", "lint:catalog-replay", "lint:ci-exit-read-under-set-e", "lint:dockerfile-copies-ship", "lint:slot-pairs-are-wired"],
     notes: [
       "A step's log is a pipe (`| tee`): a harness that prints a child's captured output must end by process.exitCode, never process.exit(), or the failing run's log stops at 64 KiB with no failing test in it (#3167; lint:cli-flush-before-exit).",
       "The `test` and `test-full` jobs are one job in two places; edit the gate, copy its env+steps over the tracker.",
@@ -297,9 +302,9 @@ export const PLACEMENT: PlacementRow[] = [
     why: "Bespoke scripts enforce invariants a general linter cannot express; there is deliberately no ESLint here.",
     lints: ["lint:placement", "lint:lints-are-wired", "lint:scripts-typecheck", "lint:shipped-script-imports", "lint:corpus-known-red-live", "lint:dns-probe-unpinned", "lint:tick-problems-keyed", "lint:box-cron-offsets", "lint:no-inline-script-quotes"],
     notes: [
-      "Start with scripts/new-lint.sh <slug> --row <row> --rule \"<sentence>\": it writes the file from scripts/templates/lint.template.ts, registers lint:<slug> in package.json, claims the row, and runs it once (skill: writing-a-lint).",
+      "Start with scripts/new-lint.sh <slug> --row <row> --rule \"<sentence>\": it writes the file from scripts/templates/lint.template.ts and its record scripts/lint-durations/<slug>.json (the command CI runs, the row it claims, a first time), and runs it once (skill: writing-a-lint). Nothing shared is edited, so two branches adding a lint never conflict.",
       "A 'one implementation only' rule is a ROW in scripts/capabilities.ts, not a new script.",
-      "Add a row to scripts/placement-registry.ts saying which kind of work it governs, or lint:placement fails: enforcement may not be added without saying where it bites.",
+      "Claim the row of the work it governs in its record (\"rows\", which the scaffold fills from --row), or lint:placement fails: enforcement may not be added without saying where it bites.",
       "Prove it RED on the real violation before you fix that violation. A lint that has never failed has never been verified.",
       "If it imports a new file of yours, add that file to scripts/publish/manifests/core.json — lint scripts ship in the public export, and one that cannot load is broken for everyone who clones it (this PR tripped exactly that).",
     ],
@@ -325,7 +330,7 @@ export const PLACEMENT: PlacementRow[] = [
     dir: "api/tests/ or beside: the file it tests, for a pure one",
     exemplar: "web/src/pages/newBinSheet.test.ts",
     why: "Pure decisions are tested where they live; anything needing a tenant database is an integration test in api/tests/.",
-    lints: ["lint:hook-timeouts", "lint:test-path-starts-with-its-own-bin"],
+    lints: ["lint:hook-timeouts", "lint:test-path-starts-with-its-own-bin", "lint:test-timeout-worn", "lint:web-image-reads-what-it-copies", "lint:hook-returns-nothing"],
     notes: [
       "Name it after the CONSEQUENCE, not the mechanism, and prove it red before you trust it green.",
       "Keep the db out of the import graph: a test that imports a file which eagerly imports cobblr_meta dies before it reaches its subject.",
@@ -338,7 +343,7 @@ export const PLACEMENT: PlacementRow[] = [
     dir: "e2e/",
     exemplar: "e2e/mobile-overflow.mjs",
     why: "The nightly yardstick batch runs these on the shared box; a screenshot-only script proves nothing and belongs to the demos instead.",
-    lints: ["lint:ci-sink", "lint:driver-hooks-live", "lint:doc-shots-prod-look", "lint:scan-fixture-category"],
+    lints: ["lint:ci-sink", "lint:driver-hooks-live", "lint:doc-shots-prod-look", "lint:scan-fixture-category", "lint:materialize-reads-its-answer", "lint:e2e-visible-probe-filters-first"],
     notes: [
       "Add it to scripts/run-e2e-yardsticks.sh to make it gate; otherwise nobody runs it.",
       "Seed the data the assertion needs. A sweep over an empty list passes vacuously — assert a positive control first.",
@@ -448,3 +453,18 @@ export const PLACEMENT: PlacementRow[] = [
     ],
   },
 ];
+
+/** Every registered lint and its command, from the lints' own records. */
+export function registeredCommands(): Record<string, string> {
+  return Object.fromEntries(readRegistry().map((l: { name: string; run: string }) => [l.name, l.run]));
+}
+
+/** The lints that judge a row: the ones its array names, and every lint whose
+ *  own record claims the row. The records are where a new lint's claim lives,
+ *  so this is the only correct way to read a row's lints. */
+export function lintsOf(row: PlacementRow): string[] {
+  const claimedHere = readRegistry()
+    .filter((l: { rows: string[] }) => l.rows.includes(row.id))
+    .map((l: { name: string }) => l.name);
+  return [...new Set([...row.lints, ...claimedHere])];
+}

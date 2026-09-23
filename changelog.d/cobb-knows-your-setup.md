@@ -3,6 +3,7 @@ type: feature
 scope: core-ai
 date: 2026-08-14
 docs_target: docs/USER_GUIDE.md#3.22 AI providers & the AI kill-switch (operator)
+docs_published: 2026-09-23
 ---
 Ask Cobb can now see how your workspace is set up, your lists, saved views, automations, apps, templates and units, and can add a unit for you when you ask.
 

@@ -3,6 +3,7 @@ type: feature
 scope: scan
 date: 2026-09-15
 docs_target: docs/USER_GUIDE.md#3.20 Scan inbox (`core-scan`, stock)
+docs_published: 2026-09-23
 ---
 On a phone the scan inbox starts with its items: the put-away strip, a series offer and each session's header are one line each, the page runs closer to the screen's edges, a card offers a better table beside its filing pair, and the picture strip outlines the catalog picture.
 

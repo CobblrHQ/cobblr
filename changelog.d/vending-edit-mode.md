@@ -3,6 +3,7 @@ type: feature
 scope: views
 date: 2026-08-23
 docs_target: docs/USER_GUIDE.md#3.15 Apps (`core-apps`, stock)
+docs_published: 2026-09-23
 ---
 **The vending board can now be tapped.** It has always shown what you have and never let you change it. A "Use / restock" button turns on a plus and minus on every tile, so you can record what you used while standing in front of the cupboard rather than going back to a laptop. Undo sits next to the toggle, because a mis-tap on a screen you walk past is going to happen.
 

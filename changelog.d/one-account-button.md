@@ -3,6 +3,7 @@ type: feature
 scope: auth
 date: 2026-08-18
 docs_target: docs/architecture/central-identity.md#The button, on both ends
+docs_published: 2026-09-23
 ---
 You can now sign in with your Cobblr account from the sign-in page, and your account page lists the Cobblr instances you can reach.
 

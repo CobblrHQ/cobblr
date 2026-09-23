@@ -32,7 +32,7 @@
 // that motivated it, watch it fail, then fix the violation. A lint that has
 // never failed has never been verified.
 //
-//   npx tsx scripts/lint-one-day-rule.ts   (pnpm run lint:one-day-rule)
+//   npx tsx scripts/lint-one-day-rule.ts   (pnpm run lint one-day-rule)
 import { readFileSync, readdirSync, statSync } from "node:fs";
 import { join } from "node:path";
 

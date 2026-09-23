@@ -24,7 +24,7 @@
 // PROVE IT RED before you trust it green: write `pkill -f node` into a scratch
 // file under scripts/, run it, watch it fail, delete the file.
 //
-//   npx tsx scripts/lint-no-pattern-kill.ts   (pnpm run lint:no-pattern-kill)
+//   npx tsx scripts/lint-no-pattern-kill.ts   (pnpm run lint no-pattern-kill)
 import { readFileSync, readdirSync, statSync } from "node:fs";
 import { join } from "node:path";
 

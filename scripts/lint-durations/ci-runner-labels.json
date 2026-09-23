@@ -1,5 +1,6 @@
 {
   "lint": "lint:ci-runner-labels",
+  "run": "tsx scripts/lint-ci-runner-labels.ts",
   "ms": 337,
   "recorded": "2026-09-14",
   "source": "split from scripts/lint-durations.json (recorded 2026-09-14)"

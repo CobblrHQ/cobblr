@@ -17,7 +17,7 @@ import * as aiImpl from "../platform/ai.js";
 import * as connectionProviders from "../platform/connections.js";
 import { notifyAccount } from "../platform/notifications.js";
 import { absoluteAppUrl } from "../platform/public-url.js";
-import { verificationOf, type ConnectionVerification } from "@cobblr/platform-contract/connection-verification";
+import { unverifiedRefusal, verificationOf, type ConnectionVerification } from "@cobblr/platform-contract/connection-verification";
 import {
   addUserCredential,
   updateUserCredential,
@@ -87,21 +87,6 @@ async function probeForSave(
   } catch (err) {
     return verificationOf({ ok: false, reason: "unknown", error: (err as Error)?.message });
   }
-}
-
-/** A key the probe rejected is saved only on the person's say-so, and so is
- *  a REPLACEMENT the probe could not settle: the key it would displace works
- *  (a made-up key replaced a working one on the rig while the probe read
- *  "unverifiable", #2895). On create there is nothing to lose. */
-function refuseUnverified(res: import("express").Response, verification: ConnectionVerification): void {
-  const invalid = verification.state === "invalid";
-  res.status(409).json({
-    error: {
-      code: invalid ? "key_invalid" : "key_unverifiable",
-      message: verification.message ?? (invalid ? "The provider rejected this key." : "The key could not be verified just now."),
-    },
-    verification,
-  });
 }
 
 /** Every org id the user actually belongs to — guards explicit routing so you
@@ -295,7 +280,7 @@ connectionsRouter.post("/me/connections", requireAuth, async (req, res, next) =>
     // saved as unverified, not as ready.
     let verification = await probeForSave(parsed.data.provider_id, parsed.data.credentials, req.session!.id);
     if (verification?.state === "invalid" && !parsed.data.confirm_unverified) {
-      refuseUnverified(res, verification);
+      res.status(409).json(unverifiedRefusal(verification));
       return;
     }
     if (verification?.state === "invalid") verification = { ...verification, state: "unverified" };
@@ -352,7 +337,7 @@ connectionsRouter.patch("/me/connections/:id", requireAuth, async (req, res, nex
     // the new state as it is.
     const displacesWorking = stored?.verification?.state === "verified";
     if (verification && (verification.state === "invalid" || (verification.state !== "verified" && displacesWorking)) && !parsed.data.confirm_unverified) {
-      refuseUnverified(res, verification);
+      res.status(409).json(unverifiedRefusal(verification));
       return;
     }
     if (verification?.state === "invalid") verification = { ...verification, state: "unverified" };

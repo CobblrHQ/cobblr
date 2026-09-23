@@ -1,5 +1,6 @@
 {
   "lint": "lint:generated-artifact-paths",
+  "run": "tsx scripts/lint-generated-artifact-paths.ts",
   "ms": 426,
   "recorded": "2026-09-14",
   "source": "split from scripts/lint-durations.json (recorded 2026-09-14)"

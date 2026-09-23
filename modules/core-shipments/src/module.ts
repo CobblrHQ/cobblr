@@ -21,7 +21,7 @@ import { defineModule } from "@cobblr/platform-contract";
 
 export default defineModule({
   name: "core-shipments",
-  version: "0.6.3",
+  version: "0.6.4",
   maturity: "beta",
   displayName: "Shipments",
   description:

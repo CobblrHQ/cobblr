@@ -16,6 +16,7 @@ import { requireRole } from "../auth/capability.js";
 import { withTenant } from "../middleware/tenant.js";
 import { validateBundle, applyValidatedBundle } from "./bundles.js";
 import {
+  bundleMenuField,
   flagshipBundleMenu,
   flagshipBundleTargets,
   getFlagshipManifest,
@@ -121,13 +122,7 @@ async function mergeScopedFieldsIntoBundleMenu(
     const defs = await resolveFieldDefsForKind(orgId, base);
     const scoped: BundleMenuField[] = defs
       .filter((d) => d.scope && d.type !== "computed")
-      .map((d) => ({
-        name: d.name,
-        label: d.display_label,
-        type: d.type,
-        ...(d.help ? { help: d.help } : {}),
-        ...(Array.isArray(d.choices) && d.choices.length ? { choices: d.choices } : {}),
-      }));
+      .map((d) => bundleMenuField(d as unknown as Record<string, unknown>));
     scopedByBase.set(base, scoped);
     return scoped;
   };

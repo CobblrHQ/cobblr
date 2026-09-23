@@ -70,3 +70,23 @@ export function verificationLabel(v: ConnectionVerification | null | undefined):
       return "Not checked yet";
   }
 }
+
+/** The 409 body for a key saved without the person's say-so: one the probe
+ *  rejected, or a REPLACEMENT the probe could not settle, because the key it
+ *  would displace works (a made-up key replaced a working one while the probe
+ *  read "unverifiable", #2895). On create there is nothing to lose. Both doors
+ *  that save a key, a personal connection and a workspace AI provider, answer
+ *  with this, so the panel reads one refusal (#3499). */
+export function unverifiedRefusal(verification: ConnectionVerification): {
+  error: { code: "key_invalid" | "key_unverifiable"; message: string };
+  verification: ConnectionVerification;
+} {
+  const invalid = verification.state === "invalid";
+  return {
+    error: {
+      code: invalid ? "key_invalid" : "key_unverifiable",
+      message: verification.message ?? (invalid ? "The provider rejected this key." : "The key could not be verified just now."),
+    },
+    verification,
+  };
+}

@@ -3,6 +3,7 @@ type: feature
 scope: scan
 date: 2026-08-15
 docs_target: docs/USER_GUIDE.md#3.20 Scan inbox (`core-scan`, stock)
+docs_published: 2026-09-23
 ---
 Scan inbox cards now carry a camera button. On a phone it opens the camera pointed at that item. At a desk, where you probably cannot take the picture, it marks the item instead so it comes to you on your phone rather than you hunting for it in a long list.
 

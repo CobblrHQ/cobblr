@@ -23,7 +23,7 @@
  * The self-host stack is immune (`deploy/selfhost` uses `env_file:`), so it is not read
  * here.
  *
- *   pnpm run lint:env-reaches-container
+ *   pnpm run lint env-reaches-container
  */
 import { readFileSync } from "node:fs";
 import { join } from "node:path";

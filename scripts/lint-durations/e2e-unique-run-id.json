@@ -1,5 +1,6 @@
 {
   "lint": "lint:e2e-unique-run-id",
+  "run": "tsx scripts/lint-e2e-unique-run-id.ts",
   "ms": 376,
   "recorded": "2026-09-14",
   "source": "split from scripts/lint-durations.json (recorded 2026-09-14)"

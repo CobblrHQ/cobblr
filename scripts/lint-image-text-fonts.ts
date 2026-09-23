@@ -12,7 +12,7 @@
 // tidying the apk line, silently reverting it. A blank label is invisible in
 // code review and in CI, which is exactly what a check is for.
 //
-//   npx tsx scripts/lint-image-text-fonts.ts    (npm run lint:image-text-fonts)
+//   npx tsx scripts/lint-image-text-fonts.ts    (pnpm run lint image-text-fonts)
 
 import { readFileSync, readdirSync, statSync } from "node:fs";
 import { fileURLToPath } from "node:url";

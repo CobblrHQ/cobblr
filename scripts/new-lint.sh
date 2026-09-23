@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# Scaffold a new repo lint: the file, its package.json entry, and its claim in
-# the placement registry, in one step, so a new rule cannot be half-wired.
+# Scaffold a new repo lint: the file and its record, in one step, so a new rule
+# cannot be half-wired.
 #
 #   scripts/new-lint.sh <slug> --row <placement-row-id> --rule "<one sentence>" \
 #       [--incident "<what happened, when>"] [--roots "api/src,modules"] [--fix "<hint>"]
@@ -11,12 +11,14 @@
 #   1. scripts/lint-<slug>.ts from scripts/templates/lint.template.ts. The first
 #      sentence of the header IS the rule `pnpm run where` prints, so it is a
 #      required argument rather than a placeholder to forget.
-#   2. "lint:<slug>" in package.json. scripts/run-lints.mjs discovers lints from
-#      there and lint:lints-are-wired fails a lint file nothing registers; two
-#      lints were once found that had never run (2026-07-30).
-#   3. the row in scripts/placement-registry.ts names the new lint, or
-#      lint:placement refuses it: enforcement may not be added without saying
-#      which kind of work it governs.
+#   2. scripts/lint-durations/<slug>.json, the lint's RECORD: the command that
+#      runs it, the placement row that claims it, and its first quiet time.
+#      scripts/run-lints.mjs discovers lints from these records and
+#      lint:placement reads the claim from it. It used to be a line in
+#      package.json plus an entry appended to the row's array in
+#      scripts/placement-registry.ts, so any two branches adding a lint
+#      conflicted in both files by construction (#3455). Now a new lint is two
+#      NEW files and touches nothing shared.
 #   4. runs the new lint once. The scaffold passes with no rule written, which
 #      proves the file loads; the rule is yours to write, and to PROVE RED on
 #      the real violation before you fix that violation.
@@ -57,7 +59,7 @@ die() { echo "new-lint: $*" >&2; exit 2; }
 case "$RULE" in *"—"*) die "the rule carries an em dash; lint:no-emdash will refuse it";; esac
 FILE="scripts/lint-$SLUG.ts"
 [ ! -e "$FILE" ] || die "$FILE already exists"
-grep -q "\"lint:$SLUG\"" package.json && die "package.json already has lint:$SLUG"
+[ ! -e "scripts/lint-durations/$SLUG.json" ] || die "lint:$SLUG is already registered (scripts/lint-durations/$SLUG.json)"
 grep -q "    id: \"$ROW\"," scripts/placement-registry.ts || die "no placement row with id \"$ROW\" (scripts/new-lint.sh --rows)"
 if [[ "$RULE" == *" only "* || "$RULE" == *"one implementation"* || "$RULE" == *"exactly one"* ]]; then
   echo "new-lint: NOTE the rule reads like 'one implementation only'. That is a ROW in scripts/capabilities.ts, not a script (docs/design-decisions/capability-registry.md). Continuing anyway."
@@ -75,41 +77,6 @@ fs.writeFileSync(file, t);
 NODE
 chmod +x "$FILE"
 
-# 2. package.json: after the last lint:* entry, keeping the file valid JSON
-node - "$SLUG" <<'NODE'
-const fs = require("fs");
-const slug = process.argv[2];
-const src = fs.readFileSync("package.json", "utf8");
-const lines = src.split("\n");
-let last = -1;
-lines.forEach((l, i) => { if (/^    "lint:[^"]+": /.test(l)) last = i; });
-if (last < 0) { console.error("new-lint: no lint:* entries found in package.json"); process.exit(2); }
-// If the last lint entry is also the last key of "scripts" it has no trailing
-// comma; the new line then takes its place as last key, comma-less.
-const wasLastKey = !lines[last].trim().endsWith(",");
-if (wasLastKey) lines[last] = lines[last] + ",";
-lines.splice(last + 1, 0, `    "lint:${slug}": "tsx scripts/lint-${slug}.ts"${wasLastKey ? "" : ","}`);
-const out = lines.join("\n");
-JSON.parse(out);
-fs.writeFileSync("package.json", out);
-NODE
-node -e 'JSON.parse(require("fs").readFileSync("package.json","utf8"))' || die "package.json is no longer valid JSON; revert it (git checkout package.json)"
-
-# 3. the placement row's lints array
-node - "$SLUG" "$ROW" <<'NODE'
-const fs = require("fs");
-const [slug, row] = process.argv.slice(2);
-let s = fs.readFileSync("scripts/placement-registry.ts", "utf8");
-const at = s.indexOf(`    id: "${row}",`);
-const lintsAt = s.indexOf("    lints: [", at);
-const close = s.indexOf("]", lintsAt);
-if (at < 0 || lintsAt < 0 || close < 0) { console.error("new-lint: could not find the lints array of row " + row); process.exit(2); }
-const before = s.slice(lintsAt, close);
-const sep = before.trim().endsWith("[") ? "" : ", ";
-s = s.slice(0, close) + `${sep}"lint:${slug}"` + s.slice(close);
-fs.writeFileSync("scripts/placement-registry.ts", s);
-NODE
-
 # 4. it must load and pass empty, and that run is its first recorded time.
 #    The budget judges a lint it has never heard of at the snapshot median and
 #    fails it at the ceiling with no re-measure, so an unrecorded lint is a
@@ -124,33 +91,32 @@ if ! npx tsx "$FILE"; then die "the scaffold did not run clean; that is a bug in
 START_MS=$(node -e 'process.stdout.write(String(Date.now()))')
 npx tsx "$FILE" >/dev/null 2>&1 || true
 END_MS=$(node -e 'process.stdout.write(String(Date.now()))')
-START_MS="$START_MS" END_MS="$END_MS" SLUG="$SLUG" node --input-type=module -e "
-  const { writeQuietMs } = await import('./scripts/lib/lint-durations.mjs');
+START_MS="$START_MS" END_MS="$END_MS" SLUG="$SLUG" ROW="$ROW" node --input-type=module -e "
+  const { registerLint } = await import('./scripts/lib/lint-durations.mjs');
   const took = Number(process.env.END_MS) - Number(process.env.START_MS);
   const { CEILING_MS } = await import('./scripts/lib/lint-budget.mjs');
   // Capped at the budget's own ceiling: a loaded dev box can time a trivial
   // lint at ten seconds, and doubling that would be a hole rather than a
   // baseline. The first CI measurement replaces it either way.
   const guess = Math.min(CEILING_MS, Math.max(500, took * 2));
-  const p = writeQuietMs('lint:' + process.env.SLUG, guess, 'scaffolded by new-lint.sh at twice a local run (a shared box); replaced from its first CI measurement');
-  console.log('new-lint: recorded ' + p.replace(process.cwd() + '/', ''));
-" || die "could not record the lint's quiet time"
+  const p = registerLint('lint:' + process.env.SLUG, { run: 'tsx scripts/lint-' + process.env.SLUG + '.ts', rows: [process.env.ROW] }, guess, 'scaffolded by new-lint.sh at twice a local run (a shared box); replaced from its first CI measurement');
+  console.log('new-lint: registered ' + p.replace(process.cwd() + '/', ''));
+" || die "could not write the lint's record"
 
 cat <<MSG
 
 new-lint: scaffolded lint:$SLUG
   file       $FILE
-  registered package.json  ->  "lint:$SLUG"
-  claimed    scripts/placement-registry.ts  row "$ROW"
+  record     scripts/lint-durations/$SLUG.json  (its command, row "$ROW", a first time)
 
 Next, in this order:
   1. Write check() in $FILE. Keep ROOTS as narrow as the rule.
-  2. Prove it RED on the real violation:   pnpm run lint:$SLUG
+  2. Prove it RED on the real violation:   pnpm lint $SLUG
   3. Fix the violation, run it again, green.
-  4. pnpm run lint:placement && pnpm run lint:lints-are-wired && pnpm run lint:no-emdash
+  4. pnpm lint placement && pnpm lint lints-are-wired && pnpm lint no-emdash
   5. If it imports a new file of yours, add that file to scripts/publish/manifests/core.json.
-  6. Its quiet time is ALREADY RECORDED, in scripts/lint-durations/$SLUG.json,
-     at twice this scaffold's own run. Nothing to do by hand. CI's own clock
+  6. Its quiet time is ALREADY RECORDED, in its record, at twice this
+     scaffold's own run. Nothing to do by hand. CI's own clock
      replaces that estimate the first time the lint runs there:
      node scripts/lint-durations-record-missing.mjs
 MSG

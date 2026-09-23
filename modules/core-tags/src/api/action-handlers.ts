@@ -11,12 +11,20 @@ import { sql, type Kysely } from "kysely";
 import { platform, requireActionEntity } from "@cobblr/platform-contract";
 import type { CoreTagsDB } from "../db.js";
 import { mergeTagInto } from "./tags.js";
+import { splitEntityKind } from "@cobblr/platform-contract/entity-kind";
 
 let registered = false;
 
+/** `<module>:<type>` → the two halves of the source triple, by the
+ *  contract's one split (the kernel's tag seam uses it too), or null for a
+ *  kind that is not one. */
 function splitKind(kind: string): { source_module: string; source_type: string } | null {
-  const [source_module, source_type] = kind.split(":");
-  return source_module && source_type ? { source_module, source_type } : null;
+  try {
+    const { module, type } = splitEntityKind(kind);
+    return { source_module: module, source_type: type };
+  } catch {
+    return null;
+  }
 }
 
 export function registerTagActionHandlers(): void {

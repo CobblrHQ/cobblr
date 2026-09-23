@@ -3516,8 +3516,7 @@ superAdminRouter.post("/authoring-eval", async (req, res, next) => {
           source: { kind: "core-authoring:eval", id: parsed.data.intent.slice(0, 60) },
           userId,
         });
-        const result = r.result as { content?: string; text?: string } | string;
-        text = typeof result === "string" ? result : result?.content ?? result?.text ?? "";
+        text = r.text;
       } catch (err) {
         res.json({ interpretation: null, bundle: null, seed: [], validation: { valid: false, preview: null, errors: [{ path: "", code: "ai_error", message: (err as Error).message }] }, warnings: ctx.warnings });
         return;

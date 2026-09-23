@@ -3,6 +3,7 @@ type: feature
 scope: discussion
 date: 2026-08-23
 docs_target: docs/modules/core-discussion.md#Keeping up
+docs_published: 2026-09-23
 ---
 Discussions now keep up with you: a Discussion page listing everything with something new in it, an unread dot, and a bell to follow or stop following any record.
 

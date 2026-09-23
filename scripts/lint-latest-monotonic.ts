@@ -2,11 +2,13 @@
 /**
  * lint:latest-monotonic — `:latest` may only ever ADVANCE to a newer commit.
  *
- * Main's CI and image builds run one group PER COMMIT, so two merges in quick
- * succession build at the same time on different machines and can finish in
- * either order. That is only safe because the push step refuses to move
+ * Main's image builds run one at a time now (one group per ref, #3551), but a
+ * workflow_dispatch, a re-run or a build that outlives its successor can still
+ * finish out of order. That is only safe because the push step refuses to move
  * `:latest` backwards: it reads the commit timestamp off the image `:latest`
- * currently points at and skips its own push when that one is newer.
+ * currently points at and skips its own push when that one is newer. (From
+ * 2026-09-09 to 2026-09-23 main built one group PER COMMIT, which made
+ * overlapping builds the normal case; the guard predates both.)
  *
  * Take the guard away and nothing fails, nothing goes red, and the fleet
  * quietly starts deploying whichever build happened to finish last — which on
@@ -38,9 +40,13 @@ const pushIdx = src.search(/docker push "\$IMG:latest"/);
 if (guardIdx < 0 || pushIdx < 0 || guardIdx > pushIdx) {
   problems.push(`${FILE}: the :latest push is not behind the timestamp comparison.`);
 }
-// Per-commit groups are the reason this matters; say so if they ever go away.
-if (!/group: docker-build-\$\{\{ github\.ref \}\}-\$\{\{ github\.ref == 'refs\/heads\/main' && github\.sha/.test(src)) {
-  problems.push(`${FILE}: main no longer builds one group per commit — if that was deliberate, this lint's premise changed; read its header before deleting it.`);
+// One build at a time, the latest waiting (#3551). A per-commit group lets a
+// burst of merges build concurrently for commits main has already passed.
+if (!/^\s*group: docker-build-\$\{\{ github\.ref \}\}\s*$/m.test(src)) {
+  problems.push(`${FILE}: the build group is no longer one per ref, so a burst of merges builds every commit at once (#3551). If that is deliberate, it is the owner's call to reverse; read this lint's header.`);
+}
+if (!/context:"image \/ superseded"/.test(src)) {
+  problems.push(`${FILE}: the gate no longer marks a superseded commit ("image / superseded"), so a commit with no image says nothing about why.`);
 }
 
 if (problems.length) {

@@ -3,6 +3,7 @@ type: feature
 scope: ai
 date: 2026-08-19
 docs_target: docs/USER_GUIDE.md#2. Core concepts
+docs_published: 2026-09-23
 ---
 Cobb's answers now appear as they are written, a few words at a time, instead of the whole thing landing at the end of a long wait. A reply that takes ten seconds starts showing up after three. This works with a self-hosted Claude bridge, which now streams from the CLI for real rather than waiting for the whole answer and sending it in one piece, and with any other provider whose API streams.
 

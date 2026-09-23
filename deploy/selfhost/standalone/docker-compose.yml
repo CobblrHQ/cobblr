@@ -115,6 +115,10 @@ services:
       # off-box copy (rsync, restic, a cloud sync) can run after it instead of
       # guessing.
       BACKUP_AT: ${BACKUP_AT:-03:00}
+      # The zone BACKUP_AT is read in. The container's own clock is UTC, so
+      # without this 03:00 means 03:00 UTC. Set BACKUP_TZ (or TZ) in .env to
+      # the zone your off-box copy runs in, e.g. Europe/Berlin.
+      BACKUP_TZ: ${BACKUP_TZ:-${TZ:-}}
       BACKUP_PREFIX: ${BACKUP_PREFIX:-cobblr}
     volumes:
       - ${COBBLR_DATA_ROOT:-./data}/backups:/backups

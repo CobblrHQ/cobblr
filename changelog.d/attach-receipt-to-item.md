@@ -3,6 +3,7 @@ type: feature
 scope: scan
 date: 2026-08-16
 docs_target: docs/USER_GUIDE.md#3.20 Scan inbox (`core-scan`, stock)
+docs_published: 2026-09-23
 ---
 You can attach a receipt to an item you already have. Choose the PDF from the item's own camera button and Cobblr reads it into a purchase, links the item to it, and puts nothing in your inbox, because that item is already there.
 

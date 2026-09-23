@@ -25,7 +25,7 @@
 // never failed has never been verified. Red first on WhatToDoPanel's box at
 // 5611bc454 (COBBLR_LINT_ROOT=<a checkout> points it at another tree).
 //
-//   npx tsx scripts/lint-phone-input-font.ts   (pnpm run lint:phone-input-font)
+//   npx tsx scripts/lint-phone-input-font.ts   (pnpm run lint phone-input-font)
 import { readFileSync, readdirSync, statSync } from "node:fs";
 import { join } from "node:path";
 

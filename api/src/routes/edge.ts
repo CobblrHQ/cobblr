@@ -35,26 +35,23 @@ import { requireAuth } from "../auth/middleware.js";
 import { requireRole } from "../auth/capability.js";
 import { withTenant } from "../middleware/tenant.js";
 import { meta } from "../db/meta.js";
+import { edgeBridgeName, edgeChannelKey } from "@cobblr/platform-contract/edge-channel";
 
 export const edgeRouter = Router({ mergeParams: true });
 edgeRouter.use(requireAuth, withTenant);
 
 /** Channel key for this request — `orgId` for the default bridge, or
- *  `orgId::<name>` when the bridge polls with ?bridge=<name>. Same format as
- *  digifab's edgeChannelKey, so consumers reach bridges registered via either
- *  the generic wire or the legacy digifab alias. */
+ *  `orgId::<name>` when the bridge polls with ?bridge=<name>, derived the one
+ *  way every sender derives it (@cobblr/platform-contract/edge-channel). */
 function channelKeyOf(req: Request): string {
-  const orgId = req.tenant!.org.id;
-  const b = req.query.bridge;
-  return typeof b === "string" && b ? `${orgId}::${b.slice(0, 60)}` : orgId;
+  return edgeChannelKey(req.tenant!.org.id, req.query.bridge);
 }
 
 /** The bridge's own id, when it polls with ?bridge=<name>. Null means the
  *  workspace's default bridge — same convention as channelKeyOf above, so a
  *  workspace with several sites scopes drivers the way it scopes channels. */
 function bridgeIdOf(req: Request): string | null {
-  const b = req.query.bridge;
-  return typeof b === "string" && b ? b.slice(0, 60) : null;
+  return edgeBridgeName(req.query.bridge);
 }
 
 // ── The wire (spoken by the bridge, authed with a devices:edge token) ──

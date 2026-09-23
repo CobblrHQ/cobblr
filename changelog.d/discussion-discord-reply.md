@@ -3,6 +3,7 @@ type: feature
 scope: discussion
 date: 2026-08-24
 docs_target: docs/modules/core-discussion.md#Answering from Discord
+docs_published: 2026-09-23
 ---
 When someone mentions you, the Discord DM now carries a Reply button: press it, type, and your answer lands in the discussion without opening Cobblr.
 

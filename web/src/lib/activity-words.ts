@@ -75,3 +75,36 @@ export function updatedFieldsWords(diff: unknown): string | null {
 export function hiddenFromDashboard(e: ActivityWordsEntry): boolean {
   return AUTOMATION_ACTIONS.has(e.action) && automationWords(e).hidden;
 }
+
+/** The verb a feed row puts between who and what: one map for every feed
+ *  (the dashboard's recent activity and the account's own log each kept a
+ *  copy, and they had drifted: only one knew what an automation row says). */
+export function activityVerb(a: string): string {
+  // Cobblr's action names are snake_case verbs like 'task_created'
+  // / 'pairing_created' / 'login'. Turn them into human prose.
+  const map: Record<string, string> = {
+    created: "created",
+    updated: "updated",
+    deleted: "deleted",
+    login: "signed in",
+    user_created: "joined",
+    pairing_created: "linked",
+    pairing_deleted: "unlinked",
+    // A boot pass moved the record to the table its fields belong to (the
+    // Groceries base-kind twin, 2026-09-13); the row says so, not "system".
+    moved_by_upgrade: "moved into its own table by the upgrade:",
+    // "ran a wire" read as jargon to a new user (2026-09-12): the row is
+    // "<actor> <verb> <event -> action>", so the verb says what happened.
+    wire_fired: "ran an automation",
+    wire_failed: "automation failed",
+    // A trial brought in from the demo box; the row's title is the trial's name.
+    carry_replayed: "brought in their trial:",
+  };
+  if (map[a]) return map[a];
+  // 'task_created' → 'created task' (the entity_type is already
+  // rendered on the row, so we just need the verb).
+  if (a.endsWith("_created")) return "created";
+  if (a.endsWith("_updated")) return "updated";
+  if (a.endsWith("_deleted")) return "deleted";
+  return a.replace(/_/g, " ");
+}

@@ -3,6 +3,7 @@ type: feature
 scope: scan
 date: 2026-09-15
 docs_target: docs/USER_GUIDE.md#3.20 Scan inbox (`core-scan`, stock)
+docs_published: 2026-09-23
 ---
 A scan inbox row has one name, yours when you gave it one: typing in a card's box is never interrupted by the row refreshing underneath, the desktop card's title edits in place with a tap, and a re-run of the AI offers its read beside your name instead of replacing it.
 

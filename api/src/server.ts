@@ -24,6 +24,7 @@ import morgan from "morgan";
 import { env } from "./env.js";
 import { authRouter } from "./routes/auth.js";
 import { tryRouter } from "./routes/try.js";
+import { carryRouter } from "./routes/carry.js";
 import { sandboxEnabled } from "./platform/try-sandbox.js";
 import { requestGuardMiddleware } from "./platform/hosted-seams.js";
 import { publicRouter } from "./routes/public.js";
@@ -275,11 +276,14 @@ export function createApp(): AppHandles {
   // checks a flag, because there is nothing mounted to reach.
   if (sandboxEnabled()) {
     v1.use(tryRouter);
-    console.log("[try-sandbox] routes mounted: GET /try, GET /try/redeem, POST /try/keep");
+    console.log("[try-sandbox] routes mounted: GET /try, GET /try/redeem, POST /try/keep, POST /try/carry");
   }
   // TEST-ONLY: org-pool checkout endpoints, mounted ONLY under the flag (never
   // in prod — the route mints tokens). See routes/test-support.ts.
   if (env.COBBLR_TEST_ORG_POOL) v1.use(testSupportRouter);
+  // The receiving end of a trial's "bring what I built": on every deployment,
+  // answering only where COBBLR_CARRY_SOURCES names somewhere to read from.
+  v1.use(carryRouter);
   v1.use(meRouter);
   // A one-shot URL for a document that must run inline scripts (a custom app
   // block, an installed renderer). The GET is unauthenticated on purpose --

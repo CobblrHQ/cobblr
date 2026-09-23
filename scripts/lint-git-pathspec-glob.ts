@@ -25,7 +25,7 @@
 // `execFileSync("git", ["grep", "-l", "x", "--", "api/src/**/*.ts"])` in a
 // scratch script under scripts/, run it, watch it fail, delete the file.
 //
-//   npx tsx scripts/lint-git-pathspec-glob.ts   (pnpm run lint:git-pathspec-glob)
+//   npx tsx scripts/lint-git-pathspec-glob.ts   (pnpm run lint git-pathspec-glob)
 import { readFileSync } from "node:fs";
 import { sourceFiles } from "./lib/glob-exclude.mjs";
 

@@ -16,7 +16,7 @@ import { publicBaseUrl } from "./public-url.js";
 const CLIENT_ID = process.env.DISCORD_CLIENT_ID || "";
 const CLIENT_SECRET = process.env.DISCORD_CLIENT_SECRET || "";
 // Must match a redirect registered on the Discord app. Defaults to the public
-// base + the callback route when COBBLR_PUBLIC_URL is set.
+// base + the callback route when PUBLIC_BASE_URL is set.
 const REDIRECT_URI =
   process.env.DISCORD_REDIRECT_URI ||
   (publicBaseUrl() ? `${publicBaseUrl()}/api/v1/me/discord/oauth-callback` : "");

@@ -3,6 +3,7 @@ type: feature
 scope: purchases
 date: 2026-08-13
 docs_target: docs/USER_GUIDE.md#3.25c Reading a purchase order
+docs_published: 2026-09-23
 ---
 Paste a tracking number on an order and Cobblr works out which carrier it belongs to, then links you straight to their tracking page.
 

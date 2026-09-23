@@ -3,6 +3,7 @@ type: feature
 scope: navigation
 date: 2026-09-13
 docs_target: docs/USER_GUIDE.md#Top nav
+docs_published: 2026-09-23
 ---
 
 The Scan Inbox row now shows how many captures are waiting to be filed, in the sidebar, the top bar and the phone menu, and the full-sidebar foot puts Scan first on its own row with your account last.

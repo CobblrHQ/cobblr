@@ -5,7 +5,7 @@
 // data + shows a lying `items.length` count (the "100 actions" bug). Growable
 // lists should use `useInfiniteQuery` + `{items, next_cursor, total}` instead.
 //
-//   npx tsx scripts/lint-pagination.ts        (npm run lint:pagination)
+//   npx tsx scripts/lint-pagination.ts        (pnpm run lint pagination)
 //
 // Runs against a committed BASELINE (scripts/pagination-baseline.json) of the
 // caps that predate the convention, so it only FAILS on NEW offenders — the

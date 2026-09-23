@@ -1,5 +1,6 @@
 {
   "lint": "lint:dockerfile-copies-ship",
+  "run": "tsx scripts/lint-dockerfile-copies-ship.ts",
   "ms": 1600,
   "recorded": "2026-09-14",
   "source": "split from scripts/lint-durations.json (recorded 2026-09-14)"

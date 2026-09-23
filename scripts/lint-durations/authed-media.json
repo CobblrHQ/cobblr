@@ -1,5 +1,6 @@
 {
   "lint": "lint:authed-media",
+  "run": "tsx scripts/lint-authed-media.ts",
   "ms": 386,
   "recorded": "2026-09-14",
   "source": "split from scripts/lint-durations.json (recorded 2026-09-14)"

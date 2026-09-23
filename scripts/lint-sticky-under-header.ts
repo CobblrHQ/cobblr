@@ -29,7 +29,7 @@
 // that motivated it, watch it fail, then fix the violation. A lint that has
 // never failed has never been verified.
 //
-//   npx tsx scripts/lint-sticky-under-header.ts   (pnpm run lint:sticky-under-header)
+//   npx tsx scripts/lint-sticky-under-header.ts   (pnpm run lint sticky-under-header)
 import { readFileSync, readdirSync, statSync } from "node:fs";
 import { join } from "node:path";
 

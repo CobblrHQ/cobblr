@@ -22,7 +22,7 @@
 // PROVE IT RED before you trust it green: put `expect(Date.now() - t0)
 // .toBeLessThan(1000)` in a test file, run it, watch it fail, take it out.
 //
-//   npx tsx scripts/lint-wall-clock-assertions.ts   (pnpm run lint:wall-clock-assertions)
+//   npx tsx scripts/lint-wall-clock-assertions.ts   (pnpm run lint wall-clock-assertions)
 import { readFileSync } from "node:fs";
 import { sourceFiles } from "./lib/glob-exclude.mjs";
 // A file that reads a clock and asserts an UPPER bound is where a wall-clock

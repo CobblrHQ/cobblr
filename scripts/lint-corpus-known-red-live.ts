@@ -35,7 +35,7 @@
 // PROVEN RED 2026-09-17 against a marker on a closed issue (#3154, closed by
 // #3169 the same evening) before the marker was removed.
 //
-//   npx tsx scripts/lint-corpus-known-red-live.ts   (pnpm run lint:corpus-known-red-live)
+//   npx tsx scripts/lint-corpus-known-red-live.ts   (pnpm run lint corpus-known-red-live)
 import { existsSync, readFileSync } from "node:fs";
 import { execSync } from "node:child_process";
 import { CHAT_CORPUS } from "../modules/core-ai/src/chat-corpus.js";

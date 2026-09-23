@@ -16,7 +16,7 @@ import { suggestKinds } from "../lib/suggest-kinds";
 import { useBundleDetail } from "../components/useBundleDetail";
 import { useQuery } from "@tanstack/react-query";
 import { Wand2, Copy, Check, AlertTriangle, Sparkles } from "lucide-react";
-import { usePageTitle, useToast } from "@cobblr/platform-web";
+import { useLater, usePageTitle, useToast } from "@cobblr/platform-web";
 import { useActiveOrg } from "../auth/ActiveOrgContext";
 import { api, ApiError, type BundleValidation } from "../lib/api";
 import { Cobb } from "../components/Cobb";
@@ -54,6 +54,7 @@ function CobbAtWork({ children }: { children: ReactNode }) {
 }
 
 function CopyButton({ text, label = "Copy" }: { text: string; label?: string }) {
+  const later = useLater();
   const [done, setDone] = useState(false);
   return (
     <button
@@ -61,7 +62,7 @@ function CopyButton({ text, label = "Copy" }: { text: string; label?: string }) 
       onClick={async () => {
         await navigator.clipboard.writeText(text).catch(() => {});
         setDone(true);
-        setTimeout(() => setDone(false), 1500);
+        later.after("done", 1500, () => setDone(false));
       }}
       className="inline-flex items-center gap-1.5 rounded-md bg-cobble-600 hover:bg-cobble-700 text-white text-sm font-medium px-3 py-1.5 transition"
     >

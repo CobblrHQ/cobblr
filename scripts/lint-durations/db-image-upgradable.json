@@ -1,5 +1,6 @@
 {
   "lint": "lint:db-image-upgradable",
+  "run": "tsx scripts/lint-db-image-upgradable.ts",
   "ms": 418,
   "recorded": "2026-09-14",
   "source": "split from scripts/lint-durations.json (recorded 2026-09-14)"

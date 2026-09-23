@@ -16,7 +16,8 @@
 
 import { Router } from "express";
 import { z } from "zod";
-import { createHash, verify as cryptoVerify, createPublicKey } from "node:crypto";
+import { createHash } from "node:crypto";
+import { verifyEd25519 } from "@cobblr/platform-contract/signature";
 import { mkdirSync, writeFileSync, existsSync, rmSync } from "node:fs";
 import { join as joinPath } from "node:path";
 import { spawnSync } from "node:child_process";
@@ -56,12 +57,6 @@ const DEFAULT_REGISTRY =
   process.env.COBBLR_REGISTRY_URL ||
   "https://raw.githubusercontent.com/CobblrHQ/registry/main/modules.json";
 
-function verifyEd25519(publicKeyB64: string, tarball: Buffer, signatureB64: string): boolean {
-  const keyDer = Buffer.from(publicKeyB64, "base64");
-  const pubKey = createPublicKey({ key: keyDer, format: "der", type: "spki" });
-  const sig = Buffer.from(signatureB64, "base64");
-  return cryptoVerify(null, tarball, pubKey, sig);
-}
 
 /** Audit a tarball's members BEFORE extraction. Even though the tarball
  *  is ed25519-verified and only a super-admin can install, a malicious
@@ -171,10 +166,7 @@ sandboxInstallRouter.post("/install", async (req, res, next) => {
       });
       return;
     }
-    const sigB64 = versionSpec.signature.startsWith("ed25519:")
-      ? versionSpec.signature.slice("ed25519:".length)
-      : versionSpec.signature;
-    if (!verifyEd25519(modSpec.public_key_ed25519, tarball, sigB64)) {
+    if (!verifyEd25519(modSpec.public_key_ed25519, tarball, versionSpec.signature)) {
       res.status(400).json({
         error: { code: "bad_signature", message: "ed25519 signature did NOT verify" },
       });

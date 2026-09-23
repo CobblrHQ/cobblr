@@ -21,6 +21,7 @@
 import { platform, restoreRow, snapshotRow } from "@cobblr/platform-contract";
 import { sql, type Kysely } from "kysely";
 import type { InventoryDB } from "../db.js";
+import { adoptAxisValuesInto } from "./adopt-axis-values.js";
 
 let registered = false;
 
@@ -69,6 +70,13 @@ export function registerInventoryWriter(): void {
      *  has something real to put back (EntityWriter.snapshot). */
     async snapshot(orgId, id) {
       return snapshotRow(await platform().tenants.getDb(orgId), "inventory_parts", id);
+    },
+
+    /** Scan-category values into inventory's own tree, before the platform
+     *  removes the field they were held under (#3223). See adopt-axis-values.ts. */
+    async adoptAxisValues(orgId, args) {
+      const db = (await platform().tenants.getDb(orgId)) as Kysely<InventoryDB>;
+      return adoptAxisValuesInto(db, args);
     },
 
     async read(orgId, id) {

@@ -18,6 +18,7 @@ import { AsyncLocalStorage } from "node:async_hooks";
 import { meta } from "../db/meta.js";
 import { lookupMany } from "./entities.js";
 import type { ResolvedEntity } from "@cobblr/platform-contract";
+import { coerceMetadata } from "@cobblr/platform-contract/entity-metadata";
 
 interface RelDef {
   name: string;
@@ -55,19 +56,6 @@ async function relationDefsFor(orgId: string, kind: string): Promise<RelDef[]> {
   }
   cache.set(key, { at: Date.now(), defs });
   return defs;
-}
-
-function coerceMetadata(raw: unknown): Record<string, unknown> {
-  if (raw && typeof raw === "object") return { ...(raw as Record<string, unknown>) };
-  if (typeof raw === "string" && raw.trim()) {
-    try {
-      const p = JSON.parse(raw);
-      if (p && typeof p === "object") return p as Record<string, unknown>;
-    } catch {
-      /* not JSON */
-    }
-  }
-  return {};
 }
 
 /** Inject `<name>_label` for each relation field on the entity, resolving the

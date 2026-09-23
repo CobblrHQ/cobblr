@@ -17,7 +17,7 @@
 // that motivated it, watch it fail, then fix the violation. A lint that has
 // never failed has never been verified.
 //
-//   npx tsx scripts/lint-contract-sibling-imports.ts   (pnpm run lint:contract-sibling-imports)
+//   npx tsx scripts/lint-contract-sibling-imports.ts   (pnpm run lint contract-sibling-imports)
 import { readFileSync, readdirSync, statSync } from "node:fs";
 import { join } from "node:path";
 

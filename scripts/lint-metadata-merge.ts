@@ -19,7 +19,7 @@
 // Allowed: mergeMeta / identityMeta / dropMeta, or a raw sql`` expression that
 // evaluates against the LIVE row. Banned: a JS object or a JSON.stringify of one.
 //
-//   npx tsx scripts/lint-metadata-merge.ts   (npm run lint:metadata-merge)
+//   npx tsx scripts/lint-metadata-merge.ts   (pnpm run lint metadata-merge)
 
 import { readFileSync, readdirSync, statSync } from "node:fs";
 import { fileURLToPath } from "node:url";

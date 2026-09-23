@@ -24,7 +24,7 @@
 // PROVEN RED 2026-09-20 against the tick before its entries were keyed (14
 // violations), then green once they were.
 //
-//   npx tsx scripts/lint-tick-problems-keyed.ts   (pnpm run lint:tick-problems-keyed)
+//   npx tsx scripts/lint-tick-problems-keyed.ts   (pnpm run lint tick-problems-keyed)
 import { readFileSync } from "node:fs";
 
 const FILE = "scripts/ci-runner-health.sh";

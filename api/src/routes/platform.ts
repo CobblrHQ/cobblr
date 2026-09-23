@@ -21,7 +21,7 @@ import { hostedIdentifyEnabled } from "@cobblr/platform-contract/hosted-identify
 import { ocrAvailable } from "@cobblr/core-scan/services/ocr";
 import { AiCapabilities, type AiCapability } from "@cobblr/platform-contract";
 import { clearComputedDefsCache } from "../platform/computed-fields.js";
-import { effectiveAppliesTo, matchAction, getActionScope, planFor, undoFor, hasUndo } from "../platform/actions.js";
+import { actionRecordOptional, effectiveAppliesTo, enabledActionOwners, matchAction, getActionScope, planFor, undoFor, hasUndo } from "../platform/actions.js";
 import { facesForKind } from "../platform/faces.js";
 import { platformActionMinRole } from "../platform/platform-actions.js";
 import { roleSatisfies } from "@cobblr/platform-contract/org-roles";
@@ -540,10 +540,11 @@ platformOrgRouter.post(
       const isWorkspaceAction =
         (await getActionScope(parsed.data.actionId)) === "workspace";
       const args = argsOf(parsed.data, isWorkspaceAction);
-      if (
-        !isWorkspaceAction &&
-        (!parsed.data.entityKind || !parsed.data.entityId)
-      ) {
+      // An entity action that may also run with no record (its manifest says
+      // `recordOptional`) is let through without one: "put milk on the
+      // shopping list" has no record to name (#3255).
+      const hasRecord = Boolean(parsed.data.entityKind && parsed.data.entityId);
+      if (!isWorkspaceAction && !hasRecord && !(await actionRecordOptional(parsed.data.actionId))) {
         res.status(400).json({
           error: {
             code: "entity_required",
@@ -631,7 +632,7 @@ platformOrgRouter.post(
         userId: req.session!.id,
         origin: requestOrigin(req),
         scope: isWorkspaceAction ? "workspace" : "entity",
-        entity: isWorkspaceAction
+        entity: isWorkspaceAction || !hasRecord
           ? undefined
           : {
               kind: parsed.data.entityKind!,
@@ -1640,11 +1641,16 @@ platformOrgRouter.get(
         .select(["id", "fields", "traits"])
         .orderBy("id")
         .execute();
+      // Only the actions of modules this workspace has turned on: a module
+      // that is off is off for its actions too, the way its routes already
+      // are (#3255). Every reader the assistant has comes through here, so
+      // this is what keeps it from offering a card that cannot run.
+      const on = await enabledActionOwners(orgId);
       res.json({
         // An action that exists only as the way back for another is not listed
         // for anyone who did not ask: every reader the assistant has (the tool,
         // the prompt rail, the argument schemas) comes through here.
-        items: actions.filter((a) => a.internal !== true || req.query.include_internal === "1").map((a) => {
+        items: actions.filter((a) => on.has(a.module_name) && (a.internal !== true || req.query.include_internal === "1")).map((a) => {
           const ovr = overrides.get(a.id);
           const effective = (ovr?.applies_to_override ??
             a.applies_to) as ActionAppliesToDecl;
@@ -1695,6 +1701,7 @@ platformOrgRouter.get(
             // Fired by an event and nothing else, its record named by the
             // event: the assistant's readers leave it out (offerableToAssistant).
             wire_only: a.wire_only === true,
+            record_optional: a.record_optional === true,
             // Whether a run of it can be put back from the card: the handler
             // registered how. Distinct from `undoable`, which is whether an
             // AI may run it unconfirmed; a guard holds the second to imply
@@ -1791,6 +1798,7 @@ platformOrgRouter.get(
             // Fired by an event and nothing else, its record named by the
             // event: the assistant's readers leave it out (offerableToAssistant).
             wire_only: a.wire_only === true,
+            record_optional: a.record_optional === true,
             // Whether a run of it can be put back from the card: the handler
             // registered how. Distinct from `undoable`, which is whether an
             // AI may run it unconfirmed; a guard holds the second to imply

@@ -49,7 +49,7 @@ function TurnstileWidget({ siteKey, onToken }: { siteKey: string; onToken: (t: s
   return <div ref={ref} className="mt-2 flex justify-center" />;
 }
 
-export function AuthPage() {
+export function AuthPage({ initialMode }: { initialMode?: Mode } = {}) {
   usePageTitle("Sign in");
   const { login, signup } = useAuth();
   const { badge: envBadge } = useDeployEnv();
@@ -58,6 +58,7 @@ export function AuthPage() {
   // away) must land on the account form, not on a login form with a small
   // toggle underneath it. Snapped back to login below if signup is off.
   const [mode, setMode] = useState<Mode>(() => {
+    if (initialMode) return initialMode;
     try {
       return new URLSearchParams(window.location.search).get("mode") === "signup" ? "signup" : "login";
     } catch {

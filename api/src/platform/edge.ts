@@ -34,6 +34,7 @@ import type {
   EdgeRequest,
   EdgeResponse,
 } from "@cobblr/platform-contract";
+import { edgeChannelKey } from "@cobblr/platform-contract/edge-channel";
 import { BRIDGE_BUNDLE_VERSION, BRIDGE_BUNDLE_SHA256, bridgeBundleJs } from "./edge-bridge-bundle.js";
 import { BRIDGE_LOADER_JS } from "./edge-bridge-loader.js";
 
@@ -265,7 +266,7 @@ export async function relayInfo(
   orgId: string,
   bridge?: string | null,
 ): Promise<{ connected: boolean; last_seen: number | null }> {
-  const key = bridge ? `${orgId}::${bridge}` : orgId;
+  const key = edgeChannelKey(orgId, bridge);
   const row = await meta
     .selectFrom("edge_bridges")
     .select("last_seen")

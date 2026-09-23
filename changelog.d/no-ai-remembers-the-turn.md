@@ -3,6 +3,7 @@ type: feature
 scope: ai
 date: 2026-08-26
 docs_target: docs/USER_GUIDE.md#2. Core concepts
+docs_published: 2026-09-23
 ---
 Without AI connected, "yes", "again", "undo" and "stop" now act on the conversation instead of apologizing: yes runs the command Cobb just offered, again re-runs the last one, undo puts its changes back, and stop waves an offer away. No model is involved; the words do what the buttons do.
 

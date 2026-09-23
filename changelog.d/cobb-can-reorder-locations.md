@@ -3,6 +3,7 @@ type: feature
 scope: locations
 date: 2026-08-18
 docs_target: docs/USER_GUIDE.md#3.12 Locations (foundational)
+docs_published: 2026-09-23
 ---
 
 Ask Cobb can put your locations in order. Say which shelves or racks under a

@@ -3,6 +3,7 @@ type: feature
 scope: scan
 date: 2026-09-15
 docs_target: docs/USER_GUIDE.md#3.20 Scan inbox (`core-scan`, stock)
+docs_published: 2026-09-23
 ---
 **Photos you already took are one tap from the home screen.** An "Add photos" tile sits beside the scan shortcut on the dashboard (and a "Photos" button beside "Scan" on a new workspace's first screen). It opens the same picker the scan inbox has, so you can pick several at once; they land in the inbox as one new session with identification already running, and the page opens on that session. On Android and desktop, long-pressing the installed app's icon offers "Add photos" too.
 

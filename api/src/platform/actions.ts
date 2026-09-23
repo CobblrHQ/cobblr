@@ -10,10 +10,11 @@ import type {
   ActionInvokeContext,
   EntityActionRecord,
 } from "@cobblr/platform-contract";
-import { axisOfTrait, type AnyAxisName } from "@cobblr/platform-contract";
+import { axisOfTrait, PLATFORM_OWNER, type AnyAxisName } from "@cobblr/platform-contract";
 import { requiredArgsRefusal } from "@cobblr/platform-contract/action-args";
 import { normaliseActionResult } from "@cobblr/platform-contract/action-result";
 import { meta } from "../db/meta.js";
+import { listEntries } from "../modules/registry.js";
 import { facesForKind } from "./faces.js";
 import { fieldRolesForKind } from "./field-defs.js";
 import { canResolve, lookup, listKinds, getKind, listKindsForOrg, baseKindOf } from "./entities.js";
@@ -101,6 +102,26 @@ export async function undoFor(actionId: string, result: unknown, ctx: ActionUndo
   return list.length ? list : null;
 }
 
+/** The owners whose actions a workspace can run: the modules it has turned
+ *  on, and the kernel's own. A module's ROUTES already refuse a workspace that
+ *  has not enabled it (mount.ts requireModuleEnabled: a clean 409 in place of a
+ *  raw `relation "..." does not exist`); its ACTIONS had no such door. So a
+ *  model was offered purchases:draft-po in a workspace without purchases, and
+ *  the card crashed on confirm with "check the log for act-..." (#3255). One
+ *  rule, read by the three doors into an action: the list the assistant reads,
+ *  the record's own action bar, and invoke. */
+export async function enabledActionOwners(orgId: string): Promise<Set<string>> {
+  const rows = await meta.selectFrom("org_modules").select("module_name").where("org_id", "=", orgId).execute();
+  return new Set([PLATFORM_OWNER, ...rows.map((r) => r.module_name)]);
+}
+
+/** The door's sentence for an action whose module is off here, in words: the
+ *  action's label and the module's name, never an id. */
+export function moduleOffRefusal(actionLabel: string, moduleName: string): string {
+  const shown = listEntries().find((e) => e.manifest.name === moduleName)?.manifest.displayName ?? moduleName;
+  return `${actionLabel} is part of ${shown}, which is not turned on in this workspace. Turn it on in Configuration → Modules first.`;
+}
+
 /** The record an entity-scoped call names, or why there is none. A null
  *  lookup used to become `fields: {}` and the handler ran on a hollow record
  *  (#3141): seven actions answered ok to an id that matched nothing. A kind
@@ -120,11 +141,15 @@ export async function planFor(
 ): Promise<ActionPlan | { error: string } | null> {
   const row = await meta
     .selectFrom("entity_actions")
-    .select(["invoke_handler", "args_schema", "scope"])
+    .select(["invoke_handler", "args_schema", "scope", "module_name", "label"])
     .where("id", "=", actionId)
     .executeTakeFirst();
-  // The record first, then the arguments: no plan for a record that is not
-  // there, and the reason goes back to the caller before any card exists.
+  // The module first (#3255), then the record, then the arguments: no plan
+  // for an action whose module is off here or a record that is not there,
+  // and the reason goes back to the caller before any card exists.
+  if (row && row.module_name !== PLATFORM_OWNER && !(await enabledActionOwners(ctx.orgId)).has(row.module_name)) {
+    return { error: moduleOffRefusal(row.label, row.module_name) };
+  }
   const gone = row ? await missingRecordRefusal(ctx, row.scope === "workspace" ? "workspace" : "entity") : null;
   if (gone) return { error: gone };
   const refused = row ? requiredArgsRefusal(actionId, row.args_schema as ArgsSchema, ctx.args) : null;
@@ -160,6 +185,7 @@ export function belongsOnEntity(
 export async function listApplicable(
   kind: string,
   orgId?: string,
+  opts: { alsoOn?: readonly string[] } = {},
 ): Promise<EntityActionRecord[]> {
   // An INSTANCE kind ("supplies:item") is synthesized per-org and never lands
   // in entity_kinds, so getKind missed it and every caller got zero actions —
@@ -214,7 +240,15 @@ export async function listApplicable(
   // an org there is no collection, so the declaration stands.
   const verdict = orgId ? await facesForKind(orgId, kind) : null;
   const traits = verdict ? (verdict.traits as Record<string, unknown>) : kindRecord.traits;
+  // Only the actions of modules this workspace has turned on (#3255), and the
+  // ones the caller is about to turn on: a bundle install enables what it
+  // requires AFTER it has checked its wires, so judging those wires against
+  // today's modules refused every bundle whose wire needed a module the
+  // workspace did not have yet, which is most first installs.
+  const on = orgId ? await enabledActionOwners(orgId) : null;
+  if (on) for (const m of opts.alsoOn ?? []) on.add(m);
   const eligible = allActions
+    .filter((a) => !on || on.has(a.module_name))
     .map(rowToActionRecord)
     .filter((a) =>
       belongsOnEntity(
@@ -351,9 +385,13 @@ export async function invoke(
     );
   }
   // The door refuses a call it cannot serve, in the same shape a handler
-  // refuses with, before the handler runs: a record that is not there
-  // (#3141), then an argument the schema says it needs (#3123). A card that
-  // renders and dies on press was a call the door could have refused.
+  // refuses with, before the handler runs: a module this workspace has not
+  // turned on (#3255), a record that is not there (#3141), then an argument
+  // the schema says it needs (#3123). A card that renders and dies on press
+  // was a call the door could have refused.
+  if (row.module_name !== PLATFORM_OWNER && !(await enabledActionOwners(ctx.orgId)).has(row.module_name)) {
+    return { ok: false, error: moduleOffRefusal(row.label, row.module_name) };
+  }
   const gone = await missingRecordRefusal(ctx, row.scope === "workspace" ? "workspace" : "entity");
   if (gone) return { ok: false, error: gone };
   const refused = requiredArgsRefusal(actionId, row.args_schema as ArgsSchema, ctx.args);
@@ -478,6 +516,7 @@ function rowToActionRecord(row: {
   user_invokable?: boolean;
   internal?: boolean;
   wire_only?: boolean;
+  record_optional?: boolean;
   args_schema?: unknown;
   version: string;
   position?: number;
@@ -498,6 +537,7 @@ function rowToActionRecord(row: {
     user_invokable: row.user_invokable ?? true,
     internal: row.internal ?? false,
     wire_only: row.wire_only ?? false,
+    record_optional: row.record_optional ?? false,
     args_schema:
       (row.args_schema as EntityActionRecord["args_schema"]) ?? null,
     version: row.version,
@@ -507,6 +547,13 @@ function rowToActionRecord(row: {
 /** The scope of a single action, or null if the action is unknown. The invoke
  *  route reads this BEFORE resolving an entity: a workspace-scoped action has
  *  no record, so it skips the lookup and requires no entityKind/entityId. */
+/** Whether an entity-scoped action may also run with no record (the
+ *  manifest's `recordOptional`, #3255). False for an unknown action. */
+export async function actionRecordOptional(actionId: string): Promise<boolean> {
+  const row = await meta.selectFrom("entity_actions").select("record_optional").where("id", "=", actionId).executeTakeFirst();
+  return row?.record_optional === true;
+}
+
 export async function getActionScope(
   actionId: string,
 ): Promise<"entity" | "workspace" | null> {

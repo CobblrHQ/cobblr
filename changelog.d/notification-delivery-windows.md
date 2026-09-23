@@ -3,6 +3,7 @@ type: feature
 scope: notifications
 date: 2026-08-21
 docs_target: docs/USER_GUIDE.md#4.7 Notifications
+docs_published: 2026-09-23
 ---
 **You can now say when a channel is allowed to interrupt you, instead of hearing about everything the moment it happens.** Set a delivery window on a channel and anything routine waits and arrives together, once, as a single message. Anything urgent still comes straight through, so choosing a quiet channel never means missing something that mattered. In-app notifications are unaffected and always immediate.
 

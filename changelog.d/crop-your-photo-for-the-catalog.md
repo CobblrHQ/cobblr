@@ -3,6 +3,7 @@ type: feature
 scope: scan
 date: 2026-09-08
 docs_target: docs/USER_GUIDE.md#3.20 Scan inbox (`core-scan`, stock)
+docs_published: 2026-09-23
 ---
 **Crop your own photo into the catalog image.** When no web picture is right and your shot is, your photo's caption on the scan card now offers **crop for catalog** beside **use as catalog**: drag a box over the part to keep, and that part becomes the display image, cut from the full-resolution original. Revert steps it back like any other pick. And the "Is it X? Yes / No" first-look question now lives on the camera sheet only, where you are still holding the thing; the inbox card no longer asks it, since by then the full read has run.
 

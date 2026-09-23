@@ -1,5 +1,6 @@
 {
   "lint": "lint:registry-filter",
+  "run": "tsx scripts/lint-registry-filter.ts",
   "ms": 2920,
   "recorded": "2026-09-14",
   "source": "split from scripts/lint-durations.json (recorded 2026-09-14)"

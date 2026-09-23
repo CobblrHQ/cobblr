@@ -7,19 +7,11 @@
 import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Check, X } from "lucide-react";
-import { useToast } from "@cobblr/platform-web";
+import { useToast, relativeTime } from "@cobblr/platform-web";
 import { api, ApiError, type ApprovalRequestView } from "../lib/api";
 
 const PRIMARY = "inline-flex items-center gap-1 rounded border border-cobble-500 bg-cobble-600 px-2.5 py-1 text-[11px] font-medium text-white hover:bg-cobble-700 disabled:opacity-50";
 const SECONDARY = "inline-flex items-center gap-1 rounded border border-line dark:border-slate-600 px-2.5 py-1 text-[11px] font-medium text-muted hover:text-content disabled:opacity-50";
-
-function ago(iso: string): string {
-  const mins = Math.max(0, Math.round((Date.now() - new Date(iso).getTime()) / 60_000));
-  if (mins < 60) return `${mins} min ago`;
-  const hours = Math.round(mins / 60);
-  if (hours < 48) return `${hours} h ago`;
-  return `${Math.round(hours / 24)} days ago`;
-}
 
 export function ApprovalRequestsCard({ slug }: { slug: string }) {
   const qc = useQueryClient();
@@ -101,7 +93,7 @@ function RequestRow({
         <span className="font-medium text-sm text-content dark:text-mortar-100">{r.requester.name}</span>
         <span className="text-sm text-content dark:text-mortar-100">asks for {r.remedies.map((x) => x.label).join(" and ")}</span>
         <span className="text-xs text-muted dark:text-slate-400">to {r.subject.charAt(0).toLowerCase() + r.subject.slice(1)}</span>
-        <span className="text-[11px] text-faint dark:text-slate-500">{ago(r.created_at)}</span>
+        <span className="text-[11px] text-faint dark:text-slate-500">{relativeTime(r.created_at)}</span>
       </div>
       {r.note && <blockquote className="text-xs text-muted dark:text-slate-400 border-l-2 border-line dark:border-slate-700 pl-2">{r.note}</blockquote>}
       <div className="flex flex-wrap items-center gap-2">

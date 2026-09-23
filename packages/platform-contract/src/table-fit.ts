@@ -115,6 +115,17 @@ const stem = (w: string): string => {
   return w;
 };
 
+/** Who sells a thing and where, never what it is: a catalog's listings name
+ *  their merchant, its domain and a tracking link. Read as evidence, an iPhone
+ *  listed by Newegg matched Groceries' "egg" (new|egg) and, with the brand
+ *  "Apple" leading its name, was a confident grocery (#3544). A listing's
+ *  TITLE still counts; it describes the product. */
+const SELLER_KEY = /^(merchant|merchants|seller|sellers|store|stores|shop|shops|retailer|retailers|vendor|domain|link|links|url|urls|href)$/i;
+const LINK = /^(https?:\/\/|www\.)/i;
+/** The JSON.stringify replacer for the haystack: seller keys and links out. */
+const aboutTheThing = (key: string, value: unknown): unknown =>
+  SELLER_KEY.test(key) || (typeof value === "string" && LINK.test(value)) ? undefined : value;
+
 /** A table whose noun says what its things ARE (spice, plant, tea, book),
  *  against an aisle whose noun says nothing (Groceries' "item", a catch-all's
  *  "part"). The category naming the first is a statement about the thing;
@@ -137,7 +148,7 @@ export function makeLexicalScorer(item: FitItem): {
   scoreEntry: (entry: FitTable) => LexicalEvidence;
 } {
   const hay = `${item.name ?? ""} ${item.description ?? ""} ${item.category ?? ""} ${item.notes ?? ""} ${
-    item.metadata ? JSON.stringify(item.metadata) : ""
+    item.metadata ? JSON.stringify(item.metadata, aboutTheThing) : ""
   }`
     .toLowerCase()
     // "a BAG of screws" / "3 BOXES of nails": the container word describes the
@@ -161,27 +172,36 @@ export function makeLexicalScorer(item: FitItem): {
   const walkValues = (v: unknown, depth: number): void => {
     if (depth > 4 || v == null) return;
     if (typeof v === "string") {
+      if (LINK.test(v)) return;
       if (v.length <= 48) for (const t of v.toLowerCase().split(/[^a-z0-9]+/)) if (t.length >= 3) attributeStems.add(stem(t));
     } else if (Array.isArray(v)) {
       if (v.length <= 8) for (const x of v) walkValues(x, depth + 1);
     } else if (typeof v === "object") {
-      for (const [k, x] of Object.entries(v as Record<string, unknown>)) if (!TAXONOMY_KEY.test(k)) walkValues(x, depth + 1);
+      for (const [k, x] of Object.entries(v as Record<string, unknown>)) if (!TAXONOMY_KEY.test(k) && !SELLER_KEY.test(k)) walkValues(x, depth + 1);
     }
   };
   walkValues(item.metadata, 0);
   // Single words match TOKENS, never raw substrings: `hay.includes("car")` hit
   // "old CARds", "make" hit "MAKing it easy", "vin" hit "without haVINg" — and
   // two such grazes in one marketing description made a storage tote "plausible"
-  // for a Vehicles table (keywords car/make/vin). A compound token still counts
-  // when the keyword is a whole morpheme of it ("screw" in "screwdriver", "van"
-  // in "minivan"): prefix/suffix with ≥3 chars of remainder, so "car|ds" can
-  // never ride again. Multi-word phrases keep the verbatim substring match
-  // ("license plate" appearing as-is is real evidence).
+  // for a Vehicles table (keywords car/make/vin). Multi-word phrases keep the
+  // verbatim substring match ("license plate" appearing as-is is real evidence).
+  //
+  // A compound token counts only when the keyword is its HEAD, the last
+  // morpheme, with ≥3 characters before it: a minivan is a van, a horseradish
+  // is a radish. The first morpheme only says what kind: a breadboard is a
+  // board, a beanbag is a bag, a butterfly valve is a valve. Reading the first
+  // morpheme too sent "Raspberry Pi 4 breadboard starter kit" and "Orange
+  // beanbag chair cover" to Groceries, the brand and the "bread"/"bean" inside
+  // the compound making the two corroborations the floor asks for; and the
+  // same rule read "egg" in a seller's "newegg" (#3544). Measured against 368
+  // product names from the repo's scan corpora, the head rule moved none.
   const tokenList = [...tokens];
+  const headOf = (token: string, sw: string): boolean => token.endsWith(sw) && token.length - sw.length >= 3;
   const wordHit = (w: string): boolean => {
     const sw = stem(w);
     if (tokens.has(sw)) return true;
-    return tokenList.some((t) => (t.startsWith(sw) || t.endsWith(sw)) && t.length - sw.length >= 3);
+    return tokenList.some((t) => headOf(t, sw));
   };
   const hasWord = (phrase: string): boolean => {
     const p = phrase.toLowerCase();
@@ -205,7 +225,7 @@ export function makeLexicalScorer(item: FitItem): {
       if (w.length < 3) continue;
       const sw = stem(w);
       if (tokens.has(sw)) out.add(sw);
-      for (const t of tokenList) if ((t.startsWith(sw) || t.endsWith(sw)) && t.length - sw.length >= 3) out.add(t);
+      for (const t of tokenList) if (headOf(t, sw)) out.add(t);
     }
     return [...out];
   };
@@ -367,8 +387,8 @@ export function makeLexicalScorer(item: FitItem): {
     // which table this is. Real evidence (strong, so the table is plausible
     // on it alone) but no score: the ORDER (orderFits) is where it counts,
     // ahead of a keyword or a choice grazing the name and behind a table
-    // the name calls by its word, so a narrower table the name names
-    // (Spices for a seasoning) is not outscored by the aisle it sits in.
+    // the name calls by its word, so a table the name names (Plants for
+    // "Basil seeds") is not outscored by the aisle it sits in.
     if (entry.label && categoryNamesLabel(entry.label)) {
       strong = true;
       categoryNames = true;
@@ -490,8 +510,10 @@ export interface RankedFit<T extends FitTable = FitTable> {
  *    the Spice Rack says seasoning), and anything plausible counts too.
  *
  *  Order: score, then real evidence (strong) before corroboration, then the
- *  NARROWER table (fewer declared words: Spices over Groceries; a specific
- *  table says less and means more), and a module's catch-all last. */
+ *  NARROWER table (fewer declared words; a specific table says less and means
+ *  more), and a module's catch-all last. Breadth is read LAST, so it decides
+ *  only a true tie: it does not make a seasoning a Spice when Groceries names
+ *  the head too and scores higher (#3492). */
 export function rankFits<T extends FitTable>(item: FitItem, tables: T[], gate: "plausible" | "named" = "plausible"): RankedFit<T>[] {
   const { scoreEntry } = makeLexicalScorer(item);
   const fits = tables
@@ -526,9 +548,12 @@ export function nameNames(e: LexicalEvidence): boolean {
  *     catalog said the thing is outranks what its name merely grazed (a
  *     fibre choice, a pair of incidental keywords);
  *  4. then the score, then real evidence before corroboration, a module's
- *     catch-all last, and the NARROWER table first (Spices over Groceries
- *     for a seasoning both declare: a specific table says less and means
- *     more). */
+ *     catch-all last, and the NARROWER table first. Last means it settles
+ *     only what everything above left tied. It used to claim "Spices over
+ *     Groceries for a seasoning both declare"; at the vocabulary a workspace
+ *     installs, Groceries declares "seasoning" and a name with a second
+ *     grocery word scores it higher first, so that was never the result
+ *     (#3217). Whether it should be is #3492. */
 export function orderFits<T extends FitTable>(a: RankedFit<T>, b: RankedFit<T>): number {
   return (
     // 0. A module's catch-all yields to a table the CATEGORY names, whatever
@@ -538,8 +563,8 @@ export function orderFits<T extends FitTable>(a: RankedFit<T>, b: RankedFit<T>):
     //    #3162). The catch-all is the least specific table there is; a
     //    category naming a specific table is asserted evidence about the
     //    thing, and the least specific table never outranks it. Between two
-    //    named tables the order below stands (Spices at the head over the
-    //    Groceries aisle the catalog names).
+    //    named tables the order below stands (Plants at the head of "Basil
+    //    seeds" over the Groceries aisle the catalog names).
     Number(!!a.table.is_fallback && b.evidence.categoryNames) - Number(!!b.table.is_fallback && a.evidence.categoryNames) ||
     // 1. A SPECIFIC table the category names outranks a table named only by
     //    a keyword at the head of the name. "Cumin seeds 100g" with the
@@ -552,8 +577,11 @@ export function orderFits<T extends FitTable>(a: RankedFit<T>, b: RankedFit<T>):
     //    IS: a table whose own NOUN is in the name keeps it ("spice blend"
     //    is called a spice), and a category that names only an AISLE, a
     //    table whose noun says nothing (Groceries' "item"), yields to the
-    //    head as it always did: "21 Seasoning Salute" the catalog shelves
-    //    under Groceries is a seasoning, and the Spice Rack declares the word.
+    //    head as it always did: "Basil seeds" the catalog shelves under
+    //    Groceries is a Plants thing, since Plants names the head and
+    //    Groceries names nothing in it. (This cited the 21 Seasoning Salute,
+    //    which goes to Groceries at the installed vocabulary: its head is
+    //    "Salute", which neither table names, so its catalog decides.)
     Number(b.evidence.categoryNames && nounSaysWhatItIs(b.table) && !a.evidence.nounHit) -
       Number(a.evidence.categoryNames && nounSaysWhatItIs(a.table) && !b.evidence.nounHit) ||
     Number(b.evidence.headNamed) - Number(a.evidence.headNamed) ||

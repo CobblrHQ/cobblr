@@ -3,6 +3,7 @@ type: feature
 scope: platform
 date: 2026-08-21
 docs_target: docs/USER_GUIDE.md#Notifications
+docs_published: 2026-09-23
 ---
 Pressing a button on a Cobblr notification in Discord now does the thing, without opening Cobblr.
 

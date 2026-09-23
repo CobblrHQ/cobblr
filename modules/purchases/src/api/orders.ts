@@ -8,7 +8,7 @@ import { z } from "zod";
 import { platform } from "@cobblr/platform-contract";
 import { instanceOf, sessionUser, tenantContext, tenantDb } from "../db.js";
 import { asyncHandler, badBody, requireRole } from "./util.js";
-import { routeUnknownToMetadata } from "./route-helpers.js";
+import { routeUnknownToMetadata } from "@cobblr/platform-contract/entity-metadata";
 
 export const ordersRouter = Router({ mergeParams: true });
 

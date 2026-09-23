@@ -44,7 +44,7 @@
 // testids removed again (three lines named), and against a placeholder changed
 // on purpose; green with both restored.
 //
-//   npx tsx scripts/lint-driver-hooks-live.ts   (pnpm run lint:driver-hooks-live)
+//   npx tsx scripts/lint-driver-hooks-live.ts   (pnpm run lint driver-hooks-live)
 import { readFileSync, readdirSync, statSync } from "node:fs";
 import { join } from "node:path";
 

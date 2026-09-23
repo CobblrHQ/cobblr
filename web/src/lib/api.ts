@@ -764,6 +764,31 @@ export interface SandboxLedger {
   left_behind: string[];
 }
 
+/** A carried trial, before anything comes: the list its ending showed. */
+export interface CarryPreview {
+  /** The trial; its id keeps it out of the workspaces offered to bring it into. */
+  workspace: { id: string; name: string };
+  ledger: SandboxLedger;
+  /** Homes a record needs that the person did not make (a stock collection). */
+  homes: { bundles: string[]; instances: string[]; modules: string[] };
+  unread: Array<{ kind: string; id: string; reason: string }>;
+}
+
+/** One line of the ending's list, and what happened to it here. */
+export interface CarryLine {
+  group: "bundles" | "modules" | "instances" | "fields" | "automations" | "contents" | "homes";
+  words: string;
+  state: "done" | "skipped" | "partly";
+  note?: string;
+}
+export interface CarryResult {
+  workspace: { name: string };
+  lines: CarryLine[];
+  done: number;
+  skipped: number;
+  partly: number;
+}
+
 export const api = {
   /** A one-shot URL for an iframe document that must run inline script (a
    *  custom app block, an installed renderer). The browser then applies the
@@ -3259,6 +3284,10 @@ export const api = {
       /** The table the fields were typed for ("yarn:item"); absent means the
        *  top candidate's table at the time of the write. */
       fields_kind?: string;
+      /** The category the person chose, by name, for a table that keeps its
+       *  own categories (no field to type it into). Served back as the top
+       *  candidate's `category`; null clears it. */
+      category?: string | null;
     },
   ) => request<ScanInboxItem>("PATCH", `/orgs/${slug}/modules/core-scan/inbox/${id}`, body),
   /** Guided Organize: propose a grouped put-away plan — for a selection of
@@ -3532,6 +3561,16 @@ export const api = {
    *  for bringing it along. Their own sandbox or kept trial, found through
    *  their link, so it reads past the hour when every workspace route is 410. */
   sandboxLedger: () => request<SandboxLedger>("GET", "/try/ledger"),
+  /** The person's grant for another deployment to read this kept trial, and
+   *  this box's public address for it to read from. */
+  startCarry: () => request<{ token: string; source: string; expires_hours: number }>("POST", "/try/carry", {}),
+  /** On the receiving side: the list the trial's ending showed, read through
+   *  the grant, before anything is brought. */
+  carryPreview: (from: string, token: string) =>
+    request<CarryPreview>("GET", `/carry/preview?from=${encodeURIComponent(from)}&token=${encodeURIComponent(token)}`),
+  /** Replay the trial into a workspace, as the signed-in person. */
+  carryInto: (slug: string, from: string, token: string) =>
+    request<CarryResult>("POST", `/orgs/${slug}/carry`, { from, token }),
 
   /** "Email me my work": builds the workspace backup, keeps it for a short
    *  window and emails a link. `emailed` false still means the file exists -
@@ -3591,6 +3630,10 @@ export const api = {
       /** Tags to attach to the created entity (union'd with pending_tags). */
       tags?: string[];
       extras?: Record<string, unknown>;
+      /** The category to file under, by NAME, whatever store the table keeps
+       *  it in. The only way to reach a table whose module owns its categories
+       *  (no custom field carries the name there). */
+      category?: string;
       /** Platform-admin only: also record this commit as a matchmaker eval
        *  case (the corrected answer = ground truth). Ignored for non-admins. */
       save_eval_case?: boolean;
@@ -5657,7 +5700,14 @@ export interface ScanMenuEntry {
   /** This table's declared GROUPING AXIS (`field_role: "category"`) and the
    *  workspace's existing vocabulary for it. Declared, so the UI never has to
    *  guess which field is the category by matching values. */
-  category_field?: { name: string; label: string; values: string[] };
+  category_field?: {
+    /** The custom field the category is written under. ABSENT for a table
+     *  whose module keeps its own categories (inventory's tree): there the
+     *  category travels by name as the confirm body's `category`. */
+    name?: string;
+    label: string;
+    values: string[];
+  };
   /** Domain routing terms a bundle declared for this table. */
   scan_keywords?: string[];
   /** This kind is tracked ONE BY ONE (its declared traits include `unique` — a

@@ -3,6 +3,7 @@ type: feature
 scope: scan
 date: 2026-08-11
 docs_target: docs/USER_GUIDE.md#3.20 Scan inbox (`core-scan`, stock)
+docs_published: 2026-09-23
 ---
 You can now crop your own scan photo into the item's catalog picture, instead of
 taking whatever the web turned up.

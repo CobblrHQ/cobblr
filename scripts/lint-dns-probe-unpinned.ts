@@ -29,7 +29,7 @@
 // PROVEN RED 2026-09-18 against the script as it stood (the probe was
 // $GIT_HOST) before the probe moved to the sink's host.
 //
-//   npx tsx scripts/lint-dns-probe-unpinned.ts   (pnpm run lint:dns-probe-unpinned)
+//   npx tsx scripts/lint-dns-probe-unpinned.ts   (pnpm run lint dns-probe-unpinned)
 import { readFileSync } from "node:fs";
 
 const FILE = "scripts/ci-runner-health.sh";

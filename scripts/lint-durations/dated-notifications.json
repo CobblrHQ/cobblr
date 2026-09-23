@@ -1,5 +1,6 @@
 {
   "lint": "lint:dated-notifications",
+  "run": "tsx scripts/lint-dated-notifications.ts",
   "ms": 577,
   "recorded": "2026-09-14",
   "source": "split from scripts/lint-durations.json (recorded 2026-09-14)"

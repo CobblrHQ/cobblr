@@ -18,7 +18,7 @@
 // and it looks fine in a mockup with square fixtures. It only bites on a real
 // portrait product shot, in front of a user trying to choose.
 //
-//   npx tsx scripts/lint-image-choice-contain.ts   (npm run lint:image-choice)
+//   npx tsx scripts/lint-image-choice-contain.ts   (pnpm run lint image-choice)
 
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";

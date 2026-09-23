@@ -39,7 +39,7 @@
 // the fetch/request call to exempt a single deliberate exception (document why
 // in an adjacent comment). Prefer fixing the path.
 //
-// Run: npx tsx scripts/lint-client-fetch-mounts.ts   (pnpm run lint:client-fetch-mounts)
+// Run: npx tsx scripts/lint-client-fetch-mounts.ts   (pnpm run lint client-fetch-mounts)
 
 import { readdirSync, readFileSync, existsSync, statSync } from "node:fs";
 import { join, resolve, basename } from "node:path";

@@ -26,7 +26,7 @@ import {
   Trash2,
   X,
 } from "lucide-react";
-import { useToast, useConfirm } from "@cobblr/platform-web";
+import { useLater, useToast, useConfirm, relativeTime } from "@cobblr/platform-web";
 import { api, ApiError, type DiscussionComment } from "../lib/api";
 import { useActiveOrg } from "../auth/ActiveOrgContext";
 import { useAuth } from "../auth/AuthContext";
@@ -79,17 +79,6 @@ export function arrivedComments(
     .map((c) => c.id);
 }
 
-/** How long ago, in the shortest form that is still unambiguous. */
-function ago(iso: string): string {
-  const mins = Math.max(0, Math.round((Date.now() - new Date(iso).getTime()) / 60000));
-  if (mins < 1) return "just now";
-  if (mins < 60) return `${mins}m ago`;
-  const hrs = Math.round(mins / 60);
-  if (hrs < 24) return `${hrs}h ago`;
-  const days = Math.round(hrs / 24);
-  return days < 30 ? `${days}d ago` : new Date(iso).toLocaleDateString();
-}
-
 /** The quote above a reply.
  *
  *  Rendered LIVE from the comment it points at, never a stored copy: edit the
@@ -109,6 +98,7 @@ function Quote({
   comments: DiscussionComment[];
   names: (userId: string) => string;
 }) {
+  const later = useLater();
   const target = comments.find((c) => c.id === id);
   const reply = comments.find((c) => c.in_reply_to === id);
   const editedSince =
@@ -123,7 +113,7 @@ function Quote({
     // A flash rather than a persistent highlight: it answers "which one" and
     // then gets out of the way.
     el.classList.add("bg-amber-400/20");
-    window.setTimeout(() => el.classList.remove("bg-amber-400/20"), 1200);
+    later.after("flash", 1200, () => el.classList.remove("bg-amber-400/20"));
   };
 
   // A quoted comment can be gone. Saying so keeps the reply readable, which is
@@ -160,6 +150,7 @@ function Quote({
 }
 
 export function DiscussionTab() {
+  const later = useLater();
   const { activeSlug, activeOrg } = useActiveOrg();
   const { user } = useAuth();
   const selfUserId = user?.id ?? null;
@@ -249,15 +240,16 @@ export function DiscussionTab() {
     requestAnimationFrame(() => {
       document.getElementById(`c-${arrived[arrived.length - 1]}`)?.scrollIntoView({ block: "nearest", behavior: "smooth" });
     });
-    // No cleanup on purpose: every poll replaces conv.data, and a cleanup here
-    // would cancel the fade before it ever fired.
-    setTimeout(() => {
+    // Not this effect's cleanup: every poll replaces conv.data, and a cleanup
+    // here would cancel the fade before it ever fired. Keyed by the batch so a
+    // later poll does not replace it either; cleared only when the tab goes.
+    later.after(`fade-${arrived.join(",")}`, FRESH_MS, () => {
       setFresh((prev) => {
         const next = new Set(prev);
         for (const id of arrived) next.delete(id);
         return next;
       });
-    }, FRESH_MS);
+    });
   }, [conv.data, convId, selfUserId]);
 
   // Names live in cobblr_meta, the comments in the tenant DB, so the join
@@ -601,7 +593,7 @@ export function DiscussionTab() {
                 {c.author_kind === "assistant" && c.requested_by && (
                   <span className="text-faint">asked by {nameOfUser(c.requested_by)}</span>
                 )}
-                <span className="text-faint">{ago(c.created_at)}</span>
+                <span className="text-faint">{relativeTime(c.created_at)}</span>
                 {c.edited_at && <span className="text-faint italic">edited</span>}
                 {fresh.has(c.id) && (
                   <span className="rounded-full bg-amber-400 text-cobble-900 text-[9px] font-mono uppercase tracking-widest px-1.5 py-0.5 animate-pulse">

@@ -38,3 +38,16 @@ export function loadFactor(perCore = loadPerCore()) {
   if (perCore === null || !Number.isFinite(perCore)) return 1;
   return Math.min(LOAD_FACTOR_MAX, Math.max(1, perCore));
 }
+
+let wornFactor;
+/** A per-test wall-clock budget written for a quiet box, worn at this box's
+ *  load: `it("…", { timeout: worn(60_000) }, …)`, `waitFor(…, { timeout:
+ *  worn(3000) })`. The config wears the DEFAULT timeout; a literal passed to one
+ *  test replaced it and wore nothing, so a 60 s budget met a box at load 48 on
+ *  twelve cores with its quiet-box number and timed out while nothing in the
+ *  test was slow (#3479). Read once per process, as the config is.
+ *  lint:test-timeout-worn holds every per-test timeout to this. */
+export function worn(ms) {
+  if (wornFactor === undefined) wornFactor = loadFactor();
+  return Math.round(ms * wornFactor);
+}

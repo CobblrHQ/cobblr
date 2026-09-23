@@ -3,6 +3,7 @@ type: feature
 scope: purchases
 date: 2026-08-14
 docs_target: docs/USER_GUIDE.md#3.25c Reading a purchase order
+docs_published: 2026-09-23
 ---
 Add a tracking number to a receipt while it is still in your scan inbox, and Cobblr files it as still on its way instead of already arrived.
 

@@ -31,7 +31,7 @@
 // PROVEN RED 2026-09-17 by mounting the router unconditionally (rule 1) and by
 // importing registerOutboundHold from api/src/index.ts (rule 2).
 //
-//   npx tsx scripts/lint-test-doors-gated.ts   (pnpm run lint:test-doors-gated)
+//   npx tsx scripts/lint-test-doors-gated.ts   (pnpm run lint test-doors-gated)
 import { readFileSync, existsSync, statSync } from "node:fs";
 import { sourceFiles } from "./lib/glob-exclude.mjs";
 

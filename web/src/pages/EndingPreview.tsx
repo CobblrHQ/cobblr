@@ -54,7 +54,6 @@ export function EndingPreview() {
   return (
     <SandboxEnded
       kind={kind}
-      slug="preview"
       preview={{
         cloud_url: params.get("cloud") ?? "https://app.cobblr.xyz/signup",
         selfhost_url: "https://github.com/CobblrHQ/cobblr",

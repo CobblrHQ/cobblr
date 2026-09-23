@@ -3,6 +3,7 @@ type: feature
 scope: scan
 date: 2026-09-04
 docs_target: docs/USER_GUIDE.md#3.20 Scan inbox (`core-scan`, stock)
+docs_published: 2026-09-23
 ---
 Records that are the same thing under two names can now be put back together.
 Open "Same thing twice" from the scan menu to see the pairs, keep the one you

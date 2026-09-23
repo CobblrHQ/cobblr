@@ -3,6 +3,7 @@ type: feature
 scope: scan
 date: 2026-08-31
 docs_target: docs/USER_GUIDE.md#1. Quick start
+docs_published: 2026-09-23
 ---
 On deployments with the hosted identify service, scanning a photo now identifies items, routes receipts, and verifies barcode matches without the workspace needing its own AI connection.
 

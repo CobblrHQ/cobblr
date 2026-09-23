@@ -9,7 +9,7 @@ import { defineModule } from "@cobblr/platform-contract";
 
 export default defineModule({
   name: "core-tags",
-  version: "0.1.5",
+  version: "0.1.6",
   displayName: "Tags",
   description:
     "Cross-module polymorphic labels. Attach the same tag to a part, a task, a printer: they all show up under that tag.",

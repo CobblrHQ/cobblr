@@ -1,0 +1,10 @@
+{
+  "lint": "lint:hook-git-env",
+  "run": "tsx scripts/lint-hook-git-env.ts",
+  "rows": [
+    "dev-script"
+  ],
+  "ms": 1176,
+  "recorded": "2026-09-23",
+  "source": "scaffolded by new-lint.sh at twice a local run (a shared box); replaced from its first CI measurement"
+}

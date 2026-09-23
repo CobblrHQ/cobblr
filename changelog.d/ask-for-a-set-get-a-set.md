@@ -3,6 +3,7 @@ type: feature
 scope: ai
 date: 2026-08-20
 docs_target: docs/USER_GUIDE.md#2. Core concepts
+docs_published: 2026-09-23
 ---
 Ask Cobb for a whole set of records and he now makes them in one go. "Each rack should have Shelf 1 through 5" used to become sixty separate requests, one a second, with a spinner for two minutes; it is now a single one that takes seconds, and it arrives as one line in the chat with a single Undo that puts all of them back. Anything already there is counted and named rather than duplicated: "Added 58 locations. 2 were already there."
 

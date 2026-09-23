@@ -1,5 +1,6 @@
 {
   "lint": "lint:ai-reach-routes",
+  "run": "tsx scripts/lint-ai-reach-routes.ts",
   "ms": 684,
   "recorded": "2026-09-14",
   "source": "split from scripts/lint-durations.json (recorded 2026-09-14)"

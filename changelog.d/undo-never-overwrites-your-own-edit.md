@@ -3,6 +3,7 @@ type: feature
 scope: ai
 date: 2026-08-20
 docs_target: docs/USER_GUIDE.md#2. Core concepts
+docs_published: 2026-09-23
 ---
 Undo now takes back what Cobb did without taking back what you did after him. If you edited the same record before pressing Undo, your edit stays: the fields still as Cobb left them go back, the ones you changed are kept and named ("Left the notes as you set it"). If your edit was to the very thing Cobb changed, the undo declines rather than overruling you, because yours is the more recent word. A record you have since used or renamed is not deleted by undoing the create that made it, and a record you deleted is never resurrected by undoing an edit to it.
 

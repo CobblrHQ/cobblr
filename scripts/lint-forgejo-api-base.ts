@@ -10,7 +10,7 @@
 // not the API host and carries a port the API does not. The resolver itself
 // is the one file allowed to read the remote for this.
 //
-//   npx tsx scripts/lint-forgejo-api-base.ts   (pnpm run lint:forgejo-api-base)
+//   npx tsx scripts/lint-forgejo-api-base.ts   (pnpm run lint forgejo-api-base)
 import { readFileSync, readdirSync, statSync } from "node:fs";
 import { join } from "node:path";
 

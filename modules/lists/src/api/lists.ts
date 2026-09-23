@@ -8,6 +8,7 @@
 //   DELETE /lists/:id             delete a list (cascades items)
 //   POST   /lists/:id/clear-done  remove all checked items (the "clear done" sweep)
 //   POST   /items                 add an item (body.list_id)
+//   GET    /items/:id             one item
 //   PATCH  /items/:id             toggle checked / claimed / edit
 //   DELETE /items/:id             remove an item
 
@@ -278,6 +279,19 @@ listsRouter.post(
       diff: { name: row.title, list_id: row.list_id },
     });
     res.status(201).json(row);
+  }),
+);
+
+// The one item, at the address its kind declares (getEndpoint "/items/{id}").
+// The declaration said it existed for as long as nothing read an item alone;
+// the trial carry was the first thing that did, and met a 404.
+listsRouter.get(
+  "/items/:id",
+  asyncHandler(async (req, res) => {
+    if (!requireRole(req, res, "member")) return;
+    const row = await tenantDb(req).selectFrom("lists_items").selectAll().where("id", "=", req.params.id!).executeTakeFirst();
+    if (!row) return void res.status(404).json({ error: { code: "not_found", message: "Item not found." } });
+    res.json(row);
   }),
 );
 

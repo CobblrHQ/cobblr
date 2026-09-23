@@ -12,7 +12,7 @@ import { defineModule } from "@cobblr/platform-contract";
 
 export default defineModule({
   name: "lists",
-  version: "0.1.10",
+  version: "0.1.11",
   displayName: "Lists",
   description:
     "Lightweight checklists: a list + check-off-able items. Shopping lists, to-do, packing. Other modules can auto-add items via a wire (e.g. 'running low' → shopping list).",
@@ -123,10 +123,15 @@ export default defineModule({
         undoable: true,
         label: "Add to a list",
         description:
-          "Append an item to a list. Wire it to an event (e.g. inventory.stock.low) to auto-build a shopping list. Dedupes by title within the list (won't pile up duplicates).",
+          "Append an item to a list: a record (its title) or just words (\"milk\"), with no record needed. The list is found by name and made if it does not exist. Wire it to an event (e.g. inventory.stock.low) to auto-build a shopping list. Dedupes by title within the list.",
         // DELIBERATELY universal: anything — physical or digital — can be put
         // on a list. The one honest any:true among the entity-bound actions.
         appliesTo: { any: true },
+        // And nothing at all: "put milk on the shopping list" names no record.
+        // Required a record, this action's own first example could not run,
+        // and a stranger asking it got an empty "Shopping" list and no milk
+        // (a walk on 2026-09-22, #3255).
+        recordOptional: true,
         invokeHandler: "lists.add-item",
         argsSchema: {
           title: { label: "What to add, defaults to the source record's title", type: "text" },

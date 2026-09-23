@@ -28,7 +28,7 @@
 //
 // PROVE IT RED: on the tree at 713dc0f08 it names the fifteen.
 //
-//   npx tsx scripts/lint-kind-create-logs.ts   (pnpm run lint:kind-create-logs)
+//   npx tsx scripts/lint-kind-create-logs.ts   (pnpm run lint kind-create-logs)
 import { readFileSync, readdirSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { entryToAdd, readReasonedBaseline, staleKeys } from "./lib/reasoned-baseline.js";

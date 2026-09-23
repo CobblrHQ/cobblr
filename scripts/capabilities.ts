@@ -73,6 +73,39 @@ export interface VocabularyCapability extends Base {
 export const CAPABILITIES: Capability[] = [
   {
     kind: "owns",
+    id: "bundle:table-vocabulary",
+    what:
+      "the words a bundle's table routes with: the table's own PLUS the manifest's, deduped, through bundleTableWords, " +
+      "never either list alone",
+    why:
+      "this drifted three times in three places. The scan offer merged both lists while the install wrote the table's alone, " +
+      "so an installed Groceries knew 40 words where the offer knew 150; then a test built its tables the same short way and " +
+      "pinned six answers the real router does not give, one of them the opposite of a change (#3219) that had shipped on " +
+      "purpose, and stayed green because it could not see the words the change added (#3217)",
+    owner: "packages/platform-contract/src/bundle-words.ts",
+    // The readers that BUILD a table from a bundle manifest. A reader of an
+    // already-built menu entry (the matchmaker, the resolver, the bench) inherits
+    // the product's words and is correctly not here. Scope is explicit, which is
+    // this registry's stated limit: a NEW file that reads bundles/*.json the
+    // short way is not covered until it is listed.
+    // modules/core-scan/src/services/sample-drink-routes-to-groceries.test.ts is
+    // already right and is left out only because its one copy reads an object
+    // bundleTableWords built, which the per-line detect cannot tell apart.
+    scope: [
+      "api/src/lib/flagship-bundles.ts",
+      "api/src/routes/bundles.ts",
+      "web/src/lib/suggest-featured.ts",
+      "packages/platform-contract/src/table-fit.test.ts",
+      "modules/core-ai/src/move-into-list.test.ts",
+      "modules/core-scan/src/services/seasoning-routes-to-groceries.test.ts",
+    ],
+    // A table or instance config whose words are copied straight off another
+    // object: the shape every one of the three drifts had.
+    detect: /\bscan_keywords\s*:\s*[A-Za-z_$][\w$]*\.scan_keywords\b/,
+    use: "bundleTableWords(instance.scan_keywords, manifest.scan_keywords) from @cobblr/platform-contract/bundle-words",
+  },
+  {
+    kind: "owns",
     id: "scan:where-a-row-is-headed",
     what:
       "the question 'which table is this row headed to, and does the workspace have a better one': answered once by the resolver " +
@@ -208,6 +241,44 @@ export const CAPABILITIES: Capability[] = [
     scope: ["api/src/routes/super-admin.ts", "api/src/cli/view-as.ts"],
     detect: /\.insertInto\(\s*["']impersonation_sessions["']/,
     use: "startImpersonation(input) from platform/impersonation.ts",
+  },
+  {
+    kind: "owns",
+    id: "activity:feed-verb",
+    what: "the verb a feed row puts between who did it and what (\"created\", \"signed in\", \"ran an automation\")",
+    why:
+      "the dashboard's recent activity and the account's own log each kept a verb map, and they had drifted: only one " +
+      "knew what an automation row says, so the same row read differently on two screens (found adding the trial carry's " +
+      "row, 2026-09-22)",
+    owner: "web/src/lib/activity-words.ts",
+    scope: ["web/src/pages/Dashboard.tsx", "web/src/pages/MeActivityPage.tsx"],
+    detect: /\bmoved_by_upgrade\s*:|\bpairing_created\s*:\s*["']linked["']/,
+    use: "activityVerb(action) from lib/activity-words.ts",
+  },
+  {
+    kind: "owns",
+    id: "publish:does-this-path-ship",
+    what: "the glob matcher that decides whether a path is in the public export (the manifest's include/exclude)",
+    why:
+      "the pre-commit guard carried its own copy of the export gate's matcher; the two agreed only by coincidence, and a " +
+      "drift would let the pre-commit pass a path the export blocks or the reverse (#3421 survey, #3499)",
+    owner: "scripts/publish/path-gate.mjs",
+    scope: ["scripts/lint-public-clean.mjs", "scripts/publish/export-repo.mjs", "scripts/lint-public-readme-links.ts", "scripts/lint-dockerfile-copies-ship.ts"],
+    detect: /function\s+globToRe\s*\(/,
+    use: "compileGlobs / anyGlobMatch / shippedPaths from scripts/publish/path-gate.mjs",
+  },
+  {
+    kind: "owns",
+    id: "signature:ed25519-verify",
+    what: "checking an ed25519 signature over bytes (the registry index, a module tarball, a file-preview renderer)",
+    why:
+      "four copies read a signature four ways (prefix stripped inside or by the caller; a malformed key false or a " +
+      "throw that became a 500) and agreed only on what the registry writes today (#3421 survey, #3499). The image-build " +
+      "installer keeps a copy it cannot avoid; scripts/signature-verdicts-agree.test.ts holds it to the same verdicts",
+    owner: "packages/platform-contract/src/signature.ts",
+    scope: ["api/src/routes/registry.ts", "api/src/routes/sandbox-install.ts", "modules/core-file-preview/src/api/renderers.ts"],
+    detect: /\bcryptoVerify\s*\(|\bverify\s*\(\s*null\s*,/,
+    use: "verifyEd25519(publicKeyB64, data, signature) from @cobblr/platform-contract/signature",
   },
   {
     kind: "owns",
@@ -427,6 +498,32 @@ export const CAPABILITIES: Capability[] = [
   },
   {
     kind: "owns",
+    id: "edge:channel-key",
+    what: "how a bridge is addressed: the edge channel key (`<orgId>`, `<orgId>::<name>`, or the owner's user id) and the bridge name inside it",
+    why:
+      "seven files derived the key, each with its own idea of the name: the receiving doors capped it at 60 characters, core-print trimmed it and " +
+      "did not cap, the rest did neither. A bridge whose name ran past 60 or carried a space registered on one key and was sent to on another, and " +
+      "a send to a channel nobody holds reads exactly like a bridge that is offline (#3499)",
+    owner: "packages/platform-contract/src/edge-channel.ts",
+    scope: [
+      "api/src/platform/edge.ts",
+      "api/src/routes/edge.ts",
+      "modules/digifab/src/jobs-core.ts",
+      "modules/digifab/src/api/edge-relay.ts",
+      "modules/core-print/src/edge.ts",
+      "modules/core-integrations/src/sync/edge-fetch.ts",
+      "modules/core-ai/src/providers/edge-transit.ts",
+      "modules/core-shipments/src/drivers/edge-transit.ts",
+      "modules/core-shipments/src/drivers/connection.ts",
+      "api/src/platform/user-credentials.ts",
+    ],
+    // A key built by hand (`${org}::${name}`), a bridge name cut by hand, or a
+    // transit setting read by hand.
+    detect: /::\$\{|\.slice\(0,\s*60\)|\.slice\((?:7|"bridge:"\.length)\)|\.startsWith\(\s*["']bridge/,
+    use: 'import { edgeChannelKey, edgeBridgeName, edgeTransit, edgeRouteKey } from "@cobblr/platform-contract/edge-channel"',
+  },
+  {
+    kind: "owns",
     id: "sandbox:countdown-mount",
     what: "mounting the sandbox countdown bar and its Keep this workspace button",
     why:
@@ -481,6 +578,58 @@ export const CAPABILITIES: Capability[] = [
     // A hand-rolled like: lower(<col>) like <needle>, in either the builder or raw-sql spelling.
     detect: /eb\.fn\(\s*["']lower["'][^\n]*["']like["']|lower\([a-z_.>'"-]+\)\s+like/i,
     use: "textSearchWhere(eb, query.q, { text: [...], json: [...] }) from @cobblr/platform-contract",
+  },
+  {
+    kind: "owns",
+    id: "entities:metadata-write-shape",
+    what: "how a record write reaches its `metadata` bag: unknown keys lifted in, server-managed keys kept, the bag read back from an object or a jsonb string",
+    why:
+      "six modules and two kernel files each carried a copy of routeUnknownToMetadata / preserveServerManaged / coerceMetadata, identical " +
+      "only by care: the purchases copy's header promised to share it once a shared package existed, and the contract has been that package " +
+      "for a long time (#3499)",
+    owner: "packages/platform-contract/src/entity-metadata.ts",
+    scope: ["api/src/**/*.ts", "modules/*/src/**/*.ts"],
+    detect: /\bfunction\s+(?:routeUnknownToMetadata|preserveServerManaged|coerceMetadata)\b/,
+    use: 'import { routeUnknownToMetadata, preserveServerManaged, coerceMetadata } from "@cobblr/platform-contract/entity-metadata"',
+  },
+  {
+    kind: "owns",
+    id: "instances:request-instance",
+    what: "which instance a module request is for: the one resolveInstance stamped, else the module's own name (the column default)",
+    why:
+      "seven modules cast the request to read `instance` themselves; one that fell back to anything but its column default would read the " +
+      "default instance's rows as another's, or none (#3499)",
+    owner: "packages/platform-contract/src/request-instance.ts",
+    scope: ["modules/*/src/**/*.ts"],
+    detect: /\{\s*instance\?:\s*string\s*\}\s*\)\s*\.instance\b/,
+    use: 'import { requestInstance } from "@cobblr/platform-contract/request-instance"; instanceOf(req) = requestInstance(req, "<module>")',
+  },
+  {
+    kind: "owns",
+    id: "connections:unverified-refusal",
+    what: "the 409 a key-saving door answers when the probe rejected the key, or could not settle a replacement, and the person has not said save it anyway",
+    why:
+      "the personal-connection door and the workspace AI-provider door each built the refusal, and the settings panel reads its codes " +
+      "(key_invalid / key_unverifiable) from both: two copies of the body are two chances for one door to say it differently (#3499)",
+    owner: "packages/platform-contract/src/connection-verification.ts",
+    scope: ["api/src/**/*.ts", "modules/*/src/**/*.ts"],
+    detect: /\bfunction\s+refuseUnverified\b|"key_unverifiable"/,
+    use: 'res.status(409).json(unverifiedRefusal(verification)) from "@cobblr/platform-contract/connection-verification"',
+  },
+  {
+    kind: "owns",
+    id: "web:relative-time",
+    what: "saying how long ago something happened in the web UI (\"just now\", \"5m ago\", \"3h ago\", \"4d ago\", a date)",
+    why:
+      "five page-local copies had drifted into three voices (\"5m ago\", \"5 min ago\", \"5 h ago\") and two cut-offs for switching to a " +
+      "date, so one screen said a thing happened \"2 days ago\" and the next \"2d ago\" (#3499)",
+    owner: "packages/platform-web/src/relativeTime.ts",
+    scope: ["web/src/**/*.ts", "web/src/**/*.tsx", "modules/*/src/ui/**/*.tsx"],
+    detect: /\$\{[^}]+\}\s?(?:m|min|mins|h|hrs?|d|days?|mo)\s+ago\b/,
+    except: {
+      "web/src/features/digifab/fleet.tsx": "fmtFileDate pairs a printer file's calendar date with a day-count hint (\"3d ago · 26 Feb 2023\"), in the machine's local time with no zone",
+    },
+    use: 'import { relativeTime } from "@cobblr/platform-web"',
   },
   {
     kind: "owns",
@@ -541,6 +690,23 @@ export const CAPABILITIES: Capability[] = [
     scope: ["modules/core-authoring/src/api/drafts.ts", "api/src/routes/super-admin.ts"],
     detect: /\b(parseJsonObject|unwrapBuild|unwrapApp|applyLeanNatives)\s*\(/,
     use: "shapeCandidate(text, task, { intent, kinds, natives }) from core-authoring's services/shape",
+  },
+  {
+    kind: "owns",
+    id: "ai:answer-text",
+    what: "reading the words of an AI answer: `platform().ai.invoke(...).text`, worked out once by aiAnswerText, whichever key the adapter used",
+    why:
+      "adapters answer chat as `content` and summarise and the vision jobs as `text`, and the seam typed the answer `unknown`. Fifteen callers " +
+      "hedged with both keys in both orders; five read only `content` and were right only because each asked for chat, so moving one to a job " +
+      "that answers `text` would have read an empty answer and degraded silently (#3499)",
+    owner: "packages/platform-contract/src/ai-answer.ts",
+    scope: ["api/src/**/*.ts", "modules/*/src/**/*.ts", "modules/*/src/**/*.tsx"],
+    // A caller casting the answer to one of the two keys, or reading either off `.result`.
+    detect: /\bas\s*\{\s*(?:content|text)\?:\s*string;?\s*(?:(?:content|text)\?:\s*string;?\s*)?\}|\.result\)?\??\.(?:text|content)\b/,
+    except: {
+      "modules/core-ai/src/api/none-from-one-list.test.ts": "reads the chat transcript's messages, which are the conversation, not an answer from invoke",
+    },
+    use: "read `r.text` off the invoke result (tool calls and vectors stay on `r.result`)",
   },
   {
     kind: "owns",

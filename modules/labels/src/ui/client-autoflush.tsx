@@ -84,6 +84,7 @@ async function tick(): Promise<void> {
 function ensureLoop(api: LabelsApi): void {
   current = api; // always refresh (org switch remounts with a new api)
   if (timer) return;
+  // TIMER-OUTLIVES-COMPONENT: the one auto-print loop a tab runs, started by whichever mount comes first and meant to outlive every mount.
   timer = setInterval(() => void tick(), POLL_MS);
 }
 

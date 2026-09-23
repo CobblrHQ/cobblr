@@ -4,6 +4,7 @@
 // bundle beats generating a worse one. Signals are the bundles' OWN declared
 // vocabulary (name, noun, scan_keywords, instance labels) — nothing hardcoded
 // per bundle here.
+import { bundleTableWords } from "@cobblr/platform-contract/bundle-words";
 import { FEATURED_BUNDLES, type FeaturedBundle } from "./featured-bundles";
 
 const WORD = /[a-z][a-z0-9-]{2,}/g;
@@ -30,7 +31,11 @@ function bundleVocab(fb: FeaturedBundle): Map<string, number> {
     add(inst.instance_name, 3);
     add(inst.display_name, 3);
     add(inst.item_noun, 3);
-    for (const k of inst.scan_keywords ?? []) add(k, 2);
+    // The table's words AND the manifest's, the rule the install and the scan
+    // menu use. The instance's alone left out every word a bundle declares one
+    // level up: Groceries' 128, cola among them, so asking for somewhere to
+    // keep your cola never suggested the bundle that claims it (#3217).
+    for (const k of bundleTableWords(inst.scan_keywords, m.scan_keywords)) add(k, 2);
   }
   return vocab;
 }

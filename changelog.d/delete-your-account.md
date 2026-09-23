@@ -3,6 +3,7 @@ type: feature
 scope: core
 date: 2026-09-22
 docs_target: docs/USER_GUIDE.md#Deleting your account
+docs_published: 2026-09-23
 ---
 You can delete your account: **Your account → Identity & password → Delete my account**, confirmed with your password. If you are the only owner of a workspace you are told which one first, before any password is asked, and you can delete it or hand it over; workspaces you share stay with their other owners. An operator can remove an account from **Super admin → Users**, and a person with no workspace now lands on a page with doors (make one, sign out, delete the account) instead of a dead line.
 

@@ -1,5 +1,6 @@
 {
   "lint": "lint:box-cron-offsets",
+  "run": "tsx scripts/lint-box-cron-offsets.ts",
   "ms": 544,
   "recorded": "2026-09-22",
   "source": "CI typecheck run 24934 (974229bf2, status success)"

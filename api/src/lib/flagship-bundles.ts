@@ -18,13 +18,34 @@ import { getOfficialBundleManifest } from "../routes/registry.js";
 import { inCatalogScope, type CatalogScope } from "./catalog-tier.js";
 export { catalogTier, inCatalogScope, type CatalogScope, type CatalogTier } from "./catalog-tier.js";
 
-/** One extraction-target field, mirroring core-scan's MenuField shape. */
+/** One extraction-target field, mirroring core-scan's MenuField shape. The
+ *  roles are part of the mirror: an offer that dropped them had nothing for a
+ *  decode to fill, so a book scanned by its ISBN reached an uninstalled
+ *  Bookshelf with a blank ISBN, and a title search filled it with another
+ *  edition's (#3543). */
 export interface BundleMenuField {
   name: string;
   label: string;
   type: string;
   help?: string;
   choices?: string[];
+  decode_role?: string;
+  field_role?: string;
+}
+
+/** A field def as the menu carries it, from a manifest entry or a stored
+ *  definition alike: the one mapping both offer builders use, so the roles
+ *  cannot be dropped by one of them. */
+export function bundleMenuField(d: Record<string, unknown>): BundleMenuField {
+  return {
+    name: String(d.name),
+    label: String(d.display_label ?? d.name),
+    type: String(d.type ?? "text"),
+    ...(d.help ? { help: String(d.help) } : {}),
+    ...(Array.isArray(d.choices) && d.choices.length ? { choices: (d.choices as unknown[]).map(String) } : {}),
+    ...(typeof d.decode_role === "string" && d.decode_role ? { decode_role: d.decode_role } : {}),
+    ...(typeof d.field_role === "string" && d.field_role ? { field_role: d.field_role } : {}),
+  };
 }
 
 /** A not-yet-installed bundle as a routable scan-menu destination. Shape is a
@@ -131,15 +152,7 @@ function load(): { manifests: RawManifest[]; byId: Map<string, RawManifest> } {
 
 function mapFields(defs: Array<Record<string, unknown>> | undefined): BundleMenuField[] {
   if (!Array.isArray(defs)) return [];
-  return defs
-    .filter((d) => d.type !== "computed")
-    .map((d) => ({
-      name: String(d.name),
-      label: String(d.display_label ?? d.name),
-      type: String(d.type ?? "text"),
-      ...(d.help ? { help: String(d.help) } : {}),
-      ...(Array.isArray(d.choices) && d.choices.length ? { choices: (d.choices as unknown[]).map(String) } : {}),
-    }));
+  return defs.filter((d) => d.type !== "computed").map(bundleMenuField);
 }
 
 function shortSlug(id: string): string {

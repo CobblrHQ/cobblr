@@ -3,6 +3,7 @@ type: feature
 scope: platform
 date: 2026-08-15
 docs_target: docs/USER_GUIDE.md#3.22 AI providers & the AI kill-switch (operator)
+docs_published: 2026-09-23
 ---
 Ask Cobb can now change your workspace's own setup, with your confirmation: add a custom field, create a separate list from a module, and switch an automation on or off.
 

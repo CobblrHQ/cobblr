@@ -1,5 +1,6 @@
 {
   "lint": "lint:modal-in-place",
+  "run": "tsx scripts/lint-modal-in-place.ts",
   "ms": 1402,
   "recorded": "2026-09-14",
   "source": "split from scripts/lint-durations.json (recorded 2026-09-14)"

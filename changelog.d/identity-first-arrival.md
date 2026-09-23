@@ -3,6 +3,7 @@ type: feature
 scope: auth
 date: 2026-08-13
 docs_target: docs/architecture/central-identity.md#What a surface does
+docs_published: 2026-09-23
 ---
 Signing in with a Cobblr account on a surface that welcomes new people now gets you a workspace on the spot, instead of a dead end.
 

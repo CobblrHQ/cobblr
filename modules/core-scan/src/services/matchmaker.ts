@@ -1195,7 +1195,7 @@ export async function runMatchmaker(
         source: { kind: "core-scan:matchmaker", id: sourceId ?? "" },
         bypass_cache: bypassCache,
       })
-      .then((r) => r.result as { content?: string })
+      .then((r) => ({ content: r.text }))
       .catch((err: unknown) => {
         lastFailure = err;
         return null;

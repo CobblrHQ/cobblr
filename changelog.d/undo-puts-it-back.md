@@ -3,6 +3,7 @@ type: feature
 scope: ai
 date: 2026-08-20
 docs_target: docs/USER_GUIDE.md#2. Core concepts
+docs_published: 2026-09-23
 ---
 Undo now puts things back rather than doing the opposite. A record Cobb deleted comes back as itself, with its own id, so everything filed inside it or pointing at it is pointing at it again; before, a lookalike was created with a new id and the old links were left dangling. An edit is reverted in full, including fields the change touched indirectly, and if something else edited that record in the meantime you are told rather than having it quietly rolled back too. Undoing a whole instruction is one request now: "each rack should have Shelf 1 through 5" goes back in one press, in seconds.
 

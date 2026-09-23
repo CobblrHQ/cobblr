@@ -3,6 +3,7 @@ type: feature
 scope: try
 date: 2026-08-29
 docs_target: docs/USER_GUIDE.md#1. Quick start
+docs_published: 2026-09-23
 ---
 A try sandbox can now email you everything you made in it as one file, along with both ways to carry on: hosted by us, or running Cobblr on your own machine. The same file restores into either.
 

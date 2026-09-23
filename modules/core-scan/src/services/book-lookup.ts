@@ -38,6 +38,18 @@ function pickIsbn13(list?: string[]): string | null {
   return xs.find((s) => s.length === 13 && /^(978|979)/.test(s)) ?? xs.find((s) => s.length === 13) ?? null;
 }
 
+/** The ISBN a row already knows from its own decode (the code scanned was an
+ *  ISBN, and the book catalog's bag carries it), or null for a row that has
+ *  none: a photographed cover, a product. The one case where a title lookup
+ *  must not be asked, because it answers with an edition, not this one. */
+export function decodedIsbnOf(suggestedMetadata: unknown): string | null {
+  const fields = (suggestedMetadata as { decoded?: { fields?: Record<string, unknown> } } | null)?.decoded?.fields;
+  const raw = fields?.isbn;
+  if (typeof raw !== "string" && typeof raw !== "number") return null;
+  const isbn = digits(String(raw)).toUpperCase();
+  return isbn.length === 10 || isbn.length === 13 ? isbn : null;
+}
+
 /** Best-effort ISBN-13 for a book identified only by title (+ author, +
  *  publisher). Returns null when nothing usable is found — the caller leaves the
  *  ISBN blank rather than inventing one. Never throws. */

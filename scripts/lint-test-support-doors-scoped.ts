@@ -31,7 +31,7 @@
 // names the bookshelf, groceries-twin and scan-category-axis doors and the
 // tests that press them.
 //
-//   npx tsx scripts/lint-test-support-doors-scoped.ts   (pnpm run lint:test-support-doors-scoped)
+//   npx tsx scripts/lint-test-support-doors-scoped.ts   (pnpm run lint test-support-doors-scoped)
 import { readFileSync, readdirSync, statSync } from "node:fs";
 import { join } from "node:path";
 

@@ -1,5 +1,6 @@
 {
   "lint": "lint:feed-caps",
+  "run": "tsx scripts/lint-feed-caps.ts",
   "ms": 418,
   "recorded": "2026-09-14",
   "source": "split from scripts/lint-durations.json (recorded 2026-09-14)"

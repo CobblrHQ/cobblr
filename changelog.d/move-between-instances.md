@@ -3,6 +3,7 @@ type: feature
 scope: platform
 date: 2026-08-09
 docs_target: docs/USER_GUIDE.md#3.18 Module instances ("+ New category")
+docs_published: 2026-09-23
 ---
 **Put something where it actually belongs.** A book on your Bookshelf that is really just inventory, or a kitchen item that wants its own "Cooking Stuff" list, can now be moved instead of deleted and retyped. The record keeps everything: its history, its tags, its photos, and the QR label already stuck on the thing.
 

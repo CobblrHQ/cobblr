@@ -5,6 +5,7 @@ import { Kysely, PostgresDialect } from "kysely";
 import { env } from "../env.js";
 import type { MetaDB } from "./schema.js";
 import { createPool } from "./client-error-guard.js";
+import { bootDbWaitMs, waitForDatabase } from "./wait-for-db.js";
 
 // createPool: every client is listening for 'error' from creation, so a
 // backend that goes away is a log line, never a process exit (the guard file
@@ -24,8 +25,10 @@ export const meta = new Kysely<MetaDB>({
   dialect: new PostgresDialect({ pool: metaPool }),
 });
 
-// Verify connectivity at startup — fail fast rather than blow up on
-// the first authenticated request.
+// Verify connectivity at startup: wait for a database that is still starting
+// (crash recovery after a power cut, a db container slower than the api), and
+// fail at once on anything else, rather than blow up on the first
+// authenticated request. See wait-for-db.ts.
 export async function pingMeta(): Promise<void> {
-  await metaPool.query("select 1");
+  await waitForDatabase(() => metaPool.query("select 1"), { ceilingMs: bootDbWaitMs() });
 }

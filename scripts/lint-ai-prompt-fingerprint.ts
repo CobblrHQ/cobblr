@@ -1,7 +1,7 @@
 #!/usr/bin/env tsx
 // Every AI provider adapter must declare `promptFingerprint`.
 //
-//   npx tsx scripts/lint-ai-prompt-fingerprint.ts     (npm run lint:prompt-fingerprint)
+//   npx tsx scripts/lint-ai-prompt-fingerprint.ts     (pnpm run lint prompt-fingerprint)
 //
 // WHY THIS IS A LINT AND NOT A CONVENTION: the AI cache keys on
 // {capability, provider, model, input}. For identify-image / extract-text /

@@ -1,7 +1,8 @@
 // Shared relative-time formatter ("just now" / "5m ago" / "3h ago" / "4d ago" /
 // "2mo ago" / a date). Extracted so read-only date surfaces (server-managed
-// stamps like `away_since`, activity rows, chips) agree on one voice — the
-// page-local copies in Dashboard/ScanPage can migrate here over time.
+// stamps like `away_since`, activity rows, chips) agree on one voice. Five
+// page-local copies had drifted to three ("5m ago", "5 min ago", "5 h ago")
+// before they were folded in here (#3499); lint:capabilities keeps it one.
 
 export function relativeTime(iso: string | Date | null | undefined): string {
   if (!iso) return "";

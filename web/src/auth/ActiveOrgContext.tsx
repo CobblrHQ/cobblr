@@ -21,6 +21,9 @@ import { useAuth } from "./AuthContext";
 import { deepPathAfterWorkspace, pathAcrossWorkspaces } from "../lib/deep-path";
 import { displaySlug } from "../lib/workspaceSlug";
 import { useImpersonation } from "../lib/impersonation";
+import { goneWorkspaceMessage, noteGoneWorkspace, takeGoneWorkspace } from "../lib/gone-workspace";
+import { BootScrim } from "../components/BootScrim";
+import { useToast } from "@cobblr/platform-web";
 import type { OrgMembership } from "../lib/api";
 
 const STORAGE_KEY = "cobblr.activeOrgSlug";
@@ -64,6 +67,20 @@ export function pickDefaultOrg(orgs: OrgMembership[]): OrgMembership | null {
   return orgs.find((o) => o.is_default) ?? orgs.find((o) => o.role === "owner") ?? orgs[0]!;
 }
 
+/** Where a /w/<handle> URL goes when the handle is none of the account's
+ *  workspaces: the account's default workspace, keeping the deep path so a
+ *  docs link still lands on its page, or, with no workspace left, the bare
+ *  origin, whose landing is the no-workspace page with its doors. Never the
+ *  shell: there is nothing behind it (#3531). */
+export function destinationForUnknownWorkspace(
+  orgs: OrgMembership[],
+  loc: { pathname: string; search: string; hash: string },
+): string {
+  const fallback = pickDefaultOrg(orgs);
+  if (!fallback) return "/";
+  return `/w/${urlHandleFor(fallback, orgs)}${deepPathAfterWorkspace(loc.pathname)}${loc.search}${loc.hash}`;
+}
+
 interface ActiveOrgCtx {
   activeOrg: OrgMembership | null;
   activeSlug: string; // FULL slug — what the API keys on
@@ -97,19 +114,26 @@ export function ActiveOrgProvider({
     return resolveHandle(urlHandle, orgs);
   }, [urlHandle, orgs, imp]);
 
-  // If the URL handle doesn't resolve to a membership (revoked, wrong account,
-  // typo, or a shared/placeholder slug like a docs link), bounce to the user's
-  // own workspace — PRESERVING the deep path so the link still lands on the right
-  // page. Never while impersonating (the operator legitimately isn't a member of
-  // the workspace they're viewing).
+  // If the URL handle doesn't resolve to a membership (deleted, revoked, wrong
+  // account, typo, or a shared/placeholder slug like a docs link), go where the
+  // bare URL goes and say why when we get there. Never while impersonating (the
+  // operator legitimately isn't a member of the workspace they're viewing).
+  // `orgs` is authoritative here: it arrives with the user, and this provider
+  // only renders once there is one, so an empty list means no workspace at all.
+  const unknown = !org && !imp;
   useEffect(() => {
-    if (orgs.length === 0 || org || imp) return;
-    const fallback = pickDefaultOrg(orgs);
-    if (fallback) {
-      const { pathname, search, hash } = window.location;
-      window.location.replace(`/w/${urlHandleFor(fallback, orgs)}${deepPathAfterWorkspace(pathname)}${search}${hash}`);
-    }
-  }, [orgs, org, imp]);
+    if (!unknown) return;
+    noteGoneWorkspace(urlHandle);
+    window.location.replace(destinationForUnknownWorkspace(orgs, window.location));
+  }, [unknown, urlHandle, orgs]);
+
+  // Arrived from a workspace URL that was not there: say so, once.
+  const toast = useToast();
+  useEffect(() => {
+    if (!org) return;
+    const gone = takeGoneWorkspace();
+    if (gone && gone !== urlHandle) toast.info(`${goneWorkspaceMessage(gone)} You are in ${org.name}.`, { duration: 10_000 });
+  }, [org, urlHandle]);
 
   // Remember the last-active workspace (by full slug) for bare-URL landings.
   useEffect(() => {
@@ -148,6 +172,8 @@ export function ActiveOrgProvider({
     },
     [org, orgs],
   );
+
+  if (unknown) return <BootScrim />;
 
   return (
     <Ctx.Provider value={{ activeOrg: org, activeSlug: org?.slug ?? "", setActiveSlug }}>

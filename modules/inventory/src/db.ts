@@ -11,6 +11,7 @@
 import type { Generated, Kysely } from "kysely";
 import type { Request } from "express";
 import type { OrgRoleName } from "@cobblr/platform-contract/org-roles";
+import { requestInstance } from "@cobblr/platform-contract/request-instance";
 
 export interface InventoryCategoriesTable {
   id: Generated<string>;
@@ -198,7 +199,7 @@ export function sessionUser(req: Request): { id: string; email: string; display_
  *  default instance line up with zero behaviour change. Every parts
  *  query filters on this; every insert stamps it. */
 export function instanceOf(req: Request): string {
-  return (req as unknown as { instance?: string }).instance ?? "inventory";
+  return requestInstance(req, "inventory");
 }
 
 /** The instance's default quantity unit (a "yarn" instance tracks skeins),

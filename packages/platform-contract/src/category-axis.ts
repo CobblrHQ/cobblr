@@ -23,6 +23,15 @@ export function applyAxisValue(assignment: CategoryAxisAssignment | null, into: 
   else into.row[assignment.slot.column] = assignment.value;
 }
 
+/** Empty the axis's slot on a record: what a caller does when the value
+ *  there cannot stand (an id the seam's `keep` found in no store), so the
+ *  record is written without it rather than refused over it. */
+export function clearAxisValue(axis: { slot: CategoryAxisSlot } | null | undefined, from: AxisTarget): void {
+  if (!axis) return;
+  if (axis.slot.kind === "extras") delete from.fields[axis.slot.name];
+  else delete from.row[axis.slot.column];
+}
+
 /** The value a caller already holds for this axis, wherever it keeps it.
  *
  *  The mirror of applyAxisValue, and here for the same reason: the scan

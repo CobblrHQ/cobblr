@@ -104,7 +104,7 @@ matchToCatalogRouter.post(
         provider_id: parsed.data.provider_id,
         model: parsed.data.model,
       });
-      const matches = parseMatches(aiRes.result);
+      const matches = parseMatches(aiRes.text);
       res.json({
         candidates,
         matches,
@@ -131,12 +131,7 @@ interface LlmMatch {
 /** The LLM response is a JSON string inside `.content` (or `.text`).
  *  Parse defensively — bad JSON is common and we fall back to an
  *  empty list rather than throwing. */
-function parseMatches(result: unknown): LlmMatch[] {
-  const raw =
-    (typeof result === "object" && result !== null
-      ? (result as { content?: string; text?: string }).content ??
-        (result as { content?: string; text?: string }).text
-      : undefined) ?? "";
+function parseMatches(raw: string): LlmMatch[] {
   if (!raw) return [];
   try {
     const start = raw.indexOf("{");

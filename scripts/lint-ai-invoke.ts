@@ -10,7 +10,7 @@
 // bug hit the put-away planner (and was latent in ~10 call sites). One key,
 // easy to forget, no compile-time signal → lint it.
 //
-//   npx tsx scripts/lint-ai-invoke.ts        (npm run lint:ai-invoke)
+//   npx tsx scripts/lint-ai-invoke.ts        (pnpm run lint ai-invoke)
 //
 // A genuinely userless caller (a cron / background job with no request user)
 // passes `userId: null` explicitly, OR annotates the call `// ai-userless:

@@ -26,7 +26,7 @@
 // better, by polling against a wall-clock deadline so the requests count too —
 // see the `until()` helper in api/tests/digifab-runs.test.ts.
 //
-//   npx tsx scripts/lint-poll-budget.ts   (pnpm run lint:poll-budget)
+//   npx tsx scripts/lint-poll-budget.ts   (pnpm run lint poll-budget)
 
 import { readFileSync, readdirSync, existsSync } from "node:fs";
 import { fileURLToPath } from "node:url";

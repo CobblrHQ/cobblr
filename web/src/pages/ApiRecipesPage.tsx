@@ -10,7 +10,7 @@ import { useQuery } from "@tanstack/react-query";
 import { Copy, Check, KeyRound, Info, Boxes, Terminal, Download } from "lucide-react";
 import { QueryError } from "../components/QueryError";
 import { useActiveOrg } from "../auth/ActiveOrgContext";
-import { downloadBlob, useToast, usePageTitle } from "@cobblr/platform-web";
+import { useLater, downloadBlob, useToast, usePageTitle } from "@cobblr/platform-web";
 import { api, type PlatformEntityKind } from "../lib/api";
 import { moduleIcon } from "../lib/module-icon";
 
@@ -158,6 +158,7 @@ function buildFile(
 const SECTION = "rounded-lg border border-line dark:border-slate-600 p-4";
 
 export function ApiRecipesPage() {
+  const later = useLater();
   usePageTitle("Scripting");
   const { activeSlug } = useActiveOrg();
   const toast = useToast();
@@ -258,7 +259,7 @@ export function ApiRecipesPage() {
   const copy = (id: string, text: string) => {
     void navigator.clipboard?.writeText(text);
     setCopied(id);
-    setTimeout(() => setCopied((c) => (c === id ? null : c)), 1400);
+    later.after("copied", 1400, () => setCopied((c) => (c === id ? null : c)));
   };
 
   const downloadAll = () => {

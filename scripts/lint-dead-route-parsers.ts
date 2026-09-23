@@ -14,7 +14,7 @@
 // Text and multipart parsers are fine here - the global parser only consumes
 // application/json - so only json() is flagged.
 //
-//   npx tsx scripts/lint-dead-route-parsers.ts   (npm run lint:dead-route-parsers)
+//   npx tsx scripts/lint-dead-route-parsers.ts   (pnpm run lint dead-route-parsers)
 
 import { readFileSync, readdirSync, statSync } from "node:fs";
 import { fileURLToPath } from "node:url";

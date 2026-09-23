@@ -27,7 +27,7 @@
 // that motivated it, watch it fail, then fix the violation. A lint that has
 // never failed has never been verified.
 //
-//   npx tsx scripts/lint-number-input-commits-a-number.ts   (pnpm run lint:number-input-commits-a-number)
+//   npx tsx scripts/lint-number-input-commits-a-number.ts   (pnpm run lint number-input-commits-a-number)
 import { readFileSync, readdirSync, statSync } from "node:fs";
 import { join } from "node:path";
 

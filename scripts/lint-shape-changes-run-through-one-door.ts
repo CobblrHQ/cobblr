@@ -20,7 +20,7 @@
 // that motivated it, watch it fail, then fix the violation. A lint that has
 // never failed has never been verified.
 //
-//   npx tsx scripts/lint-shape-changes-run-through-one-door.ts   (pnpm run lint:shape-changes-run-through-one-door)
+//   npx tsx scripts/lint-shape-changes-run-through-one-door.ts   (pnpm run lint shape-changes-run-through-one-door)
 import { readFileSync, readdirSync, statSync } from "node:fs";
 import { join } from "node:path";
 

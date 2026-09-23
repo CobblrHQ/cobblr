@@ -3,6 +3,7 @@ type: feature
 scope: ai
 date: 2026-08-20
 docs_target: docs/modules/core-ai.md#Built-in providers
+docs_published: 2026-09-23
 ---
 Setting up AI now shows numbered steps with real links, instead of a bare box asking for a key.
 

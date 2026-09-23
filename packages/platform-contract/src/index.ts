@@ -1336,6 +1336,16 @@ const EntityAction = z.object({
   // off the rail (2026-09-14). An action that says this has no phrasings
   // (a guard holds it), and an event-subject action with none says this.
   wireOnly: z.boolean().default(false),
+  // An entity-scoped action that may ALSO run with no record: its handler
+  // reads `ctx.entity` when there is one and its arguments when there is
+  // not. lists:add-item is the case: a low-stock wire adds THIS part to the
+  // shopping list, and a person says "put milk on the shopping list" where
+  // milk is not a record at all. Without this the invoke door required a
+  // record for every entity action, so the action's own example sentence
+  // could not run, and a stranger asking it got an empty list created and
+  // no milk (2026-09-22, #3255). Not `scope: "workspace"`, which would strip
+  // the record from the wire that has one.
+  recordOptional: z.boolean().default(false),
   // Can running this by mistake be put right again, INSIDE the workspace?
   //
   // This is what decides whether an AI connection that cannot show a
@@ -2538,6 +2548,27 @@ export interface EntityWriter {
   listForMatch?(
     orgId: string,
   ): Promise<Array<{ id: string; name: string; parentId?: string | null }>>;
+  /** Optional: move values held under a custom field into the module's own
+   *  taxonomy column, for a kind that declares `categoryAxis`.
+   *
+   *  The platform's scan category axis grew a choice field before a module's
+   *  own tree could answer for it (#3223), so a workspace can hold values in
+   *  `metadata[field]` that the module's own category filter never sees. Only
+   *  the module may read its table, so the module moves them; the platform
+   *  only orders the move before it removes the field. For each record with a
+   *  value under `field` and nothing in `column`: find or create the taxonomy
+   *  entry by normalised key, in the record's own instance, set the column,
+   *  drop the metadata key. A record that already has a `column` value keeps
+   *  it (somebody chose it) and loses only the stale key.
+   *
+   *  Idempotent: a second call finds nothing to move. `remaining` is how many
+   *  records still hold a value under `field`; the platform removes the field
+   *  only at zero, so a crash half way leaves a consistent workspace that the
+   *  next pass finishes. */
+  adoptAxisValues?(
+    orgId: string,
+    args: { field: string; column: string },
+  ): Promise<{ moved: number; remaining: number }>;
   /** Optional: read an entity's current fields, so an import preview can show the
    *  both-sides diff (what's there now vs what the source would write). */
   read?(orgId: string, id: string): Promise<Record<string, unknown> | null>;
@@ -3132,8 +3163,10 @@ export interface PlatformActions {
   /** Find every registered action that applies to a given entity
    *  kind, factoring in `applies_to` predicates. When `orgId` is
    *  provided, per-org appliesTo overrides take precedence over the
-   *  module-declared default. */
-  listApplicable(kind: string, orgId?: string): Promise<EntityActionRecord[]>;
+   *  module-declared default, and only modules the workspace has turned on
+   *  count; `alsoOn` names modules the caller is about to turn on (a bundle
+   *  install that enables what it requires), so their actions count too. */
+  listApplicable(kind: string, orgId?: string, opts?: { alsoOn?: readonly string[] }): Promise<EntityActionRecord[]>;
   /** Invoke an action programmatically. Throws if no handler is
    *  registered for the action's invoke_handler key. */
   invoke(actionId: string, ctx: ActionInvokeContext): Promise<unknown>;
@@ -3178,6 +3211,9 @@ export interface EntityActionRecord {
    *  Never offered to the assistant. Distinct from user_invokable, the
    *  button flag. */
   wire_only: boolean;
+  /** Runs on a record when given one, and with no record too (the manifest's
+   *  `recordOptional`). */
+  record_optional?: boolean;
   /** Disclosure: the face this verb belongs to, or null for the base. */
   face: string | null;
   /** Where the module declared it, 0-based. The strip lists a record's own
@@ -4133,7 +4169,13 @@ export interface PlatformAi {
      *  never streams: there is nothing to watch, it is already written. */
     onDelta?: (text: string) => void;
   }): Promise<{
+    /** The adapter's answer as it gave it: tool calls, a vector, the message. */
     result: unknown;
+    /** The words of the answer, whichever key the adapter put them under
+     *  (`content` for chat, `text` for the rest, or a bare string), and "" for
+     *  an answer with none. Read this, never `result.text` or
+     *  `result.content` (@cobblr/platform-contract/ai-answer). */
+    text: string;
     provider_id: string;
     model: string;
     cached: boolean;
@@ -4591,6 +4633,23 @@ export interface PlatformCategoryAxis {
    *  is what the scan confirm has always done with a field-def PATCH that came
    *  back non-ok. Filing the thing matters more than filing it under a name. */
   commit(args: {
+    orgId: string;
+    kind: string;
+    value: string;
+    instance?: string | null;
+  }): Promise<CategoryAxisAssignment | null>;
+  /** What to write for the value the record's slot ALREADY holds (read with
+   *  `readAxisValue`), which is a name on a choice-backed axis and a record
+   *  id on a native one. `commit` takes names only; handing it a slot's id
+   *  made a category named after the id. The caller never says which it
+   *  has, because the slot it came from does.
+   *
+   *  A name is committed as `commit` would (and kept as typed if it cannot
+   *  be stored). An id is kept when a record has it; one in no store (deleted
+   *  since the form loaded, or read off the wrong kind) is logged and comes
+   *  back null, and the caller empties the slot and files under a name
+   *  instead. Never throws. */
+  keep(args: {
     orgId: string;
     kind: string;
     value: string;

@@ -1,5 +1,6 @@
 {
   "lint": "lint:bundle-keyword-collisions",
+  "run": "tsx scripts/lint-bundle-keyword-collisions.ts",
   "ms": 394,
   "recorded": "2026-09-14",
   "source": "split from scripts/lint-durations.json (recorded 2026-09-14)"

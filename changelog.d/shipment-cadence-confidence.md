@@ -3,6 +3,7 @@ type: feature
 scope: purchases
 date: 2026-08-13
 docs_target: docs/USER_GUIDE.md#3.25c Reading a purchase order
+docs_published: 2026-09-23
 ---
 Cobblr now follows a tracked parcel on its own schedule, uses the carrier's date when it is better than the seller's estimate, and only asks you about an order when there is something to answer.
 

@@ -1,5 +1,6 @@
 {
   "lint": "lint:page-headers",
+  "run": "tsx scripts/lint-page-headers.ts",
   "ms": 393,
   "recorded": "2026-09-14",
   "source": "split from scripts/lint-durations.json (recorded 2026-09-14)"

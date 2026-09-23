@@ -103,7 +103,8 @@ copy a Postgres data directory while the server is running: that is a torn
 snapshot that may not restore.
 
 For a live backup, use the dumps instead. A `pg_dumpall` runs every day at
-`BACKUP_AT` (default 03:00, your machine's local time) and lands in
+`BACKUP_AT` (default 03:00, read in the zone `BACKUP_TZ` names, or `TZ`;
+UTC when neither is set) and lands in
 `${COBBLR_DATA_ROOT}/backups/daily` (Sundays are also copied to `weekly/`),
 kept for 30 days and 12 weeks, and restores anywhere. A dump only counts as
 usable above `BACKUP_MIN_BYTES`, and retention counts only usable dumps —

@@ -3,6 +3,7 @@ type: feature
 scope: discussion
 date: 2026-08-23
 docs_target: docs/modules/core-discussion.md#Mentions
+docs_published: 2026-09-23
 ---
 Type @ in a discussion to name a person, a record, or Cobb. Naming a record links the two together, both ways, using the same Linked entities you already have.
 

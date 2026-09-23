@@ -6,7 +6,7 @@ import { Router } from "express";
 import { z } from "zod";
 import { sql } from "kysely";
 import { platform } from "@cobblr/platform-contract";
-import { verificationOf, type ConnectionVerification } from "@cobblr/platform-contract/connection-verification";
+import { unverifiedRefusal, verificationOf, type ConnectionVerification } from "@cobblr/platform-contract/connection-verification";
 import { providerSentence } from "@cobblr/platform-contract/provider-reason";
 import { tenantDb, tenantContext } from "../db.js";
 import { asyncHandler, badBody, requireRole } from "./util.js";
@@ -37,21 +37,6 @@ async function probeForSave(providerId: string, credentials: Record<string, unkn
   } catch (err) {
     return verificationOf({ ok: false, reason: "unknown", error: providerSentence("unknown", { provider: providerId, door: "workspace" }) });
   }
-}
-
-/** A key the probe rejected is saved only on the person's say-so; so is a
- *  REPLACEMENT the probe could not settle, because the key it would displace
- *  works (a made-up key replaced a working one on the rig while the probe
- *  read "unverifiable", #2895). On create there is nothing to lose. */
-function refuseUnverified(res: import("express").Response, verification: ConnectionVerification): void {
-  const invalid = verification.state === "invalid";
-  res.status(409).json({
-    error: {
-      code: invalid ? "key_invalid" : "key_unverifiable",
-      message: verification.message ?? (invalid ? "The provider rejected this key." : "The key could not be verified just now."),
-    },
-    verification,
-  });
 }
 
 const verificationJson = (v: ConnectionVerification) => sql`${JSON.stringify(v)}::jsonb` as never;
@@ -173,7 +158,7 @@ providersRouter.post(
     // saved as unverified rather than as ready.
     let verification = await probeForSave(parsed.data.provider_id, parsed.data.credentials, ctx.org.id);
     if (verification.state === "invalid" && !parsed.data.confirm_unverified) {
-      refuseUnverified(res, verification);
+      res.status(409).json(unverifiedRefusal(verification));
       return;
     }
     if (verification.state === "invalid") verification = { ...verification, state: "unverified" };
@@ -267,7 +252,7 @@ providersRouter.patch(
       // protect). A row never verified takes the new state as it is.
       const displacesWorking = (current.verification as { state?: string } | null)?.state === "verified";
       if ((verification.state === "invalid" || (verification.state !== "verified" && displacesWorking)) && !parsed.data.confirm_unverified) {
-        refuseUnverified(res, verification);
+        res.status(409).json(unverifiedRefusal(verification));
         return;
       }
       if (verification.state === "invalid") verification = { ...verification, state: "unverified" };

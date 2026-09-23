@@ -3,6 +3,7 @@ type: feature
 scope: ai
 date: 2026-08-24
 docs_target: docs/USER_GUIDE.md#2. Core concepts
+docs_published: 2026-09-23
 ---
 Cobb can rename what a list is called ("call my parts spools"), give a category a list of its own ("give spices their own list"), and fold one back where it came from.
 

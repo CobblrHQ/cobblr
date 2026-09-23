@@ -1,5 +1,6 @@
 {
   "lint": "lint:touch-reachable",
+  "run": "tsx scripts/lint-touch-reachable.ts",
   "ms": 602,
   "recorded": "2026-09-14",
   "source": "split from scripts/lint-durations.json (recorded 2026-09-14)"

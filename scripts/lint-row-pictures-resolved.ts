@@ -24,7 +24,7 @@
 // the result sheet and the capture drawer of main at b4e655997
 // (COBBLR_LINT_ROOT=<a checkout> points it at another tree).
 //
-//   npx tsx scripts/lint-row-pictures-resolved.ts   (pnpm run lint:row-pictures-resolved)
+//   npx tsx scripts/lint-row-pictures-resolved.ts   (pnpm run lint row-pictures-resolved)
 import { readFileSync, readdirSync, statSync } from "node:fs";
 import { join } from "node:path";
 

@@ -59,7 +59,7 @@
 // ScanInboxCard.one-label.test.tsx (`c.ctx`, hand-built); green on main
 // after #3140. COBBLR_LINT_ROOT=<a checkout> points it at another tree.
 //
-//   npx tsx scripts/lint-gated-state-has-a-producer.ts   (pnpm run lint:gated-state-has-a-producer)
+//   npx tsx scripts/lint-gated-state-has-a-producer.ts   (pnpm run lint gated-state-has-a-producer)
 //   npx tsx scripts/lint-gated-state-has-a-producer.ts --list   every gated field and the file that produces it
 import { readFileSync, readdirSync, statSync } from "node:fs";
 import { basename, join, relative } from "node:path";

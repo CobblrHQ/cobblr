@@ -36,7 +36,7 @@ import { createPortal } from "react-dom";
 import { useLocation, useNavigate, useSearchParams } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { AlertTriangle, ArrowLeftRight, ArrowRight, Camera, Check, Flashlight, ImagePlus, Loader2, MapPin, Package, Plus, ScanLine, SkipForward, Undo2, X, Zap } from "lucide-react";
-import { LiveSurfaceProvider, Modal, usePageTitle, useOverlayOpenFlag } from "@cobblr/platform-web";
+import { useLater, LiveSurfaceProvider, Modal, usePageTitle, useOverlayOpenFlag } from "@cobblr/platform-web";
 import { classifyScanPayload, typedVerdict } from "../lib/scanPayload";
 import { doorPlan, frameFromImage } from "../lib/imageDoor";
 import { useDeployEnv } from "../lib/deploy-env";
@@ -134,6 +134,7 @@ function writeScanSession(slug: string, s: ScanSession) {
 }
 
 export function ScanCameraPage() {
+  const later = useLater();
   usePageTitle("Scan");
   // This page IS an overlay — a body-portaled fixed inset-0 surface over the
   // whole app — so it raises the same flag every Modal and SidePanel raises.
@@ -1281,7 +1282,7 @@ export function ScanCameraPage() {
       // iOS sometimes keeps the track but returns it muted; nudge playback,
       // give it a beat to self-resume, then re-acquire if it stays dark.
       void videoRef.current?.play().catch(() => {});
-      window.setTimeout(() => {
+      later.after("resume-check", 800, () => {
         const t = streamRef.current?.getVideoTracks()[0] ?? null;
         if (
           document.visibilityState === "visible" &&
@@ -1290,7 +1291,7 @@ export function ScanCameraPage() {
         ) {
           setStreamEpoch((e) => e + 1);
         }
-      }, 800);
+      });
     }
     document.addEventListener("visibilitychange", onVisible);
     return () => document.removeEventListener("visibilitychange", onVisible);
@@ -1763,7 +1764,7 @@ export function ScanCameraPage() {
     if (typeof navigator.vibrate === "function") navigator.vibrate(30);
     scanBeep("shutter");
     setFlash(true);
-    window.setTimeout(() => setFlash(false), 160);
+    later.after("shutter-flash", 160, () => setFlash(false));
     setShutterBusy(true);
     // Stamps freeze at capture time — a retry minutes later must file the shot
     // where you STOOD when you took it, not where you've wandered since. Read
@@ -2341,7 +2342,7 @@ export function ScanCameraPage() {
               setCameraDead(false);
               setPhase("idle");
               // idle → scanning is the 0→1 the acquisition effect runs on.
-              window.setTimeout(() => setPhase("scanning"), 0);
+              later.after("rescan", 0, () => setPhase("scanning"));
             }}
             className="inline-flex items-center gap-2 rounded-full bg-cobble-600 hover:bg-cobble-700 px-4 py-2 text-sm font-medium"
           >

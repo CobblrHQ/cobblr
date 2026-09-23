@@ -55,12 +55,10 @@ export function holdPhrase(hours: number): string {
 
 export function SandboxEnded({
   kind = "sandbox",
-  slug,
   preview,
   ledgerPreview,
 }: {
   kind?: EndingKind;
-  slug?: string;
   preview?: EndingPaths;
   /** The preview route's ledger; `null` shows the page as a box that cannot answer. */
   ledgerPreview?: SandboxLedger | null;
@@ -125,7 +123,7 @@ export function SandboxEnded({
         <div className="mt-6 space-y-3">
           {held && <KeepDoor />}
           <FreshDoor paths={paths} />
-          {paths?.carry_available && kind === "sandbox" && held ? <CarryDoor slug={slug} /> : <CarryNote />}
+          {paths?.carry_available && kind === "sandbox" && held ? <CarryDoor /> : <CarryNote />}
           {paths?.selfhost_url && (
             <p className="text-sm text-muted">
               Or{" "}
@@ -166,6 +164,7 @@ function KeepDoor() {
       // The latch opens and the shell can draw the workspace again; a full
       // load, so nothing cached from the frozen hour is painted.
       sandboxKeptAtTheEnd();
+      // TIMER-OUTLIVES-COMPONENT: the latch above lets the shell redraw, which can unmount this page, and the full load must still happen.
       window.setTimeout(() => window.location.assign("/"), 1500);
     } catch (err) {
       setError(
@@ -236,9 +235,16 @@ function FreshDoor({ paths }: { paths: EndingPaths | null }) {
 }
 
 /** Door 3, where the replay exists: keep it for the full month so there is
- *  something to bring, then leave for the real account with this workspace
- *  named, so the other side knows whose ledger to replay. */
-function CarryDoor({ slug }: { slug?: string }) {
+ *  something to read, get the person's own grant to read it, and leave for the
+ *  real account's /carry page, which signs them up and brings it in. */
+export function carryUrl(cloudUrl: string | null, here: string, grant: { token: string; source: string }): string {
+  const url = new URL("/carry", new URL(cloudUrl || "/", here));
+  url.searchParams.set("token", grant.token);
+  url.searchParams.set("from", grant.source);
+  return url.toString();
+}
+
+function CarryDoor() {
   const [email, setEmail] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -249,10 +255,8 @@ function CarryDoor({ slug }: { slug?: string }) {
     try {
       await api.keepSandbox(email.trim(), 30);
       sandboxKeptAtTheEnd();
-      const p = await api.sandboxPaths();
-      const url = new URL(p.cloud_url ?? "/?mode=signup", window.location.origin);
-      if (slug) url.searchParams.set("carry", slug);
-      window.location.assign(url.toString());
+      const [p, grant] = await Promise.all([api.sandboxPaths(), api.startCarry()]);
+      window.location.assign(carryUrl(p.cloud_url, window.location.origin, grant));
     } catch {
       setError("Could not keep it to bring along. Try again?");
       setBusy(false);

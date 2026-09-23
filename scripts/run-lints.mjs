@@ -1,22 +1,25 @@
 #!/usr/bin/env node
-// Run EVERY lint:* script, concurrently, in ONE step.
+// Run EVERY registered lint, concurrently, in ONE step.
 //
-// DISCOVERY IS BY package.json, deliberately — same property as run-unit-tests.mjs.
-// There is no list to forget to update: a new `lint:*` script runs because it
-// exists. That is what makes `lint:lints-are-wired` cheap to satisfy and hard to
-// regress; before this, wiring a lint meant remembering to paste a step into
-// ci.yml, and two lints shipped orphaned because nobody did.
+// DISCOVERY IS BY THE LINT'S OWN RECORD, scripts/lint-durations/<name>.json
+// (#3455): its "run" command, beside its quiet time. There is no list to
+// forget to update, and no shared list to conflict in: a lint is its script
+// and its record, two new files. It used to be a `lint:*` line in
+// package.json, which every branch adding a lint appended to, so any two such
+// branches conflicted there by construction. Before THAT, wiring a lint meant
+// pasting a step into ci.yml, and two lints shipped orphaned.
 //
 // The lints are independent, read-only and short, so they parallelise perfectly.
 // Their cost is almost entirely process startup: ~90 of them at ~600ms of
 // pnpm + tsx boot each is ~70s serialised, ~10s at 8-wide.
 //
 //   node scripts/run-lints.mjs            (pnpm run lint:all)
+//   node scripts/run-lints.mjs --one isolation [args]   (pnpm lint isolation): one lint, its own output and exit code
 //   node scripts/run-lints.mjs --only isolation,docs
 //   COBBLR_LINT_CONCURRENCY=4 pnpm run lint:all
 
 import { readFileSync } from "node:fs";
-import { readQuietMs, writeQuietMs } from "./lib/lint-durations.mjs";
+import { readQuietMs, readRegistry, writeQuietMs } from "./lib/lint-durations.mjs";
 import { execFileSync } from "node:child_process";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -27,34 +30,51 @@ import { writeFileSync } from "node:fs";
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
 
 /**
- * Lints this runner deliberately does NOT run. Each needs a reason — "we never
- * got round to it" is not one, and an entry here is a standing invitation to
- * argue. `lint:lints-are-wired` reads this list, so a lint listed here is
- * accounted for rather than reported as an orphan.
+ * Lints this runner deliberately does NOT run, each with its reason, read from
+ * its record's "manual" field. `lint:lints-are-wired` holds that every one has
+ * a reason and every other registered lint runs.
  */
-export const MANUAL = {
-  "lint:pdf-bench":
-    "renders PDFs and compares ink coverage, so its baseline is font- and " +
-    "renderer-sensitive; in CI it would report label regressions that are really " +
-    "container font differences. Run it locally when changing label layout.",
-  "lint:branch-live":
-    "asks the Forgejo API whether THIS branch's PR is still open — it is a " +
-    "pre-push guard against building on a spent branch, and has no meaning in a " +
-    "CI job that already checked the branch out.",
-  "lint:all": "this runner",
-};
+export const MANUAL = Object.fromEntries(readRegistry().filter((l) => l.manual).map((l) => [l.name, l.manual]));
 
-/** Every lint:* script in the root package.json that this runner should execute. */
+/** Every registered lint, and the ones this runner executes. */
 export function discoverLints() {
-  const pkg = JSON.parse(readFileSync(join(ROOT, "package.json"), "utf8"));
+  const reg = readRegistry();
   return {
-    all: Object.keys(pkg.scripts).filter((s) => s.startsWith("lint:")),
-    run: Object.keys(pkg.scripts).filter((s) => s.startsWith("lint:") && !(s in MANUAL)),
-    scripts: pkg.scripts,
+    all: reg.map((l) => l.name),
+    run: reg.filter((l) => !l.manual).map((l) => l.name),
+    scripts: Object.fromEntries(reg.map((l) => [l.name, l.run])),
   };
 }
 
+/** `pnpm lint <name> [args]`: run ONE registered lint, manual ones included,
+ *  with its own output and exit code. Replaces the `pnpm run lint:<name>`
+ *  that each package.json entry used to give. */
+function runOne(rawName, args) {
+  const name = String(rawName ?? "").startsWith("lint:") ? String(rawName) : `lint:${rawName ?? ""}`;
+  const { scripts } = discoverLints();
+  const cmd = scripts[name];
+  if (!rawName || !cmd) {
+    const near = Object.keys(scripts).filter((n) => rawName && n.includes(String(rawName))).slice(0, 8);
+    console.error(`[lints] ${rawName ? `no registered lint "${name}"` : "usage: pnpm lint <name> [args]"}${near.length ? `; did you mean: ${near.map((n) => n.slice(5)).join(", ")}` : ""}`);
+    console.error("        A lint is registered by its record, scripts/lint-durations/<name>.json (scripts/new-lint.sh makes one).");
+    process.exitCode = 2;
+    return;
+  }
+  const quoted = args.map((a) => `'${String(a).replace(/'/g, `'\\''`)}'`).join(" ");
+  try {
+    execFileSync("bash", ["-c", `${cmd}${quoted ? ` ${quoted}` : ""}`], { cwd: ROOT, stdio: "inherit", env: { ...process.env, PATH: `${join(ROOT, "node_modules", ".bin")}:${process.env.PATH ?? ""}` } });
+  } catch (e) {
+    process.exitCode = typeof e?.status === "number" ? e.status : 1;
+  }
+}
+
 function main() {
+  const oneArg = process.argv.indexOf("--one");
+  if (oneArg !== -1) {
+    // `pnpm lint no-emdash -- --update`: pnpm passes the separator through.
+    const rest = process.argv.slice(oneArg + 2);
+    return runOne(process.argv[oneArg + 1], rest[0] === "--" ? rest.slice(1) : rest);
+  }
   const onlyArg = process.argv.indexOf("--only");
   const only = onlyArg === -1 ? null : new Set((process.argv[onlyArg + 1] ?? "").split(",").filter(Boolean));
   // --record: write this run's per-lint times as the quiet baseline the budget
@@ -69,7 +89,7 @@ function main() {
   const names = only ? run.filter((n) => only.has(n) || only.has(n.slice("lint:".length))) : run;
 
   if (names.length === 0) {
-    console.error("[lints] no lint:* scripts matched — the discovery is broken, which is worse than a red lint.");
+    console.error("[lints] no registered lints matched: the discovery is broken, which is worse than a red lint.");
     process.exitCode = 1;
     return;
   }

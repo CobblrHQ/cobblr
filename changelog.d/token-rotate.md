@@ -3,6 +3,7 @@ type: feature
 scope: admin
 date: 2026-08-06
 docs_target: docs/USER_GUIDE.md#4.7 Notifications
+docs_published: 2026-09-23
 ---
 
 Rotate a token from its row: the dialog reopens prefilled with the same name and

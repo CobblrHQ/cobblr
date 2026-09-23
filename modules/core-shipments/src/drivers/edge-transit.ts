@@ -15,6 +15,7 @@
 
 import { platform } from "@cobblr/platform-contract";
 import { parseTransit } from "./connection.js";
+import { edgeRouteKey } from "@cobblr/platform-contract/edge-channel";
 
 /** The bridge long-polls, so between cycles the channel is briefly
  *  unregistered and send() throws. Transient: the agent re-polls in seconds. */
@@ -49,12 +50,7 @@ export function transitMode(): { viaBridge: boolean; named: string } {
  *  Same key format as the AI transit and digifab, so a bridge is addressed one
  *  way everywhere. */
 export function edgeKeyFor(orgId: string, named: string, ownerUserId?: string | null): string {
-  const owner = (ownerUserId ?? "").trim();
-  if (owner) return owner;
-  if (!orgId) {
-    throw new Error("edge transit: no personal owner or workspace to route to a bridge");
-  }
-  return named ? `${orgId}::${named}` : orgId;
+  return edgeRouteKey({ ownerUserId, orgId, bridge: named });
 }
 
 /** fetch-shaped, but performed by the bridge on its own network. */

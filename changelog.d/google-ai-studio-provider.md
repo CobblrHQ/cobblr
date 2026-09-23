@@ -3,6 +3,7 @@ type: feature
 scope: ai
 date: 2026-08-20
 docs_target: docs/modules/core-ai.md#Built-in providers
+docs_published: 2026-09-23
 ---
 Connect a free Google AI Studio key to power scanning, image identification, chat and tool calls, without pasting a base URL.
 

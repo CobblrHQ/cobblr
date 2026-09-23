@@ -16,7 +16,7 @@
 // a refusal that cannot be asked about says so THROUGH `blocked`
 // (`requestable: false` with a reason), not by leaving it off.
 //
-//   npx tsx scripts/lint-refusal-carries-blocked.ts   (pnpm run lint:refusal-carries-blocked)
+//   npx tsx scripts/lint-refusal-carries-blocked.ts   (pnpm run lint refusal-carries-blocked)
 import { readFileSync, readdirSync, statSync } from "node:fs";
 import { join } from "node:path";
 

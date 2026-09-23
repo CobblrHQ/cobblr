@@ -3,6 +3,7 @@ type: feature
 scope: platform
 date: 2026-09-17
 docs_target: docs/USER_GUIDE.md#3.20 Scan inbox (`core-scan`, stock)
+docs_published: 2026-09-23
 ---
 Every form of fields, on a record page and on the scan item screen, lays itself out from what each field needs and how wide the screen is: two short dropdowns share a row on a phone, a date gets a column it fits, a note takes the row, and nothing overlaps or runs off the edge. A compact card never prints the same value twice and every field label reads as words.
 

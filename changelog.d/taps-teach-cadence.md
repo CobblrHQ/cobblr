@@ -3,6 +3,7 @@ type: feature
 scope: inventory
 date: 2026-09-08
 docs_target: docs/USER_GUIDE.md#3.1 Inventory
+docs_published: 2026-09-23
 ---
 **Every tap on an item now teaches how fast you go through it, and there is a one-tap "Replaced with a fresh one".** Use one, Used up, Finished it, Threw it out and Restock one used to change the count and teach nothing about cadence; only a scan or a shopping-list tick did. They all feed the consumption ledger now. And when you run out of something and put an identical new one in its place, **Replaced with a fresh one** records both facts in one tap: the count stays the same, the old one ends as used, the new one is dated today, and the ledger learns the interval.
 

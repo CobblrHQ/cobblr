@@ -1,5 +1,6 @@
 {
   "lint": "lint:bundle-schema",
+  "run": "tsx scripts/lint-bundle-schema.ts",
   "ms": 2258,
   "recorded": "2026-09-14",
   "source": "split from scripts/lint-durations.json (recorded 2026-09-14)"

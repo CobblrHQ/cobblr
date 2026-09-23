@@ -40,6 +40,8 @@ export interface RailAction {
   scope?: string;
   matched_kinds?: string[];
   args_schema?: Record<string, { label?: string; type?: string; required?: boolean; oneOf?: string }> | null;
+  /** Runs on a record, or with none (the manifest's recordOptional). */
+  record_optional?: boolean;
   examples?: string[];
 }
 
@@ -86,7 +88,7 @@ const tail = (a: RailAction, mode: RailMode): string => {
 
 export function renderEntityActions(all: RailAction[], mode: RailMode): string[] {
   return entityActions(all).map(
-    (a) => `- ${a.id} (on ${a.matched_kinds!.join(", ")}) — ${a.label}${tail(a, mode)}`,
+    (a) => `- ${a.id} (on ${a.matched_kinds!.join(", ")}${a.record_optional ? ", or with no record" : ""}) — ${a.label}${tail(a, mode)}`,
   );
 }
 

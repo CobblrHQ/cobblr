@@ -32,6 +32,7 @@ import { signMcpReadGrant } from "../auth/jwt.js";
 import { publicBaseUrl } from "./public-url.js";
 import { env } from "../env.js";
 import { fullText, thumbnailImages } from "./ai-log.js";
+import { aiAnswerText } from "@cobblr/platform-contract/ai-answer";
 
 /** True when the chat input carries workspace tool defs (the AI wants to read
  *  the workspace) — the only case where the bridge MCP relay is relevant. */
@@ -472,6 +473,11 @@ export async function checkAvailability(
 }
 
 export const invoke: PlatformAi["invoke"] = async (req) => {
+  const r = await invokeRaw(req);
+  return { ...r, text: aiAnswerText(r.result) };
+};
+
+const invokeRaw = async (req: Parameters<PlatformAi["invoke"]>[0]): Promise<Omit<Awaited<ReturnType<PlatformAi["invoke"]>>, "text">> => {
   // Instance kill-switch: when AI is disabled for the whole deployment,
   // refuse before touching any per-workspace config. Same error family as
   // "no provider configured" so every caller's existing degrade path

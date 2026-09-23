@@ -48,7 +48,7 @@
 // PROVE IT RED before you trust it green: the scan form's old
 // `grid grid-cols-2` around ScanFieldInput fails it; FieldPack passes.
 //
-//   npx tsx scripts/lint-field-pack.ts   (pnpm run lint:field-pack)
+//   npx tsx scripts/lint-field-pack.ts   (pnpm run lint field-pack)
 import { readFileSync, readdirSync, statSync } from "node:fs";
 import { join } from "node:path";
 

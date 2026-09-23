@@ -3,6 +3,7 @@ type: feature
 scope: ai
 date: 2026-08-19
 docs_target: docs/USER_GUIDE.md#2. Core concepts
+docs_published: 2026-09-23
 ---
 When what you are typing to Cobb is something your workspace already knows how to do, it says so before you send it. A strip above the box shows what it would do, and tab takes it: the work happens straight away and no AI is asked. Pressing enter still sends the message to the AI as it always did, so the quick way is something you choose rather than something that happens to you. This works whether or not AI is connected.
 

@@ -1,7 +1,8 @@
 // "What you built here": the trial ledger, read back on the sandbox's ending
 // page (#3254). A list a person can read, in their own words for it, net of
 // what they deleted and never the demo's stock, and honest about what stays.
-// The same list is the picker for bringing it along once the replay exists.
+// The same list, from the same read, is what the receiving side shows before
+// it brings anything (CarryPage), so the two pages cannot disagree about it.
 import { useEffect, useState } from "react";
 import { api, type SandboxLedger } from "../lib/api";
 
@@ -20,7 +21,16 @@ export function ledgerLines(l: SandboxLedger): string[] {
   return lines;
 }
 
-export function BuiltHere({ preview }: { preview?: SandboxLedger | null }) {
+export function BuiltHere({
+  preview,
+  heading = "What you built here",
+  staysLabel = "Stays here",
+}: {
+  preview?: SandboxLedger | null;
+  /** The receiving side reads the same list from elsewhere: "there". */
+  heading?: string;
+  staysLabel?: string;
+}) {
   const [ledger, setLedger] = useState<SandboxLedger | null | undefined>(preview);
   useEffect(() => {
     if (preview !== undefined) return;
@@ -42,7 +52,7 @@ export function BuiltHere({ preview }: { preview?: SandboxLedger | null }) {
   const lines = ledgerLines(ledger);
   return (
     <section className="mt-6 rounded-xl border border-line dark:border-slate-700 bg-surface dark:bg-slate-900 p-4" data-testid="built-here">
-      <h2 className="text-[11px] font-mono uppercase tracking-widest text-accent">What you built here</h2>
+      <h2 className="text-[11px] font-mono uppercase tracking-widest text-accent">{heading}</h2>
       {lines.length === 0 ? (
         <p className="mt-1.5 text-sm text-muted" data-testid="built-nothing">
           Nothing of your own yet: the records here are the ones the sandbox came with.
@@ -59,7 +69,7 @@ export function BuiltHere({ preview }: { preview?: SandboxLedger | null }) {
       )}
       {ledger.left_behind.length > 0 && (
         <p className="mt-3 text-xs text-muted" data-testid="stays-here">
-          Stays here: {ledger.left_behind.join(", ")}.
+          {staysLabel}: {ledger.left_behind.join(", ")}.
         </p>
       )}
     </section>

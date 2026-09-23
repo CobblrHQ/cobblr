@@ -16,6 +16,7 @@
 // property of the parcel being followed, never of the running server.
 
 import { platform } from "@cobblr/platform-contract";
+import { edgeTransit } from "@cobblr/platform-contract/edge-channel";
 
 /** The kind this module registers + resolves under. */
 export const TRACKING_KIND = "parcel-tracking";
@@ -69,9 +70,8 @@ const DEFAULT_BASE = "https://api.easypost.com/v2";
 /** Parse a transit setting shared by both sources: "" / absent = direct,
  *  "bridge" = the default bridge, "bridge:<id>" = a named one. */
 export function parseTransit(raw: string): { viaBridge: boolean; named: string } {
-  const t = (raw || "").trim();
-  if (!t.startsWith("bridge")) return { viaBridge: false, named: "" };
-  return { viaBridge: true, named: t.startsWith("bridge:") ? t.slice(7).slice(0, 60) : "" };
+  const t = edgeTransit(raw);
+  return { viaBridge: t.viaBridge, named: t.bridge ?? "" };
 }
 
 /** The instance-wide config, which is what a self-hosted box uses.

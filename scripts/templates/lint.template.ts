@@ -8,11 +8,17 @@
 // a genuine exception opts out (an annotation with a reason, never a
 // baseline that grows).
 //
+// THE BOUNDARY, AND WHICH FALSE POSITIVE DREW IT. Name the near-miss that
+// made the scope what it is: the thing that looked like a violation, is not
+// one, and is why the rule stops where it does. A scope drawn by a real
+// near-miss keeps its precision; one drawn by imagination does not. If
+// nothing has tested the boundary yet, say that instead of inventing one.
+//
 // PROVE IT RED before you trust it green: run it against the real violation
 // that motivated it, watch it fail, then fix the violation. A lint that has
 // never failed has never been verified.
 //
-//   npx tsx scripts/lint-__SLUG__.ts   (pnpm run lint:__SLUG__)
+//   npx tsx scripts/lint-__SLUG__.ts   (pnpm lint __SLUG__)
 import { readFileSync, readdirSync, statSync } from "node:fs";
 import { join } from "node:path";
 

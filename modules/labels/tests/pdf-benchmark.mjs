@@ -37,7 +37,7 @@ const ITEMS = [
  *  installed here. That makes this a LOCAL tool, deliberately not wired into CI —
  *  the Linux runners have no qlmanage, and a check that cannot run is worse than
  *  no check because it goes green by accident. Run it by hand around any change
- *  to the PDF renderer: `pnpm run lint:pdf-bench`. */
+ *  to the PDF renderer: `pnpm run lint pdf-bench`. */
 function haveRasteriser() {
   try { execFileSync("which", ["qlmanage"], { stdio: "ignore" }); return true; }
   catch { return false; }

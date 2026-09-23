@@ -159,6 +159,7 @@ export async function buildSystemPrompt(
           user_invokable?: boolean;
           internal?: boolean;
           wire_only?: boolean;
+          record_optional?: boolean;
         }>
       | undefined) ?? []
   ).filter(offerableToAssistant);

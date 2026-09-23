@@ -3,6 +3,7 @@ type: feature
 scope: scan
 date: 2026-09-06
 docs_target: docs/USER_GUIDE.md#3.20 Scan inbox (`core-scan`, stock)
+docs_published: 2026-09-23
 ---
 Things sold by weight are recorded by weight. A receipt line like "4.14 lb at
 1.99/lb" now keeps the weight, the unit and the price per unit, and counts as

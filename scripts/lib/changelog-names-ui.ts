@@ -24,8 +24,20 @@ export interface Violation {
   what: string;
 }
 
-/** The check, pure: the entry's text and the paths its change touched. */
-export function check(file: string, src: string, changedPaths: readonly string[]): Violation[] {
+/** The check, pure: the entry's text, the paths its change touched, and the
+ *  1-based line numbers the change added to this entry. `null` means the
+ *  entry is new, so every line is the change's claim. For an entry that
+ *  already existed, only the lines this change added are its claim: a docs
+ *  publish run adds `docs_published:` to old feature entries whose controls
+ *  shipped in their own PRs, and reading their whole text refused a pure
+ *  publish with 90 violations (#3510). An edit that adds a control word to an
+ *  existing entry is still judged, on the line that added it. */
+export function check(
+  file: string,
+  src: string,
+  changedPaths: readonly string[],
+  addedLines: ReadonlySet<number> | null = null,
+): Violation[] {
   const fm = src.match(/^---\r?\n([\s\S]*?)\r?\n---/)?.[1] ?? "";
   const type = fm.match(/^type:\s*(\S+)/m)?.[1] ?? "";
   if (type !== "feature") return [];
@@ -37,6 +49,7 @@ export function check(file: string, src: string, changedPaths: readonly string[]
   const bodyStartLine = head.split("\n").length;
   const lines = src.slice(head.length).split("\n");
   for (let i = 0; i < lines.length; i++) {
+    if (addedLines && !addedLines.has(bodyStartLine + i)) continue;
     const m = lines[i]?.match(CONTROL_RE);
     if (!m) continue;
     return [

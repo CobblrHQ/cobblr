@@ -1,5 +1,6 @@
 {
   "lint": "lint:ci-pr-any-base",
+  "run": "tsx scripts/lint-ci-pr-any-base.ts",
   "ms": 415,
   "recorded": "2026-09-14",
   "source": "split from scripts/lint-durations.json (recorded 2026-09-14)"

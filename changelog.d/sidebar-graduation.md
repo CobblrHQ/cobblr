@@ -3,6 +3,7 @@ type: feature
 scope: navigation
 date: 2026-09-13
 docs_target: docs/USER_GUIDE.md#Top nav
+docs_published: 2026-09-23
 ---
 
 The first time the top bar runs out of room it asks once whether you want the sidebar, and the more menu always carries a Switch to the sidebar entry; nothing changes your layout without a click.

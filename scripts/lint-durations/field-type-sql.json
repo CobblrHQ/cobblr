@@ -1,5 +1,6 @@
 {
   "lint": "lint:field-type-sql",
+  "run": "tsx scripts/lint-field-type-sql.ts",
   "ms": 412,
   "recorded": "2026-09-14",
   "source": "split from scripts/lint-durations.json (recorded 2026-09-14)"

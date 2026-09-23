@@ -3,6 +3,7 @@ type: feature
 scope: ai
 date: 2026-08-20
 docs_target: docs/USER_GUIDE.md#2. Core concepts
+docs_published: 2026-09-23
 ---
 Every record's detail page now has a small Cobb button beside its other actions. Press it and that record is what Cobb is talking about: the panel opens, the chip says its name, and your question carries the record itself rather than a name he has to go and find. Press it again to drop it. It is always visible rather than appearing on hover, so it works the same on a phone as on a desktop, and it lights up in the same amber as the highlight on the page.
 

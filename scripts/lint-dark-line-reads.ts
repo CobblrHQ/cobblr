@@ -26,7 +26,7 @@
 // PROVE IT RED: on the values before #3232 (line 38 43 51 on canvas 30 41 59)
 // the canvas contrast is 1.03 and this fails; that run is recorded in the PR.
 //
-//   npx tsx scripts/lint-dark-line-reads.ts   (pnpm run lint:dark-line-reads)
+//   npx tsx scripts/lint-dark-line-reads.ts   (pnpm run lint dark-line-reads)
 import { readFileSync } from "node:fs";
 
 const CSS = "web/src/index.css";

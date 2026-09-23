@@ -10,7 +10,8 @@
 // the phone's version is the camera's Sort mode), Fill missing photos,
 // Export and Import, Drive this screen, the Auto-pick and First-look
 // toggles, Same thing twice (docs/design-decisions/scan-inbox-device-split.md §3.1).
-import { Copy, Download, Image as ImageIcon, LayoutGrid, MonitorSmartphone, MoreHorizontal, ReceiptText, Sparkles, Upload, Wand2, Zap } from "lucide-react";
+import { Copy, Download, Image as ImageIcon, LayoutGrid, MonitorSmartphone, MoreHorizontal, ReceiptText, Sparkles, Tv, Upload, Wand2, Zap } from "lucide-react";
+import { useNavigate } from "react-router-dom";
 import { HeaderMenu, MenuFilterLine, MenuHead, MenuItem, MenuSep } from "../components/HeaderMenu";
 import { ReceiptAddressMenuBlock } from "../components/ReceiptAddressChip";
 import { PairPhoneButton } from "../components/PairPhoneButton";
@@ -19,6 +20,9 @@ export interface ScanInboxMenuProps {
   handheld: boolean;
   triggerClassName: string;
   /** The waiting-2d+ filter, phone only (the desktop row carries the facet). */
+  /** The inbox's total, phone only: the row drops it whenever a facet is
+   *  there, and a count that is not on the row still has a place (#3497). */
+  pending: { total: number; onRow: boolean; filtered: boolean; showAll: () => void };
   stale: { count: number; total: number; on: boolean; toggle: () => void };
   onLiveSort: () => void;
   onFillPhotos: () => void;
@@ -40,6 +44,7 @@ export interface ScanInboxMenuProps {
 
 export function ScanInboxMenu(p: ScanInboxMenuProps) {
   const { handheld } = p;
+  const navigate = useNavigate();
   return (
     <HeaderMenu
       width={264}
@@ -56,6 +61,19 @@ export function ScanInboxMenu(p: ScanInboxMenuProps) {
               you were turning on. One quiet line at the very top, the size
               of a section title (reported 2026-08-10). Phone only - the
               desktop row still carries the facet itself. */}
+          {!p.pending.onRow && p.pending.total > 0 && (
+            <span className="sm:hidden">
+              <MenuFilterLine
+                active={!p.pending.filtered}
+                onClick={() => {
+                  p.pending.showAll();
+                  close();
+                }}
+              >
+                {p.pending.filtered ? `${p.pending.total} pending in all · show all` : `${p.pending.total} pending in all`}
+              </MenuFilterLine>
+            </span>
+          )}
           {p.stale.count > 0 && p.stale.count < p.stale.total && (
             <span className="sm:hidden">
               <MenuFilterLine
@@ -156,6 +174,15 @@ export function ScanInboxMenu(p: ScanInboxMenuProps) {
             onClick={() => {
               close();
               p.onOrganizeUnplaced();
+            }}
+          />
+          <MenuItem
+            icon={<Tv size={14} />}
+            label="Live scans"
+            hint="Leave it open on another screen to watch what gets scanned"
+            onClick={() => {
+              close();
+              navigate("/scan/live");
             }}
           />
           {handheld && (

@@ -16,7 +16,7 @@
 // Nothing about appending a control fails a typecheck or a test, so the order
 // is asserted here instead.
 //
-//   npx tsx scripts/lint-scan-session-header.ts   (npm run lint:scan-session-header)
+//   npx tsx scripts/lint-scan-session-header.ts   (pnpm run lint scan-session-header)
 
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";

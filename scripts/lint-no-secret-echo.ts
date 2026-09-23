@@ -17,7 +17,7 @@
  * secret-named variable. Printing the NAME (`echo "set JWT_SECRET in .env"`) is
  * how these scripts tell an operator what to do, and is fine.
  *
- *   pnpm run lint:no-secret-echo
+ *   pnpm run lint no-secret-echo
  */
 import { readFileSync } from "node:fs";
 import { globSync } from "node:fs";

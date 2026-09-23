@@ -39,7 +39,12 @@ export function registerListActionHandlers(): void {
       const resolved = await platform().entities.lookup(ctx.orgId, ctx.entity.kind, ctx.entity.id).catch(() => null);
       title = resolved?.title?.trim();
     }
-    if (!title) return { ok: true, skipped: "no title to add" };
+    if (!title) {
+      // A wire whose event named nothing skips, as it always has; a person
+      // or the assistant asking with nothing to add is told so in words.
+      const pressed = !ctx.event?.trigger_type || ctx.event.trigger_type === "user-invoked";
+      return pressed ? { ok: false, error: "what should go on the list? say the item" } : { ok: true, skipped: "no title to add" };
+    }
 
     // 2. Resolve the target list — id, or by title (create-on-miss so a fresh
     //    workspace's first low-stock event still has somewhere to go).
@@ -62,7 +67,11 @@ export function registerListActionHandlers(): void {
       .where("checked", "=", false)
       .where(sql<boolean>`lower(title) = lower(${title})`)
       .executeTakeFirst();
-    if (dup) return { ok: true, skipped: "already on the list", itemId: dup.id };
+    // The list by its name, for the sentence the person reads after Do it.
+    const listName = (await db.selectFrom("lists_lists").select("title").where("id", "=", listId).executeTakeFirst())?.title ?? "the list";
+    // Nothing changed, so it DECLINED (action-result.ts), with the reason in
+    // the person's words: the card says milk is already there, not "Done".
+    if (dup) return { ok: false, skipped: true, error: `"${title}" is already on ${listName}`, itemId: dup.id };
 
     // Carry a back-pointer to the entity that spawned this line (the
     // inventory part that ran low / is expiring). Generic — `source_ref` can
@@ -76,7 +85,7 @@ export function registerListActionHandlers(): void {
       .values({ list_id: listId, title, qty: args.qty ?? null, note: args.note ?? null, metadata: sql`${JSON.stringify(metadata)}::jsonb` as never })
       .returning(["id", "list_id", "title"])
       .executeTakeFirstOrThrow();
-    void platform().events.emit("lists.item.added", { orgId: ctx.orgId, listId: row.list_id, itemId: row.id, viaWire: true });
+    void platform().events.emit("lists.item.added", { orgId: ctx.orgId, listId: row.list_id, itemId: row.id, viaWire: Boolean(ctx.event?.trigger_type && ctx.event.trigger_type !== "user-invoked") });
     await platform().activity.log({
       orgId: ctx.orgId,
       userId: ctx.userId ?? null,
@@ -84,7 +93,7 @@ export function registerListActionHandlers(): void {
       ref: { module: "lists", entityType: "item", entityId: row.id },
       diff: { name: row.title, list_id: row.list_id },
     });
-    return { ok: true, added: true, itemId: row.id, listId };
+    return { ok: true, added: true, itemId: row.id, listId, summary: `"${row.title}" added to ${listName}` };
   });
 
   // Clearing the ticked items had no door: add-item was the module's only

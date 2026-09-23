@@ -75,7 +75,7 @@ if (zero.length || fresh.length) {
   }
   console.error(
     "\n  Rules: scripts/prose-rules.mjs. A genuine false positive in a baselined file can be\n" +
-      "  recorded with `pnpm run lint:public-prose --update`, but never to excuse a new one.",
+      "  recorded with `pnpm run lint public-prose --update`, but never to excuse a new one.",
   );
   process.exit(1);
 }

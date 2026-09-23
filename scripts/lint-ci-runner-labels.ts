@@ -12,7 +12,7 @@
 // The label was written from memory instead of copied from a working workflow.
 // That is not a mistake care prevents; it is one an allowlist prevents.
 //
-//   npx tsx scripts/lint-ci-runner-labels.ts   (npm run lint:ci-runner-labels)
+//   npx tsx scripts/lint-ci-runner-labels.ts   (pnpm run lint ci-runner-labels)
 
 import { readFileSync, readdirSync } from "node:fs";
 import { fileURLToPath } from "node:url";

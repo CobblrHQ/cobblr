@@ -3,6 +3,7 @@ type: feature
 scope: apps
 date: 2026-09-02
 docs_target: docs/USER_GUIDE.md#Cobblr for Groceries
+docs_published: 2026-09-23
 ---
 Cobblr for Groceries at /start/groceries: photograph the receipt and the whole trip is in, every food item gets a use-by date on its own (from what it is, counted from the receipt date), a board shows what is on hand, and the morning something expires you hear about it. The same three pieces reach every workspace: a scanned grocery is dated without asking, a bundle's pinned view opens as a tab on its table, and expiring items now get a day-of notice as well as the heads-up.
 

@@ -3,6 +3,7 @@ type: feature
 scope: ai
 date: 2026-08-24
 docs_target: docs/USER_GUIDE.md#2. Core concepts
+docs_published: 2026-09-23
 ---
 Cobb can turn a Cobblr feature on or off for your workspace when you ask for it by name, so "I want to track maintenance" sets it up instead of telling you where the switch is.
 

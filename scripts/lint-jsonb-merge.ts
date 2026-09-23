@@ -3,7 +3,7 @@
 // REPLACES one destroys every key it didn't know about.
 // (docs/design-decisions/scan-inbox-pipeline.md §"the metadata bag has many writers")
 //
-//   npx tsx scripts/lint-jsonb-merge.ts        (npm run lint:jsonb-merge)
+//   npx tsx scripts/lint-jsonb-merge.ts        (pnpm run lint jsonb-merge)
 //
 // THE RULE: an UPDATE whose value for a JSON column is built in JS
 // (`sql`…::jsonb`` or a bare `JSON.stringify(…)`) must READ that same column in

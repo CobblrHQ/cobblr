@@ -3,6 +3,7 @@ type: feature
 scope: scan
 date: 2026-09-01
 docs_target: docs/USER_GUIDE.md#3.20 Scan inbox (`core-scan`, stock)
+docs_published: 2026-09-23
 ---
 Opening a receipt now shows what it said it cost: subtotal, savings, tax, shipping and the total, beside the document they were read from. A marketplace seller shows on the item itself, next to the shop you bought from.
 

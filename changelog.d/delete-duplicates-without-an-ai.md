@@ -3,6 +3,7 @@ type: feature
 scope: ai
 date: 2026-08-20
 docs_target: docs/USER_GUIDE.md#2. Core concepts
+docs_published: 2026-09-23
 ---
 "Delete duplicates" now works with no AI connected. Cobb looks for places with the same name in the same spot, tells you what he found ("Delete 2 duplicate places (Shelf 1, Shelf 2), keeping the original of each"), and does it only once you accept. Pointing at something first scopes it, so with a rack selected it means the shelves in that rack rather than everything you own. The removals are tracked and undoable like any other change. And when you press enter for the AI instead of taking the free offer, the assistant is now told what that offer had already worked out, so it does not go and solve the same problem from scratch or ask a question the offer had answered.
 

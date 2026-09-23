@@ -23,7 +23,7 @@
 // container") and demo-sites/lego-collector/views.json ("By theme"), the only
 // three occurrences in the repo; green once each dropped the prefix.
 //
-//   npx tsx scripts/lint-view-group-by-bare.ts   (pnpm run lint:view-group-by-bare)
+//   npx tsx scripts/lint-view-group-by-bare.ts   (pnpm run lint view-group-by-bare)
 import { readFileSync, readdirSync, statSync } from "node:fs";
 import { join } from "node:path";
 

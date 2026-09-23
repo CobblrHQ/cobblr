@@ -32,7 +32,7 @@
 // PROVE IT RED before you trust it green: against the tree as of 39d8c79ab it
 // names every one of the sixteen files.
 //
-//   npx tsx scripts/lint-boot-pass-born-with.ts   (pnpm run lint:boot-pass-born-with)
+//   npx tsx scripts/lint-boot-pass-born-with.ts   (pnpm run lint boot-pass-born-with)
 import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
 import { dirname, join, relative, resolve } from "node:path";
 

@@ -3,6 +3,7 @@ type: feature
 scope: ai
 date: 2026-08-24
 docs_target: docs/USER_GUIDE.md#2. Core concepts
+docs_published: 2026-09-23
 ---
 Cobb can lay out a form for you: "put purchase date and supplier under Buying" creates the heading and moves those fields under it, in the order you named them, and taking them back out removes a heading nothing is left in.
 

@@ -21,6 +21,22 @@
 //   { "lint": "lint:one-day-rule", "ms": 2220,
 //     "recorded": "2026-09-22", "source": "CI typecheck run 24927" }
 //
+// THE FILE IS ALSO THE LINT'S REGISTRATION (#3455). A lint used to need a
+// `lint:<name>` line in package.json and a claim appended to a row's array in
+// scripts/placement-registry.ts as well, so two branches adding two lints
+// still conflicted in both, by construction. Now the record says it all:
+//
+//   { "lint": "lint:one-day-rule", "run": "tsx scripts/lint-one-day-rule.ts",
+//     "rows": ["dev-script"], "ms": 2220, "recorded": "…", "source": "…" }
+//
+//   run     the command that runs it (required: a record with no command is a
+//           time for a lint that does not run)
+//   rows    placement rows that claim it, beside the arrays in the registry
+//   manual  why run-lints.mjs does NOT run it (a reason, never "not yet")
+//
+// A new lint is therefore two new files, its script and this record, and
+// nothing shared: two branches adding two lints cannot conflict anywhere.
+//
 // Everything that reads or writes a quiet time goes through here, so the
 // shape cannot drift: run-lints.mjs (--record and the budget), the CI-clock
 // recorder, the lint that checks coverage, and new-lint.sh via the recorder.
@@ -32,15 +48,15 @@ const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..", "..");
 export const DURATIONS_DIR = join(ROOT, "scripts", "lint-durations");
 
 /** The file a lint's time lives in. `name` may carry the `lint:` prefix. */
-export function durationPath(name) {
-  return join(DURATIONS_DIR, `${String(name).replace(/^lint:/, "")}.json`);
+export function durationPath(name, dir = DURATIONS_DIR) {
+  return join(dir, `${String(name).replace(/^lint:/, "")}.json`);
 }
 
 /** The only keys a durations file carries. Anything else, above all a
  *  second lint's name, is refused rather than read: the old map grew two
  *  lint entries at its top level beside `ms` (2026-09-22), where the budget
  *  never looked, so a hand-added time sat there reading as recorded. */
-export const FILE_KEYS = ["lint", "ms", "recorded", "source"];
+export const FILE_KEYS = ["lint", "run", "rows", "manual", "ms", "recorded", "source"];
 
 /** The map this directory replaced. It must not come back beside it. */
 export const LEGACY_MAP = join(ROOT, "scripts", "lint-durations.json");
@@ -57,10 +73,32 @@ function readOne(dir, file) {
   }
   if (!d || typeof d !== "object" || Array.isArray(d)) return { name: expected, problem: `${file} is not an object` };
   const extra = Object.keys(d).filter((k) => !FILE_KEYS.includes(k));
-  if (extra.length) return { name: expected, problem: `${file} carries ${extra.map((k) => JSON.stringify(k)).join(", ")}; a file holds one lint's time and only ${FILE_KEYS.join("/")}` };
+  if (extra.length) return { name: expected, problem: `${file} carries ${extra.map((k) => JSON.stringify(k)).join(", ")}; a file holds one lint's record and only ${FILE_KEYS.join("/")}` };
   if (d.lint !== expected) return { name: expected, problem: `${file} says it is ${JSON.stringify(d.lint)}; its filename says ${expected}` };
-  if (!Number.isFinite(d.ms) || d.ms <= 0) return { name: expected, problem: `${file} has ms ${JSON.stringify(d.ms)}, which is not a time` };
-  return { name: expected, ms: d.ms };
+  // A manual lint is never run by the runner, so it has no time to record.
+  if (!(d.manual !== undefined && d.ms === undefined) && (!Number.isFinite(d.ms) || d.ms <= 0)) return { name: expected, problem: `${file} has ms ${JSON.stringify(d.ms)}, which is not a time` };
+  if (typeof d.run !== "string" || !d.run.trim()) return { name: expected, problem: `${file} has no "run": a time for a lint with no command is a lint that never runs` };
+  if (d.rows !== undefined && !(Array.isArray(d.rows) && d.rows.every((r) => typeof r === "string" && r))) return { name: expected, problem: `${file} has "rows" that is not a list of row ids` };
+  if (d.manual !== undefined && !(typeof d.manual === "string" && d.manual.trim().length >= 20)) return { name: expected, problem: `${file} has "manual" without a reason (a sentence saying why the runner skips it)` };
+  return { name: expected, ...(d.ms !== undefined ? { ms: d.ms } : {}), run: d.run, rows: d.rows ?? [], manual: d.manual };
+}
+
+/** Every registered lint, from its record: `{ name, run, rows, manual }`.
+ *  The one list of lints; package.json no longer carries one. */
+export function readRegistry(dir = DURATIONS_DIR) {
+  const out = [];
+  let names;
+  try {
+    names = readdirSync(dir);
+  } catch {
+    return out;
+  }
+  for (const file of names.sort()) {
+    if (!file.endsWith(".json")) continue;
+    const r = readOne(dir, file);
+    if (r.run) out.push({ name: r.name, run: r.run, rows: r.rows, manual: r.manual });
+  }
+  return out;
 }
 
 /** Every recorded time, as the budget wants it: `{ "lint:x": 123 }`. A file
@@ -130,14 +168,35 @@ export function recordedNames() {
 /** Write one lint's time. `source` says where the number came from, because a
  *  hand-taken number on a busy box and a CI measurement are not the same
  *  claim and the next reader has to be able to tell. */
-export function writeQuietMs(name, ms, source, recorded = new Date().toISOString().slice(0, 10)) {
+export function writeQuietMs(name, ms, source, recorded = new Date().toISOString().slice(0, 10), dir = DURATIONS_DIR) {
   // A baseline that is not a number is not a baseline, and writing one would
   // be the same silent nothing this file exists to end: the budget would read
   // the file, find no usable time, and judge the lint at the median anyway.
   if (!Number.isFinite(ms) || ms <= 0) throw new Error(`lint-durations: ${name} was given ${ms} ms, which is not a time`);
-  mkdirSync(DURATIONS_DIR, { recursive: true });
+  mkdirSync(dir, { recursive: true });
   const lint = String(name).startsWith("lint:") ? String(name) : `lint:${name}`;
-  const doc = { lint, ms: Math.round(ms), recorded, source };
+  // A time is re-recorded far more often than a lint is registered, and the
+  // registration must survive it: read what the file says and keep it.
+  let prior = {};
+  try {
+    prior = JSON.parse(readFileSync(durationPath(lint, dir), "utf8"));
+  } catch {
+    prior = {};
+  }
+  if (typeof prior.run !== "string" || !prior.run.trim()) throw new Error(`lint-durations: ${lint} has no registration to record a time against (scripts/new-lint.sh registers a lint)`);
+  const doc = { lint, run: prior.run, ...(prior.rows ? { rows: prior.rows } : {}), ...(prior.manual ? { manual: prior.manual } : {}), ms: Math.round(ms), recorded, source };
+  writeFileSync(durationPath(lint, dir), `${JSON.stringify(doc, null, 2)}\n`);
+  return durationPath(lint, dir);
+}
+
+/** Register a new lint: its command, the rows that claim it, and a first
+ *  time (the scaffold's estimate). Refuses a name that already has a record. */
+export function registerLint(name, { run, rows = [], manual }, ms, source, recorded = new Date().toISOString().slice(0, 10)) {
+  const lint = String(name).startsWith("lint:") ? String(name) : `lint:${name}`;
+  if (existsSync(durationPath(lint))) throw new Error(`lint-durations: ${lint} is already registered (${relative(ROOT, durationPath(lint))})`);
+  if (!Number.isFinite(ms) || ms <= 0) throw new Error(`lint-durations: ${lint} was given ${ms} ms, which is not a time`);
+  mkdirSync(DURATIONS_DIR, { recursive: true });
+  const doc = { lint, run, ...(rows.length ? { rows } : {}), ...(manual ? { manual } : {}), ms: Math.round(ms), recorded, source };
   writeFileSync(durationPath(lint), `${JSON.stringify(doc, null, 2)}\n`);
   return durationPath(lint);
 }

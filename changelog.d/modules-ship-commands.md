@@ -3,6 +3,7 @@ type: feature
 scope: ai
 date: 2026-08-19
 docs_target: docs/USER_GUIDE.md#2. Core concepts
+docs_published: 2026-09-23
 ---
 A brand-new workspace already knows how to do a few things, with no AI connected and nothing taught to it. Modules now ship the sentences their users commonly type, so "make Shelf 1 through 4 in Garage" works on day one, and one command covers shelves, bays or bins alike. A command your own workspace learned can also be exported as the snippet to contribute it back, so something that turns out to be common can ship for everyone instead of being taught again in every workspace.
 

@@ -20,7 +20,7 @@
 // that motivated it, watch it fail, then fix the violation. A lint that has
 // never failed has never been verified.
 //
-//   npx tsx scripts/lint-bundle-fields-on-own-kinds.ts   (pnpm run lint:bundle-fields-on-own-kinds)
+//   npx tsx scripts/lint-bundle-fields-on-own-kinds.ts   (pnpm run lint bundle-fields-on-own-kinds)
 import { readFileSync, readdirSync, statSync } from "node:fs";
 import { join } from "node:path";
 

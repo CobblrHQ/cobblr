@@ -19,7 +19,7 @@
 
 import { Fragment, useCallback, useEffect, useMemo, useState } from "react";
 import { activityKind } from "../lib/activityKind";
-import { AUTOMATION_ACTIONS, actorWords, automationWords, hiddenFromDashboard, updatedFieldsWords } from "../lib/activity-words";
+import { AUTOMATION_ACTIONS, activityVerb, actorWords, automationWords, hiddenFromDashboard, updatedFieldsWords } from "../lib/activity-words";
 import { useKindLabels } from "../lib/useKindLabels";
 import { useMutation, useQueries, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link, useNavigate } from "react-router-dom";
@@ -37,7 +37,7 @@ import { useSetupCards, dismissSetup } from "../lib/setupCards";
 import { bucketEvents, dayKey, relativeDay, upNextWindow } from "../lib/up-next";
 import { EntityThumb, changeWorkspaceShape,
   usePageTitle, useToast, useImageSrc,
-  useDashboardWidgets, TileCollapseContext, type DashboardWidgetSpec } from "@cobblr/platform-web";
+  useDashboardWidgets, TileCollapseContext, type DashboardWidgetSpec, relativeTime } from "@cobblr/platform-web";
 // Side-effect: registers the host's built-in "at a glance" widgets (machines /
 // assets / purchases) through the public registerDashboardWidget seam. The
 // TileGrid renders whatever's registered for an enabled module — no per-module
@@ -2092,7 +2092,7 @@ function ActivityRow({ entry: e, labels }: { entry: ActivityEntry; labels: KindL
       </span>
       {!auto && (
         <span className="text-content dark:text-mortar-200 shrink-0">
-          {humanAction(e.action)}
+          {activityVerb(e.action)}
         </span>
       )}
       <span className="text-content dark:text-mortar-100 truncate min-w-0">
@@ -2120,7 +2120,7 @@ function ActivityGroupRow({ group, labels }: { group: ActivityGroup; labels: Kin
   const first = group.items[0]!;
   const last = group.items[group.items.length - 1]!;
   const auto = AUTOMATION_ACTIONS.has(first.action) ? automationWords(first) : null;
-  const action = auto ? "" : humanAction(first.action);
+  const action = auto ? "" : activityVerb(first.action);
   const actor = actorLabel(first);
   // The summary must not LIE: "created K1 Max ×2" for two different machines
   // read as two copies of K1 Max. Distinct identities → summarize by entity kind
@@ -2264,43 +2264,6 @@ function activityIdentity(e: ActivityEntry): string {
   return pickString(diff, ["name", "title", "label"]) ?? "";
 }
 
-function humanAction(a: string): string {
-  // Cobblr's action names are snake_case verbs like 'task_created'
-  // / 'pairing_created' / 'login'. Turn them into human prose.
-  const map: Record<string, string> = {
-    created: "created",
-    updated: "updated",
-    deleted: "deleted",
-    login: "signed in",
-    user_created: "joined",
-    pairing_created: "linked",
-    pairing_deleted: "unlinked",
-    // A boot pass moved the record to the table its fields belong to (the
-    // Groceries base-kind twin, 2026-09-13); the row says so, not "system".
-    moved_by_upgrade: "moved into its own table by the upgrade:",
-    // "ran a wire" read as jargon to a new user (2026-09-12): the row is
-    // "<actor> <verb> <event -> action>", so the verb says what happened.
-    wire_fired: "ran an automation",
-    wire_failed: "automation failed",
-  };
-  if (map[a]) return map[a];
-  // 'task_created' → 'created task' (the entity_type is already
-  // rendered on the row, so we just need the verb).
-  if (a.endsWith("_created")) return "created";
-  if (a.endsWith("_updated")) return "updated";
-  if (a.endsWith("_deleted")) return "deleted";
-  return a.replace(/_/g, " ");
-}
-
-function relativeTime(iso: string): string {
-  const t = new Date(iso).getTime();
-  const diff = Date.now() - t;
-  if (diff < 60_000) return "just now";
-  if (diff < 3_600_000) return `${Math.round(diff / 60_000)}m ago`;
-  if (diff < 86_400_000) return `${Math.round(diff / 3_600_000)}h ago`;
-  if (diff < 7 * 86_400_000) return `${Math.round(diff / 86_400_000)}d ago`;
-  return new Date(iso).toLocaleDateString();
-}
 
 // Re-export for any callers still importing module item helpers from
 // here. (Cleaned out the old WorkspaceCard / ModulesPanel / etc.

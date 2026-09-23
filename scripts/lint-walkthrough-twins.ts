@@ -18,7 +18,7 @@
 // home-life, wardrobe, yarn); green after
 // `node scripts/walkthrough-twins.mjs --write`.
 //
-//   npx tsx scripts/lint-walkthrough-twins.ts   (pnpm run lint:walkthrough-twins)
+//   npx tsx scripts/lint-walkthrough-twins.ts   (pnpm run lint walkthrough-twins)
 import { checkTwins } from "./walkthrough-twins.mjs";
 
 interface Twin {

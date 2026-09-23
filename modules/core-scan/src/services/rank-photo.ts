@@ -222,8 +222,7 @@ export async function rankPhotoWithAi(opts: {
       userId: opts.userId ?? undefined,
       bypass_cache: opts.bypassCache,
     });
-    const res = r.result as { text?: string; content?: string };
-    raw = res.text ?? res.content ?? "";
+    raw = r.text;
   } catch (err) {
     const msg = (err as Error)?.message ?? String(err);
     console.error("[core-scan] rank-images failed:", msg);

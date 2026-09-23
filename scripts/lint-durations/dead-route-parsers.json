@@ -1,5 +1,6 @@
 {
   "lint": "lint:dead-route-parsers",
+  "run": "tsx scripts/lint-dead-route-parsers.ts",
   "ms": 451,
   "recorded": "2026-09-14",
   "source": "split from scripts/lint-durations.json (recorded 2026-09-14)"

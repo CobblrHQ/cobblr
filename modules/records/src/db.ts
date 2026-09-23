@@ -1,6 +1,7 @@
 import type { Generated, ColumnType, Kysely } from "kysely";
 import type { Request } from "express";
 import type { OrgRoleName } from "@cobblr/platform-contract/org-roles";
+import { requestInstance } from "@cobblr/platform-contract/request-instance";
 
 type ColJsonb = ColumnType<Record<string, unknown>, Record<string, unknown> | undefined, Record<string, unknown> | undefined>;
 
@@ -59,5 +60,5 @@ export function sessionUser(req: Request) {
  *  "records" — matching the DB column default. Every record query filters
  *  on this; every insert stamps it. */
 export function instanceOf(req: Request): string {
-  return (req as unknown as { instance?: string }).instance ?? "records";
+  return requestInstance(req, "records");
 }

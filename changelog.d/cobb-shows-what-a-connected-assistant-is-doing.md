@@ -3,6 +3,7 @@ type: feature
 scope: ai
 date: 2026-08-20
 docs_target: docs/USER_GUIDE.md#2. Core concepts
+docs_published: 2026-09-23
 ---
 When your AI is a personal connection that does the work itself, Cobb now shows each step as it happens instead of sitting on "Thinking". A request that added sixty locations over two minutes used to show a spinner and nothing else, because the tool calls were happening on the far side of one long request; now each one appears as it runs, named, with a tick when it lands. The step list also stopped printing raw record data at you: a finished step reads "Adding a location - Shelf 1".
 

@@ -29,7 +29,7 @@
 // record a reading (a dry run) belongs behind a guard INSIDE dispatch_census -
 // where the reason is written down once - not behind a new bare exit.
 //
-//   npx tsx scripts/lint-census-on-every-exit.ts   (pnpm run lint:census-on-every-exit)
+//   npx tsx scripts/lint-census-on-every-exit.ts   (pnpm run lint census-on-every-exit)
 import { readFileSync, existsSync } from "node:fs";
 
 const FILE = "scripts/release-daily.sh";

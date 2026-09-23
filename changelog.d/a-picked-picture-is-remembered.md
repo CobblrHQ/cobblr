@@ -3,6 +3,7 @@ type: feature
 scope: scan
 date: 2026-09-01
 docs_target: docs/USER_GUIDE.md#3.20 Scan inbox (`core-scan`, stock)
+docs_published: 2026-09-23
 ---
 The picture you pick for something off a receipt is remembered and re-served, so the next scan of the same shop's product gets it instead of another web guess. Choosing a better photo for a barcoded item has always fed back that way; a receipt line has no barcode, so the shop plus the line's name is its identity now. Only pictures from the web are shared - a photo you took yourself stays in your workspace.
 

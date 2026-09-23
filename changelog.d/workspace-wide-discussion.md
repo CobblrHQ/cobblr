@@ -3,6 +3,7 @@ type: feature
 scope: discussion
 date: 2026-08-24
 docs_target: docs/USER_GUIDE.md#4. The platform layer
+docs_published: 2026-09-23
 ---
 You can now talk to the whole workspace, not only about one record at a time.
 

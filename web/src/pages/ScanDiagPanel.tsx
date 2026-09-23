@@ -17,6 +17,7 @@ import {
   type CameraFacts,
   type DecodeStats,
 } from "../lib/scanDiag";
+import { useLater } from "@cobblr/platform-web";
 
 export function ScanDiagPanel({
   getTrack,
@@ -25,6 +26,7 @@ export function ScanDiagPanel({
   getTrack: () => MediaStreamTrack | null;
   onClose: () => void;
 }) {
+  const later = useLater();
   const [facts, setFacts] = useState<CameraFacts | null>(null);
   const [stats, setStats] = useState<DecodeStats>(decodeStats());
   const [copied, setCopied] = useState(false);
@@ -78,7 +80,7 @@ export function ScanDiagPanel({
             if (!facts) return;
             const text = factsToText(facts, decodeStats());
             void navigator.clipboard?.writeText(text)
-              .then(() => { setCopied(true); window.setTimeout(() => setCopied(false), 1800); })
+              .then(() => { setCopied(true); later.after("copied", 1800, () => setCopied(false)); })
               .catch(() => {
                 // Clipboard can be blocked; showing it is still better than nothing.
                 window.prompt("copy this:", text);

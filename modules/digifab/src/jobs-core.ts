@@ -14,6 +14,7 @@ import { notifyPrint, progressBucket } from "./notify.js";
 // Call-time only (reprint-on-fail re-queue) — lazy/circular by design; ESM
 // resolves it when the retry fires.
 import { kickAssign } from "./assign-worker.js";
+import { edgeChannelKey } from "@cobblr/platform-contract/edge-channel";
 
 /** The manual camera URL set for a device (for the "Live view" link in print
  *  notifications). Null when none or no device. */
@@ -206,9 +207,7 @@ function edgeDriverConfig(edge: { driver?: unknown; config?: unknown }): Record<
  *  to the workspace's DEFAULT channel — byte-identical to the single-bridge path,
  *  so existing bridges are untouched. The agent announces the same id via
  *  `?bridge=` on register/poll/respond. */
-export function edgeChannelKey(orgId: string, bridge?: string | null): string {
-  return bridge ? `${orgId}::${bridge}` : orgId;
-}
+export { edgeChannelKey };
 
 /** Per-printer Bambu LAN config — `creds.bambu_lan` is a JSON map of
  *  serial → { host, access_code } (the access code is a credential, so it lives

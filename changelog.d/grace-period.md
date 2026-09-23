@@ -3,6 +3,7 @@ type: feature
 scope: kitchen
 date: 2026-08-25
 docs_target: docs/USER_GUIDE.md#3.18 Module instances ("+ New category")
+docs_published: 2026-09-23
 ---
 Food stops going bad at midnight. Give an item a grace period (the "Still fine
 for" field groceries already carry) and the kitchen wall shows an orange "1d

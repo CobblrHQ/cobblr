@@ -1,5 +1,6 @@
 {
   "lint": "lint:portable-sed",
+  "run": "tsx scripts/lint-portable-sed.ts",
   "ms": 424,
   "recorded": "2026-09-14",
   "source": "split from scripts/lint-durations.json (recorded 2026-09-14)"

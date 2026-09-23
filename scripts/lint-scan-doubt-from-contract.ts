@@ -40,7 +40,7 @@
 // `lowTrust` read at f191fb210 (COBBLR_LINT_ROOT=<a checkout> points it at
 // another tree).
 //
-//   npx tsx scripts/lint-scan-doubt-from-contract.ts   (pnpm run lint:scan-doubt-from-contract)
+//   npx tsx scripts/lint-scan-doubt-from-contract.ts   (pnpm run lint scan-doubt-from-contract)
 import { readFileSync, readdirSync, statSync } from "node:fs";
 import { join } from "node:path";
 

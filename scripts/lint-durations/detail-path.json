@@ -1,5 +1,6 @@
 {
   "lint": "lint:detail-path",
+  "run": "tsx scripts/lint-detail-path-substitution.ts",
   "ms": 583,
   "recorded": "2026-09-14",
   "source": "split from scripts/lint-durations.json (recorded 2026-09-14)"

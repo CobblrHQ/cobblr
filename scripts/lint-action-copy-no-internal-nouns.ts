@@ -25,7 +25,7 @@
 // that motivated it, watch it fail, then fix the violation. A lint that has
 // never failed has never been verified.
 //
-//   npx tsx scripts/lint-action-copy-no-internal-nouns.ts   (pnpm run lint:action-copy-no-internal-nouns)
+//   npx tsx scripts/lint-action-copy-no-internal-nouns.ts   (pnpm run lint action-copy-no-internal-nouns)
 import { readFileSync, readdirSync, statSync } from "node:fs";
 import { join } from "node:path";
 
@@ -76,7 +76,7 @@ function check(file: string, src: string): Violation[] {
   if (!isHandlerFile(file)) return [];
   const out: Violation[] = [];
   const seen = new Set<number>();
-  for (const head of src.matchAll(/\b(summary|message|error)\s*[:=]\s*/g)) {
+  for (const head of src.matchAll(/\b(summary|message|error|title)\s*[:=]\s*/g)) {
     const start = (head.index ?? 0) + head[0].length;
     const stop = src.indexOf(";\n", start);
     const statement = src.slice(start, stop === -1 ? start + 800 : Math.min(stop, start + 2000));
@@ -92,6 +92,10 @@ function check(file: string, src: string): Violation[] {
       if (id) out.push({ file, line, what: `${head[1]} interpolates an internal id ${id[0]}: say the kind's words (kindWords) instead` });
       const tool = TOOL_NAME.exec(text);
       if (tool) out.push({ file, line, what: `${head[1]} names a tool (${tool[0]}): say the fact in words, a person cannot call a tool` });
+      // "2 field(s)" is a template that never decided what it was counting;
+      // the card read `Put 2 field(s) under "Buying" on Part` (#3255).
+      const hedge = /\w\(s\)/.exec(text);
+      if (hedge) out.push({ file, line, what: `${head[1]} hedges a plural (${hedge[0]}): count it (1 field, 3 fields) or name the things` });
     }
   }
   return out;

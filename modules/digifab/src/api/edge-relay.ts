@@ -21,7 +21,7 @@ import { platform } from "@cobblr/platform-contract";
 import type { Request } from "express";
 import { tenantContext } from "../db.js";
 import { asyncHandler, requireRole } from "./util.js";
-import { edgeChannelKey } from "../jobs-core.js";
+import { edgeBridgeName, edgeChannelKey } from "@cobblr/platform-contract/edge-channel";
 
 // Multi-bridge: a workspace can run more than one bridge (separate sites/VLANs,
 // or LightBurn which must run its bridge on the LightBurn PC). Each bridge polls
@@ -29,13 +29,11 @@ import { edgeChannelKey } from "../jobs-core.js";
 // default channel. The id must match the connection's stored bridge
 // (creds.edge.bridge) so send() routes to it.
 function channelKeyOf(req: Request): string {
-  const b = req.query.bridge;
-  return edgeChannelKey(tenantContext(req).org.id, typeof b === "string" && b ? b.slice(0, 60) : null);
+  return edgeChannelKey(tenantContext(req).org.id, req.query.bridge);
 }
 
 function bridgeOf(req: Request): string | null {
-  const b = req.query.bridge;
-  return typeof b === "string" && b ? b.slice(0, 60) : null;
+  return edgeBridgeName(req.query.bridge);
 }
 
 export const edgeRelayRouter = Router({ mergeParams: true });

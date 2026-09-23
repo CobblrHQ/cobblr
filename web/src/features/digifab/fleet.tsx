@@ -19,7 +19,7 @@ import { deviceBucket, fleetStatusChip } from "../../lib/fleet-status";
 import { BambuConnectWizard } from "../../components/BambuConnectWizard";
 import { BridgePicker } from "../../components/BridgePicker";
 import { useActiveOrg } from "../../auth/ActiveOrgContext";
-import { Modal, useToast, useConfirm, useImageSrc, OverlayLayer } from "@cobblr/platform-web";
+import { useLater, Modal, useToast, useConfirm, useImageSrc, OverlayLayer, relativeTime } from "@cobblr/platform-web";
 import { Combobox } from "../../components/Combobox";
 import type { ModulePageTabCtx, EntityDetailPanelCtx } from "../../panels/types";
 
@@ -559,6 +559,7 @@ function ReorderableRows({ slug, devices, gridCls, canDrag, dataVersion, renderT
   dataVersion: number;
   renderTile: (d: FleetDev) => ReactNode;
 }) {
+  const later = useLater();
   const qc = useQueryClient();
   const toast = useToast();
   const boxRef = useRef<HTMLDivElement>(null);
@@ -728,10 +729,10 @@ function ReorderableRows({ slug, devices, gridCls, canDrag, dataVersion, renderT
                         // Let the browser capture the drag image BEFORE the tile
                         // hides — hiding synchronously kills the drag in Firefox.
                         const kk = k;
-                        setTimeout(() => {
+                        later.after("drag", 0, () => {
                           setDrag(kk);
                           setTarget({ kind: "cell", row: ri, index: i }); // anchor at origin
-                        }, 0);
+                        });
                       }}
                       onDragEnd={finishDrag}
                       className={(canDrag ? "cursor-grab active:cursor-grabbing " : "") + (drag === k ? "hidden" : "")}
@@ -2555,7 +2556,7 @@ export function PrinterDetailModal({ slug, connId, device, onClose }: { slug: st
                   <span>
                     {fail.watching ? "AI failure watch is live" : "AI watch idle (arms when a print starts)"}
                     {fail.last_sample_at &&
-                      ` · last look ${Math.max(1, Math.round((Date.now() - new Date(fail.last_sample_at).getTime()) / 60000))}m ago${fail.last_source ? ` via ${fail.last_source}` : ""}`}
+                      ` · last look ${relativeTime(fail.last_sample_at)}${fail.last_source ? ` via ${fail.last_source}` : ""}`}
                     {fail.samples > 0 && ` · ${fail.samples} sample${fail.samples === 1 ? "" : "s"} this print`}
                   </span>
                   <button

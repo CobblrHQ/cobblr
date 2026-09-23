@@ -29,7 +29,7 @@
 // resolver, and group_image_file_id, screenshot_crop_file_id and extra_photos
 // unnamed by the importer).
 //
-//   npx tsx scripts/lint-scan-export-fidelity.ts   (npm run lint:scan-export-fidelity)
+//   npx tsx scripts/lint-scan-export-fidelity.ts   (pnpm run lint scan-export-fidelity)
 
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";

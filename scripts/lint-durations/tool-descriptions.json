@@ -1,5 +1,6 @@
 {
   "lint": "lint:tool-descriptions",
+  "run": "tsx scripts/lint-tool-descriptions.ts",
   "ms": 500,
   "recorded": "2026-09-14",
   "source": "split from scripts/lint-durations.json (recorded 2026-09-14)"

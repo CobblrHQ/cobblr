@@ -33,6 +33,9 @@ import { TRAIT_PRESETS, type PresetName } from "@cobblr/platform-contract";
 import { meta } from "../db/meta.js";
 import { listEntries } from "../modules/registry.js";
 import { planScanCategoryAxes } from "./scan-category-plan.js";
+import { getEntityWriterFor } from "./entities.js";
+import { forgetAxis } from "./category-axis.js";
+import { evictTenantPool } from "../db/tenant.js";
 
 const CATEGORY_FIELD = "category";
 
@@ -192,31 +195,83 @@ export async function reconcileScanCategoryFields(opts: { onlyOrgId?: string } =
       console.error(`[reconcile] scan category axis withdraw failed for ${org_id}::${kind}:`, (err as Error)?.message ?? err);
     }
   }
-  // A placeholder on a kind whose module keeps its own categories wears
-  // scanning's word, so a form does not ask "Category" twice (the module's
-  // own is the list's filter; the axis is what scans group by). Only one
-  // still wearing the bare word is touched: a person's rename is theirs.
-  // DONE WHEN the two are one axis and the placeholder no longer exists on
-  // such a kind (#3223): this pass and axisWords(true) go with it.
-  let relabelled = 0;
-  for (const { org_id, kind, label, help } of plan.relabel) {
+  if (withdrawn) console.log(`[reconcile] scan category axis: withdrawn from ${withdrawn} specialised table(s)`);
+  if (healed) console.log(`[reconcile] scan category axis: added to ${healed} table(s)`);
+}
+
+/**
+ * Retire the platform's placeholder from every kind that keeps its own
+ * taxonomy (#3223): move its values into that taxonomy, then remove it.
+ *
+ * DONE WHEN: no org has a `module_field_defs` row with source_module
+ * '@scan-category' on a kind that declares `categoryAxis` (today only
+ * inventory:part), on prod, staging and dev; checkable with one query per box.
+ * Then this function, its boot call, its test-support call and `plan.retire`
+ * go.
+ *
+ * BORN WITH: nothing (a fresh workspace never gets the placeholder on such a
+ * kind: planScanCategoryAxes no longer adds it, at signup, at enable or at boot).
+ *
+ * A SEPARATE boot pass, after mountModules, on purpose. The values live in the
+ * module's own table and only the module's entity writer may move them, and
+ * writers are registered by each module's lazily loaded api bundle. Inside
+ * reconcileScanCategoryFields (which runs before the mount) every writer
+ * lookup found nothing and the retire would have done nothing at boot,
+ * silently, the same way the axis itself once sat inert in production (#1049).
+ * A missing writer is therefore an ERROR here, never a quiet skip.
+ *
+ * Order within a workspace: move, then remove the field, and only when nothing
+ * is left under it. A crash between the two leaves the field in place, the seam
+ * still def-backed (the store that exists answers, #3433) and consistent; the
+ * next boot finishes it.
+ */
+export async function retireScanCategoryPlaceholders(opts: { onlyOrgId?: string } = {}): Promise<void> {
+  const { ownCategoryKinds } = scanFallbackKinds();
+  if (ownCategoryKinds.size === 0) return;
+  let placeholdersQ = meta
+    .selectFrom("module_field_defs")
+    .select(["org_id", "entity_kind"])
+    .where("source_module", "=", SCAN_CATEGORY_SOURCE)
+    .where("name", "=", CATEGORY_FIELD)
+    .where("entity_kind", "in", [...ownCategoryKinds]);
+  if (opts.onlyOrgId) placeholdersQ = placeholdersQ.where("org_id", "=", opts.onlyOrgId);
+  const placeholders = await placeholdersQ.execute();
+  if (placeholders.length === 0) return;
+
+  let retired = 0;
+  for (const { org_id, entity_kind: kind } of placeholders) {
     try {
+      const writer = await getEntityWriterFor(org_id, kind);
+      if (!writer?.adoptAxisValues) {
+        console.error(
+          `[reconcile] scan category axis NOT retired for ${org_id}::${kind}: no writer with adoptAxisValues is registered. ` +
+            "If this is boot, the pass is running before mountModules and every workspace is being skipped.",
+        );
+        continue;
+      }
+      const { moved, remaining } = await writer.adoptAxisValues(org_id, { field: CATEGORY_FIELD, column: "category_id" });
+      if (remaining > 0) {
+        console.error(`[reconcile] scan category axis NOT retired for ${org_id}::${kind}: ${remaining} record(s) still hold a value; left in place for the next pass`);
+        continue;
+      }
       await meta
-        .updateTable("module_field_defs")
-        .set({ display_label: label, help })
+        .deleteFrom("module_field_defs")
         .where("org_id", "=", org_id)
         .where("entity_kind", "=", kind)
         .where("name", "=", CATEGORY_FIELD)
         .where("source_module", "=", SCAN_CATEGORY_SOURCE)
-        .where("display_label", "=", "Category")
         .execute();
-      relabelled++;
-      console.log(`[reconcile] scan category axis: org ${org_id} kind ${kind} reads "${label}"`);
+      forgetAxis(org_id, kind);
+      retired++;
+      console.log(`[reconcile] scan category axis retired: org ${org_id} kind ${kind}, ${moved} value(s) moved into its own categories`);
     } catch (err) {
-      console.error(`[reconcile] scan category axis relabel failed for ${org_id}::${kind}:`, (err as Error)?.message ?? err);
+      console.error(`[reconcile] scan category axis retire failed for ${org_id}::${kind}:`, (err as Error)?.message ?? err);
+    } finally {
+      // The boot sweep opened this workspace's pool through the writer; release
+      // it (a sweep that holds a pool per tenant exhausts Postgres). A per-org
+      // call is serving that workspace, so its pool stays.
+      if (!opts.onlyOrgId) await evictTenantPool(org_id);
     }
   }
-  if (withdrawn) console.log(`[reconcile] scan category axis: withdrawn from ${withdrawn} specialised table(s)`);
-  if (healed) console.log(`[reconcile] scan category axis: added to ${healed} table(s)`);
-  if (relabelled) console.log(`[reconcile] scan category axis: relabelled on ${relabelled} table(s) that keep their own categories`);
+  if (retired) console.log(`[reconcile] scan category axis: retired from ${retired} table(s) that keep their own categories`);
 }

@@ -58,10 +58,12 @@ export function registerMachinesActionHandlers(): void {
         updated_at: new Date(),
       })
       .where("id", "=", machineId)
-      .returning(["id"])
+      .returning(["id", "name"])
       .executeTakeFirst();
-    if (!updated) return { ok: false, error: "machine_not_found" };
-    return { ok: true, machineId, prints, hours };
+    if (!updated) return { ok: false, error: "that machine is not here any more" };
+    // The card's line after Do it: it read a bare "Done." (#3255).
+    const what = [hours ? `${hours} hour${hours === 1 ? "" : "s"}` : "", prints ? `${prints} print${prints === 1 ? "" : "s"}` : ""].filter(Boolean).join(" and ");
+    return { ok: true, machineId, prints, hours, summary: `${what} recorded on "${updated.name}"` };
   });
 }
 

@@ -1,0 +1,7 @@
+{
+  "lint": "lint:slot-pairs-are-wired",
+  "run": "tsx scripts/lint-slot-pairs-are-wired.ts",
+  "ms": 1600,
+  "recorded": "2026-09-22",
+  "source": "added by hand at twice a quiet dev-box time (2026-09-22), to be replaced from its first CI run"
+}

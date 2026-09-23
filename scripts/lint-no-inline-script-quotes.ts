@@ -25,7 +25,7 @@
 // PROVEN RED 2026-09-22 against cb0a74e15's scripts/lib/shippable.sh, the
 // commit that shipped the broken line.
 //
-//   npx tsx scripts/lint-no-inline-script-quotes.ts   (pnpm run lint:no-inline-script-quotes)
+//   npx tsx scripts/lint-no-inline-script-quotes.ts   (pnpm run lint no-inline-script-quotes)
 import { readFileSync } from "node:fs";
 import { sourceFiles } from "./lib/glob-exclude.mjs";
 

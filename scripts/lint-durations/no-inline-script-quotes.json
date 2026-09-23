@@ -1,5 +1,6 @@
 {
   "lint": "lint:no-inline-script-quotes",
+  "run": "tsx scripts/lint-no-inline-script-quotes.ts",
   "ms": 544,
   "recorded": "2026-09-22",
   "source": "CI typecheck run 24934 (974229bf2, status success)"

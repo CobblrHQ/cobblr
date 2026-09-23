@@ -3,6 +3,7 @@ type: feature
 scope: ai
 date: 2026-08-21
 docs_target: docs/USER_GUIDE.md#3.22 AI providers & the AI kill-switch (operator)
+docs_published: 2026-09-23
 ---
 **Your AI key is checked as you paste it, and the model becomes a dropdown.** Before, a key was only tested after saving, so a wrong one got written down and the connection sat there broken until you went back to edit it. Now the form checks what is currently typed and says so underneath, a moment after you stop: **Works**, or the reason it did not. Nothing wrong is stored. The same check asks the provider which models it serves, so the Model field turns into a list you pick from instead of a name you have to type exactly right. A provider's list is not curated: Google AI Studio reports 51 models and most of them make video, music or speech and cannot answer a prompt at all, so the chat ones are grouped at the top and the rest sit under them. Nothing is hidden. All three places you can add a key do this: adding a provider to a workspace, replacing its credentials, and your own connections under Your account.
 

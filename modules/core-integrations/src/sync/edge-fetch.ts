@@ -6,13 +6,7 @@
 
 import { platform, type EdgeRequest } from "@cobblr/platform-contract";
 import type { SyncConnectionRef } from "./engine.js";
-
-// Same format as digifab's edgeChannelKey (modules/digifab/jobs-core.ts) so a
-// single bridge per workspace can serve both machines and sync sources. Kept
-// local rather than cross-importing digifab (module isolation).
-function channelKey(orgId: string, bridge: string | null): string {
-  return bridge ? `${orgId}::${bridge}` : orgId;
-}
+import { edgeChannelKey } from "@cobblr/platform-contract/edge-channel";
 
 function headersToObject(h: unknown): Record<string, string> {
   const out: Record<string, string> = {};
@@ -28,7 +22,9 @@ function headersToObject(h: unknown): Record<string, string> {
 
 /** A `fetch`-shaped function that proxies through the edge relay for this ref. */
 export function edgeRelayFetch(ref: SyncConnectionRef): typeof fetch {
-  const key = channelKey(ref.orgId, ref.bridge);
+  // The one derivation, so a single bridge per workspace serves machines and
+  // sync sources alike.
+  const key = edgeChannelKey(ref.orgId, ref.bridge);
   return (async (input, init) => {
     const href =
       typeof input === "string" ? input : input instanceof URL ? input.href : (input as Request).url;

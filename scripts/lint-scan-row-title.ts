@@ -12,7 +12,7 @@
 // returns a row raw would reintroduce the exact symptom - a card whose title is
 // missing the colour - with nothing failing. Hence: a check, not a convention.
 //
-//   npx tsx scripts/lint-scan-row-title.ts    (npm run lint:scan-row-title)
+//   npx tsx scripts/lint-scan-row-title.ts    (pnpm run lint scan-row-title)
 
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";

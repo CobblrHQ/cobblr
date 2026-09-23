@@ -1,5 +1,6 @@
 {
   "lint": "lint:node-resolves",
+  "run": "tsx scripts/lint-node-resolves.ts",
   "ms": 11930,
   "recorded": "2026-09-14",
   "source": "split from scripts/lint-durations.json (recorded 2026-09-14)"

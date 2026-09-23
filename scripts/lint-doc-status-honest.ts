@@ -37,7 +37,7 @@
 // original "Status: SPEC - approved direction, deliberately not built yet"
 // while /super-admin/impersonations was live.
 //
-//   npx tsx scripts/lint-doc-status-honest.ts   (pnpm run lint:doc-status-honest)
+//   npx tsx scripts/lint-doc-status-honest.ts   (pnpm run lint doc-status-honest)
 import { readFileSync, readdirSync, statSync } from "node:fs";
 import { join } from "node:path";
 

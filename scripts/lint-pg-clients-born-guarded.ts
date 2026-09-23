@@ -27,7 +27,7 @@
 // (an `.on("error"` within 12 lines of each bare Client). Both counted
 // after-the-fact attachments; there is nothing to count now.
 //
-//   npx tsx scripts/lint-pg-clients-born-guarded.ts   (pnpm run lint:pg-clients-born-guarded)
+//   npx tsx scripts/lint-pg-clients-born-guarded.ts   (pnpm run lint pg-clients-born-guarded)
 import { readFileSync, readdirSync, statSync } from "node:fs";
 import { join } from "node:path";
 

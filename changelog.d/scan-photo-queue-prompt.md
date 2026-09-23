@@ -3,6 +3,7 @@ type: feature
 scope: scan
 date: 2026-08-15
 docs_target: docs/USER_GUIDE.md#3.20 Scan inbox (`core-scan`, stock)
+docs_published: 2026-09-23
 ---
 The scanner now greets you with the items you marked for a photo, so you never have to find them again in a long inbox. Tap the line to point the camera at one; your next shot becomes its picture.
 

@@ -10,7 +10,7 @@
 // a `decode_role` of `identifier:<kind>`. A hidden native (`hidden: true`)
 // is the module's own field and is declared there.
 //
-//   npx tsx scripts/lint-identifier-fields-declared.ts   (pnpm run lint:identifier-fields-declared)
+//   npx tsx scripts/lint-identifier-fields-declared.ts   (pnpm run lint identifier-fields-declared)
 import { readFileSync, readdirSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { IDENTIFIER_FIELD_NAMES } from "../packages/platform-contract/src/same-product.ts";

@@ -38,7 +38,7 @@
 // PROVE IT RED before you trust it green: drop the env line from ci.yml, or
 // rename a cassette, and watch it fail.
 //
-//   npx tsx scripts/lint-catalog-replay.ts   (pnpm run lint:catalog-replay)
+//   npx tsx scripts/lint-catalog-replay.ts   (pnpm run lint catalog-replay)
 import { existsSync, readFileSync, readdirSync } from "node:fs";
 import { join } from "node:path";
 

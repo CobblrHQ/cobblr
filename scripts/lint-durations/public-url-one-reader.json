@@ -1,0 +1,7 @@
+{
+  "lint": "lint:public-url-one-reader",
+  "run": "tsx scripts/lint-public-url-one-reader.ts",
+  "ms": 2808,
+  "recorded": "2026-09-23",
+  "source": "scaffolded by new-lint.sh at twice a local run (a shared box); replaced from its first CI measurement"
+}

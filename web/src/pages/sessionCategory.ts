@@ -14,6 +14,7 @@ import {
   type CategoryConsensus,
 } from "@cobblr/platform-contract/category-reconcile";
 import type { ScanInboxItem, ScanMenuEntry } from "../lib/api";
+import type { CategoryAxisRef } from "./scanFileAll";
 
 export { categoryDisplay };
 
@@ -49,6 +50,44 @@ export function declaredCategoryAxis(
 }
 
 /**
+ * This table's category axis as the menu declares it, whichever store keeps
+ * it: a custom field (`name` set) or the module's own categories (no `name`,
+ * inventory's tree). Null when the table groups by nothing.
+ *
+ * The has-an-axis question must be asked here and not through
+ * `declaredCategoryAxis`, which answers only for a field: asked that way a
+ * table that keeps its own categories reads as having none, so its chip, its
+ * form question and the batch's agreed category all went quiet (#3223).
+ */
+export function tableCategoryAxis(
+  menu: ScanMenuEntry[] | null | undefined,
+  cand: { module: string; instance?: string | null } | null | undefined,
+): NonNullable<ScanMenuEntry["category_field"]> | null {
+  if (!cand) return null;
+  const entry = (menu ?? []).find(
+    (m) => m.module === cand.module && (m.instance ?? null) === (cand.instance ?? null),
+  );
+  return entry?.category_field ?? null;
+}
+
+/** The table keeps its categories itself, so the category travels by name
+ *  (the confirm's and the row's `category`) instead of under a field. */
+export function categoryTravelsByName(
+  menu: ScanMenuEntry[] | null | undefined,
+  cand: { module: string; instance?: string | null } | null | undefined,
+): boolean {
+  const axis = tableCategoryAxis(menu, cand);
+  return !!axis && !axis.name;
+}
+
+/** Where this item's table keeps its category, for `confirmBodyFor`: the
+ *  field's name, by name, or null when there is no menu to ask yet. */
+export function categoryAxisFor(it: ScanInboxItem, menu?: ScanMenuEntry[] | null): CategoryAxisRef {
+  if (categoryTravelsByName(menu, it.suggested_candidates?.[0])) return { byName: true };
+  return categoryAxisKey(it, menu);
+}
+
+/**
  * Which key in a candidate's `fields` IS the category axis.
  *
  * Prefers the DECLARED axis from the menu; falls back to the value match for a
@@ -58,6 +97,9 @@ export function declaredCategoryAxis(
 export function categoryAxisKey(it: ScanInboxItem, menu?: ScanMenuEntry[] | null): string | null {
   const cand = it.suggested_candidates?.[0];
   if (!cand) return null;
+  // No field carries it, so any field whose value happens to spell the
+  // category is some other field, and overwriting it is the wrong write.
+  if (categoryTravelsByName(menu, cand)) return null;
   const declared = declaredCategoryAxis(menu, cand);
   if (declared && cand.fields && declared in cand.fields) return declared;
   if (!cand.category) return null;

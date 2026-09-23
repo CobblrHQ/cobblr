@@ -1,5 +1,6 @@
 {
   "lint": "lint:sigpipe",
+  "run": "tsx scripts/lint-sigpipe-substitution.ts",
   "ms": 499,
   "recorded": "2026-09-14",
   "source": "split from scripts/lint-durations.json (recorded 2026-09-14)"

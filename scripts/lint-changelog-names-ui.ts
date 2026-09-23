@@ -12,7 +12,9 @@
 //
 // THE RULE. Diff-scoped, like lint:changelog: only changelog.d entries added
 // or changed since the merge-base with main are read, so a tree with no new
-// entry costs nothing. For each such entry with `type: feature`, the prose
+// entry costs nothing. A new entry is read whole; an entry that already
+// existed is read only on the lines this change added to it, because the
+// claim being judged is the one this change makes. For each such entry with `type: feature`, the prose
 // and the `## docs` section are scanned for a word naming a control a person
 // presses (CONTROL_WORDS below; the vocabulary lives here and nowhere else).
 // If one is found, the same diff must touch a path where a control can ship:
@@ -27,11 +29,18 @@
 // fixing the button. The vocabulary is nouns for things pressed, not verbs,
 // so "you can now filter by author" passes and "a Filter button" does not.
 //
+// THE BOUNDARY, AND WHICH FALSE POSITIVE DREW IT. A docs publish run (#3510)
+// stamps `docs_published:` on 149 old feature entries whose controls shipped
+// weeks earlier in their own PRs; reading each whole refused a pure publish
+// with 90 violations. So a modified entry is judged on its added lines, and a
+// stamp line carries no control word. An edit that ADDS "a Split button" to an
+// old entry still fails, on that line.
+//
 // PROVEN RED on 47f10dae2's shape: the receipt-autofile entry present in the
 // diff with no web/ path, and the lint named "button". Green once the same
 // diff carried a web/src path, and green on `ui: none (...)`.
 //
-//   npx tsx scripts/lint-changelog-names-ui.ts   (pnpm run lint:changelog-names-ui)
+//   npx tsx scripts/lint-changelog-names-ui.ts   (pnpm run lint changelog-names-ui)
 import { execSync } from "node:child_process";
 import { existsSync, readFileSync } from "node:fs";
 import { check, type Violation } from "./lib/changelog-names-ui.js";
@@ -68,6 +77,22 @@ function changedPaths(base: string): string[] {
   return [...new Set([...committed, ...working].filter(Boolean))];
 }
 
+/** The lines this change added to an entry, as 1-based numbers in the working
+ *  tree's copy, or null when the entry is new (every line is the change's).
+ *  Diffed against the merge-base so committed and uncommitted edits both
+ *  count. */
+function addedLines(base: string, file: string): Set<number> | null {
+  if (tryGit(`cat-file -e ${base}:${file}`) === null) return null;
+  const diff = tryGit(`diff -U0 ${base} -- ${file}`) ?? "";
+  const out = new Set<number>();
+  for (const m of diff.matchAll(/^@@ -\d+(?:,\d+)? \+(\d+)(?:,(\d+))? @@/gm)) {
+    const start = Number(m[1]);
+    const count = m[2] === undefined ? 1 : Number(m[2]);
+    for (let i = 0; i < count; i++) out.add(start + i);
+  }
+  return out;
+}
+
 {
   const base = findBase();
   if (!base) {
@@ -79,7 +104,7 @@ function changedPaths(base: string): string[] {
     (f) => ROOTS.some((r) => f.startsWith(`${r}/`)) && f.endsWith(".md") && !f.endsWith("/README.md") && existsSync(f),
   );
   const violations: Violation[] = [];
-  for (const f of entries) violations.push(...check(f, readFileSync(f, "utf8"), changed));
+  for (const f of entries) violations.push(...check(f, readFileSync(f, "utf8"), changed, addedLines(base, f)));
 
   if (violations.length) {
     console.error(`lint:changelog-names-ui - ${violations.length} violation(s):`);

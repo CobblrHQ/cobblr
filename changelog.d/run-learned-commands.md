@@ -3,6 +3,7 @@ type: feature
 scope: ai
 date: 2026-08-19
 docs_target: docs/USER_GUIDE.md#2. Core concepts
+docs_published: 2026-09-23
 ---
 A workspace can now be taught to do something and then do it with no AI at all. Ask an AI for twelve racks once, and under Configuration then Assistant that becomes a command you can keep. From then on the same kind of sentence, with different numbers or a different place, offers to run itself and needs only a yes. Every change it makes is recorded and undoable exactly like one an AI made, and a sentence that does not fit is refused rather than guessed at.
 

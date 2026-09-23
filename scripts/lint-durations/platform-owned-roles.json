@@ -1,5 +1,6 @@
 {
   "lint": "lint:platform-owned-roles",
+  "run": "tsx scripts/lint-platform-owned-roles.ts",
   "ms": 578,
   "recorded": "2026-09-14",
   "source": "split from scripts/lint-durations.json (recorded 2026-09-14)"

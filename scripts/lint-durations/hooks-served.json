@@ -1,5 +1,6 @@
 {
   "lint": "lint:hooks-served",
+  "run": "tsx scripts/lint-hooks-served.ts",
   "ms": 502,
   "recorded": "2026-09-14",
   "source": "split from scripts/lint-durations.json (recorded 2026-09-14)"

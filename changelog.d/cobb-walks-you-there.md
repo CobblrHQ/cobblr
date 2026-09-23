@@ -3,6 +3,7 @@ type: feature
 scope: core-ai
 date: 2026-08-15
 docs_target: docs/USER_GUIDE.md#3.22 AI providers & the AI kill-switch (operator)
+docs_published: 2026-09-23
 ---
 Ask Cobb now walks you to the screens he cannot operate for you, with the form already filled in: ask him to invite someone and you land on Members with the invite ready, you press Send.
 

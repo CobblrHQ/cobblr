@@ -21,6 +21,7 @@
 import { meta } from "../db/meta.js";
 import { render } from "./templates.js";
 import type { ResolvedEntity } from "@cobblr/platform-contract";
+import { coerceMetadata } from "@cobblr/platform-contract/entity-metadata";
 
 /** A provider returns a namespaced bag of related/aggregated data for one
  *  entity. Referenced in templates as {{<name>.<key>}}. Resolution is
@@ -59,22 +60,6 @@ const cache = new Map<string, { at: number; defs: ComputedDef[] }>();
 
 export function clearComputedDefsCache(): void {
   cache.clear();
-}
-
-/** A resolver's `metadata` field can come back as a parsed object or, on
- *  some driver paths, as the raw jsonb string. Normalise to an object so
- *  custom field values are always reachable as {{custom_field}}. */
-function coerceMetadata(raw: unknown): Record<string, unknown> {
-  if (raw && typeof raw === "object") return { ...(raw as Record<string, unknown>) };
-  if (typeof raw === "string" && raw.trim()) {
-    try {
-      const parsed = JSON.parse(raw);
-      if (parsed && typeof parsed === "object") return parsed as Record<string, unknown>;
-    } catch {
-      /* not JSON — ignore */
-    }
-  }
-  return {};
 }
 
 const REF_PATTERN = /\{\{\s*([a-z0-9_.]+)/gi;

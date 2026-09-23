@@ -3,6 +3,7 @@ type: feature
 scope: platform
 date: 2026-09-06
 docs_target: docs/USER_GUIDE.md#3.20 Scan inbox (`core-scan`, stock)
+docs_published: 2026-09-23
 ---
 An invite in your notifications now has Accept and Decline on it. Before, the row was a sentence with nothing to press: it did navigate to the invite page if you happened to click the text, but nothing said so, so the only obvious way in was the emailed link. Accept joins the workspace and takes you straight there; Decline records your answer instead of leaving the invite to expire in silence, so the person who invited you knows. An invite that has expired or been withdrawn now says so on the row rather than doing nothing.
 

@@ -8,7 +8,7 @@ import { defineModule } from "@cobblr/platform-contract";
 
 export default defineModule({
   name: "records",
-  version: "0.1.0",
+  version: "0.1.1",
   displayName: "Records",
   description:
     "A blank-slate collection of records. No built-in domain columns: each collection declares its own fields, so a bookshelf, a movie list, or a recipe box starts clean.",

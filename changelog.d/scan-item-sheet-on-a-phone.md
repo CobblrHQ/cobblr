@@ -3,6 +3,7 @@ type: feature
 scope: scan
 date: 2026-09-14
 docs_target: docs/USER_GUIDE.md#3.20 Scan inbox (`core-scan`, stock)
+docs_published: 2026-09-23
 ---
 On a phone the scan inbox is a list of compact cards and each item opens as its own full-screen review: the picture, what the AI read, the table it is going to with the override right on the card, a real form for its fields, and the filing action in reach of a thumb. A value you type on a pending item now stays on it until you file it, through every filing door.
 

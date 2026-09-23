@@ -3,6 +3,7 @@ type: feature
 scope: auth
 date: 2026-08-13
 docs_target: docs/architecture/central-identity.md#What a surface does
+docs_published: 2026-09-23
 ---
 A Cobblr account can now sign you in to a surface directly, instead of that account only existing to be verified.
 

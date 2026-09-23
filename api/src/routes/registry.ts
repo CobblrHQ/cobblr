@@ -10,7 +10,7 @@
 // just the read-only catalog. See docs/modules/extension-registry.md.
 
 import { Router } from "express";
-import { verify as cryptoVerify, createPublicKey } from "node:crypto";
+import { verifyEd25519 } from "@cobblr/platform-contract/signature";
 import { requireAuth } from "../auth/middleware.js";
 import { assertSafeUrl } from "../sandbox/ssrf.js";
 import { githubRegistryHeaders, fetchGithubText } from "../lib/github-registry.js";
@@ -42,15 +42,6 @@ registryPublicRouter.get("/index.json", (_req, res) => {
 // WASM sandbox + capabilities still bound the blast radius). Fail closed:
 // a configured root with a missing/invalid sig trusts NO keys.
 const ROOT_PUBKEY = process.env.COBBLR_ROOT_PUBKEY || "";
-function verifyEd25519(pubkeyB64: string, data: Buffer, sigB64: string): boolean {
-  try {
-    const key = createPublicKey({ key: Buffer.from(pubkeyB64, "base64"), format: "der", type: "spki" });
-    const sig = Buffer.from(sigB64.startsWith("ed25519:") ? sigB64.slice(8) : sigB64, "base64");
-    return cryptoVerify(null, data, key, sig);
-  } catch {
-    return false;
-  }
-}
 
 // The official catalog is now SELF-HOSTED: built in-process from the baked-in
 // bundle manifests (see lib/extensions-index.ts + GET /registry/index.json).

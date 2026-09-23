@@ -807,9 +807,21 @@ export async function validateBundle(
   const referencedKinds = new Set<string>(
     m.wires.map((w) => resolvedKind(w.source_kind)).filter((k): k is string => k !== null),
   );
+  // The wires are judged against the workspace as this install will leave it:
+  // what it has on, plus every module the bundle requires or its wires' actions
+  // belong to, since the install enables those before it wires anything. A
+  // module that will NOT be enabled (unregistered, or an update that may not
+  // enable) is reported by the dependency check below, once, by name.
+  const turnsOn = [
+    ...new Set([
+      ...m.requires.map((r) => r.module),
+      ...m.wires.map((w) => moduleOf(w.action_id)),
+      ...m.provides_instances.flatMap((i) => i.wires.map((w) => moduleOf(w.action_id))),
+    ]),
+  ].filter((x): x is string => typeof x === "string" && x.length > 0);
   const actionsByKind = new Map<string, Set<string>>();
   for (const kind of referencedKinds) {
-    const apps = await platform().actions.listApplicable(kind, orgId);
+    const apps = await platform().actions.listApplicable(kind, orgId, { alsoOn: turnsOn });
     actionsByKind.set(kind, new Set(apps.map((a) => a.id)));
   }
   for (const w of m.wires) {
@@ -852,7 +864,7 @@ export async function validateBundle(
     const primary = primaryByModule.get(inst.module);
     if (!primary) continue; // an unknown module is already reported elsewhere
     const applicable = new Set(
-      (await platform().actions.listApplicable(primary.id, orgId)).map((a) => a.id),
+      (await platform().actions.listApplicable(primary.id, orgId, { alsoOn: turnsOn })).map((a) => a.id),
     );
     for (const w of inst.wires) {
       if (!applicable.has(w.action_id)) {

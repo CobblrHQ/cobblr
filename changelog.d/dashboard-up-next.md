@@ -3,6 +3,7 @@ type: feature
 scope: dashboard
 date: 2026-08-20
 docs_target: docs/USER_GUIDE.md#The dashboard (home)
+docs_published: 2026-09-23
 ---
 **The dashboard now opens with what is late and what is coming.** A new "Up next" section lists everything dated across your whole workspace in one time-ordered list: maintenance you scheduled, tasks with a due date, orders you are expecting, things that expire, and any date field on any of your own records. It is grouped into Overdue, Today, Next 7 days and Later, each row saying which tracker it came from and how far away it is, and each row clicks through to the thing itself. Anything you have set a date on is already in here, with nothing to configure. The section hides itself when nothing is scheduled, and you can move or hide it with Arrange dashboard like any other.
 

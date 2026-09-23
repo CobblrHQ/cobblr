@@ -3,6 +3,7 @@ type: feature
 scope: kitchen
 date: 2026-08-25
 docs_target: docs/USER_GUIDE.md#3.18 Module instances ("+ New category")
+docs_published: 2026-09-23
 ---
 The dashboard now offers to move items into the table they look like they
 belong in: food filed in plain Inventory before the Groceries table existed

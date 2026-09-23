@@ -764,6 +764,7 @@ export const WORKSPACE_TOOLS: WorkspaceTool[] = [
               user_invokable?: boolean;
               internal?: boolean;
               wire_only?: boolean;
+              record_optional?: boolean;
               examples?: string[];
             }>
           | undefined) ?? [];
@@ -795,6 +796,10 @@ export const WORKSPACE_TOOLS: WorkspaceTool[] = [
           // rather than guessed at from the id.
           ...(a.examples?.length ? { said_like: a.examples } : {}),
           ...(a.scope === "workspace" ? {} : { matched_kinds: a.matched_kinds ?? [] }),
+          // Runs on one of those records, OR with no record at all: "put milk
+          // on the shopping list" names no record, and without this said the
+          // model created an empty list instead (#3255).
+          ...(a.record_optional ? { runs_without_a_record: true } : {}),
           args: a.args_schema && Object.keys(a.args_schema).length
             ? Object.fromEntries(
                 Object.entries(a.args_schema).map(([name, spec]) => {

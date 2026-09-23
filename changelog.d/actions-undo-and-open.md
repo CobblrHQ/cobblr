@@ -3,6 +3,7 @@ type: feature
 scope: ai
 date: 2026-09-11
 docs_target: docs/modules/core-ai.md#Actions say how they are undone, and where things went
+docs_published: 2026-09-23
 ---
 Moving records into another list can now be undone from the chat, and the card after a move offers to open the list they went to. Under the hood an action can declare its own undo, and the card offers Undo exactly when one exists; whether an action needs confirming first is unchanged.
 

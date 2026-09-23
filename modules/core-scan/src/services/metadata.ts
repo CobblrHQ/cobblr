@@ -22,7 +22,7 @@
 // read-modify-write. Everything anyone else wrote is untouched, including keys
 // written between your SELECT and your UPDATE.
 //
-// Enforced by `npm run lint:jsonb-merge`.
+// Enforced by `pnpm run lint jsonb-merge`.
 
 import { sql } from "kysely";
 import type { RawBuilder } from "kysely";

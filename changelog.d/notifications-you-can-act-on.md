@@ -3,6 +3,7 @@ type: feature
 scope: notifications
 date: 2026-09-06
 docs_target: docs/USER_GUIDE.md#4.7 Notifications
+docs_published: 2026-09-23
 ---
 Notifications you can answer where you read them, and that always take you somewhere.
 

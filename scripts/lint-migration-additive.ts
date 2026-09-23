@@ -29,7 +29,7 @@
 // dropping the column has to write down the condition they checked, the same way
 // `lint:heal-shims` makes a one-shot shim state its own retirement.
 //
-//   npx tsx scripts/lint-migration-additive.ts   (pnpm run lint:migration-additive)
+//   npx tsx scripts/lint-migration-additive.ts   (pnpm run lint migration-additive)
 
 import { readdirSync, readFileSync, existsSync } from "node:fs";
 import { join, relative, resolve } from "node:path";

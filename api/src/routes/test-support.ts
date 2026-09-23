@@ -9,11 +9,11 @@ import { retireReceiptFailurePlaceholders } from "../platform/retire-receipt-fai
 import { migrateBookshelfToInstance } from "../platform/migrate-bookshelf-to-instance.js";
 import { retireGroceriesBaseKindTwin } from "../platform/migrate-groceries-twin-to-instance.js";
 import { rehomeAssetsInstanceToRecords } from "../platform/rehome-instance.js";
-import { reconcileScanCategoryFields } from "../platform/reconcile-scan-category.js";
+import { reconcileScanCategoryFields, retireScanCategoryPlaceholders } from "../platform/reconcile-scan-category.js";
 import { runTenantSweep } from "../platform/tenant-sweeps.js";
 import { setSubscriberDelayForTests } from "../platform/events.js";
 import { registerHandler } from "../platform/actions.js";
-import { ActionRefusal } from "@cobblr/platform-contract";
+import { ActionRefusal, PLATFORM_OWNER } from "@cobblr/platform-contract";
 import { meta, metaPool } from "../db/meta.js";
 import { getTenantDb, tenantPoolStats } from "../db/tenant.js";
 import { poolCounts } from "../db/pool-stats.js";
@@ -124,7 +124,11 @@ testSupportRouter.post("/test-support/run-migration/receipt-placeholders", async
 // only the api process has.
 testSupportRouter.post("/test-support/run-migration/scan-category-axis", async (req, res, next) => {
   try {
+    // Both passes, in boot's order: the axis first, then the retire of a
+    // placeholder on a kind that keeps its own taxonomy (boot runs the retire
+    // after the module mount, which a running api has long since done).
     await reconcileScanCategoryFields(onlyOrg(req));
+    await retireScanCategoryPlaceholders(onlyOrg(req));
     res.json({ ok: true });
   } catch (err) {
     next(err);
@@ -364,9 +368,12 @@ testSupportRouter.post("/test-support/starve-meta", async (req, res, next) => {
 
 // An action whose handler THROWS, so a test can prove what the invoke route
 // answers for a handler failure: `result.ok:false` with the handler's own
-// sentence, never a bare 500 (#2847). The row is registered on demand under
-// the test-support module name; the boot sync removes it, since no manifest
-// declares it. Test-only, mounted under the same flag.
+// sentence, never a bare 500 (#2847). The row is registered on demand and
+// owned by the platform: no workspace can enable a "test-support" module, and
+// the invoke door refuses an action whose module is off before its handler
+// runs, so a module-owned stub would only ever test that refusal. The boot
+// sync removes the row, since nothing declares it. Test-only, mounted under
+// the same flag.
 // Two stubs: one REFUSES (an ActionRefusal, words for the person, repeated
 // verbatim) and one CRASHES (a plain Error whose message is a database's,
 // answered with the generic sentence and a reference, never the SQL).
@@ -379,7 +386,7 @@ async function ensureStubAction(id: string, handlerKey: string, label: string): 
     .insertInto("entity_actions")
     .values({
       id,
-      module_name: "test-support",
+      module_name: PLATFORM_OWNER,
       label,
       description: "A stub handler for the invoke route's own test.",
       icon: null,
@@ -395,7 +402,7 @@ async function ensureStubAction(id: string, handlerKey: string, label: string): 
       face: null,
       internal: true,
     })
-    .onConflict((b) => b.column("id").doUpdateSet({ invoke_handler: handlerKey }))
+    .onConflict((b) => b.column("id").doUpdateSet({ invoke_handler: handlerKey, module_name: PLATFORM_OWNER }))
     .execute();
 }
 testSupportRouter.post("/test-support/throwing-action", async (_req, res, next) => {

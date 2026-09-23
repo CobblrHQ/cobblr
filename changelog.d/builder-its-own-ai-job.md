@@ -3,6 +3,7 @@ type: feature
 scope: assistant
 date: 2026-09-08
 docs_target: docs/modules/ai-bundle-builder.md#The builder has its own AI job (2026-09-08)
+docs_published: 2026-09-23
 ---
 Building a workspace from a description is now its own AI job, so you can put it on a stronger model than the one answering everyday questions and see what it costs on its own. On the free Google tier it already defaults to the fuller model, which is capped at 20 requests a day: hopeless for chat, and plenty for a builder you run a handful of times.
 

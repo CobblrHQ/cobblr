@@ -1,5 +1,6 @@
 {
   "lint": "lint:workspace-deps",
+  "run": "tsx scripts/lint-workspace-deps-declared.ts",
   "ms": 514,
   "recorded": "2026-09-14",
   "source": "split from scripts/lint-durations.json (recorded 2026-09-14)"

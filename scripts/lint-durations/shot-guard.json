@@ -1,5 +1,6 @@
 {
   "lint": "lint:shot-guard",
+  "run": "tsx scripts/lint-shot-guard.ts",
   "ms": 492,
   "recorded": "2026-09-14",
   "source": "split from scripts/lint-durations.json (recorded 2026-09-14)"

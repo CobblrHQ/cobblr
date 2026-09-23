@@ -3,6 +3,7 @@ type: feature
 scope: try
 date: 2026-09-20
 docs_target: docs/USER_GUIDE.md#Trials, and the sandbox
+docs_published: 2026-09-23
 ---
 When a sandbox's hour is up it is held for 24 hours instead of deleted on the spot, and the ending page offers three doors: keep it as a trial for a week, two weeks or a month (your pick, and it ends when that time is up), start a real account from scratch, or, once it exists, bring what you built into a real account.
 

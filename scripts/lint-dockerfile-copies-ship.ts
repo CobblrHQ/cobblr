@@ -29,13 +29,16 @@
 //
 // PROVE IT RED: on the tree at a0ff9dd53 it names deploy/seeds.
 //
-//   npx tsx scripts/lint-dockerfile-copies-ship.ts   (pnpm run lint:dockerfile-copies-ship)
+//   npx tsx scripts/lint-dockerfile-copies-ship.ts   (pnpm run lint dockerfile-copies-ship)
 import { execFileSync } from "node:child_process";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 // path-gate.mjs is plain JS, so its return is untyped here; the cast is the
 // one place this file says what the exporter hands back.
 import { shippedPaths as shippedPathsUntyped } from "./publish/path-gate.mjs";
+import { copySources } from "./lib/dockerfile-copy.js";
+
+export { copySources };
 
 const shippedPaths = shippedPathsUntyped as (tracked: string[], manifest: { include: string[]; exclude?: string[] }) => string[];
 
@@ -53,21 +56,6 @@ function tracked(): string[] {
   return execFileSync("git", ["-C", ROOT, "ls-files"], { encoding: "utf8" }).split("\n").filter(Boolean);
 }
 
-/**
- * The build-context sources a COPY reads. The last word is the destination;
- * everything before it after the flags is a source. A `--from` stage, and an
- * absolute path an earlier stage wrote, come from inside the build and not
- * from the context.
- */
-export function copySources(line: string): string[] {
-  const m = /^\s*COPY\s+(.*)$/i.exec(line);
-  if (!m) return [];
-  const words = m[1]!.trim().split(/\s+/);
-  if (words.some((w) => /^--from=/i.test(w))) return [];
-  const args = words.filter((w) => !w.startsWith("--"));
-  if (args.length < 2) return [];
-  return args.slice(0, -1).filter((p) => !p.startsWith("/") && p !== ".");
-}
 
 const manifest = JSON.parse(readFileSync(MANIFEST, "utf8")) as { include: string[]; exclude?: string[] };
 const all = tracked();

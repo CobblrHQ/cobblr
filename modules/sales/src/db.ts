@@ -4,6 +4,7 @@
 import type { Generated, ColumnType, Kysely } from "kysely";
 import type { Request } from "express";
 import type { OrgRoleName } from "@cobblr/platform-contract/org-roles";
+import { requestInstance } from "@cobblr/platform-contract/request-instance";
 
 export type SalesOrderStatus =
   | "draft"
@@ -92,5 +93,5 @@ export function sessionUser(req: Request): { id: string; email: string; display_
 
 /** Instance scope for the request; falls back to the "sales" default column. */
 export function instanceOf(req: Request): string {
-  return (req as unknown as { instance?: string }).instance ?? "sales";
+  return requestInstance(req, "sales");
 }

@@ -3,6 +3,7 @@ type: feature
 scope: core-locations
 date: 2026-08-31
 docs_target: docs/USER_GUIDE.md#3.12 Locations (foundational)
+docs_published: 2026-09-23
 ---
 Register a bin the way you meet one: standing in front of it. **New bin from a photo** on the Locations page opens the camera, you photograph the bin and say what is in it, and the bin exists under that name with that picture. The phrase becomes the name exactly as you said it. One switch in the same sheet, off until you turn it on, queues a QR label for every new bin through the label queue and auto-print you already use.
 

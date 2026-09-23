@@ -3,6 +3,7 @@ type: feature
 scope: tags
 date: 2026-08-23
 docs_target: docs/USER_GUIDE.md#3.6 Tags (foundational)
+docs_published: 2026-09-23
 ---
 Tags now sort by how much they still matter, and a tag you have not used in months folds away behind a "+N" instead of sitting on every record forever.
 

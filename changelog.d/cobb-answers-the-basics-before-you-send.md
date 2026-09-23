@@ -3,6 +3,7 @@ type: feature
 scope: ai
 date: 2026-08-19
 docs_target: docs/USER_GUIDE.md#2. Core concepts
+docs_published: 2026-09-23
 ---
 Ask Cobb now answers the everyday questions while you are still typing them, in a green bubble that says where the answer came from and costs no AI call. "What can you do?", "where do I scan?" and the rest come from what he already knows; questions about your own records still come from a read of your workspace. Cobb's written answers also know whether your workspace has AI connected, so a connected workspace is never told it isn't.
 

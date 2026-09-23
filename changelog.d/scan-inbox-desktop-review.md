@@ -3,6 +3,7 @@ type: feature
 scope: scan
 date: 2026-09-15
 docs_target: docs/USER_GUIDE.md#3.20 Scan inbox (`core-scan`, stock)
+docs_published: 2026-09-23
 ---
 On a desk the scan inbox's cards are as tall as what they have to say: the tools sit in one row beside the title instead of a rail down the side, and a row that still needs you asks its one question with the answers a tap can give, instead of a paragraph and a percentage.
 

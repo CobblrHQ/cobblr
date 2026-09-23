@@ -24,7 +24,7 @@
 // PROVE IT RED before you trust it green: change one character in the copy,
 // run it, watch it fail, put it back.
 //
-//   npx tsx scripts/lint-alert-lib-sync.ts   (pnpm run lint:alert-lib-sync)
+//   npx tsx scripts/lint-alert-lib-sync.ts   (pnpm run lint alert-lib-sync)
 import { existsSync, readFileSync } from "node:fs";
 import { resolve } from "node:path";
 

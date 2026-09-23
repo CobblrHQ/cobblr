@@ -109,11 +109,6 @@ export function shapeReceipt(raw: string): ParsedReceipt | null {
   });
 }
 
-function aiText(r: { result: unknown }): string {
-  const res = r.result as { text?: string; content?: string };
-  return res.text ?? res.content ?? "";
-}
-
 async function chatExtract(orgId: string, text: string, sourceId: string, userId?: string | null): Promise<string> {
   const r = await platform().ai.invoke({
     orgId,
@@ -130,7 +125,7 @@ async function chatExtract(orgId: string, text: string, sourceId: string, userId
     },
     source: { kind: "core-scan:receipt", id: sourceId },
   });
-  return aiText(r);
+  return r.text;
 }
 
 /** The exact instruction the image tier sends to the model.
@@ -173,7 +168,7 @@ async function visionExtract(
     },
     source: { kind: "core-scan:receipt", id: sourceId },
   });
-  return aiText(r);
+  return r.text;
 }
 
 /** The AI failed: the router's coded reason rides the result (the session's

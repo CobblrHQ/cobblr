@@ -13,6 +13,7 @@ import { getOfficialBundleManifest } from "../routes/registry.js";
 import { getManagedApp, type ManagedApp } from "./managed-apps.js";
 import { listInstances, setScanFallback } from "./instances.js";
 import { upsertOverride } from "./entity-kind-overrides.js";
+import { fileIdFromRawPath, rawPathFor } from "./file-paths.js";
 
 /** Write the app's curated `nav_order` onto each nav entry's override, so the
  *  navbar reads left-to-right in the intended order (Yarn, Hooks, Designs, …)
@@ -242,17 +243,16 @@ export async function importAppData(
   // `image_path === undefined` (the graduation-photos flake). Failing loud makes
   // the flow ATOMIC: a 2xx response now guarantees every copied item's photo
   // path is durably set before the flow reports done.
-  const FILE_URL_RE = /\/orgs\/[^/]+\/modules\/core-files\/files\/([^/?]+)\/raw/;
   async function copyPhoto(src: unknown): Promise<string | null> {
     if (typeof src !== "string" || !src) return null; // genuinely photoless
-    const fileId = src.match(FILE_URL_RE)?.[1];
+    const fileId = fileIdFromRawPath(src);
     if (!fileId) return src; // external (catalog) URL — portable, copy the string as-is
     if (!targetSlug) throw new ProvisionAppError("target_slug_missing", "The target workspace has no slug — cannot scope the copied photo URL.");
     const bytes = await platform().files.read(sourceOrgId, fileId, "original");
     if (!bytes) throw new ProvisionAppError("photo_copy_failed", `Could not read source photo ${fileId} to copy into the graduated workspace.`);
     const w = await platform().files.write(targetOrgId, bytes.bytes, { filename: bytes.filename, mimeType: bytes.mimeType });
     if (!w) throw new ProvisionAppError("photo_copy_failed", "Could not write the copied photo into the graduated workspace.");
-    return `/api/v1/orgs/${targetSlug}/modules/core-files/files/${w.fileId}/raw`;
+    return rawPathFor(targetSlug, w.fileId);
   }
 
   // 2. Copy the source instance's items into the target instance.

@@ -206,6 +206,18 @@ async function kindWords(orgId: string, kind: string): Promise<KindWords> {
   return kindWordsFrom(kind, await listKindsForOrg(orgId).catch(() => []), pluralise);
 }
 
+/** "Purchase date", "Purchase date and Supplier", "A, B and C": a list for a
+ *  sentence a person reads. */
+function inWords(names: readonly string[]): string {
+  if (names.length <= 1) return names[0] ?? "nothing";
+  return `${names.slice(0, -1).join(", ")} and ${names[names.length - 1]}`;
+}
+
+/** "no fields", "1 field", "3 fields": never "field(s)". */
+function countOf(n: number, noun: string): string {
+  return n === 0 ? `no ${pluralise(noun)}` : `${n} ${n === 1 ? noun : pluralise(noun)}`;
+}
+
 function kindsInWords(kinds: Array<{ id: string; display_name_plural?: string | null }>): string {
   const named = kinds.map((k) => (k.display_name_plural ? `${k.display_name_plural} (${k.id})` : k.id));
   const shown = named.slice(0, 8);
@@ -445,7 +457,7 @@ export function registerPlatformActionHandlers(): void {
       lines.push("Choices cleared");
     }
     if (!lines.length) return { error: "nothing to change — pass a new display_label, required, choices, add_choices, remove_choices, unit, or hidden" };
-    return { title: `Change "${label}" on ${entityKind}`, lines };
+    return { title: `Change "${label}" on ${(await kindWords(ctx.orgId, entityKind)).many}`, lines };
   });
 
   registerHandler("platform.edit-field", async (ctx: ActionInvokeContext) => {
@@ -667,16 +679,21 @@ export function registerPlatformActionHandlers(): void {
     // ALLOW-INTERNAL-NOUN: echoes the caller's own word for a kind that is not here; there are no words for it, and the kinds that are come in words beside it
     if (!kind) return { error: `"${read.entityKind}" is not a kind of record here; the workspace has ${kindsInWords(kinds)}` };
     const lines: string[] = [];
+    const labels: string[] = [];
     for (const f of read.fields) {
       const found = await findField(ctx.orgId, read.entityKind, f);
       if ("error" in found) return { error: found.error };
       lines.push(`${found.label} → under "${read.section}"`);
+      labels.push(found.label);
     }
     if (read.renameTo) lines.push(`"${read.section}" → called "${read.renameTo}"`);
+    // The card's line names the fields and the kind's words: it read `Put 2
+    // field(s) under "Buying" on Part` for a stranger (#3255).
+    const many = kindWordsFrom(read.entityKind, kinds, pluralise).many;
     return {
       title: read.renameTo
-        ? `Rename the "${read.section}" heading on ${kind.display_name} to "${read.renameTo}"`
-        : `Put ${read.fields.length} field(s) under "${read.section}" on ${kind.display_name}`,
+        ? `Rename the "${read.section}" heading on ${many} to "${read.renameTo}"`
+        : `Put ${inWords(labels)} under "${read.section}" on ${many}`,
       lines,
     };
   });
@@ -1317,7 +1334,7 @@ export function registerPlatformActionHandlers(): void {
     return {
       ok: true,
       summary: args.on
-        ? `${preset.label} is on: ${(result.created ?? []).length || "no"} field(s) added`
+        ? `${preset.label} is on: ${countOf((result.created ?? []).length, "field")} added`
         : `${preset.label} is off. Anything already recorded in those fields is kept.`,
       data: { preset: key, on: args.on, created: result.created ?? [], removed: result.removed ?? [] },
     };

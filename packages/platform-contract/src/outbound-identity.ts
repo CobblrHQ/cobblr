@@ -21,6 +21,8 @@
 // domain from env and reports the feature unavailable when unset instead of
 // falling back to something that looks configured and is not.
 
+import { publicBaseUrl } from "@cobblr/platform-contract/public-url";
+
 /** The operator's contact address: how a third-party service reaches whoever runs
  *  THIS instance. Not Cobblr's address — the person or org hosting this copy.
  *
@@ -40,7 +42,7 @@ export function operatorEmail(): string {
  *  Empty for an instance with no public URL configured (a LAN-only install), in
  *  which case the User-Agent simply carries no URL. */
 export function contactUrl(): string {
-  const base = (process.env.PUBLIC_BASE_URL || "").trim().replace(/\/+$/, "");
+  const base = publicBaseUrl();
   // A localhost default (the dev/compose value) is not a contact address for
   // anybody outside the box, so it is treated as unset.
   if (!base || /^https?:\/\/(localhost|127\.0\.0\.1|\[::1\])(:|$)/i.test(base)) return "";

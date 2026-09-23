@@ -95,6 +95,7 @@ export function LocationsPage() {
     const a = document.createElement("a");
     a.href = url; a.download = "locations.csv";
     document.body.appendChild(a); a.click(); a.remove();
+    // TIMER-OUTLIVES-COMPONENT: the blob must be released whether or not the page is still up; cancelled, it leaks.
     setTimeout(() => URL.revokeObjectURL(url), 1000);
   };
   const [printing, setPrinting] = useState(false);

@@ -7,7 +7,7 @@
 // imports its UI from "@cobblr/<name>/ui"; the host wires it under
 // /<module>/* and the module's own internal routes take over.
 
-import { lazy, Suspense , useEffect } from "react";
+import { lazy, Suspense , useEffect, useState } from "react";
 import { BrowserRouter, Navigate, Route, Routes, useLocation, useParams } from "react-router-dom";
 import { CobbHead } from "./components/Cobb";
 import { PlatformWebProvider, type FlowRegistry } from "@cobblr/platform-web";
@@ -38,6 +38,8 @@ import { AuthPage, MagicConsumePage, IdentityCallbackPage } from "./pages/AuthPa
 import { PairPage } from "./pages/PairPage";
 import { SandboxLanding } from "./pages/SandboxLanding";
 import { SandboxEnded } from "./pages/SandboxEnded";
+import { CarryPage } from "./pages/CarryPage";
+import { pendingCarry, takeCarryGrant } from "./lib/carry-pending";
 import { EndingPreview } from "./pages/EndingPreview";
 import { useSandboxEnded } from "./lib/sandbox-session";
 import { StartAppPage } from "./pages/StartAppPage";
@@ -146,6 +148,7 @@ import { ErrorBoundary } from "./components/ErrorBoundary";
 import { ConnectivityBanner } from "./components/ConnectivityBanner";
 import { PortalLayout } from "./components/PortalLayout";
 import { ToastProvider, ConfirmProvider } from "@cobblr/platform-web";
+import { BootScrim } from "./components/BootScrim";
 import { api, getToken } from "./lib/api";
 import { useNavMode, useNavTopBar } from "./lib/nav-mode";
 import { isFullSidebar } from "./lib/nav-layout";
@@ -321,6 +324,8 @@ function PublicRoutes() {
       <Route path="/pair" element={<PairPage />} />
       {/* The sandbox's ending, to look at: test-door boxes only. */}
       <Route path="/try/ended" element={<EndingPreview />} />
+      {/* Where a trial's "bring what I built" lands, signed out or in. */}
+      <Route path="/carry" element={<CarryRoute />} />
       {/* /p/:token is the un-auth'd public surface render. Reachable
           signed-in or signed-out — the token is the secret. */}
       <Route path="/p/:token" element={<PublicSurfacePage />} />
@@ -351,12 +356,28 @@ function ConsoleEscape() {
   return <BootScrim />;
 }
 
+// /carry: a trial's "bring what I built" lands here, usually signed out. The
+// grant is held before the sign-up form, which opens on sign-up, because most
+// people arrive without an account on this side.
+function CarryRoute() {
+  const { user } = useAuth();
+  const [grant] = useState(() => takeCarryGrant(window.location.search));
+  if (grant && !user) return <AuthPage initialMode="signup" />;
+  return <CarryPage grant={grant} />;
+}
+
 // A bare URL (no /w/:slug): once authed, redirect into the user's default
 // workspace, preserving any deep path so old bookmarks keep working.
 function LandingRedirect() {
   const { user, orgs } = useAuth();
   if (!user) return <AuthPage />;
   if (user.must_reset_password) return <ForcePasswordResetPage />;
+  // A trial waiting to be brought in, from before a sign-up or a trip through
+  // the account service: back to the page that brings it.
+  if (pendingCarry()) {
+    window.location.replace("/carry");
+    return <BootScrim />;
+  }
   const org = pickDefaultOrg(orgs);
   if (!org) {
     // No workspace (an admin-minted account, or the only one was just
@@ -389,7 +410,7 @@ function WorkspaceRoutes({ urlHandle }: { urlHandle: string }) {
   // it; it is gone. The whole shell goes with it: no cached dashboard, no
   // strip, no tour, no modal, nothing left to press but the doors out.
   const sandboxOver = useSandboxEnded();
-  if (sandboxOver) return <SandboxEnded kind={sandboxOver} slug={urlHandle} />;
+  if (sandboxOver) return <SandboxEnded kind={sandboxOver} />;
   if (!user) return <AuthPage />;
   // Force-password-reset gate: if the admin minted this account with
   // a temp password, the user must pick a new one before anything
@@ -786,8 +807,8 @@ function ActiveOrgScopedRoutes() {
               bare /qr/<token> URLs into /w/<default>/qr/<token>. */}
           <Route path="/qr/*" element={<QrResolvePage />} />
           <Route path="/bricklink-connector" element={<BrickLinkPage />} />
-          {/* Legacy alias — pre-rename. Bookmarks keep working. */}
-          <Route path="/bricklink" element={<BrickLinkPage />} />
+          {/* Legacy alias — pre-rename. A redirect, not a second URL for one page, so bookmarks keep working. */}
+          <Route path="/bricklink" element={<Navigate to="/bricklink-connector" replace />} />
           {/* "What's new" from the account menu. The authed app mounts under the
               /w/:slug BASENAME, so the menu's <Link to="/changelog"> resolves to
               /w/<slug>/changelog — which fell through to the workspace catch-all
@@ -883,21 +904,5 @@ function ActiveOrgScopedRoutes() {
           BasketWidget) — the two used to overlap in that corner. */}
       {!onAdmin && labelsEnabled && !fullSide && <LabelsBasket orgSlug={activeSlug} getToken={getToken} />}
     </PlatformWebProvider>
-  );
-}
-
-// The app before it has anything to show: auth still bootstrapping, or a
-// full-document redirect on its way out. The testid is the seam e2e/shot-guard
-// waits on — a screenshot taken here is a centred grey ellipsis on an empty
-// page, which looks like a capture and is worth nothing. Seven of them shipped
-// with the docs on 2026-09-22 (#3396).
-function BootScrim() {
-  return (
-    <div
-      data-testid="app-boot-scrim"
-      className="min-h-full flex items-center justify-center text-faint font-mono text-xs"
-    >
-      …
-    </div>
   );
 }

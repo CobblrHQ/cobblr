@@ -1,5 +1,6 @@
 {
   "lint": "lint:phone-input-font",
+  "run": "tsx scripts/lint-phone-input-font.ts",
   "ms": 543,
   "recorded": "2026-09-14",
   "source": "split from scripts/lint-durations.json (recorded 2026-09-14)"

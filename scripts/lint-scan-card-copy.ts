@@ -29,7 +29,7 @@
 // that motivated it, watch it fail, then fix the violation. A lint that has
 // never failed has never been verified.
 //
-//   npx tsx scripts/lint-scan-card-copy.ts   (pnpm run lint:scan-card-copy)
+//   npx tsx scripts/lint-scan-card-copy.ts   (pnpm run lint scan-card-copy)
 import { readFileSync, readdirSync, statSync } from "node:fs";
 import { join } from "node:path";
 

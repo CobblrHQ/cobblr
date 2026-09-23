@@ -1,5 +1,6 @@
 {
   "lint": "lint:live-icons",
+  "run": "tsx scripts/lint-live-icons.ts",
   "ms": 479,
   "recorded": "2026-09-14",
   "source": "split from scripts/lint-durations.json (recorded 2026-09-14)"

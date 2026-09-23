@@ -15,7 +15,7 @@
 // simply offer. No opt-out: gate on role instead if the door is truly
 // admin-only.
 //
-//   npx tsx scripts/lint-capability-gates-grantable.ts   (pnpm run lint:capability-gates-grantable)
+//   npx tsx scripts/lint-capability-gates-grantable.ts   (pnpm run lint capability-gates-grantable)
 import { readFileSync, readdirSync, statSync } from "node:fs";
 import { join } from "node:path";
 

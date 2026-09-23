@@ -3,6 +3,7 @@ type: feature
 scope: apps
 date: 2026-09-01
 docs_target: docs/USER_GUIDE.md#Cobblr for Home
+docs_published: 2026-09-23
 ---
 Cobblr for Home: a home-inventory app at /start/home whose first screen on a phone is the camera. Point it at a thing, it gets a name, a photo and a room, and "Print label" is right there on the "Added" note for a Bluetooth label printer you pair under Your account. The Home Inventory bundle gains the three extras behind it (Scan to add, Labels, Starter rooms), each a checkbox on the full platform.
 

@@ -17,7 +17,7 @@
 // tolerance here: not one running lint may be missing.
 //
 // THE RULE.
-//   - Every lint:* script package.json runs has scripts/lint-durations/<name>.json.
+//   - Every lint the runner runs has a time in its record, scripts/lint-durations/<name>.json.
 //   - Every file names a lint that still runs.
 //   - Every file is exactly one lint's time under its own filename: the keys
 //     lint/ms/recorded/source and nothing else, `lint` equal to the filename,
@@ -32,7 +32,7 @@
 // measures them on every run, and a drifted baseline is caught the moment a
 // quiet run compares against it.
 //
-//   npx tsx scripts/lint-lint-durations.ts   (pnpm run lint:lint-durations)
+//   npx tsx scripts/lint-lint-durations.ts   (pnpm run lint lint-durations)
 import { discoverLints } from "./run-lints.mjs";
 import { auditDurations, readQuietMs } from "./lib/lint-durations.mjs";
 

@@ -441,6 +441,20 @@ async function isWorkspaceAction(c: Ctx, actionId: string): Promise<boolean> {
   }
 }
 
+/** Whether an action can be proposed with no record: a workspace action, or
+ *  an entity action whose manifest says `recordOptional` ("put milk on the
+ *  shopping list", #3255). The invoke door reads the same flag. */
+async function runsWithoutARecord(c: Ctx, actionId: string): Promise<boolean> {
+  try {
+    const reg = await callApi(c, "GET", "/registered-actions");
+    const items = (reg.body.items as Array<{ id: string; scope?: string; record_optional?: boolean }> | undefined) ?? [];
+    const a = items.find((x) => x.id === actionId);
+    return a?.scope === "workspace" || a?.record_optional === true;
+  } catch {
+    return false; // unknown → treat as record-scoped, the stricter path
+  }
+}
+
 /** Best-effort display label for a record (falls back to the id). */
 async function labelOf(wsApi: WorkspaceApi, kind: string, id: string): Promise<string> {
   try {
@@ -522,7 +536,7 @@ async function proposalOf(
       if (planned && "error" in planned) return { error: planned.error };
       const plan = planned?.plan ?? null;
       if (!kind || !id) {
-        if (!(await isWorkspaceAction(c, actionId))) {
+        if (!(await runsWithoutARecord(c, actionId))) {
           return { error: "I need the action and the exact record to run it on." };
         }
         return {
@@ -699,11 +713,8 @@ async function answerTurn(
           source: { kind: "core-ai:chat", id: orgId },
           userId: sessionUserId(req),
         });
-        const result = r.result as
-          | { content?: string; text?: string; tool_calls?: ToolCall[] }
-          | string;
-        if (typeof result === "string") return { content: result };
-        const round = { content: result?.content ?? result?.text ?? "", tool_calls: result?.tool_calls };
+        const calls = typeof r.result === "object" && r.result !== null ? (r.result as { tool_calls?: ToolCall[] }).tool_calls : undefined;
+        const round = { content: r.text, tool_calls: calls };
         // Cassette recording (COBBLR_AI_REPLAY_RECORD): capture what a REAL
         // model said, per round, to build replay fixtures. No-op unless set,
         // and the provider id is what keeps a replay from recording itself.
@@ -973,7 +984,10 @@ async function answerTurn(
     const args = (move.args && typeof move.args === "object" ? move.args : undefined) as
       | Record<string, unknown>
       | undefined;
-    if (await isWorkspaceAction(c, move.action_id)) {
+    // A workspace action has no record to resolve, and neither does a
+    // record-optional one asked for with none named ("put milk on the
+    // shopping list", #3255).
+    if ((await isWorkspaceAction(c, move.action_id)) || (!move.entity_query && (await runsWithoutARecord(c, move.action_id)))) {
       return {
         type: "proposal",
         summary: move.summary ?? `Run ${move.action_id}`,

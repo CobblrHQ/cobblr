@@ -27,7 +27,7 @@
 // that motivated it, watch it fail, then fix the violation. A lint that has
 // never failed has never been verified.
 //
-//   npx tsx scripts/lint-cli-flush-before-exit.ts   (pnpm run lint:cli-flush-before-exit)
+//   npx tsx scripts/lint-cli-flush-before-exit.ts   (pnpm run lint cli-flush-before-exit)
 import { readFileSync, readdirSync, statSync } from "node:fs";
 import { join } from "node:path";
 

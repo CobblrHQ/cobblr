@@ -1,5 +1,6 @@
 {
   "lint": "lint:dispatch-not-per-row",
+  "run": "tsx scripts/lint-dispatch-not-per-row.ts",
   "ms": 670,
   "recorded": "2026-09-14",
   "source": "split from scripts/lint-durations.json (recorded 2026-09-14)"

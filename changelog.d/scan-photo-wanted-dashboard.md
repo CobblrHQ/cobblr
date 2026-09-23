@@ -3,6 +3,7 @@ type: feature
 scope: scan
 date: 2026-08-15
 docs_target: docs/USER_GUIDE.md#3.20 Scan inbox (`core-scan`, stock)
+docs_published: 2026-09-23
 ---
 The dashboard now lists the items you marked for a photo, and each one has a button that opens the camera pointed straight at it.
 

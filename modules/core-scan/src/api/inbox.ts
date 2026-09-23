@@ -21,7 +21,7 @@
 
 import { rememberPickedImage } from "../services/picked-images.js";
 import { TITLE_VARIANTS_KEY, asTitleFormat, formatTitleVariants, titleVariantsOf, type TitleFormat } from "@cobblr/platform-contract/display-identity";
-import { applyUserFieldPatch, candidateKind, candidatesWithUserFields } from "../services/user-fields.js";
+import { applyUserCategory, applyUserFieldPatch, candidateKind, candidatesWithUserFields } from "../services/user-fields.js";
 import { isMachineReadCode } from "../services/barcode-source.js";
 import { randomUUID } from "node:crypto";
 import { buildCadenceEvents } from "../cadence-events.js";
@@ -38,7 +38,7 @@ import { applyReceiptFacts } from "../services/receipt-candidate-facts.js";
 import { alignStorageFields } from "../services/align-storage-fields.js";
 import { moveQuantity, scanTargetOf, scanTargetsRegistered, startingCount, type QuantityMove } from "../services/scan-target.js";
 import { withGroupImages as groupImagesFor } from "../services/group-image.js";
-import { applyAxisValue, readAxisValue, type AxisTarget } from "@cobblr/platform-contract/category-axis";
+import { applyAxisValue, clearAxisValue, readAxisValue, type AxisTarget } from "@cobblr/platform-contract/category-axis";
 import { retargetByCategory } from "../services/retarget-by-category.js";
 import { lineQuantity, sameOrder } from "../services/receipt-shared.js";
 import { FiledQuantity, filedQuantityOf } from "../services/filed-quantity.js";
@@ -120,7 +120,7 @@ import {
   type ScanMenuEntry, perceiveRow } from "../services/matchmaker.js";
 import { candidatesForNamelessRow, isCuratedBarcodeIdentification, shouldAdoptCandidateName } from "../services/adopt-name.js";
 import { guardReplayCandidates } from "../services/replay-guard.js";
-import { lookupBookIsbn } from "../services/book-lookup.js";
+import { decodedIsbnOf, lookupBookIsbn } from "../services/book-lookup.js";
 import { resolvePaintColorFromText } from "../services/paint-code.js";
 import { resolvePaintCodeViaWeb } from "../services/paint-code-websearch.js";
 import { parseReceipt } from "../services/receipt.js";
@@ -1759,7 +1759,7 @@ inboxRouter.get(
         source: { kind: "core-scan:session-theme", id: ctx.org.id },
         userId: sessionUser(req).id,
       });
-      const raw = (r.result as { content?: string; text?: string }).content ?? (r.result as { text?: string }).text ?? "";
+      const raw = r.text;
       const m = raw.match(/\{[\s\S]*\}/);
       if (m) parsed = JSON.parse(m[0]);
     } catch {
@@ -1830,6 +1830,11 @@ export const PatchBody = z.object({
   // The table the fields were typed for ("yarn:item"). Absent: the top
   // candidate's table at the time of the write.
   fields_kind: z.string().max(120).optional(),
+  // The category the person chose, by name, for a table that keeps its own
+  // categories and so has no field to type it into (#3223). Kept beside
+  // `fields` for the same table and read back as the top candidate's
+  // category by every door. null or "" clears it.
+  category: z.string().max(200).nullable().optional(),
   // Where the PERSON said this goes (the pill's pick), kept on the row and
   // stamped as theirs, so a better system suggestion never replaces it; the
   // system's own route (the top candidate) may be (#3062). null clears the
@@ -1876,6 +1881,7 @@ inboxRouter.patch(
       parsed.data.keep_grouped !== undefined ||
       parsed.data.photo_wanted !== undefined ||
       parsed.data.fields !== undefined ||
+      parsed.data.category !== undefined ||
       parsed.data.name !== undefined ||
       parsed.data.destination !== undefined
     ) {
@@ -1898,6 +1904,10 @@ inboxRouter.patch(
         }
         if (Object.keys(stamps).length) meta[FIELD_PROVENANCE_KEY] = stamps;
         else delete meta[FIELD_PROVENANCE_KEY];
+      }
+      if (parsed.data.category !== undefined) {
+        const kind = parsed.data.fields_kind ?? candidateKind(storedCandidateList(cur?.suggested_candidates)[0]);
+        meta = applyUserCategory(meta, parsed.data.category, kind);
       }
       // The name is a field (#2982): the person's is kept on the row and
       // stamped person, so the re-run that rewrites the column never shows
@@ -2034,9 +2044,30 @@ async function commitCategoryAxis(
    *  place the draft's choice survives. Fields first all the same, because a
    *  value there is a person's typed answer and beats a proposal. */
   proposed?: string | null,
+  /** The category the person or the session chose, as a NAME (the body's
+   *  `category`). A kind whose module owns its taxonomy has no field for the
+   *  card to write a name into, so this is how a changed category, or a
+   *  batch's agreed one, reaches it. Between the slot, which holds what a
+   *  form set, and the proposal, which nobody chose. */
+  chosenByName?: string | null,
 ): Promise<void> {
   const axis = await platform().categoryAxis.for({ orgId, kind, instance });
-  const chosen = readAxisValue(axis, into) || (typeof proposed === "string" ? proposed.trim() : "");
+  // What the record's slot holds goes back through `keep`, never `commit`:
+  // on a kind that keeps its own categories it is an id a form picked, and
+  // only the slot knows that. A pick that no longer stands is emptied, and
+  // the thing files under a name instead.
+  const inSlot = readAxisValue(axis, into);
+  if (inSlot) {
+    const kept = await platform().categoryAxis.keep({ orgId, kind, value: inSlot, instance });
+    if (kept) {
+      applyAxisValue(kept, into);
+      return;
+    }
+    clearAxisValue(axis, into);
+  }
+  const chosen =
+    (typeof chosenByName === "string" ? chosenByName.trim() : "") ||
+    (typeof proposed === "string" ? proposed.trim() : "");
   if (!chosen) return;
   applyAxisValue(await platform().categoryAxis.commit({ orgId, kind, value: chosen, instance }), into);
 }
@@ -2060,6 +2091,12 @@ export const ConfirmBody = z.object({
   quantity: FiledQuantity.optional(),
   /** Module-specific extras forwarded verbatim to the create endpoint. */
   extras: z.record(z.unknown()).optional(),
+  /** The category to file under, by NAME, whatever store the table keeps its
+   *  categories in. Needed for a table whose module owns its taxonomy
+   *  (inventory's tree): it has no custom field to carry a name, so without
+   *  this a changed or batch-agreed category could not reach it. A value in
+   *  the table's own category slot (a field, or a picked category_id) wins. */
+  category: z.string().max(200).optional(),
   /** Tags to attach to the created entity (session-theme "tag them all", or a
    *  manual pick). Union'd with any pending_tags stashed on the item. */
   tags: z.array(z.string().min(1).max(60)).max(20).optional(),
@@ -2487,6 +2524,7 @@ inboxRouter.post(
       parsed.data.instance ?? null,
       { fields: (body.metadata as Record<string, unknown> | undefined) ?? {}, row: body },
       (matchedCandidate as { category?: unknown } | undefined)?.category as string | undefined,
+      parsed.data.category,
     );
 
     const doCreate = () =>
@@ -6969,7 +7007,13 @@ interface MatchItemOpts {
  *  ISBN is almost never printed on a cover, so vision can't read it — a title
  *  lookup backfills it authoritatively (preferring the edition whose publisher
  *  matches the item's brand). Best-effort, never throws; only BACKFILLS (never
- *  overrides an ISBN the match already produced); writes back only on a change. */
+ *  overrides an ISBN the match already produced); writes back only on a change.
+ *
+ *  A row that already KNOWS its ISBN (the code scanned was one, and the decode
+ *  carries it) fills the blank with that and asks nobody: a title search finds
+ *  an edition, not this one. "JavaScript: The Good Parts" scanned as its 2008
+ *  O'Reilly ISBN was filed under a 2015 reprint's, and "The Martian" paperback
+ *  under its ebook's (#3543). */
 async function backfillBookIsbn(
   orgId: string,
   itemId: string,
@@ -6977,6 +7021,7 @@ async function backfillBookIsbn(
   menu: ScanMenuEntry[],
   title: string,
   brand: string | null,
+  knownIsbn: string | null,
 ): Promise<void> {
   try {
     const byKey = new Map(menu.map((m) => [`${m.module}::${m.instance ?? ""}`, m]));
@@ -6988,7 +7033,7 @@ async function backfillBookIsbn(
       const cur = c.fields[isbnField.name];
       if (cur != null && String(cur).replace(/[^0-9Xx]/g, "").length >= 10) continue; // already has one
       const author = (Object.entries(c.fields).find(([k]) => /^author$/i.test(k))?.[1] as string | undefined) ?? null;
-      const isbn = await lookupBookIsbn(c.name || title, author, brand);
+      const isbn = knownIsbn ?? (await lookupBookIsbn(c.name || title, author, brand));
       if (isbn) {
         c.fields[isbnField.name] = isbn;
         changed = true;
@@ -7443,7 +7488,13 @@ async function matchItem(opts: MatchItemOpts): Promise<unknown[] | null> {
     // goes to that list: "Teas" on a base-Inventory candidate is the model
     // saying tea and filing it where nobody looks for tea.
     const retargeted = retargetByCategory(candidates, menu);
-    if (retargeted) console.log(`[core-scan] ${retargeted} candidate(s) re-routed to the list their category named`);
+    if (retargeted) {
+      console.log(`[core-scan] ${retargeted} candidate(s) re-routed to the list their category named`);
+      // A moved candidate was on the catch-all when the decode filled, so it
+      // holds none of the new table's decoded fields. Empty-only, so the
+      // candidates that did not move are untouched.
+      applyDecoderFill(row.suggested_metadata, candidates, menu, row.barcode_text);
+    }
     // What a person typed for a field of this row is not on these candidates
     // and never is: it rides in user_fields and is merged over the top route
     // on every read (services/user-fields.ts), so no pass above, and no
@@ -7767,6 +7818,7 @@ async function matchItem(opts: MatchItemOpts): Promise<unknown[] | null> {
       menu,
       (adoptName ? candName : row.suggested_name) ?? "",
       row.suggested_manufacturer ?? null,
+      decodedIsbnOf(row.suggested_metadata),
     );
     // Stamp finalized_at — the canonical "nothing more will change" marker.
     // matched_at means the matchmaker RAN; finalized_at means the whole tail

@@ -24,7 +24,7 @@
 // PROVED RED on scripts/lint-bundle-content.ts importing
 // ./lib/bundle-wire-scopes.js before that file was added to the manifest.
 //
-//   npx tsx scripts/lint-shipped-script-imports.ts   (pnpm run lint:shipped-script-imports)
+//   npx tsx scripts/lint-shipped-script-imports.ts   (pnpm run lint shipped-script-imports)
 import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
 import { dirname, join, relative, resolve } from "node:path";
 

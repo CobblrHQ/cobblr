@@ -3,6 +3,7 @@ type: feature
 scope: core-scan
 date: 2026-08-14
 docs_target: docs/USER_GUIDE.md#3.20 Scan inbox (`core-scan`, stock)
+docs_published: 2026-09-23
 ---
 Ask Cobb can now see the items in your scan inbox, not just the count: ask what is waiting, what needs a look, or what has been sitting there for days, and he reads the actual queue.
 

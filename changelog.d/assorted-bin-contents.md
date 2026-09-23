@@ -3,6 +3,7 @@ type: feature
 scope: inventory
 date: 2026-08-10
 docs_target: docs/USER_GUIDE.md#3.1 Inventory
+docs_published: 2026-09-23
 ---
 **A bin of fifty jumbled things can say so.** Instead of pretending you will one day type in every adapter in the box, record it as "assorted adapters, roughly 50", and break it into kinds later only if you want to. Anything you do count keeps its identity, including its printed label.
 

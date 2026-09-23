@@ -25,11 +25,12 @@
 import { readdirSync, existsSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
-import { ordinalOf } from "./lib/migration-ordinal.js";
+import { ordinalOf } from "./lib/migration-ordinal.mjs";
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
 
-// Directories that hold ordered .sql migrations.
+// Directories that hold ordered .sql migrations (isMigrationDir says the same
+// for a single path, for the merge-time check).
 function migrationDirs(): string[] {
   const dirs: string[] = ["api/migrations/platform", "api/migrations/tenant-base"];
   const modules = join(ROOT, "modules");
@@ -55,6 +56,12 @@ const BASELINE = new Set<string>([
   "modules/core-scan/migrations|0003",
   "modules/core-scan/migrations|0027",
   "modules/digifab/migrations|0028",
+  // The same race on 2026-09-23, after this set was closed: #3504's
+  // action-record-optional and the heal-shim ledger (#3453), both taking
+  // 20260922-131 from one main, merged eight hours apart. Both are
+  // IF NOT EXISTS, so the order between them cannot matter, and merge-pr.sh
+  // now refuses the second such merge before it lands (ordinal-at-merge.mjs).
+  "api/migrations/platform|20260922-131",
 ]);
 
 const problems: string[] = [];

@@ -3,6 +3,7 @@ type: feature
 scope: ai
 date: 2026-08-20
 docs_target: docs/USER_GUIDE.md#2. Core concepts
+docs_published: 2026-09-23
 ---
 An undo that stops short now offers you the rest instead of leaving it there. "Put back 5 of 6. Left Shelf 3 alone, because you have changed it since" comes with a "Take that one back too" button: nothing is decided for you, but the choice is one press away rather than something you have to go and do by hand. Taking the offer is itself a tracked change, so it can be undone in turn.
 

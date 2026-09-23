@@ -10,11 +10,13 @@
 //   · a PERSONAL connection (/me/connections) carries __connection_user_id →
 //     the owner's personal agent (one agent, all their workspaces);
 //   · a WORKSPACE provider (AI settings) → the workspace's bridge; a named
-//     bridge via transit value "bridge:<id>" (same channel key format as
-//     digifab — kept local, module isolation).
+//     bridge via transit value "bridge:<id>". The key itself comes from
+//     @cobblr/platform-contract/edge-channel, the one derivation every door
+//     and sender shares.
 
 import { platform } from "@cobblr/platform-contract";
 import type { AiCredentialField } from "@cobblr/platform-contract";
+import { edgeRouteKey, edgeTransit } from "@cobblr/platform-contract/edge-channel";
 
 /** Spread into describeCredentials() of any provider whose endpoint can be
  *  local to the user. Renders as a select in every credential form. */
@@ -30,19 +32,17 @@ export const TRANSIT_FIELD: Record<string, AiCredentialField> = {
 };
 
 export function viaBridge(credentials: Record<string, unknown>): boolean {
-  return String(credentials.transit ?? "").startsWith("bridge");
+  return edgeTransit(credentials.transit).viaBridge;
 }
 
 /** Channel key for the bridge transit. orgId comes from invoke ctx; the test
  *  route injects __org_id instead (testConnection gets no ctx). */
 export function edgeKeyFor(credentials: Record<string, unknown>, orgId?: string): string {
-  const owner = typeof credentials.__connection_user_id === "string" ? credentials.__connection_user_id : "";
-  if (owner) return owner;
-  const org = orgId || (typeof credentials.__org_id === "string" ? credentials.__org_id : "");
-  if (!org) throw new Error("edge transit: no routing context (personal owner or workspace) available");
-  const t = String(credentials.transit ?? "");
-  const name = t.startsWith("bridge:") ? t.slice("bridge:".length).slice(0, 60) : "";
-  return name ? `${org}::${name}` : org;
+  return edgeRouteKey({
+    ownerUserId: credentials.__connection_user_id,
+    orgId: orgId || credentials.__org_id,
+    bridge: edgeTransit(credentials.transit).bridge,
+  });
 }
 
 // The bridge long-polls; between poll cycles the channel can be momentarily

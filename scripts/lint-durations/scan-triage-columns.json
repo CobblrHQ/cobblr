@@ -1,5 +1,6 @@
 {
   "lint": "lint:scan-triage-columns",
+  "run": "tsx scripts/lint-scan-triage-columns.ts",
   "ms": 550,
   "recorded": "2026-09-14",
   "source": "split from scripts/lint-durations.json (recorded 2026-09-14)"

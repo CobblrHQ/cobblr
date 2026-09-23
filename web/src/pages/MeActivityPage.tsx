@@ -4,6 +4,7 @@
 //
 // Filter: optional ?org=<slug> narrows to one workspace.
 
+import { activityVerb } from "../lib/activity-words";
 import { useEffect, useMemo, useRef } from "react";
 import { useInfiniteQuery } from "@tanstack/react-query";
 import { useSearchParams } from "react-router-dom";
@@ -149,7 +150,7 @@ function ActivityRow({ entry: e }: { entry: CrossOrgActivityEntry }) {
       : typeof diff.title === "string"
         ? diff.title
         : null;
-  const action = humanAction(e.action);
+  const action = activityVerb(e.action);
   // No per-row workspace pill — the workspace now lives in the section header
   // (grouped by day + workspace). Wrap, don't truncate: the entity name is the
   // point of the row ("created White Board", not "created White Bo…").
@@ -170,22 +171,3 @@ function ActivityRow({ entry: e }: { entry: CrossOrgActivityEntry }) {
   );
 }
 
-function humanAction(a: string): string {
-  const map: Record<string, string> = {
-    created: "created",
-    updated: "updated",
-    deleted: "deleted",
-    login: "signed in",
-    user_created: "joined",
-    pairing_created: "linked",
-    pairing_deleted: "unlinked",
-    // A boot pass moved the record to the table its fields belong to (the
-    // Groceries base-kind twin, 2026-09-13); the row says so, not "system".
-    moved_by_upgrade: "moved into its own table by the upgrade:",
-  };
-  if (map[a]) return map[a];
-  if (a.endsWith("_created")) return "created";
-  if (a.endsWith("_updated")) return "updated";
-  if (a.endsWith("_deleted")) return "deleted";
-  return a.replace(/_/g, " ");
-}

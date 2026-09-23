@@ -35,7 +35,7 @@
 // that motivated it, watch it fail, then fix the violation. A lint that has
 // never failed has never been verified.
 //
-//   npx tsx scripts/lint-fixed-chrome.ts   (pnpm run lint:fixed-chrome)
+//   npx tsx scripts/lint-fixed-chrome.ts   (pnpm run lint fixed-chrome)
 //   npx tsx scripts/lint-fixed-chrome.ts --root <dir>   judge another checkout
 import ts from "typescript";
 import { readFileSync, readdirSync, statSync } from "node:fs";

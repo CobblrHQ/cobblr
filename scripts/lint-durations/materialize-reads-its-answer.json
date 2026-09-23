@@ -1,0 +1,7 @@
+{
+  "lint": "lint:materialize-reads-its-answer",
+  "run": "tsx scripts/lint-materialize-reads-its-answer.ts",
+  "ms": 3700,
+  "recorded": "2026-09-22",
+  "source": "by hand on the dev box under load (2026-09-22)"
+}

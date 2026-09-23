@@ -17,7 +17,7 @@
 // that motivated it, watch it fail, then fix the violation. A lint that has
 // never failed has never been verified.
 //
-//   npx tsx scripts/lint-test-path-starts-with-its-own-bin.ts   (pnpm run lint:test-path-starts-with-its-own-bin)
+//   npx tsx scripts/lint-test-path-starts-with-its-own-bin.ts   (pnpm run lint test-path-starts-with-its-own-bin)
 import { readFileSync, readdirSync, statSync } from "node:fs";
 import { join } from "node:path";
 

@@ -3,6 +3,7 @@ type: feature
 scope: scan
 date: 2026-09-15
 docs_target: docs/USER_GUIDE.md#3.20 Scan inbox (`core-scan`, stock)
+docs_published: 2026-09-23
 ---
 **Typing a model number now looks it up.** Type "PB287Q" into the dashboard's box (or the scanner's) and the inbox row gets the web lookup, the product's name and picture, then the match, the same way a scanned barcode does; a typed product code takes the catalog. The card under "what you've added" opens the row it made and shows its progress while it fills in. Tapping a box on a phone no longer zooms the page.
 

@@ -1,0 +1,10 @@
+{
+  "lint": "lint:continuation-comment",
+  "run": "tsx scripts/lint-continuation-comment.ts",
+  "rows": [
+    "lint"
+  ],
+  "ms": 3000,
+  "recorded": "2026-09-22",
+  "source": "added by hand at twice a quiet dev-box time (2026-09-22), to be replaced from its first CI run"
+}

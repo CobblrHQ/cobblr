@@ -3,6 +3,7 @@ type: feature
 scope: discussion
 date: 2026-08-25
 docs_target: docs/USER_GUIDE.md#3.11 Activity log & Notifications (foundational, stubs)
+docs_published: 2026-09-23
 ---
 You can now mark a discussion settled (and reopen it later), and edit your own comments, straight from the Discussion tab and the Discussion inbox.
 

@@ -3,6 +3,7 @@ type: feature
 scope: scan
 date: 2026-08-19
 docs_target: docs/USER_GUIDE.md#3.20 Scan inbox (`core-scan`, stock)
+docs_published: 2026-09-23
 ---
 Point the camera scanner at a paper receipt and it is read as a receipt: one inbox line per item, under its own "Receipt" session, with the purchase recorded. Before this it was filed as a single thing you owned, named after whatever text the camera could read off the paper.
 

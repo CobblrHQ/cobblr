@@ -1086,6 +1086,7 @@ import {
   issueSignInLink,
 } from "../platform/sign-in-link.js";
 import { revokeSandboxLinksForUser } from "../platform/try-sandbox.js";
+import { publicBaseUrl } from "@cobblr/platform-contract/public-url";
 
 
 const MagicRequest = z.object({
@@ -1724,7 +1725,7 @@ authRouter.post("/pair/start", requireAuth, async (req, res, next) => {
     const proto = (req.headers["x-forwarded-proto"] as string | undefined) ?? req.protocol;
     const host = (req.headers["x-forwarded-host"] as string | undefined) ?? req.get("host");
     const reqBase = host ? `${proto}://${host}`.replace(/\/+$/, "") : null;
-    const pubBase = process.env.PUBLIC_BASE_URL ? process.env.PUBLIC_BASE_URL.replace(/\/+$/, "") : null;
+    const pubBase = publicBaseUrl() || null;
     const bases: string[] = [];
     for (const b of [reqBase, pubBase]) {
       if (b && !bases.some((x) => x.toLowerCase() === b.toLowerCase())) bases.push(b);

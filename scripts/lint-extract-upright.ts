@@ -14,7 +14,7 @@
 // Anything else fails: a box is drawn on the picture as displayed, and a
 // phone stores its raster a quarter turn from that.
 //
-//   npx tsx scripts/lint-extract-upright.ts   (pnpm run lint:extract-upright)
+//   npx tsx scripts/lint-extract-upright.ts   (pnpm run lint extract-upright)
 import { readFileSync, readdirSync, statSync } from "node:fs";
 import { join } from "node:path";
 

@@ -221,10 +221,13 @@ answer), then the forum (an answer that stays findable), then the tracker
 
 | Variable | Shown as | For |
 |---|---|---|
-| `COBBLR_DISCORD_INVITE_URL` | Discord | Same-day questions. `DISCORD_INVITE_URL` still works; the prefixed name wins if both are set. |
-| `COBBLR_FORUM_URL` | Community forum | Longer questions and searchable answers. |
+| `COBBLR_DISCORD_INVITE_URL` | Discord | Same-day questions. This project's own is `https://discord.gg/KXZMJDCnz9`. `DISCORD_INVITE_URL` still works; the prefixed name wins if both are set. |
+| `COBBLR_FORUM_URL` | Community forum | Longer questions and searchable answers. This project's own is `https://community.cobblr.xyz`. |
 | `COBBLR_ISSUES_URL` | Issue tracker | Your own tracker, if you run a fork. Leave it unset and no tracker is offered. |
-| `COBBLR_DOCS_URL` | Documentation | Where a feature is explained. |
+| `COBBLR_DOCS_URL` | Documentation | Where a feature is explained: `https://docs.cobblr.xyz`. |
+
+Point them at your own places if you run a community of your own. Otherwise
+paste the three above and your users reach the project's.
 
 Each must be an `http(s)` URL; anything else is ignored rather than rendered.
 An empty value counts as unset, which matters because compose passes an unset
@@ -235,6 +238,19 @@ list: it carries the report the user just typed, prefilled, and it goes to this
 project's own GitHub tracker. That is deliberate - it is the only tracker a
 self-hoster can reach, since our PRs and CI sit on a private network - and it is
 where a bug in Cobblr itself belongs.
+
+Set any of these on your instance and they appear in the **Feedback** box and the account menu. Set none and neither shows a link.
+
+| Variable | Shown as | For |
+|---|---|---|
+| `COBBLR_DISCORD_INVITE_URL` | Discord | Same-day questions. The older `DISCORD_INVITE_URL` still works. |
+| `COBBLR_FORUM_URL` | Community forum | Longer questions, and answers that stay findable. |
+| `COBBLR_ISSUES_URL` | Issue tracker | Your own tracker, if you run a fork. |
+| `COBBLR_DOCS_URL` | Documentation | Where a feature is explained. |
+
+They are offered chat first, then forum, then tracker, then docs: chat gets the fastest answer, and filing an issue is work most questions do not need. Each must be an `http(s)` URL; anything else is ignored rather than shown. An empty value counts as unset.
+
+The **"Open an issue"** button on a self-hosted instance is separate: it carries the report you just typed and goes to Cobblr's own tracker, because that is where a bug in Cobblr belongs.
 
 ## Backups
 
@@ -288,7 +304,7 @@ API key where one exists. Set these in `.env`:
 | `COBBLR_SCAN_EXTERNAL_LOOKUPS` | `true` | Master switch - `false` means **no** third-party barcode calls at all. |
 | `COBBLR_SCAN_OPENFACTS` | `true` | Open Food/Products/Beauty Facts (free, open data - the most privacy-friendly). |
 | `COBBLR_SCAN_UPCITEMDB` | `true` | upcitemdb (free shared tier). |
-| `COBBLR_SCAN_UPCITEMDB_KEY` | - | Your upcitemdb paid key → your own quota. |
+| `COBBLR_SCAN_UPCITEMDB_KEY` | - | Your [upcitemdb](https://www.upcitemdb.com) paid key → your own quota (the free tier above needs none). |
 | `COBBLR_SCAN_WEBSEARCH` | `true` | DuckDuckGo image/text fallback for codes no catalog knows. |
 | `COBBLR_SCAN_GOUPC_API_KEY` | - | Your [go-upc](https://go-upc.com) API key → their **official API** (best coverage). |
 | `COBBLR_SCAN_GOUPC` | `false` | Enable go-upc's HTML *scraper* (no key). Off by default - we don't ship a scraper that runs unasked; prefer the API key above. |
@@ -311,12 +327,13 @@ corrections travel back. What travels is the corrected value, the barcode, which
 field it fixed, and an opaque account id - not your email, not your workspace,
 not the rest of what you scanned.
 
-Sign up at `account.cobblr.xyz` for a per-install key, then:
+Sign up at [account.cobblr.xyz](https://account.cobblr.xyz) for a per-install
+key, then set both:
 
-| Var | Default | What it does |
+| Var | Set it to | What it does |
 |---|---|---|
-| `COBBLR_BIDB_URL` | - | The shared corpus to consult. Unset keeps the tier inert. |
-| `COBBLR_BIDB_KEY` | - | Your per-install key, sent as a bearer token. |
+| `COBBLR_BIDB_URL` | `https://barcodes.cobblr.xyz` | The shared corpus to consult. Unset keeps the tier inert, which is why the key alone does nothing. |
+| `COBBLR_BIDB_KEY` | the key from your account | Sent as a bearer token. |
 
 One thing to expect: records that came from another database whose licence
 forbids passing them on are withheld, and where a human correction sits on top of

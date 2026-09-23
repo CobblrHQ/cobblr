@@ -5,7 +5,7 @@ import { z } from "zod";
 import { platform } from "@cobblr/platform-contract";
 import { instanceOf, sessionUser, tenantContext, tenantDb } from "../db.js";
 import { asyncHandler, badBody, requireRole } from "./util.js";
-import { routeUnknownToMetadata } from "./route-helpers.js";
+import { routeUnknownToMetadata } from "@cobblr/platform-contract/entity-metadata";
 import {
   latestPatternFileId,
   patternPhotoThumb,
@@ -232,7 +232,7 @@ async function extractMaterials(orgId: string, designId: string, text: string, u
     },
     source: { kind: "projects:pattern-extract", id: designId },
   });
-  const content = (r.result as { content?: string })?.content ?? "";
+  const content = r.text;
   const m = content.match(/\{[\s\S]*\}/);
   const obj = m ? (JSON.parse(m[0]) as Record<string, unknown>) : null;
   if (!obj) return null;
@@ -433,7 +433,7 @@ projectsRouter.post(
         },
         source: { kind: "projects:pattern-extract", id: req.params.id ?? "" },
       });
-      const content = (r.result as { content?: string })?.content ?? "";
+      const content = r.text;
       const m = content.match(/\{[\s\S]*\}/);
       const obj = m ? (JSON.parse(m[0]) as Record<string, unknown>) : null;
       if (!obj) {

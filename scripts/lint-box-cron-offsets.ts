@@ -27,7 +27,7 @@
 // PROVEN RED 2026-09-20 against the installer's `*/10` sync line, which
 // shares every tenth minute with the tick's `*/5`.
 //
-//   npx tsx scripts/lint-box-cron-offsets.ts   (pnpm run lint:box-cron-offsets)
+//   npx tsx scripts/lint-box-cron-offsets.ts   (pnpm run lint box-cron-offsets)
 import { readFileSync } from "node:fs";
 
 const INSTALLER = "scripts/dev-rig/install-core-checkout.sh";

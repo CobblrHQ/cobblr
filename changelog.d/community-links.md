@@ -3,6 +3,7 @@ type: feature
 scope: platform
 date: 2026-08-21
 docs_target: SELF_HOSTING.md#Where your users go with a question
+docs_published: 2026-09-23
 ---
 **The feedback box can point at every place you run, not just Discord.** It offered one community link, hardcoded to a chat invite; a forum or a docs site had nowhere to go. An instance now lists whichever it has - Discord, a community forum, an issue tracker, documentation - each with a line saying what you would go there for, in the order that answers a question fastest. They appear in the feedback box and the account menu. Set none and no links show.
 

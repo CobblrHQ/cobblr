@@ -466,9 +466,7 @@ export async function identifyPhoto({
       // image, not prompt — a prompt fix wouldn't otherwise reach a cached image).
       bypass_cache: bypassCache,
     });
-    // OpenAI returns {role, content}; Anthropic returns {text} — tolerate both.
-    const res = r.result as { text?: string; content?: string };
-    raw = res.text ?? res.content ?? "";
+    raw = r.text;
   } catch (err) {
     // The router's refusal or the provider's failure, as the code it carries
     // (ai-refusal.ts, provider-reason.ts): the note under the photo reads
@@ -759,8 +757,7 @@ export async function observeScanPhoto(
       },
       source: { kind: "core-scan:photo-observe", id: sourceId ?? "" },
     });
-    const res = r.result as { text?: string; content?: string };
-    const out = (res.text ?? res.content ?? "").trim();
+    const out = r.text.trim();
     if (!out) return null;
     return parseObservation(out);
   } catch {
@@ -930,9 +927,8 @@ export async function crossCheckScanPhoto(
      *  evidence a route's guess is checked against (scan-evidence.ts). */
     printed?: { creator?: string | null; brand?: string | null; title?: string | null } | null;
   };
-  const parseVerdict = (r: { result: unknown }): Verdict => {
-    const res = r.result as { text?: string; content?: string };
-    const raw = res.text ?? res.content ?? "";
+  const parseVerdict = (r: { text: string }): Verdict => {
+    const raw = r.text;
     const m = raw.match(/\{[\s\S]*\}/);
     return JSON.parse(m ? m[0] : raw) as Verdict;
   };

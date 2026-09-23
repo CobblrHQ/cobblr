@@ -20,7 +20,12 @@ export interface FiringShape {
   template?: string | null;
 }
 
-/** Deterministic JSON with sorted keys, so `{a,b}` and `{b,a}` are one firing. */
+/** Deterministic JSON with sorted keys, so `{a,b}` and `{b,a}` are one firing.
+ *
+ *  FROZEN. The key it builds is stored, so any change here, even a better
+ *  canonical form, gives every past firing a new key and fires it again. The
+ *  copies in twin-wires-rule.ts and lint-bundle-content.ts are not stored and
+ *  may change freely; do not "share" this one with them. */
 function canonical(v: unknown): unknown {
   if (Array.isArray(v)) return v.map(canonical);
   if (v && typeof v === "object") {

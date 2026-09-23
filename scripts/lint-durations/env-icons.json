@@ -1,5 +1,6 @@
 {
   "lint": "lint:env-icons",
+  "run": "node scripts/build-env-icons.mjs --check",
   "ms": 209,
   "recorded": "2026-09-14",
   "source": "split from scripts/lint-durations.json (recorded 2026-09-14)"

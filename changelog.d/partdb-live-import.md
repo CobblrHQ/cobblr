@@ -3,6 +3,7 @@ type: feature
 scope: integrations
 date: 2026-08-27
 docs_target: docs/USER_GUIDE.md#4.5f Migrate in from another app: Part-DB (`/configuration/integrations`)
+docs_published: 2026-09-23
 ---
 **One-click "Import from Part-DB (live)."** Under Configuration → Integrations → *Migrate in from another app*, a new **Part-DB** card imports an electronic-component inventory in one step: paste your Part-DB address and an API token, and it brings your storage-location tree, your categories, and your parts across (name, description, stock total, minimum, manufacturer and part number, unit, supplier link, with the rest of each part's Part-DB record kept in its details). A part that Part-DB stocks in more than one place lands at its first lot's location, and the import summary tells you how many parts that applied to. When it is done it asks whether to **keep it synced** or **import just this once**; either way the connection is saved under Live sync. A Part-DB on your local network is reached through your workspace's edge bridge.
 

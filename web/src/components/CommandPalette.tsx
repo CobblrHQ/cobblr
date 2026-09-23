@@ -15,7 +15,7 @@ import { fuzzyMatch } from "../lib/fuzzy";
 import { searchFeatures } from "../lib/feature-index";
 import { useHostedPanels } from "../lib/useHostedPanels";
 import { mergePaletteRows, PALETTE_RANK, type PaletteRow, type PaletteRowKind } from "../lib/paletteRows";
-import { OverlayLayer } from "@cobblr/platform-web";
+import { useLater, OverlayLayer } from "@cobblr/platform-web";
 
 /** Anything (the mobile bar, the palette) can ask for the quick-add sheet. */
 export const OPEN_ADD_SHEET_EVENT = "cobblr:open-add-sheet";
@@ -52,6 +52,7 @@ const SECTION_HEADER: Record<PaletteRowKind, string | null> = {
 };
 
 export function CommandPalette() {
+  const later = useLater();
   const { activeSlug } = useActiveOrg();
   const { theme } = useTheme();
   const toggleTheme = useThemeToggle();
@@ -80,7 +81,7 @@ export function CommandPalette() {
     };
   }, []);
   useEffect(() => {
-    if (open) setTimeout(() => inputRef.current?.focus(), 0);
+    if (open) later.after("focus", 0, () => inputRef.current?.focus());
   }, [open]);
 
   const [debounced, setDebounced] = useState("");

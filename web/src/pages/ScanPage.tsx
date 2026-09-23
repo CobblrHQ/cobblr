@@ -23,7 +23,7 @@ import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } fro
 import { Link, useNavigate, useSearchParams } from "react-router-dom";
 import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { CheckCircle, ChevronDown, ExternalLink, Image as ImagePlus, LayoutGrid, List, Loader2, MapPin, MonitorSmartphone, Pencil, ReceiptText, RotateCcw, ScanLine, Search, Sparkles, Tag, Trash2, Truck, X, Zap, MoreHorizontal, Undo2 } from "lucide-react";
-import { Modal, useToast, usePageTitle, PopoverLayer } from "@cobblr/platform-web";
+import { useLater, Modal, useToast, usePageTitle, PopoverLayer, relativeTime } from "@cobblr/platform-web";
 import { ScanImportModal } from "../components/ScanImportModal";
 import { ExportInboxModal } from "../components/ExportInboxModal";
 import { } from "../components/CameraCaptureSheet";
@@ -87,6 +87,8 @@ import {
   sessionFilingReadiness,
   sessionLocation,
   categoryAxisKey,
+  categoryAxisFor,
+  tableCategoryAxis,
 } from "./sessionCategory";
 import { usePublishChatContext } from "../lib/chat-context";
 import { useBarcodeWedge } from "../lib/useBarcodeWedge";
@@ -98,7 +100,7 @@ import { } from "../lib/useFieldPresentation";
 import { } from "../auth/AuthContext";
 import { destinationLabel, type DestinationTable } from "@cobblr/platform-contract";
 import { InboxCard, GalleryTile } from "./ScanInboxCard";
-import { timeAgo, type ScanTarget } from "./scanInboxShared";
+import { type ScanTarget } from "./scanInboxShared";
 export type { ScanTarget } from "./scanInboxShared";
 
 interface ScanDrive {
@@ -458,6 +460,7 @@ function SessionIdentity({ handheld, expanded, onToggle, className, title, child
 }
 
 export function ScanPage() {
+  const later = useLater();
   usePageTitle("Scan");
   const { activeSlug, activeOrg } = useActiveOrg();
   // Desk work stays at a desk: the menu rows below that act on files, on
@@ -1520,6 +1523,14 @@ export function ScanPage() {
   // the page tells you to work this way: bulk-confirm the confident ones, then
   // focus the rest.
   const confidentCount = items.filter((it) => isReadyToFile(it, viewer)).length;
+  // On a phone the header row has ~163px for its counts. Measured at 393px
+  // (#3497): an August-sized backlog ("81 · 46 ready · 4 to review") already
+  // pushed "to review" off the row's edge, and adding the total's word cut it
+  // by 56px. So on a phone the row carries only the facets a person acts on,
+  // "to review" first, and the total moves to the ... menu. The total stays on
+  // the row, with its word, when it is the only count there is.
+  const showReadyFacet = confidentCount > 0 && confidentCount < totalPending;
+  const rowCarriesFacet = showReadyFacet || reviewCount > 0;
 
   // The standing bin, resolved to a location so the chip can NAME it.
   const fileBinName = fileBin ? (locsQ.data?.items ?? []).find((l) => l.id === fileBin) : null;
@@ -2091,8 +2102,9 @@ export function ScanPage() {
             agreedLocationId,
             (bundleId && installed.get(bundleId)) || null,
             // The DECLARED category axis, so the agreed category applies even
-            // when the stored value spells it differently than the candidate.
-            categoryAxisKey(it, menu),
+            // when the stored value spells it differently than the candidate,
+            // and reaches a table that keeps its own categories by name.
+            categoryAxisFor(it, menu),
             viewer,
           )
         : null;
@@ -2228,21 +2240,17 @@ export function ScanPage() {
         <h1 className="hidden sm:block text-lg font-semibold text-content dark:text-mortar-100 shrink-0">
           Inbox
         </h1>
-        <div className="flex items-baseline gap-0 shrink min-w-0 leading-none overflow-x-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden whitespace-nowrap text-[13px] text-muted dark:text-slate-400">
-          <span className="text-sm font-semibold text-content dark:text-mortar-100">
-            {totalPending}
+        <div className="flex items-baseline gap-0 max-sm:gap-2 shrink min-w-0 leading-none overflow-x-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden whitespace-nowrap text-[13px] text-muted dark:text-slate-400">
+          {/* The total. On a tablet the word is a luxury the counts paid ~55px
+              for, so it shows only on a desktop or on an empty inbox (a lone
+              "0" is a riddle). On a phone it leaves the row whenever a facet
+              is there (see rowCarriesFacet) and says its word when it stays:
+              "1  1 to review" read as two numbers side by side (#3497). */}
+          <span className={rowCarriesFacet ? "max-sm:hidden" : ""}>
+            <span className="text-sm font-semibold text-content dark:text-mortar-100">{totalPending}</span>
+            <span className={totalPending === 0 ? "" : "sm:hidden lg:inline"}>&nbsp;pending</span>
           </span>
-          {/* `xs:` is not a breakpoint in this project (no custom screens), so
-              the old "hidden xs:inline sm:inline" was just "hidden sm:inline"
-              wearing a dead class. The word costs ~50px that a phone row spends
-              better on the location; an EMPTY inbox keeps it, because a lone
-              "0" is a riddle. */}
-          {/* The word is a DESKTOP luxury: on a tablet it cost ~55px and the
-              counts were compressed to pay for it. The number leading a row of
-              facets is unambiguous without it. An EMPTY inbox keeps it, since a
-              lone "0" is a riddle. */}
-          <span className={totalPending === 0 ? "" : "hidden lg:inline"}>&nbsp;pending</span>
-          {confidentCount > 0 && confidentCount < totalPending && (
+          {showReadyFacet && (
             <>
               <span className="hidden sm:inline px-1 text-faint">·</span>
               <button
@@ -2252,7 +2260,7 @@ export function ScanPage() {
                   setStaleOnly(false);
                 }}
                 title="A confident name and destination, nothing flagged - these are what File all commits"
-className="ml-1.5 sm:ml-0 rounded px-1 py-0.5 text-[12.5px] hover:bg-subtle dark:hover:bg-slate-800 transition"
+className="rounded px-1 py-0.5 text-[12.5px] hover:bg-subtle dark:hover:bg-slate-800 transition"
               >
                 <b className="font-semibold text-emerald-600 dark:text-emerald-400">
                   {confidentCount}
@@ -2278,7 +2286,7 @@ className="ml-1.5 sm:ml-0 rounded px-1 py-0.5 text-[12.5px] hover:bg-subtle dark
                 aria-pressed={reviewOnly}
                 title="No clean name, low confidence, or the lookup was rate-limited - these need a human"
                 className={
-                  "ml-1.5 sm:ml-0 rounded px-1 py-0.5 text-[12.5px] transition " +
+                  "max-sm:-order-1 rounded px-1 py-0.5 text-[12.5px] transition " +
                   (reviewOnly
                     ? "bg-amber-100 dark:bg-amber-900/40 text-amber-800 dark:text-amber-200"
                     : "hover:bg-subtle dark:hover:bg-slate-800")
@@ -2459,7 +2467,7 @@ className="ml-1.5 sm:ml-0 rounded px-1 py-0.5 text-[12.5px] hover:bg-subtle dark
           onClick={() => {
             if (!omniOpen) {
               setOmniOpen(true);
-              setTimeout(() => omniRef.current?.focus(), 0);
+              later.after("omni-focus", 0, () => omniRef.current?.focus());
             }
           }}
           className={
@@ -2581,7 +2589,7 @@ className="ml-1.5 sm:ml-0 rounded px-1 py-0.5 text-[12.5px] hover:bg-subtle dark
             type="button"
             onClick={() => {
               setOmniOpen(true);
-              setTimeout(() => omniRef.current?.focus(), 0);
+              later.after("omni-focus", 0, () => omniRef.current?.focus());
             }}
             aria-label="Search the inbox"
             className={headerIcon + " sm:hidden"}
@@ -2645,6 +2653,15 @@ className="ml-1.5 sm:ml-0 rounded px-1 py-0.5 text-[12.5px] hover:bg-subtle dark
           handheld={handheld}
           triggerClassName={headerIcon}
           gallery={{ on: galleryView, toggle: toggleGalleryView }}
+          pending={{
+            total: totalPending,
+            onRow: !rowCarriesFacet,
+            filtered: reviewOnly || staleOnly,
+            showAll: () => {
+              setReviewOnly(false);
+              setStaleOnly(false);
+            },
+          }}
           stale={{
             count: staleCount,
             total: totalPending,
@@ -3343,7 +3360,9 @@ className="ml-1.5 sm:ml-0 rounded px-1 py-0.5 text-[12.5px] hover:bg-subtle dark
                 // nowhere - while the button still promised "file all 1 into
                 // Book" (reported 2026-08-01). Silence beats a filing that will not
                 // happen; the items still file, just without the clause.
-                const sessionHasCategoryAxis = readyItems.some((it) => !!categoryAxisKey(it, menu));
+                const sessionHasCategoryAxis = readyItems.some(
+                  (it) => !!categoryAxisKey(it, menu) || !!tableCategoryAxis(menu, it.suggested_candidates?.[0]),
+                );
                 const sessionCat = {
                   suggestion: sessionHasCategoryAxis ? filing.category : null,
                   unanimous: sessionCategory(g.items).unanimous,
@@ -3616,10 +3635,10 @@ className="ml-1.5 sm:ml-0 rounded px-1 py-0.5 text-[12.5px] hover:bg-subtle dark
                     {g.lastTouched - g.latest > 6 * 3600_000 && (
                       <span
                         className="hidden xl:inline-flex items-center gap-1 shrink-0 whitespace-nowrap text-faint"
-                        title={`Edited ${timeAgo(new Date(g.lastTouched).toISOString())} - a later change (a fix, or an item sent back from a commit). The session's own time is unchanged.`}
+                        title={`Edited ${relativeTime(new Date(g.lastTouched).toISOString())} - a later change (a fix, or an item sent back from a commit). The session's own time is unchanged.`}
                       >
                         <Pencil size={10} />
-                        {timeAgo(new Date(g.lastTouched).toISOString())}
+                        {relativeTime(new Date(g.lastTouched).toISOString())}
                       </span>
                     )}
                     {g.area && (
@@ -4427,8 +4446,8 @@ className="ml-1.5 sm:ml-0 rounded px-1 py-0.5 text-[12.5px] hover:bg-subtle dark
           // sheet to the NEXT pending item instead of showing a stale card.
           if (focus.status !== "pending") {
             const next = queue.find((i) => i.id !== focus.id);
-            if (next) setTimeout(() => openSheet(next.id), 0);
-            else setTimeout(() => setGalleryFocusId(null), 0);
+            if (next) later.after("advance", 0, () => openSheet(next.id));
+            else later.after("advance", 0, () => setGalleryFocusId(null));
             return null;
           }
           const prev = at > 0 ? queue[at - 1] : undefined;

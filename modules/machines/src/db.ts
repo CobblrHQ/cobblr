@@ -1,6 +1,7 @@
 import type { Generated, ColumnType, Kysely } from "kysely";
 import type { Request } from "express";
 import type { OrgRoleName } from "@cobblr/platform-contract/org-roles";
+import { requestInstance } from "@cobblr/platform-contract/request-instance";
 
 type ColJsonb = ColumnType<Record<string, unknown>, Record<string, unknown> | undefined, Record<string, unknown> | undefined>;
 
@@ -64,5 +65,5 @@ export function sessionUser(req: Request) {
  *  /instances/:name/items; falls back to "machines" (the DB column
  *  default) on legacy routes. */
 export function instanceOf(req: Request): string {
-  return (req as unknown as { instance?: string }).instance ?? "machines";
+  return requestInstance(req, "machines");
 }

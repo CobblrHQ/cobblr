@@ -3,6 +3,7 @@ type: feature
 scope: navigation
 date: 2026-09-13
 docs_target: docs/USER_GUIDE.md#Top nav
+docs_published: 2026-09-23
 ---
 
 Once a workspace's sidebar holds six rows or more it groups them under two quiet labels, Collections (the things you keep) and Tools (Locations, the Scan Inbox, Labels and other things you do), so a busy sidebar reads at a glance; a small workspace stays flat.

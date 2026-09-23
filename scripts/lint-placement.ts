@@ -12,7 +12,8 @@
 //   1. every `dir` exists (allowing the <name> placeholder for per-module dirs);
 //   2. every `exemplar` exists — the shape you are told to copy is a live file,
 //      never a snippet pasted into the registry that nobody updates;
-//   3. every lint a row names is a real script in package.json;
+//   3. every lint a row names, or a record claims a row for, is a registered
+//      lint, and every row a record claims exists;
 //   4. every NEW lint script is claimed by a row or declared GENERAL.
 //
 // (4) is the one that keeps the map growing with the rules. A lint is a rule
@@ -24,12 +25,12 @@
 
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
-import { PLACEMENT } from "./placement-registry.js";
+import { PLACEMENT, lintsOf, registeredCommands } from "./placement-registry.js";
+import { readRegistry } from "./lib/lint-durations.mjs";
 
 const ROOT = join(import.meta.dirname, "..");
-const pkg = JSON.parse(readFileSync(join(ROOT, "package.json"), "utf8")) as {
-  scripts: Record<string, string>;
-};
+// A lint is registered by its own record (#3455); package.json no longer lists them.
+const pkg = { scripts: registeredCommands() };
 const baseline: string[] = JSON.parse(
   readFileSync(join(ROOT, "scripts", "placement-baseline.json"), "utf8"),
 ) as string[];
@@ -70,22 +71,25 @@ for (const row of PLACEMENT) {
   }
   // 3 — the lints it names.
   for (const l of row.lints) {
-    if (!pkg.scripts[l]) problems.push(`${row.id}: "${l}" is not a script in package.json`);
+    if (!pkg.scripts[l]) problems.push(`${row.id}: "${l}" is not a registered lint (no scripts/lint-durations/<name>.json)`);
   }
 }
 
 // 4 — every lint script is claimed, general, or grandfathered.
-const claimed = new Set(PLACEMENT.flatMap((r) => r.lints));
-const scriptLints = Object.keys(pkg.scripts).filter(
-  (s) => s.startsWith("lint:") && s !== "lint:all",
-);
+const claimed = new Set(PLACEMENT.flatMap((r) => lintsOf(r)));
+const rowIds = new Set(PLACEMENT.map((r) => r.id));
+for (const l of readRegistry() as { name: string; rows: string[] }[]) {
+  for (const r of l.rows) if (!rowIds.has(r)) problems.push(`${l.name} claims row "${r}", which does not exist (scripts/new-lint.sh --rows lists them)`);
+}
+const scriptLints = Object.keys(pkg.scripts);
 const unclaimed = scriptLints.filter(
   (l) => !claimed.has(l) && !GENERAL.has(l) && !baseline.includes(l),
 );
 for (const l of unclaimed) {
   problems.push(
     `"${l}" is enforced but the map does not say which kind of work it governs.\n` +
-      `      Add it to a row's \`lints\` in scripts/placement-registry.ts (or to GENERAL here if it\n` +
+      `      Claim a row in its record ("rows" in scripts/lint-durations/<name>.json), or add it to GENERAL\n` +
+      `      here if it\n` +
       `      truly judges everything). A rule nobody can find before writing code is a rule people\n` +
       `      only meet in CI.`,
   );
@@ -94,7 +98,7 @@ for (const l of unclaimed) {
 // A baseline entry that no longer names a real lint is dead weight — say so, so
 // the grandfathered list shrinks instead of rotting.
 for (const l of baseline) {
-  if (!pkg.scripts[l]) problems.push(`placement-baseline.json lists "${l}", which is no longer a script — drop it`);
+  if (!pkg.scripts[l]) problems.push(`placement-baseline.json lists "${l}", which is no longer a registered lint — drop it`);
 }
 
 // (The question "is every lint file actually wired up?" already has an owner:

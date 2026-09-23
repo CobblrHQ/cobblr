@@ -3,6 +3,7 @@ type: feature
 scope: platform
 date: 2026-08-29
 docs_target: docs/USER_GUIDE.md#3.22½ Running a public demo instance (operator)
+docs_published: 2026-09-23
 ---
 **Try Cobblr for an hour without making an account.** One link hands you a real workspace with a stocked kitchen and a shelf of books already in it, the scanner works, and everything you do is thrown away an hour later unless you press "keep this workspace" and give an email. Self-hosters can turn the same thing on with `COBBLR_TRY_SANDBOX=true`.
 

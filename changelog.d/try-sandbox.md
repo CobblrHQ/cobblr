@@ -3,6 +3,7 @@ type: feature
 scope: try
 date: 2026-08-29
 docs_target: docs/USER_GUIDE.md#1. Quick start
+docs_published: 2026-09-23
 ---
 You can now try Cobblr without making an account: one button hands you a private workspace for an hour, already stocked with a bookshelf and a kitchen so there is something real to poke at. Add your email at any point to keep it.
 

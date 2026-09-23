@@ -3,6 +3,7 @@
 import type { Generated, ColumnType, Kysely } from "kysely";
 import type { Request } from "express";
 import type { OrgRoleName } from "@cobblr/platform-contract/org-roles";
+import { requestInstance } from "@cobblr/platform-contract/request-instance";
 
 export type OrderStatus = "planned" | "ordered" | "in-transit" | "arrived" | "cancelled";
 
@@ -103,5 +104,5 @@ export function sessionUser(req: Request) {
  *  /instances/:name/items; falls back to "purchases" (the DB column
  *  default) on legacy routes. */
 export function instanceOf(req: Request): string {
-  return (req as unknown as { instance?: string }).instance ?? "purchases";
+  return requestInstance(req, "purchases");
 }

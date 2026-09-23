@@ -3,6 +3,7 @@ type: feature
 scope: discussion
 date: 2026-08-23
 docs_target: docs/modules/core-discussion.md#Cobb in a conversation
+docs_published: 2026-09-23
 ---
 Mention @cobb in a discussion and he answers there, where everyone can see it. Replying to him carries on the conversation without mentioning him again.
 

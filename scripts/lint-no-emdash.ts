@@ -203,7 +203,7 @@ const fixed = baseline.filter((b) => !violations.some((v) => key(v) === key(b)))
 
 if (fixed.length) {
   console.log(
-    `lint:no-emdash — ${fixed.length} baselined em dash(es) are gone. Run \`pnpm run lint:no-emdash -- --update\` to shrink the baseline.`,
+    `lint:no-emdash — ${fixed.length} baselined em dash(es) are gone. Run \`pnpm run lint no-emdash -- --update\` to shrink the baseline.`,
   );
 }
 

@@ -1,5 +1,6 @@
 {
   "lint": "lint:one-day-rule",
+  "run": "tsx scripts/lint-one-day-rule.ts",
   "ms": 2220,
   "recorded": "2026-09-14",
   "source": "split from scripts/lint-durations.json (recorded 2026-09-14)"

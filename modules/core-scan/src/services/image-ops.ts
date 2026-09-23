@@ -255,8 +255,7 @@ export async function detectSplitItems(
       // the same parent image now share one call instead of firing N identical
       // ones.
     });
-    const res = r.result as { text?: string; content?: string };
-    const text = (res.text ?? res.content ?? "").trim();
+    const text = r.text.trim();
     const jsonStr = text.startsWith("{") ? text : (text.match(/\{[\s\S]*\}/)?.[0] ?? "");
     raw = jsonStr ? JSON.parse(jsonStr) : null;
   } catch (err) {

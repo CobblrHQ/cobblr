@@ -26,7 +26,7 @@
 // maintenance, purchases' arrival, lists' expiry, inventory's burn rate,
 // digifab's pump, before they were moved onto the walk.
 //
-//   npx tsx scripts/lint-tenant-sweep-registered.ts   (pnpm run lint:tenant-sweep-registered)
+//   npx tsx scripts/lint-tenant-sweep-registered.ts   (pnpm run lint tenant-sweep-registered)
 import { readFileSync, readdirSync, statSync } from "node:fs";
 import { join } from "node:path";
 

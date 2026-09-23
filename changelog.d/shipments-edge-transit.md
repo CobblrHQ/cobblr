@@ -3,6 +3,7 @@ type: feature
 scope: purchases
 date: 2026-08-13
 docs_target: docs/USER_GUIDE.md#3.25c Reading a purchase order
+docs_published: 2026-09-23
 ---
 A tracking service running on your own network can now be reached through your edge bridge, so hosted Cobblr can follow parcels it could not otherwise see.
 

@@ -27,7 +27,7 @@
 // whole rule — a bigger number can only cost patience, a smaller one invents a
 // failure that is not there.
 //
-//   npx tsx scripts/lint-test-timeout-floor.ts   (npm run lint:test-timeout-floor)
+//   npx tsx scripts/lint-test-timeout-floor.ts   (pnpm run lint test-timeout-floor)
 
 import { readFileSync, readdirSync, statSync } from "node:fs";
 import { fileURLToPath } from "node:url";
@@ -80,7 +80,9 @@ let overrides = 0;
 for (const file of files) {
   const lines = readFileSync(file, "utf8").split("\n");
   lines.forEach((line, i) => {
-    const m = /\btimeout:\s*([0-9_]+)/.exec(line);
+    // A budget is written bare or worn at the box's load (worn(N), #3479,
+    // lint:test-timeout-worn); the floor is judged on the quiet-box N either way.
+    const m = /\btimeout:\s*(?:worn\(\s*)?([0-9_]+)/.exec(line);
     if (!m) return;
     overrides++;
     const value = Number(m[1]!.replace(/_/g, ""));

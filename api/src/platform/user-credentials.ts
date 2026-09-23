@@ -18,6 +18,7 @@ import { planRouteRows } from "./credential-routing.js";
 import { pickCredential } from "./pick-ai-credential.js";
 import { encryptCreds, decryptCreds } from "../db/crypto.js";
 import { verificationFrom, type ConnectionVerification } from "@cobblr/platform-contract/connection-verification";
+import { edgeTransit } from "@cobblr/platform-contract/edge-channel";
 
 export type RouteMode = "my-calls" | "workspace-default";
 export type RouteScope = "sole_member" | "owner" | "all_mine" | "explicit";
@@ -362,7 +363,7 @@ function usesEdge(providerId: string, encrypted: string): boolean {
   if (providerId === "edge-bridge") return true;
   try {
     const obj = JSON.parse(decryptCreds(encrypted)) as Record<string, unknown>;
-    return typeof obj.transit === "string" && obj.transit.startsWith("bridge");
+    return edgeTransit(obj.transit).viaBridge;
   } catch {
     return false;
   }

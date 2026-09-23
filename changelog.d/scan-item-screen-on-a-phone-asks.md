@@ -3,6 +3,7 @@ type: feature
 scope: scan
 date: 2026-09-15
 docs_target: docs/USER_GUIDE.md#3.20 Scan inbox (`core-scan`, stock)
+docs_published: 2026-09-23
 ---
 On a phone the scan item screen grows a dropdown's choices from the form ("New category…"), an empty picture slot is a tap that opens your camera roll, and the pinned footer sits on the screen's foot in the installed app instead of a band above it.
 

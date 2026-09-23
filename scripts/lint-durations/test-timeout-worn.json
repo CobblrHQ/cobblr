@@ -1,0 +1,7 @@
+{
+  "lint": "lint:test-timeout-worn",
+  "run": "tsx scripts/lint-test-timeout-worn.ts",
+  "ms": 12320,
+  "recorded": "2026-09-22",
+  "source": "scaffolded by new-lint.sh: twice a dev-box time taken under load (2026-09-22), replaced from its first CI run"
+}

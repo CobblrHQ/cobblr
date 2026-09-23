@@ -21,7 +21,7 @@
 // called, only `flash` read, nothing mounted); green once <ActionOutcome>
 // sat beside the chip.
 //
-//   npx tsx scripts/lint-action-outcome-shown.ts   (pnpm run lint:action-outcome-shown)
+//   npx tsx scripts/lint-action-outcome-shown.ts   (pnpm run lint action-outcome-shown)
 import { readFileSync, readdirSync, statSync } from "node:fs";
 import { join } from "node:path";
 

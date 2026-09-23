@@ -20,6 +20,7 @@ import {
   subscribeChatSelection,
   getChatSelection,
 } from "./chat-context";
+import { useLater } from "@cobblr/platform-web";
 
 /** Drop only the captured HIGHLIGHT — ticked rows belong to the page. */
 function clearTextSelection(): void {
@@ -46,6 +47,7 @@ function paint(range: Range | null): void {
 }
 
 export function useSelectionCapture(active: boolean): void {
+  const later = useLater();
   useEffect(() => {
     if (!active) return;
     let timer: ReturnType<typeof setTimeout> | null = null;
@@ -81,10 +83,10 @@ export function useSelectionCapture(active: boolean): void {
       if (t?.closest?.("[data-cobb-panel]")) return;
       // A click that starts a new selection is handled by selectionchange a
       // moment later; this only clears when the click lands on nothing.
-      setTimeout(() => {
+      later.after("clear-selection", 60, () => {
         const sel = window.getSelection();
         if (!sel || sel.isCollapsed) clearTextSelection();
-      }, 60);
+      });
     };
     document.addEventListener("mousedown", onDown);
     document.addEventListener("selectionchange", onChange);

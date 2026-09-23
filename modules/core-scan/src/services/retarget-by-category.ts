@@ -26,9 +26,15 @@ interface CandidateLike {
  *  module's DEFAULT entry moves; one already in a named list is where the
  *  model put it on purpose. The category is dropped on the way: it was the
  *  list's name, and inside that list it says nothing. Returns how many moved,
- *  for the log. */
+ *  for the log.
+ *
+ *  A move onto a table another candidate already holds is not a second way to
+ *  file there, it is the same chip twice: the moved one goes. It arrived with
+ *  none of the fills the first one got, and the ISBN backfill then gave a
+ *  scanned book's duplicate another edition's number (#3543). */
 export function retargetByCategory(candidates: CandidateLike[], menu: readonly ScanMenuEntry[]): number {
   let moved = 0;
+  const movedOnes = new Set<CandidateLike>();
   for (const cand of candidates) {
     if (cand.instance) continue;
     if (!cand.category) continue;
@@ -42,7 +48,19 @@ export function retargetByCategory(candidates: CandidateLike[], menu: readonly S
     cand.label = hit.entry.label;
     delete cand.category;
     delete cand.category_is_new;
+    movedOnes.add(cand);
     moved++;
+  }
+  if (movedOnes.size) {
+    const tableOf = (c: CandidateLike) => `${c.module}::${c.instance ?? ""}`;
+    const held = new Set(candidates.filter((c) => !movedOnes.has(c)).map(tableOf));
+    const kept = candidates.filter((c) => {
+      if (!movedOnes.has(c)) return true;
+      if (held.has(tableOf(c))) return false;
+      held.add(tableOf(c));
+      return true;
+    });
+    candidates.splice(0, candidates.length, ...kept);
   }
   return moved;
 }

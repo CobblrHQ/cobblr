@@ -3,6 +3,7 @@ type: feature
 scope: ai
 date: 2026-09-12
 docs_target: docs/modules/core-ai.md#Sorting a list into sections, no AI
+docs_published: 2026-09-23
 ---
 "Sort the rest of inventory into the right sections" is now worked out without AI: each record goes to the section its category names, a category with enough records for a section of its own gets one, and what is left (alone in its category, or with no category) is named for you or Cobb to place. One card, every line, Do it, Undo.
 

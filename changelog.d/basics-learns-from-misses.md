@@ -3,6 +3,7 @@ type: feature
 scope: ai
 date: 2026-08-19
 docs_target: docs/USER_GUIDE.md#2. Core concepts
+docs_published: 2026-09-23
 ---
 Ask Cobb's no-AI mode now shows you what it could not answer. Every question that falls through to the "I only handle the basics" reply is collected under Configuration then Assistant, most asked first, in the words the person used, and one click turns any of them into an answer. It also gained answers for the things people actually type that it used to ignore: try again, yes go ahead, stop, undo, and questions about your own records like "how many do I have" or "where is my ...".
 

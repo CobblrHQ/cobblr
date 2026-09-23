@@ -20,7 +20,7 @@
 // that motivated it, watch it fail, then fix the violation. A lint that has
 // never failed has never been verified.
 //
-//   npx tsx scripts/lint-list-args-take-arrays.ts   (pnpm run lint:list-args-take-arrays)
+//   npx tsx scripts/lint-list-args-take-arrays.ts   (pnpm run lint list-args-take-arrays)
 import { readFileSync, readdirSync, statSync } from "node:fs";
 import { join } from "node:path";
 

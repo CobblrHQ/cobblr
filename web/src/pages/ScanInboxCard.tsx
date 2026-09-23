@@ -19,7 +19,7 @@ import { Fragment, useEffect, useMemo, useRef, useState, type ReactNode } from "
 import { Link } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Camera, CheckCircle, ChevronDown, Download, ExternalLink, Flag, Image as ImageIcon, ImagePlus, Library, Loader2, MapPin, MoreHorizontal, Pencil, RefreshCw, RotateCcw, ScanLine, Scissors, Sparkles, X, Database } from "lucide-react";
-import { Modal, useImageSrc, useOverlayOpenFlag, useToast, colorSwatch, wantsSwatch, valueFromInput, PopoverLayer, BackdropLayer, FieldPack, fieldNeed, fieldControl, fieldPackControlClass, type FieldType } from "@cobblr/platform-web";
+import { Modal, useImageSrc, useOverlayOpenFlag, useToast, colorSwatch, wantsSwatch, valueFromInput, PopoverLayer, BackdropLayer, FieldPack, fieldNeed, fieldControl, fieldPackControlClass, type FieldType, relativeTime } from "@cobblr/platform-web";
 import { } from "../components/ScanImportModal";
 import { } from "../components/ExportInboxModal";
 import { CameraCaptureSheet } from "../components/CameraCaptureSheet";
@@ -93,6 +93,8 @@ import { looksLikeContainer, nextBinName } from "./scanContainer";
 import {
   declaredCategoryAxis,
   categoryChipLabel,
+  categoryTravelsByName,
+  tableCategoryAxis,
 } from "./sessionCategory";
 import { } from "../lib/chat-context";
 import { } from "../lib/useBarcodeWedge";
@@ -103,7 +105,7 @@ import { raiseBlockedAction } from "../lib/blocked-action";
 import { useScanViewer } from "./scanViewer";
 import { useFieldPresentation } from "../lib/useFieldPresentation";
 import { useAuth } from "../auth/AuthContext";
-import { timeAgo, type ScanTarget } from "./scanInboxShared";
+import { type ScanTarget } from "./scanInboxShared";
 import { ScanNameItInline as NameItInline } from "../components/ScanNameItInline";
 import { STORE_CODE_TITLE } from "@cobblr/platform-contract/scan-copy";
 
@@ -1824,7 +1826,7 @@ export function InboxCard({
                   <span className="text-muted">· {item.ai_confidence}</span>
                 )}
                 {!aiWorking && item.updated_at && (
-                  <span className="text-faint">· updated {timeAgo(item.updated_at)}</span>
+                  <span className="text-faint">· updated {relativeTime(item.updated_at)}</span>
                 )}
                 <ChevronDown
                   size={13}
@@ -1947,7 +1949,7 @@ export function InboxCard({
                             )}
                             {h.note ? `: “${h.note}”` : ""}
                           </span>
-                          <span className="text-faint ml-auto whitespace-nowrap">{timeAgo(h.at)}</span>
+                          <span className="text-faint ml-auto whitespace-nowrap">{relativeTime(h.at)}</span>
                         </li>
                         );
                       })}
@@ -3343,7 +3345,12 @@ export function InboxCard({
                       .map(([k, v]) => ({ name: k, label: menuFieldLabel(menu, topCand, k), value: v })),
                     [shownName, item.barcode_text, brand, creator],
                   ).map((f) => [f.name, f.value]);
-                  if (entries.length === 0) return null;
+                  // A table that keeps its own categories (inventory's tree)
+                  // has no field for the category, so no field chip shows it.
+                  // It is still the first thing the card should say (#3223).
+                  const byNameAxis = categoryTravelsByName(menu, topCand) ? tableCategoryAxis(menu, topCand) : null;
+                  const byNameCategory = byNameAxis && topCand.category ? topCand.category : null;
+                  if (entries.length === 0 && !byNameCategory) return null;
                   // The row wraps, so let it breathe: cap only a genuinely long
                   // tail, and never render "+1" — that summary chip costs as
                   // much width as the field chip it hides (reported 2026-07-18).
@@ -3417,6 +3424,21 @@ export function InboxCard({
                           title={pictureBusy ? "The picture search is busy right now - it will try again on its own, or tap to try now." : "The picture search came back empty. Try again."}
                         >
                           <ImagePlus size={11} className="shrink-0" /> {pictureBusy ? "Picture search busy · retry" : "No picture found · retry"}
+                        </button>
+                      )}
+                      {!formOpen && byNameAxis && byNameCategory && (
+                        <button
+                          type="button"
+                          data-category-chip
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            openForm(topCand);
+                          }}
+                          className="inline-flex items-center gap-1 rounded-md bg-subtle/60 dark:bg-slate-800/60 border border-line/70 dark:border-slate-700/70 px-1.5 py-0.5 text-[11px] text-content dark:text-mortar-200 min-w-0 hover:border-cobble-400 dark:hover:border-cobble-600 transition"
+                          title={`${byNameAxis.label}: ${categoryChipLabel(byNameCategory, sessionCategoryLabel)} — tap to edit`}
+                        >
+                          <span className="text-faint shrink-0">{byNameAxis.label}</span>
+                          <span className="truncate">{categoryChipLabel(byNameCategory, sessionCategoryLabel)}</span>
                         </button>
                       )}
                       {!formOpen && shown.map(([k, v]) => (
@@ -4898,6 +4920,30 @@ function ConfirmForm({
   // seed from the lookup metadata, then the matchmaker's extraction wins.
   const manufacturerF = useHeldField("manufacturer", item.suggested_manufacturer ?? "");
   const manufacturer = manufacturerF.value;
+  // The CATEGORY, for a table that keeps its own categories (inventory's
+  // tree): no custom field carries it, so the form asks it here, by name,
+  // and the server files it wherever the table keeps them (#3223). A table
+  // whose category is a field asks it among its fields as before.
+  const byNameAxis = categoryTravelsByName([entry], entry) ? entry.category_field ?? null : null;
+  const entryCand = candidates.find((c) => entryKey(c.module, c.instance) === entryKey(entry.module, entry.instance)) ?? null;
+  const categoryF = useHeldField("category_axis", entryCand?.category ?? "");
+  const categoryChoice = categoryF.value;
+  // Kept on the row as the person types, like the table's own fields, so
+  // File all and a reload file what they chose, not the model's read.
+  const sentCategory = useRef(entryCand?.category ?? "");
+  useEffect(() => {
+    if (!byNameAxis || item.status !== "pending") return;
+    const next = categoryChoice.trim();
+    if (next === sentCategory.current.trim()) return;
+    const t = setTimeout(() => {
+      sentCategory.current = next;
+      api.updateScanItem(activeSlug, item.id, { category: next || null, fields_kind: entry.kind }).catch(() => {
+        // Best effort: the form still holds it, and Confirm sends it.
+      });
+    }, 700);
+    return () => clearTimeout(t);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [categoryChoice, byNameAxis, entry.kind, item.id, item.status]);
   // What the person types against the table's fields is kept on the ROW, not
   // only in this form: Cancel, collapse, the sheet's previous/next and a
   // reload used to lose it, and "review now, file later" meant reviewing
@@ -5007,6 +5053,7 @@ function ConfirmForm({
         quantity: Number.isFinite(quantity) && quantity > 0 ? quantity : undefined,
         location_id: locationId || undefined,
         extras: Object.keys(extras).length ? extras : undefined,
+        ...(byNameAxis && categoryChoice.trim() ? { category: categoryChoice.trim() } : {}),
         ...(isAdmin && saveEvalCase
           ? { save_eval_case: true, eval_note: evalNote.trim() || undefined }
           : {}),
@@ -5112,6 +5159,7 @@ function ConfirmForm({
   const setChipValue = (key: string, value: string) => {
     if (key === "name") { nameF.set(value); commitNameEditWith(value); return; }
     if (key === "manufacturer") { manufacturerF.set(value); return; }
+    if (key === "category_axis") { categoryF.set(value); return; }
     if (key === "serial_number") { serialF.set(value); return; }
     if (key === "quantity") { quantityF.set(Number(value) || 1); return; }
     custom.set(key, value);
@@ -5122,6 +5170,9 @@ function ConfirmForm({
     { key: "manufacturer", label: fieldLabel("manufacturer", "Brand"), value: manufacturer },
     ...(showSerial ? [{ key: "serial_number", label: fieldLabel("serial_number", "Serial no."), value: serial }] : []),
     { key: "quantity", label: "Qty", value: String(quantity), type: "number" as const },
+    ...(byNameAxis
+      ? [{ key: "category_axis", label: byNameAxis.label, value: categoryChoice, choices: byNameAxis.values }]
+      : []),
     ...(hasLocations
       ? [{
           key: "location",
@@ -5143,7 +5194,7 @@ function ConfirmForm({
   const all = [...builtins, ...customChips];
   // On the item = it has a value, it is always-on (name / add-to / qty), or the
   // user just asked for it.
-  const ALWAYS = new Set(["name", "quantity"]);
+  const ALWAYS = new Set(["name", "quantity", "category_axis"]);
   const chipFields = all.filter((f) => f.value || ALWAYS.has(f.key) || addedFields.includes(f.key));
     // Confirm leads, Cancel under it, collapse last: the same primary-first
     // order as the closed state's "Add to Inventory… / collapse", so the corner
@@ -5261,6 +5312,7 @@ function ConfirmForm({
   // A server change to a field the person is on, held and offered (#2982).
   const held: Array<{ key: string; label: string; theirs: string; useTheirs: () => void; keepMine: () => void }> = [];
   if (nameF.theirs !== null) held.push({ key: "name", label: fieldLabel("name", "Name"), theirs: nameF.theirs, useTheirs: takeTheirName, keepMine: nameF.keepMine });
+  if (categoryF.theirs !== null && byNameAxis) held.push({ key: "category_axis", label: byNameAxis.label, theirs: categoryF.theirs, useTheirs: categoryF.useTheirs, keepMine: categoryF.keepMine });
   if (manufacturerF.theirs !== null) held.push({ key: "manufacturer", label: fieldLabel("manufacturer", "Brand"), theirs: manufacturerF.theirs, useTheirs: manufacturerF.useTheirs, keepMine: manufacturerF.keepMine });
   if (serialF.theirs !== null) held.push({ key: "serial_number", label: fieldLabel("serial_number", "Serial no."), theirs: serialF.theirs, useTheirs: serialF.useTheirs, keepMine: serialF.keepMine });
   if (quantityF.theirs !== null) held.push({ key: "quantity", label: "Qty", theirs: String(quantityF.theirs), useTheirs: quantityF.useTheirs, keepMine: quantityF.keepMine });
@@ -5355,11 +5407,17 @@ function ConfirmForm({
                 data-field={f.key}
                 value={f.value}
                 placeholder={f.placeholder ?? ""}
+                list={f.choices?.length ? `field-choices-${item.id}-${f.key}` : undefined}
                 onChange={(e) => setChipValue(f.key, e.target.value)}
                 onBlur={f.key === "name" ? flushName : undefined}
                 className="min-h-10 w-full min-w-0 max-w-full appearance-none rounded-md border border-line dark:border-slate-600 bg-surface dark:bg-slate-800 px-2.5 text-sm text-content dark:text-mortar-100"
               />
             )}
+            {!def && f.key !== "location" && f.choices?.length ? (
+              <datalist id={`field-choices-${item.id}-${f.key}`}>
+                {f.choices.map((c) => <option key={c} value={c} />)}
+              </datalist>
+            ) : null}
             {heldUnder(f.key)}
           </label>
         ) };

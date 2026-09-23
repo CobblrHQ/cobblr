@@ -1,6 +1,16 @@
-// Field-def write-time routing. See modules/inventory/src/api/route-helpers.ts
-// for the design rationale — modules each have a tiny copy so they can stay
-// decoupled until we publish the helper to a shared internal package.
+// How a record's write reaches its `metadata` column: the kernel's rule for
+// every module whose kinds keep custom-field values in a jsonb bag.
+//
+// Bundles declare custom fields on an entity kind (a set number, a theme, a
+// year on an inventory part). The natural way to POST one is at the top level
+// beside `name` and `qty`, but the kind's native columns are fixed by its
+// migration, so anything not in that list has to land in `metadata`.
+// routeUnknownToMetadata lifts those keys in; preserveServerManaged keeps a
+// client from writing a field the server owns; coerceMetadata reads the bag
+// back whether the driver handed over an object or the raw jsonb string.
+//
+// Six modules and two kernel files each carried their own copy, identical
+// today and free to drift apart (#3499). They import these now.
 
 export function routeUnknownToMetadata<T extends Record<string, unknown>>(
   body: unknown,
@@ -8,6 +18,8 @@ export function routeUnknownToMetadata<T extends Record<string, unknown>>(
 ): T {
   if (!body || typeof body !== "object") return body as T;
   const src = body as Record<string, unknown>;
+  // Any caller-provided metadata wins for collisions — we only ADD
+  // top-level unknown keys, never overwrite explicit metadata values.
   const callerMetadata =
     src.metadata && typeof src.metadata === "object"
       ? (src.metadata as Record<string, unknown>)
@@ -19,17 +31,24 @@ export function routeUnknownToMetadata<T extends Record<string, unknown>>(
     if (nativeKeys.has(k)) {
       out[k] = v;
     } else {
+      // Don't clobber an explicit metadata.key set by the caller.
       if (!(k in promoted)) promoted[k] = v;
     }
   }
+  // Only attach metadata if something's there — otherwise leave the
+  // body alone so optional-metadata schemas don't get an empty obj.
   if (Object.keys(promoted).length > 0) out.metadata = promoted;
   return out as T;
 }
 
-/** Preserve SERVER-MANAGED metadata keys across a client write. Same helper as
- *  inventory's (see that copy for the rationale): metadata is written wholesale,
- *  so a server-stamped value must be re-injected from the STORED row — a
- *  client's value never takes. */
+/** Preserve SERVER-MANAGED metadata keys across a client write. Custom-field
+ *  values live in the `metadata` jsonb column, written wholesale (the client
+ *  does read-modify-write). A server_managed field (e.g. core-mobility's
+ *  `away_since`) is owned by the server — a client's value must never take.
+ *  So for each managed key: re-inject the STORED value if there is one, else
+ *  drop the client's attempt. Only acts when the client actually sent metadata
+ *  and the kind has managed fields (`names` from
+ *  platform().entities.serverManagedFields). */
 export function preserveServerManaged(
   incoming: Record<string, unknown> | undefined,
   current: Record<string, unknown> | undefined,

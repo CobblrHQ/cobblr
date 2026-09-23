@@ -180,6 +180,21 @@ const Schema = z.object({
   //    sandboxes sets both.
   COBBLR_SELFHOST_DOCS_URL: z.string().default(""),
   COBBLR_CLOUD_SIGNUP_URL: z.string().default(""),
+  // "Bring what I built" (the ending's third door, the trial replay). On the
+  // box that hands out sandboxes, COBBLR_TRY_CARRY=true lights the door: the
+  // person keeps their trial, gets a carry token, and leaves for the cloud
+  // URL's own /carry page. Off by default because the door promises the other
+  // side can replay, which only the operator knows. An enum, per #3303.
+  COBBLR_TRY_CARRY: z
+    .enum(["true", "false"])
+    .default("false")
+    .transform((v) => v === "true"),
+  // On the box that RECEIVES a carry: the origins it will read a trial from,
+  // comma-separated (e.g. the demo box's public URL). The page hands the
+  // server a `from=` address, and the server fetches only one listed here,
+  // so that address can never point it anywhere else. Empty = no carry is
+  // accepted at all.
+  COBBLR_CARRY_SOURCES: z.string().default(""),
   // How many days before a trial's expiry to send the humane heads-up warning
   // email (the reaper's warn -> grace -> delete lifecycle). Only consulted when
   // COBBLR_TRIAL_REAP=dry|live; a workspace is never deleted until it was warned

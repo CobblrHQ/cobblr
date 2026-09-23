@@ -212,8 +212,7 @@ export function registerCobbWorker(): void {
         source: { kind: "core-discussion:comment", id: p.comment_id },
       });
 
-      const res = answer.result as { text?: string; content?: string };
-      const text = (res.text ?? res.content ?? "").trim();
+      const text = answer.text.trim();
       if (!text) return void (await fail("Cobb had nothing to say to that."));
 
       await db

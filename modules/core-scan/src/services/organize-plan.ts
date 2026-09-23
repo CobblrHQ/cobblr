@@ -316,7 +316,7 @@ async function aiPlan(
       },
       source: { kind: "core-scan:organize", id: "" },
     })
-    .then((r) => r.result as { content?: string })
+    .then((r) => ({ content: r.text }))
     .catch(() => null);
   const res = await Promise.race([
     call,

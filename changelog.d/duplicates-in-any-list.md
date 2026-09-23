@@ -3,6 +3,7 @@ type: feature
 scope: ai
 date: 2026-08-20
 docs_target: docs/USER_GUIDE.md#2. Core concepts
+docs_published: 2026-09-23
 ---
 "Delete duplicates" now covers parts as well as places, and any other kind whose module says what "the same place" means for it. Two shelves with one name in one rack are duplicates; the same two in different racks are not. Two identical parts in one bin are a double entry; the same name in two bins is two piles of bolts. A kind that has not said how to read it is never touched, because two assets called "Drill" are usually two drills, and guessing otherwise is how an assistant deletes something you meant to keep.
 

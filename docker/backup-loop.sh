@@ -40,10 +40,23 @@
 #   5. THE COPY CAN ORDER ITSELF. A completed dump writes <dir>/last-dump (the
 #      stamp and the path), so a host-side timer or script can wait for today's
 #      dump rather than hoping it already ran.
+#   6. THE HOUR IS READ ON THE COPY'S CLOCK (BACKUP_TZ). The db image runs in
+#      UTC, and a box's off-box timer runs in the box's zone, so BACKUP_AT=03:00
+#      read on the container's clock dumped at 23:00 America/New_York, four
+#      hours before a 03:40 copy instead of forty minutes (2026-09-23; the lag
+#      check caught it the first night). BACKUP_TZ names the zone the hour is
+#      read in; a zone the image cannot find is refused at boot, because musl
+#      and busybox quietly fall back to UTC for a name they do not know, which
+#      is this same error with no message. Without BACKUP_TZ the container's own
+#      zone is used (TZ, or a mounted /etc/localtime), and the log says which.
 #
 # Env (every one has a default; a compose file overrides what it needs):
 #   BACKUP_AT               local HH:MM to dump at, or "interval" to keep the
 #                           old drifting behaviour (default 03:00)
+#   BACKUP_TZ               the IANA zone BACKUP_AT is read in, e.g.
+#                           Europe/Berlin: the zone your off-box copy runs in
+#                           (default: the container's own zone, UTC unless TZ
+#                           or /etc/localtime says otherwise)
 #   BACKUP_PREFIX           dump filename prefix (default cobblr)
 #   BACKUP_DIR              where dumps live (default /backups)
 #   BACKUP_MIN_BYTES        the size floor a dump must clear (default 1000000)
@@ -60,6 +73,33 @@ AT="${BACKUP_AT:-03:00}"
 MIN="${BACKUP_MIN_BYTES:-1000000}"
 DAILY="${BACKUP_DAILY_RETENTION:-30}"
 WEEKLY="${BACKUP_WEEKLY_RETENTION:-12}"
+
+# The clock BACKUP_AT is read on. Validated against the zone files rather than
+# trusted, because an unknown name is silently UTC (see 6 above).
+ZONEINFO_DIR="${ZONEINFO_DIR:-/usr/share/zoneinfo}"
+if [ -n "${BACKUP_TZ:-}" ]; then
+  case "$BACKUP_TZ" in
+    *..*|/*|*[!A-Za-z0-9_+/-]*)
+      echo "BACKUP_TZ must be an IANA zone name like Europe/Berlin, got: $BACKUP_TZ" >&2; exit 2 ;;
+  esac
+  if [ ! -f "$ZONEINFO_DIR/$BACKUP_TZ" ]; then
+    echo "BACKUP_TZ=$BACKUP_TZ is not a zone this image knows ($ZONEINFO_DIR/$BACKUP_TZ is missing); refusing rather than dumping on UTC" >&2
+    exit 2
+  fi
+  export TZ="$BACKUP_TZ"
+fi
+# The zone to name in the log: what we set, what TZ says, or what the mounted
+# /etc/localtime resolves to, else UTC.
+zone_name() {
+  if [ -n "${TZ:-}" ]; then echo "$TZ"; return; fi
+  local l
+  l=$(readlink /etc/localtime 2>/dev/null) && [ -n "$l" ] && { echo "${l#*zoneinfo/}"; return; }
+  [ -f /etc/timezone ] && { head -n1 /etc/timezone; return; }
+  # A mounted /etc/localtime is a plain file with no name in it; the clock's
+  # own abbreviation (UTC, CEST, EDT) is still true.
+  date +%Z 2>/dev/null || echo "UTC"
+}
+ZONE="$(zone_name)"
 
 # Seconds from now until the next local HH:MM. Never 0 (a zero would spin the
 # loop through a whole day of dumps) and never more than 25 h.
@@ -150,7 +190,8 @@ if [ "$ONCE" = "1" ]; then
   exit $rc
 fi
 
-echo "[backup] dumping at ${AT} local, prefix ${PREFIX}, floor ${MIN} bytes"
+echo "[backup] dumping at ${AT} local (${ZONE}), prefix ${PREFIX}, floor ${MIN} bytes"
+[ "$ZONE" = "UTC" ] && [ "$AT" != "interval" ] && echo "[backup] note: ${AT} is read in UTC; set BACKUP_TZ to the zone your off-box copy runs in"
 fails=0
 while true; do
   if dump_once; then fails=0; else fails=$(( fails + 1 )); fi
@@ -164,7 +205,7 @@ while true; do
     echo "[backup] sleeping ${wait}s (BACKUP_AT=interval: the hour drifts with this container's start)"
   else
     wait=$(secs_until "$AT") || exit 2
-    echo "[backup] next dump at $AT local, in ${wait}s"
+    echo "[backup] next dump at $AT local, in ${wait}s ($(date -d "@$(( $(date +%s) + wait ))" '+%Y-%m-%d %H:%M %Z' 2>/dev/null), ${ZONE})"
   fi
   sleep "$wait"
 done

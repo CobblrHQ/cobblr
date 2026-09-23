@@ -3,6 +3,7 @@ type: feature
 scope: purchases
 date: 2026-08-14
 docs_target: docs/USER_GUIDE.md#3.25c Reading a purchase order
+docs_published: 2026-09-23
 ---
 A receipt with a tracking number is followed while it is still in your scan inbox, so you are told when the parcel lands without having to file it first.
 

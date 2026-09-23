@@ -2,6 +2,20 @@
 
 User-facing changes, newest first. Dates are release dates.
 
+## 2026-09-23
+
+### Improvements
+- How long ago something happened now reads the same way everywhere: "just now", "5m ago", "3h ago", "4d ago", then a date. The scan inbox, approval requests, discussions and the printer's AI watch each had their own wording ("5 min ago", "3 h ago", "2 days ago").
+
+### Fixes
+- A scanned breadboard or beanbag chair no longer lands in Groceries. The router counted a food word inside a longer word ("bread" in breadboard, "bean" in beanbag) as evidence, so with a brand that is also a fruit it read a single-board computer kit or a chair cover as groceries. Only the last part of a compound word counts now, the part that says what the thing is: a minivan is still a van.
+- A link to a workspace you can no longer open (deleted, or you were removed from it) now takes you to your own workspace, or to the page for making one, and says the old address is gone, instead of opening an empty workspace with a blank name.
+- A named edge bridge is now reached by everything that sends to it. A bridge name longer than 60 characters, or one with a space at either end, could register under one address while print jobs, sync sources, AI providers or parcel tracking sent to another, so the bridge looked offline while it was polling.
+- A collection you nest under its module no longer vanishes from the nav. Choosing "nest under Machines" for a collection like 3D Printers, while Machines itself held nothing, hid Machines as empty and took 3D Printers out of the nav with it. The module now stays as the collection's way in, with the collection in its menu.
+- A book you scan by its barcode is filed under that ISBN, with its author. Scanning a book before you had a Bookshelf offered to add one, and that offer could carry another edition's ISBN (a reprint, an ebook) and no author, because the number was looked up from the title instead of taken from the barcode you had just scanned. The same scan no longer offers Bookshelf twice either. Scanning a vehicle's VIN into a table you have not added yet fills its decoded fields the same way.
+- A scanned phone no longer lands in Groceries because of the shop that sells it. The router read every word a barcode catalog returned, including the names and links of the stores listing the product, so a phone whose seller's name ends in "egg" matched the grocery word, and with a fruit for a brand name it went to Groceries without asking. Store names and links no longer count as evidence about what a thing is; the listing's own title still does.
+- On a phone, the scan inbox's counts lead with what needs you. The line at the top reads *"3 to review · 5 ready"*, with the total in the ⋯ menu as *"8 pending in all"*. A busy inbox used to push *to review* off the edge of a phone screen, and the total opened the line as a bare number.
+
 ## 2026-09-22
 
 ### Features

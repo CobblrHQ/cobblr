@@ -340,8 +340,7 @@ async function runBuild(
           source: { kind: "core-authoring:build", id: draftId },
           userId,
         });
-        const result = r.result as { content?: string; text?: string } | string;
-        text = typeof result === "string" ? result : (result?.content ?? result?.text ?? "");
+        text = r.text;
       } catch (e) {
         const msg = e instanceof Error ? e.message : String(e);
         const noAi = msg.includes("no provider") || msg.includes("not entitled") || msg.includes("not available");

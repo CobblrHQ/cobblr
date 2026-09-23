@@ -25,7 +25,7 @@
 // git("status --porcelain") itself, and push-registry.mjs the same; green once
 // both went through the helper.
 //
-//   npx tsx scripts/lint-porcelain-parse.ts   (pnpm run lint:porcelain-parse)
+//   npx tsx scripts/lint-porcelain-parse.ts   (pnpm run lint porcelain-parse)
 import { readFileSync, readdirSync, statSync } from "node:fs";
 import { join } from "node:path";
 

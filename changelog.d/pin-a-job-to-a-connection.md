@@ -2,6 +2,7 @@
 type: feature
 date: 2026-09-04
 docs_target: docs/USER_GUIDE.md#3.20 Scan inbox (`core-scan`, stock)
+docs_published: 2026-09-23
 ---
 A personal AI key routed into a workspace is now configurable in that workspace, the same as a key the workspace owns. Under Configuration, AI, each job (Ask Cobb, Identify a scanned item, Pick the best product photo, and the rest) can be pointed at any connection routed here, not only at the workspace's own providers, so chat can run on one provider while scanning runs on another. Before this, a routed key quietly served every job and the per-job settings on that page did nothing at all while it was in play.
 

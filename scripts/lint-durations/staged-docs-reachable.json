@@ -1,5 +1,6 @@
 {
   "lint": "lint:staged-docs-reachable",
+  "run": "tsx scripts/lint-staged-docs-reachable.ts",
   "ms": 367,
   "recorded": "2026-09-14",
   "source": "split from scripts/lint-durations.json (recorded 2026-09-14)"

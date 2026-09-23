@@ -77,7 +77,7 @@ if (fresh.length > 0) {
 Better: write it in the tokens (bg-surface / bg-subtle / text-content / text-muted /
 text-faint / border-line), which carry their own dark values. Or, if this is
 genuinely one-theme UI (a print sheet, a camera overlay under .force-dark), run
-  pnpm run lint:dark-mode-tints -- --update
+  pnpm run lint dark-mode-tints -- --update
 to accept it into the baseline, and say why in the PR.`);
   process.exit(1);
 }

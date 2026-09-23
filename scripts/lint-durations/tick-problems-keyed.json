@@ -1,5 +1,6 @@
 {
   "lint": "lint:tick-problems-keyed",
+  "run": "tsx scripts/lint-tick-problems-keyed.ts",
   "ms": 470,
   "recorded": "2026-09-22",
   "source": "CI typecheck run 24934 (974229bf2, status success)"

@@ -40,11 +40,7 @@ function buildPrompt(intent: string): { system: string; user: string } {
 /** Tolerant parse — models wrap JSON in prose/fences, and cheap tiers add
  *  trailing commas / smart quotes / truncation. The recovery is the shared
  *  contract helper (same hardening as the scan matchmaker). */
-function parseMatch(result: unknown): { template_id: unknown; confidence: unknown; reason: unknown } | null {
-  const raw =
-    (typeof result === "object" && result !== null
-      ? ((result as { content?: string; text?: string }).content ?? (result as { content?: string; text?: string }).text)
-      : undefined) ?? "";
+function parseMatch(raw: string): { template_id: unknown; confidence: unknown; reason: unknown } | null {
   if (!raw) return null;
   return parseJsonReply<{ template_id: unknown; confidence: unknown; reason: unknown }>(raw);
 }
@@ -58,7 +54,7 @@ export async function matchTemplateHosted(orgId: string, intent: string, userId?
   const valid = new Set(listTemplates().map((t) => t.id));
   const { system, user } = buildPrompt(intent);
 
-  let result: unknown;
+  let result = "";
   try {
     const r = await platform().ai.invoke({
       orgId,
@@ -68,7 +64,7 @@ export async function matchTemplateHosted(orgId: string, intent: string, userId?
       input: { messages: [{ role: "system", content: system }, { role: "user", content: user }] },
       source: { kind: "core-authoring:match-template", id: orgId },
     });
-    result = r.result;
+    result = r.text;
   } catch (e) {
     // No provider configured, or the call failed — degrade, don't error.
     const msg = e instanceof Error ? e.message : String(e);
