@@ -23,11 +23,15 @@
 import { platform } from "@cobblr/platform-contract";
 import { meta } from "../db/meta.js";
 import { resolvePress, pressMayAct, type StoredNotification } from "./discord-interaction.js";
+import { actionActed, normaliseActionResult } from "@cobblr/platform-contract/action-result";
 import { assertActingRoleClearsActionFloor, ActionRoleFloorError } from "./platform-actions.js";
 
 export type PressOutcome =
   | { ok: true; label: string; short?: string }
-  | { ok: false; reason: "refused" | "failed" };
+  | { ok: false; reason: "refused" | "failed" }
+  /** The person was allowed to press, and the action answered no in its own
+   *  words ("This was already declined."). Said, never shown as done. */
+  | { ok: false; reason: "declined"; message: string };
 
 /**
  * Run one action off one notification, as one user.
@@ -96,8 +100,9 @@ export async function pressNotificationAction(args: {
       ? { kind: `${row.module_name}:${row.entity_type}`, id: row.entity_id, fields: {} }
       : undefined;
 
+  let result: unknown;
   try {
-    await platform().actions.invoke(resolved.action, {
+    result = await platform().actions.invoke(resolved.action, {
       orgId: resolved.orgId,
       userId: resolved.userId,
       ...(entity ? { scope: "entity" as const, entity } : {}),
@@ -118,5 +123,14 @@ export async function pressNotificationAction(args: {
     console.error("[notification-press]", (err as Error).message);
     return { ok: false, reason: "failed" };
   }
+  // The handler's own answer. Ignoring it reported every refusal as done: a
+  // stale Approve on a request already declined came back "Approve" with a
+  // 200, in the app and in the Discord card alike (#3594). Nothing had been
+  // approved, and the person was told it had.
+  if (!actionActed(result)) {
+    const read = normaliseActionResult(result, resolved.action);
+    return { ok: false, reason: "declined", message: read.ok ? "That could not be done." : read.error };
+  }
   return { ok: true, label: resolved.label, ...(resolved.short ? { short: resolved.short } : {}) };
 }
+

@@ -5,7 +5,7 @@ import { z } from "zod";
 import { platform } from "@cobblr/platform-contract";
 import { instanceOf, sessionUser, tenantContext, tenantDb } from "../db.js";
 import { asyncHandler, badBody, requireRole } from "./util.js";
-import { routeUnknownToMetadata } from "@cobblr/platform-contract/entity-metadata";
+import { routeUnknownToMetadata, withMetadataMerged } from "@cobblr/platform-contract/entity-metadata";
 import {
   latestPatternFileId,
   patternPhotoThumb,
@@ -154,7 +154,7 @@ projectsRouter.patch(
 
     const updated = await db
       .updateTable("projects_projects")
-      .set(patch)
+      .set(withMetadataMerged(patch as Record<string, unknown>) as never)
       .where("id", "=", id)
       .where("instance", "=", instanceOf(req))
       .returningAll()

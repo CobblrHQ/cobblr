@@ -1,26 +1,23 @@
-// How long a kept sandbox stays, chosen by the person, bounded by the product.
+// How long a kept sandbox stays: ours to set, never the visitor's to pick.
 //
 // A sandbox lives an hour. Keeping it makes it a trial on the same demo box,
-// and the owner's rule for that trial is that it is short and chosen (#3254):
-// "we don't want people to actually use it for real". So the lengths are a
-// fixed set, a week, two weeks or a month, and there is no "forever" and no
-// free number. The server refuses anything else; the web offers exactly these.
+// short on purpose (#3254: "we don't want people to actually use it for
+// real"). It used to be a choice of a week, two weeks or a month; the owner's
+// call is that the length is a product setting, two weeks by default
+// (TRY_SANDBOX_TRIAL_DAYS on the api), and the server ignores any length a
+// client sends. The web reads the configured number back and says it in words.
 //
 // Buildless subpath: no runtime import of a sibling.
 
-export const TRIAL_LENGTHS = [7, 14, 30] as const;
-export type TrialLengthDays = (typeof TRIAL_LENGTHS)[number];
+/** The length when nothing configures one. */
+export const DEFAULT_TRIAL_DAYS = 14;
 
-/** What each length is called where a person picks it. */
-export const TRIAL_LENGTH_LABELS: Readonly<Record<TrialLengthDays, string>> = {
-  7: "A week",
-  14: "Two weeks",
-  30: "A month",
-};
-
-/** The one picked when nothing is: the middle, so neither end is the default. */
-export const DEFAULT_TRIAL_LENGTH: TrialLengthDays = 14;
-
-export function isTrialLength(days: unknown): days is TrialLengthDays {
-  return (TRIAL_LENGTHS as readonly number[]).includes(days as number);
+/** "a week", "two weeks", "a month", "10 days": a length said in a sentence. */
+export function trialLengthPhrase(days: number): string {
+  const words = ["", "one", "two", "three", "four", "five", "six", "seven", "eight"];
+  if (days === 1) return "a day";
+  if (days === 7) return "a week";
+  if (days === 30 || days === 31) return "a month";
+  if (days % 7 === 0 && days / 7 < words.length) return `${words[days / 7]} weeks`;
+  return `${days} days`;
 }

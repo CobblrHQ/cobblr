@@ -355,6 +355,7 @@ function SelectCell({
   return (
     <select
       autoFocus
+      // DRAFT-OK: mounted when the cell opens for editing and gone when it closes; for its whole life the person is the one changing it.
       defaultValue={current}
       onBlur={(e) => onCommit(e.target.value === "" ? null : e.target.value)}
       onKeyDown={(e) => {
@@ -421,6 +422,7 @@ function TextCell({
       }}
       type={def.type === "number" ? "number" : def.type === "date" ? "date" : "text"}
       step={def.type === "number" ? "any" : undefined}
+      // DRAFT-OK: mounted when the cell opens for editing and gone when it closes; for its whole life the person is the one changing it.
       defaultValue={initial}
       onFocus={(e) => e.target.select()}
       onBlur={(e) => {
@@ -463,6 +465,7 @@ function ColorCell({
   label: string;
 }) {
   const initial = value == null ? "" : String(value);
+  // DRAFT-OK: mounted when the cell opens for editing and gone when it closes; for its whole life the person is the one changing it.
   const [draft, setDraft] = useState(initial);
   const t = draft.trim();
   const swatch = /^#?[0-9a-fA-F]{6}$/.test(t) ? (t[0] === "#" ? t : `#${t}`) : "#cccccc";

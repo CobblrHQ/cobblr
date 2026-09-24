@@ -46,9 +46,27 @@ export function RecordHeaderChips({
     staleTime: 60_000,
   });
   const print = (data?.items ?? []).find((a) => HEADER_ACTION_IDS.has(a.id) && a.user_invokable !== false);
+  // The collection's own Print label, when it has one: a Bookshelf says what
+  // a book's label reads ("author / title / year"). It REPLACES the plain
+  // action here rather than sitting beside it, so a record has one Print
+  // label (#3591); the strip below leaves it out for the same reason.
+  const bound = (data?.bindings ?? []).find((b) => HEADER_ACTION_IDS.has(b.action_id));
   return (
     <span className={`inline-flex items-center gap-1.5 ${className ?? ""}`}>
-      {print && <PrintChip kind={kind} id={id} action={print} />}
+      {(print || bound) && (
+        <PrintChip
+          kind={kind}
+          id={id}
+          action={{
+            id: bound?.action_id ?? print!.id,
+            label: bound?.label ?? print!.label,
+            description: bound?.description ?? print?.description ?? null,
+            invoke_route: bound ? null : print!.invoke_route,
+            invoke_handler: bound ? null : print!.invoke_handler,
+          }}
+          bindingId={bound?.binding_id}
+        />
+      )}
       <AskCobbAbout kind={kind} id={id} label={label} />
     </span>
   );
@@ -58,10 +76,12 @@ function PrintChip({
   kind,
   id,
   action,
+  bindingId,
 }: {
   kind: string;
   id: string;
   action: { id: string; label: string; description: string | null; invoke_route: string | null; invoke_handler: string | null };
+  bindingId?: string;
 }) {
   const { run, flash, failure, dismissFailure, note, pending } = useInvokeEntityAction({ entityKind: kind, entityId: id });
   return (
@@ -73,7 +93,11 @@ function PrintChip({
       onClick={(e) => {
         e.stopPropagation();
         e.preventDefault();
-        run({ actionId: action.id, invokeRoute: action.invoke_route, invokeHandler: action.invoke_handler });
+        run(
+          bindingId
+            ? { actionId: action.id, bindingId }
+            : { actionId: action.id, invokeRoute: action.invoke_route, invokeHandler: action.invoke_handler },
+        );
       }}
       className={
         "inline-flex items-center gap-1 rounded border px-1.5 py-0.5 text-[10px] font-mono uppercase tracking-widest transition " +

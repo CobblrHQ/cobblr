@@ -576,6 +576,9 @@ export function WhatToDoPanel({
   // One capture card — shared by col 3 (typed) and the scanned queue below.
   const renderCapture = (it: (typeof items)[number]) => {
     const c = it.suggested_candidates?.[0];
+    // The table is the row's one destination (#3618); the candidate only
+    // lends the name it read.
+    const d = it.resolved_destination ?? null;
                   const stale = Date.now() - new Date(it.created_at).getTime() > 45_000;
                   const done = !!it.ai_suggested_at || stale;
                   const needsName = done && !c && !it.suggested_name && !!it.ai_suggested_at;
@@ -586,7 +589,7 @@ export function WhatToDoPanel({
                   const enriching = itemEnriching(it);
                   const removing = discardMut.isPending && discardMut.variables === it.id;
                   const filing = confirmMut.isPending && confirmMut.variables?.id === it.id;
-                  const making = !!c?.bundle_external_id && materialize.busy(c.bundle_external_id);
+                  const making = !!d?.bundle_external_id && materialize.busy(d.bundle_external_id);
                   const ctaCls = "shrink-0 inline-flex items-center gap-1 rounded-md text-xs font-medium px-2.5 py-1 transition disabled:opacity-50";
                   return (
                     <li key={it.id} data-testid="captured-item" className="rounded-lg border border-line dark:border-slate-800 bg-surface dark:bg-slate-900 px-3 py-2">
@@ -612,19 +615,19 @@ export function WhatToDoPanel({
                             {enriching ? (
                               <span className="inline-flex items-center gap-1" data-testid="captured-item-progress">
                                 <Loader2 size={11} className="animate-spin" />
-                                {c ? <>looks like <span className="text-accent">{c.label}</span>, still filling in…</> : it.suggested_name ? "looking it up…" : "finding a home…"}
+                                {d ? <>looks like <span className="text-accent">{d.label}</span>, still filling in…</> : it.suggested_name ? "looking it up…" : "finding a home…"}
                               </span>
-                            ) : c ? <>looks like <span className="text-accent">{c.label}</span></>
+                            ) : d ? <>looks like <span className="text-accent">{d.label}</span></>
                               : done ? "no match — save it as a general item"
                               : <span className="inline-flex items-center gap-1"><Loader2 size={11} className="animate-spin" /> finding a home…</span>}
                           </span>
-                          {c?.bundle_external_id ? (
-                            <button type="button" disabled={making} onClick={() => materialize.start(c.bundle_external_id!)} className={ctaCls + " bg-cobble-600 text-white hover:bg-cobble-700"}>
-                              {making ? <Loader2 size={12} className="animate-spin" /> : <ArrowRight size={12} />} Create {c.label}
+                          {d?.bundle_external_id ? (
+                            <button type="button" disabled={making} onClick={() => materialize.start(d.bundle_external_id!)} className={ctaCls + " bg-cobble-600 text-white hover:bg-cobble-700"}>
+                              {making ? <Loader2 size={12} className="animate-spin" /> : <ArrowRight size={12} />} Create {d.label}
                             </button>
-                          ) : c ? (
-                            <button type="button" disabled={filing} onClick={() => confirmMut.mutate({ id: it.id, body: { target_module: c.module, target_kind: c.kind, ...(c.instance ? { instance: c.instance } : {}) } })} className={ctaCls + " bg-cobble-600 text-white hover:bg-cobble-700"}>
-                              {filing ? <Loader2 size={12} className="animate-spin" /> : <ArrowRight size={12} />} Add to {c.label}
+                          ) : d ? (
+                            <button type="button" disabled={filing} onClick={() => confirmMut.mutate({ id: it.id, body: { target_module: d.module, target_kind: d.kind ?? undefined, ...(d.instance ? { instance: d.instance } : {}) } })} className={ctaCls + " bg-cobble-600 text-white hover:bg-cobble-700"}>
+                              {filing ? <Loader2 size={12} className="animate-spin" /> : <ArrowRight size={12} />} Add to {d.label}
                             </button>
                           ) : done ? (
                             <button type="button" disabled={filing} onClick={() => confirmMut.mutate({ id: it.id, body: {} })} className={ctaCls + " border border-cobble-300 dark:border-cobble-700 text-content dark:text-mortar-100 hover:border-cobble-400"}>

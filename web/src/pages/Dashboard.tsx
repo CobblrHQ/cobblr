@@ -33,11 +33,13 @@ import { choosePinnedViews, navNamesWithViewCards } from "../lib/dashboard-pinne
 import { useBundleUpdates, type BundleUpdate } from "../lib/useBundleUpdates";
 import { classifyBundleUpdate, tierAutoApplies, updateMayTeardownCatalogs } from "../lib/bundleUpdateTier";
 import { useDetailRoute } from "../lib/useDetailRoute";
+import { groupRows, NO_GROUP, type GroupableRow } from "../lib/view-group-key";
+import { useAreaResolver } from "../lib/useAreaResolver";
 import { useSetupCards, dismissSetup } from "../lib/setupCards";
 import { bucketEvents, dayKey, relativeDay, upNextWindow } from "../lib/up-next";
 import { EntityThumb, changeWorkspaceShape,
   usePageTitle, useToast, useImageSrc,
-  useDashboardWidgets, TileCollapseContext, type DashboardWidgetSpec, relativeTime } from "@cobblr/platform-web";
+  useDashboardWidgets, TileCollapseContext, type DashboardWidgetSpec, relativeTime, LOCATION_GROUP_KEY } from "@cobblr/platform-web";
 // Side-effect: registers the host's built-in "at a glance" widgets (machines /
 // assets / purchases) through the public registerDashboardWidget seam. The
 // TileGrid renders whatever's registered for an enabled module — no per-module
@@ -67,6 +69,7 @@ import {
 import { useWorkspaceContentProbe } from "../lib/workspaceContent";
 import { ParcelsInFlight } from "../components/ParcelsInFlight";
 import { AddPhotosTile } from "../components/AddPhotosTile";
+import { scanInboxKeys } from "../lib/scan-inbox-keys";
 
 /** Homepage quick-links: big tap targets for the destinations this workspace
  *  actually uses (Scan Inbox, each instance like "Yarn", the domain modules),
@@ -248,7 +251,7 @@ function ScannerNagRow({ slug }: { slug: string }) {
 
 function PutAwayCard({ slug, offeredElsewhere }: { slug: string; offeredElsewhere: number }) {
   const q = useQuery({
-    queryKey: ["scan-stats", slug],
+    queryKey: scanInboxKeys.stats(slug),
     queryFn: () => api.getScanStats(slug),
     enabled: !!slug,
     staleTime: 30_000,
@@ -1759,6 +1762,20 @@ export function shouldShowDistribution(
   return isGrouped && (setBucketCount >= 2 || (setBucketCount >= 1 && unsetCount > 0));
 }
 
+/** A pinned view's group distribution, highest first, with "" as the unset
+ *  bucket. The buckets are the full view's own (`groupRows`, the rule its Table
+ *  and Kanban renderers use), so the preview can never disagree with the view
+ *  it previews about which group a row is in (#3588). */
+export function pinnedViewGroupCounts(
+  rows: GroupableRow[],
+  groupBy: string,
+  areaOf: (locationId: string | null | undefined) => string | null,
+): Array<[string, number]> {
+  return [...groupRows(rows, groupBy, areaOf)]
+    .map(([key, rs]): [string, number] => [key === NO_GROUP ? "" : key, rs.length])
+    .sort((a, b) => b[1] - a[1]);
+}
+
 function PinnedView({
   slug,
   view,
@@ -1793,16 +1810,11 @@ function PinnedView({
   // old subtitle fallback conflated an unset group with a DIFFERENT field: a
   // "Laser fleet by tube type" view whose lasers had no tube_type showed their
   // STATE ("functional/building") as if it were the tube type (reported 2026-07-10).
-  const groupCounts = useMemo<Array<[string, number]>>(() => {
-    if (!isGrouped || !groupBy) return [];
-    const m = new Map<string, number>();
-    for (const r of allItems) {
-      const raw = r.fields?.[groupBy] as unknown;
-      const key = raw == null || raw === "" ? "" : String(raw); // "" = unset
-      m.set(key, (m.get(key) ?? 0) + 1);
-    }
-    return [...m.entries()].sort((a, b) => b[1] - a[1]);
-  }, [isGrouped, groupBy, allItems]);
+  const areaOf = useAreaResolver(isGrouped && groupBy === LOCATION_GROUP_KEY);
+  const groupCounts = useMemo<Array<[string, number]>>(
+    () => (isGrouped && groupBy ? pinnedViewGroupCounts(allItems, groupBy, areaOf) : []),
+    [isGrouped, groupBy, allItems, areaOf],
+  );
   const showDistribution = shouldShowDistribution(isGrouped, groupCounts);
   // A readable label for the grouping field, for the "nothing set yet" hint.
   const groupLabel = groupBy ? groupBy.replace(/_/g, " ") : "";

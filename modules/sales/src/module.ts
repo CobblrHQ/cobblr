@@ -10,7 +10,7 @@ import { defineModule } from "@cobblr/platform-contract";
 
 export default defineModule({
   name: "sales",
-  version: "0.1.6",
+  version: "0.1.7",
   displayName: "Sales",
   description:
     "Outbound order management: customers, sales orders, and line items. Fulfilling an order decrements the sold inventory parts from stock, closing the sale → fulfil → decrement → reorder loop. For makers and small shops selling finished goods.",
@@ -69,10 +69,14 @@ export default defineModule({
           { name: "fulfilled_at", type: "date" },
           { name: "shipping_address", type: "text" },
           { name: "notes", type: "text" },
+          // A bundle's custom fields, as on every other instance-backed kind.
+          { name: "metadata", type: "object" },
         ],
         // Customer + number + status + dates for cross-module display
         // ("blocked until sales order #12 ships"). Address / notes stay private.
-        exposableFields: ["customer_name", "order_number", "status", "order_date", "fulfilled_at"],
+        // A bundle's own fields ride in `metadata`, readable like a part's, so
+        // a label or view naming one prints its value (#3591).
+        exposableFields: ["customer_name", "order_number", "status", "order_date", "fulfilled_at", "metadata"],
         detailRoute: "/sales/{id}",
       },
       {

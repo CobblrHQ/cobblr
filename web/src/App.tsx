@@ -7,7 +7,9 @@
 // imports its UI from "@cobblr/<name>/ui"; the host wires it under
 // /<module>/* and the module's own internal routes take over.
 
+import { OPEN_RECORD_ROUTE } from "@cobblr/platform-contract/instance-detail";
 import { lazy, Suspense , useEffect, useState } from "react";
+import { ScanFiledRefresh } from "./lib/scanFiled";
 import { BrowserRouter, Navigate, Route, Routes, useLocation, useParams } from "react-router-dom";
 import { CobbHead } from "./components/Cobb";
 import { PlatformWebProvider, type FlowRegistry } from "@cobblr/platform-web";
@@ -111,6 +113,7 @@ const QueuePage = lazy(() => import("./pages/QueuePage").then((m) => ({ default:
 const LinksPage = lazy(() => import("./pages/LinksPage").then((m) => ({ default: m.LinksPage })));
 const LocationsPage = lazy(() => import("./pages/LocationsPage").then((m) => ({ default: m.LocationsPage })));
 const LocationDetailPage = lazy(() => import("./pages/LocationDetailPage").then((m) => ({ default: m.LocationDetailPage })));
+const OpenRecordPage = lazy(() => import("./pages/OpenRecordPage").then((m) => ({ default: m.OpenRecordPage })));
 const TemplatesPage = lazy(() => import("./pages/TemplatesPage").then((m) => ({ default: m.TemplatesPage })));
 const AssistantSettingsPage = lazy(() => import("./pages/AssistantSettingsPage").then((m) => ({ default: m.AssistantSettingsPage })));
 const ScanPage = lazy(() => import("./pages/ScanPage").then((m) => ({ default: m.ScanPage })));
@@ -156,6 +159,7 @@ import { useIsDesktopWidth } from "./lib/useIsDesktopWidth";
 import { useQuery } from "@tanstack/react-query";
 import { InstancePage } from "./pages/InstancePage";
 import { inManagedAppSurface } from "./lib/managed-apps";
+import { WorkspaceShapeRefresh } from "./lib/useWorkspaceShapeRefresh";
 import { hydrateNavPref } from "./lib/nav-mode";
 
 // First-party flow registry: id → overlay the shell can open from anywhere
@@ -217,6 +221,8 @@ export function App() {
   return (
     <ErrorBoundary scope="app">
       <ConnectivityBanner />
+      <WorkspaceShapeRefresh />
+      <ScanFiledRefresh />
       <AuthProvider>
         <ThemeSync />
       <NavPrefSync />
@@ -520,6 +526,7 @@ function ActiveOrgScopedRoutes() {
       api={{
         listActions: (slug, kind) => api.listActions(slug, kind),
         listFaces: (slug, kind) => api.listFaces(slug, kind),
+        listNativeFieldOverrides: (slug, kind) => api.listNativeFieldOverrides(slug, kind),
         upsertOverride: (slug, body) => api.upsertOverride(slug, body),
         invokeAction: (slug, body) => api.invokeAction(slug, body),
         lookupEntity: (slug, kind, id) => api.lookupEntity(slug, kind, id),
@@ -798,6 +805,7 @@ function ActiveOrgScopedRoutes() {
           {/* Nav alias — the synthetic "Locations" top routes here (useNavModules). */}
           <Route path="/locations" element={<LocationsPage />} />
           <Route path="/locations/:id" element={<LocationDetailPage />} />
+          <Route path={OPEN_RECORD_ROUTE} element={<OpenRecordPage />} />
           <Route path="/scan" element={<ScanPage />} />
           <Route path="/scan/camera" element={<ScanCameraPage />} />
           {/* The bench display: the last few scans, big, no controls. */}

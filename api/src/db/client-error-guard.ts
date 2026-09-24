@@ -68,14 +68,91 @@ function bornGuarded(label: string, Base: ClientClass): ClientClass {
     constructor(config?: ClientConfig) {
       super(config);
       this.on("error", onClientError(label));
+      // The last statement, for the starvation report (poolHolders).
+      const query = (this.query as (...a: unknown[]) => unknown).bind(this);
+      (this as unknown as { query: unknown }).query = (...a: unknown[]) => {
+        const q = a[0] as string | { text?: string } | undefined;
+        LAST.set(this, { text: typeof q === "string" ? q : (q?.text ?? "?"), at: Date.now() });
+        return query(...a);
+      };
     }
   };
+}
+
+// WHO HOLDS THE POOL. A starved pool used to say only that it was starved:
+// "10 open, 0 idle, nothing that holds a client is giving it back". Twice that
+// was the whole diagnosis. The dev rig hung for sixteen minutes (#3033), and a
+// CI run's meta pool wedged for good (#3666), which took a debugger on a live
+// container to trace to a test endpoint that stranded the clients it had
+// taken. So every checkout records when it happened and the stack that asked
+// for it, every client its last statement, and the starvation line lists each
+// held client with both. Capturing a stack is cheap because V8 formats it only
+// when read, which here is only when a pool is already starving.
+const LAST = new WeakMap<object, { text: string; at: number }>();
+const TAKEN = new WeakMap<object, { at: number; site: { stack?: string } }>();
+
+function traceCheckouts(pool: Pool): void {
+  const connect = pool.connect as (...a: unknown[]) => unknown;
+  (pool as unknown as { connect: unknown }).connect = function tracedConnect(this: Pool, ...a: unknown[]) {
+    const site: { stack?: string } = {};
+    Error.captureStackTrace(site, tracedConnect);
+    const note = (client: unknown) => {
+      if (client && typeof client === "object") TAKEN.set(client, { at: Date.now(), site });
+    };
+    const cb = a[0];
+    if (typeof cb === "function") {
+      return connect.call(this, (err: Error | undefined, client: unknown, done: unknown) => {
+        if (!err) note(client);
+        (cb as (...x: unknown[]) => void)(err, client, done);
+      });
+    }
+    return (connect.call(this) as Promise<unknown>).then((client) => {
+      note(client);
+      return client;
+    });
+  };
+}
+
+const secs = (ms: number) => (ms >= 60_000 ? `${Math.floor(ms / 60_000)}m${Math.round((ms % 60_000) / 1000)}s` : `${Math.round(ms / 1000)}s`);
+const oneLine = (s: string, n = 120) => s.replace(/\s+/g, " ").trim().slice(0, n);
+
+/** Where a checkout came from: the frames outside pg, the pool wrapper and
+ *  node itself, which are the ones that name the code holding the client. */
+export function callerFrames(stack: string | undefined, n = 4): string {
+  const frames = (stack ?? "")
+    .split("\n")
+    .slice(1)
+    .map((l) => l.trim().replace(/^at /, ""))
+    .filter((l) => l && !/node_modules|node:internal|\(node:|client-error-guard/.test(l));
+  return frames.length ? frames.slice(0, n).join(" <- ") : "(no caller frame)";
+}
+
+/** One line per client the pool has handed out and not had back: how long,
+ *  the query still in flight if any (a reply never processed), else the last
+ *  statement it ran (a caller that never released), and who took it. */
+export function poolHolders(pool: Pool, now = Date.now()): string[] {
+  const all = (pool as unknown as { _clients?: object[] })._clients ?? [];
+  const idle = new Set(((pool as unknown as { _idle?: Array<{ client: object }> })._idle ?? []).map((i) => i.client));
+  return all
+    .filter((c) => !idle.has(c))
+    .map((c) => {
+      const taken = TAKEN.get(c);
+      const inFlight = (c as { activeQuery?: { text?: string } | null }).activeQuery;
+      const last = LAST.get(c);
+      const what = inFlight
+        ? `a query still in flight: "${oneLine(inFlight.text ?? "?")}"`
+        : last
+          ? `nothing in flight; last ran "${oneLine(last.text)}" ${secs(now - last.at)} ago`
+          : "nothing run on it";
+      return `held ${taken ? secs(now - taken.at) : "?"}, ${what}; taken by ${callerFrames(taken?.site.stack)}`;
+    });
 }
 
 /** The one way to open a pool. `label` names it in the log line. */
 export function createPool(config: PoolConfig, label: string): Pool {
   const Base = (config.Client as ClientClass | undefined) ?? Client;
   const pool = new Pool({ connectionTimeoutMillis: POOL_CONNECT_TIMEOUT_MS, ...config, Client: bornGuarded(label, Base) });
+  traceCheckouts(pool);
   // pg-pool re-emits an idle client's error on the pool and, being an
   // EventEmitter, throws if nobody listens there either. The client's own
   // listener already logged it; this one only keeps the pool's emit harmless.

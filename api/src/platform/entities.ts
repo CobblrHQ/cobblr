@@ -29,13 +29,14 @@ import type {
 import { TRAIT_PRESETS, stockDisclosureFromConfig, traitAxisValue } from "@cobblr/platform-contract";
 import { meta } from "../db/meta.js";
 import { instanceKindName } from "./instance-kind.js";
-import { INSTANCE_ITEM_DETAIL, resolveDetailPath } from "./instance-detail.js";
+import { INSTANCE_ITEM_DETAIL, resolveDetailPath } from "@cobblr/platform-contract/instance-detail";
+import { IMPLICIT_EXPOSABLE_PROPS } from "@cobblr/platform-contract/entity-metadata";
 import { getEntry } from "../modules/registry.js";
 import { assertModulesMounted } from "../modules/mount-state.js";
 
 // Re-export so callers reaching detail-path logic through `entities` keep working
 // while the ONE decision lives in the DB-free instance-detail module.
-export { resolveDetailPath } from "./instance-detail.js";
+export { resolveDetailPath } from "@cobblr/platform-contract/instance-detail";
 import { applyComputedFields } from "./computed-fields.js";
 import { applyRelationFields } from "./relation-fields.js";
 import { applyMemberFields } from "./member-fields.js";
@@ -140,8 +141,20 @@ async function instanceFallbackEntityResolver(
     .executeTakeFirst();
   if (!row) return null;
   const fn = instanceResolvers.get(row.module_name);
-  if (!fn) return null;
-  return (oid, id) => fn(oid, instanceName, id);
+  if (fn) return (oid, id) => fn(oid, instanceName, id);
+  // A module that registered only its kind's resolver still answers for the
+  // rows of its instances: read by the module kind, keep only this instance's
+  // row. Without it every generic read of a sales instance's order came back
+  // empty, and a label naming the order's own field printed its placeholder
+  // (#3591). A resolver that does not report `instance` answers nothing here,
+  // which is the safe side of the choice.
+  const { base } = await resolveKind(orgId, kind);
+  const baseFn = base !== kind ? resolvers.get(base) : undefined;
+  if (!baseFn) return null;
+  return async (oid, id) => {
+    const e = await baseFn(oid, id);
+    return e && (e.fields as Record<string, unknown> | undefined)?.instance === instanceName ? e : null;
+  };
 }
 
 /** For a `<name>:item` kind with no exact list resolver, find the instance's
@@ -223,24 +236,6 @@ export interface ViewerReadScope {
   caps: ReadonlySet<string>;
 }
 
-// Implicit cross-cutting props on ResolvedEntity that are ALWAYS
-// exposable regardless of the manifest's `exposableFields`. These are
-// the ones declared on the ResolvedEntity interface itself, used by
-// every renderer to display "the entity" generically.
-const IMPLICIT_EXPOSABLE_PROPS = new Set([
-  "kind",
-  "id",
-  "title",
-  "subtitle",
-  "image_path",
-  "detailUrl",
-  // `instance` is the platform-level instances-system column (which named
-  // collection an item belongs to — "monitors" vs "printers" within one
-  // module). It's a structural, non-sensitive attribute the generic instance
-  // + labels layers group by, so it's always readable cross-module like
-  // detailUrl, without every instanceable module having to list it.
-  "instance",
-]);
 
 async function getExposableFields(kind: string): Promise<string[] | null> {
   if (exposableFieldsCache.has(kind)) {

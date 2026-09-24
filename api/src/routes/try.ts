@@ -16,7 +16,6 @@
 // stores the JWT and lands them on /w/<slug>. They type nothing.
 import { Router, type NextFunction, type Request, type Response } from "express";
 import { z } from "zod";
-import { DEFAULT_TRIAL_LENGTH, isTrialLength } from "@cobblr/platform-contract/trial-length";
 import { env } from "../env.js";
 import { meta } from "../db/meta.js";
 import { requireAuth } from "../auth/middleware.js";
@@ -47,7 +46,8 @@ import { issueSignInLink } from "../platform/sign-in-link.js";
 import { createSandboxExport, fetchSandboxExport } from "../platform/try-sandbox-export.js";
 import { takeYourWorkEmail } from "../platform/try-sandbox-export-copy.js";
 import { sendAuthEmail } from "../platform/hosted-seams.js";
-import { startHtml, startNonce, startPolicy } from "./try-start-page.js";
+import { intentQuery, startHtml, startIntentOf, startNonce, startPolicy } from "./try-start-page.js";
+import { trackProductEvent } from "../platform/product-events.js";
 import { goneHtml } from "./try-gone-page.js";
 
 /** Not an error: a pooled sandbox was filled before it was handed over, so the
@@ -70,16 +70,20 @@ export const tryRouter = Router();
 // to show for it. Looking is free now; asking is what counts.
 tryRouter.get(
   "/try",
-  (_req: Request, res: Response): void => {
+  (req: Request, res: Response): void => {
     if (!sandboxEnabled()) {
       res.status(404).json({ error: { code: "not_found", message: "Not found" } });
       return;
     }
     const key = captchaEnabled() ? captchaSiteKey() : null;
+    // Where the visitor is headed (the booth's `start=scan`) and where they came
+    // from (a QR's `source=3DP2026`), cleaned to a closed shape here and carried
+    // through the challenge to /try/start.
+    const intent = startIntentOf(req.query as Record<string, unknown>);
     // No challenge to draw (captcha off on this box, or misconfigured): go
     // straight through rather than showing a widget that cannot appear.
     if (!key) {
-      res.redirect(303, "/api/v1/try/start");
+      res.redirect(303, `/api/v1/try/start${intentQuery(intent).replace(/^&/, "?")}`);
       return;
     }
     // This page carries its OWN policy, not the app's: it needs Turnstile's
@@ -95,7 +99,7 @@ tryRouter.get(
     // would block the widget however wide this policy is.
     const nonce = startNonce();
     res.setHeader("Content-Security-Policy", startPolicy(nonce));
-    res.type("html").send(startHtml(key, nonce));
+    res.type("html").send(startHtml(key, nonce, intent));
   },
 );
 
@@ -177,11 +181,21 @@ tryRouter.get(
         sandbox = await handOverSandbox(ws);
       }
 
+      const intent = startIntentOf(req.query as Record<string, unknown>);
       console.log(
-        `[try-sandbox] provisioned ${sandbox.slug} (${cap.live + 1}/${cap.max} live), expires ${sandbox.expiresAt.toISOString()}`,
+        `[try-sandbox] provisioned ${sandbox.slug} (${cap.live + 1}/${cap.max} live), expires ${sandbox.expiresAt.toISOString()}` +
+          (intent.source ? `, source ${intent.source}` : "") +
+          (intent.start ? `, start ${intent.start}` : ""),
       );
+      // Which QR or link brought them: the booth's count of who scanned in.
+      trackProductEvent({
+        orgId: sandbox.orgId,
+        event: "sandbox_started",
+        detail: { source: intent.source, start: intent.start },
+      });
       // 303: the browser must follow with GET regardless of how it got here.
-      res.redirect(303, `/t/${sandbox.token}`);
+      // `to=scan` sends the landing straight into the camera scanner.
+      res.redirect(303, `/t/${sandbox.token}${intent.start ? `?to=${intent.start}` : ""}`);
       return;
     } catch (err) {
       next(err);
@@ -224,11 +238,12 @@ tryRouter.get(
 );
 
 // ── POST /try/keep — bind an email, become an account trial ───────────────
-// `days` is one of the contract's lengths, never a free number: the bound is
-// the product (#3254). Omitted (an older client) means the default length.
+// The length is ours (TRY_SANDBOX_TRIAL_DAYS), never the client's. A `days`
+// an older client still sends is accepted and ignored, so that client keeps
+// working and gets the configured length like everybody else.
 const KeepBody = z.object({
   email: z.string().email().max(320),
-  days: z.number().int().refine(isTrialLength, { message: "not one of the offered lengths" }).optional(),
+  days: z.unknown().optional(),
 });
 
 tryRouter.post(
@@ -261,7 +276,7 @@ tryRouter.post(
       }
 
       const email = parsed.data.email.toLowerCase().trim();
-      const days = parsed.data.days ?? DEFAULT_TRIAL_LENGTH;
+      const days = env.TRY_SANDBOX_TRIAL_DAYS;
       const absBase = `${req.protocol}://${req.get("host") ?? ""}`;
       const r = await keepSandbox(membership.org_id, userId, email, async (to) => {
         const issued = await issueSignInLink({
@@ -676,6 +691,8 @@ tryRouter.get("/try/paths", (_req: Request, res: Response): void => {
     cloud_url: env.COBBLR_CLOUD_SIGNUP_URL || null,
     selfhost_url: env.COBBLR_SELFHOST_DOCS_URL || null,
     export_days: env.TRY_SANDBOX_EXPORT_DAYS,
+    // How long keeping makes it a trial here, for the web to say in words.
+    trial_days: env.TRY_SANDBOX_TRIAL_DAYS,
     // The ending page says exactly how long a frozen sandbox is held (#3254).
     decision_hours: env.TRY_SANDBOX_DECISION_HOURS,
     // Whether "bring what I built" leads to a real account that replays the

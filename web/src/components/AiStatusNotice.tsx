@@ -2,6 +2,7 @@
 // the user the experience is degraded BEFORE they hit it, with a "connect"
 // path — never silently degrade. Extracted from ScanPage (which pioneered it);
 // the scan page, the homepage funnel, and /build all render this now.
+import { aiAvailabilityKeys } from "../lib/ai-availability-keys";
 import type { ReactNode } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Link } from "react-router-dom";
@@ -14,7 +15,7 @@ import { useActiveOrg } from "../auth/ActiveOrgContext";
 export function useAiStatus(): AiStatus | null {
   const { activeSlug } = useActiveOrg();
   const q = useQuery({
-    queryKey: ["ai-status", activeSlug],
+    queryKey: aiAvailabilityKeys.status(activeSlug),
     queryFn: () => api.getAiStatus(activeSlug),
     enabled: !!activeSlug,
     staleTime: 5 * 60_000,
@@ -23,6 +24,20 @@ export function useAiStatus(): AiStatus | null {
 }
 
 export type AiNeeds = "chat" | "identify";
+
+/** What AI this workspace can actually use, on the two axes that differ.
+ *  `chat` is a model for the assistant and the builder. `identify` is reading
+ *  a photo, which a deployment can serve with no chat model at all (its own
+ *  hosted identify service), or a provider with the image capability can.
+ *
+ *  Every notice and every AI button reads THIS, never `status.available`
+ *  alone: that is the chat axis, and a sandbox whose photo identify worked
+ *  was told "AI is off here" beside a disabled Re-run. Null status means not
+ *  answered yet, which reads as usable so nothing greys out in the meantime. */
+export function aiReach(status: AiStatus | null): { chat: boolean; identify: boolean } {
+  if (!status) return { chat: true, identify: true };
+  return { chat: status.available, identify: status.available || !!status.identify_available };
+}
 
 /** The one sentence about AI for this workspace, and the one link that goes
  *  with it. Null when there is nothing to say (AI works, or the surface only
@@ -42,10 +57,24 @@ export function aiStatusLine(
   status: AiStatus | null,
   needs: AiNeeds = "chat",
 ): { text: ReactNode | null; cta: { to: string; label: string } | null } | null {
-  if (!status || status.available) return null;
-  if (needs === "identify" && status.identify_available) return null;
+  const reach = aiReach(status);
+  if (!status || reach.chat) return null;
+  if (needs === "identify" && reach.identify) return null;
   switch (status.reason) {
     case "operator_disabled":
+      if (reach.identify) {
+        // Chat is off for the deployment, but photos are still read here. "AI
+        // is off" would be false on the very screen that just named a photo.
+        return {
+          text: (
+            <>
+              <strong>Chat with Cobb is off here.</strong> Photo identify, barcodes, ISBNs and
+              typed items all work.{" "}
+            </>
+          ),
+          cta: null,
+        };
+      }
       // Off for everyone on this deployment. No connect path: there is
       // nothing the person can connect that the operator has not switched off.
       return {

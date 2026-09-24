@@ -21,7 +21,7 @@
 // twin and keeps the one the inventory item points at, which is also the one
 // the inbox row's undo knows by id.
 import { Kysely } from "kysely";
-import { platform } from "@cobblr/platform-contract";
+import { registerHealPass } from "@cobblr/platform-contract/heal-pass";
 
 interface HealDB {
   purchases_order_items: {
@@ -67,61 +67,46 @@ export function doubledLinesToDrop(lines: LineLite[]): string[] {
   return drop;
 }
 
-export async function healDoubledReceiptLines(): Promise<{ orgs: number; rows: number }> {
-  const meta = platform().db.meta as unknown as Kysely<{
-    org_modules: { org_id: string; module_name: string };
-  }>;
-  // Only workspaces with purchases on: anyone else has no table and must not
-  // cost a tenant pool.
-  const orgs = await meta.selectFrom("org_modules").select("org_id").where("module_name", "=", "purchases").execute();
-  let healed = 0;
-  let touched = 0;
-  let found = 0;
-  let failed = 0;
-  for (const { org_id } of orgs) {
-    try {
-      await platform().tenants.withDb(org_id, async (raw) => {
-        const db = raw as Kysely<HealDB>;
-        // Cheap on the happy path: only orders that have at least one
-        // part-less line AND at least one part-bearing line are read at all.
-        const candidates = await db
-          .selectFrom("purchases_order_items as a")
-          .select("a.order_id")
-          .distinct()
-          .where("a.part_id", "is", null)
-          .where((eb) =>
-            eb.exists(
-              eb
-                .selectFrom("purchases_order_items as b")
-                .select("b.id")
-                .whereRef("b.order_id", "=", "a.order_id")
-                .where("b.part_id", "is not", null),
-            ),
-          )
-          .execute();
-        if (candidates.length === 0) return;
-        const lines = await db
-          .selectFrom("purchases_order_items")
-          .select(["id", "order_id", "part_id", "description", "qty"])
-          .where("order_id", "in", candidates.map((c) => c.order_id))
-          .execute();
-        const drop = doubledLinesToDrop(lines as LineLite[]);
-        if (drop.length === 0) return;
-        found += drop.length;
-        const r = await db.deleteFrom("purchases_order_items").where("id", "in", drop).executeTakeFirst();
-        const n = Number(r.numDeletedRows ?? 0);
-        if (n > 0) {
-          healed += n;
-          touched++;
-          console.log(`[purchases] org ${org_id}: dropped ${n} doubled receipt line(s) across ${candidates.length} order(s)`);
-        }
-      });
-    } catch (err) {
-      failed++;
-      console.error(`[purchases] doubled-lines heal for org ${org_id} failed:`, (err as Error).message);
-    }
-  }
-  if (healed > 0) console.log(`[purchases] heal: ${healed} doubled line(s) across ${touched} workspace(s)`);
-  await platform().health.noteHealShim("modules/purchases/src/heal-doubled-receipt-lines.ts", found, failed);
-  return { orgs: touched, rows: healed };
+/** Heal one workspace; answers how many doubled lines it found. */
+export async function healDoubledReceiptLinesIn(orgId: string, db: Kysely<HealDB>): Promise<number> {
+  // Cheap on the happy path: only orders that have at least one part-less
+  // line AND at least one part-bearing line are read at all.
+  const candidates = await db
+    .selectFrom("purchases_order_items as a")
+    .select("a.order_id")
+    .distinct()
+    .where("a.part_id", "is", null)
+    .where((eb) =>
+      eb.exists(
+        eb
+          .selectFrom("purchases_order_items as b")
+          .select("b.id")
+          .whereRef("b.order_id", "=", "a.order_id")
+          .where("b.part_id", "is not", null),
+      ),
+    )
+    .execute();
+  if (candidates.length === 0) return 0;
+  const lines = await db
+    .selectFrom("purchases_order_items")
+    .select(["id", "order_id", "part_id", "description", "qty"])
+    .where("order_id", "in", candidates.map((c) => c.order_id))
+    .execute();
+  const drop = doubledLinesToDrop(lines as LineLite[]);
+  if (drop.length === 0) return 0;
+  const r = await db.deleteFrom("purchases_order_items").where("id", "in", drop).executeTakeFirst();
+  const n = Number(r.numDeletedRows ?? 0);
+  if (n > 0) console.log(`[purchases] org ${orgId}: dropped ${n} doubled receipt line(s) across ${candidates.length} order(s)`);
+  return drop.length;
+}
+
+/** Call from onBoot. A registered pass (platform-contract heal-pass.ts): the
+ *  kernel's walk, budget and stagger, never a walk of its own at boot. */
+export function registerDoubledReceiptLinesHeal(): void {
+  registerHealPass({
+    name: "purchases.heal-doubled-receipt-lines",
+    shim: "modules/purchases/src/heal-doubled-receipt-lines.ts",
+    module: "purchases",
+    visit: ({ orgId, db }) => healDoubledReceiptLinesIn(orgId, db as Kysely<HealDB>),
+  });
 }

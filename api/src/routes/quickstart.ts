@@ -28,6 +28,7 @@ import { bundleInstallSummary } from "../lib/bundle-install-summary.js";
 import { meta } from "../db/meta.js";
 import { resolveFieldDefsForKind } from "../platform/field-defs.js";
 import { currentBundleId, humaniseBundleId } from "../lib/bundle-aliases.js";
+import { runSerialised } from "../platform/exclusive.js";
 
 export const quickstartRouter = Router({ mergeParams: true });
 
@@ -43,6 +44,9 @@ function bearerOf(req: { headers: Record<string, unknown> }): string | null {
 interface InboxItem {
   id: string;
   status: string;
+  /** Where the row goes, as its card says: the one destination the inbox
+   *  answer carries (core-scan services/destination.ts, #3618). */
+  resolved_destination?: { module: string; instance: string | null; kind: string | null; label: string | null; bundle_external_id: string | null } | null;
   suggested_name?: string | null;
   suggested_candidates?: Array<{
     bundle_external_id?: string;
@@ -55,14 +59,25 @@ interface InboxItem {
   }> | null;
 }
 
+/** Every pending capture, page by page. One page (the list's default 50) used
+ *  to be read as all of them, so "pending_total" said 50 of 78 and "file all"
+ *  filed the first page (#3598). */
 async function fetchPendingInbox(baseUrl: string, slug: string, token: string): Promise<InboxItem[]> {
-  const res = await fetch(`${baseUrl}/api/v1/orgs/${slug}/modules/core-scan/inbox?status=pending`, {
-    headers: { Authorization: `Bearer ${token}` },
-  });
-  if (!res.ok) return [];
-  const body = (await res.json()) as { items?: InboxItem[] } | InboxItem[];
-  const items = Array.isArray(body) ? body : (body.items ?? []);
-  return items.filter((i) => i.status !== "resolved");
+  const all: InboxItem[] = [];
+  let cursor: string | null = null;
+  for (let page = 0; page < 100; page++) {
+    const q: string = `status=pending&limit=200${cursor ? `&cursor=${encodeURIComponent(cursor)}` : ""}`;
+    const res = await fetch(`${baseUrl}/api/v1/orgs/${slug}/modules/core-scan/inbox?${q}`, {
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    if (!res.ok) break;
+    const body = (await res.json()) as { items?: InboxItem[]; next_cursor?: string | null } | InboxItem[];
+    const items = Array.isArray(body) ? body : (body.items ?? []);
+    all.push(...items);
+    cursor = Array.isArray(body) ? null : (body.next_cursor ?? null);
+    if (!cursor) break;
+  }
+  return all.filter((i) => i.status !== "resolved");
 }
 
 // ── GET /bundle-menu ─────────────────────────────────────────────────────────
@@ -169,7 +184,10 @@ quickstartRouter.get("/", requireAuth, withTenant, async (req, res, next) => {
       // install"), and the install button it renders would target a bundle that
       // no longer exists. Resolving here fixes the label AND the action, for
       // every workspace, without rewriting anyone's jsonb.
-      const bid = top?.bundle_external_id ? currentBundleId(top.bundle_external_id) : undefined;
+      // Grouped by the row's one destination, the card's and the scanner
+      // queue's, never by the raw top route (#3618).
+      const dest = it.resolved_destination ?? top;
+      const bid = dest?.bundle_external_id ? currentBundleId(dest.bundle_external_id) : undefined;
       if (!bid) continue;
       const g = groups.get(bid) ?? { count: 0, samples: [] };
       g.count += 1;
@@ -211,7 +229,28 @@ const MaterializeBody = z.object({
    *  modal, which lets the user choose optional capabilities). Skip the
    *  install step and only commit the matching captures onto its tables. */
   skip_install: z.boolean().optional(),
+  /** The install is IMPLIED by filing, not asked for: refuse (409
+   *  `bundle_removed`) when the workspace uninstalled this bundle and has not
+   *  put it back. A filing door must not quietly reinstall an app somebody
+   *  took out; the card's explicit Install & add leaves this off. */
+  unless_removed: z.boolean().optional(),
 });
+
+/** The workspace uninstalled `externalId` and has not reinstalled it: its
+ *  newest snapshot says "uninstalled" and no bundle row stands. */
+async function removedByWorkspace(orgId: string, externalId: string): Promise<boolean> {
+  const installed = await meta.selectFrom("bundles").select("external_id").where("org_id", "=", orgId).where("external_id", "=", externalId).executeTakeFirst();
+  if (installed) return false;
+  const last = await meta
+    .selectFrom("bundle_snapshots")
+    .select("reason")
+    .where("org_id", "=", orgId)
+    .where("external_id", "=", externalId)
+    .orderBy("created_at", "desc")
+    .limit(1)
+    .executeTakeFirst();
+  return last?.reason === "uninstalled";
+}
 
 quickstartRouter.post("/materialize", requireAuth, withTenant, async (req, res, next) => {
   try {
@@ -230,11 +269,18 @@ quickstartRouter.post("/materialize", requireAuth, withTenant, async (req, res, 
     const orgId = req.tenant!.org.id;
     const slug = req.tenant!.org.slug;
     const baseUrl = (req.headers["x-cobblr-base-url"] as string | undefined) ?? INTERNAL_API;
-    const bundleId = parsed.data.bundle_external_id;
+    // A capture taken before a bundle was renamed still names the retired id
+    // (bundle-aliases.ts); every caller installs the bundle it became.
+    const bundleId = currentBundleId(parsed.data.bundle_external_id);
 
     const manifest = await getFlagshipManifest(bundleId);
     if (!manifest) {
       res.status(404).json({ error: { code: "unknown_bundle", message: `No flagship bundle "${bundleId}".` } });
+      return;
+    }
+
+    if (parsed.data.unless_removed && !parsed.data.skip_install && (await removedByWorkspace(orgId, bundleId))) {
+      res.status(409).json({ error: { code: "bundle_removed", message: `${humaniseBundleId(bundleId)} was removed from this workspace. Install it again to file here.` } });
       return;
     }
 
@@ -254,11 +300,35 @@ quickstartRouter.post("/materialize", requireAuth, withTenant, async (req, res, 
         res.status(400).json({ error: { code: "invalid_bundle", message: "Bundle failed validation", details: { errors: v.errors } } });
         return;
       }
-      const result = await applyValidatedBundle(
-        orgId,
-        { id: req.session!.id, display_name: req.session!.display_name ?? null, auth_method: req.session!.auth_method, api_token_id: req.session!.api_token_id ?? null },
-        v,
-      );
+      // One install of a bundle per workspace at a time, across api
+      // processes: two doors filing rows for the same absent app at once
+      // otherwise ran the install twice concurrently.
+      let result: Awaited<ReturnType<typeof applyValidatedBundle>> | { invalid: unknown };
+      try {
+        result = await runSerialised(`bundle-install:${orgId}:${bundleId}`, async () => {
+          // Validated again under the lock: the holder before us may have just
+          // installed it, and the second apply must see that.
+          const fresh = await validateBundle(orgId, manifest, { autoEnable: true });
+          if (!fresh.valid) return { invalid: fresh.errors } as const;
+          return applyValidatedBundle(
+            orgId,
+            { id: req.session!.id, display_name: req.session!.display_name ?? null, auth_method: req.session!.auth_method, api_token_id: req.session!.api_token_id ?? null },
+            fresh,
+          );
+        });
+      } catch (err) {
+        // lock_not_available: another install of this app in this workspace
+        // held the lock past the wait. Say so, rather than a bare 500.
+        if ((err as { code?: string }).code === "55P03") {
+          res.status(409).json({ error: { code: "install_in_progress", message: `Another install of ${humaniseBundleId(bundleId)} is still running. Try again in a moment.` } });
+          return;
+        }
+        throw err;
+      }
+      if ("invalid" in result) {
+        res.status(400).json({ error: { code: "invalid_bundle", message: "Bundle failed validation", details: { errors: result.invalid } } });
+        return;
+      }
       applied = result.applied;
     }
 
@@ -285,17 +355,22 @@ quickstartRouter.post("/materialize", requireAuth, withTenant, async (req, res, 
     // comes back routed to the table the install made, no bundle id on it. So
     // "fits" is either: still carries the offer (the read could not see the
     // table yet), or is routed to one of the bundle's own tables.
-    const fits = (top: { bundle_external_id?: string; module?: string; instance?: string | null } | undefined): boolean => {
+    const fits = (top: { bundle_external_id?: string | null; module?: string; instance?: string | null } | undefined): boolean => {
       if (!top) return false;
-      if (top.bundle_external_id === bundleId) return true;
+      if (top.bundle_external_id && currentBundleId(top.bundle_external_id) === bundleId) return true;
       if (top.bundle_external_id) return false;
       return targets.some((t) => t.module === top.module && (t.instance ?? null) === (top.instance ?? null));
     };
     for (const it of pending) {
       if (onlyIds && !onlyIds.has(it.id)) continue;
       const top = (it.suggested_candidates ?? [])[0];
-      if (!fits(top)) continue;
-      const target = pickTarget(top?.kind);
+      // The row's one destination (#3618). Ids handed in ARE the decided set:
+      // the queue that offered "Create X & file all N" grouped them by this
+      // same destination, so re-judging them by the raw route filed fewer
+      // than the button said.
+      const dest = it.resolved_destination ?? top ?? undefined;
+      if (!onlyIds && !fits(dest ?? undefined)) continue;
+      const target = pickTarget(dest?.kind ?? top?.kind ?? undefined);
       const confirmRes = await fetch(`${baseUrl}/api/v1/orgs/${slug}/modules/core-scan/inbox/${it.id}/confirm`, {
         method: "POST",
         headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },

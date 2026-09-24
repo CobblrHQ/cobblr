@@ -206,6 +206,7 @@ export function FormBuilderPage({ embedded = false }: { embedded?: boolean } = {
                   {it.kind === "section" ? (
                     <>
                       <input
+                        // DRAFT-OK: a form section's title in the form builder, not a record's value; no action moves it.
                         defaultValue={it.name}
                         onBlur={(e) => {
                           const name = e.target.value.trim();

@@ -804,7 +804,7 @@ export function pickFallbackEntry(
 // read the same evidence (table-fit.ts); these names stay exported from here
 // for the bench and the tests.
 export { makeLexicalScorer, GENERIC_NOUNS, rankFits, bestFit, type LexicalEvidence } from "@cobblr/platform-contract/table-fit";
-import { contradictedByCategory, orderFits } from "@cobblr/platform-contract/table-fit";
+import { contradictedByCategory, fitsTheFloor, orderFits } from "@cobblr/platform-contract/table-fit";
 
 export function heuristicMatch(
   item: PerceivedItem,
@@ -816,12 +816,14 @@ export function heuristicMatch(
   if (menu.length === 0) return [];
   const { scoreEntry } = makeLexicalScorer(item);
 
-  const all = menu
-    .map((entry) => ({ entry, ...scoreEntry(entry) }))
-    // Only confident routes: a noun / head-noun match or ≥2 keywords. A lone
-    // incidental keyword or choice-word graze no longer force-fits an item into
-    // the wrong bundle; when nothing qualifies the fallback+category below takes it.
-    .filter((s) => s.plausible);
+  const scoredMenu = menu.map((entry) => ({ entry, ...scoreEntry(entry) }));
+  const asFits = scoredMenu.map((s) => ({ table: s.entry, evidence: s }));
+  // Only confident routes: a noun / head-noun match or ≥2 keywords, or the
+  // narrower shelf inside a table that qualifies (fitsTheFloor, the same floor
+  // the move plan reads). A lone incidental keyword or choice-word graze no
+  // longer force-fits an item into the wrong bundle; when nothing qualifies the
+  // fallback+category below takes it.
+  const all = scoredMenu.filter((_, i) => fitsTheFloor(asFits[i]!, asFits));
   // The catalog's category naming a table is the strongest thing the router
   // holds, and it forbids as well as ranks: when the category says Groceries,
   // a table the item's NAME never named (no noun, nothing at the head; only a

@@ -10,6 +10,7 @@ import { userAgent } from "@cobblr/platform-contract/outbound-identity";
 interface OlSearchDoc {
   key?: string;
   isbn?: string[];
+  title?: string;
 }
 interface OlEdition {
   publishers?: string[];
@@ -18,7 +19,7 @@ interface OlEdition {
   publish_date?: string;
 }
 
-const cache = new Map<string, { isbn: string | null; at: number }>();
+const cache = new Map<string, { isbn: string | null; title?: string | null; at: number }>();
 const TTL_MS = 24 * 60 * 60 * 1000;
 
 const norm = (s: string) => s.trim().toLowerCase().replace(/\s+/g, " ");
@@ -50,31 +51,37 @@ export function decodedIsbnOf(suggestedMetadata: unknown): string | null {
   return isbn.length === 10 || isbn.length === 13 ? isbn : null;
 }
 
-/** Best-effort ISBN-13 for a book identified only by title (+ author, +
- *  publisher). Returns null when nothing usable is found — the caller leaves the
- *  ISBN blank rather than inventing one. Never throws. */
-export async function lookupBookIsbn(
+/** The catalog's own title for the work a title search found, with its
+ *  ISBN, so a caller can check the match against what the item says before
+ *  it believes the number (#3613). Null when nothing usable was found. */
+export async function lookupBookByTitle(
   title: string,
   author?: string | null,
   publisher?: string | null,
-): Promise<string | null> {
+): Promise<{ isbn: string; title: string } | null> {
   const t = (title ?? "").trim();
   if (t.length < 3) return null;
   const key = `${norm(t)}|${norm(author ?? "")}|${norm(publisher ?? "")}`;
   const cached = cache.get(key);
-  if (cached && Date.now() - cached.at < TTL_MS) return cached.isbn;
-  let isbn: string | null = null;
+  if (cached && Date.now() - cached.at < TTL_MS) return cached.isbn ? { isbn: cached.isbn, title: cached.title ?? "" } : null;
+  let found: { isbn: string; title: string } | null = null;
   try {
-    isbn = await resolve(t, author, publisher);
+    const r = await resolveWithTitle(t, author, publisher);
+    found = r.isbn ? { isbn: r.isbn, title: r.title } : null;
   } catch {
-    isbn = null;
+    found = null;
   }
-  cache.set(key, { isbn, at: Date.now() });
-  return isbn;
+  cache.set(key, { isbn: found?.isbn ?? null, title: found?.title ?? null, at: Date.now() });
+  return found;
 }
 
-async function resolve(title: string, author?: string | null, publisher?: string | null): Promise<string | null> {
-  const p = new URLSearchParams({ title, limit: "1", fields: "key,isbn" });
+async function resolveWithTitle(title: string, author?: string | null, publisher?: string | null): Promise<{ isbn: string | null; title: string }> {
+  const found = await resolveDoc(title, author, publisher);
+  return found ?? { isbn: null, title: "" };
+}
+
+async function resolveDoc(title: string, author?: string | null, publisher?: string | null): Promise<{ isbn: string | null; title: string } | null> {
+  const p = new URLSearchParams({ title, limit: "1", fields: "key,isbn,title" });
   if (author?.trim()) p.set("author", author.trim());
   const sr = await fetch(`https://openlibrary.org/search.json?${p.toString()}`, reqInit());
   if (!sr.ok) return null;
@@ -100,14 +107,34 @@ async function resolve(title: string, author?: string | null, publisher?: string
             )
             .sort((a, b) => yearOf(b.publish_date) - yearOf(a.publish_date)); // newest printing first
           const m = matched[0] ? pickIsbn13(matched[0].isbn_13) : null;
-          if (m) return m;
+          if (m) return { isbn: m, title: doc.title ?? "" };
         }
         const any = eds.map((e) => pickIsbn13(e.isbn_13)).find(Boolean) ?? null;
-        if (any) return any;
+        if (any) return { isbn: any, title: doc.title ?? "" };
       }
     } catch {
       /* fall through to the work-level isbn below */
     }
   }
-  return pickIsbn13(doc.isbn);
+  return { isbn: pickIsbn13(doc.isbn), title: doc.title ?? "" };
+}
+
+const titleWords = (s: string): string[] =>
+  s
+    .toLowerCase()
+    .split(":")[0]!
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/[^a-z0-9\s]/g, " ")
+    .split(/\s+/)
+    .filter((w) => w && !["the", "a", "an"].includes(w));
+
+/** Does a catalog's title name the book whose title was READ off the item?
+ *  The same words in the same order, subtitle aside. A description of the
+ *  thing ("Blank softcover book") is no title at all, so a search on it can
+ *  never corroborate the ISBN it returns (#3613). */
+export function catalogTitleCorroborated(readTitle: string | null | undefined, catalogTitle: string | null | undefined): boolean {
+  const a = titleWords(readTitle ?? "");
+  const b = titleWords(catalogTitle ?? "");
+  return a.length > 0 && a.join(" ") === b.join(" ");
 }

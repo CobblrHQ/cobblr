@@ -2,11 +2,14 @@
 // call so the AuthProvider can update it without rewiring the client.
 // Everything goes through `request<T>` so error shape stays uniform.
 
+import type { ProposalValue } from "./proposal-values";
+import { AI_AVAILABILITY_WRITE } from "./ai-availability-keys";
 import { markSandboxEnded } from "./sandbox-session";
+import { busySentence, parseRetryAfter } from "./request-wait";
+import { announceScanFiled } from "./scanFiled";
 import { isMutating, raiseBlockedAction, refusedRequestFor } from "./blocked-action";
 import type { ApprovalRemedy, BlockedAction } from "@cobblr/platform-contract/blocked-action";
 import type { CommunityLinkId } from "@cobblr/platform-contract/community-links";
-import type { TrialLengthDays } from "@cobblr/platform-contract/trial-length";
 import type { AiFallback } from "@cobblr/platform-contract/scan-fallback";
 import type { ScanToolHints } from "@cobblr/platform-contract/scan-tools";
 import type { TitleFormat } from "@cobblr/platform-contract/display-identity";
@@ -57,6 +60,9 @@ export class ApiError extends Error {
      *  remedy (blocked-action.ts). The sheet in the shell reads it; a caller
      *  that shows `message` in a toast needs to know nothing about it. */
     public readonly blocked?: BlockedAction,
+    /** Retry-After, in seconds, when the server said how long to wait (429,
+     *  503). Null when it did not; see request-failure.ts for what it means. */
+    public readonly retryAfterSec: number | null = null,
   ) {
     super(message);
   }
@@ -96,6 +102,69 @@ export async function pingHealth(): Promise<boolean> {
   }
 }
 
+// ── Workspace shape ──────────────────────────────────────────────────────
+// Every workspace response carries the workspace's SHAPE version: which modules
+// are on, which collections and bundles it has (api platform/workspace-shape.ts).
+// When it moves, whatever changed it (an install inside a receipt filing, an
+// enable from another tab), the app's cached menu, destinations and counts for
+// that workspace are stale, and useWorkspaceShapeRefresh refetches them. Read
+// here because every workspace call passes through here: one door, not a list
+// of mutations that remember to invalidate (#3582).
+type ShapeListener = (slug: string) => void;
+const shapeListeners = new Set<ShapeListener>();
+const seenShape = new Map<string, string>();
+export function subscribeWorkspaceShape(listener: ShapeListener): () => void {
+  shapeListeners.add(listener);
+  return () => {
+    shapeListeners.delete(listener);
+  };
+}
+/** Note a response's shape version; tell listeners when a workspace's moved.
+ *  The first sighting only records: the page loaded against it already. */
+export function noteWorkspaceShape(path: string, header: string | null): void {
+  const m = /^\/orgs\/([^/?#]+)/.exec(path);
+  if (!m || !header) return;
+  const slug = decodeURIComponent(m[1]!);
+  const prev = seenShape.get(slug);
+  seenShape.set(slug, header);
+  if (prev !== undefined && prev !== header) shapeListeners.forEach((l) => l(slug));
+}
+
+// A write that landed in a workspace: the numbers waiting in its nav (the
+// Scan Inbox row's pending count, any module's declared count) may have
+// moved. They poll, but a person who just filed the last item should not see
+// "1" beside the inbox for another fifteen seconds (#3582). Told here for the
+// same reason as the shape: every workspace write passes through here.
+const writeListeners = new Set<ShapeListener>();
+export function subscribeWorkspaceWrite(listener: ShapeListener): () => void {
+  writeListeners.add(listener);
+  return () => {
+    writeListeners.delete(listener);
+  };
+}
+function noteWorkspaceWrite(path: string): void {
+  const m = /^\/orgs\/([^/?#]+)/.exec(path);
+  if (!m) return;
+  const slug = decodeURIComponent(m[1]!);
+  writeListeners.forEach((l) => l(slug));
+}
+
+// A write that can change whether AI works here (a connection or its routing,
+// a share, the AI switch, a provider): every reader of AI availability is
+// stale. Told here, where every such write passes, so the refresh does not
+// depend on each mutation remembering which keys to invalidate (#3654: a
+// saved route left Cobb saying AI was off until a reload).
+const aiListeners = new Set<() => void>();
+export function subscribeAiAvailability(listener: () => void): () => void {
+  aiListeners.add(listener);
+  return () => {
+    aiListeners.delete(listener);
+  };
+}
+function noteAiAvailabilityWrite(path: string): void {
+  if (AI_AVAILABILITY_WRITE.test(path)) aiListeners.forEach((l) => l());
+}
+
 async function request<T>(
   method: string,
   path: string,
@@ -129,6 +198,11 @@ async function request<T>(
   // A gateway 5xx = proxy up but api/web down; any other response (even a 4xx)
   // proves connectivity and clears the banner.
   setApiDown(res.status >= 502 && res.status <= 504);
+  noteWorkspaceShape(path, res.headers.get("x-cobblr-workspace-shape"));
+  if (res.ok && isMutating(method)) {
+    noteWorkspaceWrite(path);
+    noteAiAvailabilityWrite(path);
+  }
 
   // Always try to parse JSON — our error responses are always JSON.
   // 204 is no-content; some 201s also send empty bodies (e.g.
@@ -153,14 +227,17 @@ async function request<T>(
       // POST endpoints return 201 with no body (no content-length set
       // because the server didn't write one).
       if (res.ok) return undefined as T;
+      if (res.status === 429) throw new ApiError(429, "rate_limited", busySentence(parseRetryAfter(res.headers.get("retry-after"))), undefined, undefined, parseRetryAfter(res.headers.get("retry-after")));
       throw new ApiError(res.status, "non_json", describeUnreadableBody(res.status, raw));
     }
   } else {
     if (res.ok) return undefined as T;
+    if (res.status === 429) throw new ApiError(429, "rate_limited", busySentence(parseRetryAfter(res.headers.get("retry-after"))), undefined, undefined, parseRetryAfter(res.headers.get("retry-after")));
     throw new ApiError(res.status, "non_json", describeUnreadableBody(res.status, ""));
   }
 
   if (!res.ok) {
+    const retryAfterSec = parseRetryAfter(res.headers.get("retry-after"));
     const body = parsed as {
       error?: { code?: string; message?: string; details?: unknown; blocked?: BlockedAction };
       message?: string;
@@ -170,7 +247,9 @@ async function request<T>(
     // shell, whichever surface made the call (#3073): the prerequisite in
     // words, the ask when there is one, and the refused request kept so a
     // yes can finish it. The surface's own toast still shows the sentence.
-    if (res.status === 403 && err?.blocked && isMutating(method)) {
+    // Any refusal that carries one, not only a 403: an app that is off
+    // answers 409 with the ask attached (#3610).
+    if (res.status >= 400 && res.status < 500 && err?.blocked && isMutating(method)) {
       raiseBlockedAction({ blocked: err.blocked, refused: refusedRequestFor(method, path, sent), subject: null });
     }
     // A route that answers `{ok:false,message}` is still TELLING us why. Reading
@@ -184,7 +263,11 @@ async function request<T>(
     if (res.status === 410 && err?.code === "sandbox_expired") markSandboxEnded("sandbox");
     // A kept trial past the length the person chose: the other ending.
     if (res.status === 410 && err?.code === "trial_expired") markSandboxEnded("trial");
-    throw new ApiError(res.status, err?.code ?? "unknown", reason ?? `HTTP ${res.status}`, err?.details, err?.blocked);
+    // A 429 is the server asking us to wait, and says so in the same words on
+    // every page, whatever sentence the limiter that sent it happened to carry.
+    const message =
+      res.status === 429 && (err?.code ?? "rate_limited") === "rate_limited" ? busySentence(retryAfterSec) : reason ?? `HTTP ${res.status}`;
+    throw new ApiError(res.status, err?.code ?? "unknown", message, err?.details, err?.blocked, retryAfterSec);
   }
   return parsed as T;
 }
@@ -789,6 +872,15 @@ export interface CarryResult {
   partly: number;
 }
 
+/** A call that files (or sends back) scans: on success every screen showing
+ *  the inbox refreshes, whichever door made the call (lib/scanFiled.ts). */
+function filed<T>(slug: string, p: Promise<T>): Promise<T> {
+  return p.then((r) => {
+    announceScanFiled(slug);
+    return r;
+  });
+}
+
 export const api = {
   /** A one-shot URL for an iframe document that must run inline script (a
    *  custom app block, an installed renderer). The browser then applies the
@@ -801,6 +893,9 @@ export const api = {
    *  dedicated method (e.g. dashboard snapshot widgets that hit a
    *  module's own routes). Avoid in module code — modules go through
    *  the platform contract. */
+  /** Where a record lives, decided by its own collection (the open door). */
+  recordAddress: (slug: string, kind: string, id: string) =>
+    request<{ path: string }>("GET", `/orgs/${slug}/entities/${encodeURIComponent(kind)}/${encodeURIComponent(id)}/address`),
   request: <T>(method: "GET" | "POST" | "PATCH" | "DELETE", path: string, body?: unknown) =>
     request<T>(method, path, body),
   healthz: () => request<Healthz>("GET", "/healthz"),
@@ -3271,6 +3366,8 @@ export const api = {
       /** Answer to "this photo has N different things — keep them together, or
        *  split?" true = one record; the offer stops asking. */
       keep_grouped?: boolean;
+      /** "Treat it as one item": a receipt whose read failed stops asking to be read again (#3581). */
+      read_as_item?: boolean;
       /** "I will photograph this myself." Survives an AI re-run — only the
        *  person, or the photo arriving, clears it. */
       photo_wanted?: boolean;
@@ -3314,11 +3411,8 @@ export const api = {
   ) => request<OrganizePlanResponse>("POST", `/orgs/${slug}/modules/core-scan/organize/plan`, body),
   /** Cheap inbox counts for the put-away front door (dashboard card / scan
    *  strip): pending captures, and how many still have no home. */
-  getScanStats: (slug: string) =>
-    request<{ pending: number; unfiled: number; ready: number; failed_reads?: number }>(
-      "GET",
-      `/orgs/${slug}/modules/core-scan/inbox/stats`,
-    ),
+  getScanStats: (slug: string, batchId?: string | null) =>
+    request<ScanInboxCounts>("GET", `/orgs/${slug}/modules/core-scan/inbox/stats${batchId ? `?batch_id=${encodeURIComponent(batchId)}` : ""}`),
   /** Receipt sessions imported but not yet confirmed into a purchase order. */
   getPendingReceiptGroups: (slug: string) =>
     request<{
@@ -3551,6 +3645,8 @@ export const api = {
       cloud_url: string | null;
       selfhost_url: string | null;
       export_days: number;
+      /** How long keeping makes it a trial here. The server's setting, not a choice. */
+      trial_days: number;
       /** How long a sandbox past its hour is held so it can still be kept. */
       decision_hours: number;
       /** Whether a real account can carry what was built here (the ledger replay). */
@@ -3585,9 +3681,9 @@ export const api = {
   /** Clear a sandbox's records, keeping its modules, fields and views. */
   emptySandbox: () => request<{ deleted: number; failed: number }>("POST", "/try/empty", {}),
 
-  /** `days` is one of the contract's lengths (a week, two weeks, a month). */
-  keepSandbox: (email: string, days: TrialLengthDays) =>
-    request<{ ok: boolean; kind: "trial"; expires_at: string; emailed: boolean; days: number }>("POST", "/try/keep", { email, days }),
+  /** Keep the sandbox as a trial. How long is the server's setting, returned as `days`. */
+  keepSandbox: (email: string) =>
+    request<{ ok: boolean; kind: "trial"; expires_at: string; emailed: boolean; days: number }>("POST", "/try/keep", { email }),
 
   /** What kind of workspace this is, for the strip at the foot of the page.
    *  `link_open` is true while a kept sandbox's owner has no real door yet
@@ -3640,19 +3736,21 @@ export const api = {
       eval_note?: string;
     },
   ) =>
-    request<{ item: ScanInboxItem; created: { id: string } }>(
-      "POST",
-      `/orgs/${slug}/modules/core-scan/inbox/${id}/confirm`,
-      body,
+    filed(
+      slug,
+      request<{ item: ScanInboxItem; created: { id: string } }>("POST", `/orgs/${slug}/modules/core-scan/inbox/${id}/confirm`, body),
     ),
   /** Paired-scan: the scanned product IS the active bin itself — write the
    *  product identity onto that core-locations record instead of creating a
    *  new entity. location_id overrides the bin the scan was filed into. */
   confirmScanIntoLocation: (slug: string, id: string, location_id?: string) =>
-    request<{ item: ScanInboxItem; location_id: string }>(
-      "POST",
-      `/orgs/${slug}/modules/core-scan/inbox/${id}/confirm-into-location`,
-      location_id ? { location_id } : {},
+    filed(
+      slug,
+      request<{ item: ScanInboxItem; location_id: string }>(
+        "POST",
+        `/orgs/${slug}/modules/core-scan/inbox/${id}/confirm-into-location`,
+        location_id ? { location_id } : {},
+      ),
     ),
   // Super-admin: captured matchmaker eval cases (P2 of the eval harness).
   listScanEvalCases: () =>
@@ -3681,11 +3779,14 @@ export const api = {
       seen?: Array<{ item_id: string; action: "attach" | "create" | "skip"; to_id?: string | null }>;
       location_id?: string | null;
     },
-  ) => request<AutofileDryRun | AutofileResult>("POST", `/orgs/${slug}/modules/core-scan/inbox/autofile`, body),
+  ) => {
+    const r = request<AutofileDryRun | AutofileResult>("POST", `/orgs/${slug}/modules/core-scan/inbox/autofile`, body);
+    return body.confirm ? filed(slug, r) : r;
+  },
   unconfirmScanItem: (slug: string, id: string) =>
-    request<{ item: ScanInboxItem; entity_deleted: boolean; note: string | null }>(
-      "POST",
-      `/orgs/${slug}/modules/core-scan/inbox/${id}/unconfirm`,
+    filed(
+      slug,
+      request<{ item: ScanInboxItem; entity_deleted: boolean; note: string | null }>("POST", `/orgs/${slug}/modules/core-scan/inbox/${id}/unconfirm`),
     ),
   restoreScanItem: (slug: string, id: string) =>
     request<ScanInboxItem>(
@@ -3768,11 +3869,14 @@ export const api = {
     bundle_external_id: string,
     opts?: { item_ids?: string[]; skip_install?: boolean },
   ) =>
-    request<QuickstartMaterializeResult>("POST", `/orgs/${slug}/quickstart/materialize`, {
-      bundle_external_id,
-      ...(opts?.item_ids ? { item_ids: opts.item_ids } : {}),
-      ...(opts?.skip_install ? { skip_install: true } : {}),
-    }),
+    filed(
+      slug,
+      request<QuickstartMaterializeResult>("POST", `/orgs/${slug}/quickstart/materialize`, {
+        bundle_external_id,
+        ...(opts?.item_ids ? { item_ids: opts.item_ids } : {}),
+        ...(opts?.skip_install ? { skip_install: true } : {}),
+      }),
+    ),
   /** Re-run the scan pipeline on one inbox item.
    *
    *  `noAi` REPLAYS it instead: every model stage is served from the AI cache,
@@ -3930,12 +4034,15 @@ export const api = {
     }),
   /** Session theme: derive a shared tag + category across the pending inbox. */
   /** A theme is a question about ONE session, asked when somebody asks it. */
-  scanSessionTheme: (slug: string, batchId: string) =>
-    request<{
-      tag: string | null;
-      tag_item_ids: string[];
-      category: { value: string; item_ids: string[] } | null;
-    }>("GET", `/orgs/${slug}/modules/core-scan/inbox/session-theme?batch_id=${encodeURIComponent(batchId)}`),
+  /** Asked about exactly `itemIds` (the rows the group shows); the answer
+   *  names the set it was about, and every id it would change is in it. */
+  scanSessionTheme: (slug: string, batchId: string, itemIds: readonly string[]) =>
+    request<ScanSessionThemeAnswer>(
+      "GET",
+      `/orgs/${slug}/modules/core-scan/inbox/session-theme?batch_id=${encodeURIComponent(batchId)}&ids=${encodeURIComponent(itemIds.join(","))}`,
+    ),
+  /** Every pending scan, grouped by where it could go (the dashboard queue). */
+  scanScannerQueue: (slug: string) => request<ScannerQueueSummary>("GET", `/orgs/${slug}/modules/core-scan/inbox/scanner-queue`),
   /** Stash the accepted theme onto the pending items (tag + category hint). */
   applyScanTheme: (
     slug: string,
@@ -4060,6 +4167,9 @@ export const api = {
    *  discarded. Works from the parent or from any of its pieces. */
   unsplitScanItem: (slug: string, id: string) =>
     request<{ parent: ScanInboxItem; discarded: number }>("POST", `/orgs/${slug}/modules/core-scan/inbox/${id}/unsplit`),
+  /** Undo a combine from either row: the kept one or one it absorbed (#3639). */
+  uncombineScanItem: (slug: string, id: string) =>
+    request<{ kept: ScanInboxItem; restored: string[] }>("POST", `/orgs/${slug}/modules/core-scan/inbox/${id}/uncombine`),
   createScanBatch: (slug: string) =>
     request<{ id: string }>(
       "POST",
@@ -4654,6 +4764,8 @@ export const api = {
       `/orgs/${slug}/approval-requests/${id}/decide`,
       { decision, note: note ?? null },
     ),
+  askApprovalAgain: (slug: string, id: string) =>
+    request<{ request: ApprovalRequestView; existing: boolean }>("POST", `/orgs/${slug}/approval-requests/${id}/ask-again`),
   withdrawApprovalRequest: (slug: string, id: string) =>
     request<{ ok: true; status: ApprovalRequestStatus }>("POST", `/orgs/${slug}/approval-requests/${id}/withdraw`),
   resumeApprovalRequest: (slug: string, id: string) =>
@@ -5018,6 +5130,8 @@ export interface ScanBatchMeta {
   date_convention?: "mdy" | "dmy" | null;
   date_decided_by?: "unambiguous" | "receipt" | "workspace" | "nearest-past" | "model" | null;
   date_printed?: string | null;
+  /** The session's lines over every row, not the loaded page (#3638). */
+  lines?: { pending: number; ever: number };
 }
 
 export interface AiStatus {
@@ -5788,7 +5902,46 @@ export type ScanResolveOutcome =
     }
   | { outcome: "no_rule" };
 
+/** A session theme (core-scan services/session-theme.ts): the items it is
+ *  about, and each change with the ids it would touch. */
+export interface ScanSessionThemeAnswer {
+  items: Array<{ id: string; name: string | null }>;
+  tag: string | null;
+  tag_item_ids: string[];
+  category: { value: string; item_ids: string[] } | null;
+}
+
+/** The scanner queue over every pending scan (core-scan
+ *  services/scanner-queue.ts): the counts the dashboard reads and the exact
+ *  ids each group's button files. */
+export interface ScannerQueueSummary {
+  scanned_total: number;
+  groups: Array<{ key: string; label: string; bundle_external_id?: string; target?: { module: string; kind: string; instance?: string }; item_ids: string[] }>;
+  residual: number;
+  offered: number;
+}
+
+/** The Scan Inbox's counts over EVERY pending row (core-scan
+ *  services/inbox-counts.ts), optionally one session's. The header, the
+ *  filters and their captions read these, never the length of a loaded page
+ *  (#3598, #3638). */
+export interface ScanInboxCounts {
+  pending: number;
+  unfiled: number;
+  ready: number;
+  ready_to_file?: number;
+  needs_review?: number;
+  waiting?: number;
+  loose_ids?: string[];
+  failed_reads?: number;
+  failed_sessions?: number;
+}
+
 export interface ScanInboxItem {
+  /** Where the row goes, as its card says: the server's one destination
+   *  (core-scan services/destination.ts). Read this, never the raw top
+   *  candidate, for the table a surface names or files into (#3618). */
+  resolved_destination?: { module: string; instance: string | null; kind: string | null; label: string | null; bundle_external_id: string | null } | null;
   id: string;
   status: "pending" | "enriching" | "resolved" | "discarded";
   source_kind: "barcode" | "photo" | "url" | "receipt" | "note";
@@ -5964,7 +6117,7 @@ export interface PutawayLeftOut {
 /** "Already tracked" — an existing entity matching a scan (by barcode or name). */
 /** One line of the File everything plan, as the route returns it. */
 export type AutofilePlanLine =
-  | { action: "attach"; itemId: string; name: string | null; to: { kind: string; id: string; title: string; instance?: string | null; matched_by?: string | null }; qty: number; why: string }
+  | { action: "attach"; itemId: string; name: string | null; to: { kind: string; id: string; title: string; instance?: string | null; matched_by?: string | null; qty?: number | null }; qty: number; why: string }
   | { action: "create"; itemId: string; name: string | null; destination: string | null; installs?: string | null; qty: number; why: string }
   | { action: "skip"; itemId: string; name: string | null; why: string };
 export interface AutofileSummary {
@@ -6613,8 +6766,8 @@ export interface AiChatResponse {
 }
 
 export type AiChatProposal =
-  | { kind: "create"; entity_kind: string; fields: Record<string, unknown> }
-  | { kind: "update"; entity_kind: string; entity_id: string; fields: Record<string, unknown>; entity_label?: string }
+  | { kind: "create"; entity_kind: string; fields: Record<string, unknown>; values?: ProposalValue[] }
+  | { kind: "update"; entity_kind: string; entity_id: string; fields: Record<string, unknown>; entity_label?: string; values?: ProposalValue[] }
   | { kind: "delete"; entity_kind: string; entity_id: string; entity_label?: string }
   | {
       kind: "action";
@@ -6625,6 +6778,8 @@ export type AiChatProposal =
       args?: Record<string, unknown>;
       /** What it will touch, from the action's planner: the card lists it. */
       plan?: { title: string; lines: string[] };
+      /** What it was handed, for an action with no planner: the card lists it. */
+      values?: ProposalValue[];
     }
   | { kind: "build"; draft_id: string };
 
@@ -7092,6 +7247,9 @@ export interface NotificationEntry {
    *  it". Declared at dispatch; what a press DOES is a platform action, so the
    *  bell needs no per-notification code to render one. */
   actions?: Array<{ id: string; label: string; short?: string; style?: "primary" | "secondary" | "danger" }> | null;
+  /** The thing the buttons decide has been decided, read from ITS record on
+   *  every inbox read: how, and when. The buttons are gone. */
+  settled?: { label: string; at: string | null } | null;
   read_at: string | null;
   created_at: string;
 }
@@ -7917,4 +8075,9 @@ export interface ApprovalRequestView {
   expires_at: string;
   has_resume: boolean;
   route: string | null;
+  /** For a yes: whether it still holds for the requester as of this read, and
+   *  what was taken back if not. Null for anything that was never a yes; the
+   *  list omits it. Anything saying a permission is in place reads this, never
+   *  `status` alone. */
+  holds_now?: { holds: boolean; missing: string | null; message: string | null } | null;
 }

@@ -25,10 +25,13 @@ export interface ScanViewerInput {
   caps: { all: boolean; grants: readonly string[] } | null | undefined;
   /** The workspace's scan menu, or null while it loads. */
   menu: readonly ScanMenuEntry[] | null | undefined;
+  /** Every module this deployment has, with whether it is on here, or null
+   *  while it loads (nothing blocks). */
+  modules?: ReadonlyArray<{ name: string; enabled?: boolean }> | null;
 }
 
 /** The resolver's context for this person over this workspace's tables. */
-export function scanViewerContext({ role, caps, menu }: ScanViewerInput): ScanRowStateContext {
+export function scanViewerContext({ role, caps, menu, modules }: ScanViewerInput): ScanRowStateContext {
   return {
     // The workspace's tables as the contract reads them: the label of a
     // table a person chose (#3062) and, through the fit shape the menu
@@ -42,6 +45,18 @@ export function scanViewerContext({ role, caps, menu }: ScanViewerInput): ScanRo
     // create gate (create-capability.ts). A member without the grant used to
     // see a green Add and learn otherwise from the 403 (#3072, #3073).
     permittedFor: (module) => mayCreateIn(module, caps ?? null),
+    // A destination in an app that is off here is a table to turn on, asked
+    // for, or unavailable; never a ready Add the server refuses (#3610).
+    // An empty list is not an answer (a workspace always has its scan
+    // module): read as "not known yet", which never blocks.
+    ...(modules && modules.length > 0
+      ? {
+          moduleState: (module: string) => {
+            const m = modules.find((x) => x.name === module);
+            return !m ? "absent" : m.enabled ? "enabled" : "available";
+          },
+        }
+      : {}),
   };
 }
 
@@ -54,5 +69,12 @@ export function useScanViewer(menu: readonly ScanMenuEntry[] | null | undefined)
     enabled: !!activeSlug,
     staleTime: 60_000,
   });
-  return scanViewerContext({ role: activeOrg?.role, caps: myCaps.data ?? null, menu });
+  // The same cached list the nav reads: no extra request.
+  const orgModules = useQuery({
+    queryKey: ["org-modules", activeSlug],
+    queryFn: () => api.orgModules(activeSlug),
+    enabled: !!activeSlug,
+    staleTime: 30_000,
+  });
+  return scanViewerContext({ role: activeOrg?.role, caps: myCaps.data ?? null, menu, modules: orgModules.data?.items ?? null });
 }

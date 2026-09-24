@@ -17,7 +17,7 @@ import { useEffect, useMemo, useState } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Loader2, ShieldCheck, ShieldOff } from "lucide-react";
-import { Modal, useToast } from "@cobblr/platform-web";
+import { Modal, relativeTime, useToast } from "@cobblr/platform-web";
 import type { BlockedAction } from "@cobblr/platform-contract/blocked-action";
 import { api, ApiError, type ApprovalRequestView } from "../lib/api";
 import { useActiveOrg } from "../auth/ActiveOrgContext";
@@ -240,9 +240,22 @@ function ResumeSheet({ requestId }: { requestId: string }) {
       }
     },
     onError: (e) => {
-      if (e instanceof ApiError && (e.code === "stale" || e.code === "not_approved" || e.code === "no_resume")) setStale(e.message);
-      else toast.error(e instanceof ApiError ? e.message : String(e));
+      if (e instanceof ApiError && (e.code === "stale" || e.code === "not_approved" || e.code === "no_resume")) {
+        setStale(e.message);
+        // A yes taken back between opening this and pressing Finish: read the
+        // request again, so the sheet offers asking again instead of a dead end.
+        void qc.invalidateQueries({ queryKey: ["approval-request", activeSlug, requestId] });
+      } else toast.error(e instanceof ApiError ? e.message : String(e));
     },
+  });
+  const again = useMutation({
+    mutationFn: () => api.askApprovalAgain(activeSlug, requestId),
+    onSuccess: (r) => {
+      toast.success(r.existing ? "You already asked; it is waiting for an answer." : "Asked again. You will be told when someone answers.");
+      void qc.invalidateQueries({ queryKey: ["approval-requests", activeSlug] });
+      leave();
+    },
+    onError: (e) => toast.error(e instanceof ApiError ? e.message : String(e)),
   });
 
   if (dismissed) return null;
@@ -256,6 +269,36 @@ function ResumeSheet({ requestId }: { requestId: string }) {
     );
   }
   const asks = req.remedies.map((r) => r.label).join(" and ");
+
+  // What was decided stays what was decided; whether it is in force is read
+  // now, from the server's own check of the requester's permissions. An
+  // approval whose grant was taken back since says so, and offers a fresh ask.
+  if (req.holds_now && !req.holds_now.holds && req.holds_now.missing) {
+    const when = req.decided_at ? ` ${relativeTime(req.decided_at)}` : "";
+    return (
+      <Modal
+        open
+        onClose={leave}
+        size="sm"
+        title={req.subject}
+        footer={
+          <div className="flex items-center justify-between gap-2">
+            <button type="button" onClick={leave} className={SECONDARY}>
+              Not now
+            </button>
+            <button type="button" data-testid="resume-ask-again" disabled={again.isPending} onClick={() => again.mutate()} className={PRIMARY}>
+              {again.isPending ? <Loader2 size={14} className="animate-spin" /> : null} Ask again
+            </button>
+          </div>
+        }
+      >
+        <p data-testid="resume-taken-back" className="text-sm text-content dark:text-mortar-100">
+          {req.decided_by?.name ?? "An admin"} approved this{when}, and {req.holds_now.missing} has since been taken back, so it is not in place now.
+          Nothing has been done for you.
+        </p>
+      </Modal>
+    );
+  }
 
   // A yes with nothing to finish is recorded completed at once; it still
   // reads as the yes it was.

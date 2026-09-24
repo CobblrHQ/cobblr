@@ -11,10 +11,48 @@ import type { ActionUndoStep } from "@cobblr/platform-contract/action-undo";
 
 let registered = false;
 
+/** A record in words: its title, or null when it cannot be read. */
+async function nameOf(orgId: string, kind: string, id: string): Promise<string | null> {
+  const found = await platform().entities.lookup(orgId, kind, id).catch(() => null);
+  const t = (found as { title?: unknown } | null)?.title;
+  return typeof t === "string" && t.trim() ? t.trim() : null;
+}
+
+// The card a person confirms says where the thing goes and where it is now:
+// `Move “Desk fan”: Bedroom → Garage`, never the action's name over a chip
+// ("Place in container on Desk fan", #3658). Read from the same placement the
+// handler moves, before anything moves.
+function registerPlanners(): void {
+  platform().actions.registerPlanner("core-placement.place", async (ctx) => {
+    const args = (ctx.args as { container_kind?: unknown; container_id?: unknown; slot?: unknown } | null) ?? {};
+    const containerKind = String(args.container_kind ?? "").trim();
+    const containerId = String(args.container_id ?? "").trim();
+    if (!containerKind || !containerId || !ctx.entity) return null;
+    const what = (await nameOf(ctx.orgId, ctx.entity.kind, ctx.entity.id)) ?? "it";
+    const to = await nameOf(ctx.orgId, containerKind, containerId);
+    if (!to) return { error: "that place is not there; say which place, or make it first" };
+    const was = await platform().placement.containerOf({ orgId: ctx.orgId, containee: { kind: ctx.entity.kind, id: ctx.entity.id } }).catch(() => null);
+    const from = was ? await nameOf(ctx.orgId, was.kind, was.id) : null;
+    const slot = typeof args.slot === "string" && args.slot.trim() ? args.slot.trim() : null;
+    return {
+      title: from ? `Move “${what}”: ${from} → ${to}` : `Put “${what}” in ${to}`,
+      lines: [`From: ${from ?? "not in any place yet"}`, `To: ${to}${slot ? `, ${slot}` : ""}`],
+    };
+  });
+  platform().actions.registerPlanner("core-placement.remove", async (ctx) => {
+    if (!ctx.entity) return null;
+    const what = (await nameOf(ctx.orgId, ctx.entity.kind, ctx.entity.id)) ?? "it";
+    const was = await platform().placement.containerOf({ orgId: ctx.orgId, containee: { kind: ctx.entity.kind, id: ctx.entity.id } }).catch(() => null);
+    const from = was ? await nameOf(ctx.orgId, was.kind, was.id) : null;
+    return { title: from ? `Take “${what}” out of ${from}` : `“${what}” is not in any place`, lines: from ? [`From: ${from}`] : [] };
+  });
+}
+
 export function registerPlacementActionHandlers(): void {
   registerUndos();
   if (registered) return;
   registered = true;
+  registerPlanners();
 
   platform().actions.registerHandler("core-placement.place", async (ctx) => {
     const args = (ctx.args as { container_kind?: unknown; container_id?: unknown; slot?: unknown } | null) ?? {};

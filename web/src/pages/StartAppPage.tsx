@@ -119,7 +119,7 @@ export function StartAppPage() {
           <p className="mt-2 text-sm text-muted dark:text-slate-400">{meta.blurb}</p>
         </div>
         {authCfg.status === "failed" ? (
-          <AuthConfigUnavailable onRetry={authCfg.retry} />
+          <AuthConfigUnavailable failure={authCfg.failure} onRetry={authCfg.retry} />
         ) : cfg === null ? null : !cfg.signup_enabled ? (
           <div className="space-y-3 rounded-xl border border-line dark:border-slate-700 p-5 bg-white dark:bg-slate-900">
             {identityDoor ? (

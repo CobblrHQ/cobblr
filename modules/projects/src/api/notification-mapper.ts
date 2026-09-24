@@ -8,6 +8,7 @@
 // registers itself when the projects module loads.
 
 import { NotificationBatcher, platform, type ComposedBurst } from "@cobblr/platform-contract";
+import { openRecordPath } from "@cobblr/platform-contract/instance-detail";
 
 interface TaskUnblockedPayload {
   orgId: string;
@@ -36,7 +37,9 @@ export function composeUnblocked(items: readonly Unblocked[]): ComposedBurst | n
     return {
       message: `Task "${u.title}" is unblocked (${u.causeText} is now satisfied)`,
       count: 1,
-      link_url: `/projects/${u.projectId}`,
+      // The project may sit in a named collection this mapper cannot see; the
+      // open door asks where it lives.
+      link_url: openRecordPath("projects:project", u.projectId),
       entityType: "task",
       entityId: u.taskId,
     };
@@ -54,7 +57,7 @@ export function composeUnblocked(items: readonly Unblocked[]): ComposedBurst | n
     // the unblocked tasks are; `undefined` here used to mean the burst version
     // of this notification went nowhere at all.
     // PAGE-LINK: the burst spans several projects; no single one is right.
-    link_url: projects.size === 1 ? `/projects/${items[0]!.projectId}` : "/projects",
+    link_url: projects.size === 1 ? openRecordPath("projects:project", items[0]!.projectId) : "/projects",
   };
 }
 

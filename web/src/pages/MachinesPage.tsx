@@ -64,6 +64,7 @@ import {
 import { EntityAttachments } from "../components/EntityAttachments";
 import { LocationTreePicker } from "../components/LocationTreePicker";
 import { itemNounFor, pluralise } from "@cobblr/platform-contract";
+import { PresentationGate, useFaces } from "@cobblr/platform-web";
 
 const ENTITY_KIND = "machines:machine";
 
@@ -107,7 +108,10 @@ export function MachinesPage({
     if (instance) {
       setLocalSel(mid);
       setSearchParams((prev) => { prev.set("machine", mid); return prev; }, { replace: true });
-    } else navigate(`/machines/${mid}${searchParams.toString() ? `?${searchParams}` : ""}`);
+    } else {
+      // RECORD-LINK-OK: the module's own page opening its own default-collection record in place; its base route is this page.
+      navigate(`/machines/${mid}${searchParams.toString() ? `?${searchParams}` : ""}`);
+    }
   };
   const closeDetail = () => {
     if (instance) {
@@ -1194,6 +1198,8 @@ export function MachineDetailModal({
   // native fields per workspace. No-op (fallback label, not hidden) until an
   // override exists. Same pattern as AssetsPage.
   const fp = useFieldPresentation(customKind);
+  // The collection's faces decide sections and verbs; the body waits for them.
+  const shape = useFaces(instance ? `${instance}:item` : ENTITY_KIND);
   const remove = useMutation({
     mutationFn: () => api.deleteMachine(activeSlug, machineId!, instance),
     onSuccess: () => {
@@ -1317,6 +1323,7 @@ export function MachineDetailModal({
       size="xl"
     >
       {m ? (
+        <PresentationGate ready={fp.ready && shape.ready} failed={fp.failed || shape.failed} retry={() => { fp.retry(); shape.retry(); }}>
         <div className="space-y-3">
           {/* Wide record layout (same shape as the assets detail): the photo
               large on the LEFT with its picker, everything else on the RIGHT,
@@ -1370,7 +1377,7 @@ export function MachineDetailModal({
                     <span className="block text-[10px] font-mono uppercase tracking-widest text-faint dark:text-slate-500 mb-1">Kind</span>
                     <select
                       value={typeof m.metadata?.printer_kind === "string" ? (m.metadata.printer_kind as string) : printerKind}
-                      onChange={(e) => update.mutate({ metadata: { ...m.metadata, printer_kind: e.target.value } })}
+                      onChange={(e) => update.mutate({ metadata: { printer_kind: e.target.value } })}
                       className="input !w-auto !py-1 text-xs"
                     >
                       {PRINTER_KIND_OPTIONS.map((k) => (<option key={k.id} value={k.id}>{k.label}</option>))}
@@ -1382,7 +1389,7 @@ export function MachineDetailModal({
                     <span className="block text-[10px] font-mono uppercase tracking-widest text-faint dark:text-slate-500 mb-1">Machine type</span>
                     <select
                       value={typeof m.metadata?.specialisation === "string" ? (m.metadata.specialisation as string) : ""}
-                      onChange={(e) => update.mutate({ metadata: { ...m.metadata, specialisation: e.target.value || null } })}
+                      onChange={(e) => update.mutate({ metadata: { specialisation: e.target.value || null } })}
                       className="input !w-auto !py-1 text-xs"
                     >
                       <option value=""> - unspecialised - </option>
@@ -1434,7 +1441,7 @@ export function MachineDetailModal({
             entityId={m.id}
             values={m.metadata}
             hideNames={printerHidden}
-            onCommit={(name, value) => update.mutate({ metadata: { ...m.metadata, [name]: value } })}
+            onCommit={(name, value) => update.mutate({ metadata: { [name]: value } })}
           />
 
           {/* What's installed inside this machine (a printer's mods/parts). The
@@ -1500,6 +1507,7 @@ export function MachineDetailModal({
           </div>
           </RecordFaces>
         </div>
+        </PresentationGate>
       ) : (
         <div className="text-xs text-faint">loading…</div>
       )}
@@ -1754,7 +1762,10 @@ function NewMachineModal({
       }
       onClose();
       if (onCreated) onCreated(m.id);
-      else navigate(`/machines/${m.id}`);
+      else {
+        // RECORD-LINK-OK: the module's own page opening its own default-collection record in place; its base route is this page.
+        navigate(`/machines/${m.id}`);
+      }
     },
     onError: (e: unknown) => toast.error(e instanceof ApiError ? e.message : "Couldn't create."),
   });

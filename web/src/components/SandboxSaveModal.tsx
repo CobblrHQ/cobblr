@@ -29,14 +29,15 @@ import { Modal } from "@cobblr/platform-web";
 import { api, ApiError } from "../lib/api";
 import { holdSandboxEnd } from "../lib/sandbox-session";
 import { Cloud, Server, Download } from "lucide-react";
-import { DEFAULT_TRIAL_LENGTH, type TrialLengthDays } from "@cobblr/platform-contract/trial-length";
-import { TrialLengthPicker, trialLengthPhrase } from "./TrialLengthPicker";
+import { trialLengthPhrase } from "@cobblr/platform-contract/trial-length";
 
 interface Paths {
   /** Null when this deployment does not offer that path. */
   cloud_url: string | null;
   selfhost_url: string | null;
   export_days: number;
+  /** How long keeping makes it a trial: the server's setting, said back in words. */
+  trial_days: number;
 }
 
 export interface KeptWorkspace {
@@ -66,7 +67,6 @@ export function SandboxSaveModal({
   email?: string | null;
 }) {
   const [email, setEmail] = useState("");
-  const [length, setLength] = useState<TrialLengthDays>(DEFAULT_TRIAL_LENGTH);
   const [busy, setBusy] = useState<null | "keep" | "copy" | "resend" | "password">(null);
   const [error, setError] = useState<string | null>(null);
   const [paths, setPaths] = useState<Paths | null>(null);
@@ -110,14 +110,14 @@ export function SandboxSaveModal({
       const to = email.trim();
       // Tapped with seconds left, the hour can end while this is in flight.
       // The end waits for the answer; kept, it never comes.
-      const res = await holdSandboxEnd(api.keepSandbox(to, length), { keeps: true });
+      const res = await holdSandboxEnd(api.keepSandbox(to), { keeps: true });
       setKept({ emailed: res.emailed, email: to });
       onKept?.({ email: to, expires_at: res.expires_at, emailed: res.emailed });
     } catch (err) {
       setError(
         err instanceof ApiError && err.status === 409
           ? "That email already has an account. Sign in with it instead."
-          : "Could not save that. Try again?",
+          : "We could not save that. Please try again.",
       );
     } finally {
       setBusy(null);
@@ -135,7 +135,7 @@ export function SandboxSaveModal({
       setError(
         err instanceof ApiError && err.status === 413
           ? "That workspace is too big to email. Keep it instead and it stays where it is."
-          : "Could not build your file. Try again?",
+          : "We could not build your file. Please try again.",
       );
     } finally {
       setBusy(null);
@@ -167,7 +167,7 @@ export function SandboxSaveModal({
       setPassword("");
       onPasswordSet?.();
     } catch {
-      setError("Could not set that password. Try again?");
+      setError("We could not set that password. Please try again.");
     } finally {
       setBusy(null);
     }
@@ -276,12 +276,6 @@ export function SandboxSaveModal({
               aria-label="Your email"
               className="input w-full"
             />
-            {/* The trial on this demo box is short on purpose and the person
-                picks how short (#3254): no open-ended answer is offered. */}
-            <div className="space-y-1.5">
-              <p className="text-xs uppercase tracking-widest text-faint">Keep it for</p>
-              <TrialLengthPicker value={length} onChange={setLength} disabled={!!busy} />
-            </div>
             <div className="grid gap-2 sm:grid-cols-2">
               <button
                 type="button"
@@ -290,7 +284,7 @@ export function SandboxSaveModal({
                 className="rounded-lg bg-cobble-600 hover:bg-cobble-700 disabled:opacity-50 text-white px-3 py-2.5 text-left transition"
               >
                 <span className="block font-medium text-sm">
-                  {busy === "keep" ? "Saving…" : `Keep it for ${trialLengthPhrase(length)}`}
+                  {busy === "keep" ? "Saving…" : paths ? `Keep it for ${trialLengthPhrase(paths.trial_days)}` : "Keep it"}
                 </span>
                 <span className="block text-xs opacity-90 mt-0.5">
                   Everything stays where it is, as a trial here. It ends when that time is up.

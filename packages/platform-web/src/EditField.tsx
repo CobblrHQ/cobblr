@@ -8,12 +8,14 @@
 // here, and the packer (FieldPack) deciding the span from what the field
 // needs (editFieldNeed below) rather than the field reaching into the grid.
 //
-// Uncontrolled on purpose: the value is the record's, the input holds the
-// draft, and blur (or Enter, for one line) commits only when it changed. A
-// controlled input here would write on every keystroke.
-import type { ReactNode } from "react";
+// The value is the record's, the input holds a draft (useFieldDraft), and
+// blur (or Enter, for one line) writes only when it changed; typing never
+// writes. The draft follows the record while the field is untouched, so an
+// action that moves the record shows here at once (#3615).
+import { useRef, type ReactNode } from "react";
 import { fieldNeed, type FieldNeed } from "./field-pack";
 import { fieldPackControlClass, type FieldPackItem } from "./FieldPack";
+import { useFieldDraft } from "./use-field-draft";
 
 /** The small mono caption every field in a pack wears over its control. */
 export function FieldLabel({ children }: { children: ReactNode }) {
@@ -59,23 +61,36 @@ export function editFieldText(value: string | number | null | undefined, numeric
 export function EditField({ label, value, onCommit, numeric, multiline, type, placeholder, className }: EditFieldProps) {
   const Cmp = multiline ? "textarea" : "input";
   const initial = editFieldText(value, numeric);
+  const f = useFieldDraft(initial);
+  // Escape leaves without writing; the blur it causes must not write the draft.
+  const leaving = useRef(false);
   return (
     <label className="block min-w-0">
       <FieldLabel>{label}</FieldLabel>
       <Cmp
         type={multiline ? undefined : type ?? (numeric ? "number" : "text")}
         step={numeric && !multiline ? "any" : undefined}
-        defaultValue={initial}
+        value={f.draft}
+        onChange={(e) => f.setDraft(e.target.value)}
         placeholder={placeholder}
         onBlur={(e) => {
-          if (e.target.value !== initial) onCommit(e.target.value);
+          if (leaving.current) {
+            leaving.current = false;
+            return;
+          }
+          const v = e.target.value;
+          if (v !== initial) {
+            f.committed(v);
+            onCommit(v);
+          }
         }}
         onKeyDown={(e) => {
           // Enter commits a line (blur does the write); Escape puts the
           // record's value back and leaves without writing.
           if (!multiline && e.key === "Enter") (e.target as HTMLInputElement).blur();
           if (e.key === "Escape") {
-            (e.target as HTMLInputElement).value = initial;
+            leaving.current = true;
+            f.reset();
             (e.target as HTMLInputElement).blur();
           }
         }}
@@ -100,11 +115,20 @@ export function editFieldItem(key: string, p: EditFieldProps & { label: string }
 }
 
 export function EditSelect({ label, value, options, onCommit }: { label: ReactNode; value: string; options: readonly string[]; onCommit: (v: string) => void }) {
+  const f = useFieldDraft(value);
   return (
     <label className="block min-w-0">
       <FieldLabel>{label}</FieldLabel>
-      <select defaultValue={value} onChange={(e) => onCommit(e.target.value)} className={"input " + fieldPackControlClass}>
-        {!options.includes(value) && value ? <option value={value}>{value}</option> : null}
+      <select
+        value={f.draft}
+        onChange={(e) => {
+          f.setDraft(e.target.value);
+          f.committed(e.target.value);
+          onCommit(e.target.value);
+        }}
+        className={"input " + fieldPackControlClass}
+      >
+        {!options.includes(f.draft) && f.draft ? <option value={f.draft}>{f.draft}</option> : null}
         {options.map((o) => (
           <option key={o} value={o}>
             {o}

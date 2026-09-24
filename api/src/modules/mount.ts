@@ -14,6 +14,8 @@ import { requireAuth } from "../auth/middleware.js";
 import { withTenant } from "../middleware/tenant.js";
 import { meta } from "../db/meta.js";
 import { listEntries } from "./registry.js";
+import { roleSatisfies } from "@cobblr/platform-contract/org-roles";
+import { describeBlock } from "../platform/approvals.js";
 
 export interface ModuleApiModule {
   default: Router;
@@ -156,11 +158,27 @@ function requireModuleEnabled(moduleName: string) {
       .where("module_name", "=", moduleName)
       .executeTakeFirst();
     if (!row) {
+      const shown = listEntries().find((e) => e.manifest.name === moduleName)?.manifest.displayName ?? moduleName;
+      const role = req.tenant?.role ?? "member";
+      // An owner or admin can reach the switch, so they are told where it
+      // is. Anyone else is told what to ask for, with the ask attached
+      // (blocked-action.ts), never sent to a screen they cannot open: a
+      // member pressing Add on a scan routed to an app that is off met
+      // "Enable it in Configuration → Modules" and nothing else (#3610).
+      if (roleSatisfies(role as "owner", ["owner", "admin"])) {
+        res.status(409).json({
+          error: { code: "module_not_enabled", message: `${shown} is not turned on in this workspace. Turn it on in Configuration → Modules.` },
+        });
+        return;
+      }
+      const blocked = await describeBlock({
+        orgId,
+        userId: req.session?.id ?? "",
+        role,
+        remedies: [{ kind: "module", key: moduleName }],
+      });
       res.status(409).json({
-        error: {
-          code: "module_not_enabled",
-          message: `The "${moduleName}" module isn't enabled for this workspace. Enable it in Configuration → Modules.`,
-        },
+        error: { code: "module_not_enabled", message: `${shown} is not turned on in this workspace. Ask a workspace admin to turn it on.`, blocked },
       });
       return;
     }

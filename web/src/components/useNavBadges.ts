@@ -31,6 +31,12 @@ export interface NavCount {
  *  person is working down should read fresh within a scan or two. */
 export const NAV_COUNT_POLL_MS = 15_000;
 
+/** Every nav count of one workspace: what a write there invalidates. */
+export const navCountKeys = {
+  all: (slug: string) => ["nav-count", slug] as const,
+  one: (slug: string, module: string, path: string) => ["nav-count", slug, module, path] as const,
+};
+
 /** The declared counts among the enabled modules. Only a PRIMARY door has a
  *  row, so only a primary door can carry a number: a search-only door has
  *  nothing to hang it on. Pure, so the rule is testable without a navbar. */
@@ -78,7 +84,7 @@ export function useNavBadges(activeSlug: string): Map<string, number> {
   const counts = navCountsOf((modules.data?.items ?? []).filter((m) => m.enabled));
   const results = useQueries({
     queries: counts.map((c) => ({
-      queryKey: ["nav-count", activeSlug, c.module, c.path],
+      queryKey: navCountKeys.one(activeSlug, c.module, c.path),
       queryFn: () => api.moduleNavCount(activeSlug, c.module, c.path),
       enabled: !!activeSlug,
       staleTime: NAV_COUNT_POLL_MS - 1_000,

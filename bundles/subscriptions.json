@@ -2,12 +2,12 @@
   "manifest": {
     "id": "cobblr.flagship.subscriptions",
     "catalog": "extended",
-    "version": "0.2.3",
+    "version": "0.2.4",
     "name": "Subscriptions",
     "description": "Every recurring charge as its own table: cost/cycle, renewal date, payment method, grouped by category.",
     "author": "Cobblr",
     "released_at": "2026-06-08",
-    "changelog": "Dropped the computed “Plan” summary line (clutter on the form). (Now its OWN table (an inventory instance), not generic Inventory with extra columns) its own nav entry, a “New subscription” button, only the fields a bills tracker needs (stock/parts cruft hidden). Plain-language hints + a pinned “Renews next” view.",
+    "changelog": "Opens as a catalog of things you own, and stays one: a number typed into one item no longer turns the whole collection into stock tracking with Use one, Used up and a reorder point. Earlier: Dropped the computed “Plan” summary line (clutter on the form). (Now its OWN table (an inventory instance), not generic Inventory with extra columns) its own nav entry, a “New subscription” button, only the fields a bills tracker needs (stock/parts cruft hidden). Plain-language hints + a pinned “Renews next” view.",
     "requires": [
       {
         "module": "inventory"
@@ -17,6 +17,9 @@
       {
         "module": "inventory",
         "instance_name": "subscriptions",
+        "faces": {
+          "stock": false
+        },
         "display_name": "Subscriptions",
         "glyph": "🔁",
         "item_noun": "subscription",

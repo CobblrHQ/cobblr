@@ -10,6 +10,7 @@
 // nothing auto-commits (every identified photo waits for a one-tap
 // confirm in the triage queue).
 
+import { picturesThatAgree } from "./picture-agrees.js";
 import type { Kysely } from "kysely";
 import { seenCountOf, seenDistinctOf } from "./seen-count.js";
 import { titleVariantsOf, type TitleVariants } from "@cobblr/platform-contract/display-identity";
@@ -42,7 +43,7 @@ import { noReceiptShape, scoreReceiptShape, type ReceiptShape } from "./receipt-
 import { classifyAiFailure } from "@cobblr/platform-contract/ai-refusal";
 import { providerReasonOf } from "@cobblr/platform-contract/provider-reason";
 import { identifyFailureWords, type IdentifyFailure } from "@cobblr/platform-contract/scan-fallback";
-import { hostedIdentify, hostedIdentifyEnabled, toPhotoIdentity, receiptAsIdentity } from "./hosted-identify.js";
+import { hostedIdentifyWhy, hostedIdentifyEnabled, toPhotoIdentity, receiptAsIdentity } from "./hosted-identify.js";
 
 /** Re-fetch the catalog image to match a (corrected) name. The card prefers the
  *  downloaded `catalog_image_file_id` over `catalog_image_url`, so a rename left
@@ -175,7 +176,14 @@ export async function refreshCatalogImageByName(
       return "throttled";
     }
     if (found.items.length === 0) console.warn(`[core-scan] no pictures found for ${JSON.stringify(q)}`);
-    ranked = found.items.map((r) => r.url).filter((u): u is string => !!u);
+    // Never a picture that contradicts what the item says it is: a white
+    // plastic kettle is not given a stainless one (picture-agrees.ts, #3584).
+    // The ones that agree go first; if none is left the row keeps the
+    // person's own photo and the choice stays open.
+    const observations = (cur?.suggested_metadata as { photo_observations?: string } | null)?.photo_observations ?? null;
+    const agreeing = picturesThatAgree({ name, observations }, found.items);
+    if (found.items.length && !agreeing.length) console.warn(`[core-scan] every picture for ${JSON.stringify(q)} contradicts the item; keeping its own photo`);
+    ranked = agreeing.map((r) => r.url).filter((u): u is string => !!u);
   }
   // Try to DOWNLOAD the top candidates into core-files, falling through until one
   // stores. Storing just the top RAW url (as this did) left many tiles empty: a
@@ -430,8 +438,11 @@ export async function identifyPhoto({
   // Hosted identify first, when this deployment has it (the try sandbox, or a
   // keyed self-host). Null falls through to the tenant path unchanged, so the
   // hosted service being down is never worse than never having had it.
+  let hostedDegraded: IdentifyFailure["hosted"];
   if (hostedIdentifyEnabled()) {
-    const hosted = await hostedIdentify({ orgId, imageB64, visitorIp, userId });
+    const why = await hostedIdentifyWhy({ orgId, imageB64, visitorIp, userId });
+    const hosted = why.answer;
+    if (why.degraded && why.degraded !== "off") hostedDegraded = why.degraded;
     if (hosted?.kind === "item" && hosted.item) {
       const mapped = toPhotoIdentity(hosted.item);
       if (mapped) return { identity: mapped };
@@ -476,7 +487,7 @@ export async function identifyPhoto({
     const ai_reason = providerReasonOf(err) ?? undefined;
     const reason = (err as Error)?.message ?? String(err);
     console.error(`[core-scan] identify failed (${ai}${ai_reason ? `/${ai_reason}` : ""}):`, reason);
-    return { identity: null, failure: { code: "ai_unavailable", ai, ...(ai_reason ? { ai_reason } : {}), reason } };
+    return { identity: null, failure: { code: "ai_unavailable", ai, ...(ai_reason ? { ai_reason } : {}), ...(hostedDegraded ? { hosted: hostedDegraded } : {}), reason } };
   }
   try {
     const m = raw.match(/\{[\s\S]*\}/);
@@ -1341,7 +1352,7 @@ export async function enrichPhotoItem(ctx: PhotoEnrichContext): Promise<EnrichOu
         ai_suggested_at: new Date(),
         updated_at: new Date(),
         suggested_metadata: sql`coalesce(suggested_metadata, '{}'::jsonb) || ${JSON.stringify({
-          identify_failure: { code: failure.code, ...(failure.ai ? { ai: failure.ai } : {}), ...(failure.ai_reason ? { ai_reason: failure.ai_reason } : {}) },
+          identify_failure: { code: failure.code, ...(failure.ai ? { ai: failure.ai } : {}), ...(failure.ai_reason ? { ai_reason: failure.ai_reason } : {}), ...(failure.hosted ? { hosted: failure.hosted } : {}) },
         })}::jsonb` as never,
       })
       .where("id", "=", ctx.itemId)

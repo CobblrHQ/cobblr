@@ -15,7 +15,7 @@
 // This file is the part worth testing on its own: what "late" means, and how a
 // flat list of dated things becomes four buckets.
 
-import { dayHere } from "@cobblr/platform-contract/day";
+import { countdownWords, dayHere } from "@cobblr/platform-contract/day";
 import type { CalendarEvent } from "./api";
 
 export type BucketId = "overdue" | "today" | "week" | "later";
@@ -114,15 +114,5 @@ export function bucketEvents(events: readonly CalendarEvent[], now: Date): Bucke
  *  subtraction yourself, and the whole point of this card is not making you
  *  think. */
 export function relativeDay(dateISO: string, now: Date): string {
-  const day = dateISO.slice(0, 10);
-  const today = dayKey(now);
-  if (day === today) return "today";
-  const diff = Math.round(
-    (Date.parse(`${day}T00:00:00`) - Date.parse(`${today}T00:00:00`)) / 86_400_000,
-  );
-  const n = Math.abs(diff);
-  const unit = n === 1 ? "day" : n < 14 ? "days" : n < 60 ? "weeks" : "months";
-  const size = n < 14 ? n : n < 60 ? Math.round(n / 7) : Math.round(n / 30);
-  if (diff < 0) return n === 1 ? "yesterday" : `${size} ${unit} ago`;
-  return n === 1 ? "tomorrow" : `in ${size} ${unit}`;
+  return countdownWords(dateISO.slice(0, 10), dayKey(now), "long");
 }

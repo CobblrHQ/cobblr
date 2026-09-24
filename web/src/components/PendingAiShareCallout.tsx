@@ -6,6 +6,7 @@
 // for the settings panel. Renders nothing unless the viewer is an owner with a
 // pending offer.
 
+import { aiAvailabilityKeys } from "../lib/ai-availability-keys";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { Link } from "react-router-dom";
 import { Sparkles } from "lucide-react";
@@ -20,10 +21,10 @@ export function PendingAiShareCallout({ slug, role }: { slug: string; role: stri
   const toast = useToast();
 
   const onItems = (r: { items: WorkspaceAiOffer[] }) => {
-    qc.setQueryData(["ai-shares", slug], r);
+    qc.setQueryData(aiAvailabilityKeys.shares(slug), r);
     // Availability just changed — refresh so the chat's "AI off" strip clears
     // without a reload (useAiStatus caches for minutes).
-    void qc.invalidateQueries({ queryKey: ["ai-status"] });
+    void qc.invalidateQueries({ queryKey: aiAvailabilityKeys.all() });
   };
   // Approve with active=false — the server auto-activates it when the workspace
   // has no active AI yet (the common case), so one tap lights up the chat.

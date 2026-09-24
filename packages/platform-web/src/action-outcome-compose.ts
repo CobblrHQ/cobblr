@@ -37,7 +37,7 @@ export function printerListFailureIsNoIntent(err: unknown): boolean {
   const code = (err as { code?: unknown } | null)?.code;
   if (code === "module_not_enabled") return true;
   const msg = err instanceof Error ? err.message : String(err ?? "");
-  return /module isn't enabled for this workspace/i.test(msg);
+  return /module isn't enabled for this workspace|is not turned on in this workspace/i.test(msg);
 }
 
 /** The second line after a walk-up print attempt, or null when there is

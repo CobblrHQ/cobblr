@@ -24,12 +24,16 @@ export function pilesFrom(plans: readonly AutofilePlanLine[]): Piles {
 
 /** What confirm is told: the items the sheet is filing, each with the plan
  *  it showed. The "left for you" pile is not sent: nothing happens to it. */
-export function seenFrom(piles: Piles): {
+export function seenFrom(
+  piles: Piles,
+  /** A line's restock answer, when the person chose one other than +1. */
+  restock: Readonly<Record<string, "add" | "replaced" | "went_bad">> = {},
+): {
   item_ids: string[];
-  seen: Array<{ item_id: string; action: "attach" | "create"; to_id?: string | null; destination?: string | null }>;
+  seen: Array<{ item_id: string; action: "attach" | "create"; to_id?: string | null; destination?: string | null; restock?: "add" | "replaced" | "went_bad" }>;
 } {
   const seen = [
-    ...piles.attach.map((p) => ({ item_id: p.itemId, action: "attach" as const, to_id: p.to.id })),
+    ...piles.attach.map((p) => ({ item_id: p.itemId, action: "attach" as const, to_id: p.to.id, ...(restock[p.itemId] ? { restock: restock[p.itemId] } : {}) })),
     ...piles.create.map((p) => ({ item_id: p.itemId, action: "create" as const, destination: p.destination ?? null })),
   ];
   return { item_ids: seen.map((x) => x.item_id), seen };

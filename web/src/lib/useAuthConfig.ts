@@ -10,6 +10,7 @@
 // pages cannot make different choices about the same outage.
 import { useCallback, useEffect, useState } from "react";
 import { api } from "./api";
+import { requestFailureOf, type RequestFailure } from "./request-failure";
 
 export interface AuthConfigShape {
   signup_enabled: boolean;
@@ -21,7 +22,7 @@ export interface AuthConfigShape {
 export type AuthConfigState =
   | { status: "loading"; cfg: null }
   | { status: "ready"; cfg: AuthConfigShape }
-  | { status: "failed"; cfg: null };
+  | { status: "failed"; cfg: null; failure: RequestFailure };
 
 /** Fetches /auth/config; `retry()` asks again after a failure. */
 export function useAuthConfig(): AuthConfigState & { retry: () => void } {
@@ -44,8 +45,8 @@ export function useAuthConfig(): AuthConfigState & { retry: () => void } {
           },
         });
       })
-      .catch(() => {
-        if (alive) setState({ status: "failed", cfg: null });
+      .catch((err: unknown) => {
+        if (alive) setState({ status: "failed", cfg: null, failure: requestFailureOf(err) });
       });
     return () => {
       alive = false;

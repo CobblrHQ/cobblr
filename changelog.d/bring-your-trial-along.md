@@ -3,6 +3,7 @@ type: feature
 scope: try
 date: 2026-09-22
 docs_target: docs/USER_GUIDE.md#Trials, and the sandbox
+docs_published: 2026-09-24
 ---
 The end of a sandbox can now bring what you built into a real account: the bundles, collections, fields, automations and records it listed, with your photos, made again in the new account the same way you would have made them there.
 

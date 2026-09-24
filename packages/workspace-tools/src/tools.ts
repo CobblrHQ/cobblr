@@ -22,6 +22,7 @@ import {
   resolveDeletePath,
   summarizeKind,
 } from "./kinds.js";
+import { explainRecords } from "./field-meanings.js";
 
 export type ToolMode = "read" | "write";
 
@@ -529,9 +530,9 @@ export const WORKSPACE_TOOLS: WorkspaceTool[] = [
         // The kind's own search matched nothing by name. Before the model tells
         // the user "you have none", look at every text field ourselves.
         const scan = await scanByText(api, kind, String(args.q).trim(), limit, { includeRetired: args.include_retired === true });
-        if (scan) return toolOk(scan);
+        if (scan) return toolOk(explainRecords(scan, await fetchKinds(api).catch(() => [])));
       }
-      return toolOk(page);
+      return toolOk(explainRecords(page, await fetchKinds(api).catch(() => [])));
     },
   },
   {
@@ -596,7 +597,7 @@ export const WORKSPACE_TOOLS: WorkspaceTool[] = [
         `/entities/${encodeURIComponent(String(args.kind))}/${encodeURIComponent(String(args.id))}`,
       );
       if (res.status >= 400) return toolFail(apiErrorMessage(res, "record not found"));
-      return toolOk(res.body);
+      return toolOk(explainRecords(res.body, await fetchKinds(api).catch(() => [])));
     },
   },
   {
@@ -617,7 +618,7 @@ export const WORKSPACE_TOOLS: WorkspaceTool[] = [
           : "";
       const res = await api.request("GET", `/modules/core-search/search?q=${encodeURIComponent(q)}${kinds}`);
       if (res.status >= 400) return toolFail(apiErrorMessage(res, "search failed"));
-      return toolOk(res.body);
+      return toolOk(explainRecords(res.body, await fetchKinds(api).catch(() => [])));
     },
   },
   {

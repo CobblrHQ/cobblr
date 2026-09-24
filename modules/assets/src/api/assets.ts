@@ -4,7 +4,7 @@ import { sql } from "kysely";
 import { platform } from "@cobblr/platform-contract";
 import { instanceOf, sessionUser, tenantContext, tenantDb } from "../db.js";
 import { asyncHandler, badBody, requireRole } from "./util.js";
-import { routeUnknownToMetadata, preserveServerManaged, coerceMetadata } from "@cobblr/platform-contract/entity-metadata";
+import { routeUnknownToMetadata, coerceMetadata, withMetadataMerged } from "@cobblr/platform-contract/entity-metadata";
 
 export const assetsRouter = Router({ mergeParams: true });
 
@@ -171,13 +171,6 @@ assetsRouter.patch(
 
     const smNames = await platform().entities.serverManagedFields(ctx.org.id, "assets:asset");
     const beforeMeta = coerceMetadata((before as { metadata?: unknown }).metadata);
-    if (parsed.data.metadata !== undefined) {
-      parsed.data.metadata = preserveServerManaged(
-        parsed.data.metadata as Record<string, unknown>,
-        beforeMeta,
-        smNames,
-      );
-    }
 
     // Location changes ride the placement seam (placement-cutover-plan
     // step 1) instead of the column write; parsed.data stays intact so the
@@ -188,7 +181,9 @@ assetsRouter.patch(
     }
     const updated = await db
       .updateTable("assets_assets")
-      .set({ ...patchRest, updated_at: new Date() } as never)
+      // The custom fields MERGE into the live row: a partial edit never
+      // replaces the bag (withMetadataMerged, #3625).
+      .set(withMetadataMerged({ ...patchRest, updated_at: new Date() } as Record<string, unknown>, smNames) as never)
       .where("id", "=", id)
       .where("instance", "=", instanceOf(req))
       .returningAll()
@@ -231,10 +226,7 @@ assetsRouter.patch(
     for (const [k, v] of Object.entries(parsed.data)) {
       if (v !== undefined && k !== "metadata") nativeChanges[k] = v;
     }
-    const afterMeta =
-      parsed.data.metadata !== undefined
-        ? ((parsed.data.metadata as Record<string, unknown>) ?? {})
-        : beforeMeta;
+    const afterMeta = coerceMetadata((updated as { metadata?: unknown }).metadata);
     await platform().events.emit("assets.asset.updated", {
       orgId: ctx.org.id,
       assetId: id,

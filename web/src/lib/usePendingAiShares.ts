@@ -6,15 +6,16 @@
 // + nav dot).
 //
 // The endpoint returns for any member, but only owners can approve — so we only
-// fetch when it's actionable. Shares the ["ai-shares", slug] query key with the
+// fetch when it's actionable. Shares the aiAvailabilityKeys.shares(slug) query key with the
 // settings panel, so approving in one place updates the other.
 
+import { aiAvailabilityKeys } from "./ai-availability-keys";
 import { useQuery } from "@tanstack/react-query";
 import { api, type WorkspaceAiOffer } from "./api";
 
 export function usePendingAiShares(slug: string, isOwner: boolean): WorkspaceAiOffer[] {
   const q = useQuery({
-    queryKey: ["ai-shares", slug],
+    queryKey: aiAvailabilityKeys.shares(slug),
     queryFn: () => api.listAiShares(slug),
     enabled: !!slug && isOwner,
     // Poll so a member's new offer surfaces on the dashboard callout without a

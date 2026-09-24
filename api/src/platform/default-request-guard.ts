@@ -27,6 +27,9 @@ const DAY_MS = 24 * 60 * 60_000;
 const HOUR_MS = 60 * 60_000;
 
 // Route classes and their limits, matched by path prefix (most specific first).
+// GET /auth/config never reaches a guard (GUARD_EXEMPT_READS in hosted-seams.ts):
+// counted here as a credential attempt, a busy network's page loads spent the
+// 20-per-5-minutes bucket and it could not see the sign-in form (#3622).
 const AUTH: Rule = { max: 20, windowMs: 5 * 60_000 };       // login/signup/magic/reset/verify
 const ANON: Rule = { max: 60, windowMs: 60_000 };           // public token surfaces
 const FEEDBACK: Rule = { max: 10, windowMs: 60_000 };       // feedback submissions

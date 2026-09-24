@@ -55,6 +55,7 @@ import { getTenantDb, evictTenantPool } from "../db/tenant.js";
 import { createInstance, getInstance } from "./instances.js";
 import { upsertOverride } from "./entity-kind-overrides.js";
 import { log as activityLog } from "./activity.js";
+import { bumpWorkspaceShape } from "./workspace-shape.js";
 import { noteHealShim } from "./heal-shim-log.js";
 
 const SHIM = "api/src/platform/migrate-groceries-twin-to-instance.ts";
@@ -190,6 +191,7 @@ async function retireOne(
       .set({ manifest: sql`${JSON.stringify(next)}::jsonb` as never, version: RETIRED_TWIN_VERSION })
       .where("id", "=", bundleId)
       .execute();
+    await bumpWorkspaceShape(orgId);
   }
   return { rowsMoved, defsDropped: twinRows.length };
 }

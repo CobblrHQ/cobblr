@@ -59,3 +59,24 @@ export function groupKeyOf(
     (groupBy === "subtitle" ? r.subtitle : undefined);
   return typeof raw === "string" && raw.length > 0 ? raw : NO_GROUP;
 }
+
+/** Every grouped surface's buckets, in first-seen order: the full view's Table
+ *  and Kanban renderers AND the dashboard's preview of that view. One function,
+ *  so a preview cannot group differently from the view it previews (#3588: the
+ *  dashboard read `fields[group_by]` itself, which knows neither the reserved
+ *  `location` key nor `fields.metadata`, and called a lamp in Review Kitchen
+ *  "no location set yet" beside a full By room view that had it). */
+export function groupRows<R extends GroupableRow>(
+  rows: R[],
+  groupBy: string,
+  areaOf: (locationId: string | null | undefined) => string | null,
+): Map<string, R[]> {
+  const byKey = new Map<string, R[]>();
+  for (const r of rows) {
+    const key = groupKeyOf(r, groupBy, areaOf);
+    const arr = byKey.get(key);
+    if (arr) arr.push(r);
+    else byKey.set(key, [r]);
+  }
+  return byKey;
+}

@@ -21,6 +21,7 @@ import ReactMarkdown from "react-markdown";
 import { api, ApiError, type CrossOrgNotificationEntry } from "../lib/api";
 import { useActiveOrg } from "../auth/ActiveOrgContext";
 import { SidePanel } from "./SidePanel";
+import { notificationKeys } from "../lib/notification-keys";
 
 type Mode = "dropdown" | "sidebar";
 const MODE_KEY = "cobblr.notif.mode";
@@ -56,7 +57,7 @@ export function NotificationsBell({ panelOnly = false, asRow = false }: { panelO
   }
 
   const unread = useQuery({
-    queryKey: ["me-notifications-unread"],
+    queryKey: notificationKeys.unread(),
     queryFn: () => api.meNotificationsUnreadCount(),
     refetchInterval: 15_000,
   });
@@ -65,13 +66,13 @@ export function NotificationsBell({ panelOnly = false, asRow = false }: { panelO
   // workspace" (sky blue — cool vs warm so they're distinct at a glance)
   // — a workspace-A alert shouldn't read as urgent while you're in B.
   const unreadHere = useQuery({
-    queryKey: ["notifications-unread", activeSlug],
+    queryKey: notificationKeys.workspaceUnread(activeSlug),
     queryFn: () => api.notificationsUnreadCount(activeSlug),
     enabled: !!activeSlug,
     refetchInterval: 15_000,
   });
   const list = useQuery({
-    queryKey: ["me-notifications-list"],
+    queryKey: notificationKeys.bell(),
     queryFn: () => api.meNotifications(),
     enabled: open,
   });
@@ -79,15 +80,13 @@ export function NotificationsBell({ panelOnly = false, asRow = false }: { panelO
   const markRead = useMutation({
     mutationFn: (id: string) => api.meMarkNotificationRead(id),
     onSuccess: () => {
-      void qc.invalidateQueries({ queryKey: ["me-notifications-unread"] });
-      void qc.invalidateQueries({ queryKey: ["me-notifications-list"] });
+      void qc.invalidateQueries({ queryKey: notificationKeys.all() });
     },
   });
   const markAll = useMutation({
     mutationFn: () => api.meMarkAllNotificationsRead(),
     onSuccess: () => {
-      void qc.invalidateQueries({ queryKey: ["me-notifications-unread"] });
-      void qc.invalidateQueries({ queryKey: ["me-notifications-list"] });
+      void qc.invalidateQueries({ queryKey: notificationKeys.all() });
     },
   });
 
@@ -152,7 +151,7 @@ export function NotificationsBell({ panelOnly = false, asRow = false }: { panelO
       setAnswerError(null);
       setAnswered((a) => ({ ...a, [v.n.id]: r.joined ? "joined" : "declined" }));
       if (!v.n.read_at) markRead.mutate(v.n.id);
-      void qc.invalidateQueries({ queryKey: ["notifications"] });
+      void qc.invalidateQueries({ queryKey: notificationKeys.all() });
       if (r.joined) {
         void qc.invalidateQueries({ queryKey: ["orgs"] });
         setOpen(false);

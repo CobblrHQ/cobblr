@@ -120,6 +120,11 @@ export interface FieldSection {
  *  takes one of these via a Provider so the components stay
  *  framework-agnostic and the host owns network + auth. */
 export interface PlatformWebApi {
+  /** How a collection presents its native fields: relabels and hides
+   *  (GET /:slug/native-field-overrides?kind=). Read through
+   *  useFieldPresentation; a host without it shows the presentation as
+   *  unreadable rather than as "nothing configured". */
+  listNativeFieldOverrides?(slug: string, kind: string): Promise<{ items: Array<{ name: string; display_label: string | null; hidden: boolean }> }>;
   /** Which faces a collection wears (GET /:slug/faces). Optional so a host
    *  without it shows every face, as before. */
   listFaces?(slug: string, kind: string): Promise<{ kind: string; traits?: Record<string, string>; faces: string[]; explicit: string[] }>;

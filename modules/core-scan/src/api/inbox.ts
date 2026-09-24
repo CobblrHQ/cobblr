@@ -60,17 +60,20 @@ import {
 } from "@cobblr/platform-contract";
 import { splitEntityKind, entityKindOf } from "@cobblr/platform-contract/entity-kind";
 import { roleSatisfies } from "@cobblr/platform-contract/org-roles";
-import { BundleInstaller, fileThroughConfirm } from "../services/file-through-confirm.js";
+import { createCapabilityForModule } from "@cobblr/platform-contract/create-capability";
+import { BundleInstaller, fileThroughConfirm, tableForFiling, type FilingCandidate } from "../services/file-through-confirm.js";
 import { displayed as displayedNote, cardNote, withoutRoutingSentences } from "../services/routing-note.js";
 import {
   matchesScanFacet,
   needsScanReview,
   scanReviewReason,
+  scanReceiptReadFailed,
   scanWaitingDays,
   SCAN_TRIAGE_FACETS,
   SCAN_TRIAGE_COLUMNS,
   type ScanTriageFacet,
-  type ScanTriageRow, DESTINATION_KEY, type StoredDestination } from "@cobblr/platform-contract/scan-triage";
+  splitUncutWords,
+  type ScanTriageRow, type ScanRowStateContext, type ScanResolverTable, DESTINATION_KEY, FILED_INTO_KEY, type FiledInto, type StoredDestination } from "@cobblr/platform-contract/scan-triage";
 import { scanToolRelevance, type ScanToolHints } from "@cobblr/platform-contract/scan-tools";
 import { bearer, sessionUser, tenantContext, tenantDb } from "../db.js";
 import { liveTablesOf, withResolvedOffers, type LiveTable } from "../services/resolve-offers.js";
@@ -89,7 +92,7 @@ import {
   observeScanPhoto,
   refreshCatalogImageByName,
 } from "../services/enrich-photo.js";
-import { mergeMeta, standingHint, standingHints } from "../services/metadata.js";
+import { dropMeta, mergeMeta, standingHint, standingHints } from "../services/metadata.js";
 import {
   type CatalogSource,
   type CatalogStep,
@@ -100,7 +103,12 @@ import {
 import { pickPrimaryId, unionCandidateFields, traitsHaveUnique, combinedQuantity, type CombineItem, type CombineCandidate } from "../services/combine-merge.js";
 import { selectTopCandidates, deriveImageQuery, isFreshCategory } from "../services/ddg-images.js";
 import { pictureOptions } from "../services/picture-options.js";
-import { rankPhotoWithAi, isRankFailure } from "../services/rank-photo.js";
+import { rankPhotoWithAi, isRankFailure, rankFailureSentence } from "../services/rank-photo.js";
+import { picturesThatAgree } from "../services/picture-agrees.js";
+import { themeFromReply, themeScope, type ThemeItem } from "../services/session-theme.js";
+import { scannerQueue } from "../services/scanner-queue.js";
+import { inboxCounts, type CountRow } from "../services/inbox-counts.js";
+import { candidateTableOf, destinationTables, filingDestination, type DestinationRow } from "../services/destination.js";
 import {
   candidateFieldValue,
   deriveRankContext,
@@ -120,7 +128,10 @@ import {
   type ScanMenuEntry, perceiveRow } from "../services/matchmaker.js";
 import { candidatesForNamelessRow, isCuratedBarcodeIdentification, shouldAdoptCandidateName } from "../services/adopt-name.js";
 import { guardReplayCandidates } from "../services/replay-guard.js";
-import { decodedIsbnOf, lookupBookIsbn } from "../services/book-lookup.js";
+import { catalogTitleCorroborated, decodedIsbnOf, lookupBookByTitle } from "../services/book-lookup.js";
+import { CATALOG_TITLE_MATCHED, evidencedFill, photoReadOf, unevidencedIdentifiers } from "@cobblr/platform-contract/scan-evidence";
+import { SCAN_UNDO_ACTIONS, scanDeletedRecovery, scanRestoreRefusal } from "@cobblr/platform-contract/scan-recovery";
+import { uncombinePlan, type CombineUndo } from "../services/uncombine.js";
 import { resolvePaintColorFromText } from "../services/paint-code.js";
 import { resolvePaintCodeViaWeb } from "../services/paint-code-websearch.js";
 import { parseReceipt } from "../services/receipt.js";
@@ -199,6 +210,27 @@ export async function runBounded(tasks: Array<() => Promise<void>>, width: numbe
   await Promise.all(Array.from({ length: Math.min(width, tasks.length) }, worker));
 }
 
+// ─────────────────────── GET /inbox/scanner-queue ───────────────────
+// The dashboard's scanner queue over EVERY pending scan, grouped by where it
+// could go (services/scanner-queue.ts): the counts a person reads and the ids
+// each group's "Add all" files, from one answer. It used to be grouped in the
+// browser from the first page of the inbox, so 78 pending read as 50 (#3598).
+// Light columns only: no photos, no notes.
+inboxRouter.get(
+  "/inbox/scanner-queue",
+  asyncHandler(async (req, res) => {
+    if (!requireRole(req, res, "owner", "admin", "member", "guest")) return;
+    const rows = await tenantDb(req)
+      .selectFrom("core_scan_inbox_items")
+      .select(["id", "source_kind", ...SCAN_TRIAGE_COLUMNS])
+      .where("status", "=", "pending")
+      .orderBy("created_at", "desc")
+      .orderBy("id", "desc")
+      .execute();
+    res.json(scannerQueue(rows, await destinationTablesFor(req), await liveTablesFor(req)));
+  }),
+);
+
 // ─────────────────────────── GET /inbox/stats ──────────────────────
 // Cheap counts for the put-away front door (dashboard card + scan-page
 // strip): how many pending captures exist, how many of those still have no
@@ -214,38 +246,24 @@ inboxRouter.get(
   asyncHandler(async (req, res) => {
     if (!requireRole(req, res, "owner", "admin", "member", "guest")) return;
     const db = tenantDb(req);
-    const row = await db
+    // Every count over EVERY pending row, by the predicates the rows use
+    // (services/inbox-counts.ts): the dashboard's front door and the inbox's
+    // own header and filters read these, never the length of a loaded page
+    // (#3598, #3638). `batch_id` scopes it to one session, as the inbox can be.
+    const batchId = typeof req.query.batch_id === "string" && /^[0-9a-f-]{36}$/i.test(req.query.batch_id) ? req.query.batch_id : null;
+    let q = db
       .selectFrom("core_scan_inbox_items")
-      .select((eb) => [
-        eb.fn.countAll<number>().as("pending"),
-        eb.fn
-          .count<number>(
-            sql`case when target_location_id is null and target_container_id is null then 1 end`,
-          )
-          .as("unfiled"),
-      ])
-      .where("status", "=", "pending")
-      .executeTakeFirstOrThrow();
-    const homed = await db
-      .selectFrom("core_scan_inbox_items")
-      .select([...SCAN_TRIAGE_COLUMNS])
-      .where("status", "=", "pending")
-      .where((eb) => eb.or([eb("target_location_id", "is not", null), eb("target_container_id", "is not", null)]))
-      .execute();
-    const ready = homed.filter((r) => matchesScanFacet(r, "ready")).length;
-    // Receipt sessions whose read failed: no rows of their own, so the item
-    // counts above cannot see them; the dashboard and the header count do.
-    const failedReads = await db
-      .selectFrom("core_scan_batches")
-      .select((eb) => eb.fn.countAll<number>().as("n"))
-      .where("read_state", "=", "failed")
-      .executeTakeFirst();
-    res.json({
-      pending: Number(row.pending),
-      unfiled: Number(row.unfiled),
-      ready,
-      failed_reads: Number(failedReads?.n ?? 0),
-    });
+      .select([...SCAN_TRIAGE_COLUMNS, "id", "scan_batch_id", "target_location_id", "target_container_id"])
+      .where("status", "=", "pending");
+    if (batchId) q = q.where("scan_batch_id", "=", batchId);
+    const rows = await q.execute();
+    // Receipt sessions whose read failed have no rows of their own, so the
+    // row counts cannot see them; one receipt is one failed read, whether its
+    // session or its row says so.
+    let fq = db.selectFrom("core_scan_batches").select("id").where("read_state", "=", "failed");
+    if (batchId) fq = fq.where("id", "=", batchId);
+    const failedIds = new Set((await fq.execute()).map((b) => b.id));
+    res.json(inboxCounts(rows as CountRow[], failedIds, await scanViewerFor(req)));
   }),
 );
 
@@ -1543,6 +1561,10 @@ interface BatchLabel {
   date_convention: string | null;
   date_decided_by: string | null;
   date_printed: string | null;
+  /** The session's lines over EVERY row, not the page: the header's "N
+   *  items", File N and the verdict read these, so a session that spans a
+   *  page boundary says the same before and after scrolling (#3638). */
+  lines: { pending: number; ever: number };
   /** Where the parcel is, so a receipt WAITING in the inbox can say so.
    *  Filing it into an order is bookkeeping; the parcel moves either way. */
   shipment_state: string | null;
@@ -1560,14 +1582,33 @@ async function batchLabelsFor(
   const batchIds = [...new Set(rows.map((i) => i.scan_batch_id).filter((x): x is string => !!x))];
   const batches: Record<string, BatchLabel> = {};
   if (!batchIds.length) return batches;
+  const lines = await sessionLines(db, batchIds);
   for (const b of await db
     .selectFrom("core_scan_batches")
     .select(["id", "label", "origin", "source_file_id", "order_ref", "tracking_number", "shipment_state", "shipment_description", "shipment_location", "read_state", "read_failure", "read_started_at", "created_at", "date_convention", "date_decided_by", "date_printed"])
     .where("id", "in", batchIds)
     .execute()) {
-    batches[b.id] = batchLabelOf(b);
+    batches[b.id] = batchLabelOf(b, lines.get(b.id));
   }
   return batches;
+}
+
+/** Each session's pending and all-time line counts, in one grouped query. */
+async function sessionLines(db: ReturnType<typeof tenantDb>, batchIds: string[]): Promise<Map<string, { pending: number; ever: number }>> {
+  const out = new Map<string, { pending: number; ever: number }>();
+  if (!batchIds.length) return out;
+  const rows = await db
+    .selectFrom("core_scan_inbox_items")
+    .select((eb) => [
+      "scan_batch_id",
+      eb.fn.countAll<string>().as("ever"),
+      eb.fn.count<string>(eb.case().when("status", "=", "pending").then(1).end()).as("pending"),
+    ])
+    .where("scan_batch_id", "in", batchIds)
+    .groupBy("scan_batch_id")
+    .execute();
+  for (const r of rows) if (r.scan_batch_id) out.set(r.scan_batch_id, { pending: Number(r.pending), ever: Number(r.ever) });
+  return out;
 }
 
 function batchLabelOf(b: {
@@ -1575,8 +1616,9 @@ function batchLabelOf(b: {
   shipment_state: string | null; shipment_description: string | null; shipment_location: string | null;
   read_state: string | null; read_failure: unknown; read_started_at: Date | null; created_at: Date;
   date_convention?: string | null; date_decided_by?: string | null; date_printed?: string | null;
-}): BatchLabel {
+}, lines: { pending: number; ever: number } = { pending: 0, ever: 0 }): BatchLabel {
   return {
+    lines,
     date_convention: b.date_convention ?? null,
     date_decided_by: b.date_decided_by ?? null,
     date_printed: b.date_printed ?? null,
@@ -1612,7 +1654,9 @@ async function sessionsWithoutRows(db: ReturnType<typeof tenantDb>, present: Set
     .orderBy("created_at", "desc")
     .limit(50)
     .execute();
-  for (const b of rows) if (!present.has(b.id)) out[b.id] = batchLabelOf(b);
+  const absent = rows.filter((b) => !present.has(b.id));
+  const lines = await sessionLines(db, absent.map((b) => b.id));
+  for (const b of absent) out[b.id] = batchLabelOf(b, lines.get(b.id));
   return out;
 }
 
@@ -1655,13 +1699,24 @@ inboxRouter.get(
       if (source_kind) facetQuery = facetQuery.where("source_kind", "=", source_kind);
       if (batch_id) facetQuery = facetQuery.where("scan_batch_id", "=", batch_id);
       const scanned = await facetQuery.execute();
-      const matched = scanned.filter((row) => matchesScanFacet(row, triage));
-      const page = matched.slice(0, limit);
+      const viewer = await scanViewerFor(req);
+      const matched = scanned.filter((row) => matchesScanFacet(row, triage, Date.now(), viewer));
+      // A facet pages like the whole queue does, so a filter longer than one
+      // page reaches its end (#3638): the cursor is the offset into the match.
+      const offset = typeof cursor === "string" && /^facet:\d+$/.test(cursor) ? Number(cursor.slice(6)) : 0;
+      const page = matched.slice(offset, offset + limit);
       const batchMap = await batchLabelsFor(db, page);
+      // A receipt whose read failed is a session with no rows, and it needs a
+      // person: the review facet carries those sessions as the whole list does.
+      const sessions =
+        offset === 0 && triage === "needs_review" && !source_kind && !batch_id
+          ? await sessionsWithoutRows(db, new Set(page.map((i) => i.scan_batch_id).filter((x): x is string => !!x)))
+          : {};
       res.json({
         items: await servedAll(req, page),
         batches: batchMap,
-        next_cursor: null,
+        sessions,
+        next_cursor: offset + limit < matched.length ? `facet:${offset + limit}` : null,
         total: matched.length,
         // Never let a capped scan read as a complete answer.
         ...(scanned.length === TRIAGE_SCAN_CAP
@@ -1737,9 +1792,12 @@ inboxRouter.get(
       res.status(400).json({ error: { code: "missing_batch", message: "batch_id required: a theme is a question about one session." } });
       return;
     }
-    const items = await pendingThemeItems(db, batchId);
+    // The ids the group on screen shows (session-theme.ts): the answer is
+    // about exactly those, so its sentence and its Apply name one set.
+    const askedIds = typeof req.query.ids === "string" && req.query.ids ? req.query.ids.split(",").filter((x) => /^[0-9a-f-]{36}$/i.test(x)).slice(0, 200) : null;
+    const items = themeScope(await pendingThemeItems(db, batchId, askedIds), askedIds);
     if (items.length < 2) {
-      res.json({ tag: null, tag_item_ids: [], category: null });
+      res.json(themeFromReply(items, null));
       return;
     }
     const list = items.map((i, n) => `${n + 1}. ${i.name ?? "(unnamed)"}${i.category ? ` [${i.category}]` : ""}${i.is_titled_media ? " (titled media)" : ""}`).join("\n");
@@ -1765,15 +1823,7 @@ inboxRouter.get(
     } catch {
       /* AI off / errored → no suggestion */
     }
-    const tag = parsed && typeof parsed.tag === "string" && parsed.tag.trim() ? parsed.tag.trim().slice(0, 60) : null;
-    const catValue = parsed && typeof parsed.category === "string" && parsed.category.trim() ? parsed.category.trim().slice(0, 80) : null;
-    const catNums = Array.isArray(parsed?.category_item_numbers) ? parsed!.category_item_numbers.map((n) => Number(n)) : [];
-    const catIds = catNums.map((n) => items[n - 1]?.id).filter((x): x is string => !!x);
-    res.json({
-      tag,
-      tag_item_ids: tag ? items.map((i) => i.id) : [],
-      category: catValue && catIds.length ? { value: catValue, item_ids: catIds } : null,
-    });
+    res.json(themeFromReply(items, parsed));
   }),
 );
 
@@ -1818,6 +1868,10 @@ export const PatchBody = z.object({
   // true = keep as one record; the offer stops asking. An UNANSWERED offer and a
   // declined one must look different, or we'd nag on every render.
   keep_grouped: z.boolean().optional(),
+  // "Treat it as one item": the person's answer to a receipt whose read
+  // failed (#3581). The row stops being a failed receipt and asks for a
+  // name like any photo; Read again stays one tap away in its tools.
+  read_as_item: z.boolean().optional(),
   // "I will photograph this myself." Set from a desk, where the camera is not
   // the one you want; the scanner and the dashboard then carry the item to the
   // phone, instead of you finding it again in a long inbox.
@@ -1872,88 +1926,100 @@ inboxRouter.patch(
       patch.ai_confidence = null;
     }
     if (parsed.data.target_location_id !== undefined) patch.target_location_id = parsed.data.target_location_id;
-    const db = tenantDb(req);
-    // Metadata-riders (box_state / reviewed): merge into suggested_metadata
-    // without clobbering the rest of the blob.
-    if (
-      parsed.data.box_state !== undefined ||
-      parsed.data.reviewed !== undefined ||
-      parsed.data.keep_grouped !== undefined ||
-      parsed.data.photo_wanted !== undefined ||
-      parsed.data.fields !== undefined ||
-      parsed.data.category !== undefined ||
-      parsed.data.name !== undefined ||
-      parsed.data.destination !== undefined
-    ) {
-      const cur = await db
-        .selectFrom("core_scan_inbox_items")
-        .select(["suggested_metadata", "suggested_candidates"])
+    // One transaction, the row locked from the read to the write: the rider
+    // merges below (a person's field values, their name, their table) are
+    // computed in JS over the bag as it stands, so two edits arriving
+    // together must not both read the same bag and each write back only
+    // their own change (#3625). The second waits and reads the first's.
+    const txDb = tenantDb(req);
+    const { row, prior } = await txDb.transaction().execute(async (db) => {
+      // Metadata-riders (box_state / reviewed): merge into suggested_metadata
+      // without clobbering the rest of the blob.
+      if (
+        parsed.data.box_state !== undefined ||
+        parsed.data.reviewed !== undefined ||
+        parsed.data.keep_grouped !== undefined ||
+        parsed.data.read_as_item !== undefined ||
+        parsed.data.photo_wanted !== undefined ||
+        parsed.data.fields !== undefined ||
+        parsed.data.category !== undefined ||
+        parsed.data.name !== undefined ||
+        parsed.data.destination !== undefined
+      ) {
+        const cur = await db
+          .selectFrom("core_scan_inbox_items")
+          .select(["suggested_metadata", "suggested_candidates"])
+          .where("id", "=", id)
+          .forUpdate()
+          .executeTakeFirst();
+        let meta = ((cur?.suggested_metadata ?? {}) as Record<string, unknown>) ?? {};
+        if (parsed.data.fields !== undefined) {
+          const kind = parsed.data.fields_kind ?? candidateKind(storedCandidateList(cur?.suggested_candidates)[0]);
+          meta = applyUserFieldPatch(meta, parsed.data.fields, kind);
+          // Who put it there: the person. A cleared value drops the stamp
+          // too, so the field reads as whatever the pipeline says again.
+          const stamps: FieldProvenanceMap = { ...fieldProvenanceOf(meta) };
+          const at = new Date().toISOString();
+          for (const [name, v] of Object.entries(parsed.data.fields)) {
+            if (v === null || v === "") delete stamps[name];
+            else stamps[name] = { by: "person", from: "card", at, ...(stamps[name]?.role ? { role: stamps[name]!.role } : {}) };
+          }
+          if (Object.keys(stamps).length) meta[FIELD_PROVENANCE_KEY] = stamps;
+          else delete meta[FIELD_PROVENANCE_KEY];
+        }
+        if (parsed.data.category !== undefined) {
+          const kind = parsed.data.fields_kind ?? candidateKind(storedCandidateList(cur?.suggested_candidates)[0]);
+          meta = applyUserCategory(meta, parsed.data.category, kind);
+        }
+        // The name is a field (#2982): the person's is kept on the row and
+        // stamped person, so the re-run that rewrites the column never shows
+        // over it (services/user-name.ts; every reader resolves through the
+        // contract's displayName).
+        if (parsed.data.name !== undefined) meta = applyPersonName(meta, parsed.data.name);
+        if (parsed.data.box_state !== undefined) {
+          if (parsed.data.box_state === null) delete meta.box_state;
+          else meta.box_state = parsed.data.box_state;
+        }
+        if (parsed.data.reviewed !== undefined) meta.reviewed = parsed.data.reviewed;
+        if (parsed.data.keep_grouped !== undefined) meta.keep_grouped = parsed.data.keep_grouped;
+        if (parsed.data.read_as_item !== undefined) meta.read_as_item = parsed.data.read_as_item;
+        if (parsed.data.destination !== undefined) {
+          if (parsed.data.destination === null) delete meta[DESTINATION_KEY];
+          else {
+            const d = parsed.data.destination;
+            const stored: StoredDestination = { module: d.module, instance: d.instance ?? null, kind: d.kind ?? null, label: d.label ?? null, by: "person", at: new Date().toISOString() };
+            meta[DESTINATION_KEY] = stored;
+          }
+        }
+        // Cleared rather than stored false: the queue asks "which items want a
+        // photo", and a row answering "not me" is noise in a jsonb bag that four
+        // other writers share.
+        if (parsed.data.photo_wanted !== undefined) {
+          if (parsed.data.photo_wanted) meta.photo_wanted = true;
+          else delete meta.photo_wanted;
+        }
+        patch.suggested_metadata = JSON.stringify(meta);
+      }
+      // Capture the prior name first: renaming a barcode item is a correction we
+      // feed back to the shared Barcode Intelligence DB (below), and we need the
+      // value the resolver gave to record what was wrong.
+      const prior =
+        parsed.data.name !== undefined
+          ? await db
+              .selectFrom("core_scan_inbox_items")
+              .select(["barcode_text", "suggested_name"])
+              .where("id", "=", id)
+              .executeTakeFirst()
+          : undefined;
+      const row = await db
+        .updateTable("core_scan_inbox_items")
+        .set(patch)
         .where("id", "=", id)
+        .returningAll()
         .executeTakeFirst();
-      let meta = ((cur?.suggested_metadata ?? {}) as Record<string, unknown>) ?? {};
-      if (parsed.data.fields !== undefined) {
-        const kind = parsed.data.fields_kind ?? candidateKind(storedCandidateList(cur?.suggested_candidates)[0]);
-        meta = applyUserFieldPatch(meta, parsed.data.fields, kind);
-        // Who put it there: the person. A cleared value drops the stamp
-        // too, so the field reads as whatever the pipeline says again.
-        const stamps: FieldProvenanceMap = { ...fieldProvenanceOf(meta) };
-        const at = new Date().toISOString();
-        for (const [name, v] of Object.entries(parsed.data.fields)) {
-          if (v === null || v === "") delete stamps[name];
-          else stamps[name] = { by: "person", from: "card", at, ...(stamps[name]?.role ? { role: stamps[name]!.role } : {}) };
-        }
-        if (Object.keys(stamps).length) meta[FIELD_PROVENANCE_KEY] = stamps;
-        else delete meta[FIELD_PROVENANCE_KEY];
-      }
-      if (parsed.data.category !== undefined) {
-        const kind = parsed.data.fields_kind ?? candidateKind(storedCandidateList(cur?.suggested_candidates)[0]);
-        meta = applyUserCategory(meta, parsed.data.category, kind);
-      }
-      // The name is a field (#2982): the person's is kept on the row and
-      // stamped person, so the re-run that rewrites the column never shows
-      // over it (services/user-name.ts; every reader resolves through the
-      // contract's displayName).
-      if (parsed.data.name !== undefined) meta = applyPersonName(meta, parsed.data.name);
-      if (parsed.data.box_state !== undefined) {
-        if (parsed.data.box_state === null) delete meta.box_state;
-        else meta.box_state = parsed.data.box_state;
-      }
-      if (parsed.data.reviewed !== undefined) meta.reviewed = parsed.data.reviewed;
-      if (parsed.data.keep_grouped !== undefined) meta.keep_grouped = parsed.data.keep_grouped;
-      if (parsed.data.destination !== undefined) {
-        if (parsed.data.destination === null) delete meta[DESTINATION_KEY];
-        else {
-          const d = parsed.data.destination;
-          const stored: StoredDestination = { module: d.module, instance: d.instance ?? null, kind: d.kind ?? null, label: d.label ?? null, by: "person", at: new Date().toISOString() };
-          meta[DESTINATION_KEY] = stored;
-        }
-      }
-      // Cleared rather than stored false: the queue asks "which items want a
-      // photo", and a row answering "not me" is noise in a jsonb bag that four
-      // other writers share.
-      if (parsed.data.photo_wanted !== undefined) {
-        if (parsed.data.photo_wanted) meta.photo_wanted = true;
-        else delete meta.photo_wanted;
-      }
-      patch.suggested_metadata = JSON.stringify(meta);
-    }
-    // Capture the prior name first: renaming a barcode item is a correction we
-    // feed back to the shared Barcode Intelligence DB (below), and we need the
-    // value the resolver gave to record what was wrong.
-    const prior =
-      parsed.data.name !== undefined
-        ? await db
-            .selectFrom("core_scan_inbox_items")
-            .select(["barcode_text", "suggested_name"])
-            .where("id", "=", id)
-            .executeTakeFirst()
-        : undefined;
-    const row = await db
-      .updateTable("core_scan_inbox_items")
-      .set(patch)
-      .where("id", "=", id)
-      .returningAll()
-      .executeTakeFirst();
+      return { row, prior };
+    });
+    const db = txDb;
     if (!row) {
       res.status(404).json({ error: { code: "not_found", message: "inbox item not found" } });
       return;
@@ -2215,6 +2281,49 @@ inboxRouter.post(
       (meta as { entity_type?: unknown }).entity_type,
     );
     const kindKey = `${target.module}:${target.kind}`;
+    // The table this files into, installed first when it is an app the
+    // workspace does not have yet and the row's own candidate offers it.
+    // Every door files through here, so every door installs the same way
+    // (services/file-through-confirm.ts, tableForFiling; #3604).
+    const installer = new BundleInstaller({
+      baseUrl: (req.headers["x-cobblr-base-url"] as string | undefined) ?? INTERNAL_API,
+      slug: ctx.org.slug,
+      authHeaders: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+      canInstall: roleSatisfies((req as unknown as { tenant?: { role: string } }).tenant?.role as "owner", ["owner", "admin"]),
+    });
+    const table = await tableForFiling(
+      installer,
+      candidatesWithUserFields(storedCandidateList(row.suggested_candidates), row.suggested_metadata) as FilingCandidate[],
+      { module: target.module, instance: parsed.data.instance ?? null },
+      await liveTablesFor(req),
+    );
+    if (!table.ok) {
+      // A refusal a member sees carries its next step: the ask for what is
+      // missing (the one blocked-action sheet offers it), or another table
+      // when nothing can make this one (#3610).
+      if (table.remedy) {
+        const userId = sessionUser(req)?.id ?? "";
+        const role = (req as unknown as { tenant?: { role: string } }).tenant?.role ?? "member";
+        // Everything the filing needs, in ONE ask: a member who lacks the
+        // create permission as well as the app would otherwise get the app
+        // turned on, resume, and meet a second refusal and a second round
+        // trip to an admin. The same gate the card reads (create-capability).
+        const remedies: Array<{ kind: "capability" | "install" | "module"; key: string }> = [table.remedy];
+        const cap = createCapabilityForModule(target.module);
+        if (cap && !(await platform().auth.userHasCapability({ orgId: ctx.org.id, userId, role, actionId: cap }))) remedies.push({ kind: "capability", key: cap });
+        let blocked = await platform().auth.describeBlock({ orgId: ctx.org.id, userId, role, remedies, doing: "Filing this" });
+        // A permission for an app that is not on yet cannot be granted until
+        // it is: ask for the app alone rather than an ask nobody can answer.
+        if (!blocked.requestable && remedies.length > 1) {
+          blocked = await platform().auth.describeBlock({ orgId: ctx.org.id, userId, role, remedies: [table.remedy], doing: "Filing this" });
+        }
+        res.status(403).json({ error: { code: "table_not_installed", message: blocked.sentence, blocked } });
+        return;
+      }
+      res.status(409).json({ error: { code: "table_not_installed", message: `This item ${table.reason}.` } });
+      return;
+    }
+    const instance = table.instance ?? undefined;
     // The owning module declares its scan target (create endpoint + quantity
     // field) via registerScannable. A caller may pass an INSTANCE kind
     // (target_kind "vehicles:item") instead of the module's kind; the one
@@ -2224,7 +2333,7 @@ inboxRouter.post(
     // route had its own copy of that rule since a vehicle hit "assets:vehicles:item
     // is not a scan target"; attach and the bin adjust had none.)
     const scanTarget = (
-      await scanTargetOf(ctx.org.id, target.kind.includes(":") ? target.kind : kindKey, parsed.data.instance, target.module)
+      await scanTargetOf(ctx.org.id, target.kind.includes(":") ? target.kind : kindKey, instance, target.module)
     )?.scannable;
     if (!scanTarget) {
       res.status(400).json({
@@ -2248,7 +2357,7 @@ inboxRouter.post(
     // Fungible stock keeps the default-1 (a scanned screw IS stock intake).
     // Derived from the kind's TRAITS via the org registry, never from module
     // or bundle names; a registry hiccup falls back to today's behavior.
-    const effectiveKindId = parsed.data.instance ? `${parsed.data.instance}:item` : kindKey;
+    const effectiveKindId = instance ? `${instance}:item` : kindKey;
     let targetIsUnique = false;
     try {
       const kinds = await platform().entities.listKindsForOrg(ctx.org.id);
@@ -2311,8 +2420,8 @@ inboxRouter.post(
       }>,
       row.suggested_metadata,
     );
-    const matchedCandidate = parsed.data.instance
-      ? candidates.find((c) => c.instance === parsed.data.instance)
+    const matchedCandidate = instance
+      ? candidates.find((c) => c.instance === instance)
       : (candidates.find((c) => !c.instance && c.module === target.module) ?? candidates[0]);
     // Who put each purchase-source value there (acquisition-source.ts, #3008).
     // A route's guess that contradicts the purchase evidence is not written,
@@ -2405,6 +2514,21 @@ inboxRouter.post(
     // candidate value. Without it a decoded VIN landed in metadata.serial_number (a
     // key the VIN box never reads) and the native column stayed blank (reported
     // 2026-07-24). Pure + unit-tested (native-identity.test.ts).
+    // An identifier is filed only when the item carries it (scan-evidence.ts,
+    // identifierHasEvidence): the scanned code, a decode, what the photo
+    // shows, a corroborated catalog match, or what a person typed here. A
+    // value found by searching for a description of the thing names
+    // whatever the search found first, and filing it as this item's ISBN or
+    // serial is a fact nobody checked (#3613). It stays on the row as a
+    // suggestion the card marks.
+    // Top-level `extras` too: File everything sends the candidate's fields
+    // there, and they reach the record as they are (#3647).
+    for (const k of unevidencedIdentifiers(row, { ...restExtras, ...candidateFields, ...typedMetadata })) {
+      if (entityStamps[k]?.by === "person") continue;
+      delete candidateFields[k];
+      delete typedMetadata[k];
+      delete restExtras[k];
+    }
     const { serial_number: nativeSerial, model: nativeModel } = resolveNativeIdentity(
       meta as { serial_number?: unknown; model?: unknown },
       candidateFields,
@@ -2501,8 +2625,8 @@ inboxRouter.post(
     // (/instances/:name/items), which scopes the create to that instance of
     // the owning module. The kind still drives the qty-field mapping above —
     // an inventory instance keeps `qty`. Absent → the module's default path.
-    const createUrl = parsed.data.instance
-      ? `${baseUrl}/api/v1/orgs/${ctx.org.slug}/instances/${parsed.data.instance}/items`
+    const createUrl = instance
+      ? `${baseUrl}/api/v1/orgs/${ctx.org.slug}/instances/${instance}/items`
       : `${baseUrl}/api/v1/orgs/${ctx.org.slug}/modules/${createPath}`;
     // THE CONFIRMED CATEGORY, through the seam (#3223), BEFORE the create.
     //
@@ -2517,11 +2641,11 @@ inboxRouter.post(
     // IS a custom field, so the lookup missed it every time and the vocabulary
     // this comment promises to grow has not grown from a confirm on either
     // door. Filed as its own finding; fixed here by reading where the value is.
-    const fieldKind = parsed.data.instance ? `${parsed.data.instance}:item` : kindKey;
+    const fieldKind = instance ? `${instance}:item` : kindKey;
     await commitCategoryAxis(
       ctx.org.id,
       fieldKind,
-      parsed.data.instance ?? null,
+      instance ?? null,
       { fields: (body.metadata as Record<string, unknown> | undefined) ?? {}, row: body },
       (matchedCandidate as { category?: unknown } | undefined)?.category as string | undefined,
       parsed.data.category,
@@ -2719,8 +2843,8 @@ inboxRouter.post(
           // An instance-scoped entity is invisible to the bare module route (its
           // CRUD filters to the default instance), so the patch rides the same
           // instance path the create used.
-          const patchUrl = parsed.data.instance
-            ? `${baseUrl}/api/v1/orgs/${ctx.org.slug}/instances/${parsed.data.instance}/items/${created.id}`
+          const patchUrl = instance
+            ? `${baseUrl}/api/v1/orgs/${ctx.org.slug}/instances/${instance}/items/${created.id}`
             : `${baseUrl}/api/v1/orgs/${ctx.org.slug}/modules/${createPath}/${created.id}`;
           await fetch(patchUrl, {
             method: "PATCH",
@@ -2770,7 +2894,8 @@ inboxRouter.post(
       }
     }
 
-    // Mark the inbox row resolved.
+    // Mark the inbox row resolved, recording where it went (#3620).
+    const filedInto = await filedIntoFor(req, target.module, instance ?? null, effectiveKindId);
     const resolvedRow = await db
       .updateTable("core_scan_inbox_items")
       .set({
@@ -2778,6 +2903,7 @@ inboxRouter.post(
         target_module: target.module,
         target_kind: target.kind,
         target_entity_id: created.id,
+        suggested_metadata: sql`coalesce(suggested_metadata, '{}'::jsonb) || ${JSON.stringify({ [FILED_INTO_KEY]: filedInto })}::jsonb` as never,
         resolved_at: new Date(),
         updated_at: new Date(),
       })
@@ -2822,7 +2948,7 @@ inboxRouter.post(
         diff: {
           entity_kind: kindKey,
           entity_id: created.id,
-          ...(parsed.data.instance ? { instance: parsed.data.instance } : {}),
+          ...(instance ? { instance: instance } : {}),
           name: String(body.name ?? filingName(row) ?? "").trim() || null,
           ...(row.barcode_text ? { barcode: row.barcode_text } : {}),
           ...(resolvedRow.catalog_image_url ? { catalog_image_url: resolvedRow.catalog_image_url } : {}),
@@ -2932,7 +3058,7 @@ inboxRouter.post(
             scan_menu: JSON.stringify(menu) as never,
             candidates: JSON.stringify(row.suggested_candidates ?? []) as never,
             expected: JSON.stringify({
-              route: { module: target.module, instance: parsed.data.instance ?? null },
+              route: { module: target.module, instance: instance ?? null },
               fields: (extrasMetadata as Record<string, unknown> | undefined) ?? {},
               name: body.name,
             }) as never,
@@ -2976,7 +3102,7 @@ inboxRouter.post(
       }
     }
 
-    res.json({ item: await served(req, resolvedRow), created });
+    res.json({ item: await served(req, resolvedRow), created, installed: installer.installed });
   }),
 );
 
@@ -3255,28 +3381,19 @@ inboxRouter.post(
       .where("id", "=", id)
       .where("status", "=", "discarded")
       .executeTakeFirst();
-    const preMeta = (pre?.suggested_metadata as Record<string, unknown> | null) ?? {};
-    const combinedInto = preMeta.combined_into as string | undefined;
-    // A split that was undone put the group photo back in the inbox; one of
-    // its pieces coming back beside it would count the thing twice. The
-    // group is the row to split again.
-    if (preMeta.split_undone_at) {
+    // A combined row's quantity lives in the row it joined, and a piece of an
+    // undone split lives in the group photo: restoring either alone would
+    // count the thing twice. The refusal names the way back the row itself
+    // offers (scan-recovery.ts), never an action that is not on screen.
+    const recovery = scanDeletedRecovery(pre?.suggested_metadata as Record<string, unknown> | null);
+    const refusal = scanRestoreRefusal(recovery);
+    if (refusal) {
       res.status(409).json({
         error: {
-          code: "split_undone",
-          message: "This item came from a split that was undone: the group photo is back in the inbox. Split it again to get this one back.",
-          split_from: preMeta.split_from ?? null,
-        },
-      });
-      return;
-    }
-    if (combinedInto) {
-      res.status(409).json({
-        error: {
-          code: "was_combined",
-          message:
-            "This item was combined into another scan: its quantity already lives there. Split the combined item instead of restoring this one.",
-          combined_into: combinedInto,
+          code: recovery.kind === "undo_combine" ? "was_combined" : "split_undone",
+          message: refusal,
+          recovery,
+          ...(recovery.kind === "undo_combine" ? { combined_into: recovery.into } : { split_from: recovery.kind === "in_group_photo" ? recovery.from : null }),
         },
       });
       return;
@@ -3329,7 +3446,9 @@ async function served<T extends ScanTriageRow & {
   suggested_metadata?: unknown;
 }>(req: Request, row: T): Promise<T & { needs_review: boolean; waiting_days: number | null; group_image_file_id: string | null }> {
   const [withGroup] = await withGroupImages(req, [row]);
-  return withTitle(withResolvedOffers(withGroup!, await liveTablesFor(req)), await containerKindsFor(req), titleFormatFor(req));
+  const tables = await destinationTablesFor(req);
+  const live = await liveTablesFor(req);
+  return withDestination(withTitle(withResolvedOffers(withGroup!, live), await containerKindsFor(req), titleFormatFor(req)), row, tables, live);
 }
 
 export async function servedAll<T extends ScanTriageRow & {
@@ -3341,7 +3460,22 @@ export async function servedAll<T extends ScanTriageRow & {
   const live = await liveTablesFor(req);
   const containers = await containerKindsFor(req);
   const format = titleFormatFor(req);
-  return (await withGroupImages(req, rows)).map((r) => withTitle(withResolvedOffers(r, live), containers, format));
+  const tables = await destinationTablesFor(req);
+  return (await withGroupImages(req, rows)).map((r, i) => withDestination(withTitle(withResolvedOffers(r, live), containers, format), rows[i]!, tables, live));
+}
+
+/** The row's ONE destination on the answer itself (services/destination.ts),
+ *  for a reader that cannot run the resolver: the kernel's quickstart
+ *  groups and files by it, so "these look like X" and "file all N" agree
+ *  with the card and the scanner queue (#3618). */
+function withDestination<T>(served: T, raw: DestinationRow, tables: ScanResolverTable[], live: LiveTable[]): T & { resolved_destination: { module: string; instance: string | null; kind: string | null; label: string | null; bundle_external_id: string | null } | null } {
+  const d = filingDestination(raw, tables, live);
+  return {
+    ...served,
+    resolved_destination: d
+      ? { module: d.module, instance: d.instance ?? null, kind: typeof d.kind === "string" ? d.kind : null, label: typeof d.label === "string" ? d.label : null, bundle_external_id: typeof d.bundle_external_id === "string" ? d.bundle_external_id : null }
+      : null,
+  };
 }
 
 /** A split child's group shot, served on the child as `group_image_file_id`
@@ -3354,6 +3488,76 @@ async function withGroupImages<T extends { suggested_metadata?: unknown }>(
 }
 
 /** The workspace's tables, read once per request however many rows it serves. */
+/** The person asking, as the row resolver reads them, for a server count
+ *  that must agree with the card: whether they may turn an app on, and
+ *  whether each module is on, available or absent here (#3610). Read once
+ *  per request; a list that cannot be read leaves module state unknown,
+ *  which never excludes a row. */
+async function scanViewerFor(req: Request): Promise<ScanRowStateContext> {
+  const holder = req as Request & { __scanViewer?: Promise<ScanRowStateContext> };
+  holder.__scanViewer ??= (async () => {
+    const role = (req as unknown as { tenant?: { role: string } }).tenant?.role ?? "member";
+    const canInstall = roleSatisfies(role as "owner", ["owner", "admin"]);
+    const token = bearer(req);
+    let modules: Array<{ name: string; enabled?: boolean }> | null = null;
+    if (token) {
+      try {
+        const r = await fetch(`${INTERNAL_API}/api/v1/orgs/${tenantContext(req).org.slug}/modules`, { headers: { Authorization: `Bearer ${token}` } });
+        if (r.ok) modules = ((await r.json()) as { items: Array<{ name: string; enabled?: boolean }> }).items;
+      } catch {
+        /* unknown: nothing is excluded on its account */
+      }
+    }
+    return {
+      canInstall,
+      ...(modules && modules.length > 0
+        ? { moduleState: (m: string) => { const x = modules!.find((y) => y.name === m); return !x ? "absent" : x.enabled ? "enabled" : "available"; } }
+        : {}),
+    } as ScanRowStateContext;
+  })();
+  return holder.__scanViewer;
+}
+
+/** The workspace's tables as the destination resolver reads them, from the
+ *  same scan menu the card is handed (GET /menu), read once per request.
+ *  Empty when the menu cannot be read (a guest, a hiccup): the resolver then
+ *  answers from the row alone, the person's choice first. */
+async function destinationTablesFor(req: Request): Promise<ScanResolverTable[]> {
+  const holder = req as Request & { __destTables?: Promise<ScanResolverTable[]> };
+  holder.__destTables ??= (async () => {
+    const token = bearer(req);
+    if (!token) return [];
+    const ctx = tenantContext(req);
+    // The menu changes only on an install or a table edit, and the dashboard
+    // polls the queue every few seconds per tab: held per workspace briefly.
+    // A new table can reach the queue's grouping up to that late; filing
+    // resolves again on confirm.
+    const hit = DEST_TABLES_CACHE.get(ctx.org.id);
+    if (hit && Date.now() - hit.at < DEST_TABLES_TTL_MS) return hit.tables;
+    try {
+      const baseUrl = (req.headers["x-cobblr-base-url"] as string | undefined) ?? INTERNAL_API;
+      const tables = destinationTables(await assembleScanMenu(baseUrl, ctx.org.slug, token, ctx.org.id));
+      DEST_TABLES_CACHE.set(ctx.org.id, { at: Date.now(), tables });
+      return tables;
+    } catch {
+      return hit?.tables ?? [];
+    }
+  })();
+  return holder.__destTables;
+}
+const DEST_TABLES_TTL_MS = 30_000;
+const DEST_TABLES_CACHE = new Map<string, { at: number; tables: ScanResolverTable[] }>();
+
+/** Where a row was filed, as the commit records it (#3620): the table by
+ *  module and instance and its name at that moment, read from the
+ *  workspace's tables. A committed row is shown by this, never re-derived. */
+async function filedIntoFor(req: Request, module: string, instance: string | null, kind: string | null): Promise<FiledInto> {
+  const live = await liveTablesFor(req);
+  const t = live.find((x) => x.module === module && (x.instance ?? null) === instance) ?? (instance ? live.find((x) => x.instance === instance) : undefined);
+  const label = t?.label ?? live.find((x) => x.module === module && x.instance === null)?.label ?? module;
+  return { module, instance, kind, label };
+}
+
 async function liveTablesFor(req: Request): Promise<LiveTable[]> {
   const holder = req as Request & { __liveTables?: Promise<LiveTable[]> };
   holder.__liveTables ??= liveTablesOf(tenantContext(req).org.id);
@@ -3513,7 +3717,7 @@ async function appendScanHistory(
   db: ReturnType<typeof tenantDb>,
   id: string,
   entry: {
-    action: "rerun" | "replay" | "rerun-hint" | "wrong" | "enrich" | "confirm" | "combine" | "attached" | "split" | "unsplit" | "unconfirm" | "undo-rerun" | "barcode" | "confirm-guess" | "reject-guess" | "crop-again";
+    action: "rerun" | "replay" | "rerun-hint" | "wrong" | "enrich" | "confirm" | "combine" | "uncombine" | "attached" | "split" | "unsplit" | "unconfirm" | "undo-rerun" | "barcode" | "confirm-guess" | "reject-guess" | "crop-again";
     note?: string | null;
   },
 ): Promise<void> {
@@ -4394,7 +4598,16 @@ inboxRouter.post(
     // enough good ones remain), so it selects the best of N good candidates
     // rather than rescuing junk. The heuristic filters as far as titles/domains
     // allow; the AI does the pixel calls.
-    const candidates = selectTopCandidates(pool, row.suggested_manufacturer, q, IMAGE_BUDGET, color);
+    // The AI chooses only among pictures that do not contradict the item's own
+    // colour or material (picture-agrees.ts): a person can still pick any of
+    // them by hand, but "Pick best" never hands back one the words rule out.
+    const observations = (row.suggested_metadata as { photo_observations?: string } | null)?.photo_observations ?? null;
+    const agreeing = picturesThatAgree({ name: rank.name ?? row.suggested_name, observations }, pool);
+    if (pool.length > 0 && agreeing.length === 0) {
+      res.json({ chosen_url: null, reason: "Every picture here shows a different colour or material from this item. Search again, or choose one yourself." });
+      return;
+    }
+    const candidates = selectTopCandidates(agreeing, row.suggested_manufacturer, q, IMAGE_BUDGET, color);
     if (candidates.length === 0) {
       res.json({ chosen_url: null, reason: "No photo options were found to rank." });
       return;
@@ -4417,13 +4630,7 @@ inboxRouter.post(
     // candidates couldn't be read") told someone whose provider was fine to go
     // check their provider (reported 2026-07-30).
     if (isRankFailure(result)) {
-      const reason =
-        result.error === "no-provider"
-          ? "No AI provider in this workspace can rank photos yet. Add one under Configuration → AI (or connect your own from your profile)."
-          : result.error === "unreadable"
-            ? "None of the photo options could be downloaded to show the AI. Try a different search term."
-            : "The AI provider couldn't be reached or didn't answer usefully. Try again in a moment.";
-      res.json({ chosen_url: null, reason, error: result.error });
+      res.json({ chosen_url: null, reason: rankFailureSentence(result), error: result.error, ...(result.aiReason ? { ai_reason: result.aiReason } : {}) });
       return;
     }
     res.json({
@@ -5299,7 +5506,7 @@ inboxRouter.post(
         // The receipt-order linkage STAYS: the order line is a fact about the
         // receipt, born at parse, and filing this row again must claim that
         // same line. Only the attach link is cleared.
-        suggested_metadata: mergeMeta({}, ["attached_to"]) as never,
+        suggested_metadata: mergeMeta({}, ["attached_to", FILED_INTO_KEY]) as never,
         updated_at: new Date(),
       })
       .where("id", "=", id)
@@ -5495,14 +5702,17 @@ inboxRouter.post(
         (row.suggested_metadata as { barcode_source?: string } | null)?.barcode_source,
       );
       if (row.barcode_text && !aiRead && !entityMeta.barcode) {
-        patch.metadata = { ...entityMeta, barcode: row.barcode_text };
+        // Only the key this adds: the record's PATCH merges it into the live
+        // row, and a copy of the rest read a moment ago would write stale
+        // values back over a concurrent edit (#3625).
+        patch.metadata = { barcode: row.barcode_text };
       }
     } else if (parsed.data.mode === "link-barcode") {
       if (!row.barcode_text) {
         res.status(400).json({ error: { code: "no_barcode", message: "this item has no barcode to link" } });
         return;
       }
-      patch.metadata = { ...entityMeta, barcode: row.barcode_text };
+      patch.metadata = { barcode: row.barcode_text };
       // Linking a barcode while an active bin is set ALSO files
       // the entity into that bin — the scan meant "this thing, into here".
       const linkLoc = parsed.data.location_id ?? row.target_location_id;
@@ -5549,7 +5759,18 @@ inboxRouter.post(
       const aiRead = isMachineReadCode((scanMeta as { barcode_source?: string }).barcode_source);
       if (row.barcode_text && !aiRead) metaIn.barcode = row.barcode_text;
       if (row.suggested_sku) metaIn.sku = row.suggested_sku;
-      const nextMeta = { ...entityMeta };
+      // The same evidence rule as the confirm door (scan-evidence.ts,
+      // evidencedFill): "same one, fill it in" never writes an identifier
+      // the item gives no evidence for onto a record that has none (#3647).
+      for (const k of evidencedFill(row, { ...nativeIn, ...metaIn }).held) {
+        delete metaIn[k];
+        if (k in patch && mergedFields.includes(k)) {
+          delete patch[k];
+          mergedFields.splice(mergedFields.indexOf(k), 1);
+        }
+      }
+      // Only the keys this fills: the record's PATCH merges them (#3625).
+      const nextMeta: Record<string, unknown> = {};
       let metaChanged = false;
       for (const [k, v] of Object.entries(metaIn)) {
         if (blank(v) || !blank(entityMeta[k])) continue;
@@ -5691,6 +5912,8 @@ inboxRouter.post(
         target_kind: parsed.data.kind,
         target_entity_id: parsed.data.entity_id,
         suggested_metadata: mergeMeta({
+          // Where it went, as the commit records it (#3620).
+          [FILED_INTO_KEY]: await filedIntoFor(req, module ?? baseKind, instance ?? null, parsed.data.kind),
           attached_to: {
             kind: parsed.data.kind,
             id: parsed.data.entity_id,
@@ -6153,8 +6376,8 @@ inboxRouter.post(
       series?: string;
     };
     const observed = Array.isArray(parentMeta.photo_individuals) ? parentMeta.photo_individuals : [];
-    const boxed = await detectSplitItems(ctx.org.id, row.image_file_id, userId);
-    const pieces = pairPieces(boxed, observed);
+    const detection = await detectSplitItems(ctx.org.id, row.image_file_id, userId);
+    const pieces = pairPieces(detection.items, observed);
 
     if (pieces.length < 2) {
       res.status(409).json({
@@ -6178,7 +6401,18 @@ inboxRouter.post(
       // region recorded so the card can say what was tried.
       const cut = it.box ? await cropRegion(ctx.org.id, row.image_file_id, it.box).catch((): null => null) : null;
       const cropState: "ok" | "failed" | "none" = !it.box ? "none" : cut?.fileId ? "ok" : "failed";
-      const cropReason = it.box && cut?.fileId == null ? (cut && cut.fileId === null ? cut.reason : "no-source") : null;
+      // Every piece that keeps the group shot says why (scan-triage.ts,
+      // scanSplitUncut): a region the cut refused, or no region at all
+      // because segmentation did not answer or did not mark this one.
+      const cropReason = !it.box
+        ? detection.failed
+          ? "detect-failed"
+          : "not-boxed"
+        : cut?.fileId == null
+          ? cut && cut.fileId === null
+            ? cut.reason
+            : "no-source"
+          : null;
       cropReport.push(cropState === "ok" ? "ok" : cropState === "failed" ? `failed (${cropReason})` : "no box");
       const ownObservation = observationFor(it, siblings, observation);
       // The parent's whole-photo keys, judged per piece (split-inherit.ts,
@@ -6197,8 +6431,8 @@ inboxRouter.post(
         cropState === "ok"
           ? "Split from a group photo and cropped to this item by vision. Double-check the crop."
           : cropState === "failed"
-            ? `Split from a group photo; its crop could not be cut (${cropRefusalWords(cropReason ?? "no-source")}), so it keeps the group shot. Pick a catalog photo for this one.`
-            : "Split from a group photo. It keeps the group shot; pick a catalog photo for this one.";
+            ? `Split from a group photo; its crop could not be cut (${splitUncutWords(cropReason ?? "no-source")}), so it keeps the group shot. Crop it to this one, or pick a catalog photo.`
+            : `Split from a group photo; it could not be cut out (${splitUncutWords(cropReason)}), so it keeps the group shot. Crop it to this one, or pick a catalog photo.`;
       // The one intake (services/intake.ts, #3049): a split child's plan is
       // its own product photo searched by its own name (matchItem only
       // refetches art when it RENAMES an item, and a child keeps the name
@@ -6325,7 +6559,7 @@ inboxRouter.post(
       res.status(409).json({
         error: {
           code: "child_filed",
-          message: `"${filed.suggested_name ?? "One of the split items"}" was already filed from this split. Send it back to the inbox first, then undo the split.`,
+          message: `"${filed.suggested_name ?? "One of the split items"}" was already filed from this split. Press ${SCAN_UNDO_ACTIONS.sendBack} on it in Recently committed first, then ${SCAN_UNDO_ACTIONS.undoSplit}.`,
           item_id: filed.id,
         },
       });
@@ -6338,7 +6572,7 @@ inboxRouter.post(
       res.status(409).json({
         error: {
           code: "child_combined",
-          message: `"${combined.suggested_name ?? "One of the split items"}" was combined into another scan, and its quantity lives there now. Split that scan first if you want the group photo back.`,
+          message: `"${combined.suggested_name ?? "One of the split items"}" was combined into another scan, and its quantity lives there now. Press ${SCAN_UNDO_ACTIONS.undoCombine} on it first if you want the group photo back.`,
           item_id: combined.id,
         },
       });
@@ -6476,7 +6710,19 @@ const AutofileBody = z.object({
    *  longer holds (a match filed from another device in between) is skipped
    *  and reported as changed, rather than acted on under a plan nobody saw. */
   seen: z
-    .array(z.object({ item_id: z.string().min(1), action: z.enum(["attach", "create", "skip"]), to_id: z.string().nullish(), destination: z.string().nullish() }))
+    .array(
+      z.object({
+        item_id: z.string().min(1),
+        action: z.enum(["attach", "create", "skip"]),
+        to_id: z.string().nullish(),
+        destination: z.string().nullish(),
+        /** For a row added to a record you already have: what this purchase
+         *  means for it, the same answers the card and the detail offer
+         *  (useRepurchaseChoices). add = +1; replaced = the old one ran out,
+         *  this is what there is now; went_bad = the old one was thrown out. */
+        restock: z.enum(["add", "replaced", "went_bad"]).optional(),
+      }),
+    )
     .max(500)
     .optional(),
   /** On confirm: where the "filed as new" pile goes. The per-item confirm
@@ -6531,7 +6777,12 @@ inboxRouter.post(
     // admin, the same bar as the install route itself.
     const canInstall = roleSatisfies((req as unknown as { tenant?: { role: string } }).tenant?.role as "owner", ["owner", "admin"]);
     const plans: AutofilePlan[] = [];
+    // Where each row goes is the card's answer (services/destination.ts),
+    // read once for the page: the plan must file where the person saw it
+    // headed, not where the raw route pointed (#3618).
+    const tables = await destinationTablesFor(req);
     for (const row of rows) {
+      const dest = filingDestination(row, tables, liveNow);
       let matches: { barcode_matches: TrackedCandidate[]; name_matches: TrackedCandidate[] } = {
         barcode_matches: [],
         name_matches: [],
@@ -6540,7 +6791,7 @@ inboxRouter.post(
         matches = (await findTracked(ctx.org.id, {
           barcode: row.barcode_text,
           name: row.suggested_name,
-          fields: topCandidateFields(candidatesWithUserFields(storedCandidateList(row.suggested_candidates), row.suggested_metadata)),
+          fields: (dest?.fields as Record<string, unknown> | undefined) ?? {},
           brand: row.suggested_manufacturer,
           category: topCandidateCategory(row.suggested_candidates),
         })) as never;
@@ -6550,7 +6801,7 @@ inboxRouter.post(
         plans.push({ action: "skip", itemId: row.id, name: row.suggested_name, why: "could not check what you already have" });
         continue;
       }
-      const cand = (candidatesWithUserFields(storedCandidateList(row.suggested_candidates), row.suggested_metadata) as Array<Record<string, unknown>>)[0] ?? null;
+      const cand = dest;
       plans.push(
         planItem({
           id: row.id,
@@ -6608,12 +6859,14 @@ inboxRouter.post(
     // install REALLY made is the one filed into, since a bundle that skins a
     // module's default table makes no instance while the candidate still
     // carries the routing token (the receipt of 2026-08-22).
-    const door = { baseUrl, slug: ctx.org.slug, authHeaders, canInstall };
+    const door = { baseUrl, slug: ctx.org.slug, authHeaders, canInstall, tables };
     const installer = new BundleInstaller(door);
 
     for (const plan of actionable) {
       try {
         if (plan.action === "attach") {
+          const restock = seenById.get(plan.itemId)?.restock;
+          const replacing = restock === "replaced" || restock === "went_bad";
           const r = await fetch(
             `${baseUrl}/api/v1/orgs/${ctx.org.slug}/modules/core-scan/inbox/${plan.itemId}/attach`,
             {
@@ -6623,7 +6876,8 @@ inboxRouter.post(
                 kind: plan.to.kind,
                 entity_id: plan.to.id,
                 ...(plan.to.instance ? { instance: plan.to.instance } : {}),
-                mode: "add-qty",
+                mode: replacing ? "replace" : "add-qty",
+                ...(replacing ? { cadence: { resolution: restock === "went_bad" ? "discarded" : "consumed" } } : {}),
                 qty: plan.qty,
               }),
             },
@@ -6778,25 +7032,20 @@ inboxRouter.post(
 // products (not titled media like books, which route to a Bookshelf). Nothing
 // is hardcoded — the theme is derived; degrades to no-suggestion when AI is off.
 
-interface ThemeItemLite {
-  id: string;
-  name: string | null;
-  category: string | null;
-  is_titled_media: boolean;
-}
+type ThemeItemLite = ThemeItem;
 
 async function pendingThemeItems(
   db: ReturnType<typeof tenantDb>,
   batchId: string,
+  askedIds: readonly string[] | null,
 ): Promise<ThemeItemLite[]> {
-  const rows = await db
+  let q = db
     .selectFrom("core_scan_inbox_items")
     .select(["id", "suggested_name", "suggested_metadata", "suggested_candidates"])
     .where("status", "=", "pending")
-    .where("scan_batch_id", "=", batchId)
-    .orderBy("created_at", "desc")
-    .limit(50)
-    .execute();
+    .where("scan_batch_id", "=", batchId);
+  if (askedIds) q = askedIds.length ? q.where("id", "in", [...askedIds]) : q.where(sql<boolean>`false`);
+  const rows = await q.orderBy("created_at", "desc").limit(askedIds ? 200 : 50).execute();
   const mediaField = /^(author|isbn|director|artist|composer|writer|edition|publisher|issn)$/i;
   return rows.map((r) => {
     const meta = (r.suggested_metadata ?? {}) as { category?: unknown; hint_category?: { domain?: unknown } };
@@ -6945,6 +7194,21 @@ inboxRouter.post(
           {
             ...(barcodes.length ? { merged_barcodes: barcodes } : {}),
             merged_count: rows.length,
+            // What Undo combine gives back (#3639), from either row.
+            combine_undo: {
+              absorbed: others.map((o) => o.id),
+              quantity_before: filedQuantityOf(primary.quantity),
+              quantity_after: totalQty,
+              barcode_before: primary.barcode_text,
+              barcode_after: adoptBarcode ?? primary.barcode_text,
+              image_before: primary.image_file_id,
+              image_after: adoptPhoto ?? primary.image_file_id,
+              candidates_before: primary.suggested_candidates ?? [],
+              candidates_after: unionedCandidates ?? primary.suggested_candidates ?? [],
+              merged_barcodes_before: meta.merged_barcodes ?? null,
+              merged_count_before: meta.merged_count ?? null,
+              previous: (meta.combine_undo as CombineUndo | undefined) ?? null,
+            } satisfies CombineUndo,
           },
           // Adopting a merged item's barcode means its AI-photo-read barcode_source
           // no longer applies — drop it (what metaNoSource used to do by omission).
@@ -6955,8 +7219,8 @@ inboxRouter.post(
       .where("id", "=", primary.id)
       .execute();
     // Losers carry a marker: their quantities were SUMMED into the primary, so
-    // restoring one later would double-count. The restore endpoint reads this
-    // and refuses with a pointer at the primary (split there instead).
+    // restoring one alone would double-count. Their way back is Undo combine
+    // (scan-recovery.ts), which returns both rows.
     await db
       .updateTable("core_scan_inbox_items")
       .set({
@@ -6972,6 +7236,80 @@ inboxRouter.post(
       .execute();
     await appendScanHistory(db, primary.id, { action: "combine", note: `${rows.length} items` });
     res.json(await db.selectFrom("core_scan_inbox_items").selectAll().where("id", "=", primary.id).executeTakeFirst());
+  }),
+);
+
+// Undo combine (#3639), from either row: the kept one or one it absorbed.
+// The absorbed rows come back to the inbox as they were, and the kept row
+// gives back the quantity (and the barcode, photo and fields) the combine
+// added, keeping anything the person changed since.
+// AI-REACH: exempt (scan-inbox undo from the UI, the mirror of combine, which is a step of the guided scan flow; the assistant reaches the inbox through list_scan_inbox)
+inboxRouter.post(
+  "/inbox/:id/uncombine",
+  asyncHandler(async (req, res) => {
+    if (!requireRole(req, res, "owner", "admin", "member")) return;
+    const id = String(req.params.id);
+    const db = tenantDb(req);
+    const start = await db.selectFrom("core_scan_inbox_items").select(["id", "suggested_metadata"]).where("id", "=", id).executeTakeFirst();
+    if (!start) {
+      res.status(404).json({ error: { code: "not_found", message: "inbox item not found" } });
+      return;
+    }
+    const into = (start.suggested_metadata as { combined_into?: string } | null)?.combined_into;
+    const kept = await db.selectFrom("core_scan_inbox_items").selectAll().where("id", "=", into || start.id).executeTakeFirst();
+    const keptMeta = (kept?.suggested_metadata ?? {}) as { combine_undo?: CombineUndo };
+    const pointing = kept
+      ? await db
+          .selectFrom("core_scan_inbox_items")
+          .select(["id", "quantity"])
+          .where(sql<string>`suggested_metadata ->> 'combined_into'`, "=", kept.id)
+          .where("status", "=", "discarded")
+          .execute()
+      : [];
+    // This combine's rows: the snapshot's, or (a combine made before it
+    // existed) every row that still points here.
+    const wanted = keptMeta.combine_undo ? new Set(keptMeta.combine_undo.absorbed) : null;
+    const absorbed = wanted ? pointing.filter((r) => wanted.has(r.id)) : pointing;
+    if (!kept || !absorbed.length) {
+      res.status(409).json({ error: { code: "not_combined", message: "This scan is not combined with another, so there is nothing to undo." } });
+      return;
+    }
+    const keptName = kept.suggested_name ? `"${kept.suggested_name}"` : "The combined scan";
+    if (kept.status === "resolved") {
+      res.status(409).json({
+        error: {
+          code: "combined_filed",
+          message: `${keptName} was already filed with the combined quantity. Press ${SCAN_UNDO_ACTIONS.sendBack} on it in Recently committed first, then ${SCAN_UNDO_ACTIONS.undoCombine}.`,
+          item_id: kept.id,
+        },
+      });
+      return;
+    }
+    if (kept.status !== "pending") {
+      res.status(409).json({
+        error: {
+          code: "combined_deleted",
+          message: `${keptName} is in Recently deleted. Press ${SCAN_UNDO_ACTIONS.restore} on it first, then ${SCAN_UNDO_ACTIONS.undoCombine}.`,
+          item_id: kept.id,
+        },
+      });
+      return;
+    }
+    const plan = uncombinePlan(kept, absorbed.map((r) => filedQuantityOf(r.quantity)));
+    const now = new Date();
+    await db
+      .updateTable("core_scan_inbox_items")
+      .set({ ...plan.set, suggested_metadata: mergeMeta(plan.metaSet, plan.metaDrop) as never, updated_at: now } as never)
+      .where("id", "=", kept.id)
+      .execute();
+    await db
+      .updateTable("core_scan_inbox_items")
+      .set({ status: "pending", suggested_metadata: dropMeta(["combined_into"]) as never, updated_at: now })
+      .where("id", "in", absorbed.map((r) => r.id))
+      .where("status", "=", "discarded")
+      .execute();
+    await appendScanHistory(db, kept.id, { action: "uncombine", note: `${absorbed.length + 1} items` });
+    res.json({ kept: await served(req, await db.selectFrom("core_scan_inbox_items").selectAll().where("id", "=", kept.id).executeTakeFirstOrThrow()), restored: absorbed.map((r) => r.id) });
   }),
 );
 
@@ -7019,13 +7357,14 @@ async function backfillBookIsbn(
   itemId: string,
   candidates: MatchCandidate[],
   menu: ScanMenuEntry[],
-  title: string,
   brand: string | null,
   knownIsbn: string | null,
+  readTitle: string | null,
 ): Promise<void> {
   try {
     const byKey = new Map(menu.map((m) => [`${m.module}::${m.instance ?? ""}`, m]));
     let changed = false;
+    const stamps: Record<string, { by: "evidence"; from: string; at: string }> = {};
     for (const c of candidates) {
       const entry = byKey.get(`${c.module}::${c.instance ?? ""}`);
       const isbnField = entry?.fields.find((f) => /^isbn$/i.test(f.name));
@@ -7033,7 +7372,19 @@ async function backfillBookIsbn(
       const cur = c.fields[isbnField.name];
       if (cur != null && String(cur).replace(/[^0-9Xx]/g, "").length >= 10) continue; // already has one
       const author = (Object.entries(c.fields).find(([k]) => /^author$/i.test(k))?.[1] as string | undefined) ?? null;
-      const isbn = knownIsbn ?? (await lookupBookIsbn(c.name || title, author, brand));
+      // A title search answers with whatever work its words find first, so
+      // its ISBN is only this book's when the catalog's title is the title
+      // READ off the item. A blank notebook named "Blank softcover book" by
+      // its looks matched another book's listing and wore its ISBN as fact
+      // (#3613); with no title read there is nothing to corroborate.
+      let isbn = knownIsbn;
+      if (!isbn && readTitle) {
+        const hit = await lookupBookByTitle(readTitle, author, brand);
+        if (hit && catalogTitleCorroborated(readTitle, hit.title)) {
+          isbn = hit.isbn;
+          stamps[isbnField.name] = { by: "evidence", from: CATALOG_TITLE_MATCHED, at: new Date().toISOString() };
+        }
+      }
       if (isbn) {
         c.fields[isbnField.name] = isbn;
         changed = true;
@@ -7043,7 +7394,16 @@ async function backfillBookIsbn(
     const db = (await platform().tenants.getDb(orgId)) as unknown as ReturnType<typeof tenantDb>;
     await db
       .updateTable("core_scan_inbox_items")
-      .set({ suggested_candidates: JSON.stringify(candidates) as never, updated_at: new Date() })
+      .set({
+        // jsonb-replace-ok: candidates are a LIST; this writes the same list back with its ISBN filled in place
+        suggested_candidates: JSON.stringify(candidates) as never,
+        ...(Object.keys(stamps).length
+          ? {
+              suggested_metadata: sql`jsonb_set(coalesce(suggested_metadata, '{}'::jsonb), ${`{${FIELD_PROVENANCE_KEY}}`}::text[], coalesce(suggested_metadata->${FIELD_PROVENANCE_KEY}, '{}'::jsonb) || ${JSON.stringify(stamps)}::jsonb)` as never,
+            }
+          : {}),
+        updated_at: new Date(),
+      })
       .where("id", "=", itemId)
       .where("status", "=", "pending")
       .execute();
@@ -7500,14 +7860,16 @@ async function matchItem(opts: MatchItemOpts): Promise<unknown[] | null> {
     // on every read (services/user-fields.ts), so no pass above, and no
     // re-run, outranks it. Who put each purchase-source value there, for the
     // record the row keeps (field-provenance.ts, #3008).
-    const topEntry = candidates[0] ? menu.find((e) => e.module === (candidates[0] as { module?: string }).module && (e.instance ?? null) === ((candidates[0] as { instance?: string | null }).instance ?? null)) : undefined;
+    // The table of the route this match just wrote, whose fields it stamps.
+    const matched = candidates.length ? candidateTableOf(candidates[0]) : null;
+    const topEntry = matched ? menu.find((e) => e.module === matched.module && (e.instance ?? null) === matched.instance) : undefined;
     const fieldProvenance = provenanceStamps({
       meta: row.suggested_metadata as Record<string, unknown> | null,
       candidates,
       evidence: evidenceStamps,
       tableFields: topEntry?.fields,
       priorFields: (storedCandidateList(row.suggested_candidates)[0] as { fields?: Record<string, unknown> } | undefined)?.fields ?? null,
-      row: { image_file_id: row.image_file_id, suggested_name: row.suggested_name },
+      row: { image_file_id: row.image_file_id, suggested_name: row.suggested_name, barcode_text: row.barcode_text },
     });
 
     // THE REPLAY INVARIANT, checked rather than merely intended: a replay may
@@ -7816,9 +8178,9 @@ async function matchItem(opts: MatchItemOpts): Promise<unknown[] | null> {
       opts.itemId,
       candidates as MatchCandidate[],
       menu,
-      (adoptName ? candName : row.suggested_name) ?? "",
       row.suggested_manufacturer ?? null,
       decodedIsbnOf(row.suggested_metadata),
+      photoReadOf(row)?.title ?? null,
     );
     // Stamp finalized_at — the canonical "nothing more will change" marker.
     // matched_at means the matchmaker RAN; finalized_at means the whole tail

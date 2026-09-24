@@ -15,11 +15,13 @@ import { EntityThumb, usePageTitle } from "@cobblr/platform-web";
 import { api, type SearchHit } from "../lib/api";
 import { QueryError } from "../components/QueryError";
 import { useActiveOrg } from "../auth/ActiveOrgContext";
+import { useDetailRoute } from "../lib/useDetailRoute";
 
 export function SearchPage() {
   usePageTitle("Search");
   const { activeSlug } = useActiveOrg();
   const labels = useKindLabels(activeSlug);
+  const routeFor = useDetailRoute(activeSlug);
   const [params, setParams] = useSearchParams();
   const q = (params.get("q") ?? "").trim();
   const kindsParam = params.get("kinds") ?? "";
@@ -199,7 +201,7 @@ export function SearchPage() {
             {items.map((h) => (
               <li key={`${h.kind}:${h.id}`} className="px-3 py-2 text-sm">
                 <Link
-                  to={h.detailUrl ?? detailRoute(h.kind, h.id)}
+                  to={routeFor(h.kind, h.id, h.detailUrl) ?? "#"}
                   className="flex items-center gap-3 hover:text-accent"
                 >
                   <EntityThumb src={h.image_path} alt={h.title} size={36} />
@@ -246,13 +248,3 @@ function Chip({
   );
 }
 
-function detailRoute(kind: string, id: string): string {
-  const [moduleName, type] = kind.split(":");
-  if (moduleName === "inventory" && type === "part") return `/inventory/parts/${id}`;
-  if (moduleName === "machines" && type === "machine") return `/machines/${id}`;
-  if (moduleName === "assets" && type === "asset") return `/assets/${id}`;
-  if (moduleName === "projects" && type === "project") return `/projects/${id}`;
-  if (moduleName === "projects" && type === "task") return `/projects/tasks/${id}`;
-  if (moduleName === "purchases" && type === "order") return `/purchases/${id}`;
-  return "#";
-}

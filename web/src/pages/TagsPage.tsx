@@ -10,6 +10,7 @@ import { ExternalLink, Pencil, Pin, Plus, Tag as TagIcon, Trash2 } from "lucide-
 import { ApiError, api, type TagRecord } from "../lib/api";
 import { useActiveOrg } from "../auth/ActiveOrgContext";
 import { Modal, useToast, useConfirm, usePageTitle } from "@cobblr/platform-web";
+import { useDetailRoute } from "../lib/useDetailRoute";
 
 interface TagAttachment {
   id: string;
@@ -22,26 +23,6 @@ interface TagAttachment {
   created_at: string;
 }
 
-// Map a (source_module, source_type) to the route prefix for the
-// detail page. Same convention the EntityChip uses.
-// NOTE: these are the BASE (default-instance) routes. A tag attachment row
-// carries only source_module / source_type / source_id — NOT the item's
-// `instance` — so this page can't yet route an instance-owned item to its
-// instance detail (/instances/<name>/…). Closing that needs the attachment
-// payload (or a per-row resolve) to surface the item's instance; tracked as a
-// deferred follow-up. Search/dashboard/QR already route correctly via the
-// resolver-owned detailUrl.
-function detailRoute(sourceModule: string, sourceType: string, id: string): string | null {
-  const map: Record<string, string> = {
-    "inventory:part": `/inventory/parts/${id}`,
-    "machines:machine": `/machines/${id}`,
-    "assets:asset": `/assets/${id}`,
-    "projects:project": `/projects/${id}`,
-    "projects:task": `/projects/tasks/${id}`,
-    "purchases:order": `/purchases/${id}`,
-  };
-  return map[`${sourceModule}:${sourceType}`] ?? null;
-}
 
 // One tag rendered as a pill — its emoji icon (or the default tag glyph), name
 // (click to see what's tagged), edit + delete.
@@ -428,6 +409,7 @@ function TagAttachmentsModal({
   tag: TagRecord;
   onClose: () => void;
 }) {
+  const routeFor = useDetailRoute(slug);
   const list = useQuery({
     queryKey: ["tag-attachments", slug, tag.id],
     queryFn: async () => {
@@ -457,7 +439,10 @@ function TagAttachmentsModal({
       {items.length > 0 && (
         <ul className="space-y-1.5">
           {items.map((a) => {
-            const route = detailRoute(a.source_module, a.source_type, a.source_id);
+            // A tag's attachment row names the kind, not the collection; the
+            // one rule (recordHref) sends a base kind of a module with
+            // collections through the open door, which asks.
+            const route = routeFor(`${a.source_module}:${a.source_type}`, a.source_id);
             const label = `${a.source_module}:${a.source_type}`;
             return (
               <li

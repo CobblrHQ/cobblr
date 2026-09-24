@@ -22,7 +22,7 @@ import { ArrowRight, Loader2 } from "lucide-react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useToast } from "@cobblr/platform-web";
 import { useNavigate } from "react-router-dom";
-import { api, type ScanInboxItem } from "../lib/api";
+import { api, type ScanInboxItem, type ScannerQueueSummary } from "../lib/api";
 import { useMaterializeCapture } from "../lib/useMaterializeCapture";
 import { CaptureTile } from "./CaptureTile";
 
@@ -33,12 +33,16 @@ export interface ScanGroup {
   bundleId?: string;
   /** Set when the match is a table that exists (Add all N to). */
   target?: { module: string; kind: string; instance?: string };
-  items: ScanInboxItem[];
+  /** Every pending scan in the group, over the whole inbox: what its button
+   *  counts and exactly what it files. */
+  ids: string[];
+  /** The group's scans the loaded page holds, for the thumbnails only. */
+  preview: ScanInboxItem[];
 }
 
 export interface ScannerQueueState {
-  /** Every pending scan that came from the scanner (not typed). */
-  scanned: ScanInboxItem[];
+  /** Every pending scan that came from the scanner (not typed), all of them. */
+  total: number;
   /** Scans with a home to offer, grouped by it, biggest first. */
   groups: ScanGroup[];
   /** Scans nothing here can place: unmatched, or still being read. */
@@ -47,44 +51,42 @@ export interface ScannerQueueState {
   offered: number;
 }
 
-/** The pending inbox, grouped by where each scan could go. One read feeds the
- *  queue and the put-away nag beside it, so the two cannot disagree. */
-export function useScannerQueue(slug: string): ScannerQueueState {
-  const inbox = useQuery({
-    queryKey: ["capture-inbox", slug],
-    queryFn: () => api.listScanInbox(slug, { status: "pending" }),
-    enabled: !!slug,
-    // Poll fast only while something is pending resolution; an idle dashboard
-    // ticks slowly instead of hammering the api every 4s forever.
-    refetchInterval: (q) => ((q.state.data?.items?.length ?? 0) > 0 ? 4000 : 20000),
-  });
-  return useMemo(() => groupScans(inbox.data?.items ?? []), [inbox.data]);
+/** The server's queue (core-scan services/scanner-queue.ts, every pending
+ *  scan) with the loaded page's rows as thumbnails. Every count and every id a
+ *  button files comes from the summary; the page only lends pictures, so a
+ *  queue longer than a page is never counted as the page (#3598). */
+export function queueFromServer(summary: ScannerQueueSummary, page: readonly ScanInboxItem[]): ScannerQueueState {
+  const byId = new Map(page.map((i) => [i.id, i]));
+  const groups = summary.groups.map((g) => ({
+    key: g.key,
+    label: g.label,
+    ...(g.bundle_external_id ? { bundleId: g.bundle_external_id } : {}),
+    ...(g.target ? { target: g.target } : {}),
+    ids: g.item_ids,
+    preview: g.item_ids.flatMap((id) => (byId.has(id) ? [byId.get(id)!] : [])),
+  }));
+  return { total: summary.scanned_total, groups, residual: summary.residual, offered: summary.offered };
 }
 
-/** Consolidate the scanner stream by its match: "20 look like Filament Stash,
- *  create it & file all 20" beats 20 cards. Typed captures are the panel's
- *  conversation, not this queue. */
-export function groupScans(items: ScanInboxItem[]): ScannerQueueState {
-  const scanned = items.filter((i) => i.source_kind !== "note");
-  const map = new Map<string, ScanGroup>();
-  let residual = 0;
-  for (const it of scanned) {
-    const c = it.suggested_candidates?.[0];
-    if (!c) { residual++; continue; }
-    const key = c.bundle_external_id ? `b:${c.bundle_external_id}` : `i:${c.module}:${c.instance ?? ""}`;
-    const g = map.get(key) ?? {
-      key,
-      label: c.label,
-      ...(c.bundle_external_id
-        ? { bundleId: c.bundle_external_id }
-        : { target: { module: c.module, kind: c.kind, ...(c.instance ? { instance: c.instance } : {}) } }),
-      items: [] as ScanInboxItem[],
-    };
-    g.items.push(it);
-    map.set(key, g);
-  }
-  const groups = [...map.values()].sort((a, b) => b.items.length - a.items.length);
-  return { scanned, groups, residual, offered: groups.reduce((n, g) => n + g.items.length, 0) };
+const EMPTY: ScannerQueueSummary = { scanned_total: 0, groups: [], residual: 0, offered: 0 };
+
+/** The pending inbox, grouped by where each scan could go, counted over all of
+ *  it. One read feeds the queue and the put-away nag beside it, so the two
+ *  cannot disagree. */
+export function useScannerQueue(slug: string): ScannerQueueState {
+  const summary = useQuery({
+    queryKey: ["scanner-queue", slug],
+    queryFn: () => api.scanScannerQueue(slug),
+    enabled: !!slug,
+    refetchInterval: (q) => ((q.state.data?.scanned_total ?? 0) > 0 ? 4000 : 20000),
+  });
+  const page = useQuery({
+    queryKey: ["capture-inbox", slug],
+    queryFn: () => api.listScanInbox(slug, { status: "pending" }),
+    enabled: !!slug && (summary.data?.offered ?? 0) > 0,
+    refetchInterval: 20000,
+  });
+  return useMemo(() => queueFromServer(summary.data ?? EMPTY, page.data?.items ?? []), [summary.data, page.data]);
 }
 
 export function ScannerQueue({ slug, queue, cap = 2 }: { slug: string; queue: ScannerQueueState; cap?: number }) {
@@ -111,11 +113,11 @@ export function ScannerQueue({ slug, queue, cap = 2 }: { slug: string; queue: Sc
   if (queue.groups.length === 0) return null;
   const shown = queue.groups.slice(0, cap);
   const more = queue.groups.length - shown.length;
-  const moreScans = queue.groups.slice(cap).reduce((n, g) => n + g.items.length, 0);
+  const moreScans = queue.groups.slice(cap).reduce((n, g) => n + g.ids.length, 0);
   return (
     <section data-testid="scanner-queue" className="space-y-1.5">
       <div className="flex items-center gap-2">
-        <span className="text-[10px] font-mono uppercase tracking-widest text-faint dark:text-slate-500">// from your scanner - waiting to file ({queue.scanned.length})</span>
+        <span className="text-[10px] font-mono uppercase tracking-widest text-faint dark:text-slate-500">// from your scanner - waiting to file ({queue.total})</span>
         <div className="flex-1" />
         <Link to="/scan" className="text-xs text-accent hover:underline shrink-0">
           review all in the Scan Inbox →
@@ -130,39 +132,39 @@ export function ScannerQueue({ slug, queue, cap = 2 }: { slug: string; queue: Sc
                   below gets the full card width. */}
               <div className="flex items-center gap-3 flex-wrap">
                 <div className="flex-1 min-w-0 text-sm text-content dark:text-mortar-100">
-                  <strong>{g.items.length}</strong> look{g.items.length === 1 ? "s" : ""} like <span className="text-accent font-medium">{g.label}</span>
+                  <strong>{g.ids.length}</strong> look{g.ids.length === 1 ? "s" : ""} like <span className="text-accent font-medium">{g.label}</span>
                 </div>
                 {g.bundleId ? (
                   <button
                     type="button"
                     disabled={busy}
-                    onClick={() => materialize.start(g.bundleId!)}
+                    onClick={() => materialize.start(g.bundleId!, g.ids)}
                     className="shrink-0 inline-flex items-center gap-1 rounded-md bg-cobble-600 hover:bg-cobble-700 text-white text-xs font-medium px-2.5 py-1 transition disabled:opacity-50"
                   >
                     {busy ? <Loader2 size={12} className="animate-spin" /> : <ArrowRight size={12} />}
-                    Create {g.label} & file all {g.items.length}
+                    Create {g.label} & file all {g.ids.length}
                   </button>
                 ) : (
                   <button
                     type="button"
                     disabled={busy}
-                    onClick={() => confirmGroup.mutate({ label: g.label, target: g.target!, ids: g.items.map((i) => i.id) })}
+                    onClick={() => confirmGroup.mutate({ label: g.label, target: g.target!, ids: g.ids })}
                     className="shrink-0 inline-flex items-center gap-1 rounded-md bg-cobble-600 hover:bg-cobble-700 text-white text-xs font-medium px-2.5 py-1 transition disabled:opacity-50"
                   >
                     {busy ? <Loader2 size={12} className="animate-spin" /> : <ArrowRight size={12} />}
-                    Add all {g.items.length} to {g.label}
+                    Add all {g.ids.length} to {g.label}
                   </button>
                 )}
               </div>
               {/* Full-width tile strip: the person's own scans, so they know it is
                   their thing being offered a home. */}
               <div className="flex gap-1.5 overflow-x-auto pb-0.5">
-                {g.items.slice(0, 12).map((i) => (
+                {g.preview.slice(0, 12).map((i) => (
                   <CaptureTile key={i.id} slug={slug} it={i} />
                 ))}
-                {g.items.length > 12 && (
+                {g.ids.length > Math.min(12, g.preview.length) && (
                   <Link to="/scan" className="flex-1 min-w-14 max-w-24 aspect-square rounded-md border border-line dark:border-slate-700 bg-subtle dark:bg-slate-800 grid place-items-center text-xs font-medium text-muted dark:text-slate-300 hover:border-accent hover:text-accent transition">
-                    +{g.items.length - 12}
+                    +{g.ids.length - Math.min(12, g.preview.length)}
                   </Link>
                 )}
               </div>

@@ -5,7 +5,8 @@
 import { useEffect, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Archive, ArrowRightLeft, Copy, Library, Minus, Plus, ShieldCheck, Trash2 } from "lucide-react";
-import { AssortmentCard, ContentsPanel, ContributedDetailPanels, CustomFieldsPanel, EntityActionsBar, EntityThumb, FaceSection, FieldPack, LabeledField, Modal, RecordFaces, RecordHeaderChips, editFieldItem, fieldNeed, useFaces, MoveToInstanceModal, UnitInput, useConfirm, usePageTitle, useToast, useUnits } from "@cobblr/platform-web";
+import { consumptionGauge, type ConsumptionGauge as ConsumptionGaugeT } from "@cobblr/platform-contract/consumption-gauge";
+import { PresentationGate, AssortmentCard, ContentsPanel, ContributedDetailPanels, CustomFieldsPanel, EntityActionsBar, EntityThumb, FaceSection, FieldPack, LabeledField, Modal, RecordFaces, RecordHeaderChips, editFieldItem, fieldNeed, useFaces, MoveToInstanceModal, UnitInput, useConfirm, usePageTitle, useToast, useUnits } from "@cobblr/platform-web";
 import { useInventory } from "./context";
 import { QtyStepper } from "./QtyStepper";
 import { isAssorted } from "./assorted";
@@ -275,10 +276,8 @@ export function PartDetailPage({ id, onClose }: { id: string; onClose: () => voi
       const r = part.data?.reconcile;
       if (!r) return;
       await api.updatePart(id!, {
-        metadata: {
-          ...(part.data?.metadata ?? {}),
-          reconcile_dismissed: { qty: r.qty, units_count: r.units_count },
-        },
+        // Only the key this changes: the server merges it (#3625).
+        metadata: { reconcile_dismissed: { qty: r.qty, units_count: r.units_count } },
       });
     },
     onSuccess: () => void qc.invalidateQueries({ queryKey: ["inventory-part", id] }),
@@ -306,6 +305,26 @@ export function PartDetailPage({ id, onClose }: { id: string; onClose: () => voi
   }
   if (!part.data) return null;
   const p = part.data;
+  // The collection decides what this item shows: its field presentation, its
+  // stock face and its faces. Until all three are known nothing is drawn, and
+  // a failed read is said, never replaced by the generic part's fields.
+  const shapeKnown = fp.ready && disclosure.ready && faces.ready;
+  const shapeFailed = fp.failed || disclosure.failed || faces.failed;
+  if (!shapeKnown || shapeFailed) {
+    return (
+      <PresentationGate
+        ready={shapeKnown}
+        failed={shapeFailed}
+        retry={() => {
+          fp.retry();
+          disclosure.retry();
+          faces.retry();
+        }}
+      >
+        {null}
+      </PresentationGate>
+    );
+  }
 
   // "Disassemble into parts" only makes sense for a KIT — a part
   // matched to a catalog set, still sealed/built (not yet parted out).
@@ -471,7 +490,7 @@ export function PartDetailPage({ id, onClose }: { id: string; onClose: () => voi
                 {/* Label + Cobb, up here by the item's identity. Two verbs
                     that are not about the record left the strip below for
                     this spot; the platform decides what a header carries. */}
-                <RecordHeaderChips kind="inventory:part" id={p.id} label={p.name} />
+                <RecordHeaderChips kind={entityKind} id={p.id} label={p.name} />
                 {p.lifetime_warranty && (
                   <span className="text-[10px] inline-flex items-center gap-1 text-moss-600 border border-moss-200 dark:border-moss-800 rounded px-1.5 py-0.5">
                     lifetime warranty
@@ -645,12 +664,10 @@ export function PartDetailPage({ id, onClose }: { id: string; onClose: () => voi
         fallbackValues={matched.data?.fields}
         fallbackLabel={matched.data ? `catalog (${matched.data.title})` : undefined}
         onCommit={(name, value) =>
-          update.mutate({
-            metadata: {
-              ...((p.metadata as Record<string, unknown> | null) ?? {}),
-              [name]: value,
-            },
-          })
+          // Only the field that changed: the server merges it into the live
+          // row. Sending the bag as rendered plus this field let three quick
+          // edits keep only the last (#3625).
+          update.mutate({ metadata: { [name]: value } })
         }
       />
 
@@ -731,7 +748,7 @@ export function PartDetailPage({ id, onClose }: { id: string; onClose: () => voi
           // opt-in link. Generic — driven by the per-instance override, no
           // per-bundle branch here.
           defaultOn={fp.configured("consumable")}
-          onSetCapacity={(c) => update.mutate({ metadata: { ...pmeta, capacity: c } })}
+          onSetCapacity={(c) => update.mutate({ metadata: { capacity: c } })}
         />
       )}
 
@@ -873,6 +890,7 @@ function EditableTitle({
     return (
       <input
         autoFocus
+        // DRAFT-OK: mounted when the field opens for editing and gone when it closes; for its whole life the person is the one changing it.
         defaultValue={value}
         onBlur={(e) => {
           setEditing(false);
@@ -967,16 +985,25 @@ function ConsumptionPanel({
   defaultOn?: boolean;
   onSetCapacity: (c: number | null) => void;
 }) {
-  const { api } = useInventory();
+  const { api, entityKind } = useInventory();
   const qc = useQueryClient();
   const toast = useToast();
+  // What the capacity is measured in, by the one rule the per-unit face and the
+  // list use (consumption-unit.ts): a Yarn's is "m", from Length / skein.
+  // Same query key as the per-unit face, so it costs no second fetch.
+  const defs = useQuery({
+    queryKey: ["inventory-fielddefs", entityKind],
+    queryFn: () => api.listFieldDefs(entityKind),
+    staleTime: 60_000,
+  });
+  const capacityUnit = consumptionUnitOf(defs.data?.items ?? []);
 
   // Opt-in flag write — merges into the existing metadata (never clobbers other
   // fields) and refreshes the item. Turning it OFF leaves any unit rows in place
   // (archived, harmless): disclosure is never destructive.
   const setPerUnit = useMutation({
     mutationFn: (on: boolean) =>
-      api.updatePart(partId, { metadata: { ...metadata, [PER_UNIT_TRACKING_KEY]: on } }),
+      api.updatePart(partId, { metadata: { [PER_UNIT_TRACKING_KEY]: on } }),
     onSuccess: () => {
       void qc.invalidateQueries({ queryKey: ["inventory-part", partId] });
       void qc.invalidateQueries({ queryKey: ["inventory-parts"] });
@@ -1006,11 +1033,39 @@ function ConsumptionPanel({
       qty={qty}
       unit={unit}
       capacity={capacity}
+      capacityUnit={capacityUnit}
       trackedBy={trackedBy}
       defaultOn={defaultOn}
       onSetCapacity={onSetCapacity}
       onEnablePerUnit={trackedBy ? undefined : () => setPerUnit.mutate(true)}
     />
+  );
+}
+
+/** "2 skein left" and, when there is an honest one, how full: "of 1000 g ·
+ *  80%", or for a count of things measured one at a time "200 m each · 100%". No
+ *  percentage at all when the two cannot be put in one unit. */
+function GaugeLine({ qty, unit, gauge }: { qty: number; unit: string; gauge: ConsumptionGaugeT | null }) {
+  const units = useUnits();
+  const amount = (a: { value: number; unit: string | null }) => units.format(a.value, a.unit);
+  return (
+    <div data-testid="consumption-gauge">
+      <div className="flex items-baseline justify-between text-sm">
+        <span className="text-content dark:text-mortar-100">
+          <b>{qty}</b> {unit} left
+        </span>
+        {gauge && (
+          <span className="text-faint text-xs">
+            {gauge.perUnit ? `${amount(gauge.full)} each` : `of ${amount(gauge.full)}`} · {gauge.pct}%
+          </span>
+        )}
+      </div>
+      {gauge && (
+        <div className="mt-1 h-2 rounded bg-line dark:bg-slate-700 overflow-hidden">
+          <div className={`h-full ${gauge.pct <= 15 ? "bg-ember-500" : "bg-moss-500"}`} style={{ width: `${gauge.pct}%` }} />
+        </div>
+      )}
+    </div>
   );
 }
 
@@ -1022,6 +1077,7 @@ function FlatConsumptionPanel({
   qty,
   unit,
   capacity,
+  capacityUnit,
   trackedBy,
   defaultOn = false,
   onSetCapacity,
@@ -1031,6 +1087,8 @@ function FlatConsumptionPanel({
   qty: number;
   unit: string;
   capacity: number | null;
+  /** What the capacity is measured in; null when it is in the count's own unit. */
+  capacityUnit: string | null;
   trackedBy?: string | null;
   defaultOn?: boolean;
   onSetCapacity: (c: number | null) => void;
@@ -1041,7 +1099,10 @@ function FlatConsumptionPanel({
   const [cap, setCap] = useState(capacity != null ? String(capacity) : "");
   const log = useQuery({ queryKey: ["inventory-consumption", partId], queryFn: () => api.listConsumption(partId) });
   const rows = log.data?.items ?? [];
-  const pct = capacity && capacity > 0 ? Math.max(0, Math.min(100, Math.round((qty / capacity) * 100))) : null;
+  const units = useUnits();
+  // Only ever two amounts in one unit (#3648): 2 skeins of 200 m each read
+  // "200 m each · 100%", never "of 200 skein · 1%". Null when they cannot be one unit.
+  const gauge = consumptionGauge({ qty, unit, capacity, capacityUnit }, units.lens);
 
   // Externally tracked (e.g. a Spoolman spool): Spoolman owns the remaining; we
   // mirror it and don't deduct. Show the source, the gauge, no editor/ledger.
@@ -1056,21 +1117,7 @@ function FlatConsumptionPanel({
           </span>
         </div>
         <div>
-          <div className="flex items-baseline justify-between text-sm">
-            <span className="text-content dark:text-mortar-100">
-              <b>{qty}</b> {unit} left
-            </span>
-            {capacity != null && pct != null && (
-              <span className="text-faint text-xs">
-                of {capacity} {unit} · {pct}%
-              </span>
-            )}
-          </div>
-          {capacity != null && pct != null && (
-            <div className="mt-1 h-2 rounded bg-line dark:bg-slate-700 overflow-hidden">
-              <div className={`h-full ${pct <= 15 ? "bg-ember-500" : "bg-moss-500"}`} style={{ width: `${pct}%` }} />
-            </div>
-          )}
+          <GaugeLine qty={qty} unit={unit} gauge={gauge} />
           <div className="text-[11px] text-faint mt-1">{label} owns this spool's count - Cobblr mirrors it on sync and doesn't deduct.</div>
         </div>
       </section>
@@ -1140,20 +1187,8 @@ function FlatConsumptionPanel({
             Cancel
           </button>
         </div>
-      ) : capacity != null && pct != null ? (
-        <div>
-          <div className="flex items-baseline justify-between text-sm">
-            <span className="text-content dark:text-mortar-100">
-              <b>{qty}</b> {unit} left
-            </span>
-            <span className="text-faint text-xs">
-              of {capacity} {unit} · {pct}%
-            </span>
-          </div>
-          <div className="mt-1 h-2 rounded bg-line dark:bg-slate-700 overflow-hidden">
-            <div className={`h-full ${pct <= 15 ? "bg-ember-500" : "bg-moss-500"}`} style={{ width: `${pct}%` }} />
-          </div>
-        </div>
+      ) : capacity != null ? (
+        <GaugeLine qty={qty} unit={unit} gauge={gauge} />
       ) : null}
 
       {rows.length > 0 && (

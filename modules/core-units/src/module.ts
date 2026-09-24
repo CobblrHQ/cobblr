@@ -62,11 +62,11 @@ export default defineModule({
         // — the labels:set-code pattern. Purely additive: a new code never
         // rewrites a value already stored against a different one.
         id: "core-units:add-unit",
-        examples: ["we measure yarn in skeins", "add a fathom unit"],
+        examples: ["we measure yarn in balls", "add a fathom unit"],
         undoable: true,
         label: "Add a unit",
         description:
-          "Teach this workspace a unit it does not have yet (a fathom, a skein, a board-foot) so quantity fields can be measured in it. Runs on the workspace, not a record. The built-ins already cover mass, length, area, volume, time, count, electrical and digital, so check those first.",
+          "Teach this workspace a unit it does not have yet (a fathom, a ball, a board-foot) so quantity fields can be measured in it. Runs on the workspace, not a record. The built-ins already cover mass, length, area, volume, time, count, electrical and digital, so check those first.",
         icon: "ruler",
         scope: "workspace",
         invokeHandler: "core-units.add-unit",

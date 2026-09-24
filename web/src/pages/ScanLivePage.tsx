@@ -22,6 +22,9 @@ import { api, type ScanInboxItem } from "../lib/api";
 import { leadPhoto } from "../lib/scanPhoto";
 import { leadYours, rowPictures, scanFileUrl } from "../lib/rowPictures";
 import { useActiveOrg } from "../auth/ActiveOrgContext";
+import { useQuery } from "@tanstack/react-query";
+import { useScanViewer } from "./scanViewer";
+import { itemDestinationLabel } from "../lib/itemDestination";
 
 /** How often the display asks. Two seconds is under the time it takes to move
  *  the scanner to the next thing, so the answer is on screen before the person
@@ -37,12 +40,6 @@ function titleOf(row: ScanInboxItem): string {
   return row.suggested_name?.trim() || row.barcode_text?.trim() || "Scanned";
 }
 
-/** Where it is going, in the chip's own words (the served row carries the
- *  resolved candidate, so the display and the card cannot disagree). */
-function destinationOf(row: ScanInboxItem): string | null {
-  const c = row.suggested_candidates?.[0];
-  return c?.label?.trim() || null;
-}
 
 function Thumb({ row, big, slug }: { row: ScanInboxItem; big?: boolean; slug: string }) {
   // The shared ladder, not an inline pick: which of the catalog art and the
@@ -73,6 +70,10 @@ function Thumb({ row, big, slug }: { row: ScanInboxItem; big?: boolean; slug: st
 
 export function ScanLivePage() {
   const { activeSlug, activeOrg } = useActiveOrg();
+  // The card's own viewer, so this strip names the same table the card does.
+  const menuQ = useQuery({ queryKey: ["scan-menu", activeSlug], queryFn: () => api.scanMenu(activeSlug), enabled: !!activeSlug, staleTime: 60_000 });
+  const viewer = useScanViewer(menuQ.data?.items ?? null);
+  const destinationOf = (row: ScanInboxItem) => itemDestinationLabel(row, viewer);
   usePageTitle("Live scans");
   const [rows, setRows] = useState<ScanInboxItem[]>([]);
   const [missed, setMissed] = useState(0);

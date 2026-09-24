@@ -8,13 +8,14 @@
 import { Router, type Request } from "express";
 import { z } from "zod";
 import { sql, type RawBuilder } from "kysely";
-import { platform, stockDisclosureFromConfig, type FilterPredicate } from "@cobblr/platform-contract";
+import { daysUntilField, platform, stockDisclosureFromConfig, type FilterPredicate } from "@cobblr/platform-contract";
 import { floorDelta } from "../stock-floor.js";
 import { applyPartFilters, applyPartSort } from "./part-query.js";
 import { suggestKindsFromPhoto } from "./suggest-kinds.js";
 import { instanceOf, instanceQtyUnit, sessionUser, tenantContext, tenantDb } from "../db.js";
 import { asyncHandler, badBody, requireCapability, requireRole } from "./util.js";
-import { routeUnknownToMetadata, preserveServerManaged, coerceMetadata } from "@cobblr/platform-contract/entity-metadata";
+import { routeUnknownToMetadata, coerceMetadata } from "@cobblr/platform-contract/entity-metadata";
+import { applyJsonbMerge } from "@cobblr/platform-contract/jsonb-merge";
 import { castFieldValues } from "@cobblr/platform-contract/field-values";
 import { disclosureHandler, fieldsShowStockSignal, latchInstanceStock } from "./disclosure.js";
 import { computeReconcile } from "../reconcile.js";
@@ -165,41 +166,6 @@ const PartUpdate = PartCreate.partial();
  *  PATCH /:id), so there are no reserved words to collide with. */
 const MetadataMerge = z.record(z.unknown());
 
-/** DB-side merge of a partial custom-field bag: set the non-null keys, REMOVE
- *  the null'd ones. The removal matters — jsonb `||` keeps an explicit null
- *  under the key forever (a tombstone the whole-bag path would never produce,
- *  and one that shadows same-named computed-field provider namespaces via `in`
- *  checks); `- key` actually deletes. */
-function metadataMergeExpr(fields: Record<string, unknown>): RawBuilder<Record<string, unknown>> {
-  const sets: Record<string, unknown> = {};
-  const dels: string[] = [];
-  for (const [k, v] of Object.entries(fields)) {
-    if (v === null || v === undefined) dels.push(k);
-    else sets[k] = v;
-  }
-  let expr = sql<Record<string, unknown>>`coalesce(metadata, '{}'::jsonb)`;
-  if (Object.keys(sets).length > 0) {
-    expr = sql<Record<string, unknown>>`${expr} || ${JSON.stringify(sets)}::jsonb`;
-  }
-  for (const k of dels) {
-    expr = sql<Record<string, unknown>>`${expr} - ${k}::text`;
-  }
-  return expr;
-}
-
-/** The same merge applied in memory — for the event's after-image (the DB write
- *  is a SQL expression, not a value we hold). */
-function applyMetadataMerge(
-  before: Record<string, unknown>,
-  fields: Record<string, unknown>,
-): Record<string, unknown> {
-  const next = { ...before };
-  for (const [k, v] of Object.entries(fields)) {
-    if (v === null || v === undefined) delete next[k];
-    else next[k] = v;
-  }
-  return next;
-}
 
 const StockAdjust = z.object({
   delta: z.number(),
@@ -459,6 +425,9 @@ partsRouter.get(
     // What is left in an open unit is measured in the kind's consumption
     // unit (metres off a skein), never the count's (consumption-unit.ts).
     const remainderUnit = openUnits.size ? await consumptionUnitFor(req) : null;
+    // The reader's day, for the warranty countdown below: their client's day
+    // when it says one, else what the platform knows of them.
+    const today = await platform().accounts.dayFor(sessionUser(req).id, { said: req.query.today });
     const items = pageRows.map((r) => {
       const qty = Number(r.qty);
       const assigned = Number(r.assigned_qty ?? 0);
@@ -466,12 +435,10 @@ partsRouter.get(
       const available = qty - assigned;
       const open = openUnitsSummary(openUnits.get(r.id), remainderUnit);
       const onHand = onHandCount(qty, open?.remaining ?? []);
-      // Days until warranty expires — null when no warranty date.
-      let warranty_days_until: number | null = null;
-      if (r.warranty_expires) {
-        const ms = new Date(r.warranty_expires).getTime() - Date.now();
-        warranty_days_until = Math.ceil(ms / 86_400_000);
-      }
+      // Calendar days until the warranty ends, the one countdown (day.ts):
+      // null when there is no warranty date. It took the ceiling of an
+      // instant, so it changed its answer in the evening (#3641).
+      const warranty_days_until = daysUntilField(r.warranty_expires, today);
       const approximate = r.approximate_qty == null ? null : Number(r.approximate_qty);
       return {
         ...r,
@@ -1228,7 +1195,7 @@ partsRouter.patch(
       .set({
         // Merge in Postgres, so a concurrent writer's key survives. There is no
         // in-memory snapshot here to go stale.
-        metadata: metadataMergeExpr(own),
+        metadata: platform().db.mergeJsonb("metadata", own) as never,
         updated_at: new Date(),
       })
       .where("id", "=", id)
@@ -1255,7 +1222,7 @@ partsRouter.patch(
       orgId: ctx.org.id,
       partId: updated.id,
       before: { ...before, ...beforeMeta },
-      after: { ...before, ...applyMetadataMerge(beforeMeta, own) },
+      after: { ...before, ...applyJsonbMerge(beforeMeta, own) },
     });
 
     // The row after a save carries its served title too, so a page that
@@ -1297,30 +1264,16 @@ partsRouter.patch(
     }
 
     const smNames = await platform().entities.serverManagedFields(ctx.org.id, "inventory:part");
-    // Two metadata intents, split by whether the CALLER sent `metadata`:
-    // - explicit `metadata` REPLACES the bag (the documented contract; keys are
-    //   removed by omission), with server-managed values preserved from the row.
-    // - keys that only arrived via the top-level HOIST are single-field writes
-    //   ("set colorway") — those MERGE DB-side, same as PATCH /:id/metadata.
-    //   Replacing here would let one bare field name wipe every other custom
-    //   field on the part, from any API caller.
-    const hadExplicitMetadata =
-      !!req.body &&
-      typeof req.body === "object" &&
-      (req.body as Record<string, unknown>).metadata !== undefined;
+    // The custom fields MERGE into the live row, whether they arrived as
+    // `metadata` or hoisted from the top level: the keys sent are set, a null
+    // removes its key, every other key stays (#3625). `metadata` used to
+    // REPLACE the bag, so three quick edits to one item (each the bag as the
+    // page had rendered it, plus one field) kept only the last.
     let hoistedMerge: Record<string, unknown> | null = null;
     if (parsed.data.metadata !== undefined) {
       const typed = await typedFields(req, parsed.data.metadata as Record<string, unknown>);
-      if (hadExplicitMetadata) {
-        parsed.data.metadata = preserveServerManaged(
-          typed,
-          coerceMetadata((before as { metadata?: unknown }).metadata),
-          smNames,
-        );
-      } else {
-        hoistedMerge = Object.fromEntries(Object.entries(typed).filter(([k]) => !smNames.includes(k)));
-        delete (parsed.data as Record<string, unknown>).metadata;
-      }
+      hoistedMerge = Object.fromEntries(Object.entries(typed).filter(([k]) => !smNames.includes(k)));
+      delete (parsed.data as Record<string, unknown>).metadata;
     }
 
     const patch: Record<string, unknown> = {};
@@ -1335,7 +1288,7 @@ partsRouter.patch(
       }
     }
     if (hoistedMerge && Object.keys(hoistedMerge).length > 0) {
-      patch.metadata = metadataMergeExpr(hoistedMerge);
+      patch.metadata = platform().db.mergeJsonb("metadata", hoistedMerge);
     }
     // An estimate dates itself. The caller never sets estimated_at: it is the
     // moment the guess was made, and a client that could backdate it would make
@@ -1362,7 +1315,10 @@ partsRouter.patch(
       userId: session.id,
       action: "part_updated",
       ref: { module: "inventory", entityType: "part", entityId: updated.id },
-      diff: parsed.data,
+      // The custom fields this edit wrote ride along: they left parsed.data
+      // for the merge, and the history is the one place a value a later
+      // write replaced can be read back (#3625).
+      diff: hoistedMerge ? { ...parsed.data, metadata: hoistedMerge } : parsed.data,
     });
     // Flat before/after field bags (native columns + flattened metadata) so a
     // transition-aware wire can compare {{event.before.x}} vs {{event.after.x}}
@@ -1373,12 +1329,7 @@ partsRouter.patch(
     for (const [k, v] of Object.entries(patch)) {
       if (k !== "metadata" && k !== "updated_at") nativeChanges[k] = v;
     }
-    const afterMeta =
-      parsed.data.metadata !== undefined
-        ? ((patch.metadata as Record<string, unknown>) ?? {})
-        : hoistedMerge
-          ? applyMetadataMerge(beforeMeta, hoistedMerge)
-          : beforeMeta;
+    const afterMeta = hoistedMerge ? applyJsonbMerge(beforeMeta, hoistedMerge) : beforeMeta;
     // AWAIT: a transition wire (e.g. core-mobility's recompute-away) runs on
     // this event and writes back to the same part; the client re-reads right
     // after, so the wire must finish before we respond or the read races it.

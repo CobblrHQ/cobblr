@@ -11,6 +11,7 @@ import { z } from "zod";
 import { requireAuth } from "../auth/middleware.js";
 import { withTenant } from "../middleware/tenant.js";
 import {
+  askAgain,
   completeApprovalRequest,
   createApprovalRequest,
   decideApprovalRequest,
@@ -29,7 +30,7 @@ type Req = import("express").Request;
 const orgOf = (req: Req) => (req as unknown as { tenant: { org: { id: string; slug: string }; role: string } }).tenant;
 const userOf = (req: Req) => (req as unknown as { session: { id: string } }).session;
 
-const Remedy = z.object({ kind: z.enum(["capability", "install"]), key: z.string().min(1).max(200) });
+const Remedy = z.object({ kind: z.enum(["capability", "install", "module"]), key: z.string().min(1).max(200) });
 const CreateBody = z.object({
   remedies: z.array(Remedy).min(1).max(4),
   subject: z.string().min(1).max(200),
@@ -182,6 +183,22 @@ approvalRequestsRouter.post("/:id/withdraw", requireAuth, withTenant, async (req
       return;
     }
     res.json({ ok: true, status: row.status });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// AI-REACH: the requester asking again for a yes that was taken back since; the resume sheet offers it
+approvalRequestsRouter.post("/:id/ask-again", requireAuth, withTenant, async (req, res, next) => {
+  try {
+    const t = orgOf(req);
+    const r = await askAgain({ requestId: req.params.id!, requesterId: userOf(req).id, requesterRole: t.role });
+    if (!r.ok) {
+      res.status(r.status).json({ error: { code: r.code, message: r.message } });
+      return;
+    }
+    const view = await viewRequest(r.request.id, userOf(req).id, t.role, t.org.id);
+    res.status(r.existing ? 200 : 201).json({ request: view, existing: r.existing });
   } catch (err) {
     next(err);
   }

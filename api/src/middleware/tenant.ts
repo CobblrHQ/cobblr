@@ -15,6 +15,7 @@ import { verifyImpersonation } from "../auth/jwt.js";
 import { currentActor } from "../lib/request-context.js";
 import { noteActiveDay } from "../platform/product-events.js";
 import type { OrgRole } from "../db/schema.js";
+import { servedShapeVersion, WORKSPACE_SHAPE_HEADER } from "../platform/workspace-shape.js";
 import type { TenantDB } from "../db/tenant-schema.js";
 
 export interface RequestTenant {
@@ -130,6 +131,7 @@ export async function withTenant(
       "o.plan",
       "o.sandbox",
       "o.trial_expires_at",
+      "o.shape_version",
       "m.role",
     ])
     .where("m.user_id", "=", req.session.id)
@@ -194,6 +196,7 @@ export async function withTenant(
 
   try {
     const db = await getTenantDb(row.org_id);
+    serveShapeVersion(res, row.org_id, row.shape_version);
     req.tenant = {
       org: { id: row.org_id, name: row.org_name, slug: row.org_slug },
       role: row.role,
@@ -261,7 +264,7 @@ async function resolveImpersonatedTenant(
   const row = await meta
     .selectFrom("org_memberships as m")
     .innerJoin("orgs as o", "o.id", "m.org_id")
-    .select(["o.id as org_id", "o.name as org_name", "o.slug as org_slug", "o.db_credentials_encrypted", "o.plan", "m.role"])
+    .select(["o.id as org_id", "o.name as org_name", "o.slug as org_slug", "o.db_credentials_encrypted", "o.plan", "o.shape_version", "m.role"])
     .where("m.user_id", "=", claims.act)
     .where("o.slug", "=", slug)
     .executeTakeFirst();
@@ -298,6 +301,7 @@ async function resolveImpersonatedTenant(
     .catch(() => {});
   try {
     const db = await getTenantDb(row.org_id);
+    serveShapeVersion(res, row.org_id, row.shape_version);
     req.tenant = { org: { id: row.org_id, name: row.org_name, slug: row.org_slug }, role: row.role, db };
     req.impersonation = { operatorId: claims.sub, targetId: claims.act, sessionId: sess.id, mode: sess.mode };
     next();
@@ -308,4 +312,16 @@ async function resolveImpersonatedTenant(
     }
     res.status(500).json({ error: { code: "tenant_unavailable", message: (err as Error).message } });
   }
+}
+
+/** Stamp the workspace's shape version on the response as its head is written,
+ *  not now: the handler may change the shape (an install, often in a nested
+ *  request) before it answers, and the answer must carry the version after
+ *  that (platform/workspace-shape.ts). */
+function serveShapeVersion(res: Response, orgId: string, readAtStart: number): void {
+  const writeHead = res.writeHead;
+  res.writeHead = function (this: Response, ...args: unknown[]) {
+    if (!this.headersSent) this.setHeader(WORKSPACE_SHAPE_HEADER, String(servedShapeVersion(orgId, readAtStart)));
+    return (writeHead as (...a: unknown[]) => Response).apply(this, args);
+  } as typeof res.writeHead;
 }

@@ -13,7 +13,7 @@ import { sql } from "kysely";
 import { meta } from "../db/meta.js";
 import { getTenantDb } from "../db/tenant.js";
 import * as events from "../platform/events.js";
-import { detailPathForEntity } from "../platform/entities.js";
+import { detailPathForEntity, resolveKind } from "../platform/entities.js";
 
 export const qrScanRouter = Router({ mergeParams: true });
 
@@ -54,10 +54,19 @@ export async function resolveQrToken(token: string): Promise<ResolveResult> {
     .executeTakeFirst();
   if (!orgRow) return { ok: false, status: "not_found" };
 
+  // A sticker names the RECORD. Labels were once minted under an instance's
+  // alias for its rows ("bookshelf:item"), and those are already on shelves:
+  // read as the alias, the scanner took the book for somewhere to file things
+  // into instead of opening it (#3591). The alias and the module kind name
+  // one row, so every token answers with the module kind, printed when it may.
+  const { base: entityKind } = await resolveKind(row.org_id, row.entity_kind);
+
   // Instance-aware detail path: a label for a Vehicle (assets instance) or a 3D
   // Printer (machines instance) lands on THAT item's instance page, not the empty
   // base page. Shared with the scan registry + search via detailPathForEntity.
-  const detailPath = await detailPathForEntity(row.org_id, row.entity_kind, row.entity_id);
+  const detailPath =
+    (await detailPathForEntity(row.org_id, entityKind, row.entity_id)) ??
+    (await detailPathForEntity(row.org_id, row.entity_kind, row.entity_id));
 
   return {
     ok: true,
@@ -65,7 +74,7 @@ export async function resolveQrToken(token: string): Promise<ResolveResult> {
     token_id: row.id,
     org_id: row.org_id,
     org_slug: orgRow.slug,
-    entity_kind: row.entity_kind,
+    entity_kind: entityKind,
     entity_id: row.entity_id,
     mode: row.mode,
     action_id: row.action_id,

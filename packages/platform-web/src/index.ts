@@ -13,6 +13,8 @@ export { RecordHeaderChips } from "./RecordHeaderChips";
 export { RecordFaces, FaceSection, FacesOn, useFaces, useFaceOn } from "./faces";
 export { useInvokeEntityAction } from "./use-invoke-action";
 export { useLater, type Later } from "./use-later";
+export { useFieldDraft, type FieldDraft } from "./use-field-draft";
+export { useFieldPresentation, PresentationGate, type FieldPresentation } from "./field-presentation";
 export { runAction, useRunAction, refreshAfterAction, queryShowsKinds, affectedKindsOf, type ActionBody, type ActionRun, type ActionAffected, type KindMeta } from "./run-action";
 export { changeWorkspaceShape, useChangeWorkspaceShape, afterWorkspaceShapeChange, queryFollowsWorkspaceShape, type ShapeMeta, type ChangeShapeOptions } from "./workspace-shape";
 export { ActionOutcome } from "./ActionOutcome";
@@ -138,7 +140,7 @@ export { ToastProvider, useToast } from "./ToastContext";
 export { ConfirmProvider, useConfirm } from "./ConfirmContext";
 export { UnitInput } from "./UnitInput";
 export { useUnits, type UseUnits } from "./useUnits";
-export { formatQuantity, formatUnit, resolveUnit, convertQuantity } from "./units";
+export { formatQuantity, formatUnit, resolveUnit, convertQuantity, unitLens } from "./units";
 export type {
   FieldRendererId,
   FieldType,
@@ -246,3 +248,4 @@ export { describeUnreadableBody } from "./unreadableBody";
 export {
   localFetch, isLocalAddress, localAccessAllowed, allowLocalAccess, revokeLocalAccess, LocalAccessDenied,
 } from "./local-network.js";
+export { viewCardFields, CARD_FIELDS_ON_CARD, type ViewCardFields } from "./view-card-fields";

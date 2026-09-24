@@ -21,6 +21,7 @@
 //     the sections revamp, leaving a workspace with two approved AIs no way to
 //     switch. They live here now, next to everything else about AI.
 
+import { aiAvailabilityKeys } from "../lib/ai-availability-keys";
 import { useMemo, useState } from "react";
 import { CredentialFields } from "../components/CredentialFields";
 import { ProviderSetupSteps } from "../components/ProviderSetupSteps";
@@ -61,19 +62,19 @@ export function AiPage() {
     enabled: !!activeSlug,
   });
   const providersQ = useQuery({
-    queryKey: ["ai-providers", activeSlug],
+    queryKey: aiAvailabilityKeys.providers(activeSlug),
     queryFn: () => api.listAiProviders(activeSlug),
     enabled: !!activeSlug,
   });
   const capDefaultsQ = useQuery({
-    queryKey: ["ai-capability-defaults", activeSlug],
+    queryKey: aiAvailabilityKeys.capabilityDefaults(activeSlug),
     queryFn: () => api.listAiCapabilityDefaults(activeSlug),
     enabled: !!activeSlug,
   });
   // Connections routed into this workspace, so a job can be pinned to one.
   // Same key as the section below, so they share one fetch.
   const sharesQ = useQuery({
-    queryKey: ["ai-shares", activeSlug],
+    queryKey: aiAvailabilityKeys.shares(activeSlug),
     queryFn: () => api.listAiShares(activeSlug),
     enabled: !!activeSlug,
   });
@@ -308,8 +309,8 @@ function ProviderRow({
     mutationFn: () => api.deleteAiProvider(activeSlug, provider.id),
     onSuccess: () => {
       toast.success("Provider removed.");
-      void qc.invalidateQueries({ queryKey: ["ai-providers", activeSlug] });
-      void qc.invalidateQueries({ queryKey: ["ai-capability-defaults", activeSlug] });
+      void qc.invalidateQueries({ queryKey: aiAvailabilityKeys.providers(activeSlug) });
+      void qc.invalidateQueries({ queryKey: aiAvailabilityKeys.capabilityDefaults(activeSlug) });
     },
     onError: (e) => toast.error(e instanceof ApiError ? e.message : String(e)),
   });
@@ -318,7 +319,7 @@ function ProviderRow({
       api.updateAiProvider(activeSlug, provider.id, { enabled: !provider.enabled }),
     onSuccess: () => {
       toast.success(provider.enabled ? "Disabled." : "Enabled.");
-      void qc.invalidateQueries({ queryKey: ["ai-providers", activeSlug] });
+      void qc.invalidateQueries({ queryKey: aiAvailabilityKeys.providers(activeSlug) });
     },
     onError: (e) => toast.error(e instanceof ApiError ? e.message : String(e)),
   });
@@ -344,7 +345,7 @@ function ProviderRow({
           </div>
         </div>
         <div className="flex items-center gap-1">
-          <TestConnectionButton test={() => api.testAiProvider(activeSlug, provider.id)} invalidate={[["ai-providers", activeSlug]]} />
+          <TestConnectionButton test={() => api.testAiProvider(activeSlug, provider.id)} invalidate={[aiAvailabilityKeys.providers(activeSlug)]} />
           <button
             type="button"
             onClick={onEdit}
@@ -414,7 +415,7 @@ function ProviderAddModal({
         ...(confirmUnverified ? { confirm_unverified: true } : {}),
       }),
     onSuccess: (created) => {
-      void qc.invalidateQueries({ queryKey: ["ai-providers", activeSlug] });
+      void qc.invalidateQueries({ queryKey: aiAvailabilityKeys.providers(activeSlug) });
       onClose();
       // Say which it is. An additional provider arrives OFF (the server decides,
       // so this reads what came back rather than guessing) — otherwise adding
@@ -556,7 +557,7 @@ function ProviderEditModal({
       const v = updateCreds ? (updated as { verification?: ConnectionVerification } | undefined)?.verification : undefined;
       const t = updateCreds ? verificationToast(v, "updated") : { kind: "success" as const, message: "Provider updated." };
       toast[t.kind](t.message);
-      void qc.invalidateQueries({ queryKey: ["ai-providers", activeSlug] });
+      void qc.invalidateQueries({ queryKey: aiAvailabilityKeys.providers(activeSlug) });
       onClose();
     },
     onError: async (e) => {
@@ -696,7 +697,7 @@ function CapabilityDefaultModal({
       }),
     onSuccess: () => {
       toast.success("Default saved.");
-      void qc.invalidateQueries({ queryKey: ["ai-capability-defaults", activeSlug] });
+      void qc.invalidateQueries({ queryKey: aiAvailabilityKeys.capabilityDefaults(activeSlug) });
       onClose();
     },
     onError: (e) => toast.error(e instanceof ApiError ? e.message : String(e)),
@@ -705,7 +706,7 @@ function CapabilityDefaultModal({
     mutationFn: () => api.deleteAiCapabilityDefault(activeSlug, capability),
     onSuccess: () => {
       toast.success("Default cleared.");
-      void qc.invalidateQueries({ queryKey: ["ai-capability-defaults", activeSlug] });
+      void qc.invalidateQueries({ queryKey: aiAvailabilityKeys.capabilityDefaults(activeSlug) });
       onClose();
     },
     onError: (e) => toast.error(e instanceof ApiError ? e.message : String(e)),
@@ -873,7 +874,7 @@ function AiAvailabilityBanner({ onAdd }: { onAdd?: () => void }) {
     onSuccess: (r) => {
       toast.success(r.ai_disabled ? "AI turned off for this workspace." : "AI turned back on for this workspace.");
       void qc.invalidateQueries({ queryKey: ["ai-settings", activeSlug] });
-      void qc.invalidateQueries({ queryKey: ["ai-status", activeSlug] });
+      void qc.invalidateQueries({ queryKey: aiAvailabilityKeys.status(activeSlug) });
     },
     onError: (e) => toast.error(e instanceof ApiError ? e.message : String(e)),
   });
@@ -1039,7 +1040,7 @@ function ConnectionsSection({
   onEdit: (p: AiProvider) => void;
 }) {
   const shares = useQuery({
-    queryKey: ["ai-shares", slug],
+    queryKey: aiAvailabilityKeys.shares(slug),
     queryFn: () => api.listAiShares(slug),
     enabled: !!slug,
   });
@@ -1101,10 +1102,10 @@ function ConnectionsSection({
             />
           ))}
           <SharedAiRows slug={slug} items={shared} />
-          <MyUnusedConnections slug={slug} />
+          <MyUnusedConnections />
         </div>
       )}
-      {empty && <MyUnusedConnections slug={slug} />}
+      {empty && <MyUnusedConnections />}
     </section>
   );
 }
@@ -1112,13 +1113,12 @@ function ConnectionsSection({
 /** Your own AI connections that this workspace is not using yet, each with the
  *  two things you can do about it from here. See lib/unused-connections.ts for
  *  why this lives on the workspace page and not only on /me/connections. */
-function MyUnusedConnections({ slug }: { slug: string }) {
+function MyUnusedConnections() {
   const { activeOrg } = useActiveOrg();
   const orgId = activeOrg?.id ?? "";
-  const qc = useQueryClient();
   const toast = useToast();
   const mine = useQuery({
-    queryKey: ["my-connections"],
+    queryKey: aiAvailabilityKeys.connections(),
     queryFn: () => api.listConnections(),
   });
   const unused = orgId ? connectionsNotUsedIn(orgId, mine.data?.items ?? []) : [];
@@ -1131,9 +1131,8 @@ function MyUnusedConnections({ slug }: { slug: string }) {
           ? `${c.label || c.provider_id} now answers your own calls here.`
           : `${c.label || c.provider_id} is shared with this workspace.`,
       );
-      void qc.invalidateQueries({ queryKey: ["my-connections"] });
-      void qc.invalidateQueries({ queryKey: ["ai-shares", slug] });
-      void qc.invalidateQueries({ queryKey: ["ai-chat-models", slug] });
+      // The connection, the shares, the model pill and Cobb's availability
+      // all refresh from the write itself (api.ts subscribeAiAvailability).
     },
     onError: (e) => toast.error(e instanceof Error ? e.message : "Couldn't route that connection."),
   });
@@ -1186,8 +1185,8 @@ function SharedAiRows({ slug, items }: { slug: string; items: WorkspaceAiOffer[]
   const pending = items.filter((i) => i.status === "pending");
 
   const onItems = (r: { items: WorkspaceAiOffer[] }) => {
-    qc.setQueryData(["ai-shares", slug], r);
-    void qc.invalidateQueries({ queryKey: ["ai-status"] });
+    qc.setQueryData(aiAvailabilityKeys.shares(slug), r);
+    void qc.invalidateQueries({ queryKey: aiAvailabilityKeys.all() });
   };
   const activate = useMutation({
     mutationFn: (cid: string | null) => api.setActiveAiShare(slug, cid),

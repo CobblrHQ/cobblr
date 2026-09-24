@@ -22,7 +22,9 @@
 // how a person and a model both say "Blue cotton yarn 100g 200m" (the
 // 2026-09-13 continuation review found it as text). A prefix is word-bounded
 // and at least two words, or one word that is distinctive: four letters or
-// more, not a stopword, and in no other read record's title. Prefixes are
+// more, not a stopword, and in no other read record's title. A one-word
+// prefix also needs a determiner in front of it ("the multimeter"), and does
+// not count where the text already names the record by more (#3655). Prefixes are
 // only ever of the records THIS TURN read, never a fuzzy search of the
 // workspace, and a prefix two read records share names neither.
 //
@@ -129,8 +131,20 @@ export function findRecordNames(text: string, records: readonly RecordRef[]): Re
     const start = (m.index ?? 0) + (m[1] ?? "").length;
     out.push({ start, end: start + name.length, ref: hit.ref, prefix: hit.prefix });
   }
-  return out;
+  // A ONE-word shortening is how a person refers back to a thing ("the
+  // multimeter"), so it names the record only with a determiner in front of
+  // it, and only when the text has not already named that record by more.
+  // "The Review imported toaster is in the Kitchen ... purchased from Review
+  // test shop" linked the seller's first word to the toaster (#3655): the
+  // word stood for the toaster by the prefix rule, but the toaster was named
+  // in full a sentence earlier and "from Review" is not how anyone says "the
+  // toaster".
+  const fuller = new Set(out.filter((s) => !isOneWordShortening(s, text)).map((s) => `${s.ref.kind} ${s.ref.id}`));
+  return out.filter((s) => !isOneWordShortening(s, text) || (!fuller.has(`${s.ref.kind} ${s.ref.id}`) && DETERMINER_BEFORE.test(text.slice(0, s.start))));
 }
+
+const DETERMINER_BEFORE = /(?:^|[^\p{L}\p{N}])(?:the|my|your|our|his|her|their|this|that)\s+$/iu;
+const isOneWordShortening = (s: RecordNameSpan, text: string): boolean => s.prefix && !/\s/.test(text.slice(s.start, s.end));
 
 /** The records the text names, once each, and the titles it could not point
  *  at because more than one record carries them. */
@@ -148,4 +162,48 @@ export function namedRecords(
     named.push(s.ref);
   }
   return { named, ambiguous };
+}
+
+// A link the model wrote to a record is not a link to that record.
+//
+// Asked how much yarn was left and to "link to the item", a model answered
+// `[Review open-skein control](/instances/yarn/items/Review open-skein
+// control)`: a path it made up from the title, with no workspace, no id and
+// spaces in it. findRecordNames steps over a written link whole, so the name
+// inside it was never matched to the record the turn had read, and the
+// renderer, which cannot parse a destination with spaces, printed the
+// brackets. A record's address is only ever built from its id through the
+// kind's route (instance-detail recordHref), so a model-written link that
+// tries to address a record is dropped and its words kept: the name then goes
+// through the one rule above, and becomes the real chip when the turn read
+// that record, or stays plain text when it did not.
+//
+// A link addresses a record when its words name one of the records given, or
+// its path could only be a record's: a space in it, a path to one item
+// of a collection (`/instances/<name>/...`, its list page excepted), the open door (`/open/...`), or an
+// id-shaped segment. A page link (`[Presentation](/configuration/presentation)`)
+// and a link to another site stay, each with a destination the renderer can
+// parse. An image is left alone.
+const WRITTEN_LINK = /(!?)\[([^\]\n]*)\]\(\s*(<[^>\n]*>|[^)\n]*)\s*\)/g;
+const OFF_SITE = /^(https?:|mailto:)/i;
+const ID_SEGMENT = /(^|\/)([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}|\d{3,})(\/|$|[?#])/i;
+
+function addressesARecord(dest: string): boolean {
+  const path = dest.replace(/^\/w\/[^/\s]+/, "");
+  return /\s|%20/.test(path) || /^\/instances\/[^/?#]+\/(?!items\/?(?:[?#]|$))./.test(path) || /^\/open\//.test(path) || ID_SEGMENT.test(path);
+}
+
+/** The text with every model-written link that tries to address a record
+ *  reduced to its words, and every kept link given a destination a markdown
+ *  renderer parses (angle brackets when it carries a space). `records` are
+ *  the ones the text may name (a turn's reads, the widget's vouched refs). */
+export function unlinkInventedPaths(text: string, records: readonly RecordRef[] = []): string {
+  if (!text || !text.includes("](")) return text;
+  return text.replace(WRITTEN_LINK, (whole, bang: string, label: string, rawDest: string) => {
+    if (bang) return whole;
+    const dest = rawDest.trim().replace(/^<|>$/g, "").trim();
+    const offSite = OFF_SITE.test(dest);
+    if (!offSite && (addressesARecord(dest) || findRecordNames(label, records).length > 0)) return label;
+    return /\s/.test(dest) ? `[${label}](<${dest}>)` : whole;
+  });
 }

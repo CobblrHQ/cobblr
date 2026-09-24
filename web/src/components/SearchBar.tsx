@@ -12,6 +12,7 @@ import { Search } from "lucide-react";
 import { api } from "../lib/api";
 import { searchFeatures } from "../lib/feature-index";
 import { useActiveOrg } from "../auth/ActiveOrgContext";
+import { recordHref } from "@cobblr/platform-contract/instance-detail";
 
 export function SearchBar() {
   const { activeSlug } = useActiveOrg();
@@ -55,10 +56,8 @@ export function SearchBar() {
     return m;
   }, [kinds.data]);
 
-  function detailRoute(kind: string, id: string): string {
-    const tmpl = routeByKind.get(kind);
-    if (tmpl) return tmpl.replace("{id}", id);
-    return `/search?q=${encodeURIComponent(`${kind}:${id}`)}`;
+  function detailRoute(kind: string, id: string, detailUrl?: string | null): string {
+    return recordHref({ kind, id, detailUrl }, routeByKind.get(kind)) ?? `/search?q=${encodeURIComponent(`${kind}:${id}`)}`;
   }
 
   // Close dropdown on outside click; collapse the (empty) field back to
@@ -142,7 +141,7 @@ export function SearchBar() {
                 // Prefer the resolver-owned per-item detailUrl (carries
                 // instance context, e.g. /instances/designs/<id>); the
                 // kind→route registry map is the fallback for hits without one.
-                navigate(h.detailUrl ?? detailRoute(h.kind, h.id));
+                navigate(detailRoute(h.kind, h.id, h.detailUrl));
                 setOpen(false);
               }}
               className="w-full text-left px-3 py-2 hover:bg-subtle dark:hover:bg-slate-800/60 text-sm"

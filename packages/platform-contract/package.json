@@ -1,12 +1,13 @@
 {
   "name": "@cobblr/platform-contract",
-  "version": "0.5.58",
+  "version": "0.5.59",
   "private": true,
   "type": "module",
   "main": "src/index.ts",
   "exports": {
     ".": "./src/index.ts",
     "./qr-token": "./src/qr-token.ts",
+    "./jsonb-merge": "./src/jsonb-merge.ts",
     "./entity-tokens": "./src/entity-tokens.ts",
     "./hosted-identify": "./src/hosted-identify.ts",
     "./public-url": "./src/public-url.ts",
@@ -27,6 +28,8 @@
     "./signature": "./src/signature.ts",
     "./receipt-totals": "./src/receipt-totals.ts",
     "./scan-triage": "./src/scan-triage.ts",
+    "./scan-recovery": "./src/scan-recovery.ts",
+    "./heal-pass": "./src/heal-pass.ts",
     "./scan-tools": "./src/scan-tools.ts",
     "./scan-pictures": "./src/scan-pictures.ts",
     "./display-identity": "./src/display-identity.ts",
@@ -73,7 +76,9 @@
     "./connection-verification": "./src/connection-verification.ts",
     "./action-args": "./src/action-args.ts",
     "./action-result": "./src/action-result.ts",
-    "./platform-commands": "./src/platform-commands.ts"
+    "./platform-commands": "./src/platform-commands.ts",
+    "./instance-detail": "./src/instance-detail.ts",
+    "./consumption-gauge": "./src/consumption-gauge.ts"
   },
   "types": "src/index.ts",
   "scripts": {

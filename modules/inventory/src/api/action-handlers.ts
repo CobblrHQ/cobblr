@@ -1310,18 +1310,15 @@ async function withBatches(
         const add: Record<string, unknown> = {};
         for (const f of copyFields) if (!NATIVE.has(f) && meta[f] != null) add[f] = meta[f];
         if (Object.keys(add).length > 0) {
-          const trow = await db.selectFrom("inventory_parts").select("metadata").where("id", "=", typeId).executeTakeFirst();
-          const existing = (trow?.metadata as Record<string, unknown> | null) ?? {};
-          const merged = { ...existing };
-          let changed = false;
-          for (const [mk, mv] of Object.entries(add)) if (merged[mk] == null) { merged[mk] = mv; changed = true; }
-          if (changed) {
-            await db.updateTable("inventory_parts")
-              .set({ metadata: sql`${JSON.stringify(merged)}::jsonb` as never })
-              .where("id", "=", typeId)
-              .execute();
-            toppedUp++;
-          }
+          // Fill only the keys the type lacks, in one statement against the
+          // live row: the type's own values win (`add || existing`), so a
+          // user's edit landing meanwhile is never overwritten (#3625).
+          const r = await db.updateTable("inventory_parts")
+            .set({ metadata: sql`(${JSON.stringify(add)}::jsonb || jsonb_strip_nulls(coalesce(metadata, '{}'::jsonb)))` as never })
+            .where("id", "=", typeId)
+            .where(sql<boolean>`not (coalesce(metadata, '{}'::jsonb) @> ${JSON.stringify(add)}::jsonb)`)
+            .executeTakeFirst();
+          if (Number(r.numUpdatedRows ?? 0) > 0) toppedUp++;
         }
       }
     }

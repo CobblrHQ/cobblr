@@ -63,6 +63,7 @@ function isFoundational(entry: { manifest: { name: string; band: string } }): bo
   return false;
 }
 import { getSandboxedModuleInfo } from "../sandbox/sandboxed-module-info.js";
+import { bumpWorkspaceShape } from "../platform/workspace-shape.js";
 import { ensureModuleRole, moduleRolesEnabled } from "../sandbox/module-role.js";
 
 /** Provision the per-module Postgres role for a sandboxed module (no-op
@@ -238,6 +239,8 @@ export async function enableModuleForOrg(
     })
     .onConflict((c) => c.columns(["org_id", "module_name", "instance_name"]).doNothing())
     .execute();
+  // The menu and the filing destinations just moved (workspace-shape.ts).
+  await bumpWorkspaceShape(orgId);
 
   // Pillar E — apply contributed field-defs + wires. Tagged with
   // source_module so disable can clean them up. Idempotent via
@@ -383,6 +386,7 @@ export async function disableModuleForOrg(orgId: string, moduleName: string): Pr
     .where("module_name", "=", moduleName)
     .execute();
   clearEnabledModulesCache(orgId);
+  await bumpWorkspaceShape(orgId);
   try {
     await activity.log({
       orgId,
@@ -417,6 +421,7 @@ export async function syncTenantMigrations(): Promise<number> {
   // BORN WITH: enableModuleForOrg (writes the manifest version at enable).
   for (const entry of listEntries()) {
     try {
+      // SHAPE-UNCHANGED: the version marker of a module already on; nothing a person sees moves.
       await meta
         .updateTable("org_modules")
         .set({ version: entry.manifest.version })
@@ -500,6 +505,7 @@ export async function syncTenantMigrations(): Promise<number> {
           // boot's pre-check stay accurate. Written even when nothing was
           // applied: a workspace opened because its count was NULL must not be
           // opened again next boot for the same reason.
+          // SHAPE-UNCHANGED: migration bookkeeping on a module already on.
           await meta
             .updateTable("org_modules")
             .set({ last_migration: result.latest, migration_count: result.total })

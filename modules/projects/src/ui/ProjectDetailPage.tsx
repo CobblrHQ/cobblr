@@ -6,7 +6,8 @@ import { useLayoutEffect, useRef, useState, type ComponentProps, type FormEvent 
 import { Link, useParams } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { ArrowLeft, Check, Plus, Sparkles, Trash2, Upload } from "lucide-react";
-import { ContributedDetailPanels, EntityActionsBar, CustomFieldsPanel, Modal, usePageTitle, useUnits } from "@cobblr/platform-web";
+import { ContributedDetailPanels, EntityActionsBar, CustomFieldsPanel, Modal, PresentationGate, useFieldDraft, usePageTitle, useUnits } from "@cobblr/platform-web";
+import { countOf } from "@cobblr/platform-contract";
 import { useProjects } from "./context";
 import { DesignFiles } from "./DesignFiles";
 import { useFieldPresentation } from "./useFieldPresentation";
@@ -15,6 +16,42 @@ import { PART_PICKER_KEY, PartPicker } from "./PartPicker";
 
 const PROJECT_STATUSES: ProjectStatus[] = ["planning", "active", "blocked", "done", "abandoned"];
 const PRIORITIES: Priority[] = ["low", "med", "high", "urgent"];
+
+// An input over one of the project's own values. It shows the record, holds
+// a draft while typed in, and follows the record while untouched, so an
+// action run from this page (a status change, a duplicate) shows here at once
+// rather than after the page is reopened (useFieldDraft). Dates write on
+// change (a mobile date picker does not reliably blur), text on blur.
+function ProjectInput({
+  value,
+  commitOn,
+  onCommit,
+  ...rest
+}: Omit<ComponentProps<"input">, "value" | "defaultValue" | "onChange" | "onBlur"> & {
+  value: string;
+  commitOn: "blur" | "change";
+  onCommit: (v: string) => void;
+}) {
+  const f = useFieldDraft(value);
+  return (
+    <input
+      {...rest}
+      value={f.draft}
+      onChange={(e) => {
+        f.setDraft(e.target.value);
+        if (commitOn === "change") {
+          f.committed(e.target.value);
+          onCommit(e.target.value);
+        }
+      }}
+      onBlur={(e) => {
+        if (commitOn !== "blur" || e.target.value === value) return;
+        f.committed(e.target.value);
+        onCommit(e.target.value);
+      }}
+    />
+  );
+}
 
 // A textarea that grows to fit its content so a long value (e.g. a full
 // AI-generated pattern pasted into the description) is visible without
@@ -41,6 +78,26 @@ function AutoGrowTextarea({
         grow();
         props.onInput?.(e);
       }}
+    />
+  );
+}
+
+/** The description, a draft over the record like ProjectInput. */
+function DescriptionField({ value, onCommit }: { value: string; onCommit: (v: string) => void }) {
+  const f = useFieldDraft(value);
+  return (
+    <AutoGrowTextarea
+      value={f.draft}
+      onChange={(e) => f.setDraft(e.target.value)}
+      onBlur={(e) => {
+        const v = e.target.value.trim();
+        if (v === value) return;
+        f.committed(v);
+        onCommit(v);
+      }}
+      minRows={3}
+      placeholder="What is this project about?"
+      className="input text-sm w-full resize-y"
     />
   );
 }
@@ -106,6 +163,15 @@ export function ProjectDetailPage() {
 
   if (project.isLoading) return <div className="text-sm text-faint dark:text-slate-500">loading…</div>;
   if (!project.data) return <div className="text-sm text-ember-500">Project not found.</div>;
+  // The collection's presentation decides the fields; nothing generic is drawn
+  // in its place while it loads or when it cannot be read.
+  if (!fp.ready || fp.failed) {
+    return (
+      <PresentationGate ready={fp.ready} failed={fp.failed} retry={fp.retry}>
+        {null}
+      </PresentationGate>
+    );
+  }
 
   return (
     <div className="space-y-5 max-w-3xl">
@@ -115,12 +181,11 @@ export function ProjectDetailPage() {
 
       <div className="rounded-xl border border-line dark:border-slate-700 bg-surface dark:bg-slate-900 p-5 space-y-3">
         <div className="flex items-start gap-3">
-          <input
-            defaultValue={project.data.name}
-            onBlur={(e) => {
-              if (e.target.value.trim() && e.target.value !== project.data!.name) {
-                updateProject.mutate({ name: e.target.value.trim() });
-              }
+          <ProjectInput
+            value={project.data.name}
+            commitOn="blur"
+            onCommit={(v) => {
+              if (v.trim() && v.trim() !== project.data!.name) updateProject.mutate({ name: v.trim() });
             }}
             className="font-display text-2xl font-bold text-content dark:text-mortar-100 bg-transparent flex-1 min-w-0 focus:outline-none focus:bg-subtle dark:focus:bg-slate-800/70 rounded px-1"
           />
@@ -174,23 +239,21 @@ export function ProjectDetailPage() {
               Change fires the moment a full date is picked, like the selects. */}
           {!fp.hidden("target_date") && (
             <Labelled label={fp.label("target_date", "target date")}>
-              <input
+              <ProjectInput
                 type="date"
-                defaultValue={project.data.target_date ?? ""}
-                onChange={(e) =>
-                  updateProject.mutate({ target_date: e.target.value || null })
-                }
+                value={project.data.target_date ?? ""}
+                commitOn="change"
+                onCommit={(v) => updateProject.mutate({ target_date: v || null })}
                 className="input !w-auto !py-1 text-xs"
               />
             </Labelled>
           )}
           <Labelled label="completed">
-            <input
+            <ProjectInput
               type="date"
-              defaultValue={project.data.completion_date ?? ""}
-              onChange={(e) =>
-                updateProject.mutate({ completion_date: e.target.value || null })
-              }
+              value={project.data.completion_date ?? ""}
+              commitOn="change"
+              onCommit={(v) => updateProject.mutate({ completion_date: v || null })}
               className="input !w-auto !py-1 text-xs"
             />
           </Labelled>
@@ -200,17 +263,9 @@ export function ProjectDetailPage() {
           <label className="text-[10px] font-mono uppercase tracking-widest text-faint dark:text-slate-500 block mb-1">
             description
           </label>
-          <AutoGrowTextarea
-            defaultValue={project.data.description ?? ""}
-            onBlur={(e) => {
-              const v = e.target.value.trim();
-              if (v !== (project.data!.description ?? "")) {
-                updateProject.mutate({ description: v || null });
-              }
-            }}
-            minRows={3}
-            placeholder="What is this project about?"
-            className="input text-sm w-full resize-y"
+          <DescriptionField
+            value={project.data.description ?? ""}
+            onCommit={(v) => updateProject.mutate({ description: v || null })}
           />
         </div>
 
@@ -222,7 +277,7 @@ export function ProjectDetailPage() {
           values={project.data.metadata}
           onCommit={(name, value) =>
             updateProject.mutate({
-              metadata: { ...project.data!.metadata, [name]: value },
+              metadata: { [name]: value },
             })
           }
         />
@@ -236,7 +291,7 @@ export function ProjectDetailPage() {
             ? ((project.data!.metadata as Record<string, unknown>).hooks_needed as string[])
             : [];
           updateProject.mutate({
-            metadata: { ...project.data!.metadata, hooks_needed: Array.from(new Set([...cur, ...ids])) },
+            metadata: { hooks_needed: Array.from(new Set([...cur, ...ids])) },
           });
         }}
       />
@@ -254,7 +309,7 @@ export function ProjectDetailPage() {
         }
         onChange={(ids) =>
           updateProject.mutate({
-            metadata: { ...project.data!.metadata, hooks_needed: ids },
+            metadata: { hooks_needed: ids },
           })
         }
       />
@@ -880,7 +935,7 @@ function PatternExtractPanel({
                       <li key={i} className="text-content dark:text-mortar-200">
                         {[y.weight, y.fiber, y.color].filter(Boolean).join(" · ") || "yarn"}
                         {y.length_m ? <span className="text-muted dark:text-slate-400"> — {y.length_m} m</span> : null}
-                        {y.skeins ? <span className="text-muted dark:text-slate-400"> ({y.skeins} skein{y.skeins === 1 ? "" : "s"})</span> : null}
+                        {y.skeins ? <span className="text-muted dark:text-slate-400"> ({countOf(y.skeins, "ball")})</span> : null}
                         {stock ? (
                           <span className="mt-1 flex items-center gap-2 text-xs">
                             <span className="text-moss-600">✓ in your stash: {stock.name} ({[stock.available_qty, units.suffix(stock.unit)].filter(Boolean).join(" ")} free)</span>

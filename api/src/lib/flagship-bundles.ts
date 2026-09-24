@@ -173,6 +173,12 @@ export function listFlagshipManifests(scope: CatalogScope = "offerable"): RawMan
   return load().manifests.filter((m) => inCatalogScope(m, scope));
 }
 
+/** The manifest this image ships for `id`, from bundles/ on disk only: no
+ *  registry round trip, so it is safe on a path a visitor is waiting on. */
+export function localFlagshipManifest(id: string): RawManifest | null {
+  return load().byId.get(id) ?? null;
+}
+
 /** Resolve a flagship manifest by id — local first, registry fallback. */
 export async function getFlagshipManifest(id: string): Promise<unknown | null> {
   const local = load().byId.get(id);

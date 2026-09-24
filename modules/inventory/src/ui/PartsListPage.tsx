@@ -1,7 +1,7 @@
 // Parts list — filterable table. Search, category, location, state,
 // low-stock toggle. Clicking a row opens the part detail page.
 
-import { useCallback, useMemo, useState } from "react";
+import { Fragment, useCallback, useMemo, useState } from "react";
 import { Link, useNavigate, useParams, useSearchParams } from "react-router-dom";
 import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
@@ -40,8 +40,9 @@ import { useInventory } from "./context";
 import { QtyStepper } from "./QtyStepper";
 import { openUnitsLabel } from "./consumption/perUnit";
 import { assortedQty, isAssorted } from "./assorted";
-import { noteOf, useCreateDoor } from "@cobblr/platform-web";
+import { noteOf, useCreateDoor, viewCardFields } from "@cobblr/platform-web";
 import { useFieldPresentation } from "./useFieldPresentation";
+import { CARD_NATIVE_FIELDS } from "./card-native-fields";
 import { useDisclosure } from "./useDisclosure";
 import { NewPartDialog } from "./NewPartDialog";
 import { ImportDialog } from "./ImportDialog";
@@ -817,6 +818,7 @@ export function PartsListPage() {
                   items={g.rows}
                   basePath={basePath}
                   customCols={shownCols}
+                  viewFields={viewFields}
                   selected={selected}
                   allChecked={g.rows.every((r) => selected.has(r.id))}
                   onToggle={toggleRow}
@@ -839,6 +841,7 @@ export function PartsListPage() {
                 items={partItems}
                 basePath={basePath}
                 customCols={shownCols}
+                viewFields={viewFields}
                 selected={selected}
                 allChecked={allChecked}
                 onToggle={toggleRow}
@@ -1106,6 +1109,7 @@ function PartsTable({
   items,
   basePath,
   customCols,
+  viewFields,
   selected,
   allChecked,
   onToggle,
@@ -1114,6 +1118,9 @@ function PartsTable({
   items: PartListItem[];
   basePath: string;
   customCols: InvFieldDef[];
+  /** The selected view's declared fields, in its order; the phone card shows
+   *  them as the desktop table does (#3626). */
+  viewFields?: string[];
   selected: Set<string>;
   allChecked: boolean;
   onToggle: (id: string, checked: boolean) => void;
@@ -1160,6 +1167,15 @@ function PartsTable({
   const showLocation = !hide("location");
   const showMin = !hide("min_qty");
   const showQty = !hide("qty");
+  // What the selected view is FOR, on a phone too: its declared fields in its
+  // own order, the first few on the card and the rest one tap away. The card's
+  // own line already carries the name, qty, category and location.
+  const cardFields = viewCardFields(
+    viewFields,
+    customCols,
+    (c) => c.name,
+    CARD_NATIVE_FIELDS,
+  );
   return (
     <>
       {/* Desktop: the full table. Mobile: a stacked-card list (D7) —
@@ -1519,6 +1535,19 @@ function PartsTable({
                     </span>
                   )}
                 </div>
+                {cardFields.onCard.length > 0 && (
+                  <div data-testid="card-view-fields" onClick={(e) => e.stopPropagation()}>
+                    <CardFieldRows fields={cardFields.onCard} part={p} onCommit={(name, v) => setMeta(p, name, v)} />
+                    {cardFields.more.length > 0 && (
+                      <details className="mt-0.5">
+                        <summary className="cursor-pointer text-[11px] text-accent select-none">
+                          {cardFields.more.length} more
+                        </summary>
+                        <CardFieldRows fields={cardFields.more} part={p} onCommit={(name, v) => setMeta(p, name, v)} />
+                      </details>
+                    )}
+                  </div>
+                )}
                 <div className="mt-1 flex flex-wrap gap-1">
                   {p.low_stock && (
                     <span className="inline-flex items-center gap-1 text-[10px] text-ember-500 border border-ember-200 dark:border-ember-800 rounded px-1.5 py-0.5">
@@ -1543,6 +1572,32 @@ function PartsTable({
         ))}
       </div>
     </>
+  );
+}
+
+/** A phone card's view fields: label and value, each value the same editable
+ *  cell the desktop column draws. */
+function CardFieldRows({
+  fields,
+  part,
+  onCommit,
+}: {
+  fields: InvFieldDef[];
+  part: PartListItem;
+  onCommit: (name: string, v: unknown) => void;
+}) {
+  const meta = part.metadata as Record<string, unknown> | null;
+  return (
+    <dl className="mt-1 grid grid-cols-[auto_minmax(0,1fr)] gap-x-2 gap-y-0.5 text-[11px]">
+      {fields.map((c) => (
+        <Fragment key={c.id}>
+          <dt className="text-faint dark:text-slate-500">{c.display_label}</dt>
+          <dd className="text-content dark:text-mortar-200 min-w-0">
+            <EditableCell def={c} value={meta?.[c.name]} note={noteOf(meta, c.name)} onCommit={(v) => onCommit(c.name, v)} />
+          </dd>
+        </Fragment>
+      ))}
+    </dl>
   );
 }
 

@@ -19,7 +19,7 @@
 
 import { STORE_CODE_NOTE } from "@cobblr/platform-contract/scan-copy";
 import { preferredFactsName, primaryBrand } from "./catalog-normalize.js";
-import { replayMiss, writeCatalogCassette } from "./catalog-replay.js";
+import { isBookSource, replayMiss, writeCatalogCassette } from "./catalog-replay.js";
 
 export interface BarcodeHit {
   source: "upcitemdb" | "openproductsfacts" | "go-upc" | string;
@@ -42,7 +42,10 @@ export interface BarcodeHit {
 
 export type BarcodeOutcome =
   | { outcome: "hit"; hit: BarcodeHit }
-  | { outcome: "miss" }
+  // `refused`: a catalog answered, but not with the kind of thing the code
+  // says it is (a food for a book's ISBN, #3674). No answer for the caller,
+  // and not a definitive one either: the right catalog has not been heard.
+  | { outcome: "miss"; refused?: BarcodeHit }
   // A provider was reachable but throttled and no other provider had the
   // product. The UPC is UNRESOLVED, not absent — the caller must leave the
   // cache untouched so a later scan retries.
@@ -69,6 +72,9 @@ export type BarcodeOutcome =
  *  unresolved until someone says otherwise here. */
 export type DurableBarcodeOutcome = Extract<BarcodeOutcome, { outcome: "hit" | "miss" }>;
 export function durableOutcome(o: BarcodeOutcome): DurableBarcodeOutcome | null {
+  // A refused answer is not "no such product": caching it as a miss would
+  // stop the book catalog ever being asked for that ISBN again.
+  if (o.outcome === "miss" && o.refused) return null;
   return o.outcome === "hit" || o.outcome === "miss" ? o : null;
 }
 
@@ -637,7 +643,7 @@ export async function lookupBarcode(upc: string): Promise<BarcodeOutcome> {
   // A replay dir answers from its cassettes and never from the network
   // (catalog-replay.ts): a test's catalog is a fixture, not a service.
   const replayed = replayMiss(norm);
-  if (replayed) return normalizeOutcome(replayed);
+  if (replayed) return agreeWithCode(norm, normalizeOutcome(replayed));
   const existing = inflightLookups.get(norm);
   if (existing) return existing;
   // Normalise HERE, not in the adapters. Five provider tiers return a hit and
@@ -649,6 +655,7 @@ export async function lookupBarcode(upc: string): Promise<BarcodeOutcome> {
   // cleaning by existing.
   const p = doLookupBarcode(norm)
     .then(normalizeOutcome)
+    .then((outcome) => agreeWithCode(norm, outcome))
     .then((outcome) => {
       writeCatalogCassette(norm, outcome);
       return outcome;
@@ -656,6 +663,39 @@ export async function lookupBarcode(upc: string): Promise<BarcodeOutcome> {
     .finally(() => inflightLookups.delete(norm));
   inflightLookups.set(norm, p);
   return p;
+}
+
+/** What a code's own structure says the thing is, where it says anything.
+ *  An EAN-13 in the Bookland range (978, 979 but not 979-0, which is printed
+ *  music) is an ISBN, and an ISBN names a book; a valid ISBN-10 too. Any
+ *  other code says nothing about its category. */
+export function codeKindOf(code: string): "book" | null {
+  const c = code.trim().toUpperCase();
+  if (/^97(8\d|9[1-9])\d{9}$/.test(c) && gtinChecksumOk(c)) return "book";
+  if (/^\d{9}[\dX]$/.test(c) && isbn10ChecksumOk(c)) return "book";
+  return null;
+}
+
+/** Whether a catalog's answer is the kind of thing the code says it is. A
+ *  book: a book catalog's answer, or one carrying the ISBN decode or a books
+ *  category. */
+export function answerAgreesWithCode(code: string, hit: BarcodeHit): boolean {
+  if (codeKindOf(code) !== "book") return true;
+  return isBookSource(hit.source) || hit.decoder_id === "isbn" || /\bbooks?\b/i.test(hit.category ?? "");
+}
+
+/** A catalog's answer is taken only when it agrees with what the code's own
+ *  structure says it is (#3674). Open Food Facts holds an entry for
+ *  9781449373320, "Fit Shake", and that is the ISBN of Designing
+ *  Data-Intensive Applications: a mis-entered code on their side, and
+ *  confident nonsense on ours. An ISBN no book source answered is a miss
+ *  here, so the caller asks the book catalog (enrich.ts, resolveIsbn) and
+ *  never files a food. Every tier and a replayed cassette converge on this
+ *  one point, so a tier added later inherits it. */
+function agreeWithCode(code: string, outcome: BarcodeOutcome): BarcodeOutcome {
+  if (outcome.outcome !== "hit" || answerAgreesWithCode(code, outcome.hit)) return outcome;
+  console.log(`[core-scan] ${code} is a book's ISBN; ${outcome.hit.source} answered "${outcome.hit.title}", which is not a book, so it is not taken`);
+  return { outcome: "miss", refused: outcome.hit };
 }
 
 function normalizeOutcome(outcome: BarcodeOutcome): BarcodeOutcome {

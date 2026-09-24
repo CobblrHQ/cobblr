@@ -9,6 +9,7 @@ import { resolveSessionBatch } from "../lib/scanSession";
 import { api, ApiError, type ScanResolveCandidate } from "../lib/api";
 import { ScanAmbiguityModal } from "./ScanAmbiguityModal";
 import { scanResolveActionFor } from "../lib/scanResolveAction";
+import { scanInboxKeys } from "../lib/scan-inbox-keys";
 
 /**
  * App-wide hardware-scanner (keyboard-wedge) intake + Cobblr-QR navigation.
@@ -100,7 +101,7 @@ export function GlobalScanWedge({ activeSlug }: { activeSlug: string }) {
       });
     },
     onSuccess: (item) => {
-      void qc.invalidateQueries({ queryKey: ["scan-inbox", activeSlug] });
+      void qc.invalidateQueries({ queryKey: scanInboxKeys.all(activeSlug) });
       const name = item.suggested_name ?? `barcode ${item.barcode_text ?? ""}`.trim();
       toast.action(`Scanned ${name} → added to the scan inbox.`, {
         actionLabel: "View inbox",

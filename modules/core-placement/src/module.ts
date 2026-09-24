@@ -20,7 +20,7 @@ import { defineModule } from "@cobblr/platform-contract";
 
 export default defineModule({
   name: "core-placement",
-  version: "0.2.4",
+  version: "0.2.6",
   displayName: "Placement",
   description:
     "The containment primitive: records which container each thing lives inside (a part in a machine, a component in a server, an item in a location). Exposed platform-wide via platform().placement; a Location is just one kind of container.",
@@ -85,4 +85,12 @@ export default defineModule({
     ],
   },
   subscribes: [],
+  lifecycle: {
+    // Rows stored under a collection's kind before the kernel keyed every
+    // placement by the base kind (#3663): folded once, by the kernel's walk.
+    onBoot: async () => {
+      const { registerPlacementKindsHeal } = await import("./heal-instance-kinds.js");
+      registerPlacementKindsHeal();
+    },
+  },
 });

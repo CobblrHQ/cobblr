@@ -1,0 +1,10 @@
+{
+  "lint": "lint:shape-writes-bump",
+  "run": "tsx scripts/lint-shape-writes-bump.ts",
+  "rows": [
+    "kernel-platform-service"
+  ],
+  "ms": 1196,
+  "recorded": "2026-09-24",
+  "source": "scaffolded by new-lint.sh at twice a local run (a shared box); replaced from its first CI measurement"
+}

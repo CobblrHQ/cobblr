@@ -8,6 +8,7 @@
 // never see an "offline" dot. Shares the ["connections"] + ["me-edge-agent"]
 // query keys with ConnectionsPage so nothing double-fetches.
 
+import { aiAvailabilityKeys } from "./ai-availability-keys";
 import { useQuery } from "@tanstack/react-query";
 import { api, type UserConnection } from "./api";
 
@@ -28,7 +29,7 @@ export interface MyEdgeBridge {
 }
 
 export function useMyEdgeBridge(): MyEdgeBridge {
-  const conns = useQuery({ queryKey: ["connections"], queryFn: api.listConnections });
+  const conns = useQuery({ queryKey: aiAvailabilityKeys.connections(), queryFn: api.listConnections });
   const hasBridge = (conns.data?.items ?? []).some(isEdgeBridgeConnection);
   const agent = useQuery({
     queryKey: ["me-edge-agent"],

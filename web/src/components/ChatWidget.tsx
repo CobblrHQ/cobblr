@@ -4,12 +4,15 @@
 // messages render markdown; the input auto-grows. Portals to <body> so the
 // header's backdrop-blur can't trap its position:fixed (CLAUDE.md modal note).
 
+import { aiAvailabilityKeys } from "../lib/ai-availability-keys";
 import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import ReactMarkdown from "react-markdown";
 import { appliedCards } from "../lib/applied-cards";
 import { linkifyMarkdown, mergeRefs, refsOfResponse, refOfProposal, refsLeftUnnamed, type ChatEntityRef } from "../lib/entity-chips";
 import { ChatRefChip, ChatRefName, PermanentTag } from "./ChatRefChip";
 import { PlanNote } from "./PlanNote";
+import { ProposalValues } from "./ProposalValues";
+import { withoutValue } from "../lib/proposal-values";
 import { PlanSections, sectionsLeft, type SectionRuns } from "./PlanSections";
 import { historyToSend, slimForStore } from "../lib/chat-store";
 import { commandOrigin } from "../lib/command-origin";
@@ -512,22 +515,22 @@ export function ChatPanel({ open: railOpen, setOpen }: { open: boolean; setOpen:
   // open and AI is on. Optimistic toggle.
   const qc = useQueryClient();
   const prefsQ = useQuery({
-    queryKey: ["ai-chat-prefs", activeSlug],
+    queryKey: aiAvailabilityKeys.chatPrefs(activeSlug),
     queryFn: () => api.aiChatPrefs(activeSlug),
     enabled: open && !!activeSlug && !aiOff,
     staleTime: 60_000,
   });
   const prefs = prefsQ.data ?? { read_tools: true, write_mode: "ask" as const };
   const modelsQ = useQuery({
-    queryKey: ["ai-chat-models", activeSlug],
+    queryKey: aiAvailabilityKeys.chatModels(activeSlug),
     queryFn: () => api.aiChatModels(activeSlug),
     enabled: !!activeSlug,
     staleTime: 60_000,
   });
   const setPrefs = useMutation({
     mutationFn: (p: ChatPrefsInput) => api.aiChatSetPrefs(activeSlug, p),
-    onMutate: (p) => qc.setQueryData(["ai-chat-prefs", activeSlug], p),
-    onError: () => void qc.invalidateQueries({ queryKey: ["ai-chat-prefs", activeSlug] }),
+    onMutate: (p) => qc.setQueryData(aiAvailabilityKeys.chatPrefs(activeSlug), p),
+    onError: () => void qc.invalidateQueries({ queryKey: aiAvailabilityKeys.chatPrefs(activeSlug) }),
   });
   const undoMut = useMutation({
     mutationFn: (writeId: string) => api.aiChatUndo(activeSlug, writeId),
@@ -2011,6 +2014,24 @@ export function ChatPanel({ open: railOpen, setOpen }: { open: boolean; setOpen:
                       that names it. A card that said only "Move records into
                       another list" asked for trust; this offers a check. */}
                   {m.proposal?.kind === "action" && m.proposal.plan && !m.resolved && <PlanLines lines={m.proposal.plan.lines} />}
+                  {/* Every value a create or an update will write: the card is
+                      what the person approves, so it shows them all, marks the
+                      ones Cobb chose, and lets one be left out (#3658). */}
+                  {(m.proposal?.kind === "create" || m.proposal?.kind === "update") && m.proposal.values?.length && !m.resolved ? (
+                    <ProposalValues
+                      values={m.proposal.values}
+                      onRemove={(field) =>
+                        setMessages((prev) =>
+                          prev.map((x, j) =>
+                            j === i && x.proposal && (x.proposal.kind === "create" || x.proposal.kind === "update") ? { ...x, proposal: withoutValue(x.proposal, field) } : x,
+                          ),
+                        )
+                      }
+                    />
+                  ) : null}
+                  {m.proposal?.kind === "action" && !m.proposal.plan && m.proposal.values?.length && !m.resolved ? (
+                    <ProposalValues values={m.proposal.values} onRemove={() => {}} />
+                  ) : null}
                   {/* Which one? The answer is a tap: it sends the person's own
                       sentence back with the record named, so the write runs
                       once, on the one they chose. Only until answered. */}

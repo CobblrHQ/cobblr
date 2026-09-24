@@ -28,7 +28,7 @@
 //     earlier day.
 
 import { Kysely, sql } from "kysely";
-import { platform, expiryState, expiryPhrase, arrivedEverywhere } from "@cobblr/platform-contract";
+import { platform, expiryState, expiryPhrase, arrivedEverywhere, daysUntilField } from "@cobblr/platform-contract";
 import { expiryStages } from "./expiry-stages.js";
 import { expiryDigest, type ExpiryLine } from "./expiry-card.js";
 
@@ -172,7 +172,7 @@ export async function visitWorkspace(orgId: string, raw: unknown, now: Date = ne
     // written yet: the ledger is stamped once the message has gone.
     const headsUp: Array<{ row: ExpiringRow; dayOfCovered: boolean }> = [];
     for (const row of due) {
-      const daysUntil = Math.ceil((new Date(row.expires_on).getTime() - new Date(`${arrivedEverywhere(now)}T00:00:00Z`).getTime()) / 86_400_000);
+      const daysUntil = daysUntilField(row.expires_on, arrivedEverywhere(now)) ?? 0;
       // The item's own grace: food does not go bad at midnight, and the item
       // says how long past its date is still fine. Read through the entities
       // door so an instance row (a Groceries table's milk) answers too - the
@@ -190,7 +190,7 @@ export async function visitWorkspace(orgId: string, raw: unknown, now: Date = ne
       // Read against the DAY this sweep is claiming, not the instant: a
       // reading taken at 02:00 UTC called a date twelve hours away "expires
       // today", which is the same lie the window used to tell (#3351).
-      const reading = expiryState(row.expires_on, graceDays, new Date(`${arrivedEverywhere(now)}T00:00:00Z`));
+      const reading = expiryState(row.expires_on, graceDays, arrivedEverywhere(now));
       const tone = reading ? expiryPhrase(reading) : `expires in ${daysUntil}d`;
 
       // Event → food-cluster wire turns this into a shopping-list line. The

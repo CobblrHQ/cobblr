@@ -56,6 +56,7 @@ import { meta } from "../db/meta.js";
 import { getTenantDb, evictTenantPool } from "../db/tenant.js";
 import { createInstance, getInstance } from "./instances.js";
 import { upsertOverride } from "./entity-kind-overrides.js";
+import { bumpWorkspaceShape } from "./workspace-shape.js";
 import { noteHealShim } from "./heal-shim-log.js";
 
 const SHIM = "api/src/platform/migrate-bookshelf-to-instance.ts";
@@ -174,6 +175,7 @@ async function migrateOne(
     })
     .where("id", "=", bundleId)
     .execute();
+  await bumpWorkspaceShape(orgId);
   // Re-point any already-installed spine-label binding at the new kind, so a
   // print action doesn't silently stop offering itself on the moved books.
   await meta

@@ -43,6 +43,7 @@
 // qty, cost or unit, and one tap on the instance's stock toggle overrides it.
 import { sql, type Kysely } from "kysely";
 import { platform } from "@cobblr/platform-contract";
+import { STOCK_SHAPED_ROW } from "./api/disclosure.js";
 
 type MetaDb = Kysely<{
   orgs: { id: string };
@@ -126,11 +127,7 @@ export async function healCatalogStockLatch(): Promise<number> {
               select 1
               from inventory_parts
               where instance = ${c.instance}
-                and (
-                  qty > 1
-                  or min_qty is not null
-                  or (unit is not null and unit <> '' and unit <> 'each')
-                )
+                and ${STOCK_SHAPED_ROW}
             ) as has_stock
           `.execute(db);
           out.push({ c, hasStock: probe.rows[0]?.has_stock ?? true }); // no answer → keep the latch

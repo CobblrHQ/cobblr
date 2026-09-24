@@ -17,6 +17,7 @@ import { useActiveOrg } from "../auth/ActiveOrgContext";
 import { api, type CrossOrgNotificationEntry } from "../lib/api";
 import { NotificationActionButtons } from "../components/NotificationActionButtons";
 import { useToast, usePageTitle } from "@cobblr/platform-web";
+import { notificationKeys } from "../lib/notification-keys";
 
 export function MeNotificationsPage() {
   usePageTitle("Notifications");
@@ -32,7 +33,7 @@ export function MeNotificationsPage() {
   const [unreadOnly, setUnreadOnly] = useState(false);
 
   const q = useQuery({
-    queryKey: ["me-notifications-full", unreadOnly],
+    queryKey: notificationKeys.page(unreadOnly),
     queryFn: () => api.meNotifications(100),
     refetchInterval: 30_000,
   });
@@ -40,18 +41,14 @@ export function MeNotificationsPage() {
   const markRead = useMutation({
     mutationFn: (id: string) => api.meMarkNotificationRead(id),
     onSuccess: () => {
-      void qc.invalidateQueries({ queryKey: ["me-notifications-full"] });
-      void qc.invalidateQueries({ queryKey: ["me-notifications-unread"] });
-      void qc.invalidateQueries({ queryKey: ["me-notifications-list"] });
+      void qc.invalidateQueries({ queryKey: notificationKeys.all() });
     },
   });
   const markAll = useMutation({
     mutationFn: () => api.meMarkAllNotificationsRead(),
     onSuccess: ({ count }) => {
       toast.success(`Marked ${count} read`);
-      void qc.invalidateQueries({ queryKey: ["me-notifications-full"] });
-      void qc.invalidateQueries({ queryKey: ["me-notifications-unread"] });
-      void qc.invalidateQueries({ queryKey: ["me-notifications-list"] });
+      void qc.invalidateQueries({ queryKey: notificationKeys.all() });
     },
   });
 

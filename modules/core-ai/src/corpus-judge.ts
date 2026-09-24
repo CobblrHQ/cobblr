@@ -89,6 +89,7 @@ export function judge(
   knownActions: Set<string>,
   names: readonly string[] = [],
   says: readonly string[] = [],
+  unsays: readonly string[] = [],
 ): Judgement {
   // "escort:members|answer", "action:lists:add-item|create:record": either is
   // right. Judged left to right; the first that passes wins, else the first
@@ -133,6 +134,13 @@ export function judge(
     const unsaid = says.filter((s) => !text.includes(s.toLowerCase()));
     if (unsaid.length) return { ok: false, why: `${verdict.why}, but the answer does not say: ${unsaid.join(", ")}` };
     verdict = { ok: true, why: `${verdict.why}; says ${says.join(", ")}` };
+  }
+  // What the answer must NOT say: a value the record does not hold, stated
+  // as a fact ("paid $24" for a lamp whose 24 is its replacement value).
+  if (unsays.length) {
+    const text = (v.text ?? "").toLowerCase();
+    const said = unsays.filter((s) => text.includes(s.toLowerCase()));
+    if (said.length) return { ok: false, why: `${verdict.why}, but the answer says what the record does not hold: ${said.join(", ")}` };
   }
   return verdict;
 }

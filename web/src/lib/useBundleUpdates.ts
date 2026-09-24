@@ -8,6 +8,7 @@ import { useQuery } from "@tanstack/react-query";
 import { isDowngradeOrSame } from "./bundleUpdateTier";
 import { api, type PlatformBundleManifest } from "./api";
 import { useBundleCatalog } from "./useBundleCatalog";
+import { sandboxExpiry } from "./sandbox-session";
 
 const SOURCES_KEY = "cobblr.registry.sources";
 
@@ -39,14 +40,34 @@ export interface BundleUpdate {
   enabledFeatures: string[];
 }
 
-/** Installed bundles whose catalog version differs from what's installed. */
+/** Installed bundles whose catalog version differs from what's installed.
+ *
+ *  Always empty in a sandbox. A visitor has an hour and did not choose these
+ *  bundles, so "Update now" for them was the first thing a sandbox showed on a
+ *  phone; the sandbox is seeded from the catalog this image ships and the
+ *  server keeps it current. Every update prompt reads this hook, so this is the
+ *  one place that decides it. Until the server has said what kind of workspace
+ *  this is, nothing is offered either, so a sandbox without the local hint (a
+ *  private window) never flashes one. */
 export function useBundleUpdates(slug: string): BundleUpdate[] {
+  const hintedSandbox = sandboxExpiry() != null;
+  const kind = useQuery({
+    queryKey: ["workspace-trial", slug],
+    queryFn: () => api.workspaceTrial(slug),
+    enabled: !!slug && !hintedSandbox,
+    staleTime: 5 * 60_000,
+  });
   const installed = useQuery({
     queryKey: ["bundles", slug],
     queryFn: () => api.listBundles(slug),
     enabled: !!slug,
   });
   const { catalog } = useBundleCatalog(loadSources());
+  const sandbox = hintedSandbox || kind.data?.kind === "sandbox";
+  // An answer we could not get is not a sandbox: an instance whose trial route
+  // fails still gets its update prompts.
+  const known = hintedSandbox || kind.data != null || kind.isError;
+  if (sandbox || !known) return [];
   if (!installed.data) return [];
 
   const latestById = new Map(catalog.map((c) => [c.manifest.id, c]));

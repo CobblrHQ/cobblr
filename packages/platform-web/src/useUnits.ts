@@ -6,7 +6,7 @@ import { useMemo } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { usePlatformWeb } from "./context";
 import type { PlatformUnitDef, UnitDisplayMode } from "./types";
-import { convertQuantity, formatQuantity, formatUnit, quantitySuffix, resolveUnit } from "./units";
+import { convertQuantity, formatQuantity, formatUnit, quantitySuffix, resolveUnit, unitLens } from "./units";
 
 export interface UseUnits {
   /** built-in ∪ custom, deduped (custom wins on code collision) */
@@ -26,6 +26,8 @@ export interface UseUnits {
   /** convert a value between units (same category, both with a factor), else
    *  null — e.g. 1000 "g" → "kg" = 1 */
   convert: (value: number, fromRaw: string | null | undefined, toRaw: string | null | undefined) => number | null;
+  /** the vocabulary as a consumption gauge reads it (consumption-gauge.ts) */
+  lens: ReturnType<typeof unitLens>;
 }
 
 export function useUnits(): UseUnits {
@@ -56,6 +58,7 @@ export function useUnits(): UseUnits {
       suffix: (raw) => quantitySuffix(raw, all),
       resolve: (raw) => resolveUnit(raw, all),
       convert: (value, fromRaw, toRaw) => convertQuantity(value, fromRaw, toRaw, all),
+      lens: unitLens(all),
     };
   }, [q.data, q.isLoading]);
 }

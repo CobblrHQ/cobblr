@@ -106,3 +106,21 @@ export function quantitySuffix(
   if (!def || def.category === "count") return "";
   return def.symbol;
 }
+
+/** The workspace vocabulary as a consumption gauge reads it
+ *  (@cobblr/platform-contract/consumption-gauge): which unit a string is,
+ *  whether it is a measure, and conversion, all from this one catalog. */
+export function unitLens(units: PlatformUnitDef[]): {
+  code: (raw: string | null) => string | null;
+  isMeasure: (raw: string | null) => boolean;
+  convert: (value: number, from: string | null, to: string | null) => number | null;
+} {
+  return {
+    code: (raw) => resolveUnit(raw, units)?.code ?? null,
+    isMeasure: (raw) => {
+      const u = resolveUnit(raw, units);
+      return !!u && u.category !== "count" && u.factor != null;
+    },
+    convert: (value, from, to) => convertQuantity(value, from, to, units),
+  };
+}

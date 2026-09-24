@@ -54,7 +54,11 @@ export function EntityActionsBar({ entityKind, entityId, entityLabel, className,
       // too would be the two-label-buttons problem this replaced.
       !(headerChips && HEADER_ACTION_IDS.has(a.id)),
   );
-  const visibleBindings = bindings.filter((b) => !excluded.has(b.action_id));
+  // The header's Print label already runs the collection's own binding, so
+  // the strip showing it too was the second identical button (#3591).
+  const visibleBindings = bindings.filter(
+    (b) => !excluded.has(b.action_id) && !(headerChips && HEADER_ACTION_IDS.has(b.action_id)),
+  );
   // The Cobb button rides in the SAME cluster as the record's other actions,
   // and rides alone when there are none: a detail page with no actions is
   // still a record you might want to ask about, and it is the one place a

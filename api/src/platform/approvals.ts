@@ -202,6 +202,25 @@ const KINDS: Record<ApprovalRemedy["kind"], RemedyKind> = {
       return "installed";
     },
   },
+  // An app the deployment has and this workspace has not turned on: a scan
+  // routed to Assets in a workspace without it (#3610). The same enable the
+  // Modules screen runs, as the approver.
+  module: {
+    async label(_orgId, key) {
+      const shown = getEntry(key)?.manifest.displayName ?? null;
+      return shown ? `${shown} turned on` : null;
+    },
+    async holds(orgId, _requesterId, _role, key) {
+      const row = await meta.selectFrom("org_modules").select("module_name").where("org_id", "=", orgId).where("module_name", "=", key).executeTakeFirst();
+      return !!row;
+    },
+    async apply({ orgId, key, approver }) {
+      if (await KINDS.module.holds(orgId, "", "", key)) return "already on";
+      const { enableModuleForOrg } = await import("../modules/enable.js");
+      await enableModuleForOrg(orgId, key, { userId: approver.id });
+      return "turned on";
+    },
+  },
 };
 
 /** Name every remedy, or say which one cannot be asked for. */
@@ -216,7 +235,7 @@ async function describeRemedies(
     const label = await kind.label(orgId, r.key);
     // No identifier in the sentence: the person cannot act on one, and the
     // matrix is where an admin would look for what can be given.
-    if (!label) return { ok: false, reason: r.kind === "install" ? "That bundle is not in this deployment's catalog." : "This needs a permission no admin can grant here." };
+    if (!label) return { ok: false, reason: r.kind === "install" ? "That bundle is not in this deployment's catalog." : r.kind === "module" ? "That app is not available in this deployment." : "This needs a permission no admin can grant here." };
     out.push({ kind: r.kind, key: r.key, label });
   }
   return { ok: true, remedies: out };
@@ -621,22 +640,66 @@ export async function prepareResume(requestId: string, requesterId: string): Pro
   if (row.status !== "approved") return { ok: false, status: 409, code: "not_approved", message: describeSettled(row) };
   if (!row.resume) return { ok: false, status: 409, code: "no_resume", message: "This request was not tied to something to finish; the permission is in place, so just do it again." };
 
-  const role = await memberRole(row.org_id, requesterId);
-  if (!role) return { ok: false, status: 403, code: "stale", message: "You are no longer a member of this workspace." };
+  const now = await grantHoldsNow(row);
+  if (!now.holds) return { ok: false, status: now.member ? 409 : 403, code: "stale", message: now.message };
+  const updated = await transition(row.id, "approved", { status: "resuming" });
+  if (!updated) return { ok: false, status: 409, code: "not_approved", message: "Somebody else took this up first." };
+  return { ok: true, request: updated, resume: updated.resume! };
+}
+
+export type GrantNow =
+  | { holds: true }
+  | { holds: false; member: boolean; missing: string | null; message: string };
+
+/**
+ * Whether a yes still stands for the person it was given to, NOW: they are
+ * still a member and every remedy holds. The stored status only says what was
+ * decided; an owner who approved and then took the grant back in
+ * Permissions leaves the row "approved" for good. So everything that says a
+ * permission is in place (the resume sheet, the hand-out of the draft) asks
+ * this, never the status alone.
+ */
+export async function grantHoldsNow(row: Pick<ApprovalRequestRow, "org_id" | "requester_id" | "remedies">): Promise<GrantNow> {
+  const role = await memberRole(row.org_id, row.requester_id);
+  if (!role) return { holds: false, member: false, missing: null, message: "You are no longer a member of this workspace." };
   for (const remedy of row.remedies) {
-    const holds = await KINDS[remedy.kind].holds(row.org_id, requesterId, role, remedy.key);
-    if (!holds) {
+    if (!(await KINDS[remedy.kind].holds(row.org_id, row.requester_id, role, remedy.key))) {
       return {
-        ok: false,
-        status: 409,
-        code: "stale",
+        holds: false,
+        member: true,
+        missing: remedy.label,
         message: `This was approved, but ${remedy.label} no longer holds (it was taken back or undone since). Ask again.`,
       };
     }
   }
-  const updated = await transition(row.id, "approved", { status: "resuming" });
-  if (!updated) return { ok: false, status: 409, code: "not_approved", message: "Somebody else took this up first." };
-  return { ok: true, request: updated, resume: updated.resume! };
+  return { holds: true };
+}
+
+/** Ask again for what a yes gave and has since lost: the same remedies, the
+ *  same thing to finish, as a new request the approvers see fresh. Only the
+ *  requester, and only once the old yes no longer holds; while it holds there
+ *  is nothing to ask for. */
+export type AskAgainOutcome =
+  | CreateOutcome
+  | { ok: false; status: 403 | 404 | 409; code: "not_found" | "not_yours" | "in_force"; message: string };
+
+export async function askAgain(args: { requestId: string; requesterId: string; requesterRole: string }): Promise<AskAgainOutcome> {
+  const row = await getRequest(args.requestId);
+  if (!row) return { ok: false, status: 404, code: "not_found", message: "No such request." };
+  if (row.requester_id !== args.requesterId) return { ok: false, status: 403, code: "not_yours", message: "This is somebody else's request." };
+  if (row.status === "pending") return { ok: true, request: row, existing: true };
+  const now = await grantHoldsNow(row);
+  if (now.holds) return { ok: false, status: 409, code: "in_force", message: "You still have this; there is nothing to ask for." };
+  return createApprovalRequest({
+    orgId: row.org_id,
+    requesterId: row.requester_id,
+    requesterRole: args.requesterRole,
+    remedies: row.remedies,
+    subject: row.subject,
+    resume: row.resume,
+    route: row.route,
+    note: null,
+  });
 }
 
 /** The replay happened; record how it went. Either way the request is done —
@@ -689,6 +752,11 @@ export interface ApprovalRequestView {
   expires_at: string;
   has_resume: boolean;
   route: string | null;
+  /** For a yes (approved, resuming, completed): whether it still holds for the
+   *  requester at the moment of this read, and what was taken back if not.
+   *  Null for anything that was never a yes. Filled by viewRequest only; the
+   *  list would pay a permission check per row for a line nobody reads there. */
+  holds_now?: { holds: boolean; missing: string | null; message: string | null } | null;
 }
 
 /** The workspace's requests: an approver sees everyone's, anyone sees their
@@ -749,7 +817,14 @@ export async function listApprovalRequests(args: {
 /** Requests the viewer may see, as a view. */
 export async function viewRequest(id: string, viewerId: string, viewerRole: string, orgId: string): Promise<ApprovalRequestView | null> {
   const all = await listApprovalRequests({ orgId, viewerId, viewerRole });
-  return all.find((r) => r.id === id) ?? null;
+  const view = all.find((r) => r.id === id);
+  if (!view) return null;
+  if (view.status !== "approved" && view.status !== "resuming" && view.status !== "completed") return { ...view, holds_now: null };
+  const now = await grantHoldsNow({ org_id: orgId, requester_id: view.requester.id, remedies: view.remedies });
+  return {
+    ...view,
+    holds_now: now.holds ? { holds: true, missing: null, message: null } : { holds: false, missing: now.missing, message: now.message },
+  };
 }
 
 // ── Plumbing ─────────────────────────────────────────────────────────────

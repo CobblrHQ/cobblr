@@ -42,6 +42,7 @@ import {
   claimsForSource,
   countClaimsFor,
 } from "../platform/bundle-claims.js";
+import { bumpWorkspaceShape } from "../platform/workspace-shape.js";
 import { bundleInstallSummary } from "../lib/bundle-install-summary.js";
 
 // Cross-module table type for the tenant-DB writes. core-views owns
@@ -1548,6 +1549,10 @@ export async function applyValidatedBundle(
   // a user's own rename: if the stored nav label still equals the prior
   // bundle's label, the user never touched it, so the new name is safe.
   const priorInstanceLabels = new Map<string, string>();
+  // The count unit each instance's records defaulted to in the PREVIOUS
+  // version ("skein"). When a version changes it ("ball"), the records still
+  // on the old default follow; one someone set to anything else is theirs.
+  const priorInstanceUnits = new Map<string, string>();
   const priorBundle =
     existing.length > 0
       ? [...existing].sort((a, b) => cmpVersion(a.version, b.version)).at(-1)
@@ -1555,11 +1560,14 @@ export async function applyValidatedBundle(
   if (priorBundle) {
     const rawPm = priorBundle.manifest;
     const pm = (typeof rawPm === "string" ? JSON.parse(rawPm) : rawPm) as
-      | { provides_instances?: Array<{ instance_name?: string; display_name?: string }> }
+      | { provides_instances?: Array<{ instance_name?: string; display_name?: string; qty_unit?: string }> }
       | null;
     for (const pi of pm?.provides_instances ?? []) {
       if (pi.instance_name && typeof pi.display_name === "string") {
         priorInstanceLabels.set(pi.instance_name, pi.display_name);
+      }
+      if (pi.instance_name && typeof pi.qty_unit === "string" && pi.qty_unit.trim()) {
+        priorInstanceUnits.set(pi.instance_name, pi.qty_unit.trim());
       }
     }
   }
@@ -1652,6 +1660,21 @@ export async function applyValidatedBundle(
     // version and (b) the stored label still equals what the PREVIOUS bundle
     // version set (so the user never touched it). A genuine user rename — any
     // other stored value — won't match the WHERE and is left intact.
+    // A bundle-owned change of the default count unit reaches the records that
+    // still carry the old default. The module that owns the rows moves them;
+    // the kernel only says what changed (yarn went from skein to ball: nobody
+    // knew what a skein was).
+    const priorUnit = priorInstanceUnits.get(inst.instance_name);
+    const newUnit = typeof inst.qty_unit === "string" ? inst.qty_unit.trim() : "";
+    if (priorUnit && newUnit && priorUnit !== newUnit) {
+      await platform().events.emit("platform.instance.default-unit-changed", {
+        orgId,
+        module: inst.module,
+        instance: inst.instance_name,
+        from: priorUnit,
+        to: newUnit,
+      });
+    }
     const priorLabel = priorInstanceLabels.get(inst.instance_name);
     if (priorLabel && priorLabel !== inst.display_name) {
       await meta
@@ -2193,6 +2216,8 @@ export async function applyValidatedBundle(
       }
     }
   }
+  // Installed: its collections, fields and views are part of the shape now.
+  await bumpWorkspaceShape(orgId);
   return {
     bundle: inserted,
     applied: {
@@ -2879,4 +2904,5 @@ async function uninstallBundleId(
       }
     }
   }
+  if (bundleRow) await bumpWorkspaceShape(bundleRow.org_id);
 }

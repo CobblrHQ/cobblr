@@ -13,6 +13,7 @@
 // means.
 
 import { fieldDay } from "@cobblr/platform-contract/field-day";
+import { daysUntil as daysUntilDay, type Day } from "@cobblr/platform-contract/day";
 
 export type ExpiryState =
   /** No deadline pressure yet. */
@@ -39,7 +40,6 @@ export interface ExpiryReading {
  *  two-day amber window. */
 export const EXPIRING_WITHIN_DAYS = 2;
 
-const DAY = 86_400_000;
 
 /**
  * Read one item's expiry, honouring its grace.
@@ -51,7 +51,7 @@ const DAY = 86_400_000;
 export function expiryState(
   expiresOn: string | Date | null | undefined,
   graceDays: unknown,
-  now: Date = new Date(),
+  today: Day,
 ): ExpiryReading | null {
   // The day is the one rule's (field-day.ts): a month-only best-before is the
   // last day of its month here as everywhere, and a value that names no day
@@ -59,12 +59,14 @@ export function expiryState(
   // month while the sweeper's SQL threw on it (#3279).
   const day = fieldDay(expiresOn);
   if (day === null) return null;
-  const ts = Date.parse(`${day}T00:00:00Z`);
   // Number.isFinite, not truthiness: Infinity survives `|| 0` and would make
   // food immortal.
   const gn = Number(graceDays);
   const g = Number.isFinite(gn) ? Math.max(0, Math.trunc(gn)) : 0;
-  const daysUntil = Math.ceil((ts - now.getTime()) / DAY);
+  // Calendar days in the caller's frame (`today`), the one countdown every
+  // surface shows. It was a ceiling over the instant, which read a date in
+  // four days as "in 5d" at 19:00 and "in 4d" at 21:00 in New York (#3641).
+  const daysUntil = daysUntilDay(day, today);
   const daysPast = daysUntil < 0 ? -daysUntil : 0;
   const graceLeft = daysPast > 0 ? Math.max(0, g - daysPast) : 0;
   const state: ExpiryState =

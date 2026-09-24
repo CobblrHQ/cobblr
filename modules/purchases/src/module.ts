@@ -29,8 +29,8 @@ export default defineModule({
     // Boot-time heal for orders that list each receipt line twice - see the
     // DONE WHEN in heal-doubled-receipt-lines.ts for when this call goes.
     onBoot: async () => {
-      const { healDoubledReceiptLines } = await import("./heal-doubled-receipt-lines.js");
-      void healDoubledReceiptLines().catch((e) => console.error("[purchases] doubled-lines heal threw:", (e as Error).message));
+      const { registerDoubledReceiptLinesHeal } = await import("./heal-doubled-receipt-lines.js");
+      registerDoubledReceiptLinesHeal();
     },
   },
   schema: {

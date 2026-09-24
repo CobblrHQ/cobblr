@@ -3,7 +3,7 @@ import { z } from "zod";
 import { platform } from "@cobblr/platform-contract";
 import { instanceOf, sessionUser, tenantContext, tenantDb } from "../db.js";
 import { asyncHandler, badBody, requireRole } from "./util.js";
-import { routeUnknownToMetadata, preserveServerManaged, coerceMetadata } from "@cobblr/platform-contract/entity-metadata";
+import { routeUnknownToMetadata, coerceMetadata, withMetadataMerged } from "@cobblr/platform-contract/entity-metadata";
 
 export const recordsRouter = Router({ mergeParams: true });
 
@@ -145,13 +145,6 @@ recordsRouter.patch(
 
     const smNames = await platform().entities.serverManagedFields(ctx.org.id, "records:record");
     const beforeMeta = coerceMetadata((before as { metadata?: unknown }).metadata);
-    if (parsed.data.metadata !== undefined) {
-      parsed.data.metadata = preserveServerManaged(
-        parsed.data.metadata as Record<string, unknown>,
-        beforeMeta,
-        smNames,
-      );
-    }
 
     // Location changes ride the placement seam instead of the column write;
     // parsed.data stays intact so the activity diff and the change-event bags
@@ -159,7 +152,9 @@ recordsRouter.patch(
     const { location_id: patchLocationId, ...patchRest } = parsed.data;
     const updated = await db
       .updateTable("records_records")
-      .set({ ...patchRest, updated_at: new Date() } as never)
+      // The custom fields MERGE into the live row: a partial edit never
+      // replaces the bag (withMetadataMerged, #3625).
+      .set(withMetadataMerged({ ...patchRest, updated_at: new Date() } as Record<string, unknown>, smNames) as never)
       .where("id", "=", id)
       .where("instance", "=", instanceOf(req))
       .returningAll()
@@ -202,10 +197,7 @@ recordsRouter.patch(
     for (const [k, v] of Object.entries(parsed.data)) {
       if (v !== undefined && k !== "metadata") nativeChanges[k] = v;
     }
-    const afterMeta =
-      parsed.data.metadata !== undefined
-        ? ((parsed.data.metadata as Record<string, unknown>) ?? {})
-        : beforeMeta;
+    const afterMeta = coerceMetadata((updated as { metadata?: unknown }).metadata);
     await platform().events.emit("records.record.updated", {
       orgId: ctx.org.id,
       recordId: id,

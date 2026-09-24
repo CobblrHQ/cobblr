@@ -2,12 +2,12 @@
   "manifest": {
     "id": "cobblr.flagship.wardrobe",
     "catalog": "extended",
-    "version": "0.1.3",
+    "version": "0.1.4",
     "name": "Wardrobe",
     "description": "Catalog your clothing as its own table (type, colour, season, formality, a photo each) grouped by type. Optional Outfits table for planning looks.",
     "author": "Cobblr",
     "released_at": "2026-06-08",
-    "changelog": "First release: your wardrobe as its own inventory table (a “New garment” button, only clothing fields, the parts/stock cruft hidden), with a pinned “By type” view + plain-language hints. Turn on Outfits to plan looks by occasion + the date you'll wear them (they land on your calendar); the Outfit Planner app drags garments onto a figure.",
+    "changelog": "Opens as a catalog of things you own, and stays one: a number typed into one item no longer turns the whole collection into stock tracking with Use one, Used up and a reorder point. Earlier: First release: your wardrobe as its own inventory table (a “New garment” button, only clothing fields, the parts/stock cruft hidden), with a pinned “By type” view + plain-language hints. Turn on Outfits to plan looks by occasion + the date you'll wear them (they land on your calendar); the Outfit Planner app drags garments onto a figure.",
     "requires": [
       {
         "module": "inventory"
@@ -17,6 +17,9 @@
       {
         "module": "inventory",
         "instance_name": "wardrobe",
+        "faces": {
+          "stock": false
+        },
         "display_name": "Wardrobe",
         "glyph": "👗",
         "item_noun": "garment",

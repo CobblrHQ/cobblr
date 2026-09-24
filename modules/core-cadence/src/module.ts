@@ -140,10 +140,8 @@ export default defineModule({
       registerCadenceComputedContext();
       // One-shot heal for ledgers split across a presentation kind and its base
       // (see heal-instance-kinds.ts for the retirement condition).
-      const { healCadenceInstanceKinds } = await import("./heal-instance-kinds.js");
-      void healCadenceInstanceKinds().catch((e) =>
-        console.error("[core-cadence] heal failed:", (e as Error).message),
-      );
+      const { registerCadenceInstanceKindsHeal } = await import("./heal-instance-kinds.js");
+      registerCadenceInstanceKindsHeal();
     },
   },
 });

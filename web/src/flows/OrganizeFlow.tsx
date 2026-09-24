@@ -14,6 +14,7 @@ import { useActiveOrg } from "../auth/ActiveOrgContext";
 import { api, type ScanInboxItem } from "../lib/api";
 import { OrganizePlanSheet } from "../components/OrganizePlanSheet";
 import { OrganizeWalkSheet } from "../components/OrganizeWalkSheet";
+import { scanInboxKeys } from "../lib/scan-inbox-keys";
 
 /** Flow args (all optional; the disassemble directive sends scope:"refs" + refs):
  *  - scope: "refs" | "unplaced" | "pending"
@@ -94,7 +95,7 @@ export function OrganizeFlow({
       onClose={onClose}
       onApplied={() => {
         void qc.invalidateQueries({ queryKey: ["organize-plan-latest", activeSlug] });
-        void qc.invalidateQueries({ queryKey: ["scan-inbox", activeSlug] });
+        void qc.invalidateQueries({ queryKey: scanInboxKeys.all(activeSlug) });
       }}
       onStartWalk={(planId) => void startWalk(planId)}
     />

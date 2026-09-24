@@ -43,7 +43,10 @@ export function TrackedMatchNudges({ item, match }: { item: ScanInboxItem; match
     onError: (e) => toast.error(e instanceof ApiError ? e.message : String(e)),
   });
 
-  const mismatch = listMismatch(item.suggested_candidates?.[0], match, menu.data?.items ?? []);
+  // Compared against where the row goes, as its card says (#3618), never the
+  // raw top route: a mismatch the card does not show is not one.
+  const d = item.resolved_destination;
+  const mismatch = listMismatch(d && d.kind && d.label ? { module: d.module, instance: d.instance, kind: d.kind, label: d.label } : undefined, match, menu.data?.items ?? []);
   const picture = pictureOffer(item, match);
   if (!mismatch && !picture) return null;
 

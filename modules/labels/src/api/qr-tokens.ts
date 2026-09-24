@@ -84,6 +84,8 @@ qrTokensRouter.post(
       return;
     }
     const ctx = tenantContext(req);
+    // The record, never the collection's alias for it: one row, one QR (#3591).
+    const entityKind = await platform().entities.baseKindOf(ctx.org.id, parsed.data.entity_kind);
     // Style decides the token form: descriptive = "/qr/<kind>/<id>"
     // (self-describing, the workspace default); opaque = "/qr/<random>".
     //
@@ -119,7 +121,7 @@ qrTokensRouter.post(
         where: (col: string, op: string, val: unknown) => unknown;
       };
       q = q.where("org_id", "=", ctx.org.id) as typeof q;
-      q = q.where("entity_kind", "=", parsed.data.entity_kind) as typeof q;
+      q = q.where("entity_kind", "=", entityKind) as typeof q;
       q = q.where("entity_id", "=", parsed.data.entity_id) as typeof q;
       q = q.where("mode", "=", "navigate") as typeof q;
       const existing = (await (q as unknown as {
@@ -134,7 +136,7 @@ qrTokensRouter.post(
       ? new Date(Date.now() + parsed.data.expires_in_days * 86_400_000)
       : null;
     const mkToken = () =>
-      isDescriptive ? `${qrShortcode(parsed.data.entity_kind)}/${slug()}` : slug();
+      isDescriptive ? `${qrShortcode(entityKind)}/${slug()}` : slug();
     const insertToken = (token: string) =>
       (meta.insertInto("core_labels_qr_tokens") as unknown as {
         values: (v: Record<string, unknown>) => {
@@ -144,7 +146,7 @@ qrTokensRouter.post(
         .values({
           token,
           org_id: ctx.org.id,
-          entity_kind: parsed.data.entity_kind,
+          entity_kind: entityKind,
           entity_id: parsed.data.entity_id,
           mode: parsed.data.mode,
           action_id: parsed.data.action_id ?? null,

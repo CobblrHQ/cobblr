@@ -1,6 +1,7 @@
 import { platform, parseSort, type EntityListQuery, type ResolvedEntity, textSearchWhere } from "@cobblr/platform-contract";
 import { sql, type Kysely } from "kysely";
 import type { MachinesDB } from "../db.js";
+import { resolveDetailPath } from "@cobblr/platform-contract/instance-detail";
 
 // Native columns the list resolver will order by. Anything outside this set
 // (custom metadata fields, unknown keys) is dropped by parseSort rather than
@@ -146,10 +147,13 @@ function toResolvedMachine(row: {
   // URL, opened via ?machine=<id>; only the DEFAULT collection uses /machines.
   // Cross-module "open this machine" links (e.g. a fleet tile) read this, so it
   // must point at the collection the record actually belongs to.
-  const detailUrl =
-    row.instance && row.instance !== "machines"
-      ? `/${row.instance}?machine=${row.id}`
-      : `/machines/${row.id}`;
+  const detailUrl = resolveDetailPath({
+    kind: "machines:machine",
+    id: row.id,
+    instance: row.instance && row.instance !== "machines" ? row.instance : null,
+    detailUrl: null,
+    baseDetailRoute: "/machines/{id}",
+  })!;
   return {
     kind: "machines:machine",
     id: row.id,

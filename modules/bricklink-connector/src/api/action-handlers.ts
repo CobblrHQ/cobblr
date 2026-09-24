@@ -10,6 +10,7 @@
 // Lego-specific expansion and drives those + the platform pairings seam. No
 // direct access to inventory's tables.
 
+import { actionActed, normaliseActionResult } from "@cobblr/platform-contract/action-result";
 import { platform, requireActionEntity } from "@cobblr/platform-contract";
 
 let registered = false;
@@ -131,7 +132,11 @@ export function registerBricklinkHandlers(): void {
 
     // 7. Mark the kit disassembled, through inventory's generic update. (The Lego
     // bundle's Sets state vocabulary is sealed / built / disassembled.)
-    await platform().actions.invoke("inventory:update-item", { ...ctx, args: { id: kitId, fields: { lifecycle: "disassembled" } } });
+    const marked = await platform().actions.invoke("inventory:update-item", { ...ctx, args: { id: kitId, fields: { lifecycle: "disassembled" } } });
+    if (!actionActed(marked)) {
+      const read = normaliseActionResult(marked, "inventory:update-item");
+      return { ok: false, error: `Spawned the parts, but could not mark the kit disassembled: ${read.ok ? "no answer" : read.error}` };
+    }
 
     // 8. Hand off to the sorting planner: open the organize flow over EXACTLY the
     // parts we just spawned (the scope:"refs" door), so the user goes straight

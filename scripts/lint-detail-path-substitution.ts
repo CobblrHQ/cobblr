@@ -1,7 +1,7 @@
 // Guard: server code must NOT hand-build an entity's detail path by substituting
 // `{id}` into a detail_route template. It must go through the ONE instance-aware
 // resolver — `platform().entities.detailPathForEntity(orgId, kind, id)` (or the
-// pure `resolveDetailPath(...)` in api/src/platform/instance-detail.ts when the
+// pure `resolveDetailPath(...)` in packages/platform-contract/src/instance-detail.ts when the
 // caller already holds the entity's instance).
 //
 // The trap this catches: `getKind(kind).detail_route.replace("{id}", id)` looks
@@ -33,7 +33,7 @@ import { join } from "node:path";
 // is out of scope here.
 const ROOTS = ["api/src", "modules"];
 // The one place the substitution legitimately lives.
-const CANONICAL = "api/src/platform/instance-detail.ts";
+const CANONICAL = "packages/platform-contract/src/instance-detail.ts";
 const ESCAPE_HATCH = "lint-allow-detail-substitution";
 // `.replace("{id}"` / `.replace('{id}'` with any surrounding whitespace.
 const SUBST = /\.replace\(\s*["']\{id\}["']/;

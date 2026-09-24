@@ -9,6 +9,7 @@
 import { sql, type Kysely } from "kysely";
 import { platform, type EntityListQuery, type ResolvedEntity, textSearchWhere } from "@cobblr/platform-contract";
 import type { ProjectsDB } from "../db.js";
+import { resolveDetailPath } from "@cobblr/platform-contract/instance-detail";
 
 let registered = false;
 
@@ -256,6 +257,7 @@ function toResolvedProject(row: {
   start_date: Date | null;
   target_date: Date | null;
   instance: string;
+  metadata?: unknown;
 }): ResolvedEntity {
   // A named instance's projects (e.g. a "Designs" instance) live at
   // /instances/<name>/:id — the ProjectsUI `:id` route, mounted UNDER the
@@ -265,10 +267,13 @@ function toResolvedProject(row: {
   // detailUrl (search, dashboard, saved views, QR) sent an instance project to
   // the base route → no instance context → "back to projects". Mirrors the
   // same instance-aware detailUrl inventory's resolver already emits.
-  const detailUrl =
-    row.instance && row.instance !== "projects"
-      ? `/instances/${row.instance}/${row.id}`
-      : `/projects/${row.id}`;
+  const detailUrl = resolveDetailPath({
+    kind: "projects:project",
+    id: row.id,
+    instance: row.instance && row.instance !== "projects" ? row.instance : null,
+    detailUrl: null,
+    baseDetailRoute: "/projects/{id}",
+  })!;
   return {
     kind: "projects:project",
     id: row.id,
@@ -282,6 +287,11 @@ function toResolvedProject(row: {
       priority: row.priority,
       start_date: row.start_date,
       target_date: row.target_date,
+      // A bundle's own fields on a project live here, as they do on a part,
+      // an asset and a record. Without it no view, label or wire could read
+      // a field the bundle added: a label naming one printed its placeholder
+      // (#3591).
+      metadata: row.metadata ?? {},
       // Structural instances-system attribute (which named collection this
       // item belongs to). Always exposable per the platform's
       // IMPLICIT_EXPOSABLE_PROPS — lets generic surfaces group / route by it.

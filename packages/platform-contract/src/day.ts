@@ -22,6 +22,8 @@
 // then the day that has arrived everywhere. The UTC day is not among them,
 // and `lint:one-day-rule` refuses it in a today-claim.
 
+import { fieldDay } from "@cobblr/platform-contract/field-day";
+
 /** A calendar day, `YYYY-MM-DD`. */
 export type Day = string;
 
@@ -90,4 +92,50 @@ export function theirDay(opts: { said?: unknown; timeZone?: string | null; now?:
 export function dayHere(now: Date = new Date()): Day {
   const pad = (n: number) => String(n).padStart(2, "0");
   return `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}`;
+}
+
+/**
+ * How many calendar days from `today` until `target`: 0 on the day, 1 the day
+ * before, -1 the day after. THE countdown: every surface that says "in 5 days",
+ * "5d", "expires today" or "3d ago" about a date gets its number here.
+ *
+ * Day against day, never an instant against a date. A clock difference is a
+ * fraction of a day, and each surface turned it into a number its own way: the
+ * dashboard's attention list rounded (Sep 29 read "in 4d" at 15:48 in New York,
+ * 4.17 days before UTC midnight), its Up next counted calendar days ("in 5
+ * days"), and the grocery wall rounded against local midnight. One page, two
+ * answers for the same banana (#3641). Both inputs are days, so this is exact
+ * and has no hour at which it changes its mind.
+ *
+ * `today` is the caller's frame: the browser's `dayHere()`, a person's
+ * `theirDay()`, or `arrivedEverywhere()` for a batch with no single reader.
+ */
+export function daysUntil(target: Day, today: Day): number {
+  return Math.round((Date.parse(`${target}T00:00:00Z`) - Date.parse(`${today}T00:00:00Z`)) / 86_400_000);
+}
+
+/** `daysUntil` for a stored date field, read by the one day rule (a month-only
+ *  best-before is the last day of its month). Null when the value names no
+ *  day: a countdown to a guess is worse than none. */
+export function daysUntilField(value: unknown, today: Day): number | null {
+  const day = fieldDay(value);
+  return day === null ? null : daysUntil(day, today);
+}
+
+/**
+ * The countdown in words, from `daysUntil`. Two lengths, one number:
+ *   short  "today" · "tomorrow" · "in 5d" · "yesterday" · "3d ago"   (a list row)
+ *   long   "today" · "tomorrow" · "in 5 days" · "in 3 weeks" · "2 months ago"
+ * A surface picks a length; it never picks its own arithmetic.
+ */
+export function countdownWords(target: Day, today: Day, style: "short" | "long" = "short"): string {
+  const diff = daysUntil(target, today);
+  if (diff === 0) return "today";
+  if (diff === 1) return "tomorrow";
+  if (diff === -1) return "yesterday";
+  const n = Math.abs(diff);
+  if (style === "short") return diff < 0 ? `${n}d ago` : `in ${n}d`;
+  const unit = n < 14 ? "days" : n < 60 ? "weeks" : "months";
+  const size = n < 14 ? n : n < 60 ? Math.round(n / 7) : Math.round(n / 30);
+  return diff < 0 ? `${size} ${unit} ago` : `in ${size} ${unit}`;
 }

@@ -35,6 +35,11 @@ export interface DisclosurePolicy {
   stock: boolean;
   /** True while the verdict is still loading. */
   isLoading: boolean;
+  /** The verdict is known. */
+  ready: boolean;
+  /** The verdict could not be read; a detail waits (PresentationGate). */
+  failed: boolean;
+  retry: () => void;
   /** Whether the derived policy hides this native field for this instance.
    *  (Only stock fields, and only when the instance is lean.) Compose with the
    *  workspace override: `fp.hidden(name) || disclosure.hides(name)`. */
@@ -55,8 +60,11 @@ export function useDisclosure(): DisclosurePolicy {
     () => ({
       stock,
       isLoading: q.isLoading,
+      ready: q.isSuccess,
+      failed: q.isError,
+      retry: () => void q.refetch(),
       hides: (field: string) => !stock && STOCK_NATIVE_FIELDS.has(field),
     }),
-    [stock, q.isLoading],
+    [stock, q.isLoading, q.isSuccess, q.isError],
   );
 }

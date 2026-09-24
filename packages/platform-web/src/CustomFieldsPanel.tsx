@@ -9,7 +9,8 @@
 // the choices via api.appendFieldDefChoice (if the host adapter
 // implements it).
 
-import { useEffect, useMemo, useState, type FocusEvent } from "react";
+import { useMemo, useState, type FocusEvent } from "react";
+import { useFieldDraft } from "./use-field-draft";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { roleSatisfies } from "@cobblr/platform-contract/org-roles";
 import { usePlatformWeb } from "./context";
@@ -301,10 +302,11 @@ function PlainRow({
   const initial = value == null ? "" : String(value);
   const usingFallback = isBlank(value) && !isBlank(fallbackValue);
   const fallbackStr = fallbackValue == null ? "" : String(fallbackValue);
-  const [draft, setDraft] = useState(initial);
+  const { draft, setDraft, committed } = useFieldDraft(initial);
   function commit(e: FocusEvent<HTMLInputElement>) {
     const next = e.target.value;
     if (next === initial) return;
+    committed(next);
     onCommit(valueFromInput(def.type, next));
   }
   // When the field def declares a renderer, show a live preview
@@ -329,7 +331,7 @@ function PlainRow({
       <div className={showPreview || showUnit ? "flex items-center gap-2" : ""}>
         <input
           type={def.type === "number" ? "number" : def.type === "date" ? "date" : "text"}
-          defaultValue={initial}
+          value={draft}
           placeholder={usingFallback ? fallbackStr : undefined}
           onChange={(e) => setDraft(e.target.value)}
           onBlur={commit}
@@ -634,7 +636,7 @@ function MarkdownRow({
   onCommit: (v: unknown) => void;
 }) {
   const initial = value == null ? "" : String(value);
-  const [draft, setDraft] = useState(initial);
+  const { draft, setDraft, committed } = useFieldDraft(initial);
   return (
     <label className="block">
       <span className="block text-[10px] font-mono uppercase tracking-widest text-faint dark:text-slate-500 mb-1">
@@ -646,7 +648,9 @@ function MarkdownRow({
         ariaLabel={def.display_label}
         onChange={setDraft}
         onBlur={() => {
-          if (draft !== initial) onCommit(draft === "" ? null : draft);
+          if (draft === initial) return;
+          committed(draft);
+          onCommit(draft === "" ? null : draft);
         }}
       />
     </label>
@@ -665,7 +669,7 @@ function ColorRow({
   onCommit: (v: unknown) => void;
 }) {
   const initial = value == null ? "" : String(value);
-  const [draft, setDraft] = useState(initial);
+  const { draft, setDraft, committed } = useFieldDraft(initial);
   const t = draft.trim();
   const swatch = /^#?[0-9a-fA-F]{6}$/.test(t) ? (t[0] === "#" ? t : `#${t}`) : "#cccccc";
   return (
@@ -680,6 +684,7 @@ function ColorRow({
           value={swatch}
           onChange={(e) => {
             setDraft(e.target.value);
+            committed(e.target.value);
             onCommit(e.target.value);
           }}
           className="h-9 w-12 shrink-0 rounded border border-line dark:border-slate-600 cursor-pointer bg-transparent p-0.5"
@@ -691,7 +696,9 @@ function ColorRow({
           placeholder="#hex or a colour name"
           onChange={(e) => setDraft(e.target.value)}
           onBlur={() => {
-            if (draft !== initial) onCommit(draft.trim() === "" ? null : draft);
+            if (draft === initial) return;
+            committed(draft);
+            onCommit(draft.trim() === "" ? null : draft);
           }}
           onKeyDown={(e) => {
             if (e.key === "Enter") (e.target as HTMLInputElement).blur();
@@ -827,9 +834,9 @@ function NoteInput({
   value: string;
   onCommit: (v: string) => void;
 }) {
-  const [draft, setDraft] = useState(value);
-  // Re-sync when the record changes underneath (a refetch, a different row).
-  useEffect(() => setDraft(value), [value]);
+  // Follows the record underneath (a refetch, a different row) unless the
+  // person is typing in it.
+  const { draft, setDraft, committed, reset } = useFieldDraft(value);
   return (
     <input
       type="text"
@@ -837,11 +844,13 @@ function NoteInput({
       placeholder="who specifically? (optional)"
       onChange={(e) => setDraft(e.target.value)}
       onBlur={() => {
-        if (draft.trim() !== value.trim()) onCommit(draft);
+        if (draft.trim() === value.trim()) return;
+        committed(draft);
+        onCommit(draft);
       }}
       onKeyDown={(e) => {
         if (e.key === "Enter") (e.target as HTMLInputElement).blur();
-        if (e.key === "Escape") setDraft(value);
+        if (e.key === "Escape") reset();
       }}
       className="input text-[12px] py-1"
     />

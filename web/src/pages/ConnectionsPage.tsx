@@ -5,6 +5,7 @@
 // you instead of being re-added per workspace. Secrets are write-only — the
 // list shows which keys are set, never the values.
 
+import { aiAvailabilityKeys } from "../lib/ai-availability-keys";
 import { useEffect, useMemo, useState } from "react";
 import { useSearchParams } from "react-router-dom";
 import { incumbentConnection } from "../lib/incumbent-connection";
@@ -48,7 +49,7 @@ export function ConnectionsPage({ startAdding = false }: { startAdding?: boolean
   usePageTitle("Connections");
   const qc = useQueryClient();
   const toast = useToast();
-  const conns = useQuery({ queryKey: ["connections"], queryFn: api.listConnections });
+  const conns = useQuery({ queryKey: aiAvailabilityKeys.connections(), queryFn: api.listConnections });
   const catalogue = useQuery({ queryKey: ["conn-catalogue"], queryFn: api.connectionCatalogue });
   const me = useQuery({ queryKey: ["me"], queryFn: api.me });
   const [adding, setAdding] = useState(startAdding);
@@ -82,7 +83,7 @@ export function ConnectionsPage({ startAdding = false }: { startAdding?: boolean
     mutationFn: (id: string) => api.deleteConnection(id),
     onSuccess: () => {
       toast.success("Connection removed.");
-      void qc.invalidateQueries({ queryKey: ["connections"] });
+      void qc.invalidateQueries({ queryKey: aiAvailabilityKeys.connections() });
     },
     onError: (e) => toast.error(e instanceof ApiError ? e.message : String(e)),
   });
@@ -183,7 +184,7 @@ export function ConnectionsPage({ startAdding = false }: { startAdding?: boolean
                 <Pencil size={14} />
               </button>
               {c.kind === "ai-provider" && (
-                <TestConnectionButton test={() => api.testStoredConnection(c.id)} invalidate={[["my-connections"]]} className="text-[11px] px-2 py-1 rounded border border-line dark:border-slate-700 text-faint hover:text-accent" />
+                <TestConnectionButton test={() => api.testStoredConnection(c.id)} invalidate={[aiAvailabilityKeys.connections()]} className="text-[11px] px-2 py-1 rounded border border-line dark:border-slate-700 text-faint hover:text-accent" />
               )}
               <button
                 type="button"
@@ -205,7 +206,7 @@ export function ConnectionsPage({ startAdding = false }: { startAdding?: boolean
                 existing={c}
                 onDone={() => {
                   setEditing(null);
-                  void qc.invalidateQueries({ queryKey: ["connections"] });
+                  void qc.invalidateQueries({ queryKey: aiAvailabilityKeys.connections() });
                 }}
                 onCancel={() => setEditing(null)}
               />
@@ -224,7 +225,7 @@ export function ConnectionsPage({ startAdding = false }: { startAdding?: boolean
           existing={null}
           onDone={() => {
             setAdding(false);
-            void qc.invalidateQueries({ queryKey: ["connections"] });
+            void qc.invalidateQueries({ queryKey: aiAvailabilityKeys.connections() });
           }}
           onCancel={() => setAdding(false)}
         />

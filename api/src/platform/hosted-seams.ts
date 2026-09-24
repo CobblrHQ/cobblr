@@ -174,10 +174,20 @@ async function checkRequest(ctx: RequestGuardCtx) {
     return { allow: true as const };
   }
 }
+/** Read-only answers every page needs BEFORE anyone signs in, which carry
+ *  nothing to brute-force. They are kept out of the guard's shared bucket: one
+ *  busy network behind one address (an office, a school, a review rig) used to
+ *  spend that bucket and then could not even see the sign-in form, because
+ *  GET /auth/config came back 429 with Retry-After: 300 (#3622). Each has its
+ *  own generous per-address limit where it is served, and credential routes
+ *  stay behind the guard. Paths are relative to /api/v1. */
+export const GUARD_EXEMPT_READS: ReadonlySet<string> = new Set(["/auth/config"]);
+
 /** Express middleware that consults the registered request guard. Mounted on
  *  the public/auth routes; a no-op until the overlay registers a guard. */
 export function requestGuardMiddleware(): RequestHandler {
   return (req, res, next) => {
+    if ((req.method === "GET" || req.method === "HEAD") && GUARD_EXEMPT_READS.has(req.path)) return next();
     void checkRequest({
       ip: req.ip ?? "",
       path: req.path,

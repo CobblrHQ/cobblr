@@ -26,6 +26,8 @@ import { asyncHandler, badBody, requireRole } from "./util.js";
 import { roleSatisfies } from "@cobblr/platform-contract/org-roles";
 import { BundleInstaller, fileThroughConfirm, type FilingOutcome } from "../services/file-through-confirm.js";
 import { liveTablesOf, withResolvedOffers } from "../services/resolve-offers.js";
+import { destinationTables } from "../services/destination.js";
+import { assembleScanMenu } from "../services/matchmaker.js";
 import { withPersonName } from "../services/user-name.js";
 import { INTERNAL_API } from "./inbox.js";
 import { isJunkName } from "../services/enrich.js";
@@ -584,6 +586,11 @@ organizeRouter.post(
           slug: ctx.org.slug,
           authHeaders: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
           canInstall: roleSatisfies((req as unknown as { tenant?: { role: string } }).tenant?.role as "owner", ["owner", "admin"]),
+          // The card's tables, so each row files where its card said it goes
+          // (services/destination.ts, #3618).
+          tables: await assembleScanMenu((req.headers["x-cobblr-base-url"] as string | undefined) ?? INTERNAL_API, ctx.org.slug, token, ctx.org.id)
+            .then(destinationTables)
+            .catch(() => []),
         }
       : null;
     const installer = door ? new BundleInstaller(door) : null;
@@ -709,7 +716,7 @@ organizeRouter.post(
           const rows = (
             await db
               .selectFrom("core_scan_inbox_items")
-              .select(["id", "suggested_name", "quantity", "suggested_candidates", "suggested_metadata"])
+              .select(["id", "quantity", ...SCAN_TRIAGE_COLUMNS])
               .where("id", "in", stampedIds)
               .execute()
           ).map((r) => withPersonName(withResolvedOffers(r, liveNow)));

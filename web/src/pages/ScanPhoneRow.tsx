@@ -17,6 +17,8 @@ import { createPortal } from "react-dom";
 import { Camera, CheckCircle, ChevronDown, ChevronRight, Download, Loader2, MoreHorizontal, PackagePlus, RotateCcw, ScanLine, Scissors } from "lucide-react";
 import type { ScanInboxItem } from "../lib/api";
 import { OverlayLayer, BackdropLayer } from "@cobblr/platform-web";
+import { ScanReceiptUnread, type ScanReceiptUnreadProps } from "../components/ScanReceiptUnread";
+import { RECEIPT_UNREAD_TITLE } from "@cobblr/platform-contract/scan-copy";
 
 export interface ScanPhoneRowAction {
   label: string;
@@ -53,14 +55,19 @@ export interface ScanPhoneRowProps {
     choices: Array<{ value: string; source: string; onPick: () => void }>;
     onType: (() => void) | null;
   } | null;
+  /** A receipt whose lines could not be read (contract:
+   *  scanReceiptReadFailed): the row says so with Read again, never "Name
+   *  this item" (#3581). */
+  receipt?: Omit<ScanReceiptUnreadProps, "compact"> | null;
   /** The pulse while the AI works. */
   working: string | null;
   /** The last AI run's failure, in words, with Retry beside it. */
   /** The failure line, with the way back the contract names: retry the
    *  lookup, connect a provider, or nothing to press. */
   failure: { text: string; recovery: "retry" | "connect" | null; connectHref?: string } | null;
-  /** The quantity, with its editing flow. */
-  quantity: { value: number; busy: boolean; onChange: (n: number) => void };
+  /** The quantity, with its editing flow. Null for a row that is not an
+   *  item yet (a receipt whose lines could not be read): nothing to count. */
+  quantity: { value: number; busy: boolean; onChange: (n: number) => void } | null;
   /** A few of the destination table's own fields, as compact tokens in the
    *  metadata lines. `confirmed` = the person set it; `swatch` = a colour. */
   chips: Array<{ key: string; label: string; value: string; confirmed: boolean; swatch?: string | null }>;
@@ -174,7 +181,7 @@ export function ScanPhoneRow(p: ScanPhoneRowProps) {
             Details <ChevronRight size={14} />
           </button>
           <span data-name className={"mr-2 text-[15px] " + (nameless ? "text-muted dark:text-slate-400" : "font-medium text-content dark:text-mortar-100")}>
-            {name ?? (p.working ? "Reading…" : "Name this item")}
+            {name ?? (p.working ? "Reading…" : p.receipt ? RECEIPT_UNREAD_TITLE : "Name this item")}
           </span>
           {p.subtitle && <span className="mr-2 font-mono text-[11px] text-faint dark:text-slate-500">{p.subtitle}</span>}
           {p.chips.map((c) => (
@@ -190,7 +197,8 @@ export function ScanPhoneRow(p: ScanPhoneRowProps) {
           ))}
         </div>
         {p.working && <div className="text-[11px] text-accent animate-pulse">{p.working}</div>}
-        {p.question && (
+        {p.receipt && !p.working && <ScanReceiptUnread {...p.receipt} compact />}
+        {p.question && !p.receipt && (
           <div className="text-[11px] leading-5 text-amber-700 dark:text-amber-400" title={p.question.because} data-testid="review-questions">
             <span className="mr-1 font-medium">{p.question.prompt}{p.question.choices.length ? ":" : ":"}</span>
             {p.question.choices.length ? (
@@ -237,8 +245,8 @@ export function ScanPhoneRow(p: ScanPhoneRowProps) {
             )}
           </div>
         )}
-        {p.warning && <div className="line-clamp-2 text-[11px] text-amber-600 dark:text-amber-400">{p.warning}</div>}
-        {p.failure && (
+        {p.warning && !p.receipt && <div className="line-clamp-2 text-[11px] text-amber-600 dark:text-amber-400">{p.warning}</div>}
+        {p.failure && !p.receipt && (
           <div className="flex items-center gap-2 text-[11px] text-amber-700 dark:text-amber-400" onClick={stop}>
             <span className="line-clamp-2 min-w-0">{p.failure.text}</span>
             {p.failure.recovery === "retry" && p.rerun.can && (
@@ -270,11 +278,16 @@ export function ScanPhoneRow(p: ScanPhoneRowProps) {
         {/* Two control rows. Quantity and the tools (a better photo, a fresh
             read with its live state, the rest); then the filing pair. */}
         <div data-row="controls" className="flex flex-nowrap items-center gap-1.5" onClick={stop}>
-          <span className="inline-flex shrink-0 items-center overflow-hidden rounded-md border border-line dark:border-slate-700 text-xs" title="Quantity">
-            <button type="button" aria-label="Decrease quantity" disabled={p.quantity.busy || p.quantity.value <= 1} onClick={() => p.quantity.onChange(p.quantity.value - 1)} className="min-h-9 w-7 text-muted disabled:opacity-40">−</button>
-            <span className="min-w-[1.75rem] text-center font-semibold tabular-nums text-content dark:text-mortar-100">×{p.quantity.value}</span>
-            <button type="button" aria-label="Increase quantity" disabled={p.quantity.busy} onClick={() => p.quantity.onChange(p.quantity.value + 1)} className="min-h-9 w-7 text-muted disabled:opacity-40">+</button>
-          </span>
+          {p.quantity && (() => {
+            const q = p.quantity;
+            return (
+              <span className="inline-flex shrink-0 items-center overflow-hidden rounded-md border border-line dark:border-slate-700 text-xs" title="Quantity">
+                <button type="button" aria-label="Decrease quantity" disabled={q.busy || q.value <= 1} onClick={() => q.onChange(q.value - 1)} className="min-h-9 w-7 text-muted disabled:opacity-40">−</button>
+                <span className="min-w-[1.75rem] text-center font-semibold tabular-nums text-content dark:text-mortar-100">×{q.value}</span>
+                <button type="button" aria-label="Increase quantity" disabled={q.busy} onClick={() => q.onChange(q.value + 1)} className="min-h-9 w-7 text-muted disabled:opacity-40">+</button>
+              </span>
+            );
+          })()}
           <span className="flex shrink-0 items-center gap-1.5">
           <button type="button" onClick={p.onCapture} className={tool + " min-w-10 justify-center"} aria-label="Photograph this item" title="Photograph this item">
             <Camera size={15} />

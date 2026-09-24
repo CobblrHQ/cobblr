@@ -19,7 +19,8 @@ import { withFieldLabels } from "./platform/field-labels.js";
 import { dirname, resolve } from "node:path";
 import { setPlatform, canContain, canBeContained } from "@cobblr/platform-contract";
 import { roleHoldsEveryCapability } from "@cobblr/platform-contract/org-roles";
-import { describeCapabilityBlock } from "./platform/approvals.js";
+import { describeBlock, describeCapabilityBlock } from "./platform/approvals.js";
+import { mergeJsonb } from "./platform/jsonb-merge.js";
 import { resolveFieldDefsForKind } from "./platform/field-defs.js";
 import { sql, type Kysely, type Generated } from "kysely";
 import { env } from "./env.js";
@@ -35,6 +36,7 @@ import { syncTenantMigrations, reconcileDefaultModules } from "./modules/enable.
 import { startDeliverySweeper } from "./platform/delivery-sweeper.js";
 import { tenantSweeps, startTenantSweeps } from "./platform/tenant-sweeps.js";
 import { startPoolWatch, poolCounts } from "./db/pool-stats.js";
+import { poolHolders } from "./db/client-error-guard.js";
 import { tenantPoolStats } from "./db/tenant.js";
 import { mountModules } from "./modules/mount.js";
 import { registerBuiltinResolvables } from "./platform/resolvable-providers.js";
@@ -130,6 +132,13 @@ process.on("unhandledRejection", (reason) => {
   console.error("[cobblr-api] unhandled rejection:", reason);
 });
 
+/** The one identity a placement is stored and read under: the record's base
+ *  kind and id, whatever spelling the caller handed in (#3663). */
+async function canonicalRef(orgId: string, ref: { kind: string; id: string }): Promise<{ kind: string; id: string }> {
+  const kind = await entities.baseKindOf(orgId, ref.kind).catch(() => ref.kind);
+  return { kind, id: ref.id };
+}
+
 // The per-tenant DB slice platform().placement touches. The table is owned by
 // the core-placement foundational module (tenant-local — no org_id; the tenant
 // DB is the org). getTenantDb(orgId) is cast to this.
@@ -214,7 +223,7 @@ async function boot() {
       register: registerResolvable,
       resolve: resolveValue,
     },
-    db: { meta },
+    db: { meta, mergeJsonb },
     entities: {
       registerResolver: entities.registerResolver,
       registerWriter: entities.registerEntityWriter,
@@ -554,6 +563,7 @@ async function boot() {
         return !!viaRole;
       },
       describeBlockedCapability: (args) => describeCapabilityBlock(args),
+      describeBlock: (args) => describeBlock(args),
       mintAppToken: ({ userId, appSlug }) => signAppToken(userId, appSlug),
       mintSession: ({ userId }) => signSession(userId),
       registerEmailSender: hostedSeams.registerAuthEmailSender,
@@ -745,7 +755,15 @@ async function boot() {
       },
     },
     placement: {
-      place: async ({ orgId, containee, container, slot, placedBy }) => {
+      place: async ({ orgId, containee: asked, container: askedContainer, slot, placedBy }) => {
+        // One record, one key: whatever spelling the caller holds (a
+        // collection's "home-inventory:item" from a search, the base
+        // "inventory:part" from the record page), placements are stored and
+        // read under the base kind, the key the location trigger already
+        // writes. Two spellings were two rows: the same fan in the Bedroom
+        // and the Garage at once (#3663).
+        const containee = await canonicalRef(orgId, asked);
+        const container = await canonicalRef(orgId, askedContainer);
         if (containee.kind === container.kind && containee.id === container.id) {
           throw new Error("placement: an entity cannot contain itself");
         }
@@ -857,7 +875,8 @@ async function boot() {
           console.warn("[placement] placed event not emitted:", (err as Error).message);
         }
       },
-      remove: async ({ orgId, containee }) => {
+      remove: async ({ orgId, containee: asked }) => {
+        const containee = await canonicalRef(orgId, asked);
         const tdb = (await getTenantDb(orgId)) as unknown as Kysely<PlacementDB>;
         // If the containee was in a LOCATION container, clear the legacy
         // location_id too — otherwise the sync trigger resurrects the placement
@@ -885,7 +904,8 @@ async function boot() {
           }
         }
       },
-      containerOf: async ({ orgId, containee }) => {
+      containerOf: async ({ orgId, containee: asked }) => {
+        const containee = await canonicalRef(orgId, asked);
         const tdb = (await getTenantDb(orgId)) as unknown as Kysely<PlacementDB>;
         const row = await tdb
           .selectFrom("core_placement_placements")
@@ -895,7 +915,8 @@ async function boot() {
           .executeTakeFirst();
         return row ? { kind: row.container_kind, id: row.container_id } : null;
       },
-      contents: async ({ orgId, container }) => {
+      contents: async ({ orgId, container: asked }) => {
+        const container = await canonicalRef(orgId, asked);
         const tdb = (await getTenantDb(orgId)) as unknown as Kysely<PlacementDB>;
         const rows = await tdb
           .selectFrom("core_placement_placements")
@@ -1243,7 +1264,7 @@ async function boot() {
   startBundleUpdateSweeper();
   // A pool whose callers are waiting says so in the log while it is
   // happening, once per stretch (#3033).
-  startPoolWatch("meta-pool", () => poolCounts(metaPool));
+  startPoolWatch("meta-pool", () => poolCounts(metaPool), undefined, () => poolHolders(metaPool));
   startPoolWatch("tenant-pools", () => tenantPoolStats());
 
   // Put back scan names a Replay truncated before 2026-08-12 (a cache miss

@@ -14,8 +14,9 @@
 // `requestable: false` and never grows an Ask button.
 
 /** One thing a request asks for. `key` is the id the remedy is keyed on: an
- *  action id for a capability, a bundle's external id for an install. */
-export type ApprovalRemedyKind = "capability" | "install";
+ *  action id for a capability, a bundle's external id for an install, a
+ *  module's name for a module to turn on. */
+export type ApprovalRemedyKind = "capability" | "install" | "module";
 
 export interface ApprovalRemedy {
   kind: ApprovalRemedyKind;

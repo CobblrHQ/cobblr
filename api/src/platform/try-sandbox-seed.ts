@@ -16,9 +16,10 @@
 import { readFile } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { applyBlueprint, BlueprintManifest } from "../routes/blueprint.js";
+import { applyBlueprint, BlueprintManifest, type BlueprintManifestT } from "../routes/blueprint.js";
 import { signSession } from "../auth/jwt.js";
 import { seedSandboxRecords } from "./try-sandbox-records.js";
+import { localFlagshipManifest } from "../lib/flagship-bundles.js";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 
@@ -31,6 +32,22 @@ function seedDir(): string {
  *  a query string (`?seed=yarn`), so it must never be able to name a path. */
 function isSafeSeedName(name: string): boolean {
   return /^[a-z0-9][a-z0-9-]{0,40}$/.test(name);
+}
+
+/** The seed with each bundle it embeds swapped for the version this image
+ *  ships. A seed file is a blueprint, and a blueprint embeds full manifests as
+ *  they were on the day it was exported, so a seed written once went on
+ *  installing Groceries 0.10.0 while the catalog moved to 0.11.2, and the first
+ *  thing a visitor saw was "Update now" for bundles they had never heard of.
+ *  A bundle the catalog does not carry keeps the seed's own copy. */
+export function withCurrentBundles(bp: BlueprintManifestT): BlueprintManifestT {
+  return {
+    ...bp,
+    bundles: bp.bundles.map((b) => {
+      const id = (b as { id?: unknown } | null)?.id;
+      return (typeof id === "string" && localFlagshipManifest(id)) || b;
+    }),
+  };
 }
 
 export interface SeedOutcome {
@@ -84,7 +101,7 @@ export async function seedSandbox(
     };
   }
 
-  await applyBlueprint(orgId, { id: userId, display_name: "Guest", auth_method: "session" }, bp.data);
+  await applyBlueprint(orgId, { id: userId, display_name: "Guest", auth_method: "session" }, withCurrentBundles(bp.data));
 
   // The shape is up; now put something in it. A blueprint carries no records by
   // design, so without this the sandbox is correct and empty - which is the one

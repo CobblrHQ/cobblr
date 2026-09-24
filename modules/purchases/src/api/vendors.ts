@@ -10,7 +10,7 @@ import { z } from "zod";
 import { platform } from "@cobblr/platform-contract";
 import { instanceOf, sessionUser, tenantContext, tenantDb } from "../db.js";
 import { asyncHandler, badBody, requireRole } from "./util.js";
-import { routeUnknownToMetadata } from "@cobblr/platform-contract/entity-metadata";
+import { routeUnknownToMetadata, withMetadataMerged } from "@cobblr/platform-contract/entity-metadata";
 
 export const vendorsRouter = Router({ mergeParams: true });
 
@@ -128,7 +128,8 @@ vendorsRouter.patch(
     const session = sessionUser(req);
     const updated = await db
       .updateTable("purchases_vendors")
-      .set({ ...parsed.data, updated_at: new Date() } as never)
+      // Custom fields MERGE into the live row (withMetadataMerged, #3625).
+      .set(withMetadataMerged({ ...parsed.data, updated_at: new Date() } as Record<string, unknown>) as never)
       .where("id", "=", id)
       .where("instance", "=", instanceOf(req))
       .returningAll()

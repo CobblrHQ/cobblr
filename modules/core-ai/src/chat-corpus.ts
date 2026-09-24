@@ -71,6 +71,10 @@ export interface CorpusCase {
    *  sits in is not where it is (the 2026-09-13 continuation review was told
    *  "in the Home Inventory list"). */
   says?: string[];
+  /** Words the answer must NOT say, case-insensitive: a value the record
+   *  does not hold, stated as a fact ("paid $24" when 24 is the lamp's
+   *  replacement value and nothing paid is recorded, #3656). */
+  unsays?: string[];
   /** A stated reason this case cannot be made deterministic, written after a
    *  real attempt. A case with this LEAVES THE GATE: it is still asked and
    *  recorded, but a miss cannot put its bucket under the floor; its pass rate
@@ -236,6 +240,46 @@ const RAW_CORPUS: CorpusCase[] = [
     ai: "read:search_records|list_records|get_record",
     names: ["LED desk lamp", "Blue cotton yarn 100g 200m"],
     says: ["Living room"],
+  },
+  // The review's sentence (#3652), on the bench's yarn: asked to "link to
+  // the item", a model wrapped the name in a path made from the title, and
+  // the panel printed the brackets with nothing to open. The record named as
+  // a chip, by its id, is what this scores.
+  {
+    say: "Read only; do not change anything. How much blue cotton yarn remains? Please distinguish unopened skeins from metres left in the open skein, and link to the item.",
+    cat: "my-data",
+    no_ai: answer("my-data"),
+    ai: "read:search_records|list_records|get_record",
+    names: ["Blue cotton yarn 100g 200m"],
+  },
+  // #3656: "Show me the toaster" was answered "purchased ... for $39.95",
+  // and 39.95 was its replacement value; nothing paid was recorded. The lamp
+  // holds the same shape (a Replacement value of 24, no price paid), and the
+  // answer must not turn one into the other.
+  {
+    say: "What did I pay for the LED desk lamp?",
+    cat: "my-data",
+    no_ai: none,
+    ai: "read:search_records|list_records|get_record",
+    names: ["LED desk lamp"],
+    unsays: ["paid $24", "paid 24", "for $24", "for 24 ", "cost you $24", "cost $24"],
+  },
+  // #3658: the two sentences whose confirmation cards hid what they would
+  // write. The card is built in code from the call (write-values.ts, the
+  // placement planner); what the bench scores is that the model makes the
+  // call the card is built from.
+  {
+    say: "Add a spare desk fan to my bedroom. I paid $24 for it.",
+    cat: "write",
+    // With no AI, "add a ..." is the how-to answer; the model makes the record.
+    no_ai: answer("add-item"),
+    ai: "create:record",
+  },
+  {
+    say: "Move the desk fan to the garage",
+    cat: "workshop",
+    no_ai: none,
+    ai: "action:core-placement:place",
   },
   ...ph("my-data", answer("my-data"), "read:search_records", [
     "which bin did the drill end up in", "where did the multimeter go",

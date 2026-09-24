@@ -20,7 +20,9 @@ import { CheckCircle2, ChevronDown, Loader2, RotateCcw } from "lucide-react";
 import { Modal, useToast } from "@cobblr/platform-web";
 import { ApiError, api, type AutofileDryRun, type AutofilePlanLine, type AutofileResult } from "../lib/api";
 import { lineFor, pilesFrom, seenFrom, type Piles } from "../lib/autofilePiles";
+import { RestockPlanChoice } from "./RepurchaseControls";
 import { LocationTreePicker } from "./LocationTreePicker";
+import { scanInboxKeys } from "../lib/scan-inbox-keys";
 
 const TZ = (): string | undefined => {
   try {
@@ -124,10 +126,14 @@ export function FileEverythingSheet({
   });
   const piles: Piles = useMemo(() => pilesFrom(plan.data?.plans ?? []), [plan.data]);
   const toFile = piles.attach.length + piles.create.length;
+  // What each "added to what you have" line means for the record: +1 by
+  // default, or the old one ran out or went bad. The same answers the card
+  // and the detail offer (repurchaseOptions); the plan files by them.
+  const [restock, setRestock] = useState<Record<string, "add" | "replaced" | "went_bad">>({});
 
   const confirm = useMutation({
     mutationFn: () => {
-      const { item_ids, seen } = seenFrom(piles);
+      const { item_ids, seen } = seenFrom(piles, restock);
       return api.autofileScan(slug, {
         confirm: true,
         ...(batchId ? { batch_id: batchId } : {}),
@@ -140,7 +146,7 @@ export function FileEverythingSheet({
     onSuccess: (r) => {
       setResult(r);
       toast.success(r.message);
-      void qc.invalidateQueries({ queryKey: ["scan-inbox", slug] });
+      void qc.invalidateQueries({ queryKey: scanInboxKeys.all(slug) });
       onFiled?.();
     },
     onError: (e) => toast.error(e instanceof ApiError ? e.message : String(e)),
@@ -151,7 +157,7 @@ export function FileEverythingSheet({
     onSuccess: (r, itemId) => {
       setUndone((s) => new Set(s).add(itemId));
       if (r.note) toast.success(r.note);
-      void qc.invalidateQueries({ queryKey: ["scan-inbox", slug] });
+      void qc.invalidateQueries({ queryKey: scanInboxKeys.all(slug) });
       onFiled?.();
     },
     onError: (e) => toast.error(e instanceof ApiError ? e.message : String(e)),
@@ -173,7 +179,7 @@ export function FileEverythingSheet({
     }
     setUndoingAll(false);
     toast.success(`Put ${n} back in the inbox.`);
-    void qc.invalidateQueries({ queryKey: ["scan-inbox", slug] });
+    void qc.invalidateQueries({ queryKey: scanInboxKeys.all(slug) });
     onFiled?.();
   };
 
@@ -245,6 +251,17 @@ export function FileEverythingSheet({
             open={openPiles.attach}
             onToggle={() => setOpenPiles((o) => ({ ...o, attach: !o.attach }))}
             tone="good"
+            trailing={(p) =>
+              p.action === "attach" ? (
+                <RestockPlanChoice
+                  kind={p.to.kind}
+                  qty={p.qty}
+                  hasSome={p.to.qty == null ? true : p.to.qty > 0}
+                  value={restock[p.itemId] ?? "add"}
+                  onChange={(v) => setRestock((r) => ({ ...r, [p.itemId]: v }))}
+                />
+              ) : null
+            }
           />
           <Pile
             title="Filed as new"

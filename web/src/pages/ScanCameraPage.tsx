@@ -38,7 +38,8 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { AlertTriangle, ArrowLeftRight, ArrowRight, Camera, Check, Flashlight, ImagePlus, Loader2, MapPin, Package, Plus, ScanLine, SkipForward, Undo2, X, Zap } from "lucide-react";
 import { useLater, LiveSurfaceProvider, Modal, usePageTitle, useOverlayOpenFlag } from "@cobblr/platform-web";
 import { classifyScanPayload, typedVerdict } from "../lib/scanPayload";
-import { doorPlan, frameFromImage } from "../lib/imageDoor";
+import { doorPlan, frameFromImage, type DoorPlan } from "../lib/imageDoor";
+import { captureRoute } from "../lib/captureRoute";
 import { useDeployEnv } from "../lib/deploy-env";
 import { ManualScanField } from "../components/ManualScanField";
 import { ApiError, api, type LiveSortEntry, type ScanInboxItem, type ScanResolveCandidate, type TrackedMatch } from "../lib/api";
@@ -73,6 +74,7 @@ import { ScanDiagPanel } from "./ScanDiagPanel";
 import { recordDecode, recordOrientation, recordStreamRecovery, recordTorchEvent, recordTorchSample, recordZoom, scanDiagEnabled } from "../lib/scanDiag";
 import { BinAdjustModal } from "../components/BinAdjustModal";
 import { ScanAmbiguityModal } from "../components/ScanAmbiguityModal";
+import { scanInboxKeys } from "../lib/scan-inbox-keys";
 
 // BarcodeDetector type — not in lib.dom.d.ts as of TS 5.7. Local shim.
 interface BarcodeDetectorCtor {
@@ -252,8 +254,8 @@ export function ScanCameraPage() {
   const lumaCanvasRef = useRef<HTMLCanvasElement | null>(null);
   const lastLumaAtRef = useRef(0);
   const prevLumaFrameRef = useRef<Uint8ClampedArray | null>(null);
-  /** The estimator's verdict from the LAST decode attempt — the "was there
-   *  anything code-like" evidence the fruitless-burn rule feeds on. */
+  /** The estimator's verdict from the LAST decode attempt: "a code is in
+   *  view", the only thing that may light the torch (torchAuto.ts). */
   const lastStructureRef = useRef<boolean | undefined>(undefined);
   // Frame-liveness watchdog. iOS hands back a track that CLAIMS live+unmuted
   // after backgrounding while delivering no frames, so every track-state
@@ -791,7 +793,7 @@ export function ScanCameraPage() {
             scan_batch_id: batchId ?? undefined,
             enrich_ms: 3_000,
           });
-          void qc.invalidateQueries({ queryKey: ["scan-inbox", activeSlug] });
+          void qc.invalidateQueries({ queryKey: scanInboxKeys.all(activeSlug) });
           await routeSortItem(item.id);
         } catch (e) {
           noteError(e);
@@ -1469,8 +1471,9 @@ export function ScanCameraPage() {
       // here I can't read" — it exposes geometry only for symbols it already
       // read. So there is no honest structure verdict on this path, and
       // reporting the decode as one would conflate "nothing to scan" with
-      // "haven't managed it yet" and cut short exactly the dark-room burns the
-      // torch exists for. Undefined leaves the patient dark rule in charge.
+      // "haven't managed it yet". Undefined means auto never lights the torch
+      // on this path: it only may for a code in view that will not read
+      // (torchAuto.ts), and this path cannot see one. The button still can.
       autoTorchTick(video, undefined);
       const t0 = performance.now();
       detector
@@ -1750,7 +1753,7 @@ export function ScanCameraPage() {
       });
       onSaved(item);
       setDrawerItem(item);
-      void qc.invalidateQueries({ queryKey: ["scan-inbox", activeSlug] });
+      void qc.invalidateQueries({ queryKey: scanInboxKeys.all(activeSlug) });
       // The drawer is the confirmation now — it shows the frame itself, which
       // answers "did that come out?" better than a green note ever did.
       setLastFrame((prev) => (prev ? { ...prev, itemId: item.id } : prev));
@@ -1758,30 +1761,30 @@ export function ScanCameraPage() {
     [activeSlug, ensureBatchId, onSaved, qc],
   );
 
-  const takePhoto = useCallback(async () => {
-    const video = videoRef.current;
-    if (!video || video.readyState < 2 || shutterBusy) return;
-    if (typeof navigator.vibrate === "function") navigator.vibrate(30);
-    scanBeep("shutter");
-    setFlash(true);
-    later.after("shutter-flash", 160, () => setFlash(false));
-    setShutterBusy(true);
-    // Stamps freeze at capture time — a retry minutes later must file the shot
-    // where you STOOD when you took it, not where you've wandered since. Read
-    // through the refs: the areaName memo can lag areaId (two areas sharing a
-    // name never rebind it), and the ref is always the live binding.
-    const areaIdNow = areaIdRef.current;
-    const loc = (locsRef.current ?? []).find((l) => l.id === areaIdNow);
-    const stamps = {
-      areaName: loc ? (loc.short_name ?? loc.name) : null,
-      areaId: areaIdNow,
-      container: containerBinRef.current,
-    };
-    try {
-      const blob = await captureFrame(video);
-      if (!blob) throw new Error("could not capture a frame");
-      setFrame(blob);
+  // THE one place a capture lands, whichever door it came through (#3629):
+  // the live shutter and the image door alike. An armed "+Photo" attaches the
+  // image to the armed item whatever it holds; unarmed, a decoded QR routes,
+  // a decoded code is looked up, anything else is a new shot
+  // (lib/captureRoute.ts). The image door used to save its own shot here and
+  // made a second draft while the camera was armed.
+  const landCapture = useCallback(
+    async (blob: Blob, stamps: { areaName: string | null; areaId: string | null; container: typeof containerBinRef.current }, plan: DoorPlan | null) => {
       const armed = armRef.current;
+      const route = captureRoute(!!armed, plan);
+      if (route.kind === "route-qr") {
+        routeQr(route.token, { freeze: phaseRef.current === "scanning" });
+        return;
+      }
+      if (route.kind === "lookup") {
+        // The image is the frame the code was read off: it rides the inbox
+        // row as the person's photo, the way a live frame does.
+        frameBlobRef.current = Promise.resolve(blob);
+        setPendingBarcode(route.code);
+        setPhase("result");
+        showFilingNote(`Read ${route.code} off the image`);
+        return;
+      }
+      setFrame(blob);
       try {
         if (armed) {
           // Every arm uploads the frame and attaches it to an EXISTING item;
@@ -1826,7 +1829,7 @@ export function ScanCameraPage() {
           }
           if (updated.barcode_text) handledCodeRef.current = { raw: updated.barcode_text, at: Date.now() };
           setLastFrame((prev) => (prev ? { ...prev, itemId: targetId } : prev));
-          void qc.invalidateQueries({ queryKey: ["scan-inbox", activeSlug] });
+          void qc.invalidateQueries({ queryKey: scanInboxKeys.all(activeSlug) });
           // The drawer reads its item from this key too. Without invalidating
           // it, an append/retake renders against a CACHED pre-change copy — the
           // new photo simply doesn't appear in the gallery.
@@ -1859,12 +1862,59 @@ export function ScanCameraPage() {
         if (!armed) setFailedShot({ blob, stamps });
         noteError(e);
       }
+    },
+    [activeSlug, onSaved, qc, routeQr, saveShot, setFrame, showFilingNote, noteError],
+  );
+
+  /** A captured still, read for a code the way the image door reads a file.
+   *  A still that does not decode (or a decoder that throws) is a photo, as
+   *  it was before. */
+  const planFromStill = useCallback(async (blob: Blob): Promise<DoorPlan | null> => {
+    try {
+      const { canvas } = await frameFromImage(blob);
+      const r = decodeCanvasSmart(createBarcodeReader(), canvas, document.createElement("canvas"));
+      return r.text ? doorPlan(typedVerdict(r.text)) : null;
+    } catch {
+      return null;
+    }
+  }, []);
+
+  const takePhoto = useCallback(async () => {
+    const video = videoRef.current;
+    if (!video || video.readyState < 2 || shutterBusy) return;
+    if (typeof navigator.vibrate === "function") navigator.vibrate(30);
+    scanBeep("shutter");
+    setFlash(true);
+    later.after("shutter-flash", 160, () => setFlash(false));
+    setShutterBusy(true);
+    // Stamps freeze at capture time — a retry minutes later must file the shot
+    // where you STOOD when you took it, not where you've wandered since. Read
+    // through the refs: the areaName memo can lag areaId (two areas sharing a
+    // name never rebind it), and the ref is always the live binding.
+    const areaIdNow = areaIdRef.current;
+    const loc = (locsRef.current ?? []).find((l) => l.id === areaIdNow);
+    const stamps = {
+      areaName: loc ? (loc.short_name ?? loc.name) : null,
+      areaId: areaIdNow,
+      container: containerBinRef.current,
+    };
+    try {
+      const blob = await captureFrame(video);
+      if (!blob) throw new Error("could not capture a frame");
+      // The still is read for a code first, with the decoder the live loop and
+      // the image door run: a label with a printed barcode is a lookup, the
+      // heuristic answer, before any vision guess from the label's words (the
+      // owner, 2026-09-24: a label photo with a clear barcode came back as
+      // "Women's Flats, Brown"). The live loop only sees frames it happened
+      // to catch; the still is the one the person chose. Armed, the shot
+      // joins the item whatever it holds (captureRoute).
+      await landCapture(blob, stamps, await planFromStill(blob));
     } catch (e) {
       noteError(e);
     } finally {
       setShutterBusy(false);
     }
-  }, [activeSlug, onSaved, qc, saveShot, showFilingNote, shutterBusy, noteError]);
+  }, [landCapture, shutterBusy, noteError, planFromStill]);
 
   // THE IMAGE DOOR (a test door, #2891): an image file stands in for a live
   // frame, for a reviewer with no camera. The same decoder the live loop
@@ -1881,36 +1931,18 @@ export function ScanCameraPage() {
         const { canvas, blob } = await frameFromImage(file);
         const r = decodeCanvasSmart(createBarcodeReader(), canvas, document.createElement("canvas"));
         const plan = doorPlan(r.text ? typedVerdict(r.text) : null);
-        if (plan.kind === "route-qr") {
-          routeQr(plan.token, { freeze: phaseRef.current === "scanning" });
-          return;
-        }
-        if (plan.kind === "lookup") {
-          // The image is the frame the code was read off: it rides the inbox
-          // row as the person's photo, the way a live frame does.
-          frameBlobRef.current = Promise.resolve(blob);
-          setPendingBarcode(plan.code);
-          setPhase("result");
-          showFilingNote(`Read ${plan.code} off the image`);
-          return;
-        }
-        // No code on it: the shutter's photo path, with the image as the shot.
-        setFrame(blob);
         const areaIdNow = areaIdRef.current;
         const loc = (locsRef.current ?? []).find((l) => l.id === areaIdNow);
-        await saveShot(blob, {
-          areaName: loc ? (loc.short_name ?? loc.name) : null,
-          areaId: areaIdNow,
-          container: containerBinRef.current,
-        });
-        showFilingNote("Taken from the image; identifying it…");
+        const wasArmed = !!armRef.current;
+        await landCapture(blob, { areaName: loc ? (loc.short_name ?? loc.name) : null, areaId: areaIdNow, container: containerBinRef.current }, plan);
+        if (!wasArmed && plan.kind === "photo") showFilingNote("Taken from the image; identifying it…");
       } catch (e) {
         noteError(e);
       } finally {
         setShutterBusy(false);
       }
     },
-    [noteError, routeQr, saveShot, setFrame, showFilingNote, shutterBusy],
+    [landCapture, noteError, showFilingNote, shutterBusy],
   );
 
   // The + shutter: while a sheet blocks the viewfinder the shutter can't
@@ -1983,7 +2015,7 @@ export function ScanCameraPage() {
           image_file_id: frameFileId ?? undefined,
         });
         onSaved(it);
-        void qc.invalidateQueries({ queryKey: ["scan-inbox", activeSlug] });
+        void qc.invalidateQueries({ queryKey: scanInboxKeys.all(activeSlug) });
         if (ingestKeyRef.current === key) {
           // Only while the sheet is still on THIS scan: a late-landing ingest
           // must not blank a drawer the user has since filled with a photo.
@@ -1999,7 +2031,7 @@ export function ScanCameraPage() {
           if (intent === "discard") {
             await api.discardScanItem(activeSlug, it.id).catch(() => {});
             showFilingNote("Discarded.");
-            void qc.invalidateQueries({ queryKey: ["scan-inbox", activeSlug] });
+            void qc.invalidateQueries({ queryKey: scanInboxKeys.all(activeSlug) });
           } else {
             armFor(it, intent === "photo" ? (it.source_kind === "photo" ? "append" : "catalog") : "retake");
             setDrawerItem(it);
@@ -2638,7 +2670,7 @@ export function ScanCameraPage() {
                 .then(() => {
                   setDrawerItem((prev) => (prev?.id === it.id ? null : prev));
                   setLastFrame((prev) => (prev?.itemId === it.id ? (URL.revokeObjectURL(prev.url), null) : prev));
-                  void qc.invalidateQueries({ queryKey: ["scan-inbox", activeSlug] });
+                  void qc.invalidateQueries({ queryKey: scanInboxKeys.all(activeSlug) });
                   showFilingNote("Undone - removed from the inbox");
                 })
                 .catch((e) => noteError(e))
@@ -2804,7 +2836,7 @@ export function ScanCameraPage() {
                   .then((updated) => {
                     onSaved(updated);
                     setDrawerItem(updated);
-                    void qc.invalidateQueries({ queryKey: ["scan-inbox", activeSlug] });
+                    void qc.invalidateQueries({ queryKey: scanInboxKeys.all(activeSlug) });
                     void qc.invalidateQueries({ queryKey: ["scan-item-live", activeSlug, it.id] });
                   })
                   .catch((e) => noteError(e));

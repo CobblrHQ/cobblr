@@ -13,6 +13,7 @@ import { deleteOverride, getOverrideConfig, upsertOverride } from "./entity-kind
 import { fillItemNounIfAbsent } from "./override-config-merge.js";
 import { removeNavMember } from "./nav-headings.js";
 import { singularize, pluralize } from "../lib/inflect.js";
+import { bumpWorkspaceShape } from "./workspace-shape.js";
 import * as activity from "./activity.js";
 
 /** What a person did, kept: a list or table they made is an intent the
@@ -105,6 +106,8 @@ export async function createInstance(args: CreateInstanceArgs): Promise<ModuleIn
     })
     .returningAll()
     .executeTakeFirstOrThrow();
+  // A new collection is a new menu entry and a new filing destination.
+  await bumpWorkspaceShape(args.orgId);
   return inserted as ModuleInstance;
 }
 
@@ -132,7 +135,7 @@ export async function listInstances(
  * violation that would fail the request halfway.
  */
 export async function setScanFallback(orgId: string, instanceName: string): Promise<ModuleInstance> {
-  return meta.transaction().execute(async (trx) => {
+  const row = await meta.transaction().execute(async (trx) => {
     const inst = await trx
       .selectFrom("workspace_module_instances")
       .selectAll()
@@ -154,6 +157,9 @@ export async function setScanFallback(orgId: string, instanceName: string): Prom
       .executeTakeFirstOrThrow();
     return row as ModuleInstance;
   });
+  // Where an unmatched scan files moved: the scan menu is part of the shape.
+  await bumpWorkspaceShape(orgId);
+  return row;
 }
 
 /** Look up a single instance by (org, instance_name). The instance_name
@@ -196,6 +202,7 @@ export async function deleteInstance(
     .deleteFrom("workspace_module_instances")
     .where("id", "=", row.id)
     .execute();
+  await bumpWorkspaceShape(orgId);
 }
 
 type TenantQuery = { executeQuery: (s: unknown) => Promise<{ rows: Array<Record<string, unknown>> }> };
@@ -273,6 +280,7 @@ export async function tearDownInstance(orgId: string, instanceName: string): Pro
   // deleted category leaves a dangling member row that would silently RESURRECT
   // the category into the menu if a same-named instance is later created.
   await removeNavMember(orgId, "instance", instanceName);
+  await bumpWorkspaceShape(orgId);
 }
 
 

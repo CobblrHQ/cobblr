@@ -22,9 +22,10 @@ import { useAiStatus } from "./ScanPage";
 import { AiOffMissHint } from "./ScanInboxCard";
 import { Link } from "react-router-dom";
 import { needsScanReview, scanReviewReason } from "@cobblr/platform-contract/scan-triage";
-import { STORE_CODE_TITLE } from "@cobblr/platform-contract/scan-copy";
+import { NO_MATCH_ASK_FOR_PHOTO, STORE_CODE_TITLE } from "@cobblr/platform-contract/scan-copy";
 import { itemEnriching } from "./scan-status";
 import { ScanNameItInline } from "../components/ScanNameItInline";
+import { scanInboxKeys } from "../lib/scan-inbox-keys";
 
 export interface CameraScanTarget {
   into: string | null;
@@ -157,6 +158,10 @@ export function ScanResultModal({
   const reviewReason = item && flagged ? scanReviewReason(item) : null;
   const storeCode = (item?.suggested_metadata as { code_type?: string } | null)?.code_type === "store-code";
   const needsName = !!item && !inFlight && !item.suggested_name;
+  // A barcode the catalogs do not know. The scan was fine; the lookup came up
+  // empty, so the next step is a photo of the thing, not a "retake" (the
+  // owner, 2026-09-24: "the 'Not it' button name doesn't make sense").
+  const noMatch = needsName && !!item?.barcode_text && !storeCode;
   const live = useQuery({
     queryKey: ["scan-item-live", activeSlug, item?.id],
     queryFn: () => api.getScanItem(activeSlug, item!.id),
@@ -241,7 +246,7 @@ export function ScanResultModal({
           `Added ${r.item.suggested_name ?? barcode}`
         )) as never,
       );
-      void qc.invalidateQueries({ queryKey: ["scan-inbox", activeSlug] });
+      void qc.invalidateQueries({ queryKey: scanInboxKeys.all(activeSlug) });
       onClose("handled");
     },
     onError: (e) => toast.error(e instanceof ApiError ? e.message : String(e)),
@@ -254,7 +259,7 @@ export function ScanResultModal({
     mutationFn: () => api.confirmScanIntoLocation(activeSlug, item!.id, scanAreaId ?? undefined),
     onSuccess: () => {
       toast.success(`${scanArea ?? "Bin"} identified: ${item?.suggested_name ?? "container"}`);
-      void qc.invalidateQueries({ queryKey: ["scan-inbox", activeSlug] });
+      void qc.invalidateQueries({ queryKey: scanInboxKeys.all(activeSlug) });
       void qc.invalidateQueries({ queryKey: ["locations", activeSlug] });
       onClose("handled");
     },
@@ -268,7 +273,7 @@ export function ScanResultModal({
     mutationFn: (fileId: string) => api.setScanCatalogFile(activeSlug, item!.id, fileId),
     onSuccess: (fresh) => {
       setItem(fresh);
-      void qc.invalidateQueries({ queryKey: ["scan-inbox", activeSlug] });
+      void qc.invalidateQueries({ queryKey: scanInboxKeys.all(activeSlug) });
     },
     onError: (e) => toast.error(e instanceof ApiError ? e.message : String(e)),
   });
@@ -276,7 +281,7 @@ export function ScanResultModal({
   const discard = useMutation({
     mutationFn: () => api.discardScanItem(activeSlug, item!.id),
     onSuccess: () => {
-      void qc.invalidateQueries({ queryKey: ["scan-inbox", activeSlug] });
+      void qc.invalidateQueries({ queryKey: scanInboxKeys.all(activeSlug) });
       onClose("handled");
     },
     onError: (e) => toast.error(e instanceof ApiError ? e.message : String(e)),
@@ -376,6 +381,10 @@ export function ScanResultModal({
                 {item?.suggested_name ?? (
                   inFlight ? (
                     <span className="text-faint italic animate-pulse" data-state="in-flight">Identifying…</span>
+                  ) : noMatch ? (
+                    <span className="text-amber-700 dark:text-amber-400 text-sm font-normal" data-state="no-match" data-testid="sheet-no-match">
+                      {NO_MATCH_ASK_FOR_PHOTO}
+                    </span>
                   ) : reviewReason ? (
                     <span className="text-amber-700 dark:text-amber-400 text-sm font-normal" data-state="needs-review">{reviewReason}</span>
                   ) : (
@@ -611,10 +620,15 @@ export function ScanResultModal({
               onClick={() =>
                 item ? (onRetake(item), onClose("dismissed", item)) : onEarly?.("retake")
               }
-              title="Photograph the item - the shutter arms, and vision re-identifies it from your shot"
-              className="flex-1 h-11 inline-flex items-center justify-center gap-1.5 rounded-lg border border-line dark:border-slate-600 text-content text-[12.5px] font-medium px-2 disabled:opacity-40"
+              title="Photograph the item - the shutter arms, and vision identifies it from your shot"
+              data-testid="sheet-take-photo"
+              className={
+                noMatch
+                  ? "flex-1 h-11 inline-flex items-center justify-center gap-1.5 rounded-lg bg-cobble-600 hover:bg-cobble-700 text-white text-[13px] font-semibold px-2 disabled:opacity-40"
+                  : "flex-1 h-11 inline-flex items-center justify-center gap-1.5 rounded-lg border border-line dark:border-slate-600 text-content text-[12.5px] font-medium px-2 disabled:opacity-40"
+              }
             >
-              <Camera size={14} /> Not it - retake
+              <Camera size={14} /> {noMatch ? "Take a photo" : "Not it? Take a photo"}
             </button>
           )}
         </div>

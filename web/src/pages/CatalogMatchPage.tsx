@@ -13,6 +13,7 @@ import { Check, Library, ArrowLeft } from "lucide-react";
 import { useToast, usePageTitle } from "@cobblr/platform-web";
 import { ApiError, api, type CatalogEntry, type Catalog } from "../lib/api";
 import { useActiveOrg } from "../auth/ActiveOrgContext";
+import { recordHref } from "@cobblr/platform-contract/instance-detail";
 
 export function CatalogMatchPage() {
   usePageTitle("Match to catalog");
@@ -262,7 +263,8 @@ async function resolveBackRoute(
   try {
     const { items } = await api.listEntityKinds(slug);
     const ent = items.find((k) => k.id === kind);
-    if (ent?.detail_route) return ent.detail_route.replace("{id}", id);
+    const back = recordHref({ kind, id }, ent?.detail_route);
+    if (back) return back;
   } catch {
     /* fall through */
   }

@@ -1,6 +1,7 @@
 // /scan — the inbox review queue, photo-inbox-grade.
 import { createPortal } from "react-dom";
 import { FileEverythingSheet } from "../components/FileEverythingSheet";
+import { ScanSessionTheme } from "../components/ScanSessionTheme";
 import { ScanPickerInput, useScanIntake } from "../components/ScanPhotoPicker";
 import { SessionReadVerdict } from "../components/SessionReadVerdict";
 //
@@ -60,6 +61,8 @@ import { } from "../components/ScanToolMenu";
 import type { } from "@cobblr/platform-contract/scan-tools";
 import { } from "../lib/splitOffer";
 import { findCombineClusters } from "../lib/scanCombine";
+import { incompleteSessions, sessionLines, sessionMergeTarget } from "../lib/scanSessionLines";
+import { SCAN_UNDO_ACTIONS, scanDeletedRecovery } from "@cobblr/platform-contract/scan-recovery";
 import {
   
   ApiError,
@@ -71,11 +74,11 @@ import {
   type TrackedMatch,
 } from "../lib/api";
 import { classifyScanPayload } from "../lib/scanPayload";
-import { isScanStale, needsScanReview, scanBetterTable, scanRowState, scanSessionAction, type ScanResolverTable } from "@cobblr/platform-contract/scan-triage";
+import { filedIntoOf, scanRowState, scanSessionAction } from "@cobblr/platform-contract/scan-triage";
 import { displayName } from "@cobblr/platform-contract/display-identity";
 import { sessionVerdict, type SessionVerdict } from "@cobblr/platform-contract/scan-session";
 import { itemEnriching } from "./scan-status";
-import { attachBodyFor, confirmBodyFor, duplicateSummary, isReadyToFile, placementPreview } from "./scanFileAll";
+import { attachBodyFor, confirmBodyFor, destinationCandidateOf, duplicateSummary, isReadyToFile, placementPreview } from "./scanFileAll";
 import { useScanViewer } from "./scanViewer";
 import { resolveInstanceForFiling } from "./scanInstall";
 import { arrivalLabel, arrivalOf } from "./scanArrival";
@@ -101,6 +104,7 @@ import { } from "../auth/AuthContext";
 import { destinationLabel, type DestinationTable } from "@cobblr/platform-contract";
 import { InboxCard, GalleryTile } from "./ScanInboxCard";
 import { type ScanTarget } from "./scanInboxShared";
+import { scanInboxKeys } from "../lib/scan-inbox-keys";
 export type { ScanTarget } from "./scanInboxShared";
 
 interface ScanDrive {
@@ -303,7 +307,7 @@ function useScanDrive(slug: string | undefined, batchId: string | undefined): Sc
       return api.scanDrive(slug!, code, sessionBatch, mode);
     },
     onSuccess: (r) => {
-      void qc.invalidateQueries({ queryKey: ["scan-inbox", slug] });
+      void qc.invalidateQueries({ queryKey: scanInboxKeys.all(slug!) });
       // Print mode: the scanned entity's label went to the buffer (+ any
       // auto-flush policy). No navigation.
       if (r.action === "print") {
@@ -405,39 +409,25 @@ const SHIPMENT_LABEL: Record<string, string> = {
   unknown: "No information yet",
 };
 
-/** Where a committed scan ended up, and whether a better home has appeared since.
- *
- *  This was `-> ${target_kind}` inline, twice, and the two copies had already
- *  drifted: one row said "part" and another "inventory:part" for the same place.
- *  A destination is a table somebody set up, so it is shown by that table's name.
- *
- *  The nudge is deliberately quiet. A scan matched days ago carries the routing
- *  of the workspace AS IT WAS; install a Tea table afterwards and every tea
- *  already filed still points at plain Inventory. Saying so where the mistake is
- *  visible costs nothing and blocks nobody. */
+/** Where a committed scan went: the table the commit recorded (#3620),
+ *  never a recomputation from its candidates and never a guess. Bananas
+ *  filed into Groceries read "→ Inventory · Groceries?": the label came
+ *  from the base kind the row kept, and a "better table" nudge was asked of
+ *  a row already filed. A row filed before the record existed carries one
+ *  from the backfill; until then its label is read from the base kind. */
 function CommittedDestination({
   item,
   tables,
-  menuTables,
 }: {
-  item: { target_kind?: string | null; target_module?: string | null; barcode_text?: string | null; suggested_name?: string | null; suggested_manufacturer?: string | null };
+  item: { target_kind?: string | null; target_module?: string | null; barcode_text?: string | null; suggested_metadata?: unknown };
   tables: DestinationTable[];
-  menuTables: readonly ScanResolverTable[];
 }) {
-  const label = destinationLabel(item.target_kind, tables, item.target_module);
-  // The same question the resolver asks a pending row, by the router's one
-  // rule (#3136), of a row already filed: the menu's tables carry the fit
-  // shape; the instance list alone can label but not judge.
-  const better = scanBetterTable({ name: item.suggested_name ?? "", manufacturer: item.suggested_manufacturer ?? null }, item.target_kind, menuTables, item.target_module);
+  const filed = filedIntoOf(item.suggested_metadata);
+  const label = filed?.label ?? destinationLabel(item.target_kind, tables, item.target_module);
   return (
-    <div className="text-[10px] font-mono text-faint truncate">
+    <div className="text-[10px] font-mono text-faint truncate" data-testid="committed-destination">
       {label ? `→ ${label}` : ""}
       {item.barcode_text ? ` · ${item.barcode_text}` : ""}
-      {better && (
-        <span className="ml-1.5 text-ember-600 dark:text-ember-400" title={`This looks like it belongs in ${better.display_name ?? better.instance_name}, which did not exist when this scan was routed. Send it back to re-file it.`}>
-          · {better.display_name ?? better.instance_name}?
-        </span>
-      )}
     </div>
   );
 }
@@ -583,14 +573,21 @@ export function ScanPage() {
   // Infinite scroll — no hard cap. Load 50 at a time; the sentinel near the
   // bottom pulls the next page. Poll keeps every loaded page fresh for live
   // enrichment updates.
+  // The review and waiting filters ask the SERVER for their rows, so an
+  // item that needs review is in the filter whether or not its page was
+  // scrolled into view (#3638).
+  const [reviewOnly, setReviewOnly] = useState(false);
+  const [staleOnly, setStaleOnly] = useState(false);
+  const facet = staleOnly ? "waiting" : reviewOnly ? "needs_review" : null;
   const list = useInfiniteQuery({
-    queryKey: ["scan-inbox", activeSlug, batchId],
+    queryKey: scanInboxKeys.pending(activeSlug, batchId, facet),
     queryFn: ({ pageParam }) =>
       api.listScanInbox(activeSlug, {
         status: "pending",
         batch_id: batchId ?? undefined,
         limit: 50,
         cursor: pageParam,
+        ...(facet ? { triage: facet } : {}),
       }),
     initialPageParam: undefined as string | undefined,
     getNextPageParam: (lastPage) => lastPage.next_cursor ?? undefined,
@@ -635,11 +632,16 @@ export function ScanPage() {
     for (const p of list.data?.pages ?? []) Object.assign(m, p.sessions ?? {});
     return m;
   }, [list.data]);
-  const failedSessionCount = useMemo(
-    () => Object.values({ ...batchMeta, ...rowlessSessions }).filter((b) => sessionVerdict(b, { pending: 1, ever: 1 }).kind === "failed").length,
-    [batchMeta, rowlessSessions],
-  );
-  const totalPending = list.data?.pages[0]?.total ?? items.length;
+  // Every count this page shows, over EVERY pending row (inbox-counts.ts):
+  // the header, the filters and their captions, never a loaded page's length.
+  const countsQ = useQuery({
+    queryKey: scanInboxKeys.stats(activeSlug, batchId),
+    queryFn: () => api.getScanStats(activeSlug, batchId),
+    enabled: !!activeSlug,
+    refetchInterval: 8_000,
+  });
+  const counts = countsQ.data;
+  const totalPending = counts?.pending ?? (facet ? 0 : (list.data?.pages[0]?.total ?? 0));
   // Pull the next page when the bottom sentinel scrolls into view.
   const loadMoreRef = useRef<HTMLDivElement | null>(null);
   const { hasNextPage, isFetchingNextPage, fetchNextPage } = list;
@@ -655,21 +657,24 @@ export function ScanPage() {
     obs.observe(el);
     return () => obs.disconnect();
   }, [hasNextPage, isFetchingNextPage, fetchNextPage]);
+  // A session the page holds only part of is loaded whole, so its header,
+  // File all and the ids that action takes are the session's (#3638). Only the
+  // unfiltered list: a facet or a scope shows a chosen subset on purpose.
+  const partialSessions = useMemo(() => (facet ? [] : incompleteSessions(items, batchMeta)), [facet, items, batchMeta]);
+  useEffect(() => {
+    if (partialSessions.length && hasNextPage && !isFetchingNextPage) void fetchNextPage();
+  }, [partialSessions, hasNextPage, isFetchingNextPage, fetchNextPage]);
   // "Needs review" (a pending item that didn't cleanly resolve — no name yet, a
   // low-trust or rate-limited lookup, or low confidence) and the >2-day stale
   // nudge are defined ONCE, in @cobblr/platform-contract/scan-triage. The list
   // route filters by the same predicates (?triage=…) and Ask Cobb reads the
   // resulting flags off each row, so the count in this header and the answer the
   // assistant gives about the same queue cannot drift apart.
-  const needsReview = (it: ScanInboxItem): boolean => needsScanReview(it);
-  const [reviewOnly, setReviewOnly] = useState(false);
-  const isStale = (it: ScanInboxItem): boolean => isScanStale(it);
-  const [staleOnly, setStaleOnly] = useState(false);
-  const staleCount = items.filter(isStale).length;
+  const staleCount = counts?.waiting ?? 0;
   // A receipt session whose read failed needs a person as much as an item
   // with no name does: it counts here, so the header cannot say "2 to review"
   // over a failed receipt (#2892).
-  const reviewCount = items.filter(needsReview).length + failedSessionCount;
+  const reviewCount = (counts?.needs_review ?? 0) + (counts?.failed_sessions ?? 0);
   // Tell Ask Cobb what's on this screen, so "what do I have going on?" can
   // reference the backlog without a tool call. The ITEMS themselves are reachable
   // too — the list_scan_inbox tool — so an answer is never limited to this line.
@@ -707,11 +712,7 @@ export function ScanPage() {
     return searchTokens.every((tok) => hay.includes(tok));
   };
   const searched = searchTokens.length ? items.filter(matchesSearch) : items;
-  const visibleItems = staleOnly
-    ? searched.filter(isStale)
-    : reviewOnly
-      ? searched.filter(needsReview)
-      : searched;
+  const visibleItems = searched;
   // Gallery ⇄ list — a photo-tile grid for visual triage (persisted).
   const [galleryView, setGalleryView] = useState(() => localStorage.getItem("cobblr-scan-view") === "gallery");
   const toggleGalleryView = () =>
@@ -737,7 +738,7 @@ export function ScanPage() {
     mutationFn: ({ ids, keepId }: { ids: string[]; keepId?: string }) =>
       api.combineScanItems(activeSlug, ids, keepId),
     onSuccess: (fresh) => {
-      void qc.invalidateQueries({ queryKey: ["scan-inbox", activeSlug] });
+      void qc.invalidateQueries({ queryKey: scanInboxKeys.all(activeSlug) });
       const qty = Number(fresh.quantity) || 1;
       toast.success(`Combined into one — ${displayName(fresh) ?? "item"}${qty > 1 ? ` ×${qty}` : ""}`);
     },
@@ -956,7 +957,7 @@ export function ScanPage() {
       if (!g.batchId) continue;
       const meta = batchMeta[g.batchId];
       if (meta) {
-        g.verdict = sessionVerdict(meta, { pending: g.items.filter((it) => it.status === "pending").length, ever: g.items.length });
+        g.verdict = sessionVerdict(meta, sessionLines(g.items, meta));
         g.dateReading = { date_convention: meta.date_convention ?? null, date_decided_by: meta.date_decided_by ?? null, date_printed: meta.date_printed ?? null };
       }
     }
@@ -1085,7 +1086,7 @@ export function ScanPage() {
   // Recently deleted: discarding is a soft-delete (the row + its enriched data are
   // kept), so a mistaken X is recoverable from here — no confirm needed on delete.
   const discardedQ = useQuery({
-    queryKey: ["scan-inbox-discarded", activeSlug],
+    queryKey: scanInboxKeys.discarded(activeSlug),
     queryFn: () => api.listScanInbox(activeSlug, { status: "discarded" }),
     enabled: !!activeSlug,
   });
@@ -1102,8 +1103,17 @@ export function ScanPage() {
       // is an undo, same contract as sent-back). Surface it the same way:
       // expand its session, scroll to it, flash a ring.
       setHighlightId(r.id);
-      void qc.invalidateQueries({ queryKey: ["scan-inbox", activeSlug] });
-      void qc.invalidateQueries({ queryKey: ["scan-inbox-discarded", activeSlug] });
+      void qc.invalidateQueries({ queryKey: scanInboxKeys.all(activeSlug) });
+    },
+    onError: (e) => toast.error(e instanceof ApiError ? e.message : String(e)),
+  });
+
+  const uncombine = useMutation({
+    mutationFn: (id: string) => api.uncombineScanItem(activeSlug, id),
+    onSuccess: (r) => {
+      toast.success(`Combine undone: ${r.restored.length + 1} scans are back in the inbox as they were.`);
+      setHighlightId(r.kept.id);
+      void qc.invalidateQueries({ queryKey: scanInboxKeys.all(activeSlug) });
     },
     onError: (e) => toast.error(e instanceof ApiError ? e.message : String(e)),
   });
@@ -1114,7 +1124,7 @@ export function ScanPage() {
   // Recently deleted, for the other resolution — a wrong commit is redoable,
   // not a dead end.
   const resolvedQ = useQuery({
-    queryKey: ["scan-inbox-resolved", activeSlug],
+    queryKey: scanInboxKeys.resolved(activeSlug),
     queryFn: () => api.listScanInbox(activeSlug, { status: "resolved" }),
     enabled: !!activeSlug,
   });
@@ -1169,9 +1179,7 @@ export function ScanPage() {
           : `Sent back to the inbox.${r.note ? ` ${r.note}` : ""}`,
       );
       setHighlightId(r.item.id);
-      void qc.invalidateQueries({ queryKey: ["scan-inbox", activeSlug] });
-      void qc.invalidateQueries({ queryKey: ["scan-inbox-resolved", activeSlug] });
-      void qc.invalidateQueries({ queryKey: ["scan-stats", activeSlug] });
+      void qc.invalidateQueries({ queryKey: scanInboxKeys.all(activeSlug) });
     },
     onError: (e) => toast.error(e instanceof ApiError ? e.message : String(e)),
   });
@@ -1183,10 +1191,7 @@ export function ScanPage() {
     onSuccess: (r) => {
       toast.success(`Split undone: the group photo is back in the inbox and its ${r.discarded} piece${r.discarded === 1 ? "" : "s"} ${r.discarded === 1 ? "is" : "are"} in Recently deleted.`);
       setHighlightId(r.parent.id);
-      void qc.invalidateQueries({ queryKey: ["scan-inbox", activeSlug] });
-      void qc.invalidateQueries({ queryKey: ["scan-inbox-resolved", activeSlug] });
-      void qc.invalidateQueries({ queryKey: ["scan-inbox-discarded", activeSlug] });
-      void qc.invalidateQueries({ queryKey: ["scan-stats", activeSlug] });
+      void qc.invalidateQueries({ queryKey: scanInboxKeys.all(activeSlug) });
     },
     onError: (e) => toast.error(e instanceof ApiError ? e.message : String(e)),
   });
@@ -1198,11 +1203,7 @@ export function ScanPage() {
   const revertIds = async (ids: string[]): Promise<{ ok: number; failed: number }> => {
     const results = await Promise.allSettled(ids.map((id) => api.unconfirmScanItem(activeSlug, id)));
     const ok = results.filter((r) => r.status === "fulfilled").length;
-    await Promise.all([
-      qc.invalidateQueries({ queryKey: ["scan-inbox", activeSlug] }),
-      qc.invalidateQueries({ queryKey: ["scan-inbox-resolved", activeSlug] }),
-      qc.invalidateQueries({ queryKey: ["scan-stats", activeSlug] }),
-    ]);
+    await qc.invalidateQueries({ queryKey: scanInboxKeys.all(activeSlug) });
     return { ok, failed: ids.length - ok };
   };
   const reportRevert = ({ ok, failed }: { ok: number; failed: number }) => {
@@ -1277,7 +1278,7 @@ export function ScanPage() {
     onSettled: async (_data, _err, _code, ctx) => {
       // Wait for the refetch so the real row is present before dropping the
       // phantom — no flicker-gap between the two.
-      await qc.invalidateQueries({ queryKey: ["scan-inbox", activeSlug] });
+      await qc.invalidateQueries({ queryKey: scanInboxKeys.all(activeSlug) });
       if (ctx?.id) setPendingScans((p) => p.filter((x) => x.id !== ctx.id));
     },
   });
@@ -1452,7 +1453,7 @@ export function ScanPage() {
           lastErr = e instanceof ApiError ? e.message : String(e);
         }
       }
-      void qc.invalidateQueries({ queryKey: ["scan-inbox", activeSlug] });
+      void qc.invalidateQueries({ queryKey: scanInboxKeys.all(activeSlug) });
       // "Added 0" is a FAILURE whatever the loop technically did. A success
       // toast reporting zero confirms nothing and hides the one fact that would
       // explain it.
@@ -1522,7 +1523,7 @@ export function ScanPage() {
   // over 8 items when two are counted twice is a lie the eye can check, and
   // the page tells you to work this way: bulk-confirm the confident ones, then
   // focus the rest.
-  const confidentCount = items.filter((it) => isReadyToFile(it, viewer)).length;
+  const confidentCount = counts?.ready_to_file ?? 0;
   // On a phone the header row has ~163px for its counts. Measured at 393px
   // (#3497): an August-sized backlog ("81 · 46 ready · 4 to review") already
   // pushed "to review" off the row's edge, and adding the total's word cut it
@@ -1537,7 +1538,7 @@ export function ScanPage() {
   // Items sitting here with no location of their own. The standing bin only
   // stamps target_location_id at SCAN time, so anything scanned before it was
   // set is still loose - this is the count the menu offers to fix.
-  const looseIds = items.filter((i) => !i.target_location_id).map((i) => i.id);
+  const looseIds = counts?.loose_ids ?? [];
   const looseCount = looseIds.length;
 
   // Bulk triage: select N items, then confirm / discard the whole selection at
@@ -1593,7 +1594,7 @@ export function ScanPage() {
   }, []);
   // The put-away strip's counts (cheap SQL; also feeds the dashboard card).
   const scanStatsQ = useQuery({
-    queryKey: ["scan-stats", activeSlug],
+    queryKey: scanInboxKeys.stats(activeSlug),
     queryFn: () => api.getScanStats(activeSlug),
     enabled: !!activeSlug,
     staleTime: 15_000,
@@ -1673,7 +1674,7 @@ export function ScanPage() {
     }
     setBulkBusy(false);
     if (!explicitIds) clearSelected();
-    void qc.invalidateQueries({ queryKey: ["scan-inbox", activeSlug] });
+    void qc.invalidateQueries({ queryKey: scanInboxKeys.all(activeSlug) });
     const name = (locsQ.data?.items ?? []).find((l) => l.id === locId);
     toast.success(`Filed ${ok} item${ok === 1 ? "" : "s"} into ${name ? filingLabel(name) : "the location"}.`);
   };
@@ -1690,16 +1691,14 @@ export function ScanPage() {
     }
     setBulkBusy(false);
     clearSelected();
-    void qc.invalidateQueries({ queryKey: ["scan-inbox", activeSlug] });
-    void qc.invalidateQueries({ queryKey: ["scan-inbox-discarded", activeSlug] });
+    void qc.invalidateQueries({ queryKey: scanInboxKeys.all(activeSlug) });
     // Undo inline — restores the whole batch if it was a mis-tap.
     toast.action(`Removed ${done.length} item${done.length === 1 ? "" : "s"}.`, {
       actionLabel: "Undo",
       duration: 7000,
       onAction: async () => {
         await Promise.allSettled(done.map((id) => api.restoreScanItem(activeSlug, id)));
-        void qc.invalidateQueries({ queryKey: ["scan-inbox", activeSlug] });
-        void qc.invalidateQueries({ queryKey: ["scan-inbox-discarded", activeSlug] });
+        void qc.invalidateQueries({ queryKey: scanInboxKeys.all(activeSlug) });
       },
     });
   };
@@ -1727,13 +1726,13 @@ export function ScanPage() {
     mutationFn: (v: { from: string; into: string; itemIds: string[] }) =>
       api.mergeScanBatches(activeSlug, v.from, v.into),
     onSuccess: (r, v) => {
-      void qc.invalidateQueries({ queryKey: ["scan-inbox", activeSlug] });
+      void qc.invalidateQueries({ queryKey: scanInboxKeys.all(activeSlug) });
       toast.action(`Merged ${r.moved} item${r.moved === 1 ? "" : "s"} into the previous session.`, {
         actionLabel: "Undo",
         onAction: async () => {
           try {
             await api.reassignScanBatch(activeSlug, v.itemIds, v.from);
-            await qc.invalidateQueries({ queryKey: ["scan-inbox", activeSlug] });
+            await qc.invalidateQueries({ queryKey: scanInboxKeys.all(activeSlug) });
             toast.success("Merge undone - the session is back on its own");
           } catch (e) {
             toast.error(e instanceof ApiError ? e.message : String(e));
@@ -1781,13 +1780,13 @@ export function ScanPage() {
       return api.reparseReceipt(activeSlug, batchId);
     },
     onSuccess: (r) => {
-      void qc.invalidateQueries({ queryKey: ["scan-inbox", activeSlug] });
+      void qc.invalidateQueries({ queryKey: scanInboxKeys.all(activeSlug) });
       toast.success(`Read again: ${r.receipt.item_count} item${r.receipt.item_count === 1 ? "" : "s"}`);
     },
     onError: (e) => {
       // Failed again: the session's state carries the new reason; refetch so
       // the row says it rather than keeping the old sentence.
-      void qc.invalidateQueries({ queryKey: ["scan-inbox", activeSlug] });
+      void qc.invalidateQueries({ queryKey: scanInboxKeys.all(activeSlug) });
       toast.error(e instanceof ApiError ? e.message : String(e));
     },
     onSettled: () => setReparseBatch(null),
@@ -1867,7 +1866,7 @@ export function ScanPage() {
     mutationFn: (v: { batchId: string; orderRef: string | null }) =>
       api.setReceiptOrderRef(activeSlug, v.batchId, v.orderRef),
     onSuccess: () => {
-      void qc.invalidateQueries({ queryKey: ["scan-inbox", activeSlug] });
+      void qc.invalidateQueries({ queryKey: scanInboxKeys.all(activeSlug) });
       setEditingPo(null);
     },
     onError: (e) => toast.error(e instanceof ApiError ? e.message : String(e)),
@@ -1877,7 +1876,7 @@ export function ScanPage() {
     mutationFn: (v: { batchId: string; tracking: string | null }) =>
       api.setReceiptTracking(activeSlug, v.batchId, v.tracking),
     onSuccess: (_r, v) => {
-      void qc.invalidateQueries({ queryKey: ["scan-inbox", activeSlug] });
+      void qc.invalidateQueries({ queryKey: scanInboxKeys.all(activeSlug) });
       setEditingTracking(null);
       // Say what it CHANGED, not just that it saved: filing this receipt now
       // records the order as still on its way instead of already here, and that
@@ -1918,7 +1917,7 @@ export function ScanPage() {
     }
     setBulkBusy(false);
     clearSelected();
-    void qc.invalidateQueries({ queryKey: ["scan-inbox", activeSlug] });
+    void qc.invalidateQueries({ queryKey: scanInboxKeys.all(activeSlug) });
     toast.success(`Added ${ok} to ${entry.label}${skipped ? ` — ${skipped} skipped (no name / failed)` : ""}`);
   };
   // Commit each item to its OWN top candidate — the destination the matchmaker
@@ -2044,7 +2043,9 @@ export function ScanPage() {
     // the receipt 404'd on a bundle that had installed perfectly (2026-08-22).
     const needed = new Map<string, string>();
     for (const id of ids) {
-      const cand = byId.get(id)?.suggested_candidates?.[0] as
+      // The table each row goes to is the card's (#3618), not the raw route.
+      const row = byId.get(id);
+      const cand = (row ? destinationCandidateOf(row, viewer) : undefined) as
         | { bundle_external_id?: string; label?: string }
         | undefined;
       if (cand?.bundle_external_id) needed.set(cand.bundle_external_id, cand.label ?? "a table");
@@ -2052,7 +2053,10 @@ export function ScanPage() {
     const installed = new Map<string, { instance: string | null }>();
     for (const bundleId of needed.keys()) {
       const fallback = [...ids]
-        .map((id) => byId.get(id)?.suggested_candidates?.[0])
+        .map((id) => {
+          const row = byId.get(id);
+          return row ? destinationCandidateOf(row, viewer) : undefined;
+        })
         .find((c) => (c as { bundle_external_id?: string } | undefined)?.bundle_external_id === bundleId)
         ?.instance;
       const instance = await resolveInstanceForFiling(activeSlug, bundleId, fallback, (sum) => {
@@ -2093,7 +2097,7 @@ export function ScanPage() {
         }
       }
       if (mergedThis) continue;
-      const bundleId = (it?.suggested_candidates?.[0] as { bundle_external_id?: string } | undefined)
+      const bundleId = ((it ? destinationCandidateOf(it, viewer) : undefined) as { bundle_external_id?: string } | undefined)
         ?.bundle_external_id;
       const body = it
         ? confirmBodyFor(
@@ -2124,7 +2128,7 @@ export function ScanPage() {
       }
     }
     setBulkProgress(null);
-    void qc.invalidateQueries({ queryKey: ["scan-inbox", activeSlug] });
+    void qc.invalidateQueries({ queryKey: scanInboxKeys.all(activeSlug) });
     const parts = [`${ok} confirmed`];
     if (merged) parts.push(`${merged} added to what you already had`);
     if (skipped) parts.push(`${skipped} need a manual look`);
@@ -2182,7 +2186,7 @@ export function ScanPage() {
       }
     }
     setBulkBusy(false);
-    void qc.invalidateQueries({ queryKey: ["scan-inbox", activeSlug] });
+    void qc.invalidateQueries({ queryKey: scanInboxKeys.all(activeSlug) });
     const loc = (locsQ.data?.items ?? []).find((l) => l.id === locId);
     const where = loc ? filingLabel(loc) : "the location";
     if (ok === 0 && targets.length > 0) {
@@ -2933,7 +2937,7 @@ className="rounded px-1 py-0.5 text-[12.5px] hover:bg-subtle dark:hover:bg-slate
               for (const id of filedIds) n.delete(id);
               return n;
             });
-            void qc.invalidateQueries({ queryKey: ["scan-inbox", activeSlug] });
+            void qc.invalidateQueries({ queryKey: scanInboxKeys.all(activeSlug) });
             void qc.invalidateQueries({ queryKey: ["organize-plan-latest", activeSlug] });
           }}
           onStartWalk={(planId) => void startWalk(planId)}
@@ -2971,7 +2975,7 @@ className="rounded px-1 py-0.5 text-[12.5px] hover:bg-subtle dark:hover:bg-slate
           defaultLocationId={fileEverything.defaultLocationId}
           scope={fileEverything.scope}
           onClose={() => setFileEverything(null)}
-          onFiled={() => void qc.invalidateQueries({ queryKey: ["scan-inbox", activeSlug] })}
+          onFiled={() => void qc.invalidateQueries({ queryKey: scanInboxKeys.all(activeSlug) })}
         />
       )}
       {showDuplicates && (
@@ -2989,8 +2993,7 @@ className="rounded px-1 py-0.5 text-[12.5px] hover:bg-subtle dark:hover:bg-slate
           slug={activeSlug}
           onClose={() => {
             setLiveSortOpen(false);
-            void qc.invalidateQueries({ queryKey: ["scan-inbox", activeSlug] });
-            void qc.invalidateQueries({ queryKey: ["scan-stats", activeSlug] });
+            void qc.invalidateQueries({ queryKey: scanInboxKeys.all(activeSlug) });
           }}
         />
       )}
@@ -3085,11 +3088,17 @@ className="rounded px-1 py-0.5 text-[12.5px] hover:bg-subtle dark:hover:bg-slate
             </HeaderMenu>
           )}
           {/* How far the list is narrowed right now. Was a bare "12 / 69". */}
-          {visibleItems.length !== items.length && (
-            <span className="text-faint dark:text-slate-500">
-              {visibleItems.length} of {items.length} shown
+          {/* A filter's count is the server's, over every pending item; a
+              text search narrows only what is loaded, and says so. */}
+          {facet ? (
+            <span className="text-faint dark:text-slate-500" data-testid="filter-caption">
+              {facet === "waiting" ? staleCount : reviewCount} of {totalPending} shown
             </span>
-          )}
+          ) : searchTokens.length > 0 && visibleItems.length !== items.length ? (
+            <span className="text-faint dark:text-slate-500" data-testid="filter-caption">
+              {visibleItems.length} of the {items.length} loaded match
+            </span>
+          ) : null}
           {/* Filtered to NOTHING: without this the list under "0 of 81 shown"
               was a blank void, and the tiny counter is easy to miss. One click
               back to everything. */}
@@ -3168,8 +3177,7 @@ className="rounded px-1 py-0.5 text-[12.5px] hover:bg-subtle dark:hover:bg-slate
             itemIds={[]}
             itemsById={new Map(items.map((i) => [i.id, i]))}
             onApplied={() => {
-              void qc.invalidateQueries({ queryKey: ["scan-inbox", activeSlug] });
-              void qc.invalidateQueries({ queryKey: ["scan-stats", activeSlug] });
+              void qc.invalidateQueries({ queryKey: scanInboxKeys.all(activeSlug) });
               void qc.invalidateQueries({ queryKey: ["organize-plan-latest", activeSlug] });
             }}
             onStartWalk={(planId) => void startWalk(planId)}
@@ -3275,9 +3283,7 @@ className="rounded px-1 py-0.5 text-[12.5px] hover:bg-subtle dark:hover:bg-slate
             const groupIds = g.items.map((i) => i.id);
             const allGroupSelected = groupIds.length > 0 && groupIds.every((gid) => selected.has(gid));
             // Merge target: the NEXT (older) group that is a real batch.
-            const mergeInto = g.isBatch
-              ? sessionGroups.slice(gi + 1).find((o) => o.isBatch && o.batchId)?.batchId ?? null
-              : null;
+            const mergeInto = sessionMergeTarget(sessionGroups, gi);
             // "Do these belong together?" is offered for a scan session of two
             // or more pending rows (a receipt is already one group). It
             // SURFACES on its own only on evidence: the rows already agree on a
@@ -3315,7 +3321,7 @@ className="rounded px-1 py-0.5 text-[12.5px] hover:bg-subtle dark:hover:bg-slate
               ...new Set(
                 g.items
                   .filter((it) => isReadyToFile(it, viewer))
-                  .map((it) => it.suggested_candidates?.[0] as { bundle_external_id?: string; label?: string } | undefined)
+                  .map((it) => destinationCandidateOf(it, viewer) as { bundle_external_id?: string; label?: string } | null)
                   .filter((c) => c?.bundle_external_id)
                   .map((c) => c!.label ?? "a table"),
               ),
@@ -3361,14 +3367,14 @@ className="rounded px-1 py-0.5 text-[12.5px] hover:bg-subtle dark:hover:bg-slate
                 // Book" (reported 2026-08-01). Silence beats a filing that will not
                 // happen; the items still file, just without the clause.
                 const sessionHasCategoryAxis = readyItems.some(
-                  (it) => !!categoryAxisKey(it, menu) || !!tableCategoryAxis(menu, it.suggested_candidates?.[0]),
+                  (it) => !!categoryAxisKey(it, menu) || !!tableCategoryAxis(menu, destinationCandidateOf(it, viewer) ?? undefined),
                 );
                 const sessionCat = {
                   suggestion: sessionHasCategoryAxis ? filing.category : null,
                   unanimous: sessionCategory(g.items).unanimous,
                   seen: sessionCategory(g.items).seen,
                 };
-            const pendingInSession = g.items.filter((it) => it.status === "pending").length;
+            const pendingInSession = sessionLines(g.items, g.batchId ? batchMeta[g.batchId] : undefined).pending;
             // This group IS the live scanning session (localStorage) — so it
             // carries the "active" pulse + End control that used to live in the
             // now-suppressed green banner.
@@ -3558,6 +3564,11 @@ className="rounded px-1 py-0.5 text-[12.5px] hover:bg-subtle dark:hover:bg-slate
                               ellipsis leaves a gap of its own - the row had to
                               stop clipping before anyone could see it (#3393). */}
                           {isReceiptSession && g.batchId && g.orderRef && editingPo !== g.batchId && <span className="font-medium text-muted">&nbsp;· #{g.orderRef}</span>}
+                          {/* The date in the one line, the same place and format
+                              the unnamed sessions below carry theirs: the
+                              receipt's date, else when it was scanned (the owner,
+                              2026-09-24: "Entire separate line is unnecessary"). */}
+                          {g.label && <span data-session-date>{`\u00a0· ${g.origin === "email" ? "emailed " : ""}${receiptDateOf(g) ?? formatSessionTime(g.latest)}`}</span>}
                           {g.verdict.kind !== "failed" && g.verdict.kind !== "in_flight" && `\u00a0· ${g.items.length} item${g.items.length === 1 ? "" : "s"}`}
                         </span>
                       </span>
@@ -3696,7 +3707,12 @@ className="rounded px-1 py-0.5 text-[12.5px] hover:bg-subtle dark:hover:bg-slate
                           }}
                           aria-label="Session actions"
                           title="More for this session"
-                          className="shrink-0 inline-flex min-h-6 items-center rounded p-0.5 text-faint hover:text-accent"
+                          data-testid="session-menu"
+                          // Its own 44px target on a phone. At 18px it sat on the
+                          // edge of the name, which folds the session on a
+                          // phone, so a thumb aiming at the ⋯ folded it instead
+                          // (the owner, 2026-09-24: "keeps collapsing").
+                          className="shrink-0 inline-flex min-h-6 items-center justify-center rounded p-0.5 max-sm:min-h-11 max-sm:min-w-11 text-faint hover:text-accent"
                         >
                           <MoreHorizontal size={14} />
                         </button>
@@ -3707,7 +3723,7 @@ className="rounded px-1 py-0.5 text-[12.5px] hover:bg-subtle dark:hover:bg-slate
                           {themeOffer && (
                             <MenuItem
                               icon={<Sparkles size={13} />}
-                              label={`Do these ${g.items.filter((i) => i.status === "pending").length} belong together?`}
+                              label={`Do these ${pendingInSession} belong together?`}
                               hint="Ask whether they share a tag or a category. Nothing runs until you press this."
                               onClick={() => {
                                 setThemeAsked((prev) => new Set(prev).add(g.batchId!));
@@ -3718,8 +3734,7 @@ className="rounded px-1 py-0.5 text-[12.5px] hover:bg-subtle dark:hover:bg-slate
                           {mergeInto && (
                             <MenuItem
                               icon={<Undo2 size={13} />}
-                              label="Move into the previous session"
-                              hint="Two bursts that are really one job: these rows join the older session. Only which session they sit in changes."
+                              label="Merge with the session above"
                               disabled={mergeBatches.isPending}
                               onClick={() => {
                                 close();
@@ -4321,21 +4336,6 @@ className="rounded px-1 py-0.5 text-[12.5px] hover:bg-subtle dark:hover:bg-slate
                 </div>
                 {!collapsed && (
                   <div className="space-y-2">
-                    {/* WHEN this receipt is from, on a phone. The row carries
-                        the date from md up; below that the identity folds to
-                        name, order number and count, and the date's only other
-                        home was a `title` on the very span the fold hides, so
-                        nothing a person could reach held it and the only way to
-                        the date was to open the session (#3393). A session that
-                        is open has the room, and opening it is the tap a phone
-                        already has. The row itself is untouched: the width
-                        question the truncated merchant raises is a separate
-                        call. */}
-                    {isReceiptSession && receiptDateOf(g) && (
-                      <p className="md:hidden px-2.5 text-[11px] text-faint" data-session-date title={receiptDateWords(g.dateReading) ?? undefined}>
-                        Receipt dated {receiptDateOf(g)} · uploaded {formatSessionTime(g.latest)}
-                      </p>
-                    )}
                     {/* The read's verdict, in the session's own words: a failed
                         read says why, with a Read again you can see and the
                         connect link when a provider is the reason (#2892). The
@@ -4359,10 +4359,10 @@ className="rounded px-1 py-0.5 text-[12.5px] hover:bg-subtle dark:hover:bg-slate
                         that some still lack) or when asked from the session's
                         ⋯ (#3064): a question on every session read as nagging. */}
                     {themeOffer && (themeAsked.has(g.batchId!) || themeEvidence) && (
-                      <SessionTheme
+                      <ScanSessionTheme
                         slug={activeSlug}
                         batchId={g.batchId!}
-                        itemCount={g.items.filter((i) => i.status === "pending").length}
+                        itemIds={g.items.filter((i) => i.status === "pending").map((i) => i.id)}
                         evidence={themeEvidence}
                       />
                     )}
@@ -4488,7 +4488,10 @@ className="rounded px-1 py-0.5 text-[12.5px] hover:bg-subtle dark:hover:bg-slate
           </button>
           {showDeleted && (
             <div className="mt-2 space-y-1.5">
-              {recentlyDeleted.map((d) => (
+              {recentlyDeleted.map((d) => {
+                const recovery = scanDeletedRecovery(d.suggested_metadata as Record<string, unknown> | null);
+                const keptName = recovery.kind === "undo_combine" ? (() => { const k = items.find((i) => i.id === recovery.into); return k ? displayName(k) : null; })() : null;
+                return (
                 <div
                   key={d.id}
                   className="flex items-center gap-2 rounded-md border border-line dark:border-slate-700 bg-surface/50 dark:bg-slate-800/30 px-3 py-2"
@@ -4500,20 +4503,42 @@ className="rounded px-1 py-0.5 text-[12.5px] hover:bg-subtle dark:hover:bg-slate
                     {d.barcode_text && displayName(d) && (
                       <div className="text-[10px] font-mono text-faint truncate">{d.barcode_text}</div>
                     )}
-                    {!!(d.suggested_metadata as { split_undone_at?: string } | null)?.split_undone_at && (
+                    {recovery.kind === "in_group_photo" && (
                       <div className="text-[10px] font-mono text-faint truncate">✂ piece of a split that was undone; the group photo is back in the inbox</div>
                     )}
+                    {recovery.kind === "undo_combine" && (
+                      <div className="text-[10px] text-faint truncate">
+                        combined into {keptName ? `"${keptName}"` : "another scan"}; its quantity lives there
+                      </div>
+                    )}
                   </div>
-                  <button
-                    type="button"
-                    onClick={() => restore.mutate(d.id)}
-                    disabled={restore.isPending}
-                    className="shrink-0 inline-flex items-center gap-1 text-xs rounded border border-line px-2 py-1 text-muted hover:text-content disabled:opacity-50"
-                  >
-                    <RotateCcw size={12} /> Restore
-                  </button>
+                  {/* The row offers the way back the server accepts
+                      (scan-recovery.ts), so pressing it never meets a refusal
+                      naming an action that is not here (#3639). */}
+                  {recovery.kind === "restore" ? (
+                    <button
+                      type="button"
+                      onClick={() => restore.mutate(d.id)}
+                      disabled={restore.isPending}
+                      className="shrink-0 inline-flex items-center gap-1 text-xs rounded border border-line px-2 py-1 text-muted hover:text-content disabled:opacity-50"
+                    >
+                      <RotateCcw size={12} /> {SCAN_UNDO_ACTIONS.restore}
+                    </button>
+                  ) : recovery.kind === "undo_combine" ? (
+                    <button
+                      type="button"
+                      data-testid="undo-combine"
+                      onClick={() => uncombine.mutate(d.id)}
+                      disabled={uncombine.isPending}
+                      title="Put both scans back in the inbox, each with its own quantity"
+                      className="shrink-0 inline-flex items-center gap-1 text-xs rounded border border-line px-2 py-1 text-muted hover:text-content disabled:opacity-50"
+                    >
+                      <RotateCcw size={12} /> {SCAN_UNDO_ACTIONS.undoCombine}
+                    </button>
+                  ) : null}
                 </div>
-              ))}
+                );
+              })}
             </div>
           )}
         </div>
@@ -4565,7 +4590,7 @@ className="rounded px-1 py-0.5 text-[12.5px] hover:bg-subtle dark:hover:bg-slate
                           {splitPieces(d) ? (
                             <div className="text-[10px] font-mono text-faint truncate">✂ split into {splitPieces(d)} items</div>
                           ) : (
-                            <CommittedDestination item={d} tables={destinationTables} menuTables={viewer.tables ?? []} />
+                            <CommittedDestination item={d} tables={destinationTables} />
                           )}
                         </div>
                         {splitPieces(d) ? (
@@ -4584,7 +4609,7 @@ className="rounded px-1 py-0.5 text-[12.5px] hover:bg-subtle dark:hover:bg-slate
                             disabled={unconfirm.isPending || sendingBackAll === grp.key}
                             className="shrink-0 text-xs text-faint hover:text-content disabled:opacity-50"
                           >
-                            Send back
+                            {SCAN_UNDO_ACTIONS.sendBack}
                           </button>
                         )}
                       </div>
@@ -4603,7 +4628,7 @@ className="rounded px-1 py-0.5 text-[12.5px] hover:bg-subtle dark:hover:bg-slate
                         {splitPieces(grp.items[0]) ? (
                           <div className="text-[10px] font-mono text-faint truncate">✂ split into {splitPieces(grp.items[0])} items</div>
                         ) : (
-                          <CommittedDestination item={grp.items[0]} tables={destinationTables} menuTables={viewer.tables ?? []} />
+                          <CommittedDestination item={grp.items[0]} tables={destinationTables} />
                         )}
                       </div>
                       {splitPieces(grp.items[0]) ? (
@@ -4622,7 +4647,7 @@ className="rounded px-1 py-0.5 text-[12.5px] hover:bg-subtle dark:hover:bg-slate
                           disabled={unconfirm.isPending}
                           className="shrink-0 inline-flex items-center gap-1 text-xs rounded border border-line px-2 py-1 text-muted hover:text-content disabled:opacity-50"
                         >
-                          <RotateCcw size={12} /> Send back
+                          <RotateCcw size={12} /> {SCAN_UNDO_ACTIONS.sendBack}
                         </button>
                       )}
                     </div>
@@ -4695,7 +4720,7 @@ className="rounded px-1 py-0.5 text-[12.5px] hover:bg-subtle dark:hover:bg-slate
         slug={activeSlug}
         open={importOpen}
         onClose={() => setImportOpen(false)}
-        onImported={() => void qc.invalidateQueries({ queryKey: ["scan-inbox", activeSlug] })}
+        onImported={() => void qc.invalidateQueries({ queryKey: scanInboxKeys.all(activeSlug) })}
       />
       {exportOpen && (
         <ExportInboxModal
@@ -4775,112 +4800,6 @@ function sessionName(
   // writes, and only when the icon is there to say it instead; a session whose
   // name happens to start with the word keeps it.
   return iconSaysReceipt ? withoutRef.replace(/^Receipt\s+·\s+/, "") : withoutRef;
-}
-
-// Session-theme banner: after a batch, offer to TAG everything with a derived
-// theme + suggest a CATEGORY for the non-media subset — e.g. "these 6 things →
-// tag 'Camping', category 'Camp Cookware' on the 2 pots, leaving the 4 books
-// tagged but uncategorized." Nothing hardcoded; derived server-side, degrades to nothing.
-/**
- * "Do these belong together?" - asked about ONE session, and only when asked.
- *
- * This used to run on every inbox load: a chat call per load, keyed on the
- * pending count so every scan re-fired it, reading the 50 most recent pending
- * items in the WHOLE workspace and rendering inside whatever the person had
- * filtered to. A view of two humidifiers was offered a grocery category "to 50
- * of them" - two populations in one sentence - and Apply would have stamped 50
- * rows that were not on screen (2026-09-03).
- *
- * Now it is a link inside the expanded session, beside Merge: nothing runs
- * until someone presses it, it asks only about that session, and both numbers
- * in the sentence come from the same set of items.
- */
-function SessionTheme({ slug, batchId, itemCount, evidence }: { slug: string; batchId: string; itemCount: number; evidence: boolean }) {
-  const qc = useQueryClient();
-  const toast = useToast();
-  // Rendered means asked: the parent mounts this only on evidence of a
-  // shared theme or after the session's ⋯ was pressed (#3064).
-  const asked = true;
-  const [dismissed, setDismissed] = useState(false);
-  const theme = useQuery({
-    queryKey: ["scan-session-theme", slug, batchId],
-    queryFn: () => api.scanSessionTheme(slug, batchId),
-    // ASKED, never assumed. `enabled` stays false until the press, so opening
-    // the inbox costs nothing.
-    enabled: asked && !dismissed,
-    staleTime: Infinity,
-    gcTime: 5 * 60_000,
-  });
-  const apply = useMutation({
-    mutationFn: () =>
-      api.applyScanTheme(slug, {
-        ...(theme.data?.tag ? { tag: theme.data.tag, tag_item_ids: theme.data.tag_item_ids } : {}),
-        ...(theme.data?.category ? { category: theme.data.category } : {}),
-      }),
-    onSuccess: (r) => {
-      toast.success(
-        `Tagged ${r.tagged}${r.categorized ? ` · categorised ${r.categorized}` : ""} - applied when you confirm each.`,
-      );
-      void qc.invalidateQueries({ queryKey: ["scan-inbox", slug] });
-      setDismissed(true);
-    },
-    onError: (e) => toast.error(e instanceof ApiError ? e.message : "Couldn't apply that."),
-  });
-  if (dismissed || itemCount < 2) return null;
-  if (theme.isFetching) return <div className="pt-0.5 text-xs text-faint">Reading the {itemCount}…</div>;
-  const t = theme.data;
-  if (!t || (!t.tag && !t.category)) {
-    // Evidence that led nowhere says nothing: the rows agreed on a category
-    // and the pass found nothing to add, so there is no question to ask.
-    if (evidence) return null;
-    return (
-      <div className="pt-0.5 text-xs text-faint">
-        Nothing these {itemCount} obviously share.{" "}
-        <button type="button" onClick={() => setDismissed(true)} className="underline hover:text-content">
-          Dismiss
-        </button>
-      </div>
-    );
-  }
-  return (
-    <div data-testid="session-theme" data-evidence={evidence ? "" : undefined} className="pt-0.5 rounded-lg border border-cobble-300 dark:border-cobble-700/60 bg-cobble-50/70 dark:bg-cobble-950/20 px-3 py-2.5 flex items-center gap-3">
-      <Sparkles size={15} className="text-accent shrink-0" />
-      <div className="min-w-0 flex-1 text-sm text-content dark:text-mortar-100">
-        {/* Both counts come from THIS session now, so they cannot disagree - and
-            "these look related" is only said when a tag was actually found to
-            relate them. With a category alone, nothing was: some of them merely
-            share a kind, which is a smaller claim and the one worth making. */}
-        {t.tag ? (
-          <>
-            These {itemCount} look related. Tag each of them <strong>"{t.tag}"</strong>? A tag on each row; nothing is combined.
-            {t.category ? (
-              <span className="text-muted">
-                {" "}
-                Also add category <strong>"{t.category.value}"</strong>
-                {t.category.item_ids.length === itemCount ? " to all of them" : ` to ${t.category.item_ids.length} of them`}.
-              </span>
-            ) : null}
-          </>
-        ) : t.category ? (
-          <>
-            {t.category.item_ids.length === itemCount ? `All ${itemCount}` : `${t.category.item_ids.length} of these ${itemCount}`} look like{" "}
-            <strong>"{t.category.value}"</strong>. Add that category to each? A field on each row; nothing is combined.
-          </>
-        ) : null}
-      </div>
-      <button
-        type="button"
-        disabled={apply.isPending}
-        onClick={() => apply.mutate()}
-        className="shrink-0 rounded bg-cobble-600 hover:bg-cobble-700 text-white px-3 py-1.5 text-sm font-medium disabled:opacity-50"
-      >
-        {apply.isPending ? "Applying…" : t.tag ? "Tag them" : "Add the category"}
-      </button>
-      <button type="button" onClick={() => setDismissed(true)} className="shrink-0 text-faint hover:text-content p-1" title="Dismiss">
-        <X size={14} />
-      </button>
-    </div>
-  );
 }
 
 // The target picker lists the workspace's ACTUAL tables (instances like

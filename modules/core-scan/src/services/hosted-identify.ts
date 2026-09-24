@@ -269,7 +269,18 @@ export interface HostedAnswer {
 /** Ask the service. Null on ANY failure — disabled, over allowance, network,
  *  non-200, unparseable — so every caller degrades to the tenant-AI path it
  *  already had. A hosted outage must never be worse than never having it. */
-export async function hostedIdentify(opts: {
+/** Why the hosted path did not answer, when it did not: off (not
+ *  configured), scope, plan, allowance (the workspace's or the person's
+ *  daily tier), unreachable. The tenant path runs next either way; a
+ *  photo that ends up unnamed carries this reason, so the drawer can say
+ *  "used up for today" instead of a silent nothing (2026-09-24). */
+export type HostedDegrade = "off" | "scope" | "plan" | "allowance" | "unreachable";
+
+export async function hostedIdentify(opts: Parameters<typeof hostedIdentifyWhy>[0]): Promise<HostedAnswer | null> {
+  return (await hostedIdentifyWhy(opts)).answer;
+}
+
+export async function hostedIdentifyWhy(opts: {
   orgId: string;
   imageB64: string;
   barcode?: string | null;
@@ -284,21 +295,21 @@ export async function hostedIdentify(opts: {
    *  per-workspace counter alone cannot. Detached work with no visitor (retry
    *  sweeps, email ingest) sends nothing and rides the key cap. */
   visitorIp?: string | null;
-}): Promise<HostedAnswer | null> {
+}): Promise<{ answer: HostedAnswer | null; degraded?: HostedDegrade }> {
   const url = process.env.COBBLR_IDENTIFY_URL?.trim();
-  if (!url) return null;
+  if (!url) return { answer: null, degraded: "off" };
   if (!(await workspaceInIdentifyScope(opts.orgId))) {
     console.log(`[hosted-identify] workspace ${opts.orgId} is outside COBBLR_IDENTIFY_APPS — degrading`);
-    return null;
+    return { answer: null, degraded: "scope" };
   }
   if (!(await entitlement(opts.orgId, opts.userId))) {
     console.log(`[hosted-identify] plan says no for ${opts.userId ?? "workspace " + opts.orgId} today — degrading`);
-    return null;
+    return { answer: null, degraded: "plan" };
   }
   const allowance = await workspaceIdentifyAllowance(opts.orgId);
   if (!allowance.ok) {
     console.log(`[hosted-identify] workspace ${opts.orgId} over its daily allowance (${allowance.cap}) — degrading`);
-    return null;
+    return { answer: null, degraded: "allowance" };
   }
   try {
     const key = process.env.COBBLR_IDENTIFY_KEY?.trim();
@@ -318,7 +329,8 @@ export async function hostedIdentify(opts: {
     });
     if (!res.ok) {
       console.log(`[hosted-identify] ${res.status} — degrading to the tenant path`);
-      return null;
+      // A 429 is the edge's per-person daily tier: the allowance, said so.
+      return { answer: null, degraded: res.status === 429 ? "allowance" : "unreachable" };
     }
     const body = (await res.json()) as HostedAnswer & { cached?: boolean };
     if (body?.cached === true) {
@@ -327,10 +339,10 @@ export async function hostedIdentify(opts: {
     } else {
       meterIdentify({ orgId: opts.orgId, kind: "identify.call", userId: opts.userId });
     }
-    return body && typeof body.kind === "string" ? body : null;
+    return { answer: body && typeof body.kind === "string" ? body : null };
   } catch (err) {
     console.log(`[hosted-identify] unreachable (${(err as Error).message}) — degrading`);
-    return null;
+    return { answer: null, degraded: "unreachable" };
   }
 }
 

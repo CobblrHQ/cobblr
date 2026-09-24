@@ -13,7 +13,7 @@ import { defineModule } from "@cobblr/platform-contract";
 
 export default defineModule({
   name: "inventory",
-  version: "0.9.27",
+  version: "0.9.29",
   displayName: "Inventory",
   description:
     "Parts, locations, categories, stock tracking, polymorphic allocations. The generalised toolkit you'd otherwise Frankenstein from a spreadsheet.",
@@ -96,10 +96,16 @@ export default defineModule({
         // Cross-module readable: name + description for labels & rendering,
         // qty/min_qty for low-stock / dep-satisfied checks, unit for quantity
         // display, image for galleries. Internal-only: cost (commercial),
-        // manufacturer/supplier_url (procurement detail), notes (free-text).
+        // supplier_url (procurement detail), notes (free-text).
         exposableFields: [
           "name",
           "description",
+          // Who made it. Once withheld with supplier_url as procurement
+          // detail, but a brand is on the thing itself and already the part's
+          // subtitle everywhere, and withholding it left the one label that
+          // names it (Printer Parts, "{{manufacturer}} {{voltage}}") printing a
+          // blank where the maker goes (#3600). Where you BUY it stays private.
+          "manufacturer",
           "qty",
           "unit",
           "min_qty",
@@ -617,6 +623,10 @@ export default defineModule({
     onBoot: async () => {
       const { startBurnRateSweeper } = await import("./burn-rate.js");
       startBurnRateSweeper();
+      // A bundle that changes a collection's default count unit (Yarn: skein
+      // to ball) has its records still on the old default follow it.
+      const { registerDefaultUnitFollows } = await import("./default-unit-follows.js");
+      registerDefaultUnitFollows();
       // Catalog instances the camera sheet latched to the stock face go back to
       // the catalog face. One-shot and idempotent; meta-only for a workspace
       // with nothing to heal. Awaited rather than fired off: it is a few

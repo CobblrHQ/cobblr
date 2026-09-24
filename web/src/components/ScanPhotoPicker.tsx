@@ -27,6 +27,7 @@ import { api, ApiError } from "../lib/api";
 import { resolveSessionBatch } from "../lib/scanSession";
 import { classifyFiles } from "../pages/omniIntake";
 import { UploadKindSheet } from "./UploadKindSheet";
+import { scanInboxKeys } from "../lib/scan-inbox-keys";
 
 /** What the picker takes: a picture, or a receipt as a PDF or a CSV. One
  *  string, so no door can accept less than another. */
@@ -96,7 +97,7 @@ export function useScanIntake(slug: string, opts: ScanIntakeOptions): ScanIntake
   // double-tapped tile costs the same duplicate (reported 2026-08-19).
   const lastTakeRef = useRef<{ key: string; at: number }>({ key: "", at: 0 });
 
-  const invalidate = () => void qc.invalidateQueries({ queryKey: ["scan-inbox", slug] });
+  const invalidate = () => void qc.invalidateQueries({ queryKey: scanInboxKeys.all(slug) });
 
   async function uploadPhotos(files: File[]) {
     if (files.length === 0) return;

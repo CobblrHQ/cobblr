@@ -19,6 +19,7 @@
 import { sql } from "kysely";
 import { meta } from "../db/meta.js";
 import { getTenantDb, evictTenantPool } from "../db/tenant.js";
+import { bumpWorkspaceShape } from "./workspace-shape.js";
 import { enableModuleForOrg } from "../modules/enable.js";
 
 export interface RehomeResult {
@@ -143,6 +144,7 @@ export async function rehomeAssetsInstanceToRecords(
       .where("org_id", "=", orgId)
       .where("instance_name", "=", instanceName)
       .execute();
+    await bumpWorkspaceShape(orgId);
 
     return result;
   } finally {

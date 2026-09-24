@@ -735,6 +735,12 @@ meRouter.post("/me/notifications/:id/actions/:actionId", requireAuth, async (req
       userId: req.session!.id,
       actorName: req.session!.display_name ?? null,
     });
+    if (!outcome.ok && outcome.reason === "declined") {
+      // The person was allowed to press; the thing they pressed answered no,
+      // in words meant for them ("This was already declined.").
+      res.status(409).json({ error: { code: "declined", message: outcome.message } });
+      return;
+    }
     if (!outcome.ok) {
       // One shape for every refusal, so a prober learns nothing about which
       // ids exist or what roles anybody holds. A genuine failure is separable

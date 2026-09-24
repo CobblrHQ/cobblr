@@ -15,10 +15,17 @@
 // settles only its row: the digest of fifteen groceries used to be a list
 // and then a block of fifteen buttons, and one press took every other button
 // with it (#3282). A card without rows keeps the flat strip.
+//
+// What was pressed HERE is only a courtesy until the list refetches. Whether
+// a question is still open is the server's to say (`settled`, read from the
+// subject's own record): component state alone forgot a Deny the moment the
+// popover closed (#3594).
 
 import { useState } from "react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
+import { relativeTime } from "@cobblr/platform-web";
 import { api, ApiError, type CrossOrgNotificationEntry } from "../lib/api";
+import { notificationKeys } from "../lib/notification-keys";
 
 const STYLES = {
   primary:
@@ -55,11 +62,21 @@ export function NotificationActionButtons({ n }: { n: CrossOrgNotificationEntry 
     onSuccess: (r, vars) => {
       setError(null);
       setDone((d) => ({ ...d, [vars.rowKey]: r.label }));
-      void qc.invalidateQueries({ queryKey: ["notifications"] });
+      void qc.invalidateQueries({ queryKey: notificationKeys.all() });
     },
     onError: (e) => setError(e instanceof ApiError ? e.message : String(e)),
   });
 
+  // Decided, by whoever and wherever: the server read it off the request's own
+  // record, so a reopened popover and a reload say the same thing (#3594).
+  if (n.settled) {
+    return (
+      <div className="mt-2 text-[11px] text-muted dark:text-slate-400" data-testid="notification-settled">
+        {n.settled.label}
+        {n.settled.at ? ` · ${relativeTime(n.settled.at)}` : ""}
+      </div>
+    );
+  }
   if (!n.actions || n.actions.length === 0) return null;
   const byId = new Map(n.actions.map((a) => [a.id, a]));
 

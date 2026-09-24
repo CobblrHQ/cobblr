@@ -914,6 +914,7 @@ function FieldsEditorModal({ entityKind, title, onClose }: { entityKind: string;
                 )}
               </span>
               <input
+                // DRAFT-OK: a kind's display label on the presentation settings page, not a record's value; no action moves it.
                 defaultValue={o?.display_label ?? ""}
                 placeholder={f.defaultLabel}
                 onBlur={(e) => {

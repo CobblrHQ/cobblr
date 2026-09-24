@@ -190,7 +190,7 @@ export function siblingReviewWords(fields: readonly string[]): string {
 // confirm read to keep their hands off.
 
 import { userFieldsOf } from "./user-fields.js";
-import { BRAND_FIELD_NAMES, CREATOR_FIELD_NAMES, brandsAgree, evidenceFactsOf, namesAgree } from "@cobblr/platform-contract/scan-evidence";
+import { BRAND_FIELD_NAMES, CREATOR_FIELD_NAMES, IDENTIFIER_FIELD_NAMES, brandsAgree, evidenceFactsOf, namesAgree } from "@cobblr/platform-contract/scan-evidence";
 
 /** A menu field as the stamping needs it. */
 interface RoledFieldLike {
@@ -217,7 +217,7 @@ export function provenanceStamps(opts: {
   priorFields?: Record<string, unknown> | null;
   /** The row's columns the evidence is read from: its picture (what the
    *  photo read is about) and its name (the catalog's title). */
-  row?: { image_file_id?: string | null; suggested_name?: string | null };
+  row?: { image_file_id?: string | null; suggested_name?: string | null; barcode_text?: string | null };
 }): FieldProvenanceMap {
   const prior = fieldProvenanceOf(opts.meta);
   const person = userFieldsOf(opts.meta)?.values ?? {};
@@ -261,7 +261,11 @@ export function provenanceStamps(opts: {
     if (fact) out[name] = { by: "evidence", from: fact.source, ...withRole };
     else if (listedInferred.has(name)) out[name] = { by: "inference", from: "model", ...withRole };
     else if (hint && containsWhole(hint, claimed)) out[name] = { by: "evidence", from: "hint", ...withRole };
-    else if (containsWhole(catalogText, claimed)) out[name] = { by: "evidence", from: "catalog", ...withRole };
+    // An identifier in the catalog's text vouches only when the catalog was
+    // reached from the item's own code; found by searching a description, it
+    // is whatever the search found first (#3613, #3647).
+    else if (containsWhole(catalogText, claimed) && (!IDENTIFIER_FIELD_NAMES.test(name) || !!opts.row?.barcode_text)) out[name] = { by: "evidence", from: "catalog", ...withRole };
+    else if (IDENTIFIER_FIELD_NAMES.test(name) && containsWhole(catalogText, claimed)) out[name] = { by: "inference", from: "catalog search", ...withRole };
     else out[name] = { by: "inference", from: "router", ...withRole };
   }
   return out;

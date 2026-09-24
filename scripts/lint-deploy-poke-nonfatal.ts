@@ -1,99 +1,80 @@
-// Guard: the BEST-EFFORT steps of docker-build.yml's `deploy-trigger` job must
-// never exit non-zero.
+// Guard: the BEST-EFFORT half of a main commit's deploy never exits non-zero.
 //
-// Why this is a real trap: the job is `continue-on-error: true`, which spares the
-// workflow RUN but (in our Forgejo runner) does NOT keep the job's per-commit
-// STATUS context green. So a step here that `exit 1`s still reds
-// `Docker Build / deploy-trigger`, which reds the whole commit — even though the
-// images already built + pushed and Watchtower's 600s poll delivers them anyway.
-// That exact false-red happened 2026-07-21: a momentary tailnet blip made the
-// Watchtower poke return HTTP 000, the step `exit 1`'d, and main went red while
-// staging deployed the very same sha two minutes later via the poll.
+// Why this is a real trap: the deploy jobs are `continue-on-error: true`, which
+// spares the workflow RUN but (in our Forgejo runner) does NOT keep the job's
+// per-commit STATUS context green. So a step that exits 1 still reds
+// `Docker Build / deploy-trigger` (or `CI / deploy-when-ready`), which reds the
+// whole commit, even though the images already built and pushed and
+// Watchtower's poll delivers them anyway. That exact false-red happened
+// 2026-07-21: a momentary tailnet blip made the Watchtower poke return HTTP 000,
+// the step `exit 1`'d, and main went red while staging deployed the very same
+// sha two minutes later via the poll.
 //
-// Nothing else catches this: the YAML stays valid and every OTHER context is
-// green, so the failure is one red context on an otherwise-shipped build. This
-// lint keeps the "deploy NOW" nudge (and the cloud-overlay dispatch) strictly
-// best-effort: they may log a warning, they may not fail the build.
-//
-// The GATE step is exempt — it SHOULD `exit 1` to block a deploy on a real test
-// failure. Only the two side-effect steps below are covered.
+// The deploy is one script, scripts/deploy-when-ready.mjs, called from both
+// halves (docker-build.yml's deploy-trigger after the push, ci.yml's
+// deploy-when-ready after main's test; whichever finishes second deploys). So
+// the rule is held on the script:
+//   - its `trigger()` (the cloud-overlay dispatch and the Watchtower poke) never
+//     calls process.exit and never throws;
+//   - the ONE non-zero exit that is a verdict is the block on a failed test,
+//     `process.exit(1)` on the line that tests `d.action === "block"`; the only
+//     other is the usage error (exit 2), a misconfigured workflow, which should
+//     be loud;
+//   - both workflows still call it, so neither half quietly stops deploying.
 // Run: npx tsx scripts/lint-deploy-poke-nonfatal.ts
-
 import { readFileSync, existsSync } from "node:fs";
 
-const WF = ".forgejo/workflows/docker-build.yml";
-
-// The best-effort steps, by a stable substring of their `- name:`. If a step is
-// renamed, this lint fails loudly (below) rather than silently covering nothing —
-// update the substring here in the same change.
-const BEST_EFFORT_STEPS = [
-  "Rebuild the cloud-api overlay",
-  "Trigger Watchtower deploy",
+const SCRIPT = process.env.DEPLOY_POKE_SCRIPT ?? "scripts/deploy-when-ready.mjs";
+const CALLERS: Array<[string, string]> = [
+  [process.env.DEPLOY_POKE_DOCKER_WF ?? ".forgejo/workflows/docker-build.yml", "deploy-when-ready.mjs --side images"],
+  [process.env.DEPLOY_POKE_CI_WF ?? ".forgejo/workflows/ci.yml", "deploy-when-ready.mjs --side test"],
 ];
-
-if (!existsSync(WF)) {
-  console.error(`deploy-poke-nonfatal lint: ${WF} is missing. If the workflow was renamed, update this lint rather than deleting it.`);
-  process.exit(1);
-}
-
-const lines = readFileSync(WF, "utf8").split("\n");
-
-/** Lines of a step's body, from its `- name:` bullet (exclusive) to the next
- *  step bullet / job / top-level key. Steps here are bulleted at 6 spaces. */
-function stepBody(nameSubstring: string): string[] | null {
-  const startBullet = /^ {6}- /;
-  let start = -1;
-  for (let i = 0; i < lines.length; i++) {
-    if (startBullet.test(lines[i]!) && lines[i]!.includes(nameSubstring)) {
-      start = i;
-      break;
-    }
-  }
-  if (start === -1) return null;
-  const body: string[] = [];
-  for (let j = start + 1; j < lines.length; j++) {
-    const l = lines[j]!;
-    if (startBullet.test(l)) break; // next step
-    if (/^ {0,4}\S/.test(l)) break; // next job (2 sp) or top-level key (0 sp)
-    body.push(l);
-  }
-  return body;
-}
 
 const problems: string[] = [];
 
-for (const name of BEST_EFFORT_STEPS) {
-  const body = stepBody(name);
-  if (body === null) {
-    console.error(
-      `deploy-poke-nonfatal lint: could not find the "${name}" step in ${WF}.\n` +
-        `  If it was renamed, update BEST_EFFORT_STEPS in this lint. A best-effort\n` +
-        `  deploy step must never exit non-zero (it reds main on a transient blip).`,
-    );
-    process.exit(1);
-  }
-  body.forEach((l, k) => {
-    const code = l.replace(/^\s+/, "");
-    if (code.startsWith("#")) return; // skip bash/YAML comments
-    // `exit 0` is fine; `exit 1`..`exit 9` (or `exit $?` after a failing cmd) is not.
-    if (/\bexit\s+[1-9]/.test(code)) {
-      problems.push(`  "${name}" -> ${l.trim()}`);
+if (!existsSync(SCRIPT)) {
+  console.error(`deploy-poke-nonfatal lint: ${SCRIPT} is missing. If the deploy moved, update this lint rather than deleting it.`);
+  process.exit(1);
+}
+const src = readFileSync(SCRIPT, "utf8");
+const lines = src.split("\n");
+
+/** The body of `async function trigger()`, to its closing brace at column 0. */
+const start = lines.findIndex((l) => /^async function trigger\(\)/.test(l));
+if (start === -1) {
+  problems.push(`${SCRIPT}: no \`async function trigger()\`; the best-effort half is no longer where this lint looks. Update the lint in the same change.`);
+} else {
+  for (let i = start + 1; i < lines.length && !/^\}/.test(lines[i] ?? ""); i++) {
+    const code = (lines[i] ?? "").replace(/^\s+/, "");
+    if (code.startsWith("//")) continue;
+    if (/\bprocess\.exit\s*\(/.test(code) || /\bthrow\b/.test(code)) {
+      problems.push(`${SCRIPT}:${i + 1}: \`${code.slice(0, 90)}\`: the trigger is best-effort; log and carry on, never exit or throw.`);
     }
-  });
+  }
+}
+
+lines.forEach((l, i) => {
+  const m = /\bprocess\.exit\s*\(\s*([^)\s]+)\s*\)/.exec(l);
+  if (!m || m[1] === "0") return;
+  if (m[1] === "1" && /d\.action === "block"/.test(l)) return;
+  if (m[1] === "2" && /usage|side !== /.test(lines.slice(Math.max(0, i - 3), i + 1).join("\n"))) return;
+  problems.push(`${SCRIPT}:${i + 1}: \`${l.trim().slice(0, 90)}\`: a non-zero exit that is not the failed-test block reds the commit.`);
+});
+
+for (const [wf, call] of CALLERS) {
+  if (!existsSync(wf) || !readFileSync(wf, "utf8").includes(call)) {
+    problems.push(`${wf}: no longer runs \`${call}\`, so that half of the deploy never fires.`);
+  }
 }
 
 if (problems.length) {
-  console.error(`deploy-poke-nonfatal lint: a best-effort deploy step exits non-zero.\n`);
-  for (const p of problems) console.error(p);
+  console.error(`deploy-poke-nonfatal lint: the deploy can red a commit, or has lost a door.\n`);
+  for (const p of problems) console.error(`  ${p}`);
   console.error(
-    `\n  These steps are continue-on-error but STILL post a red commit-status context\n` +
-      `  when a step fails, which reds main. The images are already pushed and\n` +
-      `  Watchtower's ~10-min poll delivers them, so a flaky nudge must not fail the\n` +
-      `  build. Log a warning and \`exit 0\` instead (see the 200/429/000 case block).`,
+    `\n  A failed deploy nudge must not fail the build: the images are pushed and\n` +
+      `  Watchtower's poll delivers them. Log a warning and carry on.`,
   );
   process.exit(1);
 }
 
-console.log(
-  `deploy-poke-nonfatal lint: ${BEST_EFFORT_STEPS.length} best-effort deploy steps stay non-fatal ✓`,
-);
+console.log(`deploy-poke-nonfatal lint: the deploy's trigger stays non-fatal, and both halves call it ✓`);

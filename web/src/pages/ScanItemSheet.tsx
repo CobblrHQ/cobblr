@@ -15,7 +15,28 @@
 //
 // Both are sticky INSIDE the modal's scroller, hence sticky-in-scroller /
 // sticky bottom-0 and never a top-* of their own (lint:sticky-under-header).
+import type { ReactNode } from "react";
 import { ChevronLeft, ChevronRight, PackagePlus, Trash2 } from "lucide-react";
+
+/** The shape of a footer ACTION: the one commit door, "+1 more", the form's
+ *  Add portalled into the slot. It never shrinks below its words: it may
+ *  take the whole row, and past that its label wraps inside it. A primary
+ *  that was allowed to shrink (min-w-0 beside a max-w percentage) and not
+ *  to wrap overflowed its own box whenever the row ran short (larger text,
+ *  a long table name): WebKit centres a button's overflowing content, so
+ *  the icon slid over Cancel and the label ran off the screen. */
+export const SHEET_ACTION_CLASS =
+  "inline-flex min-w-0 max-w-full items-center gap-1.5 rounded-md px-4 py-2.5 text-left text-sm font-semibold text-white transition";
+
+/** An action's icon and words: the icon keeps its size, the words wrap. */
+export function SheetActionLabel({ icon, children }: { icon?: ReactNode; children: ReactNode }) {
+  return (
+    <>
+      {icon ? <span className="inline-flex shrink-0">{icon}</span> : null}
+      <span className="min-w-0 [overflow-wrap:anywhere]">{children}</span>
+    </>
+  );
+}
 
 export interface ScanItemSheetNav {
   index: number;
@@ -82,9 +103,12 @@ export function ScanItemSheetFooter({
 }) {
   return (
     // Discard and Cancel never shrink and never wrap (the owner's phone
-    // showed "ncel" and "el", #3068); the primary is the one that may wrap,
-    // inside its own box, so every action stays whole and reachable.
-    <div data-testid="sheet-footer" className="sticky bottom-0 z-20 flex items-center justify-end gap-2 border-t border-line dark:border-slate-700 bg-surface dark:bg-slate-900 px-3 py-2 pb-[max(0.5rem,env(safe-area-inset-bottom))]">
+    // showed "ncel" and "el", #3068). The ROW wraps: when the three do not
+    // fit, the primary moves to a line of its own rather than squeezing, and
+    // on that line its words wrap inside it. So no width, text size or label
+    // can push an action off the screen or over its neighbour
+    // (e2e/sheet-footer-never-clips.mjs walks every state).
+    <div data-testid="sheet-footer" className="sticky bottom-0 z-20 flex flex-wrap items-center justify-end gap-2 border-t border-line dark:border-slate-700 bg-surface dark:bg-slate-900 py-2 pb-[max(0.5rem,env(safe-area-inset-bottom))] pl-[max(0.75rem,env(safe-area-inset-left))] pr-[max(0.75rem,env(safe-area-inset-right))]">
       <button
         type="button"
         onClick={onDiscard}
@@ -98,9 +122,9 @@ export function ScanItemSheetFooter({
         <button
           type="button"
           onClick={onOpenForm}
-          className="inline-flex min-w-0 max-w-[70%] items-center gap-1.5 rounded-md bg-cobble-600 hover:bg-cobble-700 text-white px-4 py-2.5 text-left text-sm font-semibold transition"
+          className={`${SHEET_ACTION_CLASS} bg-cobble-600 hover:bg-cobble-700`}
         >
-          {addLabel}
+          <SheetActionLabel>{addLabel}</SheetActionLabel>
         </button>
       )}
       {formOpen && (
@@ -119,13 +143,12 @@ export function ScanItemSheetFooter({
               disabled={primary.busy}
               title={primary.title}
               data-testid="sheet-primary"
-              className="inline-flex min-w-0 max-w-[60%] items-center gap-1.5 rounded-md bg-emerald-600 hover:bg-emerald-500 text-white px-4 py-2.5 text-left text-sm font-semibold transition disabled:opacity-60"
+              className={`${SHEET_ACTION_CLASS} bg-emerald-600 hover:bg-emerald-500 disabled:opacity-60`}
             >
-              <PackagePlus size={14} className={primary.busy ? "animate-pulse" : ""} />
-              {primary.label}
+              <SheetActionLabel icon={<PackagePlus size={14} className={primary.busy ? "animate-pulse" : ""} />}>{primary.label}</SheetActionLabel>
             </button>
           ) : (
-            <div ref={setActionSlot} className="flex min-w-0 max-w-[60%] justify-end" />
+            <div ref={setActionSlot} className="flex min-w-0 max-w-full justify-end" />
           )}
         </>
       )}

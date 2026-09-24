@@ -148,9 +148,19 @@ metricsRouter.patch(
     if (parsed.data.unit !== undefined) patch.unit = parsed.data.unit;
     if (parsed.data.goal_value !== undefined) patch.goal_value = parsed.data.goal_value == null ? null : String(parsed.data.goal_value);
     if (parsed.data.goal_direction !== undefined) patch.goal_direction = parsed.data.goal_direction;
-    if (parsed.data.metadata !== undefined) patch.metadata = jsonb(parsed.data.metadata);
+    // The custom fields MERGE into the live row (#3625).
+    if (parsed.data.metadata !== undefined) patch.metadata = platform().db.mergeJsonb("metadata", parsed.data.metadata as Record<string, unknown>) as never;
     const row = await db.updateTable("tracking_metrics").set(patch).where("id", "=", req.params.id!).returningAll().executeTakeFirst();
     if (!row) return void res.status(404).json({ error: { code: "not_found", message: "Metric not found." } });
+    // The request as sent, on the record's history: the one place a value
+    // a later write replaced can still be read back (#3625).
+    await platform().activity.log({
+      orgId: tenantContext(req).org.id,
+      userId: sessionUser(req)?.id ?? null,
+      action: "metric_updated",
+      ref: { module: "tracking", entityType: "metric", entityId: String(req.params.id) },
+      diff: parsed.data as Record<string, unknown>,
+    });
     res.json({ ...row, goal_value: num(row.goal_value) });
   }),
 );

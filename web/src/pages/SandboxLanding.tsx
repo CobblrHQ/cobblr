@@ -61,7 +61,7 @@ export function SandboxLanding() {
         }
         // replace(), not assign(): the token URL must not sit in history where
         // a back button returns to a page that redeems again.
-        window.location.replace(`/w/${body.slug}/`);
+        window.location.replace(`/w/${body.slug}${sandboxLandingPath(window.location.search)}`);
       } catch {
         if (!cancelled) setState({ kind: "error", message: "We could not reach Cobblr." });
       }
@@ -107,4 +107,13 @@ export function SandboxLanding() {
       </div>
     </div>
   );
+}
+
+/** Where a new sandbox opens. The booth's QR asks for the camera scanner
+ *  (`?to=scan`): a visitor at a table of barcoded things came to scan one, not
+ *  to find the scan button. Anything else opens the workspace's home. A closed
+ *  set, never a path taken from the URL. */
+export function sandboxLandingPath(search: string): string {
+  const to = new URLSearchParams(search).get("to");
+  return to === "scan" ? "/scan/camera" : "/";
 }

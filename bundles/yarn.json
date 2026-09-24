@@ -1,12 +1,12 @@
 {
   "manifest": {
     "id": "cobblr.flagship.yarn",
-    "version": "0.6.2",
+    "version": "0.6.4",
     "name": "Yarn",
-    "description": "Yarn as its own inventory instance: skein-tracked, yarn-only fields, grouped by weight. Optional Hooks + Designs tables.",
+    "description": "Yarn as its own inventory instance: counted by the ball, yarn-only fields, grouped by weight. Optional Hooks + Designs tables.",
     "author": "Cobblr",
     "released_at": "2026-07-15",
-    "changelog": "Fixed: the Yarn update now installs: a bad field in the previous release made the update fail validation. New: track your yarn skein-by-skein. On a yarn's page, under Consumption, tap “Track each skein separately” and you get a plain count by state. “3 skeins · 2 new · 1 open”, with the metres left in the skein you're actually knitting from shown quietly (never a confusing total across skeins). Open a skein when you crack a new one, and log metres as you go; each open skein keeps its own running balance. It reads the “Length / skein” you already entered to know a full skein, so there's no capacity to type. It's opt-in per yarn and fully reversible, existing yarn is untouched until you turn it on. Earlier changes below.: Your Yarn table now reads “yarn” everywhere: the “New”, search box, and empty-state labels say “yarn” instead of “part”. (Earlier installs picked up the generic “part” wording; upgrading applies the fix.) Real yarn-user polish: the Color field is a swatch picker (type a hex or pick one), Brand + Price now show right on the “New yarn” modal, and a “Suggested needle size” field was added. Dropdowns (vendor, fibre…) let you add a new option on the fly that sticks for next time. Dropped the confusing “Summary” computed field.. Yarn is its OWN table (a Yarn instance), not a skin over generic inventory: only yarn fields show, the button reads “New yarn”, quantities are in skeins. Hooks and Designs become their own tables too. The generic inventory cruft (warranty, insured, lifecycle…) is hidden, and the pinned view is named for its lens (“By weight”). Opening a yarn now hides the Maintenance log (that section is for machines) and turns on skein-by-skein consumption tracking by default, so you can see at a glance how much of a skein is left. Existing yarn tables pick this up on upgrade.",
+    "changelog": "Yarn now counts in balls, the word everyone knows: the unit, Length / ball, Full ball, Price / ball and the Consumption panel (Track each ball separately, Open a ball). Yarn you already have moves over to balls on this update; field names and your values are unchanged. Earlier: Says up front that it tracks stock, so counts and Use one or Used up are there from the first item rather than after one is counted. Earlier: Fixed: the Yarn update now installs: a bad field in the previous release made the update fail validation. New: track your yarn ball by ball. On a yarn's page, under Consumption, tap “Track each ball separately” and you get a plain count by state. “3 balls · 2 new · 1 open”, with the metres left in the ball you're actually knitting from shown quietly (never a confusing total across balls). Open a ball when you crack a new one, and log metres as you go; each open ball keeps its own running balance. It reads the “Length / ball” you already entered to know a full ball, so there's no capacity to type. It's opt-in per yarn and fully reversible, existing yarn is untouched until you turn it on. Earlier changes below.: Your Yarn table now reads “yarn” everywhere: the “New”, search box, and empty-state labels say “yarn” instead of “part”. (Earlier installs picked up the generic “part” wording; upgrading applies the fix.) Real yarn-user polish: the Color field is a swatch picker (type a hex or pick one), Brand + Price now show right on the “New yarn” modal, and a “Suggested needle size” field was added. Dropdowns (vendor, fibre…) let you add a new option on the fly that sticks for next time. Dropped the confusing “Summary” computed field.. Yarn is its OWN table (a Yarn instance), not a skin over generic inventory: only yarn fields show, the button reads “New yarn”, quantities are in balls. Hooks and Designs become their own tables too.",
     "requires": [
       {
         "module": "inventory"
@@ -16,10 +16,13 @@
       {
         "module": "inventory",
         "instance_name": "yarn",
+        "faces": {
+          "stock": true
+        },
         "display_name": "Yarn",
         "glyph": "🧶",
         "item_noun": "yarn",
-        "qty_unit": "skein",
+        "qty_unit": "ball",
         "field_defs": [
           {
             "entity_kind": "inventory:part",
@@ -98,20 +101,20 @@
           {
             "entity_kind": "inventory:part",
             "name": "length_per_skein",
-            "display_label": "Length / skein (m)",
+            "display_label": "Length / ball (m)",
             "type": "number",
             "unit": "m",
             "position": 6,
-            "help": "Metres per skein, from the label, used to estimate if you have enough for a project."
+            "help": "Metres per ball, from the label, used to estimate if you have enough for a project."
           },
           {
             "entity_kind": "inventory:part",
             "name": "capacity",
-            "display_label": "Full skein",
+            "display_label": "Full ball",
             "type": "computed",
             "template": "{{ length_per_skein }}",
             "position": 7,
-            "help": "Metres in one full skein, from the length above. When you track skein-by-skein, each opened skein's gauge is measured against this: you never type it."
+            "help": "Metres in one full ball, from the length above. When you track ball by ball, each opened ball's gauge is measured against this: you never type it."
           },
           {
             "entity_kind": "inventory:part",
@@ -119,7 +122,7 @@
             "display_label": "Dye lot",
             "type": "text",
             "position": 8,
-            "help": "The batch code on the label, buy the same lot so colours match across skeins."
+            "help": "The batch code on the label, buy the same lot so colours match across balls."
           },
           {
             "entity_kind": "inventory:part",
@@ -156,7 +159,7 @@
           {
             "entity_kind": "inventory:part",
             "name": "cost",
-            "display_label": "Price / skein"
+            "display_label": "Price / ball"
           },
           {
             "entity_kind": "inventory:part",
@@ -454,7 +457,7 @@
         "key": "scan",
         "name": "Scan to add",
         "question": "Add yarn by scanning a barcode or receipt?",
-        "description": "Snap a barcode, skein label, or receipt to stock yarn fast (and log the purchase).",
+        "description": "Snap a barcode, ball band, or receipt to stock yarn fast (and log the purchase).",
         "default": false,
         "requires": [
           {

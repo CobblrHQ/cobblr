@@ -12,6 +12,8 @@
 // Six modules and two kernel files each carried their own copy, identical
 // today and free to drift apart (#3499). They import these now.
 
+import { platform } from "@cobblr/platform-contract";
+
 export function routeUnknownToMetadata<T extends Record<string, unknown>>(
   body: unknown,
   nativeKeys: ReadonlySet<string>,
@@ -39,6 +41,29 @@ export function routeUnknownToMetadata<T extends Record<string, unknown>>(
   // body alone so optional-metadata schemas don't get an empty obj.
   if (Object.keys(promoted).length > 0) out.metadata = promoted;
   return out as T;
+}
+
+/** A record UPDATE's `.set()` object with its `metadata` written as THE
+ *  merge (#3625): the keys the caller sent are set, a null removes its key,
+ *  every other key stays as the live row holds it, in one statement
+ *  (platform().db.mergeJsonb). A server-managed key the caller sent is
+ *  dropped rather than written. Every entity PATCH wraps its set in this;
+ *  writing the object itself replaced the whole bag, so three quick edits to
+ *  one item kept only the last and lost the other two with a 200 each. */
+export function withMetadataMerged<T extends Record<string, unknown>>(set: T, serverManaged: readonly string[] = [], column = "metadata"): T {
+  const incoming = set[column];
+  if (incoming === undefined) return set;
+  if (incoming === null || typeof incoming !== "object" || Array.isArray(incoming)) {
+    const { [column]: _dropped, ...rest } = set;
+    return rest as T;
+  }
+  const fields: Record<string, unknown> = {};
+  for (const [k, v] of Object.entries(incoming as Record<string, unknown>)) if (!serverManaged.includes(k)) fields[k] = v;
+  if (Object.keys(fields).length === 0) {
+    const { [column]: _dropped, ...rest } = set;
+    return rest as T;
+  }
+  return { ...set, [column]: platform().db.mergeJsonb(column, fields) } as T;
 }
 
 /** Preserve SERVER-MANAGED metadata keys across a client write. Custom-field
@@ -77,3 +102,36 @@ export function coerceMetadata(raw: unknown): Record<string, unknown> {
   }
   return {};
 }
+
+/** What a template reading a record sees: its native fields at the top level
+ *  and its custom-field values beside them, the way a person names them
+ *  (`{{author}}`, not `{{metadata.author}}`). Custom values win a collision,
+ *  since that is where authored values sit, and `metadata` stays reachable
+ *  for a template that names it.
+ *
+ *  One rule for every surface that renders a record into text: a computed
+ *  field, a label, a wire's arguments. The label and wire doors read only the
+ *  native fields, so every shipped label that named a bundle's field printed
+ *  its placeholder ("Unknown / Effective Java / ?", #3591). */
+export function templateDataOf(fields: Record<string, unknown>): Record<string, unknown> {
+  return { ...fields, ...coerceMetadata(fields.metadata) };
+}
+
+/** Props on a resolved record that every reader sees whatever the kind's
+ *  `exposableFields` say: the ones every renderer needs to show "the entity"
+ *  generically. In the contract because two sides must agree on it: the
+ *  kernel's projection keeps them, and lint:template-fields-readable counts
+ *  them as readable when it judges a bundle's template.
+ *
+ *  `instance` is the instances-system column (which named collection an item
+ *  belongs to). Structural and not sensitive, so it is readable everywhere
+ *  without every instanceable module having to list it. */
+export const IMPLICIT_EXPOSABLE_PROPS: ReadonlySet<string> = new Set([
+  "kind",
+  "id",
+  "title",
+  "subtitle",
+  "image_path",
+  "detailUrl",
+  "instance",
+]);

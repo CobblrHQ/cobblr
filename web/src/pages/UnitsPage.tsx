@@ -134,7 +134,7 @@ function AddCustomUnit({ slug }: { slug: string }) {
       <h2 className="text-sm font-semibold text-content dark:text-mortar-100">Add a unit</h2>
       <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
         <Labeled label="Code (a-z 0-9 -)">
-          <input value={code} onChange={(e) => setCode(e.target.value)} placeholder="skein" className="input font-mono text-xs" />
+          <input value={code} onChange={(e) => setCode(e.target.value)} placeholder="ball" className="input font-mono text-xs" />
         </Labeled>
         <Labeled label="Symbol">
           <input value={symbol} onChange={(e) => setSymbol(e.target.value)} placeholder="sk" className="input" />
@@ -145,10 +145,10 @@ function AddCustomUnit({ slug }: { slug: string }) {
           </select>
         </Labeled>
         <Labeled label="Name (singular)">
-          <input value={name} onChange={(e) => setName(e.target.value)} placeholder="skein" className="input" />
+          <input value={name} onChange={(e) => setName(e.target.value)} placeholder="ball" className="input" />
         </Labeled>
         <Labeled label="Plural (optional)">
-          <input value={plural} onChange={(e) => setPlural(e.target.value)} placeholder="skeins" className="input" />
+          <input value={plural} onChange={(e) => setPlural(e.target.value)} placeholder="balls" className="input" />
         </Labeled>
       </div>
       {err && <div className="text-xs text-ember-500">{err}</div>}

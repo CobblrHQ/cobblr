@@ -45,13 +45,32 @@
 // session start after a quiet day said the reaper FAILED (2026-09-23). So in a
 // script that sets both `-e` and pipefail, a one-line pipeline with a `grep`
 // stage, or an assignment `x=$(... grep ...)`, must say what "no match" means:
-// `{ grep ... || true; }` when an empty result is an answer, `grep -q` in an
-// `if` when it is a question. A condition (`if`/`while`/`!`), an `&&`/`||`
-// chain and a multi-line pipeline are not judged; the last is a known gap.
+// `{ grep ... || true; }` when an empty result is an answer, `grep -q x
+// <<<"$v"` in an `if` when it is a question (a PIPE into grep -q in the `if`
+// is the SIGPIPE trap below). A condition, an `&&`/`||` chain and a
+// multi-line pipeline are not judged for an empty grep; the last is a known gap.
+//
+// The condition is the same trap, reading a match as a MISS. `printf '%s\n'
+// "$x" | grep -q tok || missing+=...` under pipefail: bash's printf can write
+// the string and its newline separately, grep -q matches the first write and
+// exits, the second write takes SIGPIPE, and pipefail turns the match into
+// status 141, which the `||` reads as "not found". The CI box's cron-drift
+// check did this with a crontab fixture that plainly held the line
+// (2026-09-24, main red, and once before as #3511, both put down to the
+// environment): timing-dependent, so it only fires under load. So in a
+// pipefail script every pipeline into head / grep -q / grep -m is judged, not
+// only one inside `$(...)`: in a condition, at the top level, anywhere. Fixes:
+// a here-string (`grep -q tok <<<"$x"`, no pipe at all), `grep ... >/dev/null`
+// (reads all of its input), or limit in the producer. Text in single quotes is
+// never this shell's code (a payload for a remote shell, a printed hint), so
+// it is blanked across lines before judging; so is a line with an escaped
+// `\$(`, a remote payload in double quotes. Every .sh under scripts/ and
+// deploy/ is read, subdirectories included: scripts/dev-rig was invisible to
+// the first version of this lint.
 //
 // Run: npx tsx scripts/lint-sigpipe-substitution.ts
 
-import { readFileSync, existsSync, readdirSync } from "node:fs";
+import { readFileSync, existsSync, readdirSync, statSync } from "node:fs";
 import { join } from "node:path";
 
 const DIRS = ["scripts", "deploy"];
@@ -66,39 +85,89 @@ const EARLY_EXIT = /(?<!\|)\|(?!\|)\s*(head\b|grep\s+-[a-zA-Z]*q|grep\s+-[a-zA-Z
 const failures: string[] = [];
 let checked = 0;
 
-const shFiles = DIRS.filter((d) => existsSync(d)).flatMap((d) =>
-  readdirSync(d)
-    .filter((f) => f.endsWith(".sh"))
-    .map((f) => join(d, f)),
-);
+/** Every .sh under `dir`, subdirectories included. */
+function walkSh(dir: string): string[] {
+  if (!existsSync(dir)) return [];
+  const out: string[] = [];
+  for (const name of readdirSync(dir)) {
+    if (name === "node_modules" || name === "dist" || name.startsWith(".")) continue;
+    const p = join(dir, name);
+    if (statSync(p).isDirectory()) out.push(...walkSh(p));
+    else if (name.endsWith(".sh")) out.push(p);
+  }
+  return out;
+}
+
+const shFiles = DIRS.flatMap(walkSh);
+
+/** The source with every quoted string blanked (newlines kept) except the
+ *  `$(...)` substitutions inside double quotes, which ARE this shell's code. A
+ *  quoted string is otherwise a payload for a remote shell (`on_box '...'`,
+ *  `filter="... | head -1"`) or a printed hint, never this script's pipeline.
+ *  `#` comments are skipped. */
+export function blankSingleQuoted(src: string): string {
+  type St = { k: "code" } | { k: "single" } | { k: "double" } | { k: "subst"; depth: number };
+  const stack: St[] = [{ k: "code" }];
+  let out = "";
+  for (let i = 0; i < src.length; i++) {
+    const c = src[i] ?? "";
+    const top = stack[stack.length - 1] ?? { k: "code" };
+    if (top.k === "single") {
+      if (c === "'") { stack.pop(); out += c; } else out += c === "\n" ? c : " ";
+      continue;
+    }
+    if (top.k === "double") {
+      if (c === "\\") { out += "  "; i++; continue; }
+      if (c === "$" && src[i + 1] === "(") { stack.push({ k: "subst", depth: 0 }); out += "$("; i++; continue; }
+      if (c === '"') { stack.pop(); out += c; continue; }
+      out += c === "\n" ? c : " ";
+      continue;
+    }
+    // code or subst
+    if (c === "\\") { out += c + (src[i + 1] ?? ""); i++; continue; }
+    if (c === "#" && (i === 0 || /[\s;]/.test(src[i - 1] ?? "")) && src[i - 1] !== "$") {
+      while (i < src.length && src[i] !== "\n") { out += " "; i++; }
+      out += src[i] ?? "";
+      continue;
+    }
+    if (c === "'") { stack.push({ k: "single" }); out += c; continue; }
+    if (c === '"') { stack.push({ k: "double" }); out += c; continue; }
+    if (c === "$" && src[i + 1] === "(") { stack.push({ k: "subst", depth: 0 }); out += "$("; i++; continue; }
+    if (top.k === "subst") {
+      if (c === "(") top.depth++;
+      else if (c === ")") { if (top.depth === 0) stack.pop(); else top.depth--; }
+    }
+    out += c;
+  }
+  return out;
+}
+
+/** Why this (quote-blanked) line pipes into an early-exiting consumer, or null. */
+export function earlyExitPipe(line: string): string | null {
+  if (line.trimStart().startsWith("#")) return null;
+  // `\$(` is escaped, so THIS shell never evaluates it: a remote payload or a
+  // printed hint, which does not inherit this script's pipefail.
+  if (/\\\$\(/.test(line)) return null;
+  if (!EARLY_EXIT.test(line)) return null;
+  if (/\|\|\s*true/.test(line)) return null;
+  return /(?<!\\)\$\(/.test(line) ? "inside `$(...)`" : "in a pipeline (a condition reads the 141 as a miss)";
+}
 
 for (const file of shFiles) {
   const src = readFileSync(file, "utf8");
   if (!/set\s+-[a-zA-Z]*o\s+pipefail|set\s+-o\s+pipefail/.test(src)) continue;
   checked++;
-
-  const lines = src.split("\n");
+  const lines = blankSingleQuoted(src).split("\n");
   for (let i = 0; i < lines.length; i++) {
-    const line = lines[i] ?? "";
-    if (line.trimStart().startsWith("#")) continue;
-    // Only inside a command substitution: a bare pipeline's 141 is visible in
-    // the exit status and usually intended.
-    //
-    // `\$(` is escaped, so THIS shell never evaluates it — it is a hint being
-    // printed for a human to paste, or a payload handed to a remote shell over
-    // ssh. Either way the substitution runs somewhere that does not inherit
-    // this script's pipefail, so the trap does not apply.
-    if (!/(?<!\\)\$\(/.test(line)) continue;
-    if (!EARLY_EXIT.test(line)) continue;
-    // Already guarded.
-    if (/\|\|\s*true/.test(line)) continue;
-
+    const where = earlyExitPipe(lines[i] ?? "");
+    if (!where) continue;
     failures.push(
-      `${file}:${i + 1}: \`${line.trim().slice(0, 90)}\`\n` +
-        `      pipes into an early-exiting consumer inside \`$(...)\` while pipefail is on. ` +
-        `When the producer outputs more than the pipe buffer holds it takes SIGPIPE and the ` +
-        `script exits 141 with no output. Limit in the producer (\`git log -n 20\`, ` +
-        `\`sed -n 1p\`) or append \`|| true\`.`,
+      `${file}:${i + 1}: \`${(src.split("\n")[i] ?? "").trim().slice(0, 90)}\`\n` +
+        `      pipes into an early-exiting consumer (head, grep -q, grep -m) ${where} while pipefail is on. ` +
+        `The producer can take SIGPIPE after the consumer exits, and the pipeline is 141: ` +
+        `no output from \`$(...)\`, or a match read as a miss. Use a here-string ` +
+        `(\`grep -q x <<<"$v"\`), \`grep ... >/dev/null\`, or limit in the producer ` +
+        `(\`git log -n 20\`, \`sed -n 1p\`).`,
     );
   }
 }
@@ -134,7 +203,7 @@ export function emptyGrepTrap(line: string, prev: string): string | null {
 }
 
 let emptyChecked = 0;
-for (const file of [...shFiles, ...libShFiles()]) {
+for (const file of shFiles) {
   const src = readFileSync(file, "utf8");
   if (!/set\s+-[a-zA-Z]*o\s+pipefail|set\s+-o\s+pipefail/.test(src)) continue;
   if (!/set\s+-[a-zA-Z]*e/.test(src)) continue;
@@ -146,15 +215,11 @@ for (const file of [...shFiles, ...libShFiles()]) {
     failures.push(
       `${file}:${i + 1}: \`${(lines[i] ?? "").trim().slice(0, 90)}\`\n` +
         `      ${why}. Say what no match means: \`{ grep ... || true; }\` when empty is an answer, ` +
-        `\`grep -q\` in an \`if\` when it is a question.`,
+        `\`grep -q x <<<"$v"\` in an \`if\` when it is a question.`,
     );
   }
 }
 
-function libShFiles(): string[] {
-  const d = join("scripts", "lib");
-  return existsSync(d) ? readdirSync(d).filter((f) => f.endsWith(".sh")).map((f) => join(d, f)) : [];
-}
 
 // ── workflow run: blocks (bash -e -o pipefail, so bare pipelines count) ──
 const WF_DIR = ".forgejo/workflows";

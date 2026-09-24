@@ -247,6 +247,52 @@ html.dark .dark\:text-slate-600 { color: #6B7280; }
 html.dark .dark\:border-slate-700,
 html.dark .dark\:border-slate-600 { border-color: #475569; }
 
+/* ── Date and time fields keep their height ─────────────────────
+   iOS Safari draws an EMPTY date, time or datetime input with
+   appearance:none (the field pack's control class) as a sliver with no
+   height: its value box is empty and nothing props it open, so Expires,
+   Bought on and Opened on a scanned item read as thin lines, not fields
+   (2026-09-24). A min-height equal to a text field's (.input: 0.5rem
+   padding top and bottom, a 1.25rem line, a 1px border each side = 38px)
+   holds every one open on every surface, and the value sits left like
+   text rather than centred. Unlayered, so no utility shrinks it back;
+   the test "an empty date input is as tall as a text input" reads it. */
+input[type="date"],
+input[type="time"],
+input[type="datetime-local"],
+input[type="month"],
+input[type="week"] {
+  min-height: 2.375rem;
+  line-height: 1.25rem;
+}
+input[type="date"]::-webkit-date-and-time-value,
+input[type="time"]::-webkit-date-and-time-value,
+input[type="datetime-local"]::-webkit-date-and-time-value {
+  min-height: 1.25rem;
+  text-align: left;
+}
+/* And an empty one says what it wants, as a text field's placeholder would.
+   On iOS Safari ONLY: it draws an empty date input as nothing at all, while
+   Chromium and desktop Safari draw their own "mm/dd/yyyy" and Chromium draws
+   ::before as well, so outside this block the field showed two placeholders
+   stacked. -webkit-touch-callout is supported by iOS Safari alone. React
+   keeps the value attribute in step with a controlled field, so [value=""]
+   is empty. */
+@supports (-webkit-touch-callout: none) {
+  input[type="date"][value=""]:not(:focus)::before {
+    content: "Add date";
+    color: rgb(var(--c-faint));
+  }
+  input[type="time"][value=""]:not(:focus)::before {
+    content: "Add time";
+    color: rgb(var(--c-faint));
+  }
+  input[type="datetime-local"][value=""]:not(:focus)::before {
+    content: "Add date and time";
+    color: rgb(var(--c-faint));
+  }
+}
+
 /* ── iOS focus-zoom guard ────────────────────────────────────────
    Mobile Safari auto-zooms the page when a focused form control's
    font-size is under 16px — most of our inputs are text-sm (14px),

@@ -1,0 +1,13 @@
+{
+  "_recorded": "2026-09-24, GET https://world.openfoodfacts.org/api/v2/product/9781449373320.json, trimmed to the fields the adapter reads (values as returned)",
+  "code": "9781449373320",
+  "status": 1,
+  "status_verbose": "product found",
+  "product": {
+    "code": "9781449373320",
+    "product_name": "Fit Shake",
+    "image_url": "https://images.openfoodfacts.org/images/products/978/144/937/3320/front_fr.3.400.jpg",
+    "image_front_url": "https://images.openfoodfacts.org/images/products/978/144/937/3320/front_fr.3.400.jpg",
+    "lang": "fr"
+  }
+}

@@ -3,7 +3,7 @@
 // Two states, one component:
 //   sandbox  "You have 41 minutes left" and the one button that stops that
 //            being true. Quiet until the last stretch, then present.
-//   trial    "Yours until 12 Oct." For a workspace kept from a sandbox, whose
+//   trial    "This workspace is yours until 12 Oct." For a workspace kept from a sandbox, whose
 //            owner has no real door yet, it also carries the two: send the
 //            sign-in link again, or choose a password right here.
 //
@@ -33,6 +33,7 @@ import { api } from "../lib/api";
 import { useAuth } from "../auth/AuthContext";
 import { sandboxExpiry, clearSandboxExpiry, markSandboxEnded } from "../lib/sandbox-session";
 import { SandboxSaveModal } from "./SandboxSaveModal";
+import { sandboxLine, signInLinkLead, trialLine } from "../lib/workspace-state-copy";
 
 /** Below this, the sandbox bar is always visible. Above it, only the small chip is. */
 const URGENT_MS = 15 * 60_000;
@@ -50,13 +51,6 @@ export interface WorkspaceState {
   emailed?: boolean;
 }
 
-function human(msLeft: number): string {
-  const mins = Math.max(0, Math.round(msLeft / 60_000));
-  if (mins <= 1) return "less than a minute";
-  if (mins < 60) return `${mins} minutes`;
-  return "an hour";
-}
-
 /** "12 Oct", in the viewer's locale. The year only when it is not this one. */
 export function untilDate(ts: number, now: number = Date.now()): string {
   const d = new Date(ts);
@@ -64,12 +58,22 @@ export function untilDate(ts: number, now: number = Date.now()): string {
   return d.toLocaleDateString(undefined, { day: "numeric", month: "short", ...(sameYear ? {} : { year: "numeric" }) });
 }
 
-// Over the base page, under every overlay.
+// Over the base page, under every overlay. Every colour here is OPAQUE: a
+// translucent strip let the page's chips show through the sentence on a phone.
+// Its height reaches the page foot through the bottom dock, so it never sits on
+// top of the last thing on the page.
 const BAR = "z-40 border-t px-4 py-2 text-sm flex flex-wrap items-center gap-x-3 gap-y-2 justify-center ";
+// A strip with two doors: the sentence on its own full-width line, and the two
+// buttons side by side below it, sharing the width (the owner's layout). The
+// row of doors is capped so a desktop does not stretch them edge to edge.
+const STACK = "z-40 border-t px-4 py-2.5 text-sm flex flex-col items-stretch gap-2 ";
+const DOORS = "flex w-full max-w-md self-center gap-2";
 const QUIET = "bg-surface dark:bg-slate-900 border-line dark:border-slate-700";
-const LOUD = "bg-ember-50 dark:bg-ember-950/40 border-ember-300 dark:border-ember-800";
+const LOUD = "bg-ember-50 dark:bg-ember-950 border-ember-300 dark:border-ember-800";
 const PRIMARY = "rounded-md bg-cobble-600 hover:bg-cobble-700 text-white font-medium px-3 py-1 transition";
-const SECONDARY = "rounded-md border border-line dark:border-slate-600 px-3 py-1 font-medium hover:bg-subtle transition";
+const SECONDARY =
+  "rounded-md border border-line dark:border-slate-600 bg-surface dark:bg-slate-900 px-3 py-1 font-medium hover:bg-subtle transition";
+const DOOR = " flex-1 min-w-0 py-2 leading-tight";
 
 export function WorkspaceStateBar({ slug }: { slug: string }) {
   // The localStorage hint paints a sandbox on the first frame; the server
@@ -165,19 +169,24 @@ export function WorkspaceStateBar({ slug }: { slug: string }) {
     const until = state.expiresAt == null ? null : untilDate(state.expiresAt, now);
     return (
       <>
-        <FloatingChrome anchor="bottom" className={BAR + QUIET} data-testid="workspace-state">
-          <span className="text-muted">
-            {until ? `Yours until ${until}.` : "Yours."}
+        <FloatingChrome
+          anchor="bottom"
+          className={(state.linkOpen ? STACK : BAR) + QUIET}
+          data-testid="workspace-state"
+          data-strip={state.linkOpen ? "full" : "chip"}
+        >
+          <span className={"text-muted" + (state.linkOpen ? " text-center leading-snug" : "")}>
+            {trialLine(until)}
             {state.linkOpen && state.email && (
               <>
                 {" "}
-                {state.emailed === false ? "We could not send your sign-in link to " : "Sign-in link sent to "}
+                {signInLinkLead(state.emailed)}
                 <span className="font-medium text-content dark:text-mortar-100">{state.email}</span>.
               </>
             )}
           </span>
           {state.linkOpen && (
-            <>
+            <div className={DOORS}>
               <button
                 type="button"
                 disabled={resend === "sending"}
@@ -188,14 +197,14 @@ export function WorkspaceStateBar({ slug }: { slug: string }) {
                     .then((r) => setResend(r.emailed ? "sent" : "failed"))
                     .catch(() => setResend("failed"));
                 }}
-                className={SECONDARY}
+                className={SECONDARY + DOOR}
               >
                 {resend === "sent" ? "Sent again" : resend === "failed" ? "Could not send" : resend === "sending" ? "Sending…" : "Resend"}
               </button>
-              <button type="button" onClick={() => setModal("password")} className={PRIMARY}>
+              <button type="button" onClick={() => setModal("password")} className={PRIMARY + DOOR}>
                 Set a password
               </button>
-            </>
+            </div>
           )}
         </FloatingChrome>
         {modalEl}
@@ -211,6 +220,11 @@ export function WorkspaceStateBar({ slug }: { slug: string }) {
   // that is ~48px instead of the three rows the full bar wraps to, which was
   // half the screen's foot for the whole hour (#3012). Under URGENT_MS the
   // full bar, with both doors named.
+  //
+  // One ROW, not one line: the sentence wraps beside the button rather than
+  // being cut. Ellipsised, "This is a sandbox. You have 41 minutes left." lost
+  // its time on a 390px phone and most of itself on a 320px one; the number is
+  // the one part the strip exists to say.
   const left = (state.expiresAt ?? now) - now;
   const urgent = left <= URGENT_MS;
 
@@ -218,29 +232,28 @@ export function WorkspaceStateBar({ slug }: { slug: string }) {
     <>
       <FloatingChrome
         anchor="bottom"
-        className={BAR + (urgent ? LOUD : QUIET + " flex-nowrap whitespace-nowrap")}
+        className={urgent ? STACK + LOUD : BAR + QUIET + " flex-nowrap"}
         data-testid="workspace-state"
         data-strip={urgent ? "full" : "chip"}
       >
-        <span className={urgent ? "text-ember-700 dark:text-ember-300 font-medium" : "text-muted truncate"}>
-          {urgent ? "Nearly done: " : "This is a sandbox. "}
-          {human(left)} left.
+        <span className={urgent ? "text-ember-700 dark:text-ember-300 font-medium text-center leading-snug" : "text-muted min-w-0 leading-snug"}>
+          {sandboxLine(left, urgent)}
         </span>
         {urgent ? (
-          <>
+          <div className={DOORS}>
             {/* One door, not two. These used to open different things and each
                 hid the other, so whichever you pressed first was the only one
                 you knew about. They are two answers to one question, so they
                 share a modal. */}
-            <button type="button" onClick={() => setModal("save")} className={PRIMARY}>
+            <button type="button" onClick={() => setModal("save")} className={PRIMARY + DOOR}>
               Keep this workspace
             </button>
-            <button type="button" onClick={() => setModal("save")} className={SECONDARY}>
+            <button type="button" onClick={() => setModal("save")} className={SECONDARY + DOOR}>
               Take your work
             </button>
-          </>
+          </div>
         ) : (
-          <button type="button" onClick={() => setModal("save")} className={PRIMARY + " shrink-0"}>
+          <button type="button" onClick={() => setModal("save")} className={PRIMARY + " shrink-0 whitespace-nowrap"}>
             Keep it
           </button>
         )}

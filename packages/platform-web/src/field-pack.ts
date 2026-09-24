@@ -21,9 +21,9 @@
 //     more than a checkbox), the longest choice of a dropdown, the label
 //     (a long label must fit its column) and the help under it (a
 //     paragraph wants the row); never from the field's name;
-//   - the COLUMNS come from the width: as many as fit at MIN_COL_PX, so a
-//     date never lands in a column it overruns and two compact selects
-//     share a row on a phone while a desktop form takes four;
+//   - the COLUMNS come from the width: as many as fit at MIN_COL_PX, so
+//     two short fields share a row on any phone while a desktop form takes
+//     four, and a date spans two columns where one would be too narrow;
 //   - the PACKING walks the fields in their declared order and gives each
 //     the columns it needs; a field that does not fit the rest of its row
 //     starts the next one. Order is never changed: the form's author put
@@ -45,6 +45,10 @@ export interface FieldNeed {
   /** The whole row whatever the width: a paragraph, a picker that opens a
    *  drawer under itself, a long value. */
   full?: boolean;
+  /** How wide the field would LIKE to be, past its minimum: a short typed
+   *  value read whole. The packer grants it up to half the row and never
+   *  more, so a wish never costs its neighbour the row. */
+  wantPx?: number;
 }
 
 export interface PackOptions {
@@ -73,15 +77,18 @@ export interface FieldPacking {
   cells: PackedCell[];
 }
 
-/** The narrowest column the grid makes. A native date control is the
- *  widest compact field (iOS renders its value as prose, "Sep 17, 2026",
- *  with padding either side); a column this wide holds one, and so every
- *  compact control's own minimum (CONTROL_MIN_PX) is at most this, or the
- *  grid could make a column no compact field fits: at 319px (a phone's
- *  part page, two card paddings in) the columns are 153px, and a text
- *  field that asked for 160 took the whole row, one field per line
- *  (#3147's walk). */
-export const MIN_COL_PX = 150;
+/** The narrowest column the grid makes. Low enough that a 320px phone's
+ *  form (286px inside the item sheet) still splits in two, so two short
+ *  fields share a row there too: at 150 that form was one column and
+ *  every field, a dropdown of five words included, took a row of its own.
+ *  Every compact control's own minimum is at most this, except a date,
+ *  which asks for DATE_MIN_PX and spans two columns when one is narrower. */
+export const MIN_COL_PX = 130;
+
+/** A native date control is the widest compact field: iOS renders its value
+ *  as prose ("Sep 17, 2026") with padding either side, and an empty one
+ *  wider than a 125px column ("Opened" off the right edge, IMG_0798). */
+export const DATE_MIN_PX = 150;
 
 /** The gap between columns, matched to the forms' gap-3. */
 export const GAP_PX = 12;
@@ -97,10 +104,18 @@ export function packFields(needs: readonly FieldNeed[], widthPx: number, opts: P
   const cols = Math.max(1, Math.min(maxCols, Math.floor((width + gap) / (minCol + gap))));
   const colPx = Math.max(0, (width - gap * (cols - 1)) / cols);
   // A field spanning k columns gets k·col + (k−1)·gap of width.
+  const columnsFor = (px: number): number => {
+    const k = Math.ceil((px + gap) / (colPx + gap));
+    return Math.max(1, Math.min(cols, Number.isFinite(k) ? k : cols));
+  };
+  // Half the row: the most a WISH may take, so two short fields always
+  // share a row on a phone (the owner: "condition and acquired from can
+  // each be half width same row").
+  const half = Math.max(1, Math.floor(cols / 2));
   const spanOf = (n: FieldNeed): number => {
     if (n.full) return cols;
-    const k = Math.ceil((n.minPx + gap) / (colPx + gap));
-    return Math.max(1, Math.min(cols, Number.isFinite(k) ? k : cols));
+    const need = columnsFor(n.minPx);
+    return n.wantPx && n.wantPx > n.minPx ? Math.max(need, Math.min(half, columnsFor(n.wantPx))) : need;
   };
   const cells: PackedCell[] = [];
   let row = 0;
@@ -143,8 +158,8 @@ export interface FieldSpace {
 const CONTROL_MIN_PX: Record<FieldSpace["control"], number> = {
   checkbox: 120,
   number: 110,
-  date: MIN_COL_PX,
-  choice: 140,
+  date: DATE_MIN_PX,
+  choice: 120,
   text: MIN_COL_PX,
   url: MIN_COL_PX,
   color: 170,
@@ -167,8 +182,10 @@ const CHOICE_CHROME_PX = 44;
 const INPUT_CHROME_PX = 26;
 /** The controls whose value is typed text a column can be too narrow for. */
 const TYPED: ReadonlySet<FieldSpace["control"]> = new Set(["text", "url", "number"]);
-/** Past this a value is prose and wants the row rather than a wider column. */
-const LONG_VALUE_CHARS = 40;
+/** Past this a value is prose and wants the row. Up to it, a value is short
+ *  and keeps a half row beside its neighbour, even where the half cannot
+ *  show every character (a 172px phone column holds about 17). */
+const LONG_VALUE_CHARS = 24;
 /** Past this a help line is a paragraph beside nothing. */
 const LONG_HELP_CHARS = 60;
 
@@ -183,15 +200,20 @@ export function fieldNeed(key: string, space: FieldSpace): FieldNeed {
     const longest = space.choices.reduce((m, c) => Math.max(m, c.length), 0);
     minPx = Math.max(minPx, Math.round(longest * VALUE_PX_PER_CHAR) + CHOICE_CHROME_PX);
   }
-  // A typed value shorter than a paragraph still wants to be read whole: the
-  // column grows to hold it (an 18-character machine name scrolled inside a
-  // half-column input on a phone, #3107's walk), up to the row.
-  if (TYPED.has(control) && space.valueLength) {
-    minPx = Math.max(minPx, Math.round(space.valueLength * VALUE_PX_PER_CHAR) + INPUT_CHROME_PX);
-  }
   // A label may wrap to two lines above its control, so it asks for half
   // its single-line width: "Once opened, good for (days)" over a number box
   // is two short lines in a half column, not a whole row for a number.
   const labelPx = Math.ceil((space.label.trim().length * LABEL_PX_PER_CHAR) / 2) + 8;
-  return { key, minPx: Math.max(minPx, labelPx) };
+  minPx = Math.max(minPx, labelPx);
+  // A typed value shorter than prose would like to be read whole (an
+  // 18-character machine name scrolled in a half-column input, #3107), so
+  // it WISHES for the width. A wish, not a need: it may widen the column up
+  // to half the row on a wide form, and never takes the row from a short
+  // neighbour ("Acquired from" with a marketplace in it used to push
+  // Condition onto a row of its own).
+  if (TYPED.has(control) && space.valueLength) {
+    const wantPx = Math.round(space.valueLength * VALUE_PX_PER_CHAR) + INPUT_CHROME_PX;
+    if (wantPx > minPx) return { key, minPx, wantPx };
+  }
+  return { key, minPx };
 }

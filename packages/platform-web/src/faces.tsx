@@ -23,8 +23,19 @@ export interface FacesVerdict {
 
 /** The faces a kind wears in this workspace. Bias: until the answer arrives,
  *  every face is on, so a real inventory item never flashes lean and nothing
- *  a person is about to press disappears under them. */
-export function useFaces(kind: string): { on: ReadonlySet<FaceName>; worn: ReadonlySet<string>; isLoading: boolean; verdict: FacesVerdict | null } {
+ *  a person is about to press disappears under them. A FAILED read is not
+ *  that: it wears no optional face, since "every face" is what put Use one
+ *  and Used up on a lamp (#3646); an item's detail waits for `ready` behind
+ *  PresentationGate and offers Retry on `failed`. */
+export function useFaces(kind: string): {
+  on: ReadonlySet<FaceName>;
+  worn: ReadonlySet<string>;
+  isLoading: boolean;
+  verdict: FacesVerdict | null;
+  ready: boolean;
+  failed: boolean;
+  retry: () => void;
+} {
   const { api, orgSlug } = usePlatformWeb();
   const q = useQuery({
     queryKey: ["faces", orgSlug, kind],
@@ -38,14 +49,18 @@ export function useFaces(kind: string): { on: ReadonlySet<FaceName>; worn: Reado
     const known = (xs: string[]): FaceName[] => xs.filter((x): x is FaceName => (FACE_NAMES as readonly string[]).includes(x));
     const verdict: FacesVerdict | null = q.data ? { kind: q.data.kind, traits: q.data.traits ?? {}, faces: known(q.data.faces), explicit: known(q.data.explicit) } : null;
     return {
-      on: new Set<FaceName>(verdict ? verdict.faces : FACE_NAMES),
+      on: new Set<FaceName>(verdict ? verdict.faces : q.isError ? [] : FACE_NAMES),
       // Unknown until the answer arrives: treat every trait as worn, so
       // nothing a person is about to press disappears under them.
-      worn: new Set<string>(verdict ? Object.values(verdict.traits) : ["*"]),
+      worn: new Set<string>(verdict ? Object.values(verdict.traits) : q.isError ? [] : ["*"]),
       isLoading: q.isLoading,
       verdict,
+      // A host without the faces read shows every face, as it always has.
+      ready: !api.listFaces || q.isSuccess,
+      failed: q.isError,
+      retry: () => void q.refetch(),
     };
-  }, [q.data, q.isLoading]);
+  }, [q.data, q.isLoading, q.isError, q.isSuccess, api.listFaces]);
 }
 
 /** Faces a person opened on THIS screen before the collection's verdict

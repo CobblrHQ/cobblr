@@ -11,6 +11,7 @@ import sharp from "sharp";
 import { seenCountOf } from "./seen-count.js";
 import { platform } from "@cobblr/platform-contract";
 import { uprightBytes } from "./trim-margins.js";
+import { splitUncutWords } from "@cobblr/platform-contract/scan-triage";
 
 /** Read a file's ORIGINAL bytes (fall back to medium if original is gone). */
 async function readBytes(orgId: string, fileId: string): Promise<{ buf: Buffer; mime: string } | null> {
@@ -134,14 +135,7 @@ export function cropRegionFor(W: number, H: number, box: SplitBox, pad: number):
 
 /** The refusal, as a clause for a message. */
 export function cropRefusalWords(reason: CropRefusal | "no-source" | "write-failed"): string {
-  switch (reason) {
-    case "undecodable": return "the photo could not be read";
-    case "box-too-small": return "the region is too small to be a thing";
-    case "box-too-large": return "the region is nearly the whole photo";
-    case "flat": return "that region shows nothing";
-    case "no-source": return "the photo is missing";
-    case "write-failed": return "the crop could not be saved";
-  }
+  return splitUncutWords(reason);
 }
 
 export type CropOutcome =
@@ -225,50 +219,55 @@ export function normalizeSplitBox(
   return null;
 }
 
-/** Ask vision to segment the photo into distinct items. Returns [] when the
- *  model sees one item / can't parse — the caller 409s "nothing to split". */
+/** Ask vision to segment the photo into distinct items. `items` is empty when
+ *  the model sees one item or the answer could not be read; `failed` says the
+ *  call itself did not answer, so a split without boxes can say why rather
+ *  than quietly keep the group shot (#3614).
+ *
+ *  The model is shown the picture AS DISPLAYED. A phone stores its photo a
+ *  quarter turn from what it shows (EXIF orientation 6), and the stored
+ *  raster used to be sent while its answer was read against the displayed
+ *  frame: a box in pixels of the sideways picture fell outside the upright
+ *  one and was dropped, so both pieces of a two-set phone photo arrived
+ *  with no box and kept the whole photo. What the model sees, the frame its
+ *  boxes are read in, and the frame the crop is cut in are now one. */
 export async function detectSplitItems(
   orgId: string,
   fileId: string,
   userId?: string | null,
-): Promise<SplitItem[]> {
+): Promise<{ items: SplitItem[]; failed: boolean }> {
   const src = await readBytes(orgId, fileId);
-  if (!src) return [];
+  if (!src) return { items: [], failed: true };
+  const up = await uprightBytes(src.buf);
+  const shown = up?.bytes ?? src.buf;
   let raw: unknown;
   try {
     const r = await platform().ai.invoke({
       orgId,
       capability: "split-image",
       input: {
-        image_b64: src.buf.toString("base64"),
+        image_b64: shown.toString("base64"),
         image_media_type: src.mime,
         prompt: SPLIT_PROMPT,
       },
       source: { kind: "core-scan:split", id: fileId },
       userId: userId ?? undefined,
-      // The cache may now serve this. It couldn't before: the key didn't include
-      // the prompt, so a split call and an IDENTIFY call on the same photo hashed
-      // to the SAME key — a cache hit would have handed the split the identify's
-      // answer. `bypass_cache: true` was the workaround for that collision (and
-      // meant every split paid full price, for a call that couldn't work anyway).
-      // The prompt fingerprint separates them properly, so N children splitting
-      // the same parent image now share one call instead of firing N identical
-      // ones.
+      // The cache may serve this: the key carries the prompt's fingerprint, so
+      // a split and an identify on the same photo never share an answer, and
+      // N children splitting one parent share one call.
     });
     const text = r.text.trim();
     const jsonStr = text.startsWith("{") ? text : (text.match(/\{[\s\S]*\}/)?.[0] ?? "");
     raw = jsonStr ? JSON.parse(jsonStr) : null;
   } catch (err) {
     console.error("[core-scan] split detect failed:", (err as Error)?.message ?? err);
-    return [];
+    return { items: [], failed: true };
   }
   const items = Array.isArray((raw as { items?: unknown })?.items)
     ? ((raw as { items: unknown[] }).items as Array<Record<string, unknown>>)
     : [];
-  // The displayed frame, for a model that answered in pixels.
-  const up = await uprightBytes(src.buf);
   const frame = up?.meta.width && up.meta.height ? { width: up.meta.width, height: up.meta.height } : null;
-  return readSplitItems(items, frame);
+  return { items: readSplitItems(items, frame), failed: false };
 }
 
 /** The model's segmentation answer, shaped: a named item with a usable box

@@ -15,7 +15,7 @@ export { pluralise, countOf, itemNounFor } from "@cobblr/platform-contract/plura
 export { PLATFORM_OWNER, PLATFORM_COMMANDS, PLATFORM_COMMANDS_VERSION } from "@cobblr/platform-contract/platform-commands";
 export { expiryState, expiryPhrase, EXPIRING_WITHIN_DAYS, type ExpiryState, type ExpiryReading } from "@cobblr/platform-contract/expiry-grace";
 export { fieldDay, fieldDayUnreadable } from "@cobblr/platform-contract/field-day";
-export { arrivedEverywhere, dayHere, dayIn, daySaid, theirDay, type Day } from "@cobblr/platform-contract/day";
+export { arrivedEverywhere, dayHere, dayIn, countdownWords, daySaid, daysUntil, daysUntilField, theirDay, type Day } from "@cobblr/platform-contract/day";
 export { keepMembers, isMember, parcelAudience } from "@cobblr/platform-contract/membership";
 export { splitEntityKind, entityKindOf, type EntityKindParts } from "@cobblr/platform-contract/entity-kind";
 export { actionRunsUnconfirmed, type ActionConsent } from "@cobblr/platform-contract/action-consent";
@@ -279,6 +279,11 @@ export type CollectionTraits = Partial<Record<AnyAxisName, AnyTraitName>>;
  *       stock, and every book then wore Use one, Used up and a reorder point
  *       (the 2026-09-12 review); the author's declaration is the fact, the
  *       latch was a guess from a number every create sends;
+ *       And the same declaration the other way (`faces.stock === true`): the
+ *       bundle says its collection is counted stock, so a box of screws wears
+ *       Use one from its first item rather than after a second is counted.
+ *       A declaration governs both ways; only an undeclared collection is left
+ *       to its data (2026-09-24, #3646);
  *    3. the sticky latch (`stock_latched`) set by an earlier stock-shaped write;
  *    4. null: nothing meta-side says, probe the data (bias lean).
  *  The kernel's kind synthesis and the inventory module's disclosure route
@@ -287,7 +292,7 @@ export function stockDisclosureFromConfig(cfg: Record<string, unknown> | null | 
   if (!cfg) return null;
   if (typeof cfg.stock === "boolean") return cfg.stock;
   const faces = cfg.faces as Record<string, unknown> | null | undefined;
-  if (faces && typeof faces === "object" && faces.stock === false) return false;
+  if (faces && typeof faces === "object" && typeof faces.stock === "boolean") return faces.stock;
   if (cfg.stock_latched === true) return true;
   return null;
 }
@@ -2199,6 +2204,12 @@ export interface PlatformTenants {
  *  orgs?"). Day-to-day module work should stay on tenant DBs. */
 export interface PlatformDb {
   meta: unknown;
+  /** THE partial write to a record's jsonb bag (#3625): an expression to
+   *  hand to an UPDATE's `.set({ [column]: … })` that sets the non-null keys
+   *  and removes the null ones against the LIVE row, in one statement
+   *  (@cobblr/platform-contract/jsonb-merge). Never read the bag, change it
+   *  in JS and write it back: a concurrent edit in between is lost. */
+  mergeJsonb(column: string, fields: Record<string, unknown>): unknown;
 }
 
 // ──────────────── Pillar A runtime — entities ──────────────────────
@@ -2744,8 +2755,8 @@ export interface PlatformEntities {
    *  exist. Projects through the kind's exposableFields whitelist.
    *
    *  `fields` IS A SUBSET, NEVER THE WHOLE RECORD. exposableFields is curated
-   *  by the owning module - inventory withholds notes, cost, manufacturer and
-   *  supplier_url from cross-module readers on purpose. So this is the right
+   *  by the owning module - inventory withholds notes, cost and supplier_url
+   *  from cross-module readers on purpose. So this is the right
    *  way to READ ABOUT an entity and the wrong way to COPY one: anything that
    *  reads a record here and then destroys the original (a merge, a move
    *  between kinds, an export-and-delete) silently loses every field the module
@@ -4487,6 +4498,17 @@ export interface PlatformAuth {
     userId: string;
     role: string;
     actionId: string;
+  }): Promise<BlockedAction>;
+  /** The same explanation for any set of remedies: a table in an app that is
+   *  off (`module`), a bundle to install (`install`), a capability. For a
+   *  refusal that is not a capability gate, so it still carries the ask
+   *  instead of a dead end (#3610). */
+  describeBlock(args: {
+    orgId: string;
+    userId: string;
+    role: string;
+    remedies: ReadonlyArray<{ kind: "capability" | "install" | "module"; key: string }>;
+    doing?: string;
   }): Promise<BlockedAction>;
   /** Mint a SHORT-LIVED, capability-scoped token carrying `userId`'s
    *  own identity + an `app:<slug>` audience (H1 Tier B). It verifies

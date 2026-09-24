@@ -36,6 +36,16 @@ export default defineModule({
       // core-placement.placed; costs nothing until something moves.
       const { registerStorageFitCheck } = await import("./services/storage-fit.js");
       registerStorageFitCheck();
+      // Boot-time heal: a row filed before the commit recorded where it went
+      // gets that record - see the DONE WHEN in heal-filed-into.ts for when
+      // this call goes.
+      const { registerFiledIntoHeal } = await import("./heal-filed-into.js");
+      registerFiledIntoHeal();
+      // Boot-time heal: a draft identified before #3613 reads its unsupported
+      // identifiers as unconfirmed - see the DONE WHEN in
+      // heal-unconfirmed-identifiers.ts for when this call goes.
+      const { registerUnconfirmedIdentifiersHeal } = await import("./heal-unconfirmed-identifiers.js");
+      registerUnconfirmedIdentifiersHeal();
     },
   },
 

@@ -25,11 +25,16 @@ export function registerLabelsHandlers(): void {
   platform().actions.registerHandler("labels.queue-from-entity", async (ctx) => {
     const entity = requireActionEntity(ctx);
     const db = (await platform().tenants.getDb(ctx.orgId)) as Kysely<LabelsDB>;
-    const ent = await platform().entities.lookup(
-      ctx.orgId,
-      entity.kind,
-      entity.id,
-    );
+    // A label names the RECORD, never the collection's alias for it. A book on
+    // a Bookshelf is an inventory part that lives in the bookshelf instance;
+    // "bookshelf:item" is how that collection spells its rows. Queued and
+    // minted under the alias, the same book got a second QR that the scanner
+    // read as somewhere to file things into (#3591). The instance is read off
+    // the row wherever the label is opened, so the base kind loses nothing.
+    const { base: recordKind } = await platform().entities.resolveKind(ctx.orgId, entity.kind);
+    const ent =
+      (await platform().entities.lookup(ctx.orgId, recordKind, entity.id)) ??
+      (await platform().entities.lookup(ctx.orgId, entity.kind, entity.id));
     if (!ent) {
       throw new ActionRefusal(
         `labels:print: could not resolve ${entity.kind}:${entity.id}`,
@@ -74,7 +79,7 @@ export function registerLabelsHandlers(): void {
     const style = await getQrTokenStyle(qrDb);
     const token = await ensureNavToken(
       ctx.orgId,
-      ent.kind,
+      recordKind,
       ent.id,
       style === "descriptive" ? "descriptive" : "opaque",
     );
@@ -84,8 +89,8 @@ export function registerLabelsHandlers(): void {
       .insertInto("labels_queue")
       .values({
         user_id: ctx.userId,
-        module_name: ent.kind.split(":")[0] ?? "unknown",
-        entity_type: ent.kind.split(":")[1] ?? "entity",
+        module_name: recordKind.split(":")[0] ?? "unknown",
+        entity_type: recordKind.split(":")[1] ?? "entity",
         entity_id: ent.id,
         qr_payload,
         description,
@@ -97,7 +102,7 @@ export function registerLabelsHandlers(): void {
     platform().events.emit("labels.print.queued", {
       orgId: ctx.orgId,
       queueId: inserted.id,
-      entityKind: ent.kind,
+      entityKind: recordKind,
       entityId: ent.id,
     });
 

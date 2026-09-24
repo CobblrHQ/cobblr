@@ -1,0 +1,10 @@
+{
+  "lint": "lint:no-promise-all-over-connect",
+  "run": "tsx scripts/lint-no-promise-all-over-connect.ts",
+  "rows": [
+    "kernel-platform-service"
+  ],
+  "ms": 1474,
+  "recorded": "2026-09-24",
+  "source": "scaffolded by new-lint.sh at twice a local run (a shared box); replaced from its first CI measurement"
+}

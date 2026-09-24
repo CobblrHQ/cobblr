@@ -28,6 +28,7 @@
 
 import { sql } from "kysely";
 import { meta } from "../db/meta.js";
+import { bumpWorkspaceShape } from "./workspace-shape.js";
 import { noteHealShim } from "./heal-shim-log.js";
 
 const SHIM = "api/src/platform/merge-labels-qr.ts";
@@ -60,6 +61,7 @@ export async function mergeLabelsQr(): Promise<{ renamed: number; deleted: numbe
           .where("module_name", "=", "core-labels-qr")
           .execute();
         deleted++;
+        await bumpWorkspaceShape(org_id);
         continue;
       }
       const minted = await meta
@@ -84,6 +86,7 @@ export async function mergeLabelsQr(): Promise<{ renamed: number; deleted: numbe
           .execute();
         deleted++;
       }
+      await bumpWorkspaceShape(org_id);
     } catch (err) {
       failed++;
       console.error(`[merge-labels-qr] org ${org_id} failed:`, (err as Error).message);

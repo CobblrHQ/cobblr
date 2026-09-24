@@ -7,6 +7,9 @@ import { sql, type Kysely } from "kysely";
 import { platform, type EntityListQuery, type ResolvedEntity, textSearchWhere } from "@cobblr/platform-contract";
 import { type InventoryDB } from "../db.js";
 import { applyPartFilters, applyPartSort } from "./part-query.js";
+import { resolveDetailPath } from "@cobblr/platform-contract/instance-detail";
+import type { Remaining } from "@cobblr/platform-contract/consumption-gauge";
+import { remainingFor } from "./remaining.js";
 
 let registered = false;
 
@@ -28,6 +31,7 @@ export function registerInventoryResolvers(): void {
         row,
         (await categoryNames(db, [row])).get(row.category_id ?? "") ?? null,
         (await locationNames(orgId, [row])).get(row.location_id ?? "") ?? null,
+        (await remainingFor(orgId, db, [row])).get(row.id) ?? null,
       );
     },
   );
@@ -60,9 +64,11 @@ export function registerInventoryResolvers(): void {
     q = applyPartFilters(q, query);
     const sortedQ = applyPartSort(q, query.sort);
     const rows = await sortedQ.limit(limit).offset(offset).execute();
-    const [names, places] = await Promise.all([categoryNames(db, rows), locationNames(orgId, rows)]);
+    const [names, places, left] = await Promise.all([categoryNames(db, rows), locationNames(orgId, rows), remainingFor(orgId, db, rows)]);
     return {
-      items: rows.map((r) => toResolvedPart(r, names.get(r.category_id ?? "") ?? null, places.get(r.location_id ?? "") ?? null)),
+      items: rows.map((r) =>
+        toResolvedPart(r, names.get(r.category_id ?? "") ?? null, places.get(r.location_id ?? "") ?? null, left.get(r.id) ?? null),
+      ),
     };
   };
   // SCOPED TO THE DEFAULT INSTANCE, deliberately. This used to pass no
@@ -97,6 +103,7 @@ export function registerInventoryResolvers(): void {
       row,
       (await categoryNames(db, [row])).get(row.category_id ?? "") ?? null,
       (await locationNames(orgId, [row])).get(row.location_id ?? "") ?? null,
+      (await remainingFor(orgId, db, [row])).get(row.id) ?? null,
     );
   });
 }
@@ -152,7 +159,7 @@ export function toResolvedPart(row: {
   metadata: unknown;
   archived?: boolean;
   category_id?: string | null;
-}, categoryName: string | null = null, locationName: string | null = null): ResolvedEntity {
+}, categoryName: string | null = null, locationName: string | null = null, remaining: Remaining | null = null): ResolvedEntity {
   const qty = Number(row.qty);
   // A skinned instance's items live at /instances/<name>/items/:id; the default
   // ("inventory") instance lives at the base /inventory/parts/:id. Without this,
@@ -160,10 +167,13 @@ export function toResolvedPart(row: {
   // surface that uses the resolved detailUrl — a saved view, the dashboard,
   // search — navigated to the base route, which scopes to the default instance →
   // "part not found".
-  const detailUrl =
-    row.instance && row.instance !== "inventory"
-      ? `/instances/${row.instance}/items/${row.id}`
-      : `/inventory/parts/${row.id}`;
+  const detailUrl = resolveDetailPath({
+    kind: "inventory:part",
+    id: row.id,
+    instance: row.instance && row.instance !== "inventory" ? row.instance : null,
+    detailUrl: null,
+    baseDetailRoute: "/inventory/parts/{id}",
+  })!;
   return {
     kind: "inventory:part",
     id: row.id,
@@ -203,6 +213,11 @@ export function toResolvedPart(row: {
       // the card can pick its shape from the signal rather than being told.
       approximate_qty: row.approximate_qty == null ? null : Number(row.approximate_qty),
       estimated_at: row.estimated_at ?? null,
+      // What is LEFT, from the running balance (consumption-gauge.ts): the
+      // unopened count, each open unit's remainder and, when they add up in
+      // one measure, the total. A reader never works it out from a capacity,
+      // which is the size of one unit, not what is left (#3651).
+      ...(remaining ? { remaining } : {}),
       metadata: row.metadata,
     },
   };

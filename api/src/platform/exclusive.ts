@@ -95,3 +95,32 @@ export async function tryHoldExclusive(name: string): Promise<{ release: () => P
     },
   };
 }
+
+/**
+ * Run `work` once every other holder of `name` has finished, across every api
+ * process: the WAITING form, for a request that must still do its work after
+ * losing the race (a sweep can skip a tick; a person's install cannot).
+ *
+ * Two doors filing rows for the same absent app at once (two devices, a tap
+ * during File all) used to run the install twice concurrently. Serialised,
+ * the second one finds the table the first made. Gives up after `waitMs`
+ * rather than holding a request forever behind a stuck holder.
+ */
+export async function runSerialised<T>(name: string, work: () => Promise<T>, waitMs = 60_000): Promise<T> {
+  const { env } = await import("../env.js");
+  const { createClient } = await import("../db/client-error-guard.js");
+  const key = lockKeyFor(name).toString();
+  const client: Client = createClient({ connectionString: env.DATABASE_URL }, `advisory-lock ${name}`);
+  await client.connect();
+  try {
+    await client.query(`set lock_timeout = ${Math.max(1, Math.floor(waitMs))}`);
+    await client.query("select pg_advisory_lock($1)", [key]);
+    try {
+      return await work();
+    } finally {
+      await client.query("select pg_advisory_unlock($1)", [key]).catch(() => {});
+    }
+  } finally {
+    await client.end().catch(() => {});
+  }
+}

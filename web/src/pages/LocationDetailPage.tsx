@@ -18,6 +18,7 @@ import { ApiError, api, type Location, type PlatformEntityKind } from "../lib/ap
 import { useActiveOrg } from "../auth/ActiveOrgContext";
 import { EntityAttachments } from "../components/EntityAttachments";
 import { FloorPlan } from "../components/FloorPlan";
+import { recordHref } from "@cobblr/platform-contract/instance-detail";
 
 /** One thing found inside this location, as the placement endpoint returns it:
  *  the entity's resolved identity plus its declared fields. */
@@ -25,6 +26,8 @@ interface PlacedEntity {
   kind: string;
   id: string;
   title: string;
+  /** Where the record lives, from its own collection (the resolver's). */
+  detailUrl?: string;
   fields?: Record<string, unknown>;
 }
 
@@ -335,7 +338,7 @@ export function LocationDetailPage() {
             {contents.data.items.map((item) => {
               const f = item.fields ?? {};
               const template = routes.get(item.kind);
-              const href = template ? template.replace("{id}", item.id) : null;
+              const href = recordHref(item, template);
               const maker = str(f.manufacturer);
               const body = (
                 <div className="flex items-center gap-3 min-w-0">

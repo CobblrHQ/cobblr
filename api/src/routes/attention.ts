@@ -19,7 +19,7 @@ import { withTenant } from "../middleware/tenant.js";
 import { facesForKind } from "../platform/faces.js";
 import { resolveKind } from "../platform/entities.js";
 import { hasPrimaryRouter } from "../modules/mount.js";
-import { fieldDay, fieldDayUnreadable, viewQuery } from "@cobblr/platform-contract";
+import { countdownWords, fieldDay, fieldDayUnreadable, viewQuery } from "@cobblr/platform-contract";
 import { dueState, todayFrom } from "../lib/due-day.js";
 
 export const attentionRouter = Router({ mergeParams: true });
@@ -232,7 +232,7 @@ attentionRouter.get("/", requireAuth, withTenant, async (req, res, next) => {
         } catch {
           stockFace = false;
         }
-        type Dated = { id: string; name: string; when: number; field: string };
+        type Dated = { id: string; name: string; when: number; day: string; field: string };
         const overdue: Dated[] = [];
         const dueToday: Dated[] = [];
         const upcoming: Dated[] = [];
@@ -248,7 +248,7 @@ attentionRouter.get("/", requireAuth, withTenant, async (req, res, next) => {
             const day = fieldDay(raw);
             if (day === null) continue; // said above, as unreadable
             const t = Date.parse(`${day}T00:00:00Z`);
-            const dated = { id: String(r.id ?? r.name ?? "item"), name: String(r.name ?? "item"), when: t, field: f.name };
+            const dated = { id: String(r.id ?? r.name ?? "item"), name: String(r.name ?? "item"), when: t, day, field: f.name };
             // By calendar day, the way the schedule reads it: due today is
             // today, never overdue (due-day.ts).
             const state = dueState(raw, today, WINDOW_DAYS);
@@ -274,14 +274,11 @@ attentionRouter.get("/", requireAuth, withTenant, async (req, res, next) => {
           (viewQuery(v.config).sort ?? []).some((spec) => dueNames.has(spec.replace(/^-/, ""))),
         );
         const dueRoute = dueView ? `${route}?view=${encodeURIComponent(dueView.id)}` : route;
-        const ago = (t: number) => {
-          const d = Math.round((now - t) / 86_400_000);
-          return d <= 0 ? "today" : d === 1 ? "yesterday" : `${d}d ago`;
-        };
-        const ahead = (t: number) => {
-          const d = Math.round((t - now) / 86_400_000);
-          return d <= 0 ? "today" : d === 1 ? "tomorrow" : `in ${d}d`;
-        };
+        // Calendar days from the reader's day (the one countdown, day.ts):
+        // this used to round an instant, and read "in 4d" beside Up next's
+        // "in 5 days" for the same banana (#3641).
+        const ago = (day: string) => countdownWords(day, today);
+        const ahead = (day: string) => countdownWords(day, today);
         // Soonest first, both lists: the most overdue leads, the nearest
         // upcoming leads.
         overdue.sort((a, b) => a.when - b.when);
@@ -294,7 +291,7 @@ attentionRouter.get("/", requireAuth, withTenant, async (req, res, next) => {
             count: overdue.length,
             sample: overdue.slice(0, 3).map((d) => d.name),
             route: dueRoute,
-            entries: overdue.slice(0, 8).map((d) => ({ id: d.id, title: `${d.name} — ${ago(d.when)}`, action: { record: d.id, kind }, record: recordOf(d.id, d.name) })),
+            entries: overdue.slice(0, 8).map((d) => ({ id: d.id, title: `${d.name} — ${ago(d.day)}`, action: { record: d.id, kind }, record: recordOf(d.id, d.name) })),
           });
         if (dueToday.length > 0)
           rows.push({
@@ -312,7 +309,7 @@ attentionRouter.get("/", requireAuth, withTenant, async (req, res, next) => {
             count: upcoming.length,
             sample: upcoming.slice(0, 3).map((d) => d.name),
             route: dueRoute,
-            entries: upcoming.slice(0, 8).map((d) => ({ id: d.id, title: `${d.name} — ${ahead(d.when)}`, action: { record: d.id, kind }, record: recordOf(d.id, d.name) })),
+            entries: upcoming.slice(0, 8).map((d) => ({ id: d.id, title: `${d.name} — ${ahead(d.day)}`, action: { record: d.id, kind }, record: recordOf(d.id, d.name) })),
           });
       }),
     );

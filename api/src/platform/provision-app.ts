@@ -13,6 +13,7 @@ import { getOfficialBundleManifest } from "../routes/registry.js";
 import { getManagedApp, type ManagedApp } from "./managed-apps.js";
 import { listInstances, setScanFallback } from "./instances.js";
 import { upsertOverride } from "./entity-kind-overrides.js";
+import { actionActed, normaliseActionResult } from "@cobblr/platform-contract/action-result";
 import { fileIdFromRawPath, rawPathFor } from "./file-paths.js";
 
 /** Write the app's curated `nav_order` onto each nav entry's override, so the
@@ -268,7 +269,7 @@ export async function importAppData(
     // it never landed — a graduated workspace missing a row, and the second half
     // of the graduation-photos flake). Atomic: the import 2xx's only when every
     // item is actually created.
-    await platform().actions.invoke("inventory:create-item", {
+    const made = await platform().actions.invoke("inventory:create-item", {
       orgId: targetOrgId,
       userId,
       entity: { kind, id: "" },
@@ -283,6 +284,11 @@ export async function importAppData(
         fields: customFields,
       },
     });
+    // A create that answered no did not land either: the same rule as a throw.
+    if (!actionActed(made)) {
+      const read = normaliseActionResult(made, "inventory:create-item");
+      throw new Error(`could not import "${it.title ?? "an item"}": ${read.ok ? "no answer" : read.error}`);
+    }
     imported++;
   }
   return { imported, instance: app.instanceName };

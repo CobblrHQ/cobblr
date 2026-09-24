@@ -69,6 +69,9 @@ export interface OrgsTable {
   db_name: string;
   db_credentials_encrypted: string | null;
   plan: Generated<"free" | "paid" | "disabled">;
+  /** Counter of the workspace's shape (modules on, collections, bundles),
+   *  bumped by workspace-shape.ts and served as X-Cobblr-Workspace-Shape. */
+  shape_version: Generated<number>;
   /** Per-workspace AI opt-out. When true, the workspace/managed AI default is
    *  off here; a user's own personal connection still works. */
   ai_disabled: Generated<boolean>;

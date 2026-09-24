@@ -17,9 +17,17 @@
 //   3. a tenant open (`tenants.getDb(`, `tenants.withDb(`, `getTenantDb(`,
 //      `withTenantDbForSweep(`)
 // is a private tenant walker and is refused. The scheduler itself is exempt.
-// A one-shot boot pass (no timer) and a per-org queue worker (no walk) are
-// not this shape and pass. There is no opt-out annotation: a walker that
-// "cannot storm" is one more timer the budget does not know about.
+// A per-org queue worker (no walk) is not this shape and passes.
+//
+// And a module's one-shot heal (a file under modules/ with a "DONE WHEN:"
+// header) that walks the workspaces and opens them is refused with or without
+// a timer: it walks at boot beside every other module's boot work, which is a
+// storm too. core-scan's two such heals failed 339 and 340 of 340 staging
+// workspaces on "remaining connection slots are reserved" (#3647). It
+// registers with registerHealPass (platform-contract heal-pass.ts). The
+// kernel's own boot passes run one after another in boot() and are exempt.
+// There is no opt-out annotation: a walker that "cannot storm" is one more
+// walk the budget does not know about.
 //
 // PROVEN RED on the walkers it replaced: the pictures sweep, the retrim, the
 // split-series heal, the re-route, the receipt tracking, cadence,
@@ -70,6 +78,16 @@ function check(file: string, src: string): Violation[] {
     .split("\n")
     .map((l) => (/^\s*(\/\/|\*|\/\*)/.test(l) ? "" : l))
     .join("\n");
+  // A module's one-shot heal walks at boot beside every other module's boot
+  // work, so it storms exactly as a timer does: core-scan's two failed 339
+  // and 340 of 340 staging workspaces for want of a connection (#3647). A
+  // module heal registers with registerHealPass (platform-contract
+  // heal-pass.ts). The kernel's own boot passes run in one chain in boot()
+  // and are not this shape.
+  if (file.startsWith("modules/") && /^\/\/ DONE WHEN:/m.test(src) && WALK.test(code) && OPEN.test(code)) {
+    const line = code.split("\n").findIndex((l) => OPEN.test(l)) + 1;
+    return [{ file, line, what: "a module heal shim walking the workspaces itself at boot: register it with registerHealPass (platform-contract heal-pass.ts)" }];
+  }
   if (!TIMER.test(code) || !WALK.test(code) || !OPEN.test(code)) return [];
   const line = code.split("\n").findIndex((l) => TIMER.test(l)) + 1;
   return [

@@ -12,7 +12,7 @@
 // sheet replays it under the person's own session, once, and shows what it
 // will do first.
 
-import type { BlockedAction } from "@cobblr/platform-contract/blocked-action";
+import { approvalDedupeKey, type BlockedAction } from "@cobblr/platform-contract/blocked-action";
 
 export interface RefusedRequest {
   method: "POST" | "PATCH" | "DELETE";
@@ -36,6 +36,10 @@ const listeners = new Set<Listener>();
 let current: RaisedBlock | null = null;
 
 export function raiseBlockedAction(raised: RaisedBlock): void {
+  // The same ask again while it is open is one ask: a bulk Add-all that
+  // meets the same missing app on every row raises the sheet once, not once
+  // per row (#3610).
+  if (current && approvalDedupeKey(current.blocked.remedies) === approvalDedupeKey(raised.blocked.remedies) && raised.blocked.remedies.length > 0) return;
   current = raised;
   listeners.forEach((l) => l(current));
 }

@@ -119,7 +119,9 @@ export async function enabledActionOwners(orgId: string): Promise<Set<string>> {
  *  action's label and the module's name, never an id. */
 export function moduleOffRefusal(actionLabel: string, moduleName: string): string {
   const shown = listEntries().find((e) => e.manifest.name === moduleName)?.manifest.displayName ?? moduleName;
-  return `${actionLabel} is part of ${shown}, which is not turned on in this workspace. Turn it on in Configuration → Modules first.`;
+  // Said to whoever pressed it, a member included, so it names who can act
+  // rather than sending them to a screen they cannot open (#3610).
+  return `${actionLabel} is part of ${shown}, which is not turned on in this workspace. A workspace owner or admin can turn it on in Configuration → Modules.`;
 }
 
 /** The record an entity-scoped call names, or why there is none. A null

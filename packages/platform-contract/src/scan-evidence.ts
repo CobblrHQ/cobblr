@@ -193,6 +193,9 @@ export function scanAssertedFields(row: ScanEvidenceRow): Array<{ field: string;
     const s = standings[field];
     if (s?.by === "inference") out.push({ field, value, from: s.from ?? "router" });
     else if (!s && listed.has(field)) out.push({ field, value, from: "model" });
+    // An identifier nothing on the item carries is a suggestion, whoever
+    // wrote it: a row filled before identifiers needed evidence still says so.
+    else if (IDENTIFIER_FIELD_NAMES.test(field) && !identifierHasEvidence(row, field, value)) out.push({ field, value, from: s?.from ?? "search" });
   }
   return out;
 }
@@ -319,4 +322,109 @@ export function evidenceConflictWords(c: EvidenceConflict, fieldLabel?: string |
   const source = c.label.charAt(0).toUpperCase() + c.label.slice(1);
   const field = (fieldLabel ?? humanFieldLabel(c.field)).toLowerCase();
   return fillSentence(EVIDENCE_CONFLICT_SENTENCE, { source, evidence: c.evidence, claimed: c.claimed, field });
+}
+
+// ── Identifiers are facts only with evidence on the item (#3613) ─────────
+//
+// A blank white notebook, photographed, was filed with ISBN 9798502338400 at
+// 0.95 and a ready Add. Nothing on the item said so: an Open Library search
+// for its descriptive name ("Blank softcover book") answered with another
+// book's listing ("Blank Recipe Book Softcover"), and that ISBN landed as
+// fact. An identifier names ONE thing; a value found by searching for a
+// description names whatever the search found first. So an identifier field
+// is only a fact when the row itself carries it: the code that was scanned,
+// a decoded field, text the photo shows, or a value stamped as evidence (a
+// catalog match the item's own read corroborated) or typed by a person.
+// Anything else stays a suggestion and is never filed.
+
+/** Field names that identify one specific thing. A kind may also declare its
+ *  own through fieldRole "identifier" (identifierFieldNames). */
+export const IDENTIFIER_FIELD_NAMES = /^(isbn(_?1[03])?|upc|ean(_?13)?|gtin(_?1[234])?|barcode|serial(_?number)?|model_?(number|no)|mpn|part_?(number|no)|sku|vin|hin|imei|asin)$/i;
+
+const alnum = (s: string): string => s.toLowerCase().replace(/[^a-z0-9]/g, "");
+
+/** Everything the row itself carries as text: the scanned code, the decode,
+ *  what the photo shows (observations, the printed read). */
+function itemTexts(row: ScanEvidenceRow): string[] {
+  const meta = (row.suggested_metadata ?? {}) as Record<string, unknown>;
+  const out: string[] = [];
+  const push = (v: unknown) => {
+    const t = text(v);
+    if (t) out.push(alnum(t));
+  };
+  push(row.barcode_text);
+  for (const v of Object.values(decodedFieldsOf(meta).fields)) push(v);
+  push(meta.photo_observations);
+  const read = photoReadOf(row);
+  if (read) for (const v of Object.values(read)) if (typeof v === "string") push(v);
+  return out.filter((t) => t.length > 0);
+}
+
+/** The `from` a catalog answer carries when the catalog's title is the title
+ *  read off the item (book-lookup.ts catalogTitleCorroborated): the one way a
+ *  catalog reached WITHOUT the item's code vouches for an identifier. */
+export const CATALOG_TITLE_MATCHED = "catalog, title matched";
+
+/** Whether a stamp vouches for an identifier. A plain catalog stamp does only
+ *  when the catalog was reached from the item's own code: a draft identified
+ *  before #3613 carries `evidence/catalog` on an ISBN that was merely in the
+ *  payload of a search by the item's description (another book's listing),
+ *  and that is no evidence this is the book (#3647). */
+export function stampVouchesForIdentifier(row: ScanEvidenceRow, s: FieldProvenance | undefined): boolean {
+  if (!s) return false;
+  if (s.by === "person") return true;
+  if (s.by !== "evidence") return false;
+  if (s.from === "catalog") return !!text(row.barcode_text);
+  return true;
+}
+
+/** Whether an identifier's value has evidence on the item. A value of four
+ *  characters or fewer is too short to find by containment and needs a stamp. */
+export function identifierHasEvidence(row: ScanEvidenceRow, field: string, value: unknown): boolean {
+  const v = text(value);
+  if (!v) return true;
+  const s = fieldStandingsOf(row.suggested_metadata)[field];
+  if (stampVouchesForIdentifier(row, s)) return true;
+  const want = alnum(v);
+  if (want.length <= 4) return false;
+  return itemTexts(row).some((t) => t.includes(want));
+}
+
+/** The identifier fields in `fields` that are not facts about this item: the
+ *  ones a filing must leave out. `declared` adds a kind's own identifier
+ *  fields to the named ones. */
+export function unevidencedIdentifiers(row: ScanEvidenceRow, fields: Record<string, unknown>, declared: readonly string[] = []): string[] {
+  const named = new Set(declared);
+  return Object.entries(fields)
+    .filter(([k, v]) => (IDENTIFIER_FIELD_NAMES.test(k) || named.has(k)) && text(v) && !identifierHasEvidence(row, k, v))
+    .map(([k]) => k);
+}
+
+/** What a scan may write into a record, from any door: the confirm that
+ *  creates one, "same one, fill it in" onto one that exists, the preview
+ *  that says what either will write. Every field but the identifiers the
+ *  item gives no evidence for (#3647: the merge preview offered a blank
+ *  book's searched ISBN to a clean record because only confirm asked). */
+export function evidencedFill(row: ScanEvidenceRow, fields: Record<string, unknown>, declared: readonly string[] = []): { fill: Record<string, unknown>; held: string[] } {
+  const held = unevidencedIdentifiers(row, fields, declared);
+  if (!held.length) return { fill: fields, held };
+  const drop = new Set(held);
+  return { fill: Object.fromEntries(Object.entries(fields).filter(([k]) => !drop.has(k))), held };
+}
+
+/** The stamps that make a draft from before the rule read as it should: each
+ *  identifier the item gives no evidence for, stamped unconfirmed
+ *  (`inference`, from a catalog search) where its stamp says otherwise or
+ *  says nothing. Empty when there is nothing to heal. Pure. */
+export function unconfirmedIdentifierStamps(row: ScanEvidenceRow, declared: readonly string[] = []): FieldProvenanceMap {
+  const top = candidateList(row.suggested_candidates)[0];
+  const fields = top?.fields ?? {};
+  const standings = fieldStandingsOf(row.suggested_metadata);
+  const out: FieldProvenanceMap = {};
+  for (const k of unevidencedIdentifiers(row, fields, declared)) {
+    const s = standings[k];
+    if (s?.by === "inference") continue;
+    out[k] = { by: "inference", from: "catalog search", ...(s?.role ? { role: s.role } : {}) };
+  }
+  return out;
 }

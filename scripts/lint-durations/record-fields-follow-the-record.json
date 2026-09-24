@@ -1,0 +1,10 @@
+{
+  "lint": "lint:record-fields-follow-the-record",
+  "run": "tsx scripts/lint-record-fields-follow-the-record.ts",
+  "rows": [
+    "generic-web-component"
+  ],
+  "ms": 2094,
+  "recorded": "2026-09-24",
+  "source": "scaffolded by new-lint.sh at twice a local run (a shared box); replaced from its first CI measurement"
+}

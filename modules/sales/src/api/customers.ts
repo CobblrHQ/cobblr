@@ -3,6 +3,7 @@
 // dual-written from the customer's name (see orders.ts) so cross-module readers
 // + pre-link rows keep working.
 
+import { withMetadataMerged } from "@cobblr/platform-contract/entity-metadata";
 import { Router } from "express";
 import { z } from "zod";
 import { platform } from "@cobblr/platform-contract";
@@ -100,7 +101,8 @@ customersRouter.patch(
     const db = tenantDb(req);
     const row = await db
       .updateTable("sales_customers")
-      .set({ ...parsed.data, updated_at: new Date() } as never)
+      // Custom fields MERGE into the live row (withMetadataMerged, #3625).
+      .set(withMetadataMerged({ ...parsed.data, updated_at: new Date() } as Record<string, unknown>) as never)
       .where("id", "=", req.params.id!)
       .where("instance", "=", instanceOf(req))
       .returningAll()
@@ -118,6 +120,15 @@ customersRouter.patch(
         .where("instance", "=", instanceOf(req))
         .execute();
     }
+    // The request as sent, on the record's history: the one place a value
+    // a later write replaced can still be read back (#3625).
+    await platform().activity.log({
+      orgId: tenantContext(req).org.id,
+      userId: sessionUser(req)?.id ?? null,
+      action: "customer_updated",
+      ref: { module: "sales", entityType: "customer", entityId: String(req.params.id) },
+      diff: parsed.data as Record<string, unknown>,
+    });
     res.json(row);
   }),
 );

@@ -5,9 +5,9 @@
 // v0.1 renders the 'list' view_type. Future kanban/calendar/table
 // renderers swap in here as they ship.
 
-import { useState, useMemo, useEffect } from "react";
+import { useState, useMemo, useEffect, type ReactNode } from "react";
 import { useKindLabels } from "../lib/useKindLabels";
-import { expiryPhrase, expiryState } from "@cobblr/platform-contract";
+import { dayHere, daysUntilField, expiryPhrase, expiryState } from "@cobblr/platform-contract";
 import { tallyCadence, CADENCE_PRESETS } from "../lib/cadence";
 import { Link, useSearchParams } from "react-router-dom";
 import { useDetailRoute, useListRoute } from "../lib/useDetailRoute";
@@ -18,8 +18,9 @@ import { WEEKDAYS, MONTHS, isoLocal, buildMonthGrid, shiftMonth } from "../lib/m
 import { useMutation } from "@tanstack/react-query";
 import { ApiError, api, type SavedView } from "../lib/api";
 import { useActiveOrg } from "../auth/ActiveOrgContext";
-import { Modal, useToast, useConfirm, usePageTitle, BulkActionBar, useFlowHost, useImageSrc, useRunAction, LOCATION_GROUP_KEY, makeAreaResolver } from "@cobblr/platform-web";
-import { groupKeyOf, fieldVal } from "../lib/view-group-key";
+import { Modal, useToast, useConfirm, usePageTitle, BulkActionBar, useFlowHost, useImageSrc, useRunAction, LOCATION_GROUP_KEY } from "@cobblr/platform-web";
+import { groupRows, fieldVal } from "../lib/view-group-key";
+import { useAreaResolver } from "../lib/useAreaResolver";
 import {
   useKindFields,
   FieldSelect,
@@ -234,29 +235,6 @@ function ViewDataModal({
     <Modal open onClose={onClose} title={view.name} size="lg">
       <SavedViewBody view={view} items={items} isLoading={data.isLoading} collectionEmpty={data.data?.collection_empty} />
     </Modal>
-  );
-}
-
-/** The workspace's rooms, once, for the location rollup; a renderer that
- *  never groups by location pays for nothing (the query is off). */
-function useAreaResolver(enabled: boolean) {
-  const { activeSlug } = useActiveOrg();
-  const locs = useQuery({
-    queryKey: ["inventory-locations", activeSlug],
-    queryFn: () => api.listLocations(activeSlug),
-    enabled: enabled && !!activeSlug,
-    staleTime: 60_000,
-  });
-  return useMemo(
-    () =>
-      makeAreaResolver(locs.data?.items ?? [], {
-        id: (l) => l.id,
-        parentId: (l) => l.parent_id,
-        position: () => 0,
-        name: (l) => l.name,
-        isContainer: (l) => l.kind === "container",
-      }),
-    [locs.data],
   );
 }
 
@@ -518,7 +496,7 @@ function CalendarRenderer({ items, cfg }: { items: ViewRow[]; cfg: ViewConfig })
                 <div className={"text-[11px] font-mono mb-0.5 px-1 " + (key === todayKey ? "inline-flex items-center justify-center w-5 h-5 rounded-full bg-accent text-white" : inMonth ? "text-content dark:text-mortar-200" : "text-faint dark:text-slate-600")}>{day.getDate()}</div>
                 <div className="space-y-0.5">
                   {dayRows.slice(0, 4).map((r) => (
-                    <div key={`${r.kind}:${r.id}`} title={cellTitle(r)} className="truncate rounded px-1 py-0.5 text-[10px] leading-tight bg-cobble-100 text-accent dark:bg-cobble-900/40 dark:text-cobble-200">{cellTitle(r)}</div>
+                    <RecordLink key={`${r.kind}:${r.id}`} row={r} className="block truncate rounded px-1 py-0.5 text-[10px] leading-tight bg-cobble-100 text-accent dark:bg-cobble-900/40 dark:text-cobble-200 hover:underline">{cellTitle(r)}</RecordLink>
                   ))}
                   {dayRows.length > 4 && <div className="text-[9px] text-faint dark:text-slate-500 px-1">+{dayRows.length - 4} more</div>}
                 </div>
@@ -614,7 +592,7 @@ function GanttRenderer({ items, cfg }: { items: ViewRow[]; cfg: ViewConfig }) {
               style={{ width: RAIL }}
               title={rowTitle(b.r)}
             >
-              {rowTitle(b.r)}
+              <RecordLink row={b.r} className="hover:text-accent hover:underline">{rowTitle(b.r)}</RecordLink>
             </div>
             <div className="relative flex-1 my-1 mx-2">
               {/* month tick lines */}
@@ -649,18 +627,31 @@ function GanttRenderer({ items, cfg }: { items: ViewRow[]; cfg: ViewConfig }) {
   );
 }
 
-/** A row/card title that links to the entity's detail page when its kind has
- *  one (per the entity-kinds registry) — plain text otherwise. Every renderer
- *  routes titles through this so view rows are clickable everywhere. */
-function EntityTitleLink({ row, className }: { row: ViewRow; className?: string }) {
+/** Whatever a renderer draws for one record (a title, a cover tile, a day's
+ *  entry, a bar's label) opens that record, when its kind has a detail page
+ *  (the entity-kinds registry); plain otherwise. Every renderer routes the
+ *  thing a person taps through this: the cover wall drew tiles that opened
+ *  nothing, so a book was only reachable from the Table tab (#3583), and the
+ *  table, calendar and gantt had the same gap
+ *  (every-row-a-view-draws-opens-its-record.test.tsx). */
+function RecordLink({ row, className, children }: { row: ViewRow; className?: string; children: ReactNode }) {
   const { activeSlug } = useActiveOrg();
   const routeFor = useDetailRoute(activeSlug);
-  const href = routeFor(row.kind, row.id);
-  if (!href) return <span className={className}>{row.title}</span>;
+  const href = routeFor(row.kind, row.id, (row as { detailUrl?: string | null }).detailUrl);
+  if (!href) return <span className={className}>{children}</span>;
   return (
-    <Link to={href} className={`${className ?? ""} hover:text-accent hover:underline`}>
-      {row.title}
+    <Link to={href} className={className}>
+      {children}
     </Link>
+  );
+}
+
+/** A row/card title that links to the record: RecordLink over its title. */
+function EntityTitleLink({ row, className }: { row: ViewRow; className?: string }) {
+  return (
+    <RecordLink row={row} className={`${className ?? ""} hover:text-accent hover:underline`}>
+      {row.title}
+    </RecordLink>
   );
 }
 
@@ -729,14 +720,11 @@ function VendingRenderer({ items, cfg }: { items: ViewRow[]; cfg: ViewConfig }) 
   // sweeper's event cannot drift on what "spoiled" is.
   const graceField = c.grace_field ?? "grace_days";
 
-  const dayDiff = (iso: unknown): number | null => {
-    if (typeof iso !== "string" || !iso) return null;
-    const t = Date.parse(iso);
-    if (Number.isNaN(t)) return null;
-    const midnight = new Date();
-    midnight.setHours(0, 0, 0, 0);
-    return Math.round((t - midnight.getTime()) / 86_400_000);
-  };
+  // The one countdown (day.ts), from this browser's day: it rounded a UTC
+  // midnight against a local one, so the wall and the dashboard could name
+  // different days for one item (#3641).
+  const today = dayHere();
+  const dayDiff = (iso: unknown): number | null => daysUntilField(iso, today);
   const num = (v: unknown): number | null => {
     if (v === null || v === undefined || v === "") return null;
     const n = Number(v);
@@ -790,6 +778,7 @@ function VendingRenderer({ items, cfg }: { items: ViewRow[]; cfg: ViewConfig }) 
         const grace = expiryState(
           typeof pick(f, expiryField) === "string" ? (pick(f, expiryField) as string) : null,
           pick(f, graceField),
+          today,
         );
         const out = qty !== null && qty <= 0;
         const expired = !out && grace?.state === "spoiled";
@@ -910,13 +899,7 @@ function KanbanRenderer({
 }) {
   // Group rows by config.group_by through the one rule (groupKeyOf).
   const areaOf = useAreaResolver(groupBy === LOCATION_GROUP_KEY);
-  const buckets = new Map<string, ViewRow[]>();
-  for (const r of items) {
-    const key = groupKeyOf(r, groupBy, areaOf);
-    const arr = buckets.get(key) ?? [];
-    arr.push(r);
-    buckets.set(key, arr);
-  }
+  const buckets = groupRows(items, groupBy, areaOf);
   const cols = Array.from(buckets.entries()).sort(([a], [b]) => a.localeCompare(b));
   return (
     <div className="flex gap-3 overflow-x-auto pb-2">
@@ -969,6 +952,9 @@ function TableRenderer({
   // Default to title + subtitle when no visible_fields declared.
   // When declared, render each as a column read from row.fields.
   const cols = columns && columns.length > 0 ? columns : ["title", "subtitle"];
+  // The cell that opens the record: its title, or the first column when a
+  // view shows no title.
+  const linkCol = cols.includes("title") ? "title" : cols[0];
   const selectCols = selection ? cols.length + 1 : cols.length;
 
   // When group_by is set, split rows into ordered sections with a header
@@ -976,14 +962,7 @@ function TableRenderer({
   const areaOf = useAreaResolver(groupBy === LOCATION_GROUP_KEY);
   const groups: Array<{ key: string; rows: ViewRow[] }> = [];
   if (groupBy) {
-    const byKey = new Map<string, ViewRow[]>();
-    for (const r of items) {
-      const key = groupKeyOf(r, groupBy, areaOf);
-      const arr = byKey.get(key) ?? [];
-      arr.push(r);
-      byKey.set(key, arr);
-    }
-    for (const [key, rows] of byKey) groups.push({ key, rows });
+    for (const [key, rows] of groupRows(items, groupBy, areaOf)) groups.push({ key, rows });
   } else {
     groups.push({ key: "", rows: items });
   }
@@ -1002,7 +981,11 @@ function TableRenderer({
       )}
       {cols.map((c) => (
         <td key={c} className="px-3 py-1.5 align-top truncate max-w-[260px]">
-          {formatCell(c, r)}
+          {c === linkCol ? (
+            <RecordLink row={r} className="hover:text-accent hover:underline">{formatCell(c, r)}</RecordLink>
+          ) : (
+            formatCell(c, r)
+          )}
         </td>
       ))}
     </tr>
@@ -1076,10 +1059,13 @@ function formatCell(col: string, row: ViewRow): string {
 // because the list goes through EntityThumb and this did not. useImageSrc is
 // the one door for both (external passes through, internal is fetched with the
 // token and handed back as a blob: URL).
-function GalleryTile({ src, title, caption }: { src: string | null; title: string; caption: string }) {
+function GalleryTile({ row, src, title, caption }: { row: ViewRow; src: string | null; title: string; caption: string }) {
   const resolved = useImageSrc(src);
   return (
-    <div className="rounded-lg border border-line dark:border-slate-700 bg-surface dark:bg-slate-900 overflow-hidden">
+    <RecordLink
+      row={row}
+      className="block rounded-lg border border-line dark:border-slate-700 bg-surface dark:bg-slate-900 overflow-hidden hover:border-accent transition"
+    >
       <div className="aspect-[2/3] bg-subtle dark:bg-slate-800 flex items-center justify-center overflow-hidden">
         {resolved ? (
           <img src={resolved} alt={title} className="w-full h-full object-cover" loading="lazy" />
@@ -1093,7 +1079,7 @@ function GalleryTile({ src, title, caption }: { src: string | null; title: strin
         <div className="truncate text-sm font-medium text-content dark:text-mortar-100">{title}</div>
         {caption && <div className="truncate text-xs text-muted dark:text-slate-400">{caption}</div>}
       </div>
-    </div>
+    </RecordLink>
   );
 }
 
@@ -1106,7 +1092,7 @@ function GalleryRenderer({ items, cfg }: { items: ViewRow[]; cfg: ViewConfig }) 
         const raw = fieldVal(row.fields, imageField);
         const src = typeof raw === "string" && raw.trim() ? raw : null;
         const caption = captionField ? formatCell(captionField, row) : row.subtitle ?? "";
-        return <GalleryTile key={`${row.kind}:${row.id}`} src={src} title={row.title} caption={caption} />;
+        return <GalleryTile key={`${row.kind}:${row.id}`} row={row} src={src} title={row.title} caption={caption} />;
       })}
     </div>
   );

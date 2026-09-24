@@ -186,6 +186,7 @@ function DisplayNameSection({
   email: string;
   onSaved: () => void;
 }) {
+  // DRAFT-OK: the person's own display name on their own profile form; no action elsewhere moves it.
   const [name, setName] = useState(initial);
   const toast = useToast();
   const save = useMutation({

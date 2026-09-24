@@ -12,6 +12,7 @@ import { api, type CalendarEvent } from "../lib/api";
 import { useActiveOrg } from "../auth/ActiveOrgContext";
 import { usePageTitle, useToast } from "@cobblr/platform-web";
 import { WEEKDAYS, MONTHS, isoLocal as iso, buildMonthGrid, shiftMonth } from "../lib/month-grid";
+import { openRecordPath } from "@cobblr/platform-contract/instance-detail";
 
 // Coarse colour per source/category.
 const CAT_STYLE: Record<string, string> = {
@@ -64,7 +65,8 @@ export function CalendarPage() {
 
   function openEvent(ev: CalendarEvent) {
     if (ev.entityModule === "inventory" && ev.entityType === "part" && ev.entityId) {
-      navigate(`/inventory/parts/${ev.entityId}`);
+      // The event names a part, not its collection: the open door asks.
+      navigate(openRecordPath("inventory:part", ev.entityId));
     } else if (ev.source === "maintenance") {
       navigate("/configuration/maintenance");
     } else if (ev.source === "task") {

@@ -108,7 +108,8 @@ entriesRouter.patch(
     for (const k of ["title", "body", "kind", "pinned", "code", "image_path"] as const) {
       if (parsed.data[k] !== undefined) patch[k] = parsed.data[k];
     }
-    if (parsed.data.metadata !== undefined) patch.metadata = jsonb(parsed.data.metadata) as never;
+    // The custom fields MERGE into the live row (#3625).
+    if (parsed.data.metadata !== undefined) patch.metadata = platform().db.mergeJsonb("metadata", parsed.data.metadata as Record<string, unknown>) as never;
     const row = await db
       .updateTable("knowledge_entries")
       .set(patch)
@@ -117,6 +118,15 @@ entriesRouter.patch(
       .executeTakeFirst();
     if (!row) return void res.status(404).json({ error: { code: "not_found", message: "Entry not found." } });
     void platform().events.emit("knowledge.entry.updated", { orgId: ctx.org.id, entryId: row.id });
+    // The request as sent, on the record's history: the one place a value
+    // a later write replaced can still be read back (#3625).
+    await platform().activity.log({
+      orgId: tenantContext(req).org.id,
+      userId: sessionUser(req)?.id ?? null,
+      action: "entry_updated",
+      ref: { module: "knowledge", entityType: "entry", entityId: String(req.params.id) },
+      diff: parsed.data as Record<string, unknown>,
+    });
     res.json(row);
   }),
 );

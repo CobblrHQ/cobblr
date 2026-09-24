@@ -172,6 +172,11 @@ const Schema = z.object({
   //    short because it is somebody's work sitting on our disk after they have
   //    gone, and long enough to survive a weekend.
   TRY_SANDBOX_EXPORT_DAYS: z.coerce.number().int().positive().default(7),
+  //  • TRY_SANDBOX_TRIAL_DAYS — how long a KEPT sandbox stays, as a trial on
+  //    this box. Ours to set, not the visitor's to pick: the keep route
+  //    ignores any length a client sends, and the web says this number back
+  //    in words. Two weeks by the owner's call (2026-09-24).
+  TRY_SANDBOX_TRIAL_DAYS: z.coerce.number().int().positive().default(14),
   //  • The two ways to carry on, shown in the take-your-work modal and mirrored
   //    in the email. UNSET BY DEFAULT and each shown only when configured: a
   //    self-hosted Cobblr has no business advertising somebody else's hosted

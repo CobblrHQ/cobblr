@@ -247,6 +247,12 @@ async function handlePress(req: Request, res: Response): Promise<void> {
       authMethod: "session",
       ...(typed ? { extraArgs: { body: typed } } : {}),
     });
+    if (!outcome.ok && outcome.reason === "declined") {
+      // Allowed to press, and the action said no in its own words: say them,
+      // never a tick (#3594).
+      res.json(settle(outcome.message));
+      return;
+    }
     if (!outcome.ok) {
       // Deliberately one message for every refusal. Distinguishing "not yours"
       // from "no such notification" tells a prober which ids exist.

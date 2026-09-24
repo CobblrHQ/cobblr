@@ -107,6 +107,18 @@ export function duplicateSummary(items: readonly ScanItemLike[], viewer: ScanRow
   return { count: names.length, names: [...new Set(names)] };
 }
 
+/** The candidate an item files with: the table its card shows (the
+ *  contract's resolver, the person's choice first, a better table the
+ *  workspace gained since), with that table's own extracted fields when a
+ *  candidate names it. The raw top candidate is NOT the destination: File N
+ *  once filed rows where the card had said another table (#3618). */
+export function destinationCandidateOf(it: ScanItemLike, viewer: ScanRowStateContext = {}): ScanCandidateLike | null {
+  const d = scanRowState(it, viewer).destination;
+  if (!d) return null;
+  const own = (it.suggested_candidates ?? []).find((c) => c.module === d.module && (c.instance ?? null) === (d.instance ?? null));
+  return own ?? { module: d.module, instance: d.instance, ...(d.kind ? { kind: d.kind } : {}), fields: {} };
+}
+
 /** The confirm endpoint's target_kind is the module's BASE kind (the instance,
  *  when present, scopes the create separately). */
 export function baseKind(module: string): string {
@@ -197,7 +209,7 @@ export function confirmBodyFor(
    *  item came from; this re-reads it for the same person. */
   viewer: ScanRowStateContext = {},
 ): ConfirmBody | null {
-  const cand = it.suggested_candidates?.[0];
+  const cand = destinationCandidateOf(it, viewer);
   if (!isReadyToFile(it, viewer) || !cand) return null;
   const fields = { ...(cand.fields ?? {}) };
   // A table whose module keeps its own categories (inventory's tree) has no

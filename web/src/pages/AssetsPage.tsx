@@ -34,6 +34,8 @@ import { EntityAttachments } from "../components/EntityAttachments";
 import { LocationTreePicker } from "../components/LocationTreePicker";
 import { ContentsPanel } from "../components/ContentsPanel";
 import { countOf, itemNounFor, pluralise } from "@cobblr/platform-contract";
+import { resolveDetailPath } from "@cobblr/platform-contract/instance-detail";
+import { PresentationGate, useFaces } from "@cobblr/platform-web";
 
 const ENTITY_KIND = "assets:asset";
 
@@ -79,7 +81,10 @@ export function AssetsPage({
     if (instance) {
       setLocalSel(aid);
       setSearchParams((prev) => { prev.set("asset", aid); return prev; }, { replace: true });
-    } else navigate(`/assets/${aid}${searchParams.toString() ? `?${searchParams}` : ""}`);
+    } else {
+      // RECORD-LINK-OK: the module's own page opening its own default-collection record in place; its base route is this page.
+      navigate(`/assets/${aid}${searchParams.toString() ? `?${searchParams}` : ""}`);
+    }
   };
   const closeDetail = () => {
     if (instance) {
@@ -672,6 +677,8 @@ export function AssetDetailModal({
   const kind = instance ? `${instance}:item` : ENTITY_KIND;
   const [moveOpen, setMoveOpen] = useState(false);
   const fp = useFieldPresentation(kind);
+  // The collection's faces decide sections and verbs; the body waits for them.
+  const shape = useFaces(kind);
   const asset = useQuery({
     queryKey: ["asset", activeSlug, instance ?? null, assetId],
     queryFn: () => api.getAsset(activeSlug, assetId!, instance),
@@ -733,6 +740,7 @@ export function AssetDetailModal({
   return (
     <Modal open={!!assetId} onClose={onClose} title={a?.name ?? (asset.isError ? "Couldn't load" : "loading…")} subtitle={subtitle} size="xl">
       {a ? (
+        <PresentationGate ready={fp.ready && shape.ready} failed={fp.failed || shape.failed} retry={() => { fp.retry(); shape.retry(); }}>
         <div className="space-y-4">
           {/* Wide record layout: the cover large on the LEFT, fields on the
               RIGHT — so an image-bearing record (a book, a wine, a machine)
@@ -796,7 +804,7 @@ export function AssetDetailModal({
             entityId={a.id}
             values={a.metadata}
             onCommit={(name, value) =>
-              update.mutate({ metadata: { ...a.metadata, [name]: value } })
+              update.mutate({ metadata: { [name]: value } })
             }
           />
           {/* What's inside this asset — e.g. the components in a server/computer.
@@ -846,6 +854,7 @@ export function AssetDetailModal({
           </div>
           </RecordFaces>
         </div>
+        </PresentationGate>
       ) : asset.isError ? (
         // Don't sit on "loading…" forever when the fetch fails (a 404, a stale
         // service-worker chunk hitting the wrong route, an auth blip). Say what
@@ -910,7 +919,7 @@ function NewAssetModal({
       onClose();
       // On an instance page stay in the instance and deep-link the new record's
       // detail; on the base page go to /assets/:id as before.
-      navigate(instance ? `/${instance}?asset=${a.id}` : `/assets/${a.id}`);
+      navigate(resolveDetailPath({ kind: "assets:asset", id: a.id, instance: instance ?? null, detailUrl: null, baseDetailRoute: "/assets/{id}" }) ?? "/assets");
     },
     onError: (e: unknown) => toast.error(e instanceof ApiError ? e.message : "Couldn't create."),
   });

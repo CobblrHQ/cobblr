@@ -16,3 +16,15 @@ empty-but-working sandbox, never no sandbox. See
 Why seed at all: an empty table is the wrong first impression, which is the
 lesson the household demo taught — invented names behind grey placeholder
 tiles read as a demo, a shelf of books you recognise reads as a workspace.
+
+## Bundle versions come from the catalog, not the seed
+
+A blueprint embeds each bundle's full manifest as it was when it was written, so
+a seed left alone goes on installing old versions while `bundles/` moves on.
+`seedSandbox` swaps each embedded bundle for the manifest this image ships
+(`withCurrentBundles`, `localFlagshipManifest`), so a new sandbox always starts
+on the current version and never opens on "Update now". A bundle the catalog
+does not carry keeps the seed's own copy. A sandbox also never shows an update
+prompt (`useBundleUpdates` is empty there): a visitor has an hour and did not
+choose these bundles. Both are held by `a-fresh-sandbox-installs-the-current-bundles`
+(api) and `a-sandbox-never-offers-a-bundle-update` (web).

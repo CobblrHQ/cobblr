@@ -50,6 +50,7 @@ import { recordRound } from "../providers/replay.js";
 import { performWrite, performWrites, undoWrite, undoableOf, type WriteRequest, type WriteOutcome } from "./chat-ledger.js";
 import type { ToolCall, ChatTurn } from "../providers/tool-wire.js";
 import { summariseAction, type ActionCopy } from "./action-summary.js";
+import { actionArgValues, writeValues } from "./write-values.js";
 import { actionRunsUnconfirmed, type ActionConsent } from "@cobblr/platform-contract/action-consent";
 import { inferMoveFromToolShape, jsonBlockIn } from "./tool-shaped-move.js";
 
@@ -476,8 +477,14 @@ async function proposalOf(
   wsApi: WorkspaceApi,
   kinds: KindRec[],
   call: ToolCall,
+  /** The person's own words, to tell a value they gave from one Cobb chose. */
+  said = "",
 ): Promise<{ summary: string; proposal: Record<string, unknown> } | { error: string }> {
   const a = call.args ?? {};
+  const titleOf = async (k: string, id: string): Promise<string | null> => {
+    const t = await labelOf(wsApi, k, id);
+    return t && t !== id ? t : null;
+  };
   const kind = typeof a.kind === "string" ? a.kind : typeof a.entity_kind === "string" ? a.entity_kind : "";
   switch (call.name) {
     case "create_record": {
@@ -487,9 +494,12 @@ async function proposalOf(
       // The card's line is what the person confirms: "Create a location:
       // “Bin 4”", never the kind id (#3237).
       const words = kindWordsFrom(kind, kinds);
+      // Every value it will set, on the card (#3658): the room, the count, the
+      // price, and the one Cobb chose himself, marked as his.
+      const values = await writeValues({ kind, kinds, fields, said, titleOf });
       return {
         summary: `Create ${/^[aeiou]/i.test(words.one) ? "an" : "a"} ${words.one}${name ? `: “${name}”` : ""}`,
-        proposal: { kind: "create", entity_kind: kind, fields },
+        proposal: { kind: "create", entity_kind: kind, fields, ...(values.length ? { values } : {}) },
       };
     }
     case "update_record": {
@@ -499,9 +509,13 @@ async function proposalOf(
       }
       const fields = (a.fields as Record<string, unknown>) ?? {};
       const label = await labelOf(wsApi, kind, id);
+      // What each field is now and what it will be, in the form's words.
+      const now = await getTool("get_record")!.execute(wsApi, { kind, id }).catch(() => null);
+      const current = now?.ok ? ((now.data as { fields?: Record<string, unknown> }).fields ?? null) : null;
+      const values = await writeValues({ kind, kinds, fields, said, titleOf, current, update: true });
       return {
-        summary: `Update “${label}” (${Object.keys(fields).join(", ") || "fields"})`,
-        proposal: { kind: "update", entity_kind: kind, entity_id: id, fields, entity_label: label },
+        summary: `Update “${label}”${values.length ? `: ${values.map((v) => v.label).join(", ")}` : ""}`,
+        proposal: { kind: "update", entity_kind: kind, entity_id: id, fields, entity_label: label, ...(values.length ? { values } : {}) },
       };
     }
     case "delete_record": {
@@ -535,13 +549,17 @@ async function proposalOf(
       // reason; a card here would be the bare label the rule forbids.
       if (planned && "error" in planned) return { error: planned.error };
       const plan = planned?.plan ?? null;
+      // No planner: the card still lists what the action was handed, in the
+      // action's own labels (#3658), never its name alone.
+      const argLines = plan ? [] : await actionArgValues({ args: argValues, schema: copy?.args_schema ?? null, said, titleOf });
+      const values = argLines.length ? { values: argLines } : {};
       if (!kind || !id) {
         if (!(await runsWithoutARecord(c, actionId))) {
           return { error: "I need the action and the exact record to run it on." };
         }
         return {
           summary: plan?.title ?? summariseAction(actionId, copy, argValues),
-          proposal: { kind: "action", action_id: actionId, ...args, ...(plan ? { plan } : {}) },
+          proposal: { kind: "action", action_id: actionId, ...args, ...(plan ? { plan } : {}), ...values },
         };
       }
       const label = await labelOf(wsApi, kind, id);
@@ -555,6 +573,7 @@ async function proposalOf(
           entity_label: label,
           ...args,
           ...(plan ? { plan } : {}),
+          ...values,
         },
       };
     }
@@ -888,7 +907,7 @@ async function answerTurn(
     const problems: string[] = [];
     const kinds = await fetchKinds(wsApi).catch(() => [] as KindRec[]);
     for (const call of outcome.calls) {
-      const built = await proposalOf(c, wsApi, kinds, call);
+      const built = await proposalOf(c, wsApi, kinds, call, askedFor);
       if ("error" in built) problems.push(built.error);
       else items.push(built);
     }

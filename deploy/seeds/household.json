@@ -844,6 +844,292 @@
           ]
         }
       ]
+    },
+    {
+      "id": "cobblr.flagship.home-inventory",
+      "version": "0.5.7",
+      "name": "Home Inventory",
+      "description": "Your belongings as their own room-by-room catalog: make/model + condition, filed by room. Scan to add, print labels for boxes, optional insurance valuation.",
+      "author": "Cobblr",
+      "released_at": "2026-09-01",
+      "changelog": "Opens as a catalog of things you own, and stays one: a number typed into one item no longer turns the whole collection into stock tracking with Use one, Used up and a reorder point. Earlier: The Labels option says what it gives without a printer: a Print label button queues a QR label, the Labels page prints the queue, and a label printer under Print prints as you go. Earlier: Three optional extras, each a checkbox: Scan to add (point your phone at a thing and it lands in the catalog with a photo and a name), Labels (print a QR label for a thing or a box on a Bluetooth label printer), and Starter rooms (Kitchen, Living room, Bedroom, Bathroom, Garage, Closet, ready on day one). Earlier: Rooms are now real Locations. The separate \u201cRoom\u201d field is gone: items file into the workspace\u2019s Location tree (rooms, and bins inside them) like everything else, so a thing has one place, not two. Your existing room values move over automatically on this update: each becomes a Location and its items are filed into it, nothing lost. The pinned \u201cBy room\u201d view still groups your catalog by room (now off the real Location), and the claim-ready Insurance view too. Earlier: Home Inventory became its OWN table (an inventory instance) with only the fields a home catalog needs, plain-language hints, and optional Insurance valuation.",
+      "requires": [
+        {
+          "module": "inventory"
+        }
+      ],
+      "provides_instances": [
+        {
+          "module": "inventory",
+          "instance_name": "home-inventory",
+          "faces": {
+            "stock": false
+          },
+          "display_name": "Home Inventory",
+          "glyph": "\ud83c\udfe0",
+          "item_noun": "item",
+          "scan_keywords": [
+            "bed sheet",
+            "sheet set",
+            "sheets",
+            "bedding",
+            "linen",
+            "towel",
+            "pillow",
+            "blanket",
+            "comforter",
+            "duvet",
+            "curtain",
+            "rug",
+            "mattress",
+            "furniture",
+            "dresser",
+            "sofa",
+            "couch",
+            "chair",
+            "bookcase",
+            "desk",
+            "lamp",
+            "mirror",
+            "shelf",
+            "cabinet",
+            "appliance",
+            "vacuum",
+            "fan",
+            "heater",
+            "microwave",
+            "toaster",
+            "blender",
+            "cookware",
+            "utensil",
+            "dishes",
+            "monitor",
+            "television",
+            "speaker",
+            "headphones",
+            "router",
+            "iphone"
+          ],
+          "qty_unit": "each",
+          "field_defs": [
+            {
+              "entity_kind": "inventory:part",
+              "name": "condition",
+              "display_label": "Condition",
+              "type": "text",
+              "position": 2,
+              "choices": [
+                "New",
+                "Excellent",
+                "Good",
+                "Fair",
+                "Poor"
+              ],
+              "help": "Rough state, for resale or an insurance claim. New down to Poor."
+            }
+          ],
+          "field_overrides": [
+            {
+              "entity_kind": "inventory:part",
+              "name": "cost",
+              "display_label": "Paid"
+            },
+            {
+              "entity_kind": "inventory:part",
+              "name": "manufacturer",
+              "display_label": "Make / brand"
+            },
+            {
+              "entity_kind": "inventory:part",
+              "name": "model_number",
+              "display_label": "Model"
+            },
+            {
+              "entity_kind": "inventory:part",
+              "name": "category",
+              "hidden": true
+            },
+            {
+              "entity_kind": "inventory:part",
+              "name": "warranty",
+              "hidden": true
+            },
+            {
+              "entity_kind": "inventory:part",
+              "name": "min_qty",
+              "hidden": true
+            },
+            {
+              "entity_kind": "inventory:part",
+              "name": "supplier_url",
+              "hidden": true
+            },
+            {
+              "entity_kind": "inventory:part",
+              "name": "serial_number",
+              "hidden": true
+            }
+          ],
+          "saved_views": [
+            {
+              "entity_kind": "inventory:part",
+              "name": "By room",
+              "view_type": "table",
+              "pinned": true,
+              "config": {
+                "group_by": "location",
+                "visible_fields": [
+                  "title",
+                  "manufacturer",
+                  "model_number",
+                  "condition",
+                  "qty"
+                ]
+              }
+            }
+          ]
+        }
+      ],
+      "features": [
+        {
+          "key": "scan",
+          "name": "Scan to add",
+          "question": "Add things by pointing your phone at them?",
+          "description": "Point your phone at a barcode or just the thing itself: it lands in your catalog with a photo and a name, filed in the room you are standing in.",
+          "default": false,
+          "requires": [
+            {
+              "module": "core-scan"
+            }
+          ],
+          "next_steps": [
+            {
+              "label": "Scan your first thing",
+              "module": "core-scan",
+              "path": "/scan/camera",
+              "hint": "A barcode or a photo. It files itself into the room you pick."
+            }
+          ]
+        },
+        {
+          "key": "print-labels",
+          "name": "Labels",
+          "question": "Print QR labels for things and boxes?",
+          "description": "A Print label button on every thing and box queues a QR label; print the queue from the Labels page, or set up a label printer under Print and a tap prints it there and then. A scan of the label opens the record.",
+          "default": false,
+          "requires": [
+            {
+              "module": "labels"
+            }
+          ]
+        },
+        {
+          "key": "rooms",
+          "name": "Starter rooms",
+          "question": "Start with the usual rooms?",
+          "description": "Kitchen, Living room, Bedroom, Bathroom, Garage and Closet, ready to file into on day one. Rename or add rooms any time; nothing here is fixed.",
+          "default": true,
+          "provides_locations": [
+            {
+              "name": "Kitchen",
+              "kind": "area"
+            },
+            {
+              "name": "Living room",
+              "kind": "area"
+            },
+            {
+              "name": "Bedroom",
+              "kind": "area"
+            },
+            {
+              "name": "Bathroom",
+              "kind": "area"
+            },
+            {
+              "name": "Garage",
+              "kind": "area"
+            },
+            {
+              "name": "Closet",
+              "kind": "area"
+            }
+          ]
+        },
+        {
+          "key": "insurance",
+          "name": "Insurance valuation",
+          "question": "Add insurance valuation (for a claim)?",
+          "description": "Add replacement value + where/when you bought each item, plus an 'Insurance valuation' view to hand an insurer after a fire/theft/move.",
+          "default": false,
+          "next_steps": [
+            {
+              "label": "Value your items for insurance",
+              "module": "inventory",
+              "path": "/instances/home-inventory",
+              "hint": "Replacement value + where/when you bought each item."
+            }
+          ],
+          "provides_instances": [
+            {
+              "module": "inventory",
+              "instance_name": "home-inventory",
+              "display_name": "Home Inventory",
+              "field_defs": [
+                {
+                  "entity_kind": "inventory:part",
+                  "name": "replacement_value",
+                  "display_label": "Replacement value",
+                  "type": "number",
+                  "position": 3,
+                  "help": "What it'd cost to buy new today, what an insurer pays out (not what you paid)."
+                },
+                {
+                  "entity_kind": "inventory:part",
+                  "name": "purchased_from",
+                  "display_label": "Bought from",
+                  "type": "text",
+                  "position": 4,
+                  "help": "Store or site, proof-of-purchase for a claim."
+                },
+                {
+                  "entity_kind": "inventory:part",
+                  "name": "purchase_date",
+                  "display_label": "Purchased",
+                  "type": "date",
+                  "position": 5
+                }
+              ],
+              "saved_views": [
+                {
+                  "entity_kind": "inventory:part",
+                  "name": "Insurance valuation",
+                  "view_type": "table",
+                  "config": {
+                    "group_by": "location",
+                    "visible_fields": [
+                      "title",
+                      "replacement_value",
+                      "purchase_date",
+                      "condition"
+                    ]
+                  }
+                }
+              ]
+            }
+          ]
+        }
+      ],
+      "migrations": [
+        {
+          "to_version": "0.4.0",
+          "action": "inventory:field-to-location",
+          "args": {
+            "field": "room",
+            "instance": "home-inventory"
+          }
+        }
+      ]
     }
   ],
   "wires": []

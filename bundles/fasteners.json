@@ -1,8 +1,8 @@
 {
   "manifest": {
     "id": "cobblr.flagship.fasteners",
-    "changelog": "First catalogued release: the fastener drawer skin (length, diameter, thread, head) on inventory.",
-    "version": "0.1.2",
+    "changelog": "Says up front that it tracks stock, so counts and Use one or Used up are there from the first item rather than after one is counted. Earlier: First catalogued release: the fastener drawer skin (length, diameter, thread, head) on inventory.",
+    "version": "0.1.3",
     "name": "Fasteners",
     "description": "Your fastener drawers as their own table: an inventory instance with thread, length, head, drive and material pre-shaped, quantities + reorder thresholds kept, grouped by thread.",
     "author": "Cobblr",
@@ -37,6 +37,9 @@
       {
         "module": "inventory",
         "instance_name": "fasteners",
+        "faces": {
+          "stock": true
+        },
         "display_name": "Fasteners",
         "glyph": "🔩",
         "item_noun": "fastener",

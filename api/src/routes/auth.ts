@@ -11,7 +11,7 @@
 // in Phase 0 owns at least one org (their own). Tenant DB provisioning
 // happens in milestone 3 — the org row here just reserves the db_name.
 
-import { Router, type Request } from "express";
+import { Router, type Request, type Response } from "express";
 import { z } from "zod";
 import { sql } from "kysely";
 import { meta, metaPool } from "../db/meta.js";
@@ -329,8 +329,12 @@ export async function buildAuthResponse(userId: string): Promise<AuthResponse> {
 // link). Add fields here as more anonymous-time toggles appear;
 // don't repurpose /api/v1/healthz for auth UI hints.
 
-authRouter.get("/config", (_req, res) => {
-  res.json({
+authRouter.get("/config", (req, res) => {
+  if (overLimit(configLimiter, req)) return rateLimited(res);
+  // The same answer for every visitor of a deployment: a shared cache may hold
+  // it for a minute, which also spares the limit a page reload's worth.
+  res.setHeader("Cache-Control", "public, max-age=60");
+  return res.json({
     signup_enabled: publicSignupEnabled(),
     self_serve_invites: selfServeInvitesEnabled(),
     // Captcha for the signup form. Null unless a provider + secret are configured
@@ -396,7 +400,7 @@ authRouter.get("/config", (_req, res) => {
 
 authRouter.post("/signup", async (req, res, next) => {
   try {
-    if (overLimit(signupLimiter, req)) return res.status(429).json(RATE_LIMITED);
+    if (overLimit(signupLimiter, req)) return rateLimited(res);
     const body = SignupBody.parse(req.body);
     const email = body.email.toLowerCase().trim();
 
@@ -701,7 +705,7 @@ async function clearLoginAttempts(email: string): Promise<void> {
 
 authRouter.post("/login", async (req, res, next) => {
   try {
-    if (overLimit(loginLimiter, req)) return res.status(429).json(RATE_LIMITED);
+    if (overLimit(loginLimiter, req)) return rateLimited(res);
     const body = LoginBody.parse(req.body);
     const email = body.email.toLowerCase().trim();
     const now = new Date();
@@ -936,7 +940,7 @@ authRouter.post("/identity/deleted", async (req, res, next) => {
       return res.status(404).json({ error: { code: "identity_disabled", message: "Central identity is not enabled on this surface." } });
     }
     if (!identityExchangeLimiter(req.ip ?? "unknown")) {
-      return res.status(429).json({ error: { code: "rate_limited", message: "Too many attempts — wait a moment." } });
+      return rateLimited(res);
     }
     const parsed = IdentityDeletedBody.safeParse(req.body);
     if (!parsed.success) {
@@ -964,7 +968,7 @@ authRouter.post("/identity/callback", async (req, res, next) => {
       });
     }
     if (!identityExchangeLimiter(req.ip ?? "unknown")) {
-      return res.status(429).json({ error: { code: "rate_limited", message: "Too many attempts — wait a moment." } });
+      return rateLimited(res);
     }
     const { code, app } = IdentityCallbackBody.parse(req.body);
     const redeemed = await redeemIdentityCode(code);
@@ -1023,7 +1027,7 @@ authRouter.post("/identity/exchange", async (req, res, next) => {
     // Unauthenticated + does a jwtVerify and a users lookup — cap bursts (token probing /
     // identity enumeration / CPU) like every other auth endpoint here.
     if (!identityExchangeLimiter(req.ip ?? "unknown")) {
-      return res.status(429).json({ error: { code: "rate_limited", message: "Too many attempts — wait a moment." } });
+      return rateLimited(res);
     }
     const { token } = IdentityExchangeBody.parse(req.body);
     let identityId: string;
@@ -1095,7 +1099,7 @@ const MagicRequest = z.object({
 
 authRouter.post("/magic/request", async (req, res, next) => {
   try {
-    if (overLimit(magicRequestLimiter, req)) return res.status(429).json(RATE_LIMITED);
+    if (overLimit(magicRequestLimiter, req)) return rateLimited(res);
     const parsed = MagicRequest.safeParse(req.body);
     if (!parsed.success) {
       res.status(400).json({
@@ -1163,7 +1167,7 @@ const MagicConsume = z.object({
 
 authRouter.post("/magic/consume", async (req, res, next) => {
   try {
-    if (overLimit(magicConsumeLimiter, req)) return res.status(429).json(RATE_LIMITED);
+    if (overLimit(magicConsumeLimiter, req)) return rateLimited(res);
     const parsed = MagicConsume.safeParse(req.body);
     if (!parsed.success) {
       res.status(400).json({
@@ -1318,7 +1322,7 @@ const PasswordForgot = z.object({ email: z.string().email().max(255) });
 authRouter.post("/password/forgot", async (req, res, next) => {
   try {
     if (overLimit(passwordForgotLimiter, req)) {
-      res.status(429).json(RATE_LIMITED);
+      rateLimited(res);
       return;
     }
     const parsed = PasswordForgot.safeParse(req.body);
@@ -1385,7 +1389,7 @@ const PasswordReset = z.object({
 
 authRouter.post("/password/reset", async (req, res, next) => {
   try {
-    if (overLimit(passwordResetLimiter, req)) return res.status(429).json(RATE_LIMITED);
+    if (overLimit(passwordResetLimiter, req)) return rateLimited(res);
     const parsed = PasswordReset.safeParse(req.body);
     if (!parsed.success) {
       res.status(400).json({ error: { code: "invalid_body", message: "Bad request", details: parsed.error.issues } });
@@ -1494,7 +1498,7 @@ const VerifyEmail = z.object({ token: z.string().min(8).max(200) });
 authRouter.post("/verify-email", async (req, res, next) => {
   try {
     if (overLimit(verifyEmailLimiter, req)) {
-      res.status(429).json(RATE_LIMITED);
+      rateLimited(res);
       return;
     }
     const parsed = VerifyEmail.safeParse(req.body);
@@ -1665,6 +1669,17 @@ function overLimit(limiter: (k: string) => boolean, req: Request): boolean {
   return !AUTH_LIMITS_OFF && !limiter(req.ip ?? "unknown");
 }
 const RATE_LIMITED = { error: { code: "rate_limited", message: "Too many attempts — wait a moment." } };
+/** Every limiter here is a one-minute window, so a refusal can say how long to
+ *  wait; a client that knows counts down instead of retrying into the wall. */
+function rateLimited(res: Response) {
+  res.setHeader("Retry-After", "60");
+  return res.status(429).json(RATE_LIMITED);
+}
+// GET /config is read by every sign-in page load before anyone types, and holds
+// nothing to guess at: a generous bucket of its own (out of the request guard's
+// shared one, see GUARD_EXEMPT_READS), so a busy shared network cannot lock
+// everyone out of even SEEING the form (#3622).
+const configLimiter = makePairLimiter(60_000, 600);
 
 const PairStartBody = z.object({ org_slug: z.string().min(1).max(120) });
 
@@ -1785,7 +1800,7 @@ const PairClaimBody = z.object({ code: z.string().min(1).max(200) });
 authRouter.post("/pair/claim", async (req, res, next) => {
   try {
     if (!pairClaimLimiter(req.ip ?? "unknown")) {
-      res.status(429).json({ error: { code: "rate_limited", message: "Too many attempts — wait a moment." } });
+      rateLimited(res);
       return;
     }
     const parsed = PairClaimBody.safeParse(req.body ?? {});

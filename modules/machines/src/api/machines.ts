@@ -9,7 +9,7 @@ import { sql } from "kysely";
 import { platform } from "@cobblr/platform-contract";
 import { instanceOf, sessionUser, tenantContext, tenantDb } from "../db.js";
 import { asyncHandler, badBody, requireRole } from "./util.js";
-import { routeUnknownToMetadata } from "@cobblr/platform-contract/entity-metadata";
+import { routeUnknownToMetadata, withMetadataMerged } from "@cobblr/platform-contract/entity-metadata";
 
 export const machinesRouter = Router({ mergeParams: true });
 
@@ -156,7 +156,8 @@ machinesRouter.patch(
     const { location_id: patchLocationId, ...patchRest } = parsed.data;
     const updated = await db
       .updateTable("machines_machines")
-      .set({ ...patchRest, updated_at: new Date() } as never)
+      // The custom fields MERGE into the live row (withMetadataMerged, #3625).
+      .set(withMetadataMerged({ ...patchRest, updated_at: new Date() } as Record<string, unknown>) as never)
       .where("id", "=", id)
       .where("instance", "=", instanceOf(req))
       .returningAll()

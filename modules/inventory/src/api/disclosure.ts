@@ -18,7 +18,9 @@
 //      when its quantities drain to zero (the drain-to-restock trap) and
 //      instance-kind synthesis can read the verdict without a tenant pool.
 //   4. Stock-shaped data — any record in the instance carrying a qty ABOVE
-//      ONE, a reorder point (min_qty), or a non-"each" unit (a measured unit
+//      ONE, a reorder point ABOVE ZERO (min_qty; a 0 is what an emptied
+//      number field saves, and one lamp's 0 latched a whole Home Inventory
+//      to stock, 2026-09-24), or a non-"each" unit (a measured unit
 //      only exists to be depleted). `cost` is NOT signal: a catalog recording
 //      what a book cost implies nothing about stock, and would wrongly latch
 //      the whole shelf. Neither is a qty of exactly 1: that is "I have one",
@@ -56,8 +58,18 @@ export function fieldsShowStockSignal(row: {
 }): boolean {
   const qty = row.qty == null ? 0 : Number(row.qty);
   const unit = (row.unit ?? "").trim();
-  return (Number.isFinite(qty) && qty > 1) || row.min_qty != null || (unit !== "" && unit !== "each");
+  const reorder = row.min_qty == null ? 0 : Number(row.min_qty);
+  return (Number.isFinite(qty) && qty > 1) || (Number.isFinite(reorder) && reorder > 0) || (unit !== "" && unit !== "each");
 }
+
+/** The same rule as fieldsShowStockSignal, as a WHERE predicate over
+ *  inventory_parts. The probe below and the catalog heal both read this, so a
+ *  row that latches an instance is the row that keeps it latched. */
+export const STOCK_SHAPED_ROW = sql<boolean>`(
+  qty > 1
+  or min_qty > 0
+  or (unit is not null and unit <> '' and unit <> 'each')
+)`;
 
 /** Latch this instance to stock meta-side (idempotent; only call when not
  *  already latched). Best-effort — a latch write must never fail the request it
@@ -99,16 +111,13 @@ export const disclosureHandler = asyncHandler(async (req: Request, res: Response
     res.json({ stock: true, instance, source: "default" } satisfies Disclosure);
     return;
   }
-  // 3. Meta-side: the bundle's declared faces (no stock face = lean, whatever
-  //    a write latched), then the sticky latch. One rule with the kernel's
+  // 3. Meta-side: the bundle's declared stock face, either way (it outranks
+  //    whatever a write latched), then the sticky latch. One rule with the kernel's
   //    kind synthesis (stockDisclosureFromConfig), so the two cannot disagree.
   const metaSide = stockDisclosureFromConfig(cfg);
-  if (metaSide === false) {
-    res.json({ stock: false, instance, source: "declared" } satisfies Disclosure);
-    return;
-  }
-  if (metaSide === true) {
-    res.json({ stock: true, instance, source: "latched" } satisfies Disclosure);
+  if (metaSide !== null) {
+    const declared = typeof (cfg?.faces as { stock?: unknown } | null | undefined)?.stock === "boolean";
+    res.json({ stock: metaSide, instance, source: declared ? "declared" : "latched" } satisfies Disclosure);
     return;
   }
   // 4. Stock-shaped data present? On the first fire, latch it so this becomes a
@@ -119,11 +128,7 @@ export const disclosureHandler = asyncHandler(async (req: Request, res: Response
       select 1
       from inventory_parts
       where instance = ${instance}
-        and (
-          qty > 1
-          or min_qty is not null
-          or (unit is not null and unit <> 'each')
-        )
+        and ${STOCK_SHAPED_ROW}
     ) as has_stock
   `.execute(db);
   const hasStock = probe.rows[0]?.has_stock ?? false;

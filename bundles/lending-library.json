@@ -2,9 +2,9 @@
   "manifest": {
     "id": "cobblr.community.lending-library",
     "released_at": "2026-06-28",
-    "changelog": "An ISBN scan fills author, year and ISBN, and a title you already have is offered instead of a second copy.",
+    "changelog": "Says up front that it tracks stock, so counts and Use one or Used up are there from the first item rather than after one is counted. Earlier: An ISBN scan fills author, year and ISBN, and a title you already have is offered instead of a second copy.",
     "catalog": "extended",
-    "version": "0.1.2",
+    "version": "0.1.3",
     "name": "Lending Library",
     "description": "A shelf you lend from: each title carries its copies, and lending one out reserves it against a borrower until it comes back.",
     "author": "Cobblr community",
@@ -38,6 +38,9 @@
       {
         "module": "inventory",
         "instance_name": "lending-library",
+        "faces": {
+          "stock": true
+        },
         "display_name": "Lending Library",
         "glyph": "📖",
         "item_noun": "book",

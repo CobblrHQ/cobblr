@@ -6,6 +6,7 @@ import { useState } from "react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { useToast } from "@cobblr/platform-web";
 import { api, ApiError, type ScanInboxItem } from "../lib/api";
+import { scanInboxKeys } from "../lib/scan-inbox-keys";
 
 /** Inline "name it yourself" for a scan that couldn't be auto-identified (a bare
  *  photo with no vision provider). Naming it triggers a server re-match, so the
@@ -34,7 +35,7 @@ export function ScanNameItInline({
   const mut = useMutation({
     mutationFn: (value: string) => api.updateScanItem(slug, itemId, { name: value.trim() }),
     onSuccess: (row) => {
-      void qc.invalidateQueries({ queryKey: ["scan-inbox", slug] });
+      void qc.invalidateQueries({ queryKey: scanInboxKeys.all(slug) });
       toast.success("Got it - finding the right table…");
       onNamed?.(row);
     },
@@ -63,6 +64,7 @@ export function ScanNameItInline({
           onChange={(e) => setName(e.target.value)}
           placeholder={guess ? "Or name it yourself" : "What is this? e.g. blue worsted yarn"}
           aria-label="Name this item"
+          data-name-it={itemId}
           autoFocus={autoFocus}
           className="input !py-1 text-xs flex-1"
           onKeyDown={(e) => {

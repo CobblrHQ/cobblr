@@ -7,7 +7,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import QRCode from "qrcode";
 import { Bluetooth, Check, ChevronDown, Download, Hash, Minus, Monitor, Pencil, Plus, Printer, RotateCcw, RotateCw, Send, Settings2, Trash2, Wifi, Zap } from "lucide-react";
 import { useNavigate } from "react-router-dom";
-import { usePageTitle, useToast, Modal, BACKDROP_LAYER_CLASS } from "@cobblr/platform-web";
+import { usePageTitle, useToast, Modal, BACKDROP_LAYER_CLASS, useFieldDraft } from "@cobblr/platform-web";
 import { useLabels } from "./context";
 import { BrowsePanel } from "./BrowsePanel";
 import { CodesPanel } from "./CodesPanel";
@@ -1491,7 +1491,9 @@ function EditableLabel({
   onSave: (v: string) => void;
 }) {
   const [editing, setEditing] = useState(false);
-  const [draft, setDraft] = useState(value);
+  // Follows the caption while untouched, so opening the editor after the
+  // caption changed elsewhere starts from what it says now.
+  const { draft, setDraft } = useFieldDraft(value);
   // A trimmed caption can be put back to the entity's system name. Only when we
   // know that name AND the caption differs from it (nothing to revert otherwise).
   const canRevert = canRevertToStock(value, stockName);

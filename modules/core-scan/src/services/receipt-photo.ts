@@ -195,7 +195,18 @@ type RowDb = {
  *  Identify and "Read as a receipt" ways out. The failed session the door kept
  *  for its own callers is withdrawn: that state belongs to a receipt somebody
  *  SAID was one; a guess that did not read out is one thing, not two. */
-async function leaveAsPhoto(opts: { orgId: string; itemId: string }, note: string, keptBatchId: string | null): Promise<void> {
+/** What a failed read leaves on the row, beside its note: the row IS a
+ *  receipt whose lines could not be read, so every surface shows Read again
+ *  rather than asking for a name (scanReceiptReadFailed in the contract;
+ *  #3581). The note is the sentence; this is the state. */
+export interface ReceiptReadFailed {
+  failure: string | null;
+  ai: string | null;
+  at: string;
+}
+
+async function leaveAsPhoto(opts: { orgId: string; itemId: string }, note: string, keptBatchId: string | null, why: { failure?: string; ai?: string } = {}): Promise<void> {
+  const state: ReceiptReadFailed = { failure: why.failure ?? null, ai: why.ai ?? null, at: new Date().toISOString() };
   try {
     const db = (await platform().tenants.getDb(opts.orgId)) as unknown as RowDb;
     await db
@@ -204,7 +215,7 @@ async function leaveAsPhoto(opts: { orgId: string; itemId: string }, note: strin
         ai_notes: note,
         ai_suggested_at: new Date(),
         updated_at: new Date(),
-        suggested_metadata: sql`coalesce(suggested_metadata, '{}'::jsonb) - 'reading_receipt'`,
+        suggested_metadata: sql`(coalesce(suggested_metadata, '{}'::jsonb) - 'reading_receipt' - 'read_as_item') || jsonb_build_object('receipt_read_failed', ${JSON.stringify(state)}::jsonb)`,
       })
       .where("id", "=", opts.itemId)
       .execute();
@@ -239,7 +250,7 @@ export async function routeScannedReceiptPhoto(opts: {
     const note = door?.message
       ? `That looked like a receipt, but it ${door.message.replace(/^Couldn't/, "couldn't")} Or identify it as an item instead.`
       : `That looked like a receipt, but its line items could not be read (${reason}). Read it as a receipt again, or identify it as an item instead.`;
-    await leaveAsPhoto(opts, note, door?.keptBatchId ?? null);
+    await leaveAsPhoto(opts, note, door?.keptBatchId ?? null, { failure: door?.failure, ai: door?.ai });
     return { routed: false, reason, note, ...(door?.failure ? { failure: door.failure } : {}), ...(door?.ai ? { ai: door.ai } : {}) };
   };
 

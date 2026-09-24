@@ -68,6 +68,9 @@ for (const f of files) {
 const headerStates = (src: string) => src.split("\n").slice(0, 60).some((l) => l.startsWith("// DONE WHEN:"));
 const recordedKeys = new Map<string, string>(); // key -> the file that names it
 const NOTE_CALL = /noteHealShim\(\s*(?:"([^"]+)"|([A-Z_]+))/g;
+// A registered heal pass (platform-contract heal-pass.ts) records through the
+// kernel's walk: its `shim:` is the key.
+const HEAL_PASS = /registerHealPass\(\{[^}]*?\bshim:\s*"([^"]+)"/g;
 for (const f of [...files, ...moduleFiles]) {
   const rel = relative(ROOT, f);
   if (rel.endsWith(".test.ts")) continue;
@@ -77,6 +80,7 @@ for (const f of [...files, ...moduleFiles]) {
     if (!key && m[2]) key = new RegExp(`const ${m[2]} = "([^"]+)"`).exec(src)?.[1];
     if (key) recordedKeys.set(key, rel);
   }
+  for (const m of src.matchAll(HEAL_PASS)) if (m[1]) recordedKeys.set(m[1], rel);
 }
 for (const f of [...files, ...moduleFiles]) {
   const rel = relative(ROOT, f);

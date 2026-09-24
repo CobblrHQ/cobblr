@@ -15,7 +15,7 @@
 // left as text. Proposals and their summaries are read the same way, so the
 // three response shapes agree.
 
-import { namedRecords, type RecordRef } from "@cobblr/platform-contract/record-mentions";
+import { namedRecords, unlinkInventedPaths, type RecordRef } from "@cobblr/platform-contract/record-mentions";
 
 export type ChatMention = RecordRef;
 
@@ -76,11 +76,29 @@ function proseOf(response: Record<string, unknown>): string {
   return parts.join("\n");
 }
 
+/** The prose of a response with every model-written in-app link reduced to
+ *  its words (record-mentions unlinkInventedPaths): a record's address is built
+ *  from its id, never taken from the model. */
+function withoutInventedPaths<T extends Record<string, unknown>>(response: T, reads: readonly ChatMention[]): T {
+  const out: Record<string, unknown> = { ...response };
+  if (typeof out.text === "string") out.text = unlinkInventedPaths(out.text, reads);
+  if (typeof out.summary === "string") out.summary = unlinkInventedPaths(out.summary, reads);
+  if (Array.isArray(out.items)) {
+    out.items = out.items.map((it) => {
+      const s = (it as { summary?: unknown } | null)?.summary;
+      return typeof s === "string" ? { ...(it as object), summary: unlinkInventedPaths(s, reads) } : it;
+    });
+  }
+  return out as T;
+}
+
 /** The response with `mentions`: the records this turn read whose exact title
  *  its words carry. Absent when there are none, so a reply that names nothing
- *  is unchanged. */
+ *  is unchanged. The words are cleared of invented links FIRST, so a name the
+ *  model wrapped in a made-up path is matched like any other (#3652). */
 export function withMentions<T extends Record<string, unknown>>(response: T, reads: readonly ChatMention[]): T & { mentions?: ChatMention[] } {
-  if (reads.length === 0) return response;
-  const { named } = namedRecords(proseOf(response), reads);
-  return named.length ? { ...response, mentions: named } : response;
+  const clean = withoutInventedPaths(response, reads);
+  if (reads.length === 0) return clean;
+  const { named } = namedRecords(proseOf(clean), reads);
+  return named.length ? { ...clean, mentions: named } : clean;
 }

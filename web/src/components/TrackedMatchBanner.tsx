@@ -20,6 +20,8 @@ import { RepurchaseAnswers, useBestTrackedMatch } from "./RepurchaseControls";
 import { useHandheld } from "../lib/useHandheld";
 import { TrackedMatchNudges } from "./TrackedMatchNudges";
 import { scanRowState, scanTrackedMatch } from "@cobblr/platform-contract/scan-triage";
+import { evidencedFill } from "@cobblr/platform-contract/scan-evidence";
+import { scanInboxKeys } from "../lib/scan-inbox-keys";
 
 /** "license_plate" → "License plate" — a friendly label for a raw field key
  *  (no field-def lookup needed for a quick merge preview). */
@@ -173,7 +175,7 @@ export function TrackedMatchBanner({
         ...(vars.mode === "move" && locationId ? { location_id: locationId } : {}),
       }),
     onSuccess: (r, vars) => {
-      void qc.invalidateQueries({ queryKey: ["scan-inbox", activeSlug] });
+      void qc.invalidateQueries({ queryKey: scanInboxKeys.all(activeSlug) });
       toast.success(
         vars.mode === "move"
           ? `Moved ${r.entity_title}${locationName ? ` → ${locationName}` : ""}`
@@ -218,9 +220,14 @@ export function TrackedMatchBanner({
       c.fields &&
       Object.keys(c.fields).length > 0,
   );
-  const mergeEntries = mergeCand
-    ? Object.entries(mergeCand.fields).filter(([, v]) => v !== "" && v != null)
-    : [];
+  // What the server will write, by the rule it writes by (scan-evidence.ts,
+  // evidencedFill): an identifier the item gives no evidence for is never
+  // offered as a fill, and the preview says it was left out (#3647).
+  const mergeFill = mergeCand
+    ? evidencedFill(item, Object.fromEntries(Object.entries(mergeCand.fields).filter(([, v]) => v !== "" && v != null)))
+    : { fill: {}, held: [] as string[] };
+  const mergeEntries = Object.entries(mergeFill.fill);
+  const mergeHeld = mergeFill.held.map((k) => [k, mergeCand?.fields?.[k]] as const);
   const canMerge = best.matched_by === "name" && mergeEntries.length > 0;
 
   // On a phone the card must not grow (#3339): the "same barcode" tag that
@@ -265,8 +272,12 @@ export function TrackedMatchBanner({
         </button>
       </div>
       {canMerge && (
-        <div className="rounded-md bg-white/60 dark:bg-slate-900/40 border border-emerald-200/70 dark:border-emerald-800/50 px-2.5 py-2">
-          <div className="text-[11px] font-mono uppercase tracking-widest text-emerald-700 dark:text-emerald-300 mb-1">
+        // Folded: the question, the record and the answers are what a person
+        // reads; which fields a fill would write is one tap away (the owner,
+        // 2026-09-24: "a wealth of info here (possibly even too much)").
+        <details data-testid="merge-in" className="rounded-md bg-white/60 dark:bg-slate-900/40 border border-emerald-200/70 dark:border-emerald-800/50 px-2.5 py-2">
+          <summary className="cursor-pointer text-[11px] text-emerald-700 dark:text-emerald-300">What gets filled in</summary>
+          <div className="text-[11px] font-mono uppercase tracking-widest text-emerald-700 dark:text-emerald-300 mb-1 mt-1">
             merge in
           </div>
           <dl className="text-xs space-y-0.5">
@@ -277,6 +288,11 @@ export function TrackedMatchBanner({
               </div>
             ))}
           </dl>
+          {mergeHeld.length > 0 && (
+            <p data-testid="merge-held" className="text-[11px] text-amber-700 dark:text-amber-400 mt-1">
+              Not filled in: {mergeHeld.map(([k, v]) => `${humanizeField(k)} ${String(v)}`).join(", ")}. Nothing on the item shows {mergeHeld.length === 1 ? "it" : "them"}; type it on the record if it is right.
+            </p>
+          )}
           <p className="text-[11px] text-muted mt-1.5">
             {/* This is the one offer that changes a record you own (#3009):
                 say which, what it writes, and what becomes of this row. */}
@@ -284,7 +300,7 @@ export function TrackedMatchBanner({
               ? `Writes these onto ${best.title}, only where it is empty, and the picture you picked becomes its photo; this row is then filed as that record.`
               : `Writes these onto ${best.title}, only where it is empty; nothing there is overwritten, and this row is then filed as that record.`}
           </p>
-        </div>
+        </details>
       )}
       <TrackedMatchNudges item={item} match={best} />
       <div className="flex flex-wrap gap-1.5">

@@ -15,6 +15,7 @@
 // the domain is carried entirely by the model's declared per-unit capacity
 // field and its unit. Proven by tests against filament + screws.
 
+import { amountPct, SAME_UNIT_ONLY } from "@cobblr/platform-contract/consumption-gauge";
 /** A consumption ledger row, as returned by `GET /parts/:id/consumption`
  *  (newest first). `delta` is a signed string ("-40" used, "+546" added). */
 export interface LedgerRow {
@@ -86,8 +87,11 @@ export function resolveUnitCapacity(opts: {
  *  capacity to gauge against. Clamped at 100 so a topped-up unit that briefly
  *  exceeds full doesn't overflow the bar (open question #4 → default clamp). */
 export function gaugePct(qty: number, capacity: number | null): number | null {
-  if (capacity == null || capacity <= 0) return null;
-  return Math.max(0, Math.min(100, Math.round((qty / capacity) * 100)));
+  if (capacity == null) return null;
+  // One open unit's remainder and its full capacity are both in the consumed
+  // unit (metres of one skein), so they compare as they are; the one division
+  // lives in consumption-gauge.ts.
+  return amountPct({ value: qty, unit: null }, { value: capacity, unit: null }, SAME_UNIT_ONLY);
 }
 
 // ── Running balance, per unit, DERIVED on read (§7.2) ─────────────────────────

@@ -16,7 +16,7 @@ import { registerHandler } from "../platform/actions.js";
 import { ActionRefusal, PLATFORM_OWNER } from "@cobblr/platform-contract";
 import { meta, metaPool } from "../db/meta.js";
 import { getTenantDb, tenantPoolStats } from "../db/tenant.js";
-import { poolCounts } from "../db/pool-stats.js";
+import { holdClients, poolCounts } from "../db/pool-stats.js";
 import { sql } from "kysely";
 import {
   forgetOutboundHold,
@@ -356,7 +356,15 @@ testSupportRouter.post("/test-support/starve-meta", async (req, res, next) => {
       return;
     }
     const max = metaPool.options.max ?? 10;
-    const clients = await Promise.all(Array.from({ length: max }, () => metaPool.connect()));
+    let clients;
+    try {
+      clients = await holdClients(metaPool, max);
+    } catch (err) {
+      // A busy pool could not hand over every client in time. The ones it
+      // did hand over are back already (holdClients), so nothing is stranded.
+      res.status(503).json({ error: { code: "pool_busy", message: `could not hold every meta client: ${(err as Error).message}` } });
+      return;
+    }
     setTimeout(() => {
       for (const c of clients) c.release();
     }, ms).unref();
@@ -420,6 +428,30 @@ testSupportRouter.post("/test-support/throwing-action", async (_req, res, next) 
       refuses: { action_id: REFUSING_ACTION_ID, sentence: REFUSAL_SENTENCE },
       crashes: { action_id: CRASHING_ACTION_ID, message: CRASH_MESSAGE },
     });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// A placement row as it was stored before the kernel keyed every placement by
+// the record's base kind (#3663): a collection's spelling, and a placed_at of
+// the test's choosing, so the heal that folds them has something to fold and
+// its "newest wins" can be put to the test. Test-only, mounted under the same
+// flag. Body: { org_id, containee_kind, containee_id, container_kind,
+// container_id, placed_at }.
+testSupportRouter.post("/test-support/raw-placement", async (req, res, next) => {
+  try {
+    const b = (req.body ?? {}) as Record<string, string | undefined>;
+    if (!b.org_id || !b.containee_kind || !b.containee_id || !b.container_kind || !b.container_id || !b.placed_at) {
+      res.status(400).json({ error: { code: "bad_body", message: "org_id, containee_kind/_id, container_kind/_id and placed_at required" } });
+      return;
+    }
+    const db = await getTenantDb(b.org_id);
+    await sql`insert into core_placement_placements (containee_kind, containee_id, container_kind, container_id, placed_at)
+              values (${b.containee_kind}, ${b.containee_id}, ${b.container_kind}, ${b.container_id}, ${b.placed_at}::timestamptz)
+              on conflict (containee_kind, containee_id) do update
+                set container_kind = excluded.container_kind, container_id = excluded.container_id, placed_at = excluded.placed_at`.execute(db as never);
+    res.json({ ok: true });
   } catch (err) {
     next(err);
   }

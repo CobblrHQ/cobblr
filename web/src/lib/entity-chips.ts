@@ -28,7 +28,7 @@
 // (record-mentions), the same one the server used to decide what to vouch
 // for, so the two sides cannot disagree about which words are a record.
 
-import { findRecordNames } from "@cobblr/platform-contract/record-mentions";
+import { findRecordNames, unlinkInventedPaths } from "@cobblr/platform-contract/record-mentions";
 
 export interface ChatEntityRef {
   kind: string;
@@ -97,6 +97,11 @@ export function linkifyMarkdown(
   refs: ChatEntityRef[],
   routeFor: (kind: string, id: string) => string | null,
 ): string {
+  // A link the model wrote to a record is never trusted: it is reduced to its
+  // words first (the contract's rule), and the words are linked from the id
+  // below. The server does the same before it decides the mentions; this
+  // covers a reply stored before it did.
+  text = unlinkInventedPaths(text, refs);
   const linkable = refs.filter((r) => !!r.label && !!routeFor(r.kind, r.id));
   if (linkable.length === 0) return text;
   const spans = findRecordNames(text, linkable);
@@ -166,6 +171,11 @@ export function recordOfHref(
   }
   if (!path.startsWith("/")) return null;
   const bare = path.replace(/^\/w\/[^/]+/, "").replace(/[?#].*$/, "");
+  // The open door (recordHref's address for a record of a module's base kind
+  // filed in a collection) names the record outright; without this a chip
+  // built for one drew as a plain link.
+  const door = /^\/open\/([^/]+)\/([^/]+)$/.exec(bare);
+  if (door?.[1] && door[2]) return { kind: decodeURIComponent(door[1]), id: decodeURIComponent(door[2]), path: bare };
   for (const k of kinds) {
     const tmpl = k.detail_route;
     if (!tmpl || !tmpl.includes("{id}")) continue;

@@ -15,6 +15,7 @@ import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { Sparkles, X } from "lucide-react";
 import { useToast } from "@cobblr/platform-web";
 import { api, ApiError, type ScanInboxItem } from "../lib/api";
+import { scanInboxKeys } from "../lib/scan-inbox-keys";
 
 /** The field names a table gives the series a thing belongs to: the LEGO
  *  bundle's theme, a book table's series, a figure line's franchise. */
@@ -95,7 +96,7 @@ export function SeriesBanner({ slug, items }: { slug: string; items: ScanInboxIt
       // Only toast when the user tapped (a real batch); silent for the sticky
       // auto-tag of a single straggler so it doesn't nag.
       if (!v.silent) toast.success(`Tagged ${r.tagged} as "${v.series}", applied when you confirm each.`);
-      void qc.invalidateQueries({ queryKey: ["scan-inbox", slug] });
+      void qc.invalidateQueries({ queryKey: scanInboxKeys.all(slug) });
       // Remember the series so late members auto-tag. NOT `dismissed` — a dismiss
       // would also hide a genuinely-new straggler; accepted keeps sweeping it in.
       setAccepted((a) => new Set([...a, v.series.toLowerCase()]));

@@ -29,6 +29,8 @@
 // would be written back into the record as a field of that name: the second
 // storage the join exists to end.
 
+import { storedDestinationOf } from "@cobblr/platform-contract/scan-triage";
+
 export type UserFieldValue = string | number | boolean;
 export type UserFields = Record<string, UserFieldValue>;
 /** What the row stores: the values and the table they were typed for. */
@@ -111,12 +113,52 @@ export function candidateKind(c: unknown): string | null {
   return typeof k === "string" && k ? k : null;
 }
 
-/** The candidate list with the person's values merged over the TOP
- *  candidate's fields, when the top candidate is the table they were typed
- *  for. Other candidates are untouched. */
+/** The candidate list as the person left it: the table they chose on the row
+ *  leading it, and their values merged over that top candidate's fields when
+ *  it is the table they were typed for. Other candidates are untouched.
+ *
+ *  The chosen table leads because every reader of "where this goes" reads the
+ *  top candidate: the served row, the form's seed, the sweep, the filing
+ *  doors. The choice lives on the metadata (DESTINATION_KEY, #3062), and a
+ *  Replay, a re-identify, an arrival sweep or a bundle install rewrites only
+ *  the candidates, so without this every one of them put the router's table
+ *  back on top while the choice sat unread beside it (#3587). */
 export function candidatesWithUserFields<T>(candidates: T, meta: unknown): T {
+  const led = personChoiceFirst(candidates, meta);
   const user = userFieldsOf(meta);
-  if (!user || !Array.isArray(candidates) || candidates.length === 0) return candidates;
+  if (!user || !Array.isArray(led) || led.length === 0) return led;
+  return mergeUserFields(led, user);
+}
+
+/** The list with the person's stored destination first: their candidate moved
+ *  up whole (its fields and install offer are the matchmaker's answer for
+ *  that table), or, for a table no candidate names, a bare one for it. A
+ *  system-stamped destination and a row with no choice are returned as they
+ *  were, so the router's answer still leads there. */
+function personChoiceFirst<T>(candidates: T, meta: unknown): T {
+  const chosen = storedDestinationOf(meta);
+  if (!chosen || chosen.by !== "person") return candidates;
+  const list = Array.isArray(candidates) ? (candidates as Array<Record<string, unknown>>) : [];
+  const same = (c: Record<string, unknown>) =>
+    c && typeof c === "object" && c.module === chosen.module && ((c.instance as string | null | undefined) ?? null) === chosen.instance;
+  const at = list.findIndex(same);
+  if (at === 0) return candidates;
+  const top: Record<string, unknown> =
+    at > 0
+      ? list[at]!
+      : {
+          module: chosen.module,
+          instance: chosen.instance,
+          ...(chosen.kind ? { kind: chosen.kind } : {}),
+          ...(chosen.label ? { label: chosen.label } : {}),
+          fields: {},
+          basis: "person",
+        };
+  return [top, ...list.filter((_, i) => i !== at)] as unknown as T;
+}
+
+function mergeUserFields<T>(candidates: T, user: StoredUserFields): T {
+  if (!Array.isArray(candidates) || candidates.length === 0) return candidates;
   const [top, ...rest] = candidates as Array<Record<string, unknown>>;
   if (!top || typeof top !== "object") return candidates;
   const topKind = candidateKind(top);

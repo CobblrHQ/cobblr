@@ -1,0 +1,20 @@
+{
+  "match": "move the replay desk fan to the garage",
+  "rounds": [
+    { "tool_calls": [{ "name": "search_records", "args": { "q": "Replay desk fan" } }] },
+    { "tool_calls": [{ "name": "list_records", "args": { "kind": "core-locations:location", "q": "Garage" } }] },
+    {
+      "tool_calls": [
+        {
+          "name": "invoke_action",
+          "args": {
+            "action_id": "core-placement:place",
+            "entity_kind": "$result.search_records.data.items[0].kind",
+            "entity_id": "$result.search_records.data.items[0].id",
+            "args": { "container_kind": "core-locations:location", "container_id": "$result.list_records.data.items[0].id" }
+          }
+        }
+      ]
+    }
+  ]
+}

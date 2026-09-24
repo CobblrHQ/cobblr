@@ -7,6 +7,7 @@
 import { useMemo } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { api } from "./api";
+import { recordHref } from "@cobblr/platform-contract/instance-detail";
 
 /** A kind's LIST page, from the same template that names its records: the
  *  detail route with the record part taken off. "/instances/tea/items/{id}"
@@ -32,7 +33,11 @@ export function useListRoute(slug: string): (kind: string) => string | null {
   }, [kinds.data]);
 }
 
-export function useDetailRoute(slug: string): (kind: string, id: string) => string | null {
+/** kind + id (+ the row's own detailUrl, when it has one) → where a link to
+ *  that record goes. The row's detailUrl wins; a base kind of a module with
+ *  collections goes through the open door; any other kind uses its template
+ *  (recordHref, the one rule). */
+export function useDetailRoute(slug: string): (kind: string, id: string, detailUrl?: string | null) => string | null {
   const kinds = useQuery({
     queryKey: ["entity-kinds", slug],
     queryFn: () => api.listEntityKinds(slug),
@@ -42,9 +47,6 @@ export function useDetailRoute(slug: string): (kind: string, id: string) => stri
   return useMemo(() => {
     const byKind = new Map<string, string | null>();
     for (const k of kinds.data?.items ?? []) byKind.set(k.id, k.detail_route);
-    return (kind: string, id: string) => {
-      const tmpl = byKind.get(kind);
-      return tmpl ? tmpl.replace("{id}", id) : null;
-    };
+    return (kind: string, id: string, detailUrl?: string | null) => recordHref({ kind, id, detailUrl }, byKind.get(kind));
   }, [kinds.data]);
 }

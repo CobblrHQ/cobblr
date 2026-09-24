@@ -92,6 +92,8 @@ interface ToolMeta {
   category?: string | null;
   receipt_group_id?: string | null;
   photo_is_receipt?: string | null;
+  receipt_read_failed?: unknown;
+  receipt_shape?: { verdict?: string } | null;
   photo_observations?: string | null;
   photo_observed_for?: string | null;
   photo_distinct?: number | null;
@@ -169,6 +171,7 @@ export function scanToolRelevance(row: ScanToolRow, ctx: ScanToolContext = {}): 
   if (receiptRow) receipt = hint("no", "this row is a line of a receipt already");
   else if (!hasPicture) receipt = hint("no", "no picture to read");
   else if (m.photo_is_receipt === "yes") receipt = hint("likely", "the picture reads as a receipt");
+  else if (!named && (m.receipt_read_failed || m.receipt_shape?.verdict === "receipt")) receipt = hint("likely", "a receipt that could not be read yet");
   else if (hasBarcode && named) receipt = hint("no", "a barcode-identified product");
   else if (named) receipt = hint("no", "identified as a thing, not a document");
   else if (settled) receipt = hint("possible", "a picture nothing could name");

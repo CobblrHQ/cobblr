@@ -8,7 +8,7 @@ import { z } from "zod";
 import { platform } from "@cobblr/platform-contract";
 import { instanceOf, sessionUser, tenantContext, tenantDb } from "../db.js";
 import { asyncHandler, badBody, requireRole } from "./util.js";
-import { routeUnknownToMetadata } from "@cobblr/platform-contract/entity-metadata";
+import { routeUnknownToMetadata, withMetadataMerged } from "@cobblr/platform-contract/entity-metadata";
 
 export const ordersRouter = Router({ mergeParams: true });
 
@@ -230,7 +230,8 @@ ordersRouter.patch(
       return;
     }
     // Keep the legacy `vendor` text in sync when vendor_id changes in this PATCH.
-    const patch: Record<string, unknown> = { ...parsed.data, updated_at: new Date() };
+    // Custom fields MERGE into the live row (withMetadataMerged, #3625).
+    const patch: Record<string, unknown> = withMetadataMerged({ ...parsed.data, updated_at: new Date() } as Record<string, unknown>);
     // Setting a tracking number claims the parcel; clearing it releases the
     // claim. An edit that does not touch tracking leaves ownership alone.
     if ("tracking_number" in parsed.data) {

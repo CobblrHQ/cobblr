@@ -15,6 +15,8 @@
 import { identifyFailureWords, identifyNeverTried, type IdentifyFailure } from "@cobblr/platform-contract/scan-fallback";
 
 export type NamelessReason =
+  /** A receipt whose lines could not be read: Read again, not a name (#3581). */
+  | "receipt-unread"
   /** Nothing here can identify a photo: the setup sentence. */
   | "no-identify"
   /** A shop's own code: nothing to look up. */
@@ -35,7 +37,10 @@ export function namelessReason(
   /** The lookup held an uncorroborated web guess back and left the name
    *  blank (metadata held_reason): nothing found for the code (#2918). */
   unresolvedCode = false,
+  /** The contract's scanReceiptReadFailed: outranks every other reason. */
+  receiptUnread = false,
 ): NamelessReason {
+  if (receiptUnread) return "receipt-unread";
   // Only a KNOWN "nothing here can identify a photo" earns the setup sentence;
   // an unknown status is not a reason to send someone to set up what they
   // may already have.
@@ -79,5 +84,5 @@ export function namelessRemedy(why: NamelessReason, failure: IdentifyFailure | n
  *  something the heading does not (the held guess, which AI failed and
  *  how, that the model saw no one item). */
 export function headingSaysItAll(why: NamelessReason): boolean {
-  return why === "no-identify" || why === "store-code";
+  return why === "no-identify" || why === "store-code" || why === "receipt-unread";
 }

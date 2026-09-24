@@ -21,7 +21,7 @@
 import { meta } from "../db/meta.js";
 import { render } from "./templates.js";
 import type { ResolvedEntity } from "@cobblr/platform-contract";
-import { coerceMetadata } from "@cobblr/platform-contract/entity-metadata";
+import { coerceMetadata, templateDataOf } from "@cobblr/platform-contract/entity-metadata";
 
 /** A provider returns a namespaced bag of related/aggregated data for one
  *  entity. Referenced in templates as {{<name>.<key>}}. Resolution is
@@ -120,9 +120,8 @@ export async function applyComputedFields(
   const fields = resolved.fields;
   const metadata = coerceMetadata(fields.metadata);
 
-  // Tier-1 context: native fields (top-level) + custom values (metadata).
-  // metadata wins on key collision since that's where authored values sit.
-  const ctx: Record<string, unknown> = { ...fields, ...metadata };
+  // Tier-1 context: the one rule every template reads a record by.
+  const ctx: Record<string, unknown> = templateDataOf(fields);
 
   // Tier-2: invoke each registered provider whose namespace is referenced
   // by at least one computed template on this kind, once per entity.

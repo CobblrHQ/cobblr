@@ -61,7 +61,12 @@ export function starvationStep(
 
 /** Sample a pool every `everyMs` and log the two lines above under `label`.
  *  The timer is unref'd, so it never keeps a process alive. Returns a stop. */
-export function startPoolWatch(label: string, read: () => PoolCounts, everyMs = 5_000): () => void {
+export function startPoolWatch(
+  label: string,
+  read: () => PoolCounts,
+  everyMs = 5_000,
+  holders?: () => string[],
+): () => void {
   let state: StarvationState = { waitingSince: null, reported: false };
   // SINGLE-PROCESS-SAFE: reads this process's own pool counters and writes
   // this process's own log; another api against the same database has its
@@ -70,7 +75,35 @@ export function startPoolWatch(label: string, read: () => PoolCounts, everyMs = 
     const next = starvationStep(state, read(), Date.now());
     state = next.state;
     if (next.line) console.error(`[${label}] ${next.line}`);
+    // A starved pool names who holds it, so the next wedge is diagnosed from
+    // the log (poolHolders, #3666).
+    if (next.line?.startsWith("starved") && holders) {
+      const held = holders();
+      for (const h of held.slice(0, 12)) console.error(`[${label}]   ${h}`);
+      if (held.length > 12) console.error(`[${label}]   ...and ${held.length - 12} more`);
+    }
   }, everyMs);
   t.unref?.();
   return () => clearInterval(t);
+}
+
+/** Check out `n` clients and hold them. If ANY checkout fails, every client
+ *  already taken goes back at once and the failure is thrown. A bare
+ *  `Promise.all` over `pool.connect()` strands the clients it did get when one
+ *  times out, because the caller never sees them: that is how a CI run's meta
+ *  pool wedged for good, every later request waiting on ten clients nobody
+ *  held a reference to (#3666). `lint:no-promise-all-over-connect` refuses the
+ *  bare form. */
+export async function holdClients<C extends { release: () => void }>(
+  pool: { connect: () => Promise<C> },
+  n: number,
+): Promise<C[]> {
+  const settled = await Promise.allSettled(Array.from({ length: n }, () => pool.connect()));
+  const held = settled.flatMap((s) => (s.status === "fulfilled" ? [s.value] : []));
+  const failed = settled.find((s): s is PromiseRejectedResult => s.status === "rejected");
+  if (failed) {
+    for (const c of held) c.release();
+    throw failed.reason;
+  }
+  return held;
 }

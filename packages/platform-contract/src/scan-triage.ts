@@ -38,10 +38,12 @@ import {
   HELD_GUESS_SOURCE,
   INSTALL_SENTENCE,
   INSTALL_BLOCKED_SENTENCE,
+  UNAVAILABLE_SENTENCE,
   KEYWORD_ROUTE_SENTENCE,
   LOW_CONFIDENCE_SENTENCE,
   MERGE_SENTENCE,
   NO_NAME_SENTENCE,
+  RECEIPT_UNREAD_SENTENCE,
   SHORT_BARCODE_DOUBT,
   SPLIT_GROUP_DOUBT,
   SPLIT_SIBLINGS_DOUBT,
@@ -138,6 +140,14 @@ interface TriageMeta {
   /** Values a person typed on the row before filing, by the table they
    *  were typed for (core-scan's user-fields). */
   user_fields?: { kind?: string | null; values?: Record<string, unknown> };
+  /** A read of this photo as a receipt failed (core-scan's receipt-photo). */
+  receipt_read_failed?: unknown;
+  /** The shape check's verdict on the picture. */
+  receipt_shape?: { verdict?: string } | null;
+  /** A receipt read is running now. */
+  reading_receipt?: boolean;
+  /** The person answered "treat it as one item". */
+  read_as_item?: boolean;
 }
 
 function metaOf(row: ScanTriageRow): TriageMeta {
@@ -150,6 +160,23 @@ function isPending(row: ScanTriageRow): boolean {
 
 function isNamed(row: ScanTriageRow): boolean {
   return !!row.suggested_name?.trim();
+}
+
+/**
+ * A receipt whose lines could not be read, still waiting on a person: THE
+ * answer every surface reads before it asks for a name (#3581). The photo was
+ * taken as a receipt (the read stamped `receipt_read_failed`, or, on a row
+ * written before that stamp existed, the shape check called it a receipt),
+ * nothing named it, no read is running, and the person has not said to treat
+ * it as one item. A failed read is a state with Read again, not an item: the
+ * review surface used to reason from "no name" and asked the person to name
+ * a receipt.
+ */
+export function scanReceiptReadFailed(row: ScanTriageRow): boolean {
+  if (!isPending(row) || isNamed(row)) return false;
+  const meta = metaOf(row);
+  if (meta.read_as_item || meta.reading_receipt) return false;
+  return !!meta.receipt_read_failed || meta.receipt_shape?.verdict === "receipt";
 }
 
 /** A route the matchmaker suggested. Only what the readiness rule needs. */
@@ -183,11 +210,14 @@ export function scanTopCandidate(row: ScanTriageRow): ScanTopCandidate | null {
  *  nagging, not to record a permanent doubt. */
 export function needsScanReview(row: ScanTriageRow): boolean {
   if (!isPending(row)) return false;
+  // An unmet requirement is not a doubt: nothing files without a name, so
+  // "Looks fine" cannot retire it. It used to, which hid the review block
+  // while Add stayed disabled for want of the name (#3616).
+  if (!isNamed(row)) return true;
   const meta = metaOf(row);
   if (meta.reviewed) return false;
   const confidence = row.ai_confidence == null ? null : Number(row.ai_confidence);
   return (
-    !isNamed(row) ||
     !!meta.low_trust ||
     !!meta.rate_limited ||
     (confidence != null && !Number.isNaN(confidence) && confidence < SCAN_REVIEW_CONFIDENCE) ||
@@ -197,6 +227,21 @@ export function needsScanReview(row: ScanTriageRow): boolean {
     // is the identification's, not the field's (#3070, scan-evidence.ts).
     scanEvidenceConflicts(row).length > 0
   );
+}
+
+/**
+ * Whether "Looks fine" settles this row's review: the ONE rule for offering
+ * it, on every surface (#3616). A person saying "I looked, it's fine"
+ * resolves a doubt (a low confidence, a flagged read, a guessed route, a
+ * source conflict), never an unmet requirement: a row with no name still
+ * cannot file after the tap, so offering it there was an affordance that
+ * lied. Decided by applying the tap: true only when the row, marked
+ * reviewed, no longer needs review.
+ */
+export function scanLooksFineResolves(row: ScanTriageRow): boolean {
+  if (!needsScanReview(row)) return false;
+  const meta = { ...(metaOf(row) as Record<string, unknown>), reviewed: true };
+  return !needsScanReview({ ...row, suggested_metadata: meta });
 }
 
 /**
@@ -285,6 +330,8 @@ export function scanReviewReason(
 ): string | null {
   if (!needsScanReview(row)) return null;
   const meta = metaOf(row);
+  // Before "no name": a receipt whose read failed is not an unnamed item.
+  if (scanReceiptReadFailed(row)) return RECEIPT_UNREAD_SENTENCE;
   if (!isNamed(row)) return meta.code_type === "store-code" ? STORE_CODE_NOTE : NO_NAME_SENTENCE;
   if (meta.rate_limited) return THROTTLED_SENTENCE;
   // A row nothing tried to read (no provider here) was not one the AI could
@@ -344,6 +391,8 @@ export function scanReviewQuestions(row: ScanTriageRow): ScanQuestion[] {
   const typed = meta.user_fields?.values ?? {};
   const answered = (field: string) => typed[field] != null && String(typed[field]).trim() !== "";
   const out: ScanQuestion[] = [];
+  // A receipt whose read failed asks to be read again, not named (#3581).
+  if (scanReceiptReadFailed(row)) return out;
   if (!isNamed(row)) {
     // A web guess held for want of a second source is shown as a guess a
     // tap can take. It used to be prose in the note beside an empty name
@@ -504,6 +553,60 @@ export function storedDestinationOf(meta: unknown): StoredDestination | null {
   };
 }
 
+/** Where a filed row actually went, stamped on the row when it was filed
+ *  (#3620): the table by module and instance, and its name then. A
+ *  committed row is shown by THIS, never re-derived from its candidates:
+ *  a filing into Groceries read back as "Inventory · Groceries?" because
+ *  the row only kept the module's base kind. */
+export const FILED_INTO_KEY = "filed_into";
+export interface FiledInto {
+  module: string;
+  instance: string | null;
+  kind: string | null;
+  label: string;
+}
+export function filedIntoOf(meta: unknown): FiledInto | null {
+  const f = ((meta ?? {}) as Record<string, unknown>)[FILED_INTO_KEY];
+  if (!f || typeof f !== "object") return null;
+  const o = f as Record<string, unknown>;
+  if (typeof o.module !== "string" || !o.module || typeof o.label !== "string" || !o.label.trim()) return null;
+  return {
+    module: o.module,
+    instance: typeof o.instance === "string" && o.instance ? o.instance : null,
+    kind: typeof o.kind === "string" && o.kind ? o.kind : null,
+    label: o.label,
+  };
+}
+
+/** A workspace's scan menu entry, as both the web and the server hold it. */
+export interface ScanMenuTableEntry {
+  module: string;
+  instance: string | null;
+  kind: string;
+  noun: string;
+  label: string;
+  fields: ReadonlyArray<{ name: string }>;
+  category_field?: { name?: string; label: string; values: string[] };
+  scan_keywords?: string[];
+  bundle_external_id?: string | null;
+}
+
+/** The scan menu as the destination resolver reads it: the destination
+ *  shape beside the fit shape the router reads. ONE builder for the card,
+ *  the page's File N and every server reader of an item's destination
+ *  (#3618), so the tables they hand the resolver are the same tables. */
+export function scanResolverTables(menu: ReadonlyArray<ScanMenuTableEntry> | null | undefined): ScanResolverTable[] {
+  return (menu ?? []).map((m) => ({
+    ...m,
+    instance_name: m.instance ?? m.module,
+    display_name: m.label,
+    module_name: m.module,
+    keywords: m.scan_keywords ?? [],
+    kind: m.kind,
+    bundle_external_id: m.bundle_external_id ?? null,
+  })) as unknown as ScanResolverTable[];
+}
+
 /** A candidate as the served row carries it: only what the destination
  *  needs. */
 export interface ScanDestinationCandidate {
@@ -646,6 +749,17 @@ export function scanDestination(row: ScanTriageRow, ctx: ScanDestinationContext 
   };
 }
 
+/** The row's table is in an app this person cannot reach: absent from the
+ *  deployment, or off here and they may not turn it on (#3610). The card
+ *  says Ask or Pick another table for it; a count of what is ready must not
+ *  include it. Unknown module state is never unreachable. */
+export function scanDestinationUnreachable(row: ScanTriageRow, ctx: ScanRowStateContext): boolean {
+  const d = scanDestination(row, ctx);
+  if (!d || d.installs) return !!d?.installs && ctx.canInstall === false;
+  const state = ctx.moduleState?.(d.module);
+  return state === "absent" || (state === "available" && ctx.canInstall === false);
+}
+
 export interface ScanRowStateContext extends ScanDestinationContext {
   /** The person may file into THIS table (the capability): asked with the
    *  resolved destination's module, so a session of rows routed to
@@ -654,8 +768,16 @@ export interface ScanRowStateContext extends ScanDestinationContext {
    *  blocks. Once a plain `permitted` boolean that nothing in the product
    *  set, so the blocked state never rendered (#3126). */
   permittedFor?: (module: string | null) => boolean | null | undefined;
-  /** The person may install a bundle (the role). Default true. */
+  /** The person may install a bundle or turn on a module (the role).
+   *  Default true. */
   canInstall?: boolean;
+  /** Whether a module is turned on in this workspace: "enabled", "available"
+   *  (this deployment has it; an admin can turn it on) or "absent" (it does
+   *  not exist here, so nothing can be asked for). Null or undefined while
+   *  it loads, which never blocks. The destination's table living in an app
+   *  that is off is the same missing table as an uninstalled bundle (#3610):
+   *  a ready Add there is refused by the server. */
+  moduleState?: (module: string) => "enabled" | "available" | "absent" | null | undefined;
   /** The field's label on the destination's table, for the source-conflict
    *  sentence. */
   fieldLabel?: (name: string) => string;
@@ -716,7 +838,7 @@ export interface ScanRowState {
    *  destination installs, or both. The surface hands these to the
    *  approval seam; the words come back from the server. Null unless
    *  blocked. */
-  ask: Array<{ kind: "capability" | "install"; key: string }> | null;
+  ask: Array<{ kind: "capability" | "install" | "module"; key: string }> | null;
 }
 
 /**
@@ -730,11 +852,22 @@ export interface ScanRowState {
  * whatever the matchmaker's basis was.
  */
 export function scanRowState(row: ScanTriageRow, ctx: ScanRowStateContext = {}): ScanRowState {
+  // A receipt whose lines could not be read is not an item yet, so it has no
+  // table to be filed into: its actions are Read again, or "Treat it as one
+  // item" on purpose (#3581). A destination here drew a table picker and a
+  // Review button on a thing nobody can file.
+  if (scanReceiptReadFailed(row)) {
+    const sentence = scanReviewReason(row, { fieldLabel: ctx.fieldLabel }) ?? UNTRUSTED_DOUBT;
+    return { eligibility: "needs-review", sentence, action: { kind: "review", label: ACTION_REVIEW, title: sentence }, destination: null, merge: null, ask: null };
+  }
   const destination = scanDestination(row, ctx);
   const destLabel = destination?.label ?? "a table";
   // Whether this person may file into the table the row resolved to: asked
   // with the destination the resolver chose, not one the caller guessed at.
   const permitted = ctx.permittedFor?.(destination?.module ?? null);
+  // The destination's app, when it is off here and no bundle offer covers it
+  // (an offer installs the module with the bundle).
+  const moduleOff = destination && !destination.installs ? ctx.moduleState?.(destination.module) : null;
   const meta = metaOf(row);
   const review = (sentence: string): ScanRowState => ({
     eligibility: "needs-review",
@@ -757,12 +890,15 @@ export function scanRowState(row: ScanTriageRow, ctx: ScanRowStateContext = {}):
   const blocked = (sentence: string): ScanRowState => {
     const ask: NonNullable<ScanRowState["ask"]> = [];
     if (destination?.installs && destination.bundle_external_id) ask.push({ kind: "install", key: destination.bundle_external_id });
+    if (destination && moduleOff === "available") ask.push({ kind: "module", key: destination.module });
     const cap = createCapabilityForModule(destination?.module);
     if (cap && permitted === false) ask.push({ kind: "capability", key: cap });
     return { eligibility: "blocked", sentence, action: { kind: "blocked", label: ACTION_BLOCKED, title: sentence }, destination, merge: null, ask };
   };
   if (!isPending(row)) return add();
-  if (permitted === false) return blocked(BLOCKED_SENTENCE);
+  // No grant makes a table in an app this deployment lacks: another table is
+  // the only next step, for a person with or without the permission.
+  if (permitted === false) return moduleOff === "absent" && destination ? review(fillSentence(UNAVAILABLE_SENTENCE, { table: destination.label })) : blocked(BLOCKED_SENTENCE);
   if (needsScanReview(row)) return review(scanReviewReason(row, { fieldLabel: ctx.fieldLabel }) ?? UNTRUSTED_DOUBT);
   if (!meta.reviewed) {
     // Another of a thing the workspace COUNTS is a re-purchase: +1 more, one
@@ -788,7 +924,9 @@ export function scanRowState(row: ScanTriageRow, ctx: ScanRowStateContext = {}):
     if (destination?.chosenBy !== "person" && (!top || top.basis === "keywords")) return review(KEYWORD_ROUTE_SENTENCE);
   }
   if (!destination) return review(KEYWORD_ROUTE_SENTENCE);
-  if (destination.installs) {
+  // Nothing can make this table: the next step is another one.
+  if (moduleOff === "absent") return review(fillSentence(UNAVAILABLE_SENTENCE, { table: destination.label }));
+  if (destination.installs || moduleOff === "available") {
     // A person who may not install is blocked with an ask, not asked to
     // review: the review step cannot install either, and the ask can.
     if (ctx.canInstall === false) return blocked(fillSentence(INSTALL_BLOCKED_SENTENCE, { table: destination.label }));
@@ -934,6 +1072,9 @@ export function matchesScanFacet(
   row: ScanTriageRow,
   facet: ScanTriageFacet,
   now: number = Date.now(),
+  /** Who is asking, when known: a row whose table they cannot reach is not
+   *  ready for them, whatever its home (#3610). */
+  viewer?: ScanRowStateContext,
 ): boolean {
   switch (facet) {
     case "needs_review":
@@ -944,10 +1085,46 @@ export function matchesScanFacet(
       return isPending(row) && !scanHasHome(row);
     case "ready":
       // Somewhere to go AND nothing left to ask — the "just put them away" set.
-      return isPending(row) && scanHasHome(row) && !needsScanReview(row);
+      return isPending(row) && scanHasHome(row) && !needsScanReview(row) && !(viewer && scanDestinationUnreachable(row, viewer));
     case "photo_wanted":
       return wantsOwnPhoto(row);
     case "all":
       return true;
   }
+}
+
+// ── A split piece that could not be cut out (#3614) ──────────────────────
+//
+// A split piece either gets its own crop or says it could not be cut, with
+// the crop tool beside it. Two boxed sets split into two records that both
+// carried the whole group photo (crop "none", no region) and said nothing,
+// so each looked like it had its own picture. The reason is kept on the row
+// (`crop_reason`); these are its words.
+
+/** Why a piece of a split has no crop of its own. */
+export type SplitUncutReason = "undecodable" | "box-too-small" | "box-too-large" | "flat" | "no-source" | "write-failed" | "not-boxed" | "detect-failed";
+
+/** The reason in a person's words. */
+export function splitUncutWords(reason: string | null | undefined): string {
+  switch (reason) {
+    case "undecodable": return "the photo could not be read";
+    case "box-too-small": return "the region is too small to be a thing";
+    case "box-too-large": return "the region is nearly the whole photo";
+    case "flat": return "that region shows nothing";
+    case "no-source": return "the photo is missing";
+    case "write-failed": return "the crop could not be saved";
+    case "detect-failed": return "the AI did not answer when asked where each thing is";
+    default: return "the AI did not mark where this one is";
+  }
+}
+
+/** A split piece still showing the whole group photo: the sentence it says
+ *  and why, or null for anything else (a piece with its own crop, a row that
+ *  is not a split piece). */
+export function scanSplitUncut(row: ScanTriageRow): { sentence: string; why: string } | null {
+  const meta = metaOf(row) as Record<string, unknown>;
+  if (typeof meta.split_from !== "string" || !meta.split_from) return null;
+  if (meta.crop === "ok") return null;
+  const why = splitUncutWords(typeof meta.crop_reason === "string" ? meta.crop_reason : null);
+  return { sentence: "Not cut out of the group photo, so it shows all of it.", why: `It could not be cut out: ${why}.` };
 }

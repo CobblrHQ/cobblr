@@ -35,6 +35,8 @@ import { EntityAttachments } from "../components/EntityAttachments";
 import { EntityImageEdit } from "../components/EntityImageEdit";
 import { ImageSearchPicker } from "../components/ImageSearchPicker";
 import { LocationTreePicker } from "../components/LocationTreePicker";
+import { resolveDetailPath } from "@cobblr/platform-contract/instance-detail";
+import { PresentationGate, useFaces } from "@cobblr/platform-web";
 
 const ENTITY_KIND = "records:record";
 
@@ -80,7 +82,10 @@ export function RecordsPage({
     if (instance) {
       setLocalSel(rid);
       setSearchParams((prev) => { prev.set("record", rid); return prev; }, { replace: true });
-    } else navigate(`/records/${rid}${searchParams.toString() ? `?${searchParams}` : ""}`);
+    } else {
+      // RECORD-LINK-OK: the module's own page opening its own default-collection record in place; its base route is this page.
+      navigate(`/records/${rid}${searchParams.toString() ? `?${searchParams}` : ""}`);
+    }
   };
   const closeDetail = () => {
     if (instance) {
@@ -296,7 +301,7 @@ function RecordsTable({
   );
 }
 
-function RecordDetailModal({
+export function RecordDetailModal({
   recordId,
   onClose,
   instance,
@@ -312,6 +317,8 @@ function RecordDetailModal({
   // through every record call + the field kind. Mirrors AssetDetailModal.
   const kind = instance ? `${instance}:item` : ENTITY_KIND;
   const fp = useFieldPresentation(kind);
+  // The collection's faces decide sections and verbs; the body waits for them.
+  const shape = useFaces(kind);
   const record = useQuery({
     queryKey: ["record", activeSlug, instance ?? null, recordId],
     queryFn: () => api.getRecord(activeSlug, recordId!, instance),
@@ -403,6 +410,7 @@ function RecordDetailModal({
   return (
     <Modal open={!!recordId} onClose={onClose} title={r?.name ?? (record.isError ? "Couldn't load" : "loading…")} size="xl">
       {r ? (
+        <PresentationGate ready={fp.ready && shape.ready} failed={fp.failed || shape.failed} retry={() => { fp.retry(); shape.retry(); }}>
         <div className="space-y-4">
           {/* Wide record layout: the cover large on the LEFT, fields on the
               RIGHT — so an image-bearing record (a book, a film, a bottle)
@@ -467,7 +475,7 @@ function RecordDetailModal({
                 entityId={r.id}
                 values={r.metadata}
                 onCommit={(name, value) =>
-                  update.mutate({ metadata: { ...r.metadata, [name]: value } })
+                  update.mutate({ metadata: { [name]: value } })
                 }
               />
               <EntityAttachments kind={ENTITY_KIND} entityId={r.id} />
@@ -489,6 +497,7 @@ function RecordDetailModal({
             </button>
           </div>
         </div>
+        </PresentationGate>
       ) : record.isError ? (
         // Don't sit on "loading…" forever when the fetch fails — say what
         // went wrong + offer a retry, so it's never a silent mystery.
@@ -543,7 +552,7 @@ function NewRecordModal({
       onClose();
       // On an instance page stay in the instance and deep-link the new
       // record's detail; on the base page go to /records/:id.
-      navigate(instance ? `/${instance}?record=${r.id}` : `/records/${r.id}`);
+      navigate(resolveDetailPath({ kind: "records:record", id: r.id, instance: instance ?? null, detailUrl: null, baseDetailRoute: "/records/{id}" }) ?? "/records");
     },
     onError: (e: unknown) => toast.error(e instanceof ApiError ? e.message : "Couldn't create."),
   });

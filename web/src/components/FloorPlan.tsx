@@ -392,7 +392,7 @@ function PlanFor({
   const saveBound = (next: FpBound) => {
     saveMeta.mutate({
       id: room.id,
-      metadata: { ...(room.metadata ?? {}), floorplan: next },
+      metadata: { floorplan: next },
     });
   };
 

@@ -226,7 +226,7 @@ export function AuthPage({ initialMode }: { initialMode?: Mode } = {}) {
             </p>
           </div>
         ) : authCfg.status === "failed" ? (
-          <AuthConfigUnavailable onRetry={authCfg.retry} />
+          <AuthConfigUnavailable failure={authCfg.failure} onRetry={authCfg.retry} />
         ) : (
         <form
           onSubmit={submit}

@@ -51,6 +51,13 @@ export const SPLIT_SIBLINGS_DOUBT = "The pieces split from one photo disagree on
 /** A row nothing could name. */
 export const NO_NAME_SENTENCE = "No name yet. Name it to file it.";
 
+/** A receipt whose lines could not be read (#3581): the row is a receipt,
+ *  not an unnamed item, so the card says so and offers Read again first. */
+export const RECEIPT_UNREAD_TITLE = "Receipt not read";
+export const RECEIPT_UNREAD_SENTENCE = "Its lines could not be read yet. Read it again.";
+export const RECEIPT_READ_AGAIN = "Read again";
+export const RECEIPT_AS_ITEM = "Treat it as one item";
+
 /** A nameless row whose web guess was held for want of a second source
  *  (#2918): the card asks, with the guess as its one tap. The prompt, the
  *  tap's source and the why, read by the contract's question and the card. */
@@ -88,6 +95,11 @@ export const EVIDENCE_CONFLICT_SENTENCE = "{source} says {evidence}, not {claime
  *  is not one. `{table}` is the destination's label. Asking is the way. */
 export const INSTALL_BLOCKED_SENTENCE = "{table} is not set up yet. Ask a workspace admin.";
 
+/** The destination belongs to an app this deployment does not have at all,
+ *  so no install or request can make it: the next step is another table.
+ *  `{table}` is the destination's label. */
+export const UNAVAILABLE_SENTENCE = "{table} is not available here. Pick another table.";
+
 /** The AI was asked and did not answer (the row's coded identify_failure):
  *  the name is whatever else named it, and a person checks it. Never
  *  "connect AI": a manual check settles the row without one. */
@@ -108,3 +120,11 @@ export const ACTION_BLOCKED = "Ask an admin";
 export function fillSentence(template: string, slots: Record<string, string | number>): string {
   return template.replace(/\{(\w+)\}/g, (_, k: string) => String(slots[k] ?? ""));
 }
+
+/** A barcode no catalog knows: the scan worked and the lookup came up empty,
+ *  so the next step is a photo of the thing (the owner, 2026-09-24). */
+export const NO_MATCH_ASK_FOR_PHOTO = "We couldn't find this barcode. Take a photo so we can tell what it is.";
+
+/** A capture no pass could identify: said plainly, with the way on (name it),
+ *  never "Captured item" (the owner, 2026-09-24). */
+export const COULD_NOT_TELL = "Couldn't tell what this is";

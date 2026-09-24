@@ -17,6 +17,8 @@ import { Camera, ChevronDown, Pencil, ReceiptText, RefreshCw, RotateCcw, Scissor
 import type { ScanInboxItem } from "../lib/api";
 import { displayName } from "@cobblr/platform-contract/display-identity";
 import { ScanItemSheetHeader, ScanItemSheetFooter, type ScanItemSheetNav } from "./ScanItemSheet";
+import { ScanReceiptUnread, type ScanReceiptUnreadProps } from "../components/ScanReceiptUnread";
+import { RECEIPT_UNREAD_TITLE } from "@cobblr/platform-contract/scan-copy";
 
 export interface ScanItemScreenAction {
   label: string;
@@ -55,6 +57,9 @@ export interface ScanItemScreenProps {
   };
   warning: string | null;
   working: string | null;
+  /** A piece of a split still showing the whole group photo: says so, with
+   *  the crop tool beside it (contract: scanSplitUncut, #3614). */
+  uncut?: { sentence: string; why: string; onCrop: () => void } | null;
   /** What this row still asks of a person, and the taps that answer it
    *  (the contract's scanReviewQuestions): the one question, a choice per
    *  answer the pipeline can offer, and the resolving actions (Looks fine,
@@ -68,6 +73,9 @@ export interface ScanItemScreenProps {
     choices: Array<{ value: string; source: string; onPick: () => void }>;
     actions: Array<{ label: string; hint?: string; busy?: boolean; onClick: () => void }>;
   } | null;
+  /** A receipt whose lines could not be read (contract: scanReceiptReadFailed):
+   *  the screen leads with Read again instead of asking for a name (#3581). */
+  receipt?: Omit<ScanReceiptUnreadProps, "compact"> | null;
   /** "Use photo's name: X", when the photo read a different product off the label. */
   photoName: { name: string; busy: boolean; onApply: () => void } | null;
   /** The model's newest read of the name, offered beside the person's own
@@ -300,7 +308,7 @@ export function ScanItemScreen(p: ScanItemScreenProps) {
       <div className="space-y-5 px-4 pb-4 pt-3">
         <section className="space-y-1.5">
           <h2 className={"text-xl font-semibold leading-tight " + (displayName(item) ? "text-content dark:text-mortar-100" : "text-muted dark:text-slate-400")}>
-            {displayName(item) ?? "Name this item"}
+            {displayName(item) ?? (p.receipt ? RECEIPT_UNREAD_TITLE : "Name this item")}
           </h2>
           <div className="flex flex-wrap items-center gap-x-2 gap-y-0.5 text-[11px] font-mono text-faint dark:text-slate-500">
             {p.barcode.editing ? (
@@ -358,7 +366,20 @@ export function ScanItemScreen(p: ScanItemScreenProps) {
             {p.subtitle && <span>{p.subtitle}</span>}
           </div>
           {p.working && <div className="text-xs text-accent animate-pulse">{p.working}</div>}
-          {p.warning && !p.review && <div className="text-xs text-amber-600 dark:text-amber-400">{p.warning}</div>}
+          {p.warning && !p.review && !p.receipt && <div className="text-xs text-amber-600 dark:text-amber-400">{p.warning}</div>}
+          {p.uncut && (
+            <div data-testid="split-uncut" title={p.uncut.why} className="flex flex-wrap items-center gap-1.5 text-xs text-amber-700 dark:text-amber-400">
+              {p.uncut.sentence}
+              <button
+                type="button"
+                data-testid="split-crop-it"
+                onClick={p.uncut.onCrop}
+                className="rounded border border-amber-400/70 px-2 py-1 text-xs font-medium hover:bg-amber-50 dark:hover:bg-amber-950/30"
+              >
+                Crop it
+              </button>
+            </div>
+          )}
           {p.photoName && (
             <button
               type="button"
@@ -397,7 +418,7 @@ export function ScanItemScreen(p: ScanItemScreenProps) {
           )}
         </section>
 
-        {p.review && <ReviewBlock r={p.review} barcode={p.barcode} />}
+        {p.receipt ? <ScanReceiptUnread {...p.receipt} /> : p.review && <ReviewBlock r={p.review} barcode={p.barcode} />}
 
         <Section
           title="Pictures"
@@ -414,18 +435,44 @@ export function ScanItemScreen(p: ScanItemScreenProps) {
             </div>
           }
         >
-          {/* Catalog first, then yours, the desktop's order (the owner, #2982). */}
-          <div className="grid grid-cols-2 gap-2">
-            <Picture
-              src={p.pictures.catalog}
-              caption={p.pictures.catalogChecking ? "Catalog, checking" : (p.pictures.catalogCaption ?? "Catalog")}
-              empty="No picture"
-              onOpen={p.pictures.onOpenCatalog}
-              onBroken={p.pictures.onCatalogBroken}
-              onPick={p.pictures.onPickCatalog}
-            />
-            <Picture src={p.pictures.yours} caption="Your photo" empty="No photo yet" onOpen={p.pictures.onOpenYours} onBroken={p.pictures.onYoursBroken} onPick={p.pictures.onPickYours} />
-          </div>
+          {/* Catalog first, then yours, the desktop's order (the owner, #2982).
+              With no catalog picture there is no catalog tile: your photo IS
+              the item's picture, not the peer of an empty box that reads as
+              broken (the owner, 2026-09-24; #3584's fallback). Finding or
+              adding a catalog picture stays one quiet line below. */}
+          {p.pictures.catalog || p.pictures.catalogChecking ? (
+            <div className="grid grid-cols-2 gap-2">
+              <Picture
+                src={p.pictures.catalog}
+                caption={p.pictures.catalogChecking ? "Catalog, checking" : (p.pictures.catalogCaption ?? "Catalog")}
+                empty="No picture"
+                onOpen={p.pictures.onOpenCatalog}
+                onBroken={p.pictures.onCatalogBroken}
+                onPick={p.pictures.onPickCatalog}
+              />
+              <Picture src={p.pictures.yours} caption="Your photo" empty="No photo yet" onOpen={p.pictures.onOpenYours} onBroken={p.pictures.onYoursBroken} onPick={p.pictures.onPickYours} />
+            </div>
+          ) : (
+            <div data-testid="pictures-yours-only">
+              <Picture src={p.pictures.yours} caption={p.pictures.yours ? "Photo" : "Your photo"} empty="No photo yet" onOpen={p.pictures.onOpenYours} onBroken={p.pictures.onYoursBroken} onPick={p.pictures.onPickYours} />
+              {p.pictures.onPickCatalog && (
+                <label data-testid="add-catalog-picture" className="mt-1 inline-flex cursor-pointer items-center gap-1 text-[11px] text-muted hover:text-content">
+                  No catalog picture. Add one
+                  <input
+                    type="file"
+                    accept="image/*"
+                    className="sr-only"
+                    aria-label="Add catalog picture"
+                    onChange={(e) => {
+                      const f = e.target.files?.[0];
+                      e.target.value = "";
+                      if (f) p.pictures.onPickCatalog?.(f);
+                    }}
+                  />
+                </label>
+              )}
+            </div>
+          )}
           {p.slots.strip}
         </Section>
 

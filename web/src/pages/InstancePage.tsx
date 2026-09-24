@@ -9,8 +9,9 @@
 // parameterized (tracked in instances.md). The API path
 // (/instances/:name/items) already works for every module.
 
-import { useParams, useSearchParams } from "react-router-dom";
+import { useLocation, useParams, useSearchParams } from "react-router-dom";
 import { Link } from "react-router-dom";
+import { addressesInstanceItem } from "@cobblr/platform-contract/instance-detail";
 import { useQuery } from "@tanstack/react-query";
 import { CheckCircle2, Camera, Plus, X } from "lucide-react";
 import { InventoryUI } from "@cobblr/inventory/ui";
@@ -28,8 +29,12 @@ export function InstancePage({ instanceName }: { instanceName?: string } = {}) {
   const { activeSlug } = useActiveOrg();
   // Reached two ways: the canonical `/instances/:name` (param) AND the clean
   // top-level alias `/<name>` registered in App.tsx (prop). The prop wins.
-  const params = useParams<{ name: string }>();
+  const params = useParams<{ name: string; "*": string }>();
   const name = instanceName ?? params.name;
+  // What follows the instance in the url: "" for the collection, "items/<id>"
+  // for one of its records, "settings" for a page of its own.
+  const subPath = params["*"] ?? "";
+  const location = useLocation();
 
   const instancesQ = useQuery({
     queryKey: ["instances", activeSlug],
@@ -209,6 +214,17 @@ export function InstancePage({ instanceName }: { instanceName?: string } = {}) {
     else next.delete("view");
     setSearchParams(next, { replace: true });
   };
+  // A url for ONE item, or for a page of the collection's own, is the module's
+  // to render under every view. A view draws the collection, never an item:
+  // with the cover wall on, a link to a book (a Cobb chip, a tile, a pasted
+  // url) used to land on the wall with nothing opened (#3583). Which urls are
+  // items is read from the same templates the links are built from.
+  const sub = subPath.replace(/^\/+|\/+$/g, "");
+  const showsOneThing =
+    addressesInstanceItem(inst.module_name, { subPath, search: location.search }) || (sub !== "" && sub !== "items");
+  // Back to the view the collection was on: the collection's own url, where
+  // the remembered (or default) view opens again. The preference is untouched.
+  const collectionPath = sub ? location.pathname.slice(0, location.pathname.length - subPath.length).replace(/\/+$/, "") : location.pathname;
   const tabCls = (on: boolean) =>
     "rounded-full px-3 py-1 text-sm transition " +
     (on
@@ -222,7 +238,16 @@ export function InstancePage({ instanceName }: { instanceName?: string } = {}) {
           not-yet-enabled features (maintenance, connected-car…) + opens the
           bundle modal to enable them. Renders nothing when there's nothing more. */}
       <BundleFeaturesStrip slug={activeSlug} instance={inst.instance_name} />
-      {pinnedViews.length > 0 && (
+      {activeView && showsOneThing && (
+        <Link
+          to={collectionPath || "."}
+          data-testid="back-to-view"
+          className="inline-flex items-center gap-1 text-sm text-accent hover:underline"
+        >
+          ← Back to {activeView.name}
+        </Link>
+      )}
+      {pinnedViews.length > 0 && !(activeView && showsOneThing) && (
         <div className="flex flex-wrap items-center gap-2" data-testid="instance-view-tabs">
           <button type="button" className={tabCls(!activeView)} onClick={() => pickView(null)}>
             Table
@@ -234,7 +259,7 @@ export function InstancePage({ instanceName }: { instanceName?: string } = {}) {
           ))}
         </div>
       )}
-      {activeView ? (
+      {activeView && !showsOneThing ? (
         <div className="space-y-3">
           <h1 className="font-display text-2xl font-extrabold text-content dark:text-mortar-100 page-title">
             {displayName}

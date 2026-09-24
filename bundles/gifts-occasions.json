@@ -2,12 +2,12 @@
   "manifest": {
     "id": "cobblr.flagship.gifts-occasions",
     "catalog": "disabled",
-    "version": "0.2.1",
+    "version": "0.2.2",
     "name": "Gifts & Occasions",
     "description": "Gift ideas as their own table: who, occasion + date (calendar-reminded), budget, and an idea→bought→wrapped→given pipeline.",
     "author": "Cobblr",
     "released_at": "2026-06-08",
-    "changelog": "Now its OWN table (an inventory instance), not generic Inventory with extra columns: its own nav entry, a “New gift” button, only gift-list fields (stock/parts cruft hidden). Plain-language hints + a pinned “By recipient” view.",
+    "changelog": "Opens as a catalog of things you own, and stays one: a number typed into one item no longer turns the whole collection into stock tracking with Use one, Used up and a reorder point. Earlier: Now its OWN table (an inventory instance), not generic Inventory with extra columns: its own nav entry, a “New gift” button, only gift-list fields (stock/parts cruft hidden). Plain-language hints + a pinned “By recipient” view.",
     "requires": [
       {
         "module": "inventory"
@@ -17,6 +17,9 @@
       {
         "module": "inventory",
         "instance_name": "gifts",
+        "faces": {
+          "stock": false
+        },
         "display_name": "Gifts & Occasions",
         "glyph": "🎁",
         "item_noun": "gift",

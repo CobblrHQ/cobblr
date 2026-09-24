@@ -31,6 +31,7 @@ import { useNavBadges } from "./useNavBadges";
 import { NavCountBadge } from "./NavCountBadge";
 import { CobblestoneMark } from "../CobblestoneMark";
 import { OverlayLayer } from "@cobblr/platform-web";
+import { notificationKeys } from "../lib/notification-keys";
 
 /** The marker on a row that belongs to the group heading above it. It replaced
  *  the word "instance" on those rows: a dot under a heading already says
@@ -61,7 +62,7 @@ export function MobileNav() {
   // so the two stay in sync. The desktop bell polls this every 15s but is
   // desktop-only; on mobile this hook is the sole owner, so it polls too.
   const unread = useQuery({
-    queryKey: ["me-notifications-unread"],
+    queryKey: notificationKeys.unread(),
     queryFn: () => api.meNotificationsUnreadCount(),
     refetchInterval: 30000,
   });

@@ -295,7 +295,9 @@ locationsRouter.patch(
     if (parsed.data.name !== undefined) patch.name = parsed.data.name;
     if (parsed.data.short_name !== undefined) patch.short_name = parsed.data.short_name;
     if (parsed.data.kind !== undefined) patch.kind = parsed.data.kind;
-    if (parsed.data.metadata !== undefined) patch.metadata = parsed.data.metadata;
+    // The location's bag MERGES into the live row (#3625): a floor-plan save
+    // and a rename in flight must not replace each other's keys.
+    if (parsed.data.metadata !== undefined) patch.metadata = platform().db.mergeJsonb("metadata", parsed.data.metadata as Record<string, unknown>);
     if (parsed.data.description !== undefined) patch.description = parsed.data.description;
     if (parsed.data.notes !== undefined) patch.notes = parsed.data.notes;
     if (parsed.data.image_path !== undefined) patch.image_path = parsed.data.image_path;
@@ -401,6 +403,15 @@ locationsRouter.patch(
     void platform().events.emit("core-locations.location.updated", {
       orgId: ctx.org.id,
       locationId: id,
+    });
+    // The request as sent, on the record's history: the one place a value
+    // a later write replaced can still be read back (#3625).
+    await platform().activity.log({
+      orgId: tenantContext(req).org.id,
+      userId: sessionUser(req)?.id ?? null,
+      action: "location_updated",
+      ref: { module: "core-locations", entityType: "location", entityId: String(req.params.id) },
+      diff: parsed.data as Record<string, unknown>,
     });
     res.json(updated);
   }),

@@ -101,27 +101,4 @@ export function CobbBust({
   );
 }
 
-/** Head-only cobblestone mark — avatars, inline chips, the AI-face. The crop is square
- *  and tight to the head, so it still reads at ~20px. */
-export function CobbHead({
-  size = 22,
-  className,
-  title,
-}: {
-  size?: number;
-  className?: string;
-  title?: string;
-}) {
-  return (
-    <svg
-      viewBox={COBB_VIEWBOX.Head}
-      width={size}
-      height={size}
-      role="img"
-      aria-label={title ?? "Cobb"}
-      className={className}
-    >
-      {COBB_ART.Head}
-    </svg>
-  );
-}
+export { CobbHead } from "./CobbHead";

@@ -19,7 +19,7 @@ import { sql } from "kysely";
 import { browserImageHeaders } from "./image-fetch-headers.js";
 import { platform } from "@cobblr/platform-contract";
 import { isShortBarcode } from "@cobblr/platform-contract/scan-triage";
-import { durableOutcome, lookupBarcode, type BarcodeHit, type DurableBarcodeOutcome } from "./barcode-lookup.js";
+import { answerAgreesWithCode, durableOutcome, lookupBarcode, type BarcodeHit, type DurableBarcodeOutcome } from "./barcode-lookup.js";
 import { resolveBarcodeViaWebSearch, productTitle } from "./barcode-websearch.js";
 import { reportBarcodeCorrection } from "./barcode-corrections.js";
 import { BookDoorUnavailable, classifyScanCode, resolveIsbn, resolveAsin, isbnFieldsForHit, ISBN_DECODER_ID, type ScanCodeType } from "./scan-router.js";
@@ -664,6 +664,9 @@ export async function enrichBarcodeItem(ctx: EnrichContext): Promise<void> {
           await stampBookChecked(ctx, cacheVal).catch(() => {});
         }
       }
+      // The stray never stands (#3674): an ISBN is a book, so a product
+      // catalog's answer for one is not this item, book or no book.
+      if (hit && !answerAgreesWithCode(ctx.upc, hit)) hit = null;
     }
     // Stale-while-revalidate: serve instantly, re-check a day-old (or legacy
     // unstamped) entry in the background so corrections propagate everywhere.
@@ -682,6 +685,9 @@ export async function enrichBarcodeItem(ctx: EnrichContext): Promise<void> {
     // the live Open Library API below (a brand-new book not yet in the mirror).
     const result = await lookupBarcode(ctx.upc);
     if (result.outcome === "hit") hit = result.hit;
+    // A product catalog's answer the lookup refused for this ISBN (#3674):
+    // not taken, but named as what the book displaced when the book is found.
+    const refused = result.outcome === "miss" ? result.refused : undefined;
     // Throttled, refused, or could not be asked: the code is UNRESOLVED, not
     // absent. All three ride the retry path below and none is cached.
     if (result.outcome === "rate_limited" || result.outcome === "unavailable") rateLimited = true;
@@ -694,6 +700,8 @@ export async function enrichBarcodeItem(ctx: EnrichContext): Promise<void> {
     if (codeClass.type === "isbn" && hit && !isBookSource(hit.source) && !rateLimited) {
       const book = await resolveIsbn(codeClass.code).catch(() => null);
       if (book) hit = { ...book, raw: { ...book.raw, displaced: { source: hit.source, title: hit.title } } };
+      // No book source knows it: a non-book answer still never stands (#3674).
+      else if (!answerAgreesWithCode(ctx.upc, hit)) hit = null;
     }
     // Cache a HIT or a DEFINITIVE MISS — both durable — to BOTH the tenant and
     // the cross-tenant cache. A `rate_limited` or `unavailable` outcome is
@@ -712,6 +720,7 @@ export async function enrichBarcodeItem(ctx: EnrichContext): Promise<void> {
     // next scan of it asks nobody.
     if (codeClass.type === "isbn" && !hit && !rateLimited) {
       hit = await resolveIsbn(codeClass.code).catch(() => null);
+      if (hit && refused) hit = { ...hit, raw: { ...hit.raw, displaced: { source: refused.source, title: refused.title } } };
       if (hit) await cacheHit(ctx, hit);
     }
   } else if (codeClass.type === "isbn") {

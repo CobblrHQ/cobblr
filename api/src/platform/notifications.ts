@@ -22,6 +22,10 @@ import { smsChannel } from "./channels/sms.js";
 import type { Channel, NotificationCard } from "./channels/types.js";
 import type { NotificationAction } from "../db/schema.js";
 import type { NotificationChannel, NotificationPriority } from "../db/schema.js";
+import { settleForDisplay, type Settled } from "./notification-subjects.js";
+// Registers the approval request as a subject whose cards settle; imported
+// here so every inbox read has it, whatever else the process has loaded.
+import "./approval-subject.js";
 import { hasAuthEmailSender, sendAuthEmail } from "./hosted-seams.js";
 import { sendDiscordDm, dmOutcome, dmResultUnverifies } from "./discord-bot-trigger.js";
 import { discordConnectionState } from "./discord-connection.js";
@@ -578,6 +582,9 @@ export interface NotificationListItem {
   card: NotificationCard | null;
   read_at: Date | null;
   created_at: Date;
+  /** When the thing the buttons decide has been decided: how, and when. Its
+   *  buttons are gone (notification-subjects.ts). */
+  settled: Settled | null;
 }
 
 export async function listForUser(
@@ -600,13 +607,16 @@ export async function listForUser(
       "actions",
       "read_at",
       "created_at",
+      "org_id",
+      "entity_type",
+      "entity_id",
     ])
     .where("user_id", "=", userId)
     .where("org_id", "=", orgId)
     .orderBy("created_at", "desc")
     .limit(limit);
   if (opts.unreadOnly) q = q.where("read_at", "is", null);
-  return q.execute();
+  return (await settleForDisplay(await q.execute())).map(({ org_id: _o, entity_type: _t, entity_id: _i, ...rest }) => rest);
 }
 
 export async function markRead(notificationId: string, userId: string): Promise<void> {
@@ -678,12 +688,14 @@ export async function listForUserAcrossOrgs(
       "n.org_id as org_id",
       "o.name as org_name",
       "o.slug as org_slug",
+      "n.entity_type as entity_type",
+      "n.entity_id as entity_id",
     ])
     .where("n.user_id", "=", userId)
     .orderBy("n.created_at", "desc")
     .limit(limit);
   if (opts.unreadOnly) q = q.where("n.read_at", "is", null);
-  return q.execute();
+  return (await settleForDisplay(await q.execute())).map(({ entity_type: _t, entity_id: _i, ...rest }) => rest);
 }
 
 export async function unreadCountAcrossOrgs(userId: string): Promise<number> {

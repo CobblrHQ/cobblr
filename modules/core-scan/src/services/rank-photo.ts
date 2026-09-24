@@ -16,6 +16,7 @@
 // multi-image support that three of the five lacked.
 
 import { platform } from "@cobblr/platform-contract";
+import { providerReasonOf, providerSentence, type ProviderReason } from "@cobblr/platform-contract/provider-reason";
 import { guardedImageFetch, isPlaceholderImageUrl } from "./enrich.js";
 import { browserImageHeaders } from "./image-fetch-headers.js";
 import type { DdgImageResult } from "./ddg-images.js";
@@ -142,7 +143,18 @@ export function parseRankReply(
 
 /** Why a rank produced no pick — each maps to a DIFFERENT thing the user can do
  *  about it, which is why the endpoint no longer reports one catch-all message. */
-export type RankFailure = "no-provider" | "unreadable" | "model";
+export type RankFailure = "no-provider" | "unreadable" | "model" | "no-answer";
+
+/** A rank that produced no pick. On a provider failure (`model`) it carries the
+ *  provider's own reason (provider-reason.ts), so a refusal for a usage limit is
+ *  not reported as a provider that could not be reached. `no-answer` is a
+ *  reply that arrived and named no picture. */
+export interface RankFailed {
+  error: RankFailure;
+  aiReason?: ProviderReason;
+  provider?: string;
+  retryAfterSec?: number;
+}
 
 export interface RankPhotoResult {
   /** The candidate URL the model chose (to apply as the catalog image). */
@@ -159,9 +171,42 @@ export interface RankPhotoResult {
 }
 
 /** A pick, or the reason there isn't one. */
-export type RankPhotoOutcome = RankPhotoResult | { error: RankFailure };
+/** The one sentence a person reads when Pick best found nothing: each failure
+ *  is something different they can do. A provider failure says the provider's
+ *  own reason, so a usage-limit refusal from a connection that reads Verified
+ *  is not told as a provider that could not be reached. */
+export function rankFailureSentence(f: RankFailed): string {
+  switch (f.error) {
+    case "no-provider":
+      return "No AI provider in this workspace can rank photos yet. Add one under Configuration → AI (or connect your own from your profile).";
+    case "unreadable":
+      return "None of the photo options could be downloaded to show the AI. Try a different search term.";
+    case "no-answer":
+      return "The AI answered without choosing a picture. Try again, or choose one yourself.";
+    case "model":
+      return providerSentence(f.aiReason ?? "unknown", { provider: f.provider ?? "", retryAfterSec: f.retryAfterSec });
+  }
+}
 
-export function isRankFailure(o: RankPhotoOutcome | null): o is { error: RankFailure } {
+/** What a thrown rank call means. The "no provider" family (none configured,
+ *  not entitled, AI disabled for the instance) is a configuration answer; any
+ *  other failure keeps the provider's own reason when it gave one. */
+export function rankFailureOf(err: unknown): RankFailed {
+  const msg = (err as Error)?.message ?? String(err);
+  if (/no provider|not entitled|disabled for this instance/i.test(msg)) return { error: "no-provider" };
+  const aiReason = providerReasonOf(err);
+  const e = err as { provider?: unknown; retryAfterSec?: unknown } | null;
+  return {
+    error: "model",
+    ...(aiReason ? { aiReason } : {}),
+    ...(typeof e?.provider === "string" && e.provider ? { provider: e.provider } : {}),
+    ...(typeof e?.retryAfterSec === "number" ? { retryAfterSec: e.retryAfterSec } : {}),
+  };
+}
+
+export type RankPhotoOutcome = RankPhotoResult | RankFailed;
+
+export function isRankFailure(o: RankPhotoOutcome | null): o is RankFailed {
   return !!o && "error" in o;
 }
 
@@ -224,16 +269,13 @@ export async function rankPhotoWithAi(opts: {
     });
     raw = r.text;
   } catch (err) {
-    const msg = (err as Error)?.message ?? String(err);
-    console.error("[core-scan] rank-images failed:", msg);
-    // The "no provider" family (no provider configured / not entitled / AI
-    // disabled for the instance) is a CONFIGURATION answer the user can act on,
-    // and must not be reported as the same thing as a model or network failure.
-    return { error: /no provider|not entitled|disabled for this instance/i.test(msg) ? "no-provider" : "model" };
+    const failed = rankFailureOf(err);
+    console.error(`[core-scan] rank-images failed (${failed.error}${failed.aiReason ? `/${failed.aiReason}` : ""}):`, (err as Error)?.message ?? String(err));
+    return failed;
   }
 
   const parsed = parseRankReply(raw, { tileCount: usable.length });
-  if (!parsed) return { error: "model" };
+  if (!parsed) return { error: "no-answer" };
   const chosen = usable[parsed.candidateIndex]?.c ?? usable[0]!.c;
   return {
     chosenUrl: chosen.url,

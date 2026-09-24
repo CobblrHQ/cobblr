@@ -24,7 +24,6 @@ import { meta } from "../db/meta.js";
 import { announceSandboxKept, announceSandboxStarted, createAccount } from "./accounts.js";
 import { env } from "../env.js";
 import { expiredSandboxesQuery, reapCutoff } from "./try-sandbox-query.js";
-import { DEFAULT_TRIAL_LENGTH, type TrialLengthDays } from "@cobblr/platform-contract/trial-length";
 import { hashToken } from "./try-sandbox-token.js";
 import { mintSandboxToken } from "./try-sandbox-token.js";
 import { hashPassword } from "../auth/password.js";
@@ -335,7 +334,7 @@ export async function keepSandbox(
   userId: string,
   email: string,
   sendKeepLink?: SendKeepLink,
-  days: TrialLengthDays = DEFAULT_TRIAL_LENGTH,
+  days: number = env.TRY_SANDBOX_TRIAL_DAYS,
 ): Promise<KeepResult> {
   const org = await meta
     .selectFrom("orgs")
@@ -352,8 +351,8 @@ export async function keepSandbox(
     .executeTakeFirst();
   if (taken) return { ok: false, reason: "email_taken" };
 
-  // The length the person chose, from the bounded set (#3254): the trial on
-  // the demo box is short on purpose, and there is no unbounded answer.
+  // The configured length (TRY_SANDBOX_TRIAL_DAYS): the trial on the demo box
+  // is short on purpose, and it is ours to set, not the visitor's.
   const expiresAt = new Date(Date.now() + days * 86_400_000);
   await meta.transaction().execute(async (trx) => {
     // The person was "Guest" in a workspace called "Sandbox", which was true

@@ -16,6 +16,12 @@
 // every kind, such as the dashboard's attention rows). A workspace action
 // names no kind, and everything is refreshed. Undo goes through here too.
 //
+// And the record itself: a detail reads its record by id
+// (`["project", id]`, `["inventory-part", id]`) and seldom names the kind,
+// so a query whose key carries the record's id is refreshed as well. Restock
+// one moved the table behind an open detail and left the detail saying the
+// old quantity (#3615).
+//
 // No surface calls `api.invokeAction` itself: lint:actions-run-through-one-door.
 
 import { useCallback } from "react";
@@ -64,14 +70,20 @@ export function affectedKindsOf(outcome: Partial<ActionRun> | null | undefined, 
   return body.entityKind ? [body.entityKind] : [];
 }
 
-/** Refresh everything that showed the affected records. No kinds (a
- *  workspace action) refreshes every query, since anything may have moved. */
-export function refreshAfterAction(qc: QueryClient, kinds: readonly string[]): void {
+/** Does this query show this one record? Its key carries the record's id. */
+export function queryShowsRecord(query: Pick<Query, "queryKey">, entityId: string | null | undefined): boolean {
+  return !!entityId && query.queryKey.some((part) => part === entityId);
+}
+
+/** Refresh everything that showed the affected records, and the record the
+ *  action ran on. No kinds (a workspace action) refreshes every query, since
+ *  anything may have moved. */
+export function refreshAfterAction(qc: QueryClient, kinds: readonly string[], entityId?: string | null): void {
   if (kinds.length === 0) {
     void qc.invalidateQueries();
     return;
   }
-  void qc.invalidateQueries({ predicate: (q) => queryShowsKinds(q, kinds) });
+  void qc.invalidateQueries({ predicate: (q) => queryShowsKinds(q, kinds) || queryShowsRecord(q, entityId) });
 }
 
 /** Invoke, then refresh what the action touched. The one door. */
@@ -82,7 +94,7 @@ export async function runAction(
   body: ActionBody,
 ): Promise<ActionRun> {
   const outcome = (await api.invokeAction(orgSlug, body)) as ActionRun;
-  refreshAfterAction(qc, affectedKindsOf(outcome, body));
+  refreshAfterAction(qc, affectedKindsOf(outcome, body), outcome?.affected?.entity?.id ?? body.entityId);
   return outcome;
 }
 

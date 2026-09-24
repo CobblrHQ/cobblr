@@ -17,71 +17,47 @@
 // not merge what is already there, and a half ledger reads as a confident wrong
 // cadence rather than as an error.
 
-import { Kysely, sql } from "kysely";
+import { Kysely } from "kysely";
 import { platform } from "@cobblr/platform-contract";
+import { registerHealPass } from "@cobblr/platform-contract/heal-pass";
 
 interface HealDB {
   core_cadence_events: { entity_kind: string; entity_id: string };
 }
 
-export async function healCadenceInstanceKinds(): Promise<{ orgs: number; rows: number }> {
-  const meta = platform().db.meta as unknown as Kysely<{
-    orgs: { id: string };
-    org_modules: { org_id: string; module_name: string };
-  }>;
-
-  // Only workspaces that actually have the capability on: everyone else has no
-  // table to sweep and must not cost a tenant pool.
-  const orgs = await meta
-    .selectFrom("org_modules")
-    .select("org_id")
-    .where("module_name", "=", "core-cadence")
+/** Heal one workspace; answers how many rows it folded. */
+export async function healCadenceInstanceKindsIn(orgId: string, db: Kysely<HealDB>): Promise<number> {
+  const stray = await db
+    .selectFrom("core_cadence_events")
+    .select(["entity_kind"])
+    .distinct()
+    .where("entity_kind", "like", "%:item")
     .execute();
-
+  if (stray.length === 0) return 0; // the happy path: one query, no writes
   let healed = 0;
-  let touched = 0;
-  let failed = 0;
-  for (const { org_id } of orgs) {
-    try {
-      await platform().tenants.withDb(org_id, async (raw) => {
-        const db = raw as Kysely<HealDB>;
-        const stray = await db
-          .selectFrom("core_cadence_events")
-          .select(["entity_kind"])
-          .distinct()
-          .where("entity_kind", "like", "%:item")
-          .execute();
-        if (stray.length === 0) return; // the happy path: one query, no writes
-
-        for (const { entity_kind } of stray) {
-          const base = await platform().entities.baseKindOf(org_id, entity_kind);
-          if (base === entity_kind) continue; // not an instance kind after all
-          const r = await db
-            .updateTable("core_cadence_events")
-            .set({ entity_kind: base })
-            .where("entity_kind", "=", entity_kind)
-            .executeTakeFirst();
-          const n = Number(r.numUpdatedRows ?? 0);
-          if (n > 0) {
-            healed += n;
-            console.log(`[core-cadence] org ${org_id}: folded ${n} ${entity_kind} row(s) onto ${base}`);
-          }
-        }
-        touched++;
-      });
-    } catch (err) {
-      // One workspace's failure must never block the rest.
-      failed++;
-      console.error(`[core-cadence] heal for org ${org_id} failed:`, (err as Error).message);
+  for (const { entity_kind } of stray) {
+    const base = await platform().entities.baseKindOf(orgId, entity_kind);
+    if (base === entity_kind) continue; // not an instance kind after all
+    const r = await db.updateTable("core_cadence_events").set({ entity_kind: base }).where("entity_kind", "=", entity_kind).executeTakeFirst();
+    const n = Number(r.numUpdatedRows ?? 0);
+    if (n > 0) {
+      healed += n;
+      console.log(`[core-cadence] org ${orgId}: folded ${n} ${entity_kind} row(s) onto ${base}`);
     }
   }
-  if (healed > 0) console.log(`[core-cadence] heal: ${healed} row(s) across ${touched} workspace(s)`);
   // Every instance-kind row it meets is folded, so what it folded is what it
   // found; a "<x>:item" kind that turns out to be a base kind is not the
   // shape the DONE WHEN names.
-  await platform().health.noteHealShim("modules/core-cadence/src/heal-instance-kinds.ts", healed, failed);
-  return { orgs: touched, rows: healed };
+  return healed;
 }
 
-// Referenced so the unused-import lint and a reader both see the intent.
-void sql;
+/** Call from onBoot. A registered pass (platform-contract heal-pass.ts): the
+ *  kernel's walk, budget and stagger, never a walk of its own at boot. */
+export function registerCadenceInstanceKindsHeal(): void {
+  registerHealPass({
+    name: "core-cadence.heal-instance-kinds",
+    shim: "modules/core-cadence/src/heal-instance-kinds.ts",
+    module: "core-cadence",
+    visit: ({ orgId, db }) => healCadenceInstanceKindsIn(orgId, db as Kysely<HealDB>),
+  });
+}

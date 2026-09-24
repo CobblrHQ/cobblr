@@ -215,6 +215,7 @@ function FieldRow({ def }: { def: InvFieldDef }) {
   return (
     <li>
       <input
+        // DRAFT-OK: a field definition's setting on the settings page, not a record's value; no action moves it.
         defaultValue={def.display_label}
         aria-label={`Rename ${def.display_label}`}
         title="Click to rename this field"
@@ -233,6 +234,7 @@ function FieldRow({ def }: { def: InvFieldDef }) {
           <div className="text-[11px] text-faint dark:text-slate-500 mb-1">Labels shown instead of true/false:</div>
           <div className="flex items-center gap-2">
             <input
+              // DRAFT-OK: a field definition's setting on the settings page, not a record's value; no action moves it.
               defaultValue={def.choices?.[0] ?? ""}
               placeholder="No"
               aria-label={`${def.display_label} — label when off`}
@@ -241,6 +243,7 @@ function FieldRow({ def }: { def: InvFieldDef }) {
             />
             <span className="text-faint">/</span>
             <input
+              // DRAFT-OK: a field definition's setting on the settings page, not a record's value; no action moves it.
               defaultValue={def.choices?.[1] ?? ""}
               placeholder="Yes"
               aria-label={`${def.display_label} — label when on`}

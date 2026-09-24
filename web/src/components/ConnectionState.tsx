@@ -29,7 +29,7 @@ export function TestConnectionButton({
 }: {
   test: () => Promise<{ verification?: ConnectionVerification }>;
   /** Query keys to refresh once the verdict is stored. */
-  invalidate: unknown[][];
+  invalidate: ReadonlyArray<readonly unknown[]>;
   className?: string;
 }) {
   const toast = useToast();

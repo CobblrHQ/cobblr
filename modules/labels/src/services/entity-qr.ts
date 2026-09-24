@@ -32,6 +32,9 @@ export async function ensureNavToken(
   entityId: string,
   style: "descriptive" | "opaque",
 ): Promise<string> {
+  // One record, one QR, whichever door asked: an instance's alias
+  // (`bookshelf:item`) and the module kind name the same row (#3591).
+  entityKind = await platform().entities.baseKindOf(orgId, entityKind);
   const meta = platform().db.meta as unknown as {
     selectFrom: (t: string) => {
       select: (cols: string[]) => {

@@ -73,6 +73,92 @@ export interface VocabularyCapability extends Base {
 export const CAPABILITIES: Capability[] = [
   {
     kind: "owns",
+    id: "placement:keys-are-canonical",
+    what:
+      "where a record is: platform().placement (place / remove / containerOf / contents in api/src/index.ts), which stores and " +
+      "reads every placement under the record's base kind, whatever spelling the caller holds",
+    why:
+      "a record placed as inventory:part and moved by the assistant as home-inventory:item got a second row, so the same desk fan " +
+      "was in the Bedroom and the Garage at once and a lookup with the other spelling found neither (#3663)",
+    owner: "api/src/index.ts",
+    scope: ["api/src/**/*.ts", "modules/*/src/**/*.ts"],
+    detect: /core_placement_placements/,
+    use: "platform().placement.place / remove / containerOf / contents, never the table",
+    except: {
+      "api/src/platform/migrate-location-to-placement.ts":
+        "the location trigger: it writes under its own table's kind, which is the base kind, the key the kernel reads by",
+      "modules/core-placement/src/heal-instance-kinds.ts":
+        "the one-shot heal that folds rows stored under a collection's kind onto the base kind (retires by its DONE WHEN)",
+      "api/src/routes/test-support.ts":
+        "the test-only door that plants a row as it was stored before the fix, so the heal's test has one to fold",
+    },
+  },
+  {
+    kind: "owns",
+    id: "consumption:how-full-and-what-is-left",
+    what:
+      "how full a consumable is and what is left of it: consumptionGauge / remainingOf / amountPct in " +
+      "@cobblr/platform-contract/consumption-gauge, which only ever divide two amounts in one unit",
+    why:
+      "the Consumption panel divided a count in skeins by the length of one skein in metres and printed \"2 skein left · of 200 " +
+      "skein · 1%\" for two full skeins (#3648), and the assistant, reading the record's fields itself, said 200 m left of a skein " +
+      "the page showed at 160 m (#3651)",
+    owner: "packages/platform-contract/src/consumption-gauge.ts",
+    scope: [
+      "modules/inventory/src/ui/PartDetailPage.tsx",
+      "modules/inventory/src/ui/PartsListPage.tsx",
+      "modules/inventory/src/ui/consumption/perUnit.ts",
+      "modules/inventory/src/api/resolvers.ts",
+      "modules/inventory/src/api/parts.ts",
+      "web/src/pages/Dashboard.tsx",
+    ],
+    // Something divided by a capacity: the shape every hand-rolled gauge had.
+    // A comment's `//` does not count: the slash must not follow another.
+    detect: /[^/*]\/\s*\(?\s*[\w.?]*[cC]apacity\b/,
+    use: "consumptionGauge(item, units.lens) for a gauge, remainingOf(...) for what is left, from @cobblr/platform-contract/consumption-gauge",
+  },
+  {
+    kind: "owns",
+    id: "fields:a-collections-presentation",
+    what:
+      "how a collection presents its native fields (relabels, hides): useFieldPresentation in " +
+      "packages/platform-web/src/field-presentation.tsx, which says `failed` rather than `nothing configured`, and the " +
+      "PresentationGate an item's fields wait behind",
+    why:
+      "three copies of the reader (web, inventory, projects) drifted; two read a failed request as no overrides and cached it, " +
+      "so the same Home Inventory lamp showed Min qty, Cost and Supplier URL through Locations and Paid and Make / brand " +
+      "through its own list (#3645)",
+    owner: "packages/platform-web/src/field-presentation.tsx",
+    scope: ["web/src/**/*.{ts,tsx}", "modules/*/src/ui/**/*.{ts,tsx}"],
+    // A presentation read of its own: a query over the overrides endpoint.
+    detect: /queryKey:\s*\[\s*"native-field-overrides"|native-field-overrides\?kind=/,
+    use: "useFieldPresentation(kind) from @cobblr/platform-web, and PresentationGate around an item's fields",
+    except: {
+      "web/src/pages/PresentationPage.tsx": "the settings page that EDITS a collection's overrides, not a surface that draws an item's fields",
+      "web/src/pages/an-items-page-is-the-same-however-you-got-there.test.tsx": "the test's stand-in for the host's API (App.tsx's listNativeFieldOverrides), fetched as the host does",
+    },
+  },
+  {
+    kind: "owns",
+    id: "views:a-rows-group",
+    what:
+      "which group a saved-view row belongs in: groupKeyOf / groupRows in web/src/lib/view-group-key.ts, for the full view's " +
+      "renderers and the dashboard's preview of it alike",
+    why:
+      "the dashboard preview read fields[group_by] itself, which knows neither the reserved location key (a row's room) nor " +
+      "the metadata a bundle's fields live under, so it told somebody to set a location on a lamp the full By room view, one " +
+      "click away, grouped under its room (#3588); the full view had already been through the same two misreadings (#3341, #3391)",
+    owner: "web/src/lib/view-group-key.ts",
+    // The surfaces that group SAVED-VIEW rows. The module list pages (parts,
+    // projects, assets, machines) group their own record shapes, not view rows,
+    // and are a different affordance.
+    scope: ["web/src/pages/Dashboard.tsx", "web/src/pages/ViewsPage.tsx"],
+    // A row's group read straight off its fields by the view's group_by.
+    detect: /\bfields\??\.?\[\s*(groupBy|group_by|view\.config)/,
+    use: "groupRows(rows, groupBy, areaOf) (or groupKeyOf for one row) from web/src/lib/view-group-key.ts, with useAreaResolver",
+  },
+  {
+    kind: "owns",
     id: "bundle:table-vocabulary",
     what:
       "the words a bundle's table routes with: the table's own PLUS the manifest's, deduped, through bundleTableWords, " +
@@ -1105,5 +1191,94 @@ export const CAPABILITIES: Capability[] = [
       "scripts/lint-inline-style-overrides.ts": "strips comments from CSS, which has only block comments; the TS scanner would take `//` in a url() for a line comment",
     },
     use: 'import { stripComments } from "./lib/source-scan.js" (from scripts/lib: "./source-scan.js")',
+  },
+  {
+    kind: "owns",
+    id: "entity:metadata-merge",
+    what:
+      "a record update's write to its custom-field bag (`metadata`): the kernel merge, platform().db.mergeJsonb, reached " +
+      "through withMetadataMerged, which sets the keys sent, removes the nulled ones and leaves the rest as the live row holds them",
+    why:
+      "three quick edits to one Home Inventory item each sent the bag as the page had rendered it plus one field, and the " +
+      "PATCH replaced the bag with it, so only the last survived and the other two were lost with a 200 each (#3625); assets, " +
+      "records, machines, orders, projects, lists and more replaced the same way, and one hoisted field could wipe the rest",
+    owner: "api/src/platform/jsonb-merge.ts",
+    scope: ["modules/*/src/api/**/*.ts", "api/src/routes/**/*.ts"],
+    // A metadata value assigned into an update patch other than the merge, or a
+    // request body spread straight into an update's set.
+    detect: /patch\.metadata\s*=(?!\s*platform\(\)\.db\.mergeJsonb)|\.set\(\s*\{\s*\.\.\.(patchRest|parsed\.data)\b|=\s*\{\s*\.\.\.(patchRest|parsed\.data)\b/,
+    use:
+      'wrap the update\'s set in withMetadataMerged(set, serverManagedNames) from "@cobblr/platform-contract/entity-metadata", ' +
+      'or assign platform().db.mergeJsonb("metadata", fields)',
+    except: {
+      "modules/assets/src/api/sync-writer.ts": "a sync applies the remote record's whole state; replacing is how a key removed at the source goes",
+      "modules/inventory/src/api/sync-writer.ts": "a sync applies the remote record's whole state; replacing is how a key removed at the source goes",
+      "modules/machines/src/api/sync-writer.ts": "a sync applies the remote record's whole state; replacing is how a key removed at the source goes",
+      "modules/core-locations/src/api/sync-writer.ts": "a sync applies the remote record's whole state; replacing is how a key removed at the source goes",
+      "modules/core-scan/src/api/inbox.ts": "builds a REQUEST body for the owning module's PATCH (which merges), holding only the keys the scan adds",
+      "modules/digifab/src/api/failure.ts": "a failure-detection config row with no custom-field bag; an upsert of plain columns",
+    },
+  },
+  {
+    kind: "owns",
+    id: "web:metadata-edit-sends-changed-keys",
+    what: "an edit to a record's custom fields sends only the keys it changes; the server merges them into the live row",
+    why:
+      "a detail page sent `{ metadata: { ...p.metadata, [name]: value } }` from the bag it had rendered, so an edit made before " +
+      "the last one's refetch wrote the stale values back over it, even with the server merging (#3625)",
+    owner: "packages/platform-contract/src/jsonb-merge.ts",
+    scope: ["web/src/**/*.tsx", "modules/*/src/ui/**/*.tsx"],
+    detect: /\bmetadata:\s*\{\s*\.\.\./,
+    use: "send `{ metadata: { [name]: value } }`; a null removes the key",
+  },
+  {
+    kind: "owns",
+    id: "dates:days-until-a-date",
+    what: "how many days until (or since) a date: daysUntil / daysUntilField / countdownWords in @cobblr/platform-contract/day, fed the reader's day",
+    why:
+      "one Home page said a banana dated Sep 29 expired 'in 4d' (the attention list rounded an instant) and 'in 5 days' (Up next counted " +
+      "calendar days), minutes apart, and the grocery wall and expiryState each had a third and fourth rule that changed their answer in " +
+      "the evening (#3641). A clock difference is a fraction of a day, and every surface turned it into a number its own way",
+    owner: "packages/platform-contract/src/day.ts",
+    scope: ["web/src/pages/*.tsx", "web/src/components/*.tsx", "web/src/lib/*.ts", "api/src/routes/*.ts", "api/src/lib/*.ts", "modules/*/src/**/*.ts", "modules/*/src/**/*.tsx", "packages/platform-web/src/*.tsx", "packages/platform-contract/src/*.ts"],
+    // A millisecond difference divided into days, in a file that talks about
+    // expiry. Measured on the tree: four countdowns (all moved here) and the
+    // cadence model's intervals, which are not a countdown.
+    detect: /\/\s*(?:86_?400_?000|MS_PER_DAY|DAY_MS|ONE_DAY|DAY)\b/,
+    also: /expir/i,
+    except: {
+      "modules/core-cadence/src/model.ts": "the gap between two purchases in days (a rate), not a countdown to a date anybody reads",
+      "packages/platform-contract/src/every-surface-shows-one-countdown.test.ts": "rebuilds the two retired rules on purpose, to prove the grid can tell them from the calendar",
+    },
+    use: "daysUntilField(value, today) for a stored date, daysUntil(day, today) for a day, countdownWords(day, today, 'short' | 'long') for the words; today is dayHere() in the browser, the person's day (accounts.dayFor / the client's ?today) on the server",
+  },
+  {
+    kind: "owns",
+    id: "scan:an-items-destination",
+    what:
+      "where a scan item goes (or went): the card's resolver, scanDestination over the person-first candidates and the " +
+      "workspace's menu. filingDestination on the server, scanRowState(...).destination / itemDestinationLabel in the web, " +
+      "and a filed row's recorded filed_into",
+    why:
+      "the dashboard's scanner queue grouped a vinegar the card sent to Groceries under Inventory, so 'Add all 54 to Inventory' " +
+      "would have filed it where nobody chose (#3618); Recently committed then read '→ Inventory · Groceries?' for bananas filed " +
+      "into Groceries (#3620). Each reader of the raw top candidate had its own idea",
+    owner: "modules/core-scan/src/services/destination.ts",
+    scope: [
+      "modules/core-scan/src/**/*.ts",
+      "api/src/routes/quickstart.ts",
+      "web/src/pages/Scan*.tsx",
+      "web/src/pages/scan*.ts",
+      "web/src/components/Scan*.tsx",
+      "web/src/components/WhatToDoPanel.tsx",
+      "web/src/components/TrackedMatchNudges.tsx",
+    ],
+    // The raw top candidate's table, read straight off the list or through a
+    // cast. Reading what it NAMED, its fields, its category or its count is
+    // not a destination read.
+    detect: /(suggested_candidates|candidates|cands)\??\.?\[0\]\??\.(module|instance|label|bundle_external_id)\b|\[0\]\s*as\s*\{[^}]*\b(bundle_external_id|module|instance|label)\b/,
+    use:
+      "filingDestination(row, tables) (modules/core-scan/src/services/destination.ts) on the server; " +
+      "scanRowState(row, viewer).destination or itemDestinationLabel / useItemDestinationLabel (web/src/lib/itemDestination.ts) in the web",
   },
 ];

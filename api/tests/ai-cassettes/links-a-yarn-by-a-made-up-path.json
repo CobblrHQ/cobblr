@@ -1,0 +1,7 @@
+{
+  "match": "how much yarn remains in replay open-skein control",
+  "rounds": [
+    { "tool_calls": [{ "name": "search_records", "args": { "q": "Replay open-skein control" } }] },
+    { "content": "For [Replay open-skein control](/instances/yarn/items/Replay open-skein control), the quantity is 0 unopened skeins, and there are 160 metres left in the open skein." }
+  ]
+}

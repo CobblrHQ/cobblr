@@ -20,10 +20,14 @@
 // The quantity stepper is the same − N + shape as ScanResultModal's, PATCHed
 // debounced so mashing + doesn't stack requests.
 
+import { useItemDestinationLabel } from "../lib/itemDestination";
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import { leadYours, rowPictures, scanFileUrl, yourPictures } from "../lib/rowPictures";
 import { Link } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { COULD_NOT_TELL } from "@cobblr/platform-contract/scan-copy";
+import { needsScanReview } from "@cobblr/platform-contract/scan-triage";
+import { identifyFailureWords, type IdentifyFailure } from "@cobblr/platform-contract/scan-fallback";
 import { Camera, Check, ChevronDown, Loader2, MapPin, Minus, Plus, RefreshCw, Trash2, Undo2, X } from "lucide-react";
 import { useImageSrc } from "@cobblr/platform-web";
 import { api, type ScanInboxItem } from "../lib/api";
@@ -31,6 +35,7 @@ import { useScanQuantity } from "../lib/scanQuantity";
 import { GlanceQuestion, pendingGlance } from "../components/GlanceQuestion";
 import { leadPhoto } from "../lib/scanPhoto";
 import { useAnimatedHeight } from "../lib/useAnimatedHeight";
+import { scanInboxKeys } from "../lib/scan-inbox-keys";
 
 /** How long a photo item may sit un-named before we stop saying "identifying…"
  *  (mirrors the inbox's own stale rule). */
@@ -210,7 +215,7 @@ export function ScanCaptureDrawer({
         : api.answerScanGlance(slug, item!.id, { answer: b.answer, ...(b.hint ? { hint: b.hint } : {}) }),
     onSuccess: (row) => {
       qc.setQueryData(["scan-item-live", slug, row.id], row);
-      void qc.invalidateQueries({ queryKey: ["scan-inbox", slug] });
+      void qc.invalidateQueries({ queryKey: scanInboxKeys.all(slug) });
     },
   });
   // Prefer whichever copy is newer: the poll can hold a snapshot from before an
@@ -250,10 +255,21 @@ export function ScanCaptureDrawer({
       else onDismiss();
     },
   );
+  // "Not right": the identification is wrong. Undo discards and Retake
+  // reshoots; neither corrects, so the drawer offers the correction itself
+  // (the owner, 2026-09-24): fix the name, give the barcode, or re-run.
+  const [correcting, setCorrecting] = useState(false);
+  const correct = useMutation({
+    mutationFn: (v: { barcode?: string }) => api.rerunScanAi(slug, item!.id, v.barcode ? { barcode: v.barcode } : { wrong: true }),
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: scanInboxKeys.all(slug) });
+      void qc.invalidateQueries({ queryKey: ["scan-item-live", slug, item?.id] });
+    },
+  });
   const rename = useMutation({
     mutationFn: (name: string) => api.updateScanItem(slug, item!.id, { name }),
     onSuccess: () => {
-      void qc.invalidateQueries({ queryKey: ["scan-inbox", slug] });
+      void qc.invalidateQueries({ queryKey: scanInboxKeys.all(slug) });
       void qc.invalidateQueries({ queryKey: ["scan-item-live", slug, item?.id] });
     },
   });
@@ -263,13 +279,15 @@ export function ScanCaptureDrawer({
         ? api.setScanPrimaryPhoto(slug, item!.id, v.fileId)
         : api.removeScanPhoto(slug, item!.id, v.fileId),
     onSuccess: () => {
-      void qc.invalidateQueries({ queryKey: ["scan-inbox", slug] });
+      void qc.invalidateQueries({ queryKey: scanInboxKeys.all(slug) });
       void qc.invalidateQueries({ queryKey: ["scan-item-live", slug, item?.id] });
     },
   });
   // The quantity and its persistence come as one thing — see lib/scanQuantity.
   const { value: shownQty, bump } = useScanQuantity(slug, it ?? null);
 
+  // Before any early return: a hook. Where it goes is the card's answer (#3618).
+  const routedTo = useItemDestinationLabel(it ?? null);
   if (!failed && !it) return null;
 
   // ── failed save: the frame survives, retry lives where the eye already is ──
@@ -312,17 +330,29 @@ export function ScanCaptureDrawer({
   // The first look, if the workspace asked for one and nobody has answered.
   const glance = pendingGlance(it!);
   const identifying =
-    isPhoto && !name && !it!.ai_suggested_at &&
+    !name && !it!.ai_suggested_at &&
     Date.now() - new Date(it!.created_at).getTime() < IDENTIFY_WINDOW_MS;
   // Identify FINISHED (or timed out) with no name. Saying so is the whole
   // point of the drawer — "identifying…" that silently becomes "Captured
   // item" reads as the resolution having been eaten (reported 2026-08-03). The
   // sheet's name field is one swipe away.
-  const identifyFailed = isPhoto && !name && !identifying;
+  // Any capture, whichever door: an unnamed row that is not being read says
+  // so. "Captured item" confirmed nothing and read as done (the owner,
+  // 2026-09-24: "still feels weird").
+  const identifyFailed = !name && !identifying;
+  // A weak identification is a guess, and says so: the same rule every scan
+  // surface uses for "needs a person" (scan-triage needsScanReview: low
+  // confidence, a doubt, a low-trust source). The person who took the photo
+  // cares what it is; the drawer invites a name rather than nudging Looks
+  // right (the owner, 2026-09-24).
+  const weakGuess = !!name && needsScanReview(it!);
+  const recordedFailure = (it!.suggested_metadata as { identify_failure?: IdentifyFailure } | null)?.identify_failure ?? null;
+  const failureWhy = recordedFailure ? identifyFailureWords(recordedFailure).sentence : null;
   // Interplay rule from the mock: with a container bin armed the line reads
   // "Into <container>" — it's a container target, not a location id.
+  // Where it goes is the card's answer, never the raw top route (#3618).
   const dest =
-    it!.suggested_candidates?.[0]?.label ??
+    routedTo ??
     it!.scan_area ??
     (containerLabel ? `Into ${containerLabel}` : null);
   // Local frame beats everything for a PHOTO item (never swap away from the
@@ -372,6 +402,9 @@ export function ScanCaptureDrawer({
           onConfirm={() => onConfirm(it!)}
           onDelete={() => onUndo(it!)}
           deleteBusy={undoBusy}
+          correcting={correcting}
+          correctBusy={correct.isPending}
+          onCorrect={(v) => correct.mutate(v)}
         />
       ) : (
       <>
@@ -407,7 +440,7 @@ export function ScanCaptureDrawer({
         <Thumb url={thumbUrl} name={name ?? "item"} />
         <div className="flex-1 min-w-0 pt-0.5">
           <div className="text-white text-[13.5px] font-semibold leading-tight line-clamp-2">
-            {name ?? (glance ? `${glance.name}?` : identifying ? "Photo saved" : identifyFailed ? "Couldn't identify" : "Captured item")}
+            {name ? (weakGuess ? `Best guess: ${name}` : name) : glance ? `${glance.name}?` : identifying ? "Identifying…" : COULD_NOT_TELL}
           </div>
           {glance && (
             <GlanceQuestion
@@ -430,8 +463,14 @@ export function ScanCaptureDrawer({
               <span className="inline-flex items-center gap-1.5">
                 <Loader2 size={10} className="animate-spin" /> identifying…
               </span>
+            ) : weakGuess ? (
+              <span className="text-amber-300" data-testid="capture-drawer-why">Not sure? Name it</span>
             ) : identifyFailed ? (
-              <span className="text-amber-300">swipe up to name it</span>
+              <span className="text-amber-300" data-testid="capture-drawer-why">
+                {/* The recorded reason when there is one: a spent allowance is
+                    said, not a silent "could not tell" (2026-09-24). */}
+                {failureWhy ?? "Name it, or look again"}
+              </span>
             ) : dest ? (
               // A hint about where it will probably end up, not a claim that
               // the camera put it there — everything here is in the inbox.
@@ -464,20 +503,54 @@ export function ScanCaptureDrawer({
       <div className="flex items-center gap-2 px-3 pt-2 pb-1.5">
         <QtyStepper value={shownQty} onBump={bump} testId="capture-drawer-qty" />
         <div className="flex-1" />
+        {/* Looks right confirms a name; an item with none has nothing to
+            confirm and nothing to be wrong about (#3616's rule, and the
+            owner's "Looks right on a Captured item still feels weird"): its
+            one action is Name it. */}
+        {name && weakGuess ? (
+          <button
+            type="button"
+            onClick={() => onConfirm(it!)}
+            data-testid="capture-drawer-confirm"
+            className="inline-flex items-center justify-center gap-1 rounded-lg border border-white/30 text-white text-[13px] px-3 py-2 shrink-0"
+          >
+            <Check size={13} /> Looks right
+          </button>
+        ) : name ? (
+          <button
+            type="button"
+            onClick={() => { setCorrecting(true); setExpanded(true); }}
+            data-testid="capture-drawer-not-right"
+            className="inline-flex items-center justify-center gap-1 rounded-lg border border-white/30 text-white text-[13px] px-3 py-2 shrink-0"
+          >
+            <X size={13} /> Not right
+          </button>
+        ) : null}
         {/* The right slot is where the thumb lands, so it belongs to the action
             you take every time. It is an affirmative "I looked, it's right" that
             clears the drawer — it does NOT file (the scanner never files; that
             happens in the inbox). Not "Done" either: the shutter row's ✓ Done
             (which exits to the inbox) sits ~40px below, and two Dones that deep
             in muscle memory is a mis-tap. */}
-        <button
-          type="button"
-          onClick={() => onConfirm(it!)}
-          data-testid="capture-drawer-confirm"
-          className="inline-flex items-center justify-center gap-1.5 rounded-lg bg-cobble-600 hover:bg-cobble-700 text-white text-[13px] font-semibold px-4 py-2 shrink-0 disabled:opacity-50"
-        >
-          <Check size={14} /> Looks right
-        </button>
+        {name && !weakGuess ? (
+          <button
+            type="button"
+            onClick={() => onConfirm(it!)}
+            data-testid="capture-drawer-confirm"
+            className="inline-flex items-center justify-center gap-1.5 rounded-lg bg-cobble-600 hover:bg-cobble-700 text-white text-[13px] font-semibold px-4 py-2 shrink-0 disabled:opacity-50"
+          >
+            <Check size={14} /> Looks right
+          </button>
+        ) : !identifying ? (
+          <button
+            type="button"
+            onClick={() => { setCorrecting(true); setExpanded(true); }}
+            data-testid="capture-drawer-name-it"
+            className="inline-flex items-center justify-center gap-1.5 rounded-lg bg-cobble-600 hover:bg-cobble-700 text-white text-[13px] font-semibold px-4 py-2 shrink-0"
+          >
+            Name it
+          </button>
+        ) : null}
       </div>
       )}
       {/* Secondary taps, deliberately small and LEFT: Undo is urgent but rare
@@ -551,7 +624,7 @@ function Thumb({ url, name }: { url: string | null; name: string }) {
 function ExpandedSheet({
   slug, it, name, shownQty, bump, onCollapse, onRename, onPhoto, photoBusy,
   onAddPhoto, onPickLocation, sessionLocationLabel, containerLabel,
-  onConfirm, onDelete, deleteBusy,
+  onConfirm, onDelete, deleteBusy, correcting = false, correctBusy = false, onCorrect,
 }: {
   slug: string;
   it: ScanInboxItem;
@@ -569,6 +642,10 @@ function ExpandedSheet({
   onConfirm: () => void;
   onDelete: () => void;
   deleteBusy: boolean;
+  /** Opened from "Not right": lead with the correction. */
+  correcting?: boolean;
+  correctBusy?: boolean;
+  onCorrect?: (v: { barcode?: string }) => void;
 }) {
   // The row's pictures, resolved once (lib/rowPictures.ts, #3046).
   const resolved = rowPictures(slug, it);
@@ -582,7 +659,8 @@ function ExpandedSheet({
       yours: yours ? resolved.src(yours, "thumb") : null,
     }).src,
   );
-  const dest = it.suggested_candidates?.[0]?.label ?? null;
+  // Where it goes is the card's answer, never the raw top route (#3618).
+  const dest = useItemDestinationLabel(it);
   const where = containerLabel ?? it.scan_area ?? sessionLocationLabel;
 
   return (
@@ -638,15 +716,48 @@ function ExpandedSheet({
         </div>
       </div>
 
+      {correcting && onCorrect && (
+        <div data-testid="capture-sheet-correct" className="mx-3 mt-2.5 rounded-lg border border-amber-300/40 bg-amber-300/10 px-2.5 py-2 text-[12px] text-white/90">
+          <div className="mb-1.5">{name ? "Not right? Fix the name below, give the barcode, or look again." : "Name it below, give the barcode, or look again."}</div>
+          <div className="flex items-center gap-1.5">
+            <input
+              // DRAFT-OK: a barcode typed to correct a wrong identification; Enter or Use sends it and the lookup re-runs.
+              inputMode="numeric"
+              placeholder="its barcode, if it has one"
+              data-testid="capture-sheet-barcode"
+              onKeyDown={(e) => {
+                const v = e.currentTarget.value.replace(/\D/g, "");
+                if (e.key === "Enter" && v.length >= 8) onCorrect({ barcode: v });
+              }}
+              className="min-w-0 flex-1 rounded-lg border border-white/20 bg-white/10 dark:bg-white/10 px-2 py-1.5 text-white text-[13px] focus:outline-none focus:border-cobble-400"
+            />
+            <button
+              type="button"
+              disabled={correctBusy}
+              onClick={(e) => {
+                const input = (e.currentTarget.parentElement?.querySelector("input") as HTMLInputElement | null)?.value.replace(/\D/g, "") ?? "";
+                onCorrect(input.length >= 8 ? { barcode: input } : {});
+              }}
+              data-testid="capture-sheet-rerun"
+              className="inline-flex items-center gap-1 rounded-lg border border-white/25 px-2.5 py-1.5 text-white text-[12.5px] disabled:opacity-50"
+            >
+              {correctBusy ? <Loader2 size={12} className="animate-spin" /> : <RefreshCw size={12} />} Look again
+            </button>
+          </div>
+        </div>
+      )}
       <label className="block px-3 mt-2.5">
         <span className="block text-[9.5px] font-mono uppercase tracking-widest text-white/40 mb-1">What is it</span>
         <input
+          // DRAFT-OK: a scan's name while the capture drawer is open, filled in by the identifier as it arrives; see the keying note below.
           defaultValue={name ?? ""}
           // Keyed by the ITEM only. Keying on the name too meant every
           // background poll that filled in an identity remounted the field
           // mid-edit and ate what you were typing.
           key={it.id}
           placeholder="name it"
+          autoFocus={correcting}
+          onFocus={(e) => { if (correcting) e.currentTarget.select(); }}
           data-testid="capture-sheet-name"
           onBlur={(e) => { const v = e.target.value.trim(); if (v && v !== name) onRename(v); }}
           onKeyDown={(e) => { if (e.key === "Enter") e.currentTarget.blur(); }}
@@ -693,14 +804,14 @@ function ExpandedSheet({
           <Trash2 size={13} /> Delete
         </button>
         <div className="flex-1" />
-        <button
+        {name && <button
           type="button"
           onClick={onConfirm}
           data-testid="capture-sheet-confirm"
           className="inline-flex items-center gap-1.5 rounded-lg bg-cobble-600 hover:bg-cobble-700 text-white text-[13px] font-semibold px-4 py-2"
         >
           <Check size={13} /> Looks right
-        </button>
+        </button>}
       </div>
     </div>
   );

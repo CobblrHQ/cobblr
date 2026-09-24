@@ -4,6 +4,7 @@
 // consume these to discover what kinds/actions exist, look up
 // entities polymorphically, manage bindings, and run actions.
 
+import { detailPathForEntity, titleForEntity } from "../platform/entities.js";
 import { Router, type Request } from "express";
 import { z } from "zod";
 import { parseWireFilter } from "../platform/wire-filter.js";
@@ -25,6 +26,7 @@ import { actionRecordOptional, effectiveAppliesTo, enabledActionOwners, matchAct
 import { facesForKind } from "../platform/faces.js";
 import { platformActionMinRole } from "../platform/platform-actions.js";
 import { roleSatisfies } from "@cobblr/platform-contract/org-roles";
+import { templateDataOf } from "@cobblr/platform-contract/entity-metadata";
 import type { ActionAppliesToDecl } from "@cobblr/platform-contract";
 import {
   FIELD_SCOPE_PRESETS,
@@ -67,7 +69,7 @@ platformOrgRouter.get(
       if (String(req.query.include ?? "").split(",").includes("custom_fields")) {
         const defs = await meta
           .selectFrom("module_field_defs")
-          .select(["entity_kind", "name", "display_label", "type", "required", "choices"])
+          .select(["entity_kind", "name", "display_label", "type", "required", "choices", "help"])
           .where("org_id", "=", req.tenant!.org.id)
           .orderBy("position")
           .execute();
@@ -80,11 +82,30 @@ platformOrgRouter.get(
             type: d.type,
             required: d.required,
             ...(d.choices?.length ? { choices: d.choices } : {}),
+            // What the field MEANS, in the words the record's form shows
+            // under it: "Replacement value" is not what you paid, and a
+            // reader of the record needs that as much as a person does.
+            ...(d.help ? { help: d.help } : {}),
           });
           byKind.set(d.entity_kind, list);
         }
+        // A native field this workspace relabels ("cost" shows as "Paid" in
+        // a Home Inventory): the same word the form uses, on the kind.
+        const relabels = await meta
+          .selectFrom("native_field_overrides")
+          .select(["entity_kind", "name", "display_label"])
+          .where("org_id", "=", req.tenant!.org.id)
+          .where("display_label", "is not", null)
+          .execute();
+        const labelOf = new Map(relabels.map((r) => [`${r.entity_kind} ${r.name}`, r.display_label as string]));
         res.json({
-          items: items.map((k) => ({ ...k, custom_fields: byKind.get(k.id) ?? [] })),
+          items: items.map((k) => ({
+            ...k,
+            ...(Array.isArray(k.fields)
+              ? { fields: k.fields.map((f) => { const label = labelOf.get(`${k.id} ${f.name}`); return label ? { ...f, label } : f; }) }
+              : {}),
+            custom_fields: byKind.get(k.id) ?? [],
+          })),
         });
         return;
       }
@@ -114,6 +135,42 @@ platformOrgRouter.get(
         return;
       }
       res.json(found);
+    } catch (err) {
+      next(err);
+    }
+  },
+);
+
+// Where a record lives: the one address every link to it should use, decided
+// by the record's own collection (detailPathForEntity), for a surface that has
+// only a kind and an id. The web's open door (/open/:kind/:id) asks this and
+// goes there, so a row naming the base kind of an item filed in a named
+// collection still opens that item rather than "part not found" (#3623).
+// AI-REACH: reads
+platformOrgRouter.get(
+  "/:slug/entities/:kind/:id/address",
+  requireAuth,
+  withTenant,
+  async (req, res, next) => {
+    try {
+      const { kind, id } = req.params;
+      if (!kind || !id) {
+        res.status(400).json({ error: { code: "missing_params", message: "kind + id required" } });
+        return;
+      }
+      const orgId = req.tenant!.org.id;
+      // A record that no longer resolves has no address; the door says so
+      // rather than opening an empty page.
+      if ((await titleForEntity(orgId, kind, id)) === null) {
+        res.status(404).json({ error: { code: "not_found", message: "That record is not here any more." } });
+        return;
+      }
+      const path = await detailPathForEntity(orgId, kind, id);
+      if (!path) {
+        res.status(404).json({ error: { code: "no_page", message: "That kind of record has no page to open." } });
+        return;
+      }
+      res.json({ path });
     } catch (err) {
       next(err);
     }
@@ -606,7 +663,7 @@ platformOrgRouter.post(
           // flatten onto event.* so {{event.delta}} works directly;
           // system-added keys come last to win on collision.
           rendered = platform().templates.render(b.template, {
-            ...entityFields,
+            ...templateDataOf(entityFields),
             _title: ent?.title ?? "",
             event: {
               ...(args ?? {}),

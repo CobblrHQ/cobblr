@@ -21,6 +21,56 @@ export function ledgerLines(l: SandboxLedger): string[] {
   return lines;
 }
 
+/** The ending page's one line: "Bookshelf, Groceries · 4 items · 3 photos".
+ *  The names of what they set up, then counts in the words people use, photos
+ *  called photos. Null when they made nothing of their own. */
+export function addedSummary(l: SandboxLedger): string | null {
+  const names = [...new Set([...l.bundles.map((b) => b.name), ...l.instances.map((i) => i.display_name), ...l.modules.map((m) => m.name)])];
+  const items = l.records.reduce((n, r) => n + r.ids.length, 0);
+  const photos = l.scans.reduce((n, s) => n + s.photo_file_ids.length, 0);
+  const count = (n: number, one: string, many: string) => (n === 1 ? `1 ${one}` : `${n} ${many}`);
+  const parts = [
+    ...(names.length ? [names.join(", ")] : []),
+    ...(items ? [count(items, "item", "items")] : []),
+    ...(photos ? [count(photos, "photo", "photos")] : []),
+    ...(l.fields.length ? [count(l.fields.length, "field", "fields")] : []),
+    ...(l.automations.length ? [count(l.automations.length, "automation", "automations")] : []),
+  ];
+  return parts.length ? parts.join(" · ") : null;
+}
+
+/** What the ending page shows of the ledger: one line, or one sentence when
+ *  there is nothing. The full list (BuiltHere) is the receiving side's. */
+export function AddedLine({ preview }: { preview?: SandboxLedger | null }) {
+  const [ledger, setLedger] = useState<SandboxLedger | null | undefined>(preview);
+  useEffect(() => {
+    if (preview !== undefined) return;
+    let gone = false;
+    void api
+      .sandboxLedger()
+      .then((l) => !gone && setLedger(l))
+      .catch(() => !gone && setLedger(null));
+    return () => {
+      gone = true;
+    };
+  }, [preview]);
+  if (!ledger) return null;
+  const summary = addedSummary(ledger);
+  return (
+    <p className="mt-4 text-sm text-content dark:text-mortar-100" data-testid="built-here">
+      {summary ? (
+        <>
+          <strong>You added:</strong> <span data-testid="built-lines">{summary}</span>
+        </>
+      ) : (
+        <span className="text-muted" data-testid="built-nothing">
+          You did not add anything of your own.
+        </span>
+      )}
+    </p>
+  );
+}
+
 export function BuiltHere({
   preview,
   heading = "What you built here",

@@ -1,0 +1,19 @@
+{
+  "_recorded": "2026-09-24, GET https://world.openfoodfacts.org/api/v2/product/3017620422003.json, trimmed to the fields the adapter reads (values as returned)",
+  "code": "3017620422003",
+  "status": 1,
+  "status_verbose": "product found",
+  "product": {
+    "code": "3017620422003",
+    "product_name": "Nutella",
+    "product_name_en": "Nutella",
+    "generic_name": "Pâte à tartiner aux noisettes et au cacao",
+    "generic_name_en": "Hazelnut And Cocoa Spread",
+    "brands": "Nutella, Ferrero",
+    "categories": "en:Confectionary based spreads, en:Petit-déjeuners, en:Produits à tartiner, en:Produits à tartiner sucrés, en:Pâtes à tartiner, Nutella, Nuttela",
+    "image_url": "https://images.openfoodfacts.org/images/products/301/762/042/2003/front_en.879.400.jpg",
+    "image_front_url": "https://images.openfoodfacts.org/images/products/301/762/042/2003/front_en.879.400.jpg",
+    "quantity": "400 g e",
+    "lang": "fr"
+  }
+}

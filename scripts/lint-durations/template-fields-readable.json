@@ -1,0 +1,10 @@
+{
+  "lint": "lint:template-fields-readable",
+  "run": "tsx scripts/lint-template-fields-readable.ts",
+  "rows": [
+    "bundle"
+  ],
+  "ms": 1666,
+  "recorded": "2026-09-24",
+  "source": "scaffolded by new-lint.sh at twice a local run (a shared box); replaced from its first CI measurement"
+}

@@ -2,12 +2,12 @@
   "manifest": {
     "id": "cobblr.flagship.medications",
     "catalog": "extended",
-    "version": "0.3.3",
+    "version": "0.3.4",
     "name": "Medications",
     "description": "Your medications as their own table: dose, schedule, instructions, prescriber/pharmacy, refills left + a refill-by date. Caregiver-friendly.",
     "author": "Cobblr",
     "released_at": "2026-06-08",
-    "changelog": "Richer prescription fields: Instructions + Important information (how to take it, warnings), a Time of day field (Morning/Midday/Evening/Bedtime), interval schedules (Every 4/6/8/12 hours) with a First-dose-at time, and a unit picker on the quantity.: Its OWN table (an inventory instance), not generic Inventory with extra columns: its own nav entry, a “New medication” button, only med fields (parts/warranty/supplier cruft hidden), plain-language hints + a pinned “Current meds” view.",
+    "changelog": "Says up front that it tracks stock, so counts and Use one or Used up are there from the first item rather than after one is counted. Earlier: Richer prescription fields: Instructions + Important information (how to take it, warnings), a Time of day field (Morning/Midday/Evening/Bedtime), interval schedules (Every 4/6/8/12 hours) with a First-dose-at time, and a unit picker on the quantity.: Its OWN table (an inventory instance), not generic Inventory with extra columns: its own nav entry, a “New medication” button, only med fields (parts/warranty/supplier cruft hidden), plain-language hints + a pinned “Current meds” view.",
     "requires": [
       {
         "module": "inventory"
@@ -17,6 +17,9 @@
       {
         "module": "inventory",
         "instance_name": "medications",
+        "faces": {
+          "stock": true
+        },
         "display_name": "Medications",
         "glyph": "💊",
         "item_noun": "medication",

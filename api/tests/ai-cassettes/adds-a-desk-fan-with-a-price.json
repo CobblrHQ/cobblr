@@ -1,0 +1,17 @@
+{
+  "match": "add a spare replay desk fan to my bedroom",
+  "rounds": [
+    { "tool_calls": [{ "name": "list_records", "args": { "kind": "core-locations:location", "q": "Bedroom" } }] },
+    {
+      "tool_calls": [
+        {
+          "name": "create_record",
+          "args": {
+            "kind": "home-inventory:item",
+            "fields": { "name": "Replay desk fan", "qty": 1, "location_id": "$prev.data.items[0].id", "cost": 24, "replacement_value": 24 }
+          }
+        }
+      ]
+    }
+  ]
+}

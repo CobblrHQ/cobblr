@@ -57,6 +57,16 @@
 // A decode loop that cannot measure structure only ever reaches the patient
 // grade, so it is strictly less eager than before and never more.
 //
+// AND THEN DARK ALONE STOPPED FIRING AT ALL (reported 2026-09-24 on the booth
+// phone: the flash came on "out of nowhere", too aggressively). The owner's
+// rule, as stated: "It should only do it when a barcode is in frame but not
+// reading." So the dark grade is gone: the torch comes on only for a code-like
+// region that has been in view without a read for strugglingDwellMs (a missed
+// estimator frame or two does not restart that clock), never on camera start,
+// never for a dark room alone, and never for a loop that cannot see structure.
+// It goes off when the code is read (the page's release), when the code has
+// left the frame for goneMs, or by the older off rules below.
+//
 // Pure state machine: samples in, "turn the torch on/off" intents out. The
 // canvas glue (sampling luma + falloff off the live video) sits at the bottom;
 // everything above it is node-testable, and the strobe case is pinned in
@@ -78,6 +88,12 @@ export interface TorchAutoConfig {
   /** ...and how long that struggle must hold. Short: unlike a dark frame, this
    *  is direct evidence of a scan that is trying and failing. */
   strugglingDwellMs: number;
+  /** A missed estimator frame inside a struggle: a gap this short keeps the
+   *  struggle clock running rather than restarting it. */
+  struggleGapMs: number;
+  /** While ON: the code has been out of view this long, so the light has
+   *  nothing left to help with. */
+  goneMs: number;
   /** While ON: absolute saturation — this bright means improved regardless of
    *  any baseline. */
   brightLuma: number;
@@ -140,7 +156,9 @@ export const TORCH_AUTO_DEFAULTS: TorchAutoConfig = {
   darkLuma: 50,
   darkDwellMs: 2500,
   dimLuma: 110,
-  strugglingDwellMs: 900,
+  strugglingDwellMs: 1200,
+  struggleGapMs: 400,
+  goneMs: 1500,
   brightLuma: 230,
   brightDwellMs: 2000,
   baselineSettleMs: 800,
@@ -197,6 +215,8 @@ export interface TorchAutoState {
   lastBrightOffAt: number;
   /** While ON: has any sample shown code-like structure this burn? */
   sawStructure: boolean;
+  /** When a code-like region was last in view (either side of the switch). */
+  lastStructureAt: number;
   /** A fruitless burn ended; the dark trigger is dead until the scene changes
    *  (or rearmMaxMs passes). 0 = not suppressed. */
   suppressedAt: number;
@@ -214,6 +234,7 @@ export function torchAutoInitial(): TorchAutoState {
     marginBoost: 0,
     lastBrightOffAt: 0,
     sawStructure: false,
+    lastStructureAt: 0,
     suppressedAt: 0,
   };
 }
@@ -244,17 +265,15 @@ export function torchAutoSample(
     if (s.suppressedAt > 0) {
       return { state: { ...s, wantSince: null }, turn: null };
     }
-    // Two grades of "light would help", and they want very different patience.
-    // Struggling is direct evidence (a code is right there and won't read);
-    // dark alone is circumstantial, so it has to persist.
+    // Only a code in view that will not read, in a scene dim enough that
+    // light is a plausible cause. Dark alone never fires (see the header).
     const struggling = structure === true && luma < cfg.dimLuma;
-    if (!struggling && luma >= cfg.darkLuma) {
+    if (struggling) s = { ...s, lastStructureAt: now };
+    else if (s.wantSince === null || now - s.lastStructureAt > cfg.struggleGapMs) {
       return { state: { ...s, wantSince: null }, turn: null };
     }
     const wantSince = s.wantSince ?? now;
-    // The clock is shared, so a scene that was merely dark and then starts
-    // struggling gets credit for the waiting it already did.
-    const dwell = struggling ? cfg.strugglingDwellMs : cfg.darkDwellMs;
+    const dwell = cfg.strugglingDwellMs;
     if (now - wantSince >= dwell && now >= s.cooldownUntil) {
       // Re-firing right after a bright-off means that off was wrong — the
       // "brightness" was the torch bouncing off something reflective. Raise
@@ -273,7 +292,8 @@ export function torchAutoSample(
           onBaseline: null,
           onFalloff: null,
           marginBoost,
-          sawStructure: false,
+          sawStructure: true,
+          lastStructureAt: now,
         },
         turn: "on",
       };
@@ -282,7 +302,14 @@ export function torchAutoSample(
   }
 
   // ON: track whether this burn has revealed anything code-like.
-  if (structure === true && !s.sawStructure) s = { ...s, sawStructure: true };
+  if (structure === true) s = { ...s, sawStructure: true, lastStructureAt: now };
+  // The code left the frame: the light has nothing left to help with.
+  if (structure !== undefined && s.onAt !== null && now - s.lastStructureAt >= cfg.goneMs) {
+    return {
+      state: { ...s, ...offReset(), cooldownUntil: now + cfg.cooldownMs },
+      turn: "off",
+    };
+  }
   // A burn that lit the scene and found nothing to scan was pointless — end
   // it and stay quiet until the scene changes. Only when the caller supplies
   // structure evidence at all (structure !== undefined); a loop that cannot

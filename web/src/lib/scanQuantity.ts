@@ -17,6 +17,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { api, type ScanInboxItem } from "./api";
+import { scanInboxKeys } from "./scan-inbox-keys";
 
 /** The debounce + flush machine, free of React so it can be tested with fake
  *  timers. `write` is fired at most once per settled edit, and always exactly
@@ -108,7 +109,7 @@ export function useScanQuantity(slug: string, item: ScanInboxItem | null) {
         void api
           .updateScanItem(slug, itemId, { quantity })
           .then(() => {
-            void qc.invalidateQueries({ queryKey: ["scan-inbox", slug] });
+            void qc.invalidateQueries({ queryKey: scanInboxKeys.all(slug) });
             void qc.invalidateQueries({ queryKey: ["scan-item-live", slug, itemId] });
           })
           // A failed write leaves the row at its old count; the next open shows

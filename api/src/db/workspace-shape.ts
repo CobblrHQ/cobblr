@@ -132,7 +132,12 @@ async function metaShape(orgId: string, self: RegExp | null): Promise<Record<str
   out.orgs = orgRow.rows.map((r) => {
     const kept: Record<string, unknown> = {};
     for (const [k, v] of Object.entries(r)) {
-      if (["id", "slug", "name", "db_name", "db_credentials_encrypted"].includes(k) || k.endsWith("_at")) continue;
+      // shape_version is a CLOCK like the *_at columns: it counts changes, so
+      // two workspaces that carry the same things read different numbers by
+      // history alone (one enabled forty modules through signup, one was
+      // baked before the counter existed and reads 0). Its only reader asks
+      // whether it MOVED, never what it is (platform/workspace-shape.ts).
+      if (["id", "slug", "name", "db_name", "db_credentials_encrypted", "shape_version"].includes(k) || k.endsWith("_at")) continue;
       kept[k] = normaliseValue(v, self);
     }
     return stableStringify(kept);

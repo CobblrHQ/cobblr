@@ -509,17 +509,32 @@ export interface RankedFit<T extends FitTable = FitTable> {
  *    record's NAME is enough ("… Garlic Seasoning Blend" says seasoning, and
  *    the Spice Rack says seasoning), and anything plausible counts too.
  *
- *  Order: score, then real evidence (strong) before corroboration, then the
- *  NARROWER table (fewer declared words; a specific table says less and means
- *  more), and a module's catch-all last. Breadth is read LAST, so it decides
- *  only a true tie: it does not make a seasoning a Spice when Groceries names
- *  the head too and scores higher (#3492). */
+ *  Order: orderFits. The floor is fitsTheFloor: plausible, or the narrower
+ *  shelf inside a table that is (the funnel, #3492). */
 export function rankFits<T extends FitTable>(item: FitItem, tables: T[], gate: "plausible" | "named" = "plausible"): RankedFit<T>[] {
   const { scoreEntry } = makeLexicalScorer(item);
-  const fits = tables
-    .map((table) => ({ table, evidence: scoreEntry(table) }))
-    .filter(({ evidence }) => evidence.plausible || (gate === "named" && evidence.nameHits.length > 0));
+  const scored = tables.map((table) => ({ table, evidence: scoreEntry(table) }));
+  const fits = scored.filter((f) => fitsTheFloor(f, scored) || (gate === "named" && f.evidence.nameHits.length > 0));
   return fits.filter((f) => !contradictedByCategory(f, fits)).sort(orderFits);
+}
+
+/** Whether a table clears the scan floor: plausible on its own evidence, or
+ *  the narrower shelf inside a table that is (the funnel, #3492). When the
+ *  wider table fits the thing and the narrower one calls it by the same word,
+ *  the narrower one fits it too: "21 Seasoning Salute" says "seasoning" only
+ *  beside its head, which alone is one keyword, and the Groceries its catalog
+ *  names vouches for the word. Every floor reads this, so the chip and the
+ *  move plan cannot disagree about which tables are in the running. */
+export function fitsTheFloor<T extends FitTable>(fit: RankedFit<T>, all: readonly RankedFit<T>[]): boolean {
+  if (fit.evidence.plausible) return true;
+  if (!fit.evidence.nameHits.length) return false;
+  return all.some((o) => o !== fit && o.evidence.plausible && sharesNameWord(o.evidence, fit.evidence) && tableBreadth(fit.table) < tableBreadth(o.table));
+}
+
+function sharesNameWord(a: LexicalEvidence, b: LexicalEvidence): boolean {
+  const words = (e: LexicalEvidence) => new Set(e.nameHits.flatMap((h) => h.toLowerCase().split(/\s+/)).map(stem));
+  const aw = words(a);
+  return [...words(b)].some((w) => aw.has(w));
 }
 
 /** How many words a table declares: a specific table says less and means more. */
@@ -547,13 +562,12 @@ export function nameNames(e: LexicalEvidence): boolean {
  *     catalog names the Groceries table) before one it does not, so what the
  *     catalog said the thing is outranks what its name merely grazed (a
  *     fibre choice, a pair of incidental keywords);
+ *  2b. then THE FUNNEL: of two tables the name calls by the same word, the
+ *     one declaring the longer phrase, then the NARROWER one, ahead of the
+ *     category and the score, so a seasoning is a Spice when the Spice Rack
+ *     is installed however many grocery words its name carries (#3492);
  *  4. then the score, then real evidence before corroboration, a module's
- *     catch-all last, and the NARROWER table first. Last means it settles
- *     only what everything above left tied. It used to claim "Spices over
- *     Groceries for a seasoning both declare"; at the vocabulary a workspace
- *     installs, Groceries declares "seasoning" and a name with a second
- *     grocery word scores it higher first, so that was never the result
- *     (#3217). Whether it should be is #3492. */
+ *     catch-all last, and breadth for a true tie. */
 export function orderFits<T extends FitTable>(a: RankedFit<T>, b: RankedFit<T>): number {
   return (
     // 0. A module's catch-all yields to a table the CATEGORY names, whatever
@@ -586,6 +600,19 @@ export function orderFits<T extends FitTable>(a: RankedFit<T>, b: RankedFit<T>):
       Number(a.evidence.categoryNames && nounSaysWhatItIs(a.table) && !b.evidence.nounHit) ||
     Number(b.evidence.headNamed) - Number(a.evidence.headNamed) ||
     Number(nameNames(b.evidence)) - Number(nameNames(a.evidence)) ||
+    // 2b. THE FUNNEL. Two tables that call the thing by the SAME word are one
+    //    kind of thing seen at two widths: a seasoning is a grocery, and the
+    //    Spice Rack is the narrower shelf inside the pantry. The narrower
+    //    table wins, ahead of the aisle's category and of the score, so a
+    //    second broad-only word ("garlic" in "Garlic Seasoning Blend") cannot
+    //    pull the thing back out to the wide table (the owner's call, #3492:
+    //    "Spice is more specific than Grocery"). Derived, not declared: the
+    //    widths are the tables' own vocabularies, so any pair of installed
+    //    tables gets the same rule. One exception first, the longer phrase:
+    //    a table that declares the whole phrase ("sunflower seeds") names the
+    //    thing better than one that only shares its last word ("seeds"),
+    //    whichever is narrower (#3219).
+    funnel(a, b) ||
     Number(b.evidence.categoryNames) - Number(a.evidence.categoryNames) ||
     b.evidence.score - a.evidence.score ||
     Number(b.evidence.strong) - Number(a.evidence.strong) ||
@@ -595,6 +622,14 @@ export function orderFits<T extends FitTable>(a: RankedFit<T>, b: RankedFit<T>):
     Number(!!a.table.is_fallback) - Number(!!b.table.is_fallback) ||
     tableBreadth(a.table) - tableBreadth(b.table)
   );
+}
+
+/** The funnel order between two tables the name calls by the same word:
+ *  the longer phrase first, then the narrower table. Zero when they share no
+ *  word, so an unrelated pair falls through to the category and the score. */
+function funnel<T extends FitTable>(a: RankedFit<T>, b: RankedFit<T>): number {
+  if (!sharesNameWord(a.evidence, b.evidence)) return 0;
+  return longestNameHit(b.evidence) - longestNameHit(a.evidence) || tableBreadth(a.table) - tableBreadth(b.table);
 }
 
 /** Words in the longest table word found at the head of the name. */

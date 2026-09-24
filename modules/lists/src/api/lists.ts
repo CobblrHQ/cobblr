@@ -188,9 +188,19 @@ listsRouter.patch(
     const patch: Record<string, unknown> = { updated_at: new Date() };
     if (parsed.data.title !== undefined) patch.title = parsed.data.title;
     if (parsed.data.description !== undefined) patch.description = parsed.data.description;
-    if (parsed.data.metadata !== undefined) patch.metadata = jsonb(parsed.data.metadata);
+    // The custom fields MERGE into the live row (#3625).
+    if (parsed.data.metadata !== undefined) patch.metadata = platform().db.mergeJsonb("metadata", parsed.data.metadata as Record<string, unknown>) as never;
     const row = await db.updateTable("lists_lists").set(patch).where("id", "=", req.params.id!).returningAll().executeTakeFirst();
     if (!row) return void res.status(404).json({ error: { code: "not_found", message: "List not found." } });
+    // The request as sent, on the record's history: the one place a value
+    // a later write replaced can still be read back (#3625).
+    await platform().activity.log({
+      orgId: tenantContext(req).org.id,
+      userId: sessionUser(req)?.id ?? null,
+      action: "list_updated",
+      ref: { module: "lists", entityType: "list", entityId: String(req.params.id) },
+      diff: parsed.data as Record<string, unknown>,
+    });
     res.json(row);
   }),
 );
@@ -307,7 +317,8 @@ listsRouter.patch(
     if (parsed.data.title !== undefined) patch.title = parsed.data.title;
     if (parsed.data.note !== undefined) patch.note = parsed.data.note;
     if (parsed.data.qty !== undefined) patch.qty = parsed.data.qty;
-    if (parsed.data.metadata !== undefined) patch.metadata = jsonb(parsed.data.metadata);
+    // The custom fields MERGE into the live row (#3625).
+    if (parsed.data.metadata !== undefined) patch.metadata = platform().db.mergeJsonb("metadata", parsed.data.metadata as Record<string, unknown>) as never;
     if (parsed.data.checked !== undefined) {
       patch.checked = parsed.data.checked;
       patch.checked_at = parsed.data.checked ? new Date() : null;
@@ -377,6 +388,15 @@ listsRouter.patch(
         claimedByName: row.claimed_by_name,
       });
     }
+    // The request as sent, on the record's history: the one place a value
+    // a later write replaced can still be read back (#3625).
+    await platform().activity.log({
+      orgId: tenantContext(req).org.id,
+      userId: sessionUser(req)?.id ?? null,
+      action: "list_item_updated",
+      ref: { module: "lists", entityType: "item", entityId: String(req.params.id) },
+      diff: parsed.data as Record<string, unknown>,
+    });
     res.json(row);
   }),
 );

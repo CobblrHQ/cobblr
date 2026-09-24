@@ -2058,6 +2058,7 @@ function AnnouncementsTab() {
               </div>
               <div className="text-xs text-muted dark:text-slate-400">{a.description}</div>
               <input
+                // DRAFT-OK: an operator setting on the admin console, not a record's value; no action moves it.
                 defaultValue={a.webhook_url ?? ""}
                 placeholder="channel webhook override (blank = default channel)"
                 onBlur={(e) => {

@@ -121,6 +121,9 @@ export interface IdentifyFailure {
   ai_reason?: ProviderErrorReason;
   /** The raw reason, for the log; the sentence never shows it. */
   reason?: string;
+  /** The hosted identify did not run, and why, when the tenant path then
+   *  failed too: a spent daily allowance is the reason worth saying. */
+  hosted?: "allowance" | "plan" | "scope" | "unreachable";
 }
 
 /** Nothing tried: no provider anywhere for this workspace, so no AI read the
@@ -136,6 +139,9 @@ export function identifyNeverTried(f: IdentifyFailure): boolean {
  *  is the remedy. The sentence is one line a phone card can show whole; the
  *  remedy rides in `detail`. */
 export function identifyFailureWords(f: IdentifyFailure): { sentence: string; detail: string; retry: boolean; connect: boolean } {
+  if (f.hosted === "allowance") {
+    return { sentence: "Photo identify is used up for today here.", detail: "Name it yourself, or identify it again tomorrow.", retry: false, connect: false };
+  }
   if (f.code === "no_item") {
     return { sentence: "The AI saw no single item to name in this photo.", detail: "Name it yourself, or read it as a receipt if that is what it is.", retry: false, connect: false };
   }

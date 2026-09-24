@@ -17,14 +17,17 @@
 // already know: stock that is past its expiry date makes "went bad" the
 // obvious one; an empty shelf leaves only "+N to it"; otherwise the everyday
 // re-buy, "replaced", leads.
+import type { ReactNode } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { PackagePlus, RefreshCw } from "lucide-react";
+import { ChevronDown, PackagePlus, RefreshCw } from "lucide-react";
+import { HeaderMenu, MenuItem } from "./HeaderMenu";
 import { useFaces, useToast } from "@cobblr/platform-web";
 import { repurchaseWords } from "@cobblr/platform-contract/kind-label";
 import { api, ApiError, type TrackedMatch } from "../lib/api";
 import { useActiveOrg } from "../auth/ActiveOrgContext";
 import { useKindLabels } from "../lib/useKindLabels";
 import { leadAnswer } from "../lib/repurchaseAnswer";
+import { scanInboxKeys } from "../lib/scan-inbox-keys";
 
 export type RepurchaseMode = "add-qty" | "replace";
 type Resolution = "over_buy" | "consumed" | "discarded";
@@ -71,6 +74,84 @@ const pill = {
 
 export type RepurchaseLayout = "pills" | "stack";
 
+/** The restock answers a scan of a record you already have can give, in the
+ *  collection's own words: ONE list for the detail, the card and the File N
+ *  plan. Pure. */
+export function repurchaseOptions(words: ReturnType<typeof repurchaseWords>): Array<{ key: RepurchaseChoice["key"]; label: string; title?: string }> {
+  return [
+    words.replace ? { key: "replaced" as const, label: words.replace.label, title: words.replace.title } : null,
+    { key: "add" as const, label: words.add.label, title: words.add.title || undefined },
+    words.wentBad ? { key: "went_bad" as const, label: words.wentBad.label, title: words.wentBad.title } : null,
+  ].filter((x): x is NonNullable<typeof x> => !!x);
+}
+
+export interface RepurchaseChoice {
+  key: "replaced" | "add" | "went_bad";
+  label: string;
+  title?: string;
+  run: () => void;
+}
+
+/** The restock choices for a scan that matched a record the workspace
+ *  counts: +1 (still had some), Replaced (the one that ran out), Old one went
+ *  bad. ONE list, read by the detail's "Is this the same one?" and by the
+ *  inbox card, so the two can never offer different answers (the owner,
+ *  2026-09-24: "the key buttons have not been transferred over to the scan
+ *  inbox card"). Null until the collection's faces are known. */
+export function useRepurchaseChoices(
+  itemId: string,
+  match: TrackedMatch | null,
+  quantity: number,
+  onDone?: (result: AttachResult, match: TrackedMatch, mode: RepurchaseMode) => void,
+): { answers: RepurchaseChoice[]; lead: RepurchaseChoice["key"]; busy: boolean; hasSome: boolean; daysLeft: number | null; ledgerLine: boolean } | null {
+  const { activeSlug } = useActiveOrg();
+  const qc = useQueryClient();
+  const toast = useToast();
+  const kind = match?.kind ?? "";
+  const worn = useFaces(kind);
+  const face = match && worn.verdict ? { stock: worn.on.has("stock"), perishable: worn.on.has("perishable") } : null;
+  const noun = useKindLabels(activeSlug).noun(kind);
+  const cadence = useQuery({
+    queryKey: ["cadence-state", activeSlug, kind, match?.id, match?.expired],
+    queryFn: () => api.cadenceState(activeSlug, kind, match!.id, { expired: !!match!.expired }).catch(() => null),
+    enabled: !!match && match.qty != null && match.qty > 0 && face?.stock === true,
+    staleTime: 60_000,
+  });
+  const cad = cadence.data ?? null;
+  const daysLeft = cad?.days_until_runout != null ? Math.round(cad.days_until_runout) : null;
+  const attach = useMutation({
+    mutationFn: (vars: { mode: RepurchaseMode; resolution?: Resolution; label: string }) =>
+      api.scanAttach(activeSlug, itemId, {
+        kind: match!.kind,
+        entity_id: match!.id,
+        instance: match!.instance ?? undefined,
+        mode: vars.mode,
+        ...(vars.resolution ? { cadence: { resolution: vars.resolution } } : {}),
+      }),
+    onSuccess: (r, vars) => {
+      void qc.invalidateQueries({ queryKey: scanInboxKeys.all(activeSlug) });
+      // The toast leads with the exact label of the button pressed (#3339).
+      const now = r.new_qty != null ? ` (now ×${r.new_qty})` : "";
+      toast.success(`${vars.label}: ${r.entity_title}${now}`);
+      onDone?.(r, match!, vars.mode);
+    },
+    onError: (e) => toast.error(e instanceof ApiError ? e.message : String(e)),
+  });
+  if (!match || match.qty == null || !face) return null;
+  const hasSome = match.qty > 0;
+  const words = repurchaseWords(face, noun, quantity, hasSome);
+  const led = leadAnswer(match, cad?.repurchase_means);
+  const lead = led === "went_bad" && !words.wentBad ? "replaced" : led;
+  if (!lead) return null;
+  const runs: Record<RepurchaseChoice["key"], () => void> = {
+    replaced: () => attach.mutate({ mode: "replace", resolution: "consumed", label: words.replace!.label }),
+    add: () => attach.mutate({ mode: "add-qty", ...(hasSome ? { resolution: "over_buy" as const } : {}), label: words.add.label }),
+    went_bad: () => attach.mutate({ mode: "replace", resolution: "discarded", label: words.wentBad!.label }),
+  };
+  const answers: RepurchaseChoice[] = repurchaseOptions(words).map((o) => ({ ...o, run: runs[o.key] }));
+  return { answers, lead, busy: attach.isPending, hasSome, daysLeft, ledgerLine: !!words.ledgerLine };
+}
+
 export function RepurchaseAnswers({
   itemId,
   match,
@@ -89,59 +170,9 @@ export function RepurchaseAnswers({
    *  the default were the two hardest to hit, one-handed, at a stand). */
   layout?: RepurchaseLayout;
 }) {
-  const { activeSlug } = useActiveOrg();
-  const qc = useQueryClient();
-  const toast = useToast();
-  // What this collection wears, and what it calls one of its things. Nothing
-  // renders until the verdict is in: the hook answers "every face" while it
-  // loads, which would flash the pantry words under a book.
-  const worn = useFaces(match.kind);
-  const face = worn.verdict ? { stock: worn.on.has("stock"), perishable: worn.on.has("perishable") } : null;
-  const noun = useKindLabels(activeSlug).noun(match.kind);
-
-  // What the ledger makes of a purchase right now. A workspace without the
-  // Cadence capability 404s here; `catch` turns that into "no opinion". Only
-  // stock has a ledger opinion worth asking for.
-  const cadence = useQuery({
-    queryKey: ["cadence-state", activeSlug, match.kind, match.id, match.expired],
-    queryFn: () => api.cadenceState(activeSlug, match.kind, match.id, { expired: !!match.expired }).catch(() => null),
-    enabled: match.qty != null && match.qty > 0 && face?.stock === true,
-    staleTime: 60_000,
-  });
-  const cad = cadence.data ?? null;
-  const daysLeft = cad?.days_until_runout != null ? Math.round(cad.days_until_runout) : null;
-
-  const attach = useMutation({
-    mutationFn: (vars: { mode: RepurchaseMode; resolution?: Resolution; label: string }) =>
-      api.scanAttach(activeSlug, itemId, {
-        kind: match.kind,
-        entity_id: match.id,
-        instance: match.instance ?? undefined,
-        mode: vars.mode,
-        ...(vars.resolution ? { cadence: { resolution: vars.resolution } } : {}),
-      }),
-    onSuccess: (r, vars) => {
-      void qc.invalidateQueries({ queryKey: ["scan-inbox", activeSlug] });
-      // The toast leads with the exact label of the button pressed, then the
-      // record and the count: three buttons lead here, and "+1 → …" was one
-      // button's wording shown for all three, so a person who pressed Replaced
-      // read a toast that described a different button (#3339). The label is
-      // the button's own, so the two cannot drift.
-      const now = r.new_qty != null ? ` (now ×${r.new_qty})` : "";
-      toast.success(`${vars.label}: ${r.entity_title}${now}`);
-      onDone?.(r, match, vars.mode);
-    },
-    onError: (e) => toast.error(e instanceof ApiError ? e.message : String(e)),
-  });
-
-  if (match.qty == null || !face) return null;
-  const hasSome = match.qty > 0;
-  const words = repurchaseWords(face, noun, quantity, hasSome);
-  // The ledger's lead only stands where its button does.
-  const led = leadAnswer(match, cad?.repurchase_means);
-  const lead = led === "went_bad" && !words.wentBad ? "replaced" : led;
-  if (!lead) return null;
-  const busy = attach.isPending;
+  const choices = useRepurchaseChoices(itemId, match, quantity, onDone);
+  if (!choices) return null;
+  const { lead, busy, hasSome, daysLeft } = choices;
   const stacked = layout === "stack";
   // One size for all three on a phone: the same height, padding, type and
   // shape; the lead keeps its fill, the others their outline, and none is a
@@ -152,29 +183,8 @@ export function RepurchaseAnswers({
     `inline-flex items-center gap-1 font-medium disabled:opacity-50 ${primary ? pill.primary : pill.secondary} ${
       stacked ? "justify-center rounded-lg px-2 py-1.5 text-[13px] leading-tight min-h-10 text-center" : "rounded-full px-2.5 py-1 text-xs"
     }`;
-  const answers = [
-    words.replace && {
-      key: "replaced" as const,
-      label: words.replace.label,
-      title: words.replace.title,
-      icon: stacked ? null : <RefreshCw size={12} />,
-      run: () => attach.mutate({ mode: "replace", resolution: "consumed", label: words.replace!.label }),
-    },
-    {
-      key: "add" as const,
-      label: words.add.label,
-      title: words.add.title || undefined,
-      icon: stacked ? null : <PackagePlus size={12} />,
-      run: () => attach.mutate({ mode: "add-qty", ...(hasSome ? { resolution: "over_buy" as const } : {}), label: words.add.label }),
-    },
-    words.wentBad && {
-      key: "went_bad" as const,
-      label: words.wentBad.label,
-      title: words.wentBad.title,
-      icon: null,
-      run: () => attach.mutate({ mode: "replace", resolution: "discarded", label: words.wentBad!.label }),
-    },
-  ].filter((a): a is NonNullable<typeof a> => !!a);
+  const icons: Record<RepurchaseChoice["key"], ReactNode> = { replaced: <RefreshCw size={12} />, add: <PackagePlus size={12} />, went_bad: null };
+  const answers = choices.answers.map((c) => ({ ...c, icon: stacked ? null : icons[c.key] }));
   // Stacked: the lead first and full width, the rest side by side; with two
   // answers, side by side; with one, full width.
   const span = (i: number) => (!stacked ? "" : answers.length === 3 ? (i === 0 ? "col-span-2" : "col-span-1") : answers.length === 2 ? "col-span-1" : "col-span-2");
@@ -184,7 +194,7 @@ export function RepurchaseAnswers({
       {a.icon} {a.label}
     </button>
   ));
-  const ledger = words.ledgerLine && hasSome && daysLeft != null && daysLeft > 0 && (
+  const ledger = choices.ledgerLine && hasSome && daysLeft != null && daysLeft > 0 && (
     <span className={`self-center text-[11px] text-muted ${stacked ? "col-span-2" : ""}`} title="What the cadence ledger expects from your past buys">
       ~{daysLeft} {daysLeft === 1 ? "day" : "days"} of the last one left
     </span>
@@ -204,3 +214,86 @@ export function RepurchaseAnswers({
     </>
   );
 }
+
+/** The card's side of the restock choices: every answer but the add (the
+ *  card's own +1 more), one tap away in a small menu. Mounted only on a row
+ *  that matched a counted record, so no other card pays for the hooks. */
+export function CardRestockOther({ itemId, match, quantity }: { itemId: string; match: TrackedMatch; quantity: number }) {
+  const choices = useRepurchaseChoices(itemId, match, quantity);
+  const others = (choices?.answers ?? []).filter((c) => c.key !== "add");
+  if (!others.length) return null;
+  return (
+    <HeaderMenu
+      width={240}
+      align="right"
+      trigger={({ toggle }) => (
+        <button
+          type="button"
+          data-testid="card-restock-other"
+          onClick={(e) => {
+            e.stopPropagation();
+            toggle();
+          }}
+          className="shrink-0 inline-flex items-center gap-0.5 rounded-full border border-emerald-400 dark:border-emerald-700 px-2 py-1 text-xs text-emerald-700 dark:text-emerald-300"
+        >
+          Other <ChevronDown size={11} />
+        </button>
+      )}
+    >
+      {({ close }) => (
+        <>
+          {others.map((c) => (
+            <MenuItem
+              key={c.key}
+              label={c.label}
+              hint={c.title}
+              disabled={choices?.busy}
+              onClick={() => {
+                close();
+                c.run();
+              }}
+            />
+          ))}
+        </>
+      )}
+    </HeaderMenu>
+  );
+}
+
+/** The phone row's side: the same answers, as the first entries of its ⋯.
+ *  A render prop, so the hooks run only for a row with a match. */
+export function WithRestockChoices({ itemId, match, quantity, children }: { itemId: string; match: TrackedMatch | null; quantity: number; children: (others: RepurchaseChoice[]) => ReactNode }) {
+  if (!match) return <>{children([])}</>;
+  return <WithRestockChoicesInner itemId={itemId} match={match} quantity={quantity}>{children}</WithRestockChoicesInner>;
+}
+function WithRestockChoicesInner({ itemId, match, quantity, children }: { itemId: string; match: TrackedMatch; quantity: number; children: (others: RepurchaseChoice[]) => ReactNode }) {
+  const choices = useRepurchaseChoices(itemId, match, quantity);
+  return <>{children((choices?.answers ?? []).filter((c) => c.key !== "add"))}</>;
+}
+
+/** The File N plan's side: the same answers as a choice on a line that adds
+ *  to a record you already have. The plan files by it (seen[].restock). */
+export function RestockPlanChoice({ kind, qty, hasSome, value, onChange }: { kind: string; qty: number; hasSome: boolean; value: RepurchaseChoice["key"]; onChange: (v: RepurchaseChoice["key"]) => void }) {
+  const { activeSlug } = useActiveOrg();
+  const worn = useFaces(kind);
+  const noun = useKindLabels(activeSlug).noun(kind);
+  if (!worn.verdict) return null;
+  const options = repurchaseOptions(repurchaseWords({ stock: worn.on.has("stock"), perishable: worn.on.has("perishable") }, noun, qty, hasSome));
+  if (options.length < 2) return null;
+  return (
+    <select
+      value={value}
+      data-testid="plan-restock"
+      aria-label="What this one means for what you have"
+      onChange={(e) => onChange(e.target.value as RepurchaseChoice["key"])}
+      className="shrink-0 rounded border border-line dark:border-slate-600 bg-surface dark:bg-slate-900 px-1.5 py-0.5 text-xs text-content dark:text-mortar-100"
+    >
+      {options.map((o) => (
+        <option key={o.key} value={o.key}>
+          {o.label}
+        </option>
+      ))}
+    </select>
+  );
+}
+

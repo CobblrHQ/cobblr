@@ -76,7 +76,43 @@ export function startPolicy(nonce: string): string {
   ].join("; ");
 }
 
-export function startHtml(siteKey: string, nonce = ""): string {
+/** Where a visitor is headed once the sandbox is up, and where they came from.
+ *  Both arrive in the query string (a QR on a booth display), so both are
+ *  cleaned to a closed shape before they reach the page or a redirect. */
+export interface StartIntent {
+  /** "scan": open the camera scanner straight away (the booth). */
+  start: "scan" | null;
+  /** A campaign tag ("3DP2026"), folded to lower case: a QR printed in capitals
+   *  and a link typed in lower case are one source. */
+  source: string | null;
+}
+
+export const NO_INTENT: StartIntent = { start: null, source: null };
+
+export function startIntentOf(query: Record<string, unknown>): StartIntent {
+  const start = query.start === "scan" ? "scan" : null;
+  const raw = typeof query.source === "string" ? query.source.trim().toLowerCase() : "";
+  const source = /^[a-z0-9][a-z0-9-]{0,31}$/.test(raw) ? raw : null;
+  return { start, source };
+}
+
+/** The query string that carries an intent on to /try/start and on to the
+ *  landing, e.g. "&start=scan&source=3dp2026" ("" for none). Values are from
+ *  the closed shape above, so nothing here needs escaping. */
+export function intentQuery(intent: StartIntent): string {
+  return (intent.start ? `&start=${intent.start}` : "") + (intent.source ? `&source=${intent.source}` : "");
+}
+
+export function startHtml(siteKey: string, nonce = "", intent: StartIntent = NO_INTENT): string {
+  const booth = intent.start === "scan";
+  // The booth (a QR at a stand, a phone on cellular): one big button, and the
+  // challenge runs on that tap. The tap is a person saying "yes, make me one",
+  // and it is the gesture a phone likes to see before the camera asks.
+  // Turnstile still decides: the button only asks it to run.
+  const heading = booth ? "Scan something on the table" : "Setting up your sandbox";
+  const lede = booth
+    ? "One tap opens a sandbox and your camera. It lasts an hour, and you do not need an account."
+    : "It lasts an hour, and you do not need an account.";
   return `<!doctype html><html lang="en"><head><meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
 <meta name="robots" content="noindex" /><title>Cobblr - starting your sandbox</title>
@@ -104,6 +140,8 @@ export function startHtml(siteKey: string, nonce = ""): string {
    background:transparent;color:#3D4451;font:inherit;font-weight:600;text-decoration:none;
    margin-top:1rem;cursor:pointer}
  button.primary{background:#8B7355;color:#fff;box-shadow:4px 4px 0 #3D4451;margin-right:.5rem}
+ button.big{font-size:1.25rem;padding:1rem 1.6rem;width:min(20rem,86vw);margin:.4rem 0 .2rem}
+ .hint{font-size:.9rem;margin:.6rem 0 0}
  [hidden]{display:none!important}
  noscript p{color:#8B3A3A}
  ${brandHeaderCss()}
@@ -127,9 +165,11 @@ export function startHtml(siteKey: string, nonce = ""): string {
   .brand a,.wordmark{color:#F4EFE5}
  }
 </style></head><body>${brandHeaderHtml()}<main><div class="card">
-<h1 id="h">Setting up your sandbox</h1>
-<p id="lede">It lasts an hour, and you do not need an account.</p>
-<div class="w"><div class="cf-turnstile" data-sitekey="${siteKey}" data-callback="cobblrGo" data-error-callback="cobblrFail" data-expired-callback="cobblrExpired"></div></div>
+<h1 id="h">${heading}</h1>
+<p id="lede">${lede}</p>
+${booth ? `<button type="button" id="go" class="primary big">Try it: scan something</button>
+<p class="hint" id="camhint">Your phone will ask to use the camera. Tap Allow.</p>` : ""}
+<div class="w"><div class="cf-turnstile" data-sitekey="${siteKey}" data-callback="cobblrGo" data-error-callback="cobblrFail" data-expired-callback="cobblrExpired"${booth ? ` data-execution="execute" data-appearance="interaction-only"` : ""}></div></div>
 <div id="work" hidden>
   <div class="spin"></div>
   <div class="bar"><i id="fill"></i></div>
@@ -151,6 +191,8 @@ export function startHtml(siteKey: string, nonce = ""): string {
  // These lines are the actual order of work, not decoration, and the bar is
  // deliberately asymptotic: it never reaches the end on a timer, because the
  // only thing that finishes it is the page arriving.
+ var INTENT = ${JSON.stringify(intentQuery(intent))};
+ var BOOTH = ${booth ? "true" : "false"};
  var STEPS = [
    [0,    'Creating your workspace',   12],
    [900,  'Setting up your shelves',   34],
@@ -163,6 +205,7 @@ export function startHtml(siteKey: string, nonce = ""): string {
  function cobblrGo(token){
    show(document.querySelector('.w'), false);
    show($('recover'), false);
+   show($('go'), false);
    var lede = $('lede');
    if (lede) lede.textContent = 'This takes a few seconds. It lasts an hour once it is up.';
    show($('work'), true);
@@ -173,7 +216,7 @@ export function startHtml(siteKey: string, nonce = ""): string {
        if (fill) fill.style.width = s[2] + '%';
      }, s[0]);
    });
-   window.location.replace('/api/v1/try/start?captcha=' + encodeURIComponent(token));
+   window.location.replace('/api/v1/try/start?captcha=' + encodeURIComponent(token) + INTENT);
  }
  // The two ways the widget gives up. The token never exists on either path,
  // so nothing here can reach /try/start: the only exits are a fresh challenge
@@ -182,6 +225,7 @@ export function startHtml(siteKey: string, nonce = ""): string {
    var h = $('h'); if (h) h.textContent = heading;
    var l = $('lede'); if (l) l.textContent = lede;
    show($('work'), false);
+   show($('go'), false);
    show($('recover'), true);
  }
  function cobblrFail(){
@@ -193,15 +237,33 @@ export function startHtml(siteKey: string, nonce = ""): string {
           'The challenge expired before it was used. Try again and it is usually instant.');
  }
  function retry(){
-   var h = $('h'); if (h) h.textContent = 'Setting up your sandbox';
-   var l = $('lede'); if (l) l.textContent = 'It lasts an hour, and you do not need an account.';
+   var h = $('h'); if (h) h.textContent = BOOTH ? 'Scan something on the table' : 'Setting up your sandbox';
+   var l = $('lede'); if (l) l.textContent = BOOTH
+     ? 'One tap opens a sandbox and your camera. It lasts an hour, and you do not need an account.'
+     : 'It lasts an hour, and you do not need an account.';
    show($('recover'), false);
    show(document.querySelector('.w'), true);
    var box = document.querySelector('.cf-turnstile');
    if (window.turnstile && box) { window.turnstile.reset(box); }
-   else { window.location.reload(); }
+   else { window.location.reload(); return; }
+   // In execute mode a reset does not run the challenge again; the booth's
+   // button does, so it comes back rather than leaving an idle widget.
+   if (BOOTH) {
+     var b = $('go');
+     if (b) { b.disabled = false; b.textContent = 'Try it: scan something'; show(b, true); }
+   }
  }
  var r = $('retry'); if (r) r.addEventListener('click', retry);
+ // The booth's one tap: ask the challenge to run now. It may pass silently or
+ // show its checkbox; either way the token only comes from a pass.
+ var go = $('go');
+ if (go) go.addEventListener('click', function(){
+   go.disabled = true;
+   go.textContent = 'Checking you are a person';
+   var box = document.querySelector('.cf-turnstile');
+   if (window.turnstile && box) { window.turnstile.execute(box); }
+   else { go.disabled = false; go.textContent = 'Try it: scan something'; }
+ });
  window.cobblrGo = cobblrGo; window.cobblrFail = cobblrFail; window.cobblrExpired = cobblrExpired;
 </script>
 </body></html>`;

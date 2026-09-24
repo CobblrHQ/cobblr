@@ -11,7 +11,7 @@ import { defineModule } from "@cobblr/platform-contract";
 
 export default defineModule({
   name: "projects",
-  version: "0.3.6",
+  version: "0.3.7",
   displayName: "Projects",
   description:
     "Projects + tasks + dependencies. Tasks can wait on other tasks or on any module's entity, the platform brokers.",
@@ -46,6 +46,8 @@ export default defineModule({
           { name: "priority", type: "text" },
           { name: "start_date", type: "date" },
           { name: "target_date", type: "date" },
+          // A bundle's custom fields, as on every other instance-backed kind.
+          { name: "metadata", type: "object" },
         ],
         // Public face — everything except internal flags. Status + start/target
         // dates are needed for cross-module displays (Kanban over multiple
@@ -57,6 +59,7 @@ export default defineModule({
           "priority",
           "start_date",
           "target_date",
+          "metadata",
         ],
         detailRoute: "/projects/{id}",
       },
