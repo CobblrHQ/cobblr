@@ -78,6 +78,10 @@ export const DUPLICATE_SENTENCE = "You already have one of these. Compare before
 /** The workspace counts this thing already: filing is one more of it. */
 export const MERGE_SENTENCE = "You already have this. Adding counts one more.";
 
+/** The scan matches several things the workspace has, equally well: no
+ *  machine can pick, so a person does. */
+export const AMBIGUOUS_MATCH_SENTENCE = "This could be any of {n} things you have. Open it to pick.";
+
 /** The destination is a table this workspace has not installed. `{table}`
  *  is the destination's label. */
 export const INSTALL_SENTENCE = "{table} is not set up yet. Adding installs it.";
@@ -128,3 +132,8 @@ export const NO_MATCH_ASK_FOR_PHOTO = "We couldn't find this barcode. Take a pho
 /** A capture no pass could identify: said plainly, with the way on (name it),
  *  never "Captured item" (the owner, 2026-09-24). */
 export const COULD_NOT_TELL = "Couldn't tell what this is";
+
+/** A barcode look-up's last word once its retries are spent, on the row and
+ *  on the card: what happened, and the two ways on the card offers beside it.
+ *  Never a promise of another attempt (#3710). */
+export const LOOKUP_GAVE_UP = "Couldn't look this up. Take a photo or name it.";

@@ -24,6 +24,7 @@
 // (#2980).
 
 import { filedQuantityOf } from "./filed-quantity.js";
+import { scanRebuy, type ScanRebuy, type ScanResolverTable, type ScanTriageRow } from "@cobblr/platform-contract/scan-triage";
 
 /** What findTracked gives back, narrowed to what the decision needs. */
 export interface TrackedCandidate {
@@ -56,9 +57,10 @@ export interface AutofileItem {
   quantity?: number | null;
   /** The matchmaker's routing suggestion, used only when nothing is matched. */
   candidate?: InboxCandidate | null;
-  /** Things already tracked that look like this one. */
-  barcodeMatches: TrackedCandidate[];
-  nameMatches: TrackedCandidate[];
+  /** What the row's match means, the contract's one answer (scanRebuy):
+   *  the card's +1 more and this plan read it alike, so a renamed row can
+   *  never be "+1" on its card and "Filed as new" here (#3726). */
+  rebuy: ScanRebuy;
   /** Whether the person confirming may install a bundle (owner or admin).
    *  Filing into a table that does not exist yet means installing it first,
    *  and that changes what the workspace is made of. */
@@ -78,6 +80,55 @@ export type AutofilePlan =
   | { action: "skip"; itemId: string; name: string | null; why: string };
 
 /**
+ * The plan for a page of rows, matched before anything is written.
+ *
+ * Each row's match is re-derived fresh (`rematch`, the one derivation the
+ * card's stamp comes from, which also stores it), never read from a stamp
+ * that may be days old: Monday's milk stamped "no match" must find the milk
+ * Tuesday's scan filed, or this button makes the weekly duplicate it exists
+ * to stop. And never matched another way than the card's, which is how a
+ * renamed book read "+1 more" on its card and "Filed as new" here (#3726).
+ * A matcher that fails is left for a person: "nothing matched" would create
+ * a duplicate.
+ */
+export async function planInbox<T extends ScanTriageRow & { id: string; suggested_name: string | null; quantity?: number | null }>(
+  rows: readonly T[],
+  deps: {
+    /** The row's fresh match stamp (null: nothing like it). Throws when the matcher fails. */
+    rematch: (row: T) => Promise<unknown>;
+    /** Where a new record would go, read from the row as re-stamped. */
+    candidate: (row: T) => InboxCandidate | null;
+    review: (row: T) => string | null;
+    tables: readonly ScanResolverTable[];
+    canInstall: boolean;
+  },
+): Promise<AutofilePlan[]> {
+  const plans: AutofilePlan[] = [];
+  for (const row of rows) {
+    let judged: T;
+    try {
+      const stamp = await deps.rematch(row);
+      judged = { ...row, suggested_metadata: { ...((row.suggested_metadata ?? {}) as Record<string, unknown>), tracked_match: stamp } };
+    } catch {
+      plans.push({ action: "skip", itemId: row.id, name: row.suggested_name, why: "could not check what you already have" });
+      continue;
+    }
+    plans.push(
+      planItem({
+        id: row.id,
+        suggested_name: row.suggested_name,
+        quantity: row.quantity ?? null,
+        candidate: deps.candidate(judged),
+        rebuy: scanRebuy(judged, { tables: deps.tables }),
+        canInstall: deps.canInstall,
+        review: deps.review(row),
+      }),
+    );
+  }
+  return plans;
+}
+
+/**
  * What to do with one item, decided without touching anything.
  *
  * Ordered by how much the evidence is worth: a barcode is the product's own
@@ -95,34 +146,22 @@ export function planItem(item: AutofileItem): AutofilePlan {
     return { action: "skip", itemId: item.id, name, why: item.review };
   }
 
-  // A barcode is the product saying what it is. One match is decisive.
-  if (item.barcodeMatches.length === 1) {
-    return { action: "attach", itemId: item.id, name, to: item.barcodeMatches[0]!, qty, why: "same barcode" };
-  }
-  // Two records with the same barcode is a mess somebody made earlier, and
-  // guessing which one to feed would deepen it.
-  if (item.barcodeMatches.length > 1) {
+  // Something already here: the tier rule (a barcode decides, two of one
+  // tier are a person's) is applied once, where the match is stamped
+  // (services/tracked-stamp.ts), and read here as the card reads it.
+  if (item.rebuy.kind === "adds") {
+    const to = item.rebuy.to;
+    const by = item.rebuy.matchedBy;
     return {
-      action: "skip",
+      action: "attach",
       itemId: item.id,
       name,
-      why: `${item.barcodeMatches.length} things already have this barcode`,
+      to: { kind: to.kind, id: to.id, title: to.title, instance: to.instance, matched_by: by },
+      qty,
+      why: by === "barcode" || by === "identifier" ? "same barcode" : "matches by name",
     };
   }
-
-  if (item.nameMatches.length === 1) {
-    return { action: "attach", itemId: item.id, name, to: item.nameMatches[0]!, qty, why: "matches by name" };
-  }
-  if (item.nameMatches.length > 1) {
-    // "Organic Green Tea" against three teas. A person settles this in a second
-    // and a machine cannot settle it at all.
-    return {
-      action: "skip",
-      itemId: item.id,
-      name,
-      why: `could be any of ${item.nameMatches.length} things you already have`,
-    };
-  }
+  if (item.rebuy.kind === "hold") return { action: "skip", itemId: item.id, name, why: item.rebuy.sentence };
 
   // Nothing matched: this is new. Create it, but only where the matchmaker is
   // confident enough that "File all" would have created it anyway - this button

@@ -135,6 +135,7 @@ export {
   type DetailPanelComponent,
 } from "./panels";
 export { Modal } from "./Modal";
+export { lockPageScroll, useLockPageScroll } from "./scrollLock";
 export { ContentsPanel } from "./ContentsPanel";
 export { ToastProvider, useToast } from "./ToastContext";
 export { ConfirmProvider, useConfirm } from "./ConfirmContext";

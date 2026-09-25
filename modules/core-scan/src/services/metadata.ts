@@ -58,6 +58,9 @@ export const IDENTIFY_OWNED_KEYS = [
   // releases it; the retry worker releases it itself on its no-result and
   // budget-spent endings, which never come back through an identify write.
   "retry_queued",
+  // The retry is for a catalog that could not be ASKED (a timeout, a refused
+  // key), not one that said it was busy: the row's words differ (#3710).
+  "lookup_unreachable",
   // Why the last identify produced no name (the coded reason the card's note
   // and remedy read), and what the receipt-shape check made of the image.
   // Both are this pass's findings about THIS read; a new read replaces them.

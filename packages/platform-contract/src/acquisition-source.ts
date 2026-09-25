@@ -55,6 +55,9 @@ export interface FieldProvenance {
    *  "seller"), so the check can find the source field again on a row
    *  without reading the table. */
   role?: string;
+  /** Names a person said this is NOT ("Not right"), on the `name` stamp. A
+   *  person's answer like any other: no later read may put one back (#3724). */
+  rejected?: string[];
 }
 
 /** The metadata key the stamps live under, on an inbox row and on the entity

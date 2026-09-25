@@ -22,7 +22,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { ChevronDown, PackagePlus, RefreshCw } from "lucide-react";
 import { HeaderMenu, MenuItem } from "./HeaderMenu";
 import { useFaces, useToast } from "@cobblr/platform-web";
-import { repurchaseWords } from "@cobblr/platform-contract/kind-label";
+import { repurchaseWords, type RestockChoice } from "@cobblr/platform-contract/kind-label";
 import { api, ApiError, type TrackedMatch } from "../lib/api";
 import { useActiveOrg } from "../auth/ActiveOrgContext";
 import { useKindLabels } from "../lib/useKindLabels";
@@ -86,7 +86,7 @@ export function repurchaseOptions(words: ReturnType<typeof repurchaseWords>): Ar
 }
 
 export interface RepurchaseChoice {
-  key: "replaced" | "add" | "went_bad";
+  key: RestockChoice;
   label: string;
   title?: string;
   run: () => void;

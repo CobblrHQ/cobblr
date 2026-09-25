@@ -26,6 +26,8 @@ export interface FilingCandidate {
   bundle_external_id?: string | null;
   label?: string;
   fields?: Record<string, unknown>;
+  /** The record this row adds to instead of creating one (a re-purchase). */
+  updates?: { kind: string; id: string; instance: string | null };
 }
 
 export interface FilingRow {
@@ -203,6 +205,10 @@ export async function fileThroughConfirm(
   const blocker = filingBlocker(row, door.tables);
   if (blocker) return { ok: false, item_id: row.id, name: displayName(row), reason: blocker };
   const cand = topCandidate(row, door.tables)!;
+  // A re-purchase adds to the record it matched, the way the card's +1 more
+  // does: filing it through confirm made a second milk beside the first in
+  // the very table the card named (#3707).
+  if (cand.updates) return addToRecord(door, row, cand.updates, overrides.quantity ?? (row.quantity == null ? 1 : filedQuantityOf(row.quantity)));
   let instance = cand.instance ?? undefined;
   const bundleId = cand.bundle_external_id ?? null;
   if (bundleId) {
@@ -241,6 +247,29 @@ export async function fileThroughConfirm(
     const tk = body.item?.target_kind ?? null;
     const entityKind = body.created?.kind ?? (tk ? (tk.includes(":") ? tk : body.item?.target_module ? `${body.item.target_module}:${tk}` : tk) : null);
     return { ok: true, item_id: row.id, name: displayName(row) ?? "", entity_id: entityId, entity_kind: entityKind };
+  } catch (err) {
+    return { ok: false, item_id: row.id, name: displayName(row), reason: (err as Error).message };
+  }
+}
+
+async function addToRecord(door: FilingDoor, row: FilingRow, to: { kind: string; id: string; instance: string | null }, qty: number): Promise<FilingOutcome> {
+  try {
+    const r = await fetch(`${door.baseUrl}/api/v1/orgs/${door.slug}/modules/core-scan/inbox/${row.id}/attach`, {
+      method: "POST",
+      headers: door.authHeaders,
+      body: JSON.stringify({ kind: to.kind, entity_id: to.id, ...(to.instance ? { instance: to.instance } : {}), mode: "add-qty", qty }),
+    });
+    if (!r.ok) {
+      let msg = `attach ${r.status}`;
+      try {
+        const e = (await r.json()) as { error?: { message?: string } };
+        if (e.error?.message) msg = e.error.message;
+      } catch {
+        /* the status is the message */
+      }
+      return { ok: false, item_id: row.id, name: displayName(row), reason: msg };
+    }
+    return { ok: true, item_id: row.id, name: displayName(row) ?? "", entity_id: to.id, entity_kind: to.kind };
   } catch (err) {
     return { ok: false, item_id: row.id, name: displayName(row), reason: (err as Error).message };
   }

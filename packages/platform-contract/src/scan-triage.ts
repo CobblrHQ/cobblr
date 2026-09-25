@@ -33,6 +33,7 @@ import {
   AI_FAILED_SENTENCE,
   BLOCKED_SENTENCE,
   DUPLICATE_SENTENCE,
+  AMBIGUOUS_MATCH_SENTENCE,
   HELD_GUESS_BECAUSE,
   HELD_GUESS_PROMPT,
   HELD_GUESS_SOURCE,
@@ -53,6 +54,7 @@ import {
   fillSentence,
 } from "@cobblr/platform-contract/scan-copy";
 import { createCapabilityForModule } from "@cobblr/platform-contract/create-capability";
+import { nameIsRejected } from "@cobblr/platform-contract/display-identity";
 import { normaliseTargetKind, type DestinationTable } from "@cobblr/platform-contract/destination-label";
 import { rankFits, type FitItem, type FitTable } from "@cobblr/platform-contract/table-fit";
 import { SCAN_TOOLS, type ScanTool, type ScanToolHints } from "@cobblr/platform-contract/scan-tools";
@@ -159,7 +161,9 @@ function isPending(row: ScanTriageRow): boolean {
 }
 
 function isNamed(row: ScanTriageRow): boolean {
-  return !!row.suggested_name?.trim();
+  // A name the person turned down is no name: it cannot file, and the row
+  // waits for theirs (#3724).
+  return !!row.suggested_name?.trim() && !nameIsRejected(row);
 }
 
 /**
@@ -525,6 +529,12 @@ export interface ScanDestination {
    *  choice is where the router would put it too, or for a system route
    *  (there the better table IS the destination and `replaced` says so). */
   offered: { module: string; instance: string | null; kind: string | null; label: string } | null;
+  /** The record filing this row UPDATES instead of creating one (a
+   *  re-purchase of something the workspace counts): the destination is
+   *  then that record's table, whatever the route or an earlier pick said,
+   *  because that is where the write lands (#3707). Null when filing
+   *  creates. */
+  updates: ScanMergeTarget | null;
 }
 
 /** The stored choice a person made on the row. */
@@ -701,6 +711,26 @@ export function scanDestination(row: ScanTriageRow, ctx: ScanDestinationContext 
     tables.find((t) => (t.instance_name ?? null) === (instance ?? module));
   const stored = storedDestinationOf(row.suggested_metadata);
   const cands = candidatesOf(row);
+  // A re-purchase is filed onto the record it matched, so THAT record's
+  // table is where the item goes. The card said Inventory beside "+1 more"
+  // while Replaced wrote to the milk in Groceries (#3707).
+  const updates = scanMergeTarget(row, ctx);
+  if (updates) {
+    const table = tableOf(updates.module, updates.instance);
+    const cand = cands.find((c) => sameTable(c, updates));
+    return {
+      module: updates.module,
+      instance: updates.instance,
+      kind: table?.kind ?? cand?.kind ?? updates.kind,
+      label: table?.display_name ?? cand?.label ?? updates.instance ?? updates.module,
+      installs: false,
+      bundle_external_id: null,
+      chosenBy: stored?.by === "person" ? "person" : "system",
+      replaced: null,
+      offered: null,
+      updates,
+    };
+  }
   if (stored?.by === "person") {
     const table = tableOf(stored.module, stored.instance);
     const cand = cands.find((c) => sameTable(c, stored));
@@ -718,6 +748,7 @@ export function scanDestination(row: ScanTriageRow, ctx: ScanDestinationContext 
         const b = scanBetterTable(scanFitItem(row), stored.kind ?? cand?.kind ?? table?.kind ?? null, tables, stored.module);
         return b ? { module: b.module_name ?? b.instance_name, instance: b.instance_name, kind: b.kind ?? null, label: b.display_name ?? b.instance_name } : null;
       })(),
+      updates: null,
     };
   }
   const top = cands[0];
@@ -732,6 +763,7 @@ export function scanDestination(row: ScanTriageRow, ctx: ScanDestinationContext 
     chosenBy: "system",
     replaced: null,
     offered: null,
+    updates: null,
   };
   if (!isPending(row) || tables.length === 0) return system;
   const entry = scanBetterTable(scanFitItem(row), system.kind, tables, system.module);
@@ -746,6 +778,7 @@ export function scanDestination(row: ScanTriageRow, ctx: ScanDestinationContext 
     chosenBy: "system",
     replaced: { module: system.module, instance: system.instance, label: system.label },
     offered: null,
+    updates: null,
   };
 }
 
@@ -795,10 +828,14 @@ export interface ScanTrackedMatch {
   id: string | null;
   instance: string | null;
   counted: boolean;
+  /** How many records matched as well as this one (the same tier: two on
+   *  one barcode, or two by name with no barcode). Above 1 no machine can
+   *  pick. A stamp from before the count reads 1. */
+  of: number;
 }
 export function scanTrackedMatch(row: ScanTriageRow): ScanTrackedMatch | null {
   const m = ((row.suggested_metadata ?? {}) as {
-    tracked_match?: { title?: unknown; matched_by?: unknown; kind?: unknown; id?: unknown; instance?: unknown; qty?: unknown } | null;
+    tracked_match?: { title?: unknown; matched_by?: unknown; kind?: unknown; id?: unknown; instance?: unknown; qty?: unknown; of?: unknown } | null;
   }).tracked_match;
   if (!m || typeof m !== "object" || typeof m.title !== "string" || !m.title.trim()) return null;
   const str = (v: unknown): string | null => (typeof v === "string" && v.trim() ? v : null);
@@ -809,16 +846,110 @@ export function scanTrackedMatch(row: ScanTriageRow): ScanTrackedMatch | null {
     id: str(m.id),
     instance: str(m.instance),
     counted: typeof m.qty === "number" && Number.isFinite(m.qty),
+    of: typeof m.of === "number" && Number.isFinite(m.of) && m.of > 1 ? Math.floor(m.of) : 1,
   };
 }
 
 /** What a merge files into: the tracked record, by the id the attach
- *  endpoint wants. */
+ *  endpoint wants, and the table it lives in. */
 export interface ScanMergeTarget {
+  module: string;
   kind: string;
   id: string;
   instance: string | null;
   title: string;
+}
+
+/** "Not the same, keep separate": the person's answer that this scan is not
+ *  the record the matchmaker found. Stored with THAT record's id, so a
+ *  re-run that finds a different record asks again. */
+export const KEEP_SEPARATE_KEY = "keep_separate";
+export function scanKeptSeparateFrom(meta: unknown): string | null {
+  const k = ((meta ?? {}) as Record<string, unknown>)[KEEP_SEPARATE_KEY];
+  if (!k || typeof k !== "object") return null;
+  const id = (k as { id?: unknown }).id;
+  return typeof id === "string" && id ? id : null;
+}
+/** The keep-separate answer to store for this row: against the record it
+ *  is matched to now, or null when nothing is matched. */
+export function scanKeepSeparateStamp(meta: unknown, at: string): { id: string; at: string } | null {
+  const id = scanTrackedMatch({ suggested_metadata: meta })?.id;
+  return id ? { id, at } : null;
+}
+
+/** The table the tracked record lives in. An instance's record carries the
+ *  instance's own kind (`groceries:item`), so its module is the instance's
+ *  module from the workspace's tables, never the kind's namespace; a base
+ *  table's record is namespaced by its module (`inventory:part`). */
+function trackedTable(t: ScanRecordRef, tables: readonly ScanResolverTable[]): { module: string; instance: string | null } | null {
+  if (!t.kind) return null;
+  if (t.instance) {
+    const inst = tables.find((x) => x.instance_name === t.instance && x.module_name);
+    const module = inst?.module_name ?? t.kind.split(":")[0] ?? "";
+    return module ? { module, instance: t.instance === module ? null : t.instance } : null;
+  }
+  const module = t.kind.split(":")[0] ?? "";
+  return module ? { module, instance: null } : null;
+}
+
+/** The person said this scan is NOT the tracked record: "keep separate" on
+ *  that record, or a table of their own choosing other than the record's
+ *  (picking where a NEW item goes is the same answer). An instance is
+ *  named once per workspace, so a record in one is compared by instance. */
+type ScanRecordRef = Pick<ScanTrackedMatch, "kind" | "id" | "instance">;
+function matchDeclined(row: ScanTriageRow, t: ScanRecordRef, tables: readonly ScanResolverTable[]): boolean {
+  if (t.id && scanKeptSeparateFrom(row.suggested_metadata) === t.id) return true;
+  const stored = storedDestinationOf(row.suggested_metadata);
+  if (stored?.by !== "person") return false;
+  if (t.instance) return (stored.instance ?? stored.module) !== t.instance;
+  const home = trackedTable(t, tables);
+  return !!home && !sameTable(stored, home);
+}
+
+/** Whether the person has said this scan is not that record: for a door
+ *  that finds matches live (File all's plan) rather than reading the stamp,
+ *  so a declined record is never fed by a bulk action either. */
+export function scanDeclinesRecord(row: ScanTriageRow, rec: ScanRecordRef, ctx: ScanDestinationContext = {}): boolean {
+  return matchDeclined(row, rec, ctx.tables ?? []);
+}
+
+/**
+ * The record filing this row updates instead of creating, or null. ONE
+ * answer for the destination (the record's table), the action (+1 more)
+ * and every door that files (#3707): a pending re-purchase of a record
+ * the workspace counts, that nobody has said is a different thing
+ * ("Looks fine", keep separate, or a table picked for a new one).
+ */
+export function scanMergeTarget(row: ScanTriageRow, ctx: ScanDestinationContext = {}): ScanMergeTarget | null {
+  const r = scanRebuy(row, ctx);
+  return r.kind === "adds" ? r.to : null;
+}
+
+/** What the row's match means for filing, the one answer every door reads:
+ *  the card's button, File N, the dashboard and File everything's plan
+ *  (#3726: the card offered +1 from the match stamped under the old name
+ *  while File everything matched the new name live and planned a new
+ *  record). `adds`: filing adds to that record. `hold`: a person decides
+ *  first, and the sentence says why. `none`: filing creates. */
+export type ScanRebuy =
+  | { kind: "adds"; to: ScanMergeTarget; matchedBy: string | null }
+  | { kind: "hold"; sentence: string }
+  | { kind: "none" };
+
+export function scanRebuy(row: ScanTriageRow, ctx: ScanDestinationContext = {}): ScanRebuy {
+  if (!isPending(row) || metaOf(row).reviewed) return { kind: "none" };
+  const t = scanTrackedMatch(row);
+  if (!t) return { kind: "none" };
+  const tables = ctx.tables ?? [];
+  // "Not A" is no evidence for B: turning down one of several equal matches
+  // still leaves a choice only a person can make.
+  if (matchDeclined(row, t, tables)) return t.of > 1 ? { kind: "hold", sentence: fillSentence(AMBIGUOUS_MATCH_SENTENCE, { n: t.of }) } : { kind: "none" };
+  if (t.of > 1) return { kind: "hold", sentence: fillSentence(AMBIGUOUS_MATCH_SENTENCE, { n: t.of }) };
+  // A record with no count is one unique thing, and "+1" would double it.
+  if (!t.counted || !t.kind || !t.id) return { kind: "hold", sentence: DUPLICATE_SENTENCE };
+  const home = trackedTable(t, tables);
+  if (!home) return { kind: "hold", sentence: DUPLICATE_SENTENCE };
+  return { kind: "adds", to: { module: home.module, kind: t.kind, id: t.id, instance: t.instance, title: t.title }, matchedBy: t.matched_by };
 }
 
 export interface ScanRowState {
@@ -906,20 +1037,22 @@ export function scanRowState(row: ScanTriageRow, ctx: ScanRowStateContext = {}):
     // (a set, a book, a machine) is one unique thing, and "+1" would double
     // it, so that match is a look first. The bulk sweep used to merge every
     // match while the card said Review for the same row (#3076).
-    const tracked = scanTrackedMatch(row);
-    if (tracked) {
-      if (tracked.counted && tracked.kind && tracked.id) {
-        return {
-          eligibility: "ready",
-          sentence: MERGE_SENTENCE,
-          action: { kind: "merge", label: ACTION_MERGE, title: `Adds one more to ${tracked.title}, the one you already have` },
-          destination,
-          merge: { kind: tracked.kind, id: tracked.id, instance: tracked.instance, title: tracked.title },
-          ask: null,
-        };
-      }
-      return review(DUPLICATE_SENTENCE);
+    // The record it adds to is the destination's (scanMergeTarget), so the
+    // pill, the button and the write name one table (#3707). A match the
+    // person turned down is a new item like any other.
+    const rebuy = scanRebuy(row, ctx);
+    const updates = destination?.updates;
+    if (rebuy.kind === "adds" && updates) {
+      return {
+        eligibility: "ready",
+        sentence: MERGE_SENTENCE,
+        action: { kind: "merge", label: ACTION_MERGE, title: `Adds one more to ${updates.title} in ${destLabel}, the one you already have` },
+        destination,
+        merge: updates,
+        ask: null,
+      };
     }
+    if (rebuy.kind === "hold") return review(rebuy.sentence);
     const top = scanTopCandidate(row);
     if (destination?.chosenBy !== "person" && (!top || top.basis === "keywords")) return review(KEYWORD_ROUTE_SENTENCE);
   }
@@ -1061,6 +1194,20 @@ export function wantsOwnPhoto(row: ScanTriageRow): boolean {
   return isPending(row) && metaOf(row).photo_wanted === true;
 }
 
+/**
+ * Is this row held for a person: the card's own Review, whatever the reason
+ * (no name, a doubtful read, a keyword-only or missing destination, a
+ * duplicate that is not a re-purchase, a table this deployment lacks). The
+ * ONE answer the To review filter, its count and the served `needs_review`
+ * read, so a row the card flags is always in the filter and counted. They
+ * used needsScanReview, which knows only the row's doubts, so a named row
+ * whose destination was a keyword guess said Review on its card and was in
+ * neither the filter nor the count (#3722).
+ */
+export function scanHeldForReview(row: ScanTriageRow, ctx: ScanRowStateContext = {}): boolean {
+  return isPending(row) && scanRowState(row, ctx).eligibility === "needs-review";
+}
+
 /** The facets a caller can ask for. `all` is every pending item. */
 export type ScanTriageFacet = "all" | "needs_review" | "waiting" | "unfiled" | "ready" | "photo_wanted";
 
@@ -1078,14 +1225,14 @@ export function matchesScanFacet(
 ): boolean {
   switch (facet) {
     case "needs_review":
-      return needsScanReview(row);
+      return scanHeldForReview(row, viewer);
     case "waiting":
       return isScanStale(row, now);
     case "unfiled":
       return isPending(row) && !scanHasHome(row);
     case "ready":
       // Somewhere to go AND nothing left to ask — the "just put them away" set.
-      return isPending(row) && scanHasHome(row) && !needsScanReview(row) && !(viewer && scanDestinationUnreachable(row, viewer));
+      return isPending(row) && scanHasHome(row) && !scanHeldForReview(row, viewer) && !(viewer && scanDestinationUnreachable(row, viewer));
     case "photo_wanted":
       return wantsOwnPhoto(row);
     case "all":

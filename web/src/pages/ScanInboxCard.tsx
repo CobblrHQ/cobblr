@@ -15,7 +15,7 @@ import { } from "../components/FileEverythingSheet";
 import { } from "../components/UploadKindSheet";
 import { } from "../components/SessionReadVerdict";
 
-import { Fragment, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { Fragment, useEffect, useId, useMemo, useRef, useState, type ReactNode } from "react";
 import { Link } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Camera, CheckCircle, ChevronDown, Download, ExternalLink, Flag, Image as ImageIcon, ImagePlus, Library, Loader2, MapPin, MoreHorizontal, Pencil, RefreshCw, RotateCcw, ScanLine, Scissors, Sparkles, X, Database } from "lucide-react";
@@ -81,7 +81,7 @@ import {
   type TrackedMatch,
 } from "../lib/api";
 import { } from "../lib/scanPayload";
-import { needsScanReview, scanLooksFineResolves, scanDoubt, scanDoubtWords, scanProvenanceNote, scanReceiptReadFailed, scanSplitUncut, scanReviewQuestions, scanReviewReason, scanRowState, scanTrackedMatch } from "@cobblr/platform-contract/scan-triage";
+import { needsScanReview, scanLooksFineResolves, scanDoubt, scanDoubtWords, scanProvenanceNote, scanReceiptReadFailed, scanSplitUncut, scanReviewQuestions, scanReviewReason, scanRowState, scanTrackedMatch, scanDeclinesRecord } from "@cobblr/platform-contract/scan-triage";
 import { SCAN_UNDO_ACTIONS, scanCombinedCount } from "@cobblr/platform-contract/scan-recovery";
 import { ScanReceiptUnread } from "../components/ScanReceiptUnread";
 import { scanAssertedFields } from "@cobblr/platform-contract/scan-evidence";
@@ -111,7 +111,7 @@ import { useFieldPresentation } from "../lib/useFieldPresentation";
 import { useAuth } from "../auth/AuthContext";
 import { type ScanTarget } from "./scanInboxShared";
 import { ScanNameItInline as NameItInline } from "../components/ScanNameItInline";
-import { RECEIPT_READ_AGAIN, RECEIPT_UNREAD_SENTENCE, STORE_CODE_TITLE } from "@cobblr/platform-contract/scan-copy";
+import { LOOKUP_GAVE_UP, RECEIPT_READ_AGAIN, RECEIPT_UNREAD_SENTENCE, STORE_CODE_TITLE } from "@cobblr/platform-contract/scan-copy";
 import { scanInboxKeys } from "../lib/scan-inbox-keys";
 
 /** Base-kind fallback for when the scan menu can't load — the menu
@@ -653,6 +653,11 @@ export function InboxCard({
     fieldLabel: (name) => (topCand ? menuFieldLabel(menu, topCand, name) : name),
   });
   const resolvedDestKey = rowState.destination ? entryKey(rowState.destination.module, rowState.destination.instance) : null;
+  // A re-purchase adds to the record it matched, so the pill names that
+  // record in its table ("Whole milk in Groceries"), not only a table a NEW
+  // item would go to: the pill once said Inventory while Replaced wrote to
+  // the milk in Groceries (#3707).
+  const updating = rowState.destination?.updates ?? null;
   // A receipt whose lines could not be read is a receipt, not a nameless
   // item: the contract says which, and every surface draws the same block
   // (ScanReceiptUnread) with Read again first (#3581). It has no table (the
@@ -924,7 +929,9 @@ export function InboxCard({
   // the thing is how you end up with a second Honda Civic. So the green Add gives
   // way to a chip that opens the card, where the merge banner lives.
   const trackedMatch = scanTrackedMatch(item);
-  const alreadyTracked = !!trackedMatch;
+  // A match the person turned down (Not the same, or a table picked for a
+  // new one) is not "you already have" any more: the card files it as new.
+  const alreadyTracked = !!trackedMatch && !scanDeclinesRecord(item, trackedMatch, viewer);
   // One name, whoever wrote it (#2982): the person's when they gave one,
   // the model's otherwise; the model's newest read is offered beside it.
   const shownName = displayName(item);
@@ -942,7 +949,11 @@ export function InboxCard({
    *  (lib/identifySentence). */
   const identifyFailure =
     (item.suggested_metadata as { identify_failure?: IdentifyFailure } | null)?.identify_failure ?? null;
-  const namelessWhy = namelessReason(cardAiStatus, storeCode, identifyFailure, heldWebGuess, receiptUnread);
+  // A code with no photo that no catalog resolved is an unresolved CODE: no
+  // AI read anything, so "The AI could not read this one" with a Retry was
+  // the wrong story on a booth visitor's unknown barcode (#3710).
+  const codeWithoutPhoto = item.source_kind === "barcode" && !item.image_file_id;
+  const namelessWhy = namelessReason(cardAiStatus, storeCode, identifyFailure, heldWebGuess || codeWithoutPhoto, receiptUnread);
   // The remedy under a photo the identify step could not name, or null when
   // nothing tried (no AI here) or a retry would only look again (#3233): the
   // phone row's line and its tool button read this, so neither says the AI
@@ -2587,8 +2598,8 @@ export function InboxCard({
                               ? "ask"
                               : "review",
                     label: rowState.action.label,
-                    destination: dest.label,
-                    tentative: tentativeRoute,
+                    destination: updating ? `${updating.title} in ${dest.label}` : dest.label,
+                    tentative: tentativeRoute && !updating,
                     reason: rowState.sentence ?? rowState.action.title,
                     busy: commitBusy || askToFile.isPending,
                     onAdd: rowState.action.kind === "blocked" ? () => askToFile.mutate() : runCommit,
@@ -2792,7 +2803,13 @@ export function InboxCard({
               // No catalog knows the code and the web guess was held back
               // (the amber line under this says which); the name is yours.
               // When there is a guess, the name field offers it as a tap.
-              <span className="text-muted">{nameGuess ? `No catalog knows this ${idNoun}. Take the guess, or name it:` : `Nothing found for this ${idNoun} - name it:`}</span>
+              <span className="text-muted">
+                {nameGuess
+                  ? `No catalog knows this ${idNoun}. Take the guess, or name it:`
+                  : item.ai_notes === LOOKUP_GAVE_UP
+                    ? `Couldn't look this ${idNoun} up - name it:`
+                    : `Nothing found for this ${idNoun} - name it:`}
+              </span>
             ) : cantIdentify && namelessWhy === "no-item" ? (
               // The model looked and saw no one thing to name: a group shot,
               // a document, a receipt it did not call one. The two ways out
@@ -3298,12 +3315,19 @@ export function InboxCard({
                 // (measured on the live inbox, 2026-09-01). The wrapper wraps
                 // there, the suggestion takes the next line, the verb drops
                 // "& add", and the name keeps a floor. The walk asserts it.
-                <span className="relative inline-flex max-w-full order-first max-sm:w-full max-sm:flex-wrap">
+                // The pill WRAPS rather than squeezes (#3705): the table's name
+                // keeps a floor, and when the name at its floor and the verb do
+                // not fit one line the verb takes a line of its own inside the
+                // pill. Squeezed, the name went to 16px under the verb and the
+                // restock choice ran past the card at 320px. The radius is a
+                // length, not "full", so a two-line pill is a rounded block
+                // rather than a lozenge. e2e/scan-card-never-clips.mjs walks it.
+                <span className="relative inline-flex max-w-full order-first flex-wrap items-center gap-1 max-sm:w-full">
                 <span
                   className={
                     tentativeRoute
-                      ? "inline-flex max-w-full max-sm:w-full items-stretch rounded-full overflow-hidden border border-dashed border-cobble-500 text-content dark:text-mortar-100 text-xs font-medium"
-                      : "inline-flex max-w-full max-sm:w-full items-stretch rounded-full overflow-hidden border border-cobble-600 bg-cobble-600 text-white text-xs font-medium"
+                      ? "inline-flex max-w-full max-sm:w-full flex-wrap items-stretch rounded-[0.875rem] overflow-hidden border border-dashed border-cobble-500 text-content dark:text-mortar-100 text-xs font-medium"
+                      : "inline-flex max-w-full max-sm:w-full flex-wrap items-stretch rounded-[0.875rem] overflow-hidden border border-cobble-600 bg-cobble-600 text-white text-xs font-medium"
                   }
                   onClick={(e) => e.stopPropagation()}
                 >
@@ -3314,7 +3338,7 @@ export function InboxCard({
                       region absorbs the slack, so the table's NAME gets the room
                       ("Home Invento…" at 61px of 91, second census 2026-08-30)
                       and Add sits flush right. */}
-                  <span className="relative inline-flex min-w-0 items-center max-sm:flex-1">
+                  <span className="relative inline-flex min-w-[5rem] max-w-full grow basis-[5rem] items-center">
                     <button
                       type="button"
                       ref={destBtnRef}
@@ -3325,18 +3349,18 @@ export function InboxCard({
                       onKeyDown={(e) => {
                         if (e.key === "Escape" && destOpen) closeDest();
                       }}
-                      title="Which table this gets filed into"
+                      title={updating ? `Adds to ${updating.title}, which you already have in ${dest.label}. Pick another table to file it as a new item there instead.` : "Which table this gets filed into"}
                       aria-haspopup="listbox"
                       aria-expanded={destOpen}
                       className={
-                        "inline-flex min-w-0 items-center gap-1 pl-2.5 max-sm:pl-2 pr-2 py-1 transition " +
+                        "inline-flex w-full min-w-0 items-center gap-1 pl-2.5 max-sm:pl-2 pr-2 py-1 transition " +
                         (tentativeRoute ? "hover:bg-cobble-600/10" : "hover:bg-cobble-700")
                       }
                     >
                       <Sparkles size={11} className="shrink-0 max-sm:hidden" />
-                      <span className="truncate max-sm:min-w-[4rem]">
-                        {dest.label}
-                        {tentativeRoute ? "?" : ""}
+                      <span className="min-w-0 truncate" data-testid="dest-pill-label">
+                        {updating ? `${updating.title} in ${dest.label}` : dest.label}
+                        {tentativeRoute && !updating ? "?" : ""}
                       </span>
                       {destOptions.length > 1 && <ChevronDown size={11} className="shrink-0 opacity-80 max-sm:hidden" />}
                     </button>
@@ -3347,8 +3371,8 @@ export function InboxCard({
                     onAdd={runCommit}
                     onReview={() => (rowState.action.kind === "blocked" && rowState.ask?.length ? askToFile.mutate() : openForm(dest))}
                   />
-                  {restockMatch && <CardRestockOther itemId={item.id} match={restockMatch} quantity={restockQty} />}
                 </span>
+                {restockMatch && <CardRestockOther itemId={item.id} match={restockMatch} quantity={restockQty} />}
                 {/* The route was answered against the workspace as it was. A table
                     that has appeared since is offered, never applied: a route you
                     can see and ignore costs a glance, one that moves under you
@@ -3388,6 +3412,11 @@ export function InboxCard({
                           }}
                           className="z-[61] min-w-[13rem] max-w-[18rem] rounded-md border border-line dark:border-slate-700 bg-surface dark:bg-slate-900 shadow-lg py-1 flex flex-col"
                         >
+                          {updating && (
+                            <p className="px-2.5 pt-1 pb-1.5 text-[11px] leading-snug text-muted border-b border-line dark:border-slate-700 mb-1">
+                              Adds to {updating.title} in {dest.label}. Pick another table to file this as a new item there.
+                            </p>
+                          )}
                           {destOptions.map((c) => {
                             const k = entryKey(c.module, c.instance);
                             const on = k === entryKey(dest.module, dest.instance);
@@ -5267,7 +5296,13 @@ function ConfirmForm({
       <button
         type="button"
         data-testid="suggested-placement-put"
-        onClick={putWhereSuggested}
+        onClick={(e) => {
+          // Exactly one thing: set the spot. Nothing around it (a card, a
+          // cell, a label) gets the tap as well.
+          e.preventDefault();
+          e.stopPropagation();
+          putWhereSuggested();
+        }}
         disabled={persistLocation.isPending}
         className="group -my-3 inline-flex min-h-11 items-center px-0.5 align-middle disabled:opacity-50"
       >
@@ -5503,19 +5538,29 @@ function ConfirmForm({
           valueLength: f.key === "name" ? Math.max(41, String(f.value ?? "").length) : String(f.value ?? "").length,
         });
         return { need, node: (
-          <label className="flex min-w-0 flex-col gap-1">
+          // A cell, not a <label>: the location cell holds the picker's
+          // trigger, the picker and the suggestion's Put here, and a label
+          // hands a tap inside it to its first control, so Put here also
+          // threw the picker open (#3712). Each title labels its own control
+          // by id instead.
+          <div className="flex min-w-0 flex-col gap-1">
             {/* A table field's input carries its own label; the builtins get one here. */}
-            {!def && <span className="text-[10px] font-medium uppercase tracking-wide text-faint">{f.label}</span>}
+            {!def && (
+              <label id={`scan-${item.id}-${f.key}-label`} htmlFor={f.key === "location" ? undefined : `scan-${item.id}-${f.key}`} className="text-[10px] font-medium uppercase tracking-wide text-faint">
+                {f.label}
+              </label>
+            )}
             {f.key === "location" ? (
               <>
                 <button
                   type="button"
                   onClick={() => setLocOpen((o) => !o)}
                   aria-expanded={locOpen}
+                  aria-labelledby={`scan-${item.id}-${f.key}-label scan-${item.id}-${f.key}-value`}
                   className="inline-flex min-h-10 items-center gap-1.5 rounded-md border border-line dark:border-slate-600 bg-surface dark:bg-slate-800 px-2.5 text-left text-sm text-content dark:text-mortar-100"
                 >
                   <MapPin size={13} className="shrink-0 text-accent" />
-                  <span className="truncate">{locLabel || "Choose a spot…"}</span>
+                  <span id={`scan-${item.id}-${f.key}-value`} className="truncate">{locLabel || "Choose a spot…"}</span>
                 </button>
                 {/* The choices open HERE, under the control that asked, not at
                     the end of the form after every other field (#2982:
@@ -5547,6 +5592,7 @@ function ConfirmForm({
               />
             ) : (
               <input
+                id={`scan-${item.id}-${f.key}`}
                 type={f.type === "number" ? "number" : "text"}
                 inputMode={f.type === "number" ? "numeric" : undefined}
                 min={f.type === "number" ? 1 : undefined}
@@ -5565,7 +5611,7 @@ function ConfirmForm({
               </datalist>
             ) : null}
             {heldUnder(f.key)}
-          </label>
+          </div>
         ) };
       })}
     />
@@ -5759,23 +5805,29 @@ function ScanFieldInput({
    *  definition and selects it (#2982). Absent: a plain select. */
   choiceDoor?: { slug: string; entityKind: string | null; canAdd: boolean };
 }) {
+  // A title labels ONE control by id; it never wraps the field. A label
+  // around two controls (the swatch and its hex box, a dropdown that grows
+  // a "new choice" box) hands a tap anywhere inside it to its first one.
+  const inputId = useId();
   const s = value == null ? "" : String(value);
   if (wantsSwatch(def)) {
     const hex = HEX_RE.test(s.trim()) ? s.trim() : null;
     return (
-      <label className="block">
-        <div className="text-[10px] font-mono uppercase tracking-widest text-muted dark:text-slate-400 mb-1">
+      <div className="block">
+        <label htmlFor={inputId} className="block text-[10px] font-mono uppercase tracking-widest text-muted dark:text-slate-400 mb-1">
           {def.display_label}
-        </div>
+        </label>
         <div className="flex items-center gap-2">
           <input
             type="color"
+            aria-label={`${def.display_label}, picked`}
             value={hex ?? "#888888"}
             onChange={(e) => onChange(e.target.value)}
             title={hex ?? "pick a colour"}
             className="h-8 w-10 shrink-0 rounded border border-line dark:border-slate-600 bg-transparent p-0.5 cursor-pointer"
           />
           <input
+            id={inputId}
             type="text"
             data-field={def.name}
             value={s}
@@ -5787,7 +5839,7 @@ function ScanFieldInput({
         {def.help ? (
           <p className="text-[11px] text-faint dark:text-slate-500 leading-snug mt-1">{def.help}</p>
         ) : null}
-      </label>
+      </div>
     );
   }
   const help = def.help ? (
@@ -5811,12 +5863,13 @@ function ScanFieldInput({
     );
   }
   return (
-    <label className="block">
-      <div className="text-[10px] font-mono uppercase tracking-widest text-muted dark:text-slate-400 mb-1">
+    <div className="block">
+      <label htmlFor={inputId} className="block text-[10px] font-mono uppercase tracking-widest text-muted dark:text-slate-400 mb-1">
         {def.display_label}
-      </div>
+      </label>
       {def.choices && def.choices.length > 0 && choiceDoor ? (
         <ScanChoiceSelect
+          id={inputId}
           slug={choiceDoor.slug}
           entityKind={choiceDoor.entityKind}
           fieldName={def.name}
@@ -5830,6 +5883,7 @@ function ScanFieldInput({
         />
       ) : def.choices && def.choices.length > 0 ? (
         <select
+          id={inputId}
           data-field={def.name}
           value={s}
           onChange={(e) => onChange(e.target.value || null)}
@@ -5844,6 +5898,7 @@ function ScanFieldInput({
         </select>
       ) : (
         <input
+          id={inputId}
           data-field={def.name}
           type={def.type === "number" ? "number" : def.type === "date" ? "date" : def.type === "url" ? "url" : "text"}
           step={def.type === "number" ? "any" : undefined}
@@ -5853,6 +5908,6 @@ function ScanFieldInput({
         />
       )}
       {help}
-    </label>
+    </div>
   );
 }

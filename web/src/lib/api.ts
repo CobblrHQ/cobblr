@@ -3363,6 +3363,11 @@ export const api = {
       target_location_id?: string | null;
       box_state?: "item-in-box" | "empty-box" | null;
       reviewed?: boolean;
+      /** "Not right": the shown name is turned down for good (#3724). */
+      reject_name?: true;
+      /** "Not the same, keep separate": this scan is not the record the
+       *  matchmaker found; it files as a new item. false withdraws it. */
+      keep_separate?: boolean;
       /** Answer to "this photo has N different things — keep them together, or
        *  split?" true = one record; the offer stops asking. */
       keep_grouped?: boolean;
@@ -3995,6 +4000,8 @@ export const api = {
         context?: "normal" | "faster" | "bulk" | "one_off";
         resolution?: "over_buy" | "consumed" | "discarded";
       };
+      /** How many were bought (add-qty / replace); the row's own when absent. */
+      qty?: number;
     },
   ) =>
     request<{
@@ -5916,7 +5923,15 @@ export interface ScanSessionThemeAnswer {
  *  ids each group's button files. */
 export interface ScannerQueueSummary {
   scanned_total: number;
-  groups: Array<{ key: string; label: string; bundle_external_id?: string; target?: { module: string; kind: string; instance?: string }; item_ids: string[] }>;
+  groups: Array<{
+    key: string;
+    label: string;
+    bundle_external_id?: string;
+    target?: { module: string; kind: string; instance?: string };
+    item_ids: string[];
+    /** The scans that add to a record already in this table, by item id. */
+    updates?: Record<string, { kind: string; id: string; instance: string | null }>;
+  }>;
   residual: number;
   offered: number;
 }

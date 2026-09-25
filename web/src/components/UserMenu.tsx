@@ -18,7 +18,6 @@ import {
   MessageSquare,
   Rocket,
   Sparkles,
-  MessagesSquare,
   Moon,
   Server,
   ShieldCheck,
@@ -39,7 +38,7 @@ import { UpdateBadge } from "./UpdateBadge";
 import { GrowModal } from "./GrowModal";
 import { PairPhoneButton } from "./PairPhoneButton";
 import { api, isFocused, setFocused } from "../lib/api";
-import { communityLinksFor } from "../lib/community-links";
+import { COMMUNITY_HEADING, CommunityLinks } from "./CommunityLinks";
 import { useMyEdgeBridge } from "../lib/useMyEdgeBridge";
 import { PopoverLayer } from "@cobblr/platform-web";
 
@@ -271,23 +270,20 @@ export function UserMenu({ themed, inline = false }: { themed: boolean; inline?:
               )}
             </>
           )}
-          {/* Every community place this deployment offers, not just Discord —
-              the server owns the list (api/src/platform/community.ts). An older
-              server sends only discord_invite_url, which communityLinksFor() folds
-              back into a chat entry. */}
-          {communityLinksFor(user).map((l) => (
-            <a
-              key={l.id}
-              href={l.url}
-              target="_blank"
-              rel="noopener noreferrer"
-              onClick={() => setOpen(false)}
-              className={itemCls}
-              role="menuitem"
-            >
-              <MessagesSquare size={14} className="text-faint dark:text-slate-400" /> {l.label}
-            </a>
-          ))}
+          {/* Every community place this deployment offers, under one heading,
+              from the one component every menu uses (CommunityLinks). */}
+          <CommunityLinks
+            user={user}
+            role="menuitem"
+            itemClassName={itemCls}
+            onNavigate={() => setOpen(false)}
+            heading={
+              <>
+                <div className="my-1 border-t border-line dark:border-slate-700" />
+                <div className="px-3 py-1 text-[10px] font-mono uppercase tracking-widest text-faint dark:text-slate-400">{COMMUNITY_HEADING}</div>
+              </>
+            }
+          />
 
           {/* Platform-operator section — only for super-admins. */}
           {isAdmin && (
@@ -493,23 +489,20 @@ export function UserMenu({ themed, inline = false }: { themed: boolean; inline?:
               )}
             </>
           )}
-          {/* Every community place this deployment offers, not just Discord —
-              the server owns the list (api/src/platform/community.ts). An older
-              server sends only discord_invite_url, which communityLinksFor() folds
-              back into a chat entry. */}
-          {communityLinksFor(user).map((l) => (
-            <a
-              key={l.id}
-              href={l.url}
-              target="_blank"
-              rel="noopener noreferrer"
-              onClick={() => setOpen(false)}
-              className={itemCls}
-              role="menuitem"
-            >
-              <MessagesSquare size={14} className="text-faint dark:text-slate-400" /> {l.label}
-            </a>
-          ))}
+          {/* Every community place this deployment offers, under one heading,
+              from the one component every menu uses (CommunityLinks). */}
+          <CommunityLinks
+            user={user}
+            role="menuitem"
+            itemClassName={itemCls}
+            onNavigate={() => setOpen(false)}
+            heading={
+              <>
+                <div className="my-1 border-t border-line dark:border-slate-700" />
+                <div className="px-3 py-1 text-[10px] font-mono uppercase tracking-widest text-faint dark:text-slate-400">{COMMUNITY_HEADING}</div>
+              </>
+            }
+          />
 
           {/* Platform-operator section — only for super-admins. */}
           {isAdmin && (

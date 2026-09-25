@@ -46,6 +46,11 @@ export default defineModule({
       // heal-unconfirmed-identifiers.ts for when this call goes.
       const { registerUnconfirmedIdentifiersHeal } = await import("./heal-unconfirmed-identifiers.js");
       registerUnconfirmedIdentifiersHeal();
+      // Boot-time heal: a stored catalog picture is measured, and set aside
+      // when it shows another colour than its item states - see the DONE
+      // WHEN in heal-picture-colour.ts for when this call goes.
+      const { registerPictureColourHeal } = await import("./heal-picture-colour.js");
+      registerPictureColourHeal();
     },
   },
 

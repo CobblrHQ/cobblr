@@ -32,6 +32,7 @@ export function ScanChoiceSelect({
   canAdd,
   className,
   dataField,
+  id,
   onAdded,
 }: {
   slug: string;
@@ -46,6 +47,8 @@ export function ScanChoiceSelect({
   canAdd: boolean;
   className?: string;
   dataField?: string;
+  /** The select's id, so a title outside it can label it. */
+  id?: string;
   /** The definition changed: refresh whatever lists the choices. */
   onAdded?: () => void;
 }) {
@@ -116,6 +119,7 @@ export function ScanChoiceSelect({
   }
   return (
     <select
+      id={id}
       data-field={dataField}
       value={value}
       onChange={(e) => {

@@ -73,6 +73,21 @@ export interface VocabularyCapability extends Base {
 export const CAPABILITIES: Capability[] = [
   {
     kind: "owns",
+    id: "overlay:holds-the-page-still",
+    what: "stopping the page scrolling behind an overlay: lockPageScroll / useLockPageScroll in packages/platform-web/src/scrollLock.ts",
+    why:
+      "html, body and #root are full height, so a menu that locked overflow on both <html> and <body> made the page one screen " +
+      "long and threw it to the top on every open, drawing the menu offscreen (#3718); five overlays each locked it by hand",
+    owner: "packages/platform-web/src/scrollLock.ts",
+    scope: ["web/src/**/*.tsx", "web/src/**/*.ts", "packages/platform-web/src/**/*.tsx", "packages/platform-web/src/**/*.ts", "modules/*/src/ui/**/*.tsx"],
+    detect: /(?:document\.body|document\.documentElement|\bhtml|\bbody)\.style\.overflow\s*=/,
+    use: "useLockPageScroll(open), or lockPageScroll() and call what it returns",
+    except: {
+      "packages/platform-web/src/scrollLock.test.ts": "the lock's own test sets the page's starting state before it locks",
+    },
+  },
+  {
+    kind: "owns",
     id: "placement:keys-are-canonical",
     what:
       "where a record is: platform().placement (place / remove / containerOf / contents in api/src/index.ts), which stores and " +
@@ -116,6 +131,25 @@ export const CAPABILITIES: Capability[] = [
     // A comment's `//` does not count: the slash must not follow another.
     detect: /[^/*]\/\s*\(?\s*[\w.?]*[cC]apacity\b/,
     use: "consumptionGauge(item, units.lens) for a gauge, remainingOf(...) for what is left, from @cobblr/platform-contract/consumption-gauge",
+  },
+  {
+    kind: "owns",
+    id: "community:the-places-to-ask",
+    what:
+      "the community places a deployment offers (its Discord invite, forum, issue tracker, docs), as every menu and the " +
+      "feedback widget show them: CommunityLinks in web/src/components/CommunityLinks.tsx, shown exactly when the server lists them",
+    why:
+      "the account menu, the phone menu and the feedback widget each read the list their own way, and the hosted app's " +
+      "Discord ended up reachable only under the feedback widget and from no phone menu at all",
+    owner: "web/src/components/CommunityLinks.tsx",
+    scope: ["web/src/**/*.{ts,tsx}"],
+    // A surface reading the places for itself.
+    detect: /communityLinksFor\(|\.discord_invite_url\b|\.community_links\b/,
+    use: "<CommunityLinks user={user} itemClassName=... heading=... /> from web/src/components/CommunityLinks.tsx",
+    except: {
+      "web/src/lib/community-links.ts": "the reader itself, which CommunityLinks calls",
+      "web/src/lib/community-links.test.ts": "the reader's own test",
+    },
   },
   {
     kind: "owns",
@@ -1280,5 +1314,51 @@ export const CAPABILITIES: Capability[] = [
     use:
       "filingDestination(row, tables) (modules/core-scan/src/services/destination.ts) on the server; " +
       "scanRowState(row, viewer).destination or itemDestinationLabel / useItemDestinationLabel (web/src/lib/itemDestination.ts) in the web",
+  },
+  {
+    kind: "owns",
+    id: "scan:what-a-rebuy-updates",
+    what:
+      "whether filing a scan adds to a record the workspace already has, and which: scanMergeTarget in the contract, surfaced " +
+      "as scanRowState(...).merge and scanDestination(...).updates, so the pill, +1 more and every door name one record",
+    why:
+      "the card said Inventory beside +1 more while Replaced wrote to the milk in Groceries, and the dashboard's Add all would " +
+      "have made a second milk; each surface read the matchmaker's stamp its own way (#3707)",
+    owner: "packages/platform-contract/src/scan-triage.ts",
+    scope: [
+      "modules/core-scan/src/**/*.ts",
+      "api/src/routes/quickstart.ts",
+      "web/src/pages/Scan*.tsx",
+      "web/src/pages/scan*.ts",
+      "web/src/components/*.tsx",
+      "web/src/lib/*.ts",
+    ],
+    // The stamped match's identity, read straight off the row: which record
+    // it is, its kind or its table. Its title and picture are display.
+    detect: /tracked_match(\s+as\s+[^)]*\))?\??\.(id|kind|instance)\b|scanTrackedMatch\([^)]*\)\??\.(id|kind|instance)\b/,
+    use:
+      "scanRowState(row, viewer).merge or scanDestination(row, ctx).updates (the contract's scanMergeTarget); " +
+      "filingDestination(row, tables).updates on the server; scanDeclinesRecord for a door that finds matches live",
+  },
+  {
+    kind: "owns",
+    id: "scan:what-a-scan-matches",
+    what:
+      "the record a scan already matches, derived one way: trackedMatchStamp over findTracked asked through matchQuery " +
+      "(the person's name first), stamped on the row by the matcher, a rename, or File everything for a row never asked",
+    why:
+      "the card read the match stamped under the model's name while File everything asked findTracked live under the " +
+      "person's, so a renamed book was +1 on its card and Filed as new in the plan (#3726)",
+    owner: "modules/core-scan/src/services/tracked-stamp.ts",
+    scope: ["modules/core-scan/src/**/*.ts"],
+    // A hand-built matcher query (an object literal straight into findTracked)
+    // or a hand-built stamp.
+    detect: /findTracked\(\s*[^,()]+,\s*\{|\btracked_match:\s*\{/,
+    use:
+      "findTracked(orgId, matchQuery(row, fields, category)) and trackedMatchStamp(...) or restampTrackedMatch(...) " +
+      "(modules/core-scan/src/services/tracked-stamp.ts); read a row's match through scanRebuy in the contract",
+    except: {
+      "modules/core-scan/src/services/file-through-confirm.test.ts": "a fixture: the stamp as the matcher writes it, to test a door that reads it",
+    },
   },
 ];

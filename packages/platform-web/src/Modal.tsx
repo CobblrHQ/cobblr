@@ -18,6 +18,7 @@
 // navbar (which uses backdrop-blur) would otherwise position
 // relative to the navbar strip and intercept clicks only there.
 
+import { lockPageScroll } from "./scrollLock";
 import { useEffect, useRef, type ReactNode } from "react";
 import { createPortal } from "react-dom";
 import { Sparkles, X } from "lucide-react";
@@ -144,11 +145,10 @@ export function Modal({ open, onClose, title, subtitle, children, size = "md", d
     }
     document.addEventListener("keydown", onKey);
     // Prevent background scroll while open
-    const prev = document.body.style.overflow;
-    document.body.style.overflow = "hidden";
+    const release = lockPageScroll();
     return () => {
       document.removeEventListener("keydown", onKey);
-      document.body.style.overflow = prev;
+      release();
     };
   }, [open, onClose, inline]);
 

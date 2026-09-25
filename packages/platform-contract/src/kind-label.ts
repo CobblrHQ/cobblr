@@ -236,3 +236,37 @@ export function repurchaseWords(face: RepurchaseFace, noun: string, quantity: nu
     ledgerLine: false,
   };
 }
+
+/** The three answers to "you already have one of these": the one list the
+ *  card's buttons, the File everything select, the plan line's sentence and
+ *  the server's `seen[].restock` all speak. */
+export const RESTOCK_CHOICES = ["add", "replaced", "went_bad"] as const;
+export type RestockChoice = (typeof RESTOCK_CHOICES)[number];
+
+/** The count a record holds after filing `bought` onto it with this choice,
+ *  or null when what it holds now is not known. Adding goes on top; a
+ *  replacement (the old one ran out, or went bad) leaves exactly what was
+ *  bought, the way the attach's replace mode does. */
+export function restockOutcome(choice: RestockChoice, have: number | null | undefined, bought: number): number | null {
+  const n = Math.max(1, Math.trunc(bought));
+  if (choice === "add") return have == null ? null : have + n;
+  return n;
+}
+
+const RESTOCK_WHY: Record<RestockChoice, string | null> = {
+  add: null,
+  replaced: "the old one ran out",
+  went_bad: "the old one went bad",
+};
+
+/** What filing this line will do, in words, from the same choice that files
+ *  it: "Whole milk: 1 → 2", "Replace Sourdough loaf: 2 → 1 (the old one went
+ *  bad)". The line said "+1 to …" whatever was chosen (#3709). */
+export function restockSentence(choice: RestockChoice, title: string, have: number | null | undefined, bought: number): string {
+  const n = Math.max(1, Math.trunc(bought));
+  const to = restockOutcome(choice, have, n);
+  const why = RESTOCK_WHY[choice];
+  if (!why) return have == null ? `+${n} to ${title}` : `${title}: ${have} → ${to}`;
+  return `Replace ${title}: ${have == null ? "" : `${have} `}→ ${to} (${why})`;
+}
+

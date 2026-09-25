@@ -36,6 +36,9 @@ export interface ScanGroup {
   /** Every pending scan in the group, over the whole inbox: what its button
    *  counts and exactly what it files. */
   ids: string[];
+  /** The scans that add to a record already in the table (a re-purchase),
+   *  by id: filed onto that record, never as a second one. */
+  updates?: Record<string, { kind: string; id: string; instance: string | null }>;
   /** The group's scans the loaded page holds, for the thumbnails only. */
   preview: ScanInboxItem[];
 }
@@ -62,6 +65,7 @@ export function queueFromServer(summary: ScannerQueueSummary, page: readonly Sca
     label: g.label,
     ...(g.bundle_external_id ? { bundleId: g.bundle_external_id } : {}),
     ...(g.target ? { target: g.target } : {}),
+    ...(g.updates ? { updates: g.updates } : {}),
     ids: g.item_ids,
     preview: g.item_ids.flatMap((id) => (byId.has(id) ? [byId.get(id)!] : [])),
   }));
@@ -95,11 +99,15 @@ export function ScannerQueue({ slug, queue, cap = 2 }: { slug: string; queue: Sc
   const navigate = useNavigate();
   const materialize = useMaterializeCapture(slug);
   // "Add all N to <existing table>": sequential confirms (small groups; no bulk
-  // endpoint needed).
+  // endpoint needed). A scan that re-buys a record already in the table adds
+  // to it, as its card's +1 more does: confirming it made a second milk
+  // beside the first (#3707).
   const confirmGroup = useMutation({
-    mutationFn: async (g: { label: string; target: { module: string; kind: string; instance?: string }; ids: string[] }) => {
+    mutationFn: async (g: { label: string; target: { module: string; kind: string; instance?: string }; ids: string[]; updates?: ScanGroup["updates"] }) => {
       for (const id of g.ids) {
-        await api.confirmScanItem(slug, id, { target_module: g.target.module, target_kind: g.target.kind, ...(g.target.instance ? { instance: g.target.instance } : {}) });
+        const to = g.updates?.[id];
+        if (to) await api.scanAttach(slug, id, { kind: to.kind, entity_id: to.id, ...(to.instance ? { instance: to.instance } : {}), mode: "add-qty" });
+        else await api.confirmScanItem(slug, id, { target_module: g.target.module, target_kind: g.target.kind, ...(g.target.instance ? { instance: g.target.instance } : {}) });
       }
       return g;
     },
@@ -148,7 +156,7 @@ export function ScannerQueue({ slug, queue, cap = 2 }: { slug: string; queue: Sc
                   <button
                     type="button"
                     disabled={busy}
-                    onClick={() => confirmGroup.mutate({ label: g.label, target: g.target!, ids: g.ids })}
+                    onClick={() => confirmGroup.mutate({ label: g.label, target: g.target!, ids: g.ids, updates: g.updates })}
                     className="shrink-0 inline-flex items-center gap-1 rounded-md bg-cobble-600 hover:bg-cobble-700 text-white text-xs font-medium px-2.5 py-1 transition disabled:opacity-50"
                   >
                     {busy ? <Loader2 size={12} className="animate-spin" /> : <ArrowRight size={12} />}

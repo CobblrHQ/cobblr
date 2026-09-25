@@ -20,6 +20,7 @@
 // The quantity stepper is the same − N + shape as ScanResultModal's, PATCHed
 // debounced so mashing + doesn't stack requests.
 
+import { capturedLine } from "../lib/capturedLine";
 import { useItemDestinationLabel } from "../lib/itemDestination";
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import { leadYours, rowPictures, scanFileUrl, yourPictures } from "../lib/rowPictures";
@@ -266,6 +267,15 @@ export function ScanCaptureDrawer({
       void qc.invalidateQueries({ queryKey: ["scan-item-live", slug, item?.id] });
     },
   });
+  // "Not right" turns the shown name down on the row itself, so no re-run,
+  // replay or empty edit can put it back; the row waits for a name (#3724).
+  const reject = useMutation({
+    mutationFn: () => api.updateScanItem(slug, item!.id, { reject_name: true }),
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: scanInboxKeys.all(slug) });
+      void qc.invalidateQueries({ queryKey: ["scan-item-live", slug, item?.id] });
+    },
+  });
   const rename = useMutation({
     mutationFn: (name: string) => api.updateScanItem(slug, item!.id, { name }),
     onSuccess: () => {
@@ -440,7 +450,7 @@ export function ScanCaptureDrawer({
         <Thumb url={thumbUrl} name={name ?? "item"} />
         <div className="flex-1 min-w-0 pt-0.5">
           <div className="text-white text-[13.5px] font-semibold leading-tight line-clamp-2">
-            {name ? (weakGuess ? `Best guess: ${name}` : name) : glance ? `${glance.name}?` : identifying ? "Identifying…" : COULD_NOT_TELL}
+            {name ? (weakGuess ? `Best guess: ${name}` : <span data-testid="capture-drawer-line">{capturedLine(name, it!)}</span>) : glance ? `${glance.name}?` : identifying ? "Identifying…" : COULD_NOT_TELL}
           </div>
           {glance && (
             <GlanceQuestion
@@ -519,7 +529,7 @@ export function ScanCaptureDrawer({
         ) : name ? (
           <button
             type="button"
-            onClick={() => { setCorrecting(true); setExpanded(true); }}
+            onClick={() => { setCorrecting(true); setExpanded(true); reject.mutate(); }}
             data-testid="capture-drawer-not-right"
             className="inline-flex items-center justify-center gap-1 rounded-lg border border-white/30 text-white text-[13px] px-3 py-2 shrink-0"
           >
@@ -647,6 +657,8 @@ function ExpandedSheet({
   correctBusy?: boolean;
   onCorrect?: (v: { barcode?: string }) => void;
 }) {
+  // An empty name was submitted: say what would do instead.
+  const [askName, setAskName] = useState(false);
   // The row's pictures, resolved once (lib/rowPictures.ts, #3046).
   const resolved = rowPictures(slug, it);
   const yours = leadYours(resolved.pictures);
@@ -749,20 +761,37 @@ function ExpandedSheet({
       <label className="block px-3 mt-2.5">
         <span className="block text-[9.5px] font-mono uppercase tracking-widest text-white/40 mb-1">What is it</span>
         <input
+          // Correcting, the field starts empty: the name there was just
+          // turned down, and leaving it in the box was how an empty-looking
+          // submit put it straight back (#3724).
           // DRAFT-OK: a scan's name while the capture drawer is open, filled in by the identifier as it arrives; see the keying note below.
-          defaultValue={name ?? ""}
-          // Keyed by the ITEM only. Keying on the name too meant every
-          // background poll that filled in an identity remounted the field
-          // mid-edit and ate what you were typing.
-          key={it.id}
+          defaultValue={correcting ? "" : name ?? ""}
+          // Keyed by the ITEM (and the correction), never the name: keying on
+          // the name meant every background poll that filled in an identity
+          // remounted the field mid-edit and ate what you were typing.
+          key={`${it.id}:${correcting ? "correct" : ""}`}
           placeholder="name it"
           autoFocus={correcting}
-          onFocus={(e) => { if (correcting) e.currentTarget.select(); }}
           data-testid="capture-sheet-name"
-          onBlur={(e) => { const v = e.target.value.trim(); if (v && v !== name) onRename(v); }}
-          onKeyDown={(e) => { if (e.key === "Enter") e.currentTarget.blur(); }}
+          onChange={() => setAskName(false)}
+          onBlur={(e) => {
+            const v = e.target.value.trim();
+            if (v && v !== name) onRename(v);
+            else if (!v && correcting) setAskName(true);
+          }}
+          onKeyDown={(e) => {
+            if (e.key !== "Enter") return;
+            // An empty name never submits: it answers instead.
+            if (!e.currentTarget.value.trim()) { e.preventDefault(); setAskName(true); return; }
+            e.currentTarget.blur();
+          }}
           className="w-full rounded-lg border border-white/20 bg-white/10 px-2.5 py-2 text-white text-[13.5px] focus:outline-none focus:border-cobble-400"
         />
+        {askName && (
+          <span data-testid="capture-sheet-name-empty" role="status" className="block mt-1 text-[11.5px] text-amber-200">
+            Type a name, or scan the barcode.
+          </span>
+        )}
       </label>
 
       <div className="flex items-end gap-3 px-3 mt-2.5">

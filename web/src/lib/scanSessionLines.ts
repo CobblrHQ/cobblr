@@ -42,17 +42,27 @@ export function incompleteSessions(
   return out;
 }
 
-/** The session a burst can be merged into: the next older scan session, or
- *  none. A receipt is its own purchase, so a receipt session is never merged
- *  into another and nothing is merged into one (the owner, 2026-09-24: "a
- *  receipt doesn't make sense to merge into another session"). */
-export function sessionMergeTarget(
-  groups: ReadonlyArray<{ isBatch: boolean; batchId: string | null; label?: string | null }>,
+/** What a session's merge offers: the session it joins and the words that
+ *  name it, from ONE resolution, so the label cannot say one session while
+ *  the action joins another (#3711: "Merge with the session above" joined a
+ *  session further DOWN, past a receipt, that was not even the neighbour).
+ *
+ *  The target is the session shown directly above this one in the list as it
+ *  is drawn, and only that one: if it is not a scan session, nothing is
+ *  offered. A receipt is its own purchase, so a receipt session is never
+ *  merged into another and nothing is merged into one (the owner,
+ *  2026-09-24: "a receipt doesn't make sense to merge into another
+ *  session"). The session above is always on the page, whatever has been
+ *  paged in below it. */
+export function sessionMergeOffer<G extends { isBatch: boolean; batchId: string | null; label?: string | null }>(
+  groups: readonly G[],
   index: number,
-): string | null {
+  nameOf: (g: G) => string,
+): { into: string; target: G; label: string } | null {
   const receipt = (x: { isBatch: boolean; label?: string | null }) => x.isBatch && !!x.label?.startsWith("Receipt");
   const g = groups[index];
-  if (!g || !g.isBatch || receipt(g)) return null;
-  return groups.slice(index + 1).find((o) => o.isBatch && !!o.batchId && !receipt(o))?.batchId ?? null;
+  const above = index > 0 ? groups[index - 1] : undefined;
+  if (!g || !g.isBatch || !g.batchId || receipt(g)) return null;
+  if (!above || !above.isBatch || !above.batchId || receipt(above) || above.batchId === g.batchId) return null;
+  return { into: above.batchId, target: above, label: `Merge with ${nameOf(above)}, above` };
 }
-

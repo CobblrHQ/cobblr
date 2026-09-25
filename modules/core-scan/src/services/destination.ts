@@ -19,6 +19,7 @@ import {
   scanDestination,
   scanResolverTables,
   type ScanMenuTableEntry,
+  type ScanMergeTarget,
   type ScanResolverTable,
   type ScanTriageRow,
 } from "@cobblr/platform-contract/scan-triage";
@@ -48,6 +49,8 @@ export interface DestinationCandidate {
   bundle_external_id?: string | null;
   fields?: Record<string, unknown>;
   category?: string;
+  /** The record filing adds to instead of creating (a re-purchase). */
+  updates?: ScanMergeTarget;
   [k: string]: unknown;
 }
 
@@ -96,7 +99,10 @@ export function filingDestination(row: DestinationRow, tables: readonly ScanReso
   if (!d) return null;
   const same = (c: DestinationCandidate) => c.module === d.module && (c.instance ?? null) === (d.instance ?? null);
   const own = cands.find(same);
-  if (own) return own;
+  // A re-purchase files onto the record it matched: the door adds to it
+  // rather than creating a second one in the same table (#3707).
+  const updates = d.updates ? { updates: d.updates } : {};
+  if (own) return { ...own, ...updates };
   return {
     module: d.module,
     instance: d.instance,
@@ -104,5 +110,6 @@ export function filingDestination(row: DestinationRow, tables: readonly ScanReso
     label: d.label,
     ...(d.bundle_external_id ? { bundle_external_id: d.bundle_external_id } : {}),
     fields: {},
+    ...updates,
   };
 }

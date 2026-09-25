@@ -10,7 +10,9 @@
 // nothing auto-commits (every identified photo waits for a one-tap
 // confirm in the triage queue).
 
-import { picturesThatAgree } from "./picture-agrees.js";
+import { looksOfRow, picturesThatAgree } from "./picture-agrees.js";
+import { withholdContradictedPicture } from "./withhold-picture.js";
+import { applyLabelFacts } from "./label-quantity.js";
 import type { Kysely } from "kysely";
 import { seenCountOf, seenDistinctOf } from "./seen-count.js";
 import { titleVariantsOf, type TitleVariants } from "@cobblr/platform-contract/display-identity";
@@ -180,8 +182,7 @@ export async function refreshCatalogImageByName(
     // plastic kettle is not given a stainless one (picture-agrees.ts, #3584).
     // The ones that agree go first; if none is left the row keeps the
     // person's own photo and the choice stays open.
-    const observations = (cur?.suggested_metadata as { photo_observations?: string } | null)?.photo_observations ?? null;
-    const agreeing = picturesThatAgree({ name, observations }, found.items);
+    const agreeing = picturesThatAgree(looksOfRow(cur ?? {}, name), found.items);
     if (found.items.length && !agreeing.length) console.warn(`[core-scan] every picture for ${JSON.stringify(q)} contradicts the item; keeping its own photo`);
     ranked = agreeing.map((r) => r.url).filter((u): u is string => !!u);
   }
@@ -1281,6 +1282,24 @@ async function markReadingReceipt(ctx: PhotoEnrichContext, note: string, decided
 }
 
 export async function enrichPhotoItem(ctx: PhotoEnrichContext): Promise<EnrichOutcome> {
+  const outcome = await readPhotoItem(ctx);
+  // What the photo read says the item looks like can contradict a picture a
+  // lookup gave it before the read finished (a label saying J7 DARK BLUE
+  // under a beige skein, #3729): judged again once the read has written.
+  await withholdContradictedPicture(ctx.orgId, ctx.db as never, ctx.itemId).catch((err) =>
+    console.error(`[core-scan] picture check after the photo read of ${ctx.itemId} failed:`, (err as Error).message),
+  );
+  // What the photo read transcribed off a label (a pack's count, its lot,
+  // its colourway) is written onto the item as read from the label, never
+  // over the person's own values (label-quantity.ts, #3729). A bulk bag
+  // whose label said "quantity contained 3" stayed x1.
+  await applyLabelFacts(ctx.db as never, ctx.itemId).catch((err) =>
+    console.error(`[core-scan] reading the label facts of ${ctx.itemId} failed:`, (err as Error).message),
+  );
+  return outcome;
+}
+
+async function readPhotoItem(ctx: PhotoEnrichContext): Promise<EnrichOutcome> {
   // Read the photo bytes via the platform files seam. The medium variant
   // (a resized JPEG: smaller payload, a cheaper vision call) goes to the
   // model; the original goes to the OCR engine, whose photograph pass wants

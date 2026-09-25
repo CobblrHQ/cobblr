@@ -32,6 +32,9 @@ export function scanCardMayAdd(p: ScanCardCommitProps): boolean {
 export function ScanCardCommit(p: ScanCardCommitProps) {
   const installs = p.state.action.kind === "install-add";
   const merges = p.state.action.kind === "merge";
+  // grow-[0.001]: beside the table's name the verb takes none of the slack,
+  // and on a line of its own (the pill wraps on a narrow card) it takes all
+  // of it, so it is a full-width button rather than a stub.
   if (scanCardMayAdd(p)) {
     return (
       <button
@@ -43,7 +46,7 @@ export function ScanCardCommit(p: ScanCardCommitProps) {
         disabled={p.busy}
         title={p.state.action.title}
         data-testid="card-commit"
-        className="inline-flex shrink-0 items-center gap-1 border-l border-white/25 bg-emerald-600 hover:bg-emerald-500 pl-2 pr-2.5 py-1 transition disabled:opacity-60"
+        className="inline-flex shrink-0 grow-[0.001] items-center justify-center gap-1 whitespace-nowrap border-l border-white/25 bg-emerald-600 hover:bg-emerald-500 pl-2 pr-2.5 py-1 transition disabled:opacity-60"
       >
         {/* A table that has to be INSTALLED first commits from here too. It
             used to be suppressed so a second brown button could carry the same
@@ -73,7 +76,7 @@ export function ScanCardCommit(p: ScanCardCommitProps) {
       }}
       title={reviewTitle(p) ?? undefined}
       data-testid="card-commit"
-      className="inline-flex shrink-0 items-center gap-1 border-l border-white/25 hover:bg-cobble-700 pl-2 pr-2.5 py-1 transition"
+      className="inline-flex shrink-0 grow-[0.001] items-center justify-center gap-1 whitespace-nowrap border-l border-white/25 hover:bg-cobble-700 pl-2 pr-2.5 py-1 transition"
     >
       {p.state.action.label}
     </button>

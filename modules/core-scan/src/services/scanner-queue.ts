@@ -24,6 +24,10 @@ export interface ScannerQueueGroup {
   target?: { module: string; kind: string; instance?: string };
   /** Every pending scan in the group, newest first: the set its action files. */
   item_ids: string[];
+  /** The scans in the group that add to a record already in this table (a
+   *  re-purchase), by item id: the group's action adds to that record
+   *  instead of making a second one (#3707). */
+  updates?: Record<string, { kind: string; id: string; instance: string | null }>;
 }
 
 export interface ScannerQueue {
@@ -64,6 +68,7 @@ export function scannerQueue(rows: readonly QueueRow[], tables: readonly ScanRes
       map.set(key, g);
     }
     g.item_ids.push(r.id);
+    if (c.updates) g.updates = { ...g.updates, [r.id]: { kind: c.updates.kind, id: c.updates.id, instance: c.updates.instance } };
   }
   const groups = [...map.values()].sort((a, b) => b.item_ids.length - a.item_ids.length);
   return { scanned_total: scanned.length, groups, residual, offered: groups.reduce((n, g) => n + g.item_ids.length, 0) };

@@ -2,6 +2,7 @@
 import { createPortal } from "react-dom";
 import { FileEverythingSheet } from "../components/FileEverythingSheet";
 import { ScanSessionTheme } from "../components/ScanSessionTheme";
+import { SessionHeadline } from "../components/SessionHeadline";
 import { ScanPickerInput, useScanIntake } from "../components/ScanPhotoPicker";
 import { SessionReadVerdict } from "../components/SessionReadVerdict";
 //
@@ -61,7 +62,7 @@ import { } from "../components/ScanToolMenu";
 import type { } from "@cobblr/platform-contract/scan-tools";
 import { } from "../lib/splitOffer";
 import { findCombineClusters } from "../lib/scanCombine";
-import { incompleteSessions, sessionLines, sessionMergeTarget } from "../lib/scanSessionLines";
+import { incompleteSessions, sessionLines, sessionMergeOffer } from "../lib/scanSessionLines";
 import { SCAN_UNDO_ACTIONS, scanDeletedRecovery } from "@cobblr/platform-contract/scan-recovery";
 import {
   
@@ -143,6 +144,14 @@ function formatSessionTime(ms: number): string {
   if (sameDate(d, now)) return `Today ${time}`;
   if (sameDate(d, yest)) return `Yesterday ${time}`;
   return `${d.toLocaleDateString(undefined, { month: "short", day: "numeric" })}, ${time}`;
+}
+
+/** The day alone, as a receipt's date reads, for the header line: the hour
+ *  and "Yesterday" cost more width than a phone row has, and both are on the
+ *  tooltip. */
+function formatSessionDay(ms: number): string {
+  if (!Number.isFinite(ms) || ms <= 0) return "Earlier";
+  return new Date(ms).toLocaleDateString(undefined, { month: "short", day: "numeric" });
 }
 
 /* (day-bucket helpers removed: batch-less history now clusters into
@@ -1723,11 +1732,11 @@ export function ScanPage() {
   // reassigning EXACTLY those items back to their original (now-empty) batch,
   // never disturbing items that were already in the target session.
   const mergeBatches = useMutation({
-    mutationFn: (v: { from: string; into: string; itemIds: string[] }) =>
+    mutationFn: (v: { from: string; into: string; intoName: string; itemIds: string[] }) =>
       api.mergeScanBatches(activeSlug, v.from, v.into),
     onSuccess: (r, v) => {
       void qc.invalidateQueries({ queryKey: scanInboxKeys.all(activeSlug) });
-      toast.action(`Merged ${r.moved} item${r.moved === 1 ? "" : "s"} into the previous session.`, {
+      toast.action(`Merged ${r.moved} item${r.moved === 1 ? "" : "s"} into ${v.intoName}.`, {
         actionLabel: "Undo",
         onAction: async () => {
           try {
@@ -3283,7 +3292,9 @@ className="rounded px-1 py-0.5 text-[12.5px] hover:bg-subtle dark:hover:bg-slate
             const groupIds = g.items.map((i) => i.id);
             const allGroupSelected = groupIds.length > 0 && groupIds.every((gid) => selected.has(gid));
             // Merge target: the NEXT (older) group that is a real batch.
-            const mergeInto = sessionMergeTarget(sessionGroups, gi);
+            // The label and the action from one resolution (#3711).
+            const mergeOffer = sessionMergeOffer(sessionGroups, gi, (t) => sessionName(t, t.isBatch && !!t.label?.startsWith("Receipt")) ?? formatSessionTime(t.latest));
+            const mergeInto = mergeOffer?.into ?? null;
             // "Do these belong together?" is offered for a scan session of two
             // or more pending rows (a receipt is already one group). It
             // SURFACES on its own only on evidence: the rows already agree on a
@@ -3441,6 +3452,7 @@ className="rounded px-1 py-0.5 text-[12.5px] hover:bg-subtle dark:hover:bg-slate
                     The filing trio (location, file, open) stays last. */}
                 <div
                   data-session-header
+                  data-testid="scan-session-header"
                   // gap-1.5, not gap-2: eleven gaps across this row, so the
                   // half-step is most of a control's width back.
                   className="flex w-full items-center gap-1.5 max-sm:gap-1 overflow-hidden rounded-md bg-mortar-50 dark:bg-slate-800/40 px-2.5 py-1.5 max-sm:px-1.5 max-sm:py-0 text-left text-xs"
@@ -3538,7 +3550,7 @@ className="rounded px-1 py-0.5 text-[12.5px] hover:bg-subtle dark:hover:bg-slate
                       // under shrink pressure at any width the desktop layout
                       // runs at. truncate + min-w-0 keeps it able to give way
                       // last if that ever stops being true.
-                      className="font-medium text-content dark:text-mortar-100 truncate min-w-[4rem] sm:min-w-0 max-sm:flex-1 max-sm:basis-0 max-sm:min-w-0 max-sm:min-h-11 max-sm:text-left"
+                      className="font-medium text-content dark:text-mortar-100 truncate min-w-0 max-sm:flex-1 max-sm:basis-0 max-sm:min-w-0 max-sm:min-h-11 max-sm:text-left"
                       // The DATE is the session's identity; the word was
                       // boilerplate on every row of a view already called "By
                       // session", and truncation ate the date to keep it
@@ -3546,51 +3558,36 @@ className="rounded px-1 py-0.5 text-[12.5px] hover:bg-subtle dark:hover:bg-slate
                       // "I would prioritize the date time over the word").
                       title={g.label ?? formatSessionTime(g.latest)}
                     >
-                      {/* Without the order number — that is the control beside
-                          it, so tapping the number edits it. */}
-                      {/* PHONE: the name gives way, the count never does. The
-                          count sat at the END of one truncating span, so a long
-                          location beside it left "6 ite…" (#3064). */}
-                      <span className="flex min-w-0 items-baseline">
-                        <span className="truncate">{sessionName(g, isReceiptSession) ?? formatSessionTime(g.latest)}</span>
-                        {/* PHONE ONLY: the rest of the identity. The order number
-                            is still the control it is beside the name from sm up. */}
-                        <span data-session-tail className="sm:hidden shrink-0 whitespace-nowrap font-normal text-faint">
-                          {/* NON-BREAKING space, not a plain one. The name and
-                              this tail are two flex items, and a flex item drops
-                              the whitespace it starts with, so the separator ran
-                              into the name: "STITCH & SPARK\u00b7 #77142". It was
-                              invisible while the name truncated, because the
-                              ellipsis leaves a gap of its own - the row had to
-                              stop clipping before anyone could see it (#3393). */}
-                          {isReceiptSession && g.batchId && g.orderRef && editingPo !== g.batchId && <span className="font-medium text-muted">&nbsp;· #{g.orderRef}</span>}
-                          {/* The date in the one line, the same place and format
-                              the unnamed sessions below carry theirs: the
-                              receipt's date, else when it was scanned (the owner,
-                              2026-09-24: "Entire separate line is unnecessary"). */}
-                          {g.label && <span data-session-date>{`\u00a0· ${g.origin === "email" ? "emailed " : ""}${receiptDateOf(g) ?? formatSessionTime(g.latest)}`}</span>}
-                          {g.verdict.kind !== "failed" && g.verdict.kind !== "in_flight" && `\u00a0· ${g.items.length} item${g.items.length === 1 ? "" : "s"}`}
-                        </span>
-                      </span>
+                      <SessionHeadline
+                        name={sessionName(g, isReceiptSession)}
+                        // Named by when it was scanned: the time drops as a
+                        // whole word before anything is cut.
+                        nameFits={g.label ? undefined : [formatSessionTime(g.latest), formatSessionDay(g.latest)]}
+                        orderRef={isReceiptSession && g.batchId && editingPo !== g.batchId ? g.orderRef : null}
+                        // A phone folds the session on the headline, so the
+                        // number is text there and edited in the open session.
+                        onEditRef={
+                          handheld || !g.batchId
+                            ? undefined
+                            : () => {
+                                setPoInput(g.orderRef ?? "");
+                                setEditingPo(g.batchId!);
+                              }
+                        }
+                        // A receipt's date is the date ON THE RECEIPT, not when
+                        // the photo was uploaded (reported 2026-08-20); the
+                        // upload time is on the tooltip.
+                        date={g.label ? (receiptDateOf(g) ?? formatSessionDay(g.latest)) : null}
+                        dateTitle={[
+                          g.origin === "email" ? "Emailed." : null,
+                          receiptDateOf(g) ? receiptDateWords(g.dateReading) : null,
+                          `${receiptDateOf(g) ? "Uploaded" : "Scanned"} ${formatSessionTime(g.latest)}`,
+                        ]
+                          .filter(Boolean)
+                          .join(" ")}
+                        count={g.verdict.kind !== "failed" && g.verdict.kind !== "in_flight" ? g.items.length : null}
+                      />
                     </SessionIdentity>
-                  {/* The receipt's own number, edited where it is READ. A separate
-                      "PO#" control said the same thing twice: the number was
-                      already in the name, and the pencil beside it was a second
-                      way to reach it (reported 2026-08-20). */}
-                  {isReceiptSession && g.batchId && g.orderRef && editingPo !== g.batchId && (
-                    <button
-                      type="button"
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        setPoInput(g.orderRef ?? "");
-                        setEditingPo(g.batchId!);
-                      }}
-                      title="Edit the order / invoice number"
-                      className="hidden sm:inline shrink-0 font-medium text-muted hover:text-accent transition"
-                    >
-                      #{g.orderRef}
-                    </button>
-                  )}
                   {/* ...and the offer to add one takes the SAME slot when there
                       is none. They are one fact in one place: an "+ #" sitting
                       over with the actions, while the number it creates appears
@@ -3610,30 +3607,6 @@ className="rounded px-1 py-0.5 text-[12.5px] hover:bg-subtle dark:hover:bg-slate
                       <Pencil size={11} /> + #
                     </button>
                   )}
-                  {/* What this session IS, reading as one phrase beside its name
-                      rather than scattered across the row. None of it collapses
-                      the session any more: only the name does, which is the part
-                      that looks like a heading. */}
-                  {g.label && (
-                      <span
-                        className="hidden md:inline shrink-0 whitespace-nowrap text-faint"
-                        // A receipt's date is the date ON THE RECEIPT. This said
-                        // when the photo was uploaded, which is a fact about the
-                        // scanning and not about the purchase — "Aug 19, 6:28 PM"
-                        // beside a receipt dated the 18th (reported 2026-08-20).
-                        // The upload time is still worth having, so it moves to
-                        // the tooltip rather than the row.
-                        title={
-                          receiptDateOf(g)
-                            ? [receiptDateWords(g.dateReading), `Uploaded ${formatSessionTime(g.latest)}`].filter(Boolean).join(" ")
-                            : undefined
-                        }
-                      >
-                        {g.origin === "email" ? "emailed " : ""}
-                        {receiptDateOf(g) ?? formatSessionTime(g.latest)}
-                      </span>
-                    )}
-
                     {isActiveSession && (
                       <span
                         className="inline-flex items-center gap-1 shrink-0 text-emerald-600/80 dark:text-emerald-400/80"
@@ -3655,15 +3628,6 @@ className="rounded px-1 py-0.5 text-[12.5px] hover:bg-subtle dark:hover:bg-slate
                     {g.area && (
                       <span className="hidden lg:inline shrink-0 whitespace-nowrap text-muted">· {g.area}</span>
                     )}
-                    {/* Left-aligned with the name and the date. These three say
-                        WHAT this session is, so they read as one phrase; pushing
-                        the count to the far right made it look like a control
-                        (reported 2026-08-20). */}
-                  {g.verdict.kind !== "failed" && g.verdict.kind !== "in_flight" && (
-                    <span className="hidden sm:inline shrink-0 whitespace-nowrap text-faint">
-                      {g.items.length} item{g.items.length === 1 ? "" : "s"}
-                    </span>
-                  )}
                   {g.verdict.kind === "in_flight" && (
                     <SessionReadVerdict verdict={g.verdict} reading={false} onReadAgain={() => {}} configureAiHref={`/w/${activeSlug}/configuration/ai`} />
                   )}
@@ -3708,11 +3672,16 @@ className="rounded px-1 py-0.5 text-[12.5px] hover:bg-subtle dark:hover:bg-slate
                           aria-label="Session actions"
                           title="More for this session"
                           data-testid="session-menu"
-                          // Its own 44px target on a phone. At 18px it sat on the
-                          // edge of the name, which folds the session on a
-                          // phone, so a thumb aiming at the ⋯ folded it instead
-                          // (the owner, 2026-09-24: "keeps collapsing").
-                          className="shrink-0 inline-flex min-h-6 items-center justify-center rounded p-0.5 max-sm:min-h-11 max-sm:min-w-11 text-faint hover:text-accent"
+                          // Its touch size comes from its OWN box, 32 by 44 on
+                          // a phone, clear of its neighbours. At 18px it sat on
+                          // the name's edge, which folds the session, so a thumb
+                          // aiming at it folded it instead (the owner,
+                          // 2026-09-24); a 44px-wide box was then the widest
+                          // thing on the row (2026-09-25); and a 44px ::after
+                          // over a 16px box lay over File, so a tap on File
+                          // opened this menu (#3717). No overlay: a target
+                          // never reaches past its own box.
+                          className="shrink-0 inline-flex min-h-6 items-center justify-center rounded p-0.5 max-sm:min-h-11 max-sm:w-8 max-sm:p-0 text-faint hover:text-accent"
                         >
                           <MoreHorizontal size={14} />
                         </button>
@@ -3731,14 +3700,14 @@ className="rounded px-1 py-0.5 text-[12.5px] hover:bg-subtle dark:hover:bg-slate
                               }}
                             />
                           )}
-                          {mergeInto && (
+                          {mergeOffer && (
                             <MenuItem
                               icon={<Undo2 size={13} />}
-                              label="Merge with the session above"
+                              label={mergeOffer.label}
                               disabled={mergeBatches.isPending}
                               onClick={() => {
                                 close();
-                                void mergeBatches.mutateAsync({ from: g.batchId!, into: mergeInto, itemIds: groupIds });
+                                void mergeBatches.mutateAsync({ from: g.batchId!, into: mergeOffer.into, intoName: mergeOffer.label.replace(/^Merge with |, above$/g, ""), itemIds: groupIds });
                               }}
                             />
                           )}

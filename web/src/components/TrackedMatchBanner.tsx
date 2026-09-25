@@ -19,7 +19,7 @@ import { useActiveOrg } from "../auth/ActiveOrgContext";
 import { RepurchaseAnswers, useBestTrackedMatch } from "./RepurchaseControls";
 import { useHandheld } from "../lib/useHandheld";
 import { TrackedMatchNudges } from "./TrackedMatchNudges";
-import { scanRowState, scanTrackedMatch } from "@cobblr/platform-contract/scan-triage";
+import { scanDeclinesRecord, scanRowState, scanTrackedMatch } from "@cobblr/platform-contract/scan-triage";
 import { evidencedFill } from "@cobblr/platform-contract/scan-evidence";
 import { scanInboxKeys } from "../lib/scan-inbox-keys";
 
@@ -161,9 +161,25 @@ export function TrackedMatchBanner({
     enabled: !!item.id && item.status === "pending" && (!!item.barcode_text || !!item.suggested_name),
     staleTime: 60_000,
   });
-  const all = [...(matches.data?.barcode_matches ?? []), ...(matches.data?.name_matches ?? [])];
+  // A record the person said this is not stays said: the card files the
+  // scan as a new item, so the banner does not offer to add to it.
+  const all = [...(matches.data?.barcode_matches ?? []), ...(matches.data?.name_matches ?? [])].filter(
+    (m) => !scanDeclinesRecord(item, { kind: m.kind, id: m.id, instance: m.instance }),
+  );
   const best = all[0] ?? null;
   const { where } = useBestTrackedMatch(item.id, best);
+
+  // "Not the same" is kept on the row, so the pill, +1 more and File all
+  // stop treating the scan as this record everywhere, not only here (#3707).
+  const keepSeparate = useMutation({
+    mutationFn: () => api.updateScanItem(activeSlug, item.id, { keep_separate: true }),
+    onMutate: () => setDismissed(true),
+    onSuccess: () => void qc.invalidateQueries({ queryKey: scanInboxKeys.all(activeSlug) }),
+    onError: (e) => {
+      setDismissed(false);
+      toast.error(e instanceof ApiError ? e.message : String(e));
+    },
+  });
 
   const attach = useMutation({
     mutationFn: (vars: { m: TrackedMatch; mode: "link-barcode" | "move" | "merge-fields" }) =>
@@ -265,7 +281,7 @@ export function TrackedMatchBanner({
         <button
           type="button"
           title="Not the same - keep this as a new item"
-          onClick={() => setDismissed(true)}
+          onClick={() => keepSeparate.mutate()}
           className="shrink-0 text-faint hover:text-muted p-1"
         >
           <X size={15} />

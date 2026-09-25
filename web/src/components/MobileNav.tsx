@@ -25,12 +25,13 @@ import { configurationReachable } from "../lib/configuration-nav";
 import { UpdateBadge } from "./UpdateBadge";
 import { usePendingAiShares } from "../lib/usePendingAiShares";
 import { useAuth } from "../auth/AuthContext";
+import { COMMUNITY_HEADING, CommunityLinks } from "./CommunityLinks";
 import { useTheme } from "../theme/ThemeContext";
 import { useNavModules, NAVGROUP_PREFIX, navTargetFor, surfaceTops } from "./useNavModules";
 import { useNavBadges } from "./useNavBadges";
 import { NavCountBadge } from "./NavCountBadge";
 import { CobblestoneMark } from "../CobblestoneMark";
-import { OverlayLayer } from "@cobblr/platform-web";
+import { OverlayLayer, useLockPageScroll } from "@cobblr/platform-web";
 import { notificationKeys } from "../lib/notification-keys";
 
 /** The marker on a row that belongs to the group heading above it. It replaced
@@ -53,7 +54,7 @@ export function MobileNav() {
   const visibleTops = surfaceTops(tops, appMode);
   const badges = useNavBadges(activeSlug);
   const pendingShares = usePendingAiShares(activeSlug, activeOrg?.role === "owner");
-  const { logout } = useAuth();
+  const { logout, user } = useAuth();
   const { theme, toggle } = useTheme();
   const navigate = useNavigate();
   const [open, setOpen] = useState(false);
@@ -90,14 +91,7 @@ export function MobileNav() {
   }, [open]);
 
   // Lock body scroll while the panel is open.
-  useEffect(() => {
-    if (!open) return;
-    const prev = document.body.style.overflow;
-    document.body.style.overflow = "hidden";
-    return () => {
-      document.body.style.overflow = prev;
-    };
-  }, [open]);
+  useLockPageScroll(open);
 
   function go(to: string) {
     navigate(to);
@@ -353,6 +347,20 @@ export function MobileNav() {
                   asRow
                   rowClassName={linkClass + " flex items-center gap-2"}
                   onNavigate={() => setOpen(false)}
+                />
+              )}
+
+              {/* The community, at the end of the list: the phone's only door
+                  to it (the account menu that carries it is desktop-only). The
+                  same component every menu uses, so it is here exactly when the
+                  deployment offers it. Not in a managed app, whose menu leads
+                  nowhere outside the app. */}
+              {!appMode && (
+                <CommunityLinks
+                  user={user}
+                  itemClassName={linkClass}
+                  onNavigate={() => setOpen(false)}
+                  heading={<div className="mt-2 px-4 pt-2 border-t border-line dark:border-slate-800 text-[10px] font-mono uppercase tracking-widest text-faint dark:text-slate-500">{COMMUNITY_HEADING}</div>}
                 />
               )}
 

@@ -16,7 +16,7 @@ import { useEffect, useState } from "react";
 import { createPortal } from "react-dom";
 import { Camera, CheckCircle, ChevronDown, ChevronRight, Download, Loader2, MoreHorizontal, PackagePlus, RotateCcw, ScanLine, Scissors } from "lucide-react";
 import type { ScanInboxItem } from "../lib/api";
-import { OverlayLayer, BackdropLayer } from "@cobblr/platform-web";
+import { OverlayLayer, BackdropLayer, useLockPageScroll } from "@cobblr/platform-web";
 import { ScanReceiptUnread, type ScanReceiptUnreadProps } from "../components/ScanReceiptUnread";
 import { RECEIPT_UNREAD_TITLE } from "@cobblr/platform-contract/scan-copy";
 
@@ -449,15 +449,11 @@ function PhoneActionSheet({ title, actions, hints, onClose }: { title: string; a
   // and each row says what a tap does; two rows of one tool used to each
   // repeat the reason (#3075).
   const groups = scanToolsFoldGroups(hints, folded);
+  useLockPageScroll();
   useEffect(() => {
-    const prev = document.body.style.overflow;
-    document.body.style.overflow = "hidden";
     const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") onClose(); };
     document.addEventListener("keydown", onKey);
-    return () => {
-      document.body.style.overflow = prev;
-      document.removeEventListener("keydown", onKey);
-    };
+    return () => document.removeEventListener("keydown", onKey);
   }, [onClose]);
   return createPortal(
     <OverlayLayer className="z-50 flex items-end bg-slate-900/50" onClick={onClose} role="presentation">

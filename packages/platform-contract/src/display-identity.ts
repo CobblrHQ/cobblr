@@ -123,6 +123,28 @@ export function personNameOf(meta: unknown): string | null {
   return clean(m[USER_NAME_KEY]);
 }
 
+/** The names a person turned down for this row ("Not right"): kept on the
+ *  name's provenance stamp, the store a person's answers already live in. */
+export function rejectedNamesOf(meta: unknown): string[] {
+  const prov = ((meta ?? {}) as Record<string, unknown>)[FIELD_PROVENANCE_KEY] as FieldProvenanceMap | undefined;
+  const r = prov?.name?.rejected;
+  return Array.isArray(r) ? r.filter((x): x is string => typeof x === "string" && !!x.trim()) : [];
+}
+
+const nameKey = (s: string) => s.trim().toLowerCase().replace(/\s+/g, " ");
+
+/** Is the name this row would show one the person turned down? A name the
+ *  person typed themselves is theirs and never "rejected"; any other writer
+ *  (a re-run, a replay, a later lookup) cannot bring a turned-down name back,
+ *  so the row stays waiting for a name (#3724). */
+export function nameIsRejected(row: { suggested_name?: string | null; suggested_metadata?: unknown }): boolean {
+  if (personNameOf(row.suggested_metadata)) return false;
+  const name = row.suggested_name?.trim();
+  if (!name) return false;
+  const k = nameKey(name);
+  return rejectedNamesOf(row.suggested_metadata).some((r) => nameKey(r) === k);
+}
+
 /** The one name every surface shows: the person's when there is one,
  *  untouched; the model's otherwise, read through the presentation rules
  *  (the first letter capitalised, a titled work's variants in the person's

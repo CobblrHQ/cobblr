@@ -9,12 +9,20 @@ import { platform } from "@cobblr/platform-contract";
 import type { CoreScanDB } from "../db.js";
 import { enrichBarcodeItem } from "./enrich.js";
 import { dropMeta, mergeMeta } from "./metadata.js";
-import { RETRY_LOOKUP_QUEUE, RETRY_MAX_ATTEMPTS, workerAttempt } from "./retry-lookup.js";
+import {
+  RETRY_LOOKUP_QUEUE,
+  RETRY_MAX_ATTEMPTS,
+  enqueueRetryLookup,
+  retriesExhausted,
+  retryStep,
+  type RetryCause,
+} from "./retry-lookup.js";
 
 interface RetryPayload {
   itemId?: unknown;
   upc?: unknown;
   orgSlug?: unknown;
+  attempt?: unknown;
 }
 
 export function registerRetryLookupWorker(): void {
@@ -36,9 +44,11 @@ export function registerRetryLookupWorker(): void {
     // there is nothing left to chase.
     if (!row || row.status === "discarded" || row.suggested_name) return;
 
-    // The LAST run has to finish cleanly rather than throw: a throw would mark
-    // the job failed and leave the row still claiming a retry was coming.
-    const { attemptNo, lastChance, note } = workerAttempt(job.attempts, RETRY_MAX_ATTEMPTS);
+    // The chain counts its own attempts (the payload), so it keeps its own
+    // schedule. A job queued before that carried no count; core-queue's
+    // pre-increment `attempts` is the same number for it (workerAttempt).
+    const attemptNo = typeof p.attempt === "number" && p.attempt >= 1 ? p.attempt : job.attempts + 1;
+    const lastChance = retriesExhausted(attemptNo, RETRY_MAX_ATTEMPTS);
 
     await enrichBarcodeItem({
       db,
@@ -63,8 +73,10 @@ export function registerRetryLookupWorker(): void {
       .executeTakeFirst();
     if (after?.suggested_name) return; // resolved — a successful identify cleared retry_queued
 
-    const stillThrottled =
-      !!(after?.suggested_metadata as { rate_limited?: boolean } | null)?.rate_limited;
+    const afterMeta = (after?.suggested_metadata ?? null) as { rate_limited?: boolean; lookup_unreachable?: boolean } | null;
+    const stillThrottled = !!afterMeta?.rate_limited;
+    const cause: RetryCause = afterMeta?.lookup_unreachable ? "unreachable" : "busy";
+    const { note, next } = retryStep(attemptNo, cause, RETRY_MAX_ATTEMPTS);
 
     if (!stillThrottled) {
       // The provider answered and simply has nothing. enrichBarcodeItem has
@@ -73,14 +85,16 @@ export function registerRetryLookupWorker(): void {
       // marker so a later throttled re-run can enqueue a fresh chain.
       await db
         .updateTable("core_scan_inbox_items")
-        .set({ suggested_metadata: dropMeta(["retry_queued"]) as never, updated_at: new Date() })
+        .set({ suggested_metadata: dropMeta(["retry_queued", "lookup_unreachable"]) as never, updated_at: new Date() })
         .where("id", "=", itemId)
         .execute();
       return;
     }
 
-    // Tell the row where the retry has actually got to, then either give
-    // core-queue a reason to schedule the next attempt, or stop and say so.
+    // Tell the row where the retry has actually got to, then either queue the
+    // next attempt on the chain's own schedule, or stop and say so. Never a
+    // throw: that handed the wait to core-queue's global backoff, whose fourth
+    // step is eighteen minutes (#3710).
     await db
       .updateTable("core_scan_inbox_items")
       .set({
@@ -90,7 +104,7 @@ export function registerRetryLookupWorker(): void {
             // "retrying" state nothing is backing, and let the note say plainly
             // that this one needs a human or a photo.
             {
-              suggested_metadata: mergeMeta({}, ["rate_limited", "retry_queued"]) as never,
+              suggested_metadata: mergeMeta({}, ["rate_limited", "retry_queued", "lookup_unreachable"]) as never,
               ai_suggested_at: new Date(),
             }
           : {}),
@@ -99,7 +113,7 @@ export function registerRetryLookupWorker(): void {
       .where("id", "=", itemId)
       .execute();
 
-    if (lastChance) return;
-    throw new Error(`barcode ${upc} still rate-limited (attempt ${attemptNo})`);
+    if (!next) return;
+    await enqueueRetryLookup({ orgId: job.orgId, itemId, upc, orgSlug, attempt: next.attempt, delayMs: next.delayMs });
   });
 }

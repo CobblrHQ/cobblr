@@ -19,6 +19,10 @@
 // obtained from a separate multipart endpoint — keeps the JSON
 // body limits sane.
 
+import { ocrImageText } from "../services/ocr.js";
+import { applyLabelFacts } from "../services/label-quantity.js";
+import { RESTOCK_CHOICES } from "@cobblr/platform-contract/kind-label";
+import { LOOKUP_GAVE_UP, retryHasRunOut } from "../services/retry-lookup.js";
 import { rememberPickedImage } from "../services/picked-images.js";
 import { TITLE_VARIANTS_KEY, asTitleFormat, formatTitleVariants, titleVariantsOf, type TitleFormat } from "@cobblr/platform-contract/display-identity";
 import { applyUserCategory, applyUserFieldPatch, candidateKind, candidatesWithUserFields } from "../services/user-fields.js";
@@ -26,12 +30,11 @@ import { isMachineReadCode } from "../services/barcode-source.js";
 import { randomUUID } from "node:crypto";
 import { buildCadenceEvents } from "../cadence-events.js";
 import {
-  planItem,
+  planInbox,
   planStillHolds,
   summarise,
   describeSummary,
   type AutofilePlan,
-  type TrackedCandidate,
 } from "../services/autofile.js";
 import { resolveRequirement, storageRequirementFor } from "../services/storage-requirement.js";
 import { applyReceiptFacts } from "../services/receipt-candidate-facts.js";
@@ -66,6 +69,8 @@ import { displayed as displayedNote, cardNote, withoutRoutingSentences } from ".
 import {
   matchesScanFacet,
   needsScanReview,
+  scanHeldForReview,
+  scanRowState,
   scanReviewReason,
   scanReceiptReadFailed,
   scanWaitingDays,
@@ -73,7 +78,7 @@ import {
   SCAN_TRIAGE_COLUMNS,
   type ScanTriageFacet,
   splitUncutWords,
-  type ScanTriageRow, type ScanRowStateContext, type ScanResolverTable, DESTINATION_KEY, FILED_INTO_KEY, type FiledInto, type StoredDestination } from "@cobblr/platform-contract/scan-triage";
+  type ScanTriageRow, type ScanRowStateContext, type ScanResolverTable, DESTINATION_KEY, KEEP_SEPARATE_KEY, scanKeepSeparateStamp, FILED_INTO_KEY, type FiledInto, type StoredDestination } from "@cobblr/platform-contract/scan-triage";
 import { scanToolRelevance, type ScanToolHints } from "@cobblr/platform-contract/scan-tools";
 import { bearer, sessionUser, tenantContext, tenantDb } from "../db.js";
 import { liveTablesOf, withResolvedOffers, type LiveTable } from "../services/resolve-offers.js";
@@ -100,14 +105,17 @@ import {
   pushStep,
   seedHistory,
 } from "../services/catalog-history.js";
-import { pickPrimaryId, unionCandidateFields, traitsHaveUnique, combinedQuantity, type CombineItem, type CombineCandidate } from "../services/combine-merge.js";
+import { pickPrimaryId, unionCandidateFields, traitsHaveUnique, combinedQuantity,
+  combinedQuantityOf, type CombineItem, type CombineCandidate } from "../services/combine-merge.js";
 import { selectTopCandidates, deriveImageQuery, isFreshCategory } from "../services/ddg-images.js";
 import { pictureOptions } from "../services/picture-options.js";
 import { rankPhotoWithAi, isRankFailure, rankFailureSentence } from "../services/rank-photo.js";
-import { picturesThatAgree } from "../services/picture-agrees.js";
+import { looksOfRow, picturesThatAgree } from "../services/picture-agrees.js";
+import { withholdContradictedPicture } from "../services/withhold-picture.js";
 import { themeFromReply, themeScope, type ThemeItem } from "../services/session-theme.js";
 import { scannerQueue } from "../services/scanner-queue.js";
 import { inboxCounts, type CountRow } from "../services/inbox-counts.js";
+import { matchQuery, restampTrackedMatch, trackedMatchStamp } from "../services/tracked-stamp.js";
 import { candidateTableOf, destinationTables, filingDestination, type DestinationRow } from "../services/destination.js";
 import {
   candidateFieldValue,
@@ -162,8 +170,8 @@ import {
   type SourceConflict,
 } from "@cobblr/platform-contract/acquisition-source";
 import { applyNameFacts, nameFactWords } from "../services/name-facts.js";
-import { applyPersonName, withPersonName } from "../services/user-name.js";
-import { displayName, filingName } from "@cobblr/platform-contract/display-identity";
+import { applyPersonName, applyRejectName, withPersonName } from "../services/user-name.js";
+import { displayName, filingName, rejectedNamesOf, USER_NAME_KEY } from "@cobblr/platform-contract/display-identity";
 import { extractLocation, type LocationLite } from "../services/note-location.js";
 import { suggestLocationForItem } from "../services/suggest-location.js";
 import { normaliseCategory } from "@cobblr/platform-contract/category-reconcile";
@@ -263,7 +271,7 @@ inboxRouter.get(
     let fq = db.selectFrom("core_scan_batches").select("id").where("read_state", "=", "failed");
     if (batchId) fq = fq.where("id", "=", batchId);
     const failedIds = new Set((await fq.execute()).map((b) => b.id));
-    res.json(inboxCounts(rows as CountRow[], failedIds, await scanViewerFor(req)));
+    res.json(inboxCounts((rows as CountRow[]).map((r) => asTheCardReadsIt(r)), failedIds, await scanViewerFor(req)));
   }),
 );
 
@@ -1700,7 +1708,7 @@ inboxRouter.get(
       if (batch_id) facetQuery = facetQuery.where("scan_batch_id", "=", batch_id);
       const scanned = await facetQuery.execute();
       const viewer = await scanViewerFor(req);
-      const matched = scanned.filter((row) => matchesScanFacet(row, triage, Date.now(), viewer));
+      const matched = scanned.filter((row) => matchesScanFacet(asTheCardReadsIt(row), triage, Date.now(), viewer));
       // A facet pages like the whole queue does, so a filter longer than one
       // page reaches its end (#3638): the cursor is the offset into the match.
       const offset = typeof cursor === "string" && /^facet:\d+$/.test(cursor) ? Number(cursor.slice(6)) : 0;
@@ -1864,6 +1872,13 @@ export const PatchBody = z.object({
   box_state: z.enum(["item-in-box", "empty-box"]).nullable().optional(),
   // "Looks fine" — a human eyeballed a ⚠-flagged item; drop it from needs-review.
   reviewed: z.boolean().optional(),
+  // "Not right": the name shown is wrong. It joins the turned-down list and
+  // never comes back on its own; the row waits for a name (#3724).
+  reject_name: z.literal(true).optional(),
+  // "Not the same, keep separate": this scan is not the record the
+  // matchmaker found. Stored against THAT record, so a re-run that finds a
+  // different one asks again; false withdraws it.
+  keep_separate: z.boolean().optional(),
   // Answer to "this photo has N different things — keep them together, or split?"
   // true = keep as one record; the offer stops asking. An UNANSWERED offer and a
   // declined one must look different, or we'd nag on every render.
@@ -1938,6 +1953,9 @@ inboxRouter.patch(
       if (
         parsed.data.box_state !== undefined ||
         parsed.data.reviewed !== undefined ||
+        parsed.data.quantity !== undefined ||
+        parsed.data.reject_name !== undefined ||
+        parsed.data.keep_separate !== undefined ||
         parsed.data.keep_grouped !== undefined ||
         parsed.data.read_as_item !== undefined ||
         parsed.data.photo_wanted !== undefined ||
@@ -1948,7 +1966,7 @@ inboxRouter.patch(
       ) {
         const cur = await db
           .selectFrom("core_scan_inbox_items")
-          .select(["suggested_metadata", "suggested_candidates"])
+          .select(["suggested_metadata", "suggested_candidates", "suggested_name"])
           .where("id", "=", id)
           .forUpdate()
           .executeTakeFirst();
@@ -1975,12 +1993,23 @@ inboxRouter.patch(
         // stamped person, so the re-run that rewrites the column never shows
         // over it (services/user-name.ts; every reader resolves through the
         // contract's displayName).
+        if (parsed.data.reject_name) meta = applyRejectName(meta, displayName({ suggested_name: cur?.suggested_name ?? null, suggested_metadata: meta }));
         if (parsed.data.name !== undefined) meta = applyPersonName(meta, parsed.data.name);
         if (parsed.data.box_state !== undefined) {
           if (parsed.data.box_state === null) delete meta.box_state;
           else meta.box_state = parsed.data.box_state;
         }
         if (parsed.data.reviewed !== undefined) meta.reviewed = parsed.data.reviewed;
+        // A count the person set is theirs: a label read never replaces it
+        // (services/label-quantity.ts, #3729).
+        if (parsed.data.quantity !== undefined) {
+          meta[FIELD_PROVENANCE_KEY] = { ...fieldProvenanceOf(meta), quantity: { by: "person", from: "edit", at: new Date().toISOString() } };
+        }
+        if (parsed.data.keep_separate !== undefined) {
+          const stamp = parsed.data.keep_separate ? scanKeepSeparateStamp(meta, new Date().toISOString()) : null;
+          if (stamp) meta[KEEP_SEPARATE_KEY] = stamp;
+          else delete meta[KEEP_SEPARATE_KEY];
+        }
         if (parsed.data.keep_grouped !== undefined) meta.keep_grouped = parsed.data.keep_grouped;
         if (parsed.data.read_as_item !== undefined) meta.read_as_item = parsed.data.read_as_item;
         if (parsed.data.destination !== undefined) {
@@ -2067,7 +2096,35 @@ inboxRouter.patch(
         ).catch((err) => console.error("[core-scan] catalog refresh after rename threw:", (err as Error).message));
       }
     }
-    res.json(await served(req, row));
+    // A rename is what the row is called now, so its match is re-derived
+    // under the new name before the row goes back: the card and File
+    // everything read this one stamp (services/tracked-stamp.ts, #3726). A
+    // "not the same" answer stays tied to its record, so a re-derived match
+    // on that record stays declined. A matcher that fails keeps the old
+    // stamp and says so; the detached re-match above tries again.
+    let out = row;
+    if (parsed.data.name !== undefined && row.status === "pending") {
+      try {
+        const named = withPersonName(row);
+        const dest = filingDestination(named, await destinationTablesFor(req));
+        await restampTrackedMatch(tenantContext(req).org.id, db as never, id, row, (dest?.fields as Record<string, unknown> | undefined) ?? null, topCandidateCategory(row.suggested_candidates));
+        out = (await db.selectFrom("core_scan_inbox_items").selectAll().where("id", "=", id).executeTakeFirst()) ?? row;
+      } catch (err) {
+        console.error("[core-scan] re-deriving the match after rename failed; the old one stands:", (err as Error).message);
+      }
+    }
+    // What the row says it looks like may have changed (a colour field, the
+    // name): its catalog picture is judged again against it (#3729).
+    if ((parsed.data.fields !== undefined || parsed.data.name !== undefined) && row.status === "pending") {
+      try {
+        if ((await withholdContradictedPicture(tenantContext(req).org.id, db as never, id)) === "withheld") {
+          out = (await db.selectFrom("core_scan_inbox_items").selectAll().where("id", "=", id).executeTakeFirst()) ?? out;
+        }
+      } catch (err) {
+        console.error("[core-scan] judging the picture after an edit failed:", (err as Error).message);
+      }
+    }
+    res.json(await served(req, out));
   }),
 );
 
@@ -3448,7 +3505,7 @@ async function served<T extends ScanTriageRow & {
   const [withGroup] = await withGroupImages(req, [row]);
   const tables = await destinationTablesFor(req);
   const live = await liveTablesFor(req);
-  return withDestination(withTitle(withResolvedOffers(withGroup!, live), await containerKindsFor(req), titleFormatFor(req)), row, tables, live);
+  return withHeld(withDestination(withTitle(withResolvedOffers(withGroup!, live), await containerKindsFor(req), titleFormatFor(req)), row, tables, live), await scanViewerFor(req));
 }
 
 export async function servedAll<T extends ScanTriageRow & {
@@ -3461,7 +3518,31 @@ export async function servedAll<T extends ScanTriageRow & {
   const containers = await containerKindsFor(req);
   const format = titleFormatFor(req);
   const tables = await destinationTablesFor(req);
-  return (await withGroupImages(req, rows)).map((r, i) => withDestination(withTitle(withResolvedOffers(r, live), containers, format), rows[i]!, tables, live));
+  const viewer = await scanViewerFor(req);
+  return (await withGroupImages(req, rows)).map((r, i) => withHeld(withDestination(withTitle(withResolvedOffers(r, live), containers, format), rows[i]!, tables, live), viewer));
+}
+
+/** A stored row as the card reads it: the person's own field values over the
+ *  candidates' and the person's name over the model's. Every judgement of
+ *  "does this need review" (the served flag, the To review filter, its
+ *  count) is made on this, never the raw row, whose candidate still carries
+ *  a value the person corrected (#3722). */
+function asTheCardReadsIt<T extends ScanTriageRow>(row: T): T {
+  const r = row as T & { suggested_name: string | null; suggested_candidates?: unknown; suggested_metadata?: unknown };
+  return withPersonName({ ...r, suggested_name: r.suggested_name ?? null, suggested_candidates: candidatesWithUserFields(storedCandidateList(r.suggested_candidates), r.suggested_metadata) }) as T;
+}
+
+/** The served row's `needs_review` and `review_reason` from the one held
+ *  predicate, with the viewer's tables, so the field, the filter, the count
+ *  and the card agree on every row (#3722). */
+function withHeld<T extends { needs_review: boolean }>(served: T, viewer: ScanRowStateContext): T {
+  // Judged on the SERVED row, the one the card reads: the person's own field
+  // values are applied there (candidatesWithUserFields). The raw row still
+  // carries the value the person corrected, so it read a conflict the card
+  // had already seen resolved.
+  const row = served as unknown as ScanTriageRow;
+  const held = scanHeldForReview(row, viewer);
+  return { ...served, needs_review: held, review_reason: held ? (scanRowState(row, viewer).sentence ?? null) : null };
 }
 
 /** The row's ONE destination on the answer itself (services/destination.ts),
@@ -3510,6 +3591,9 @@ async function scanViewerFor(req: Request): Promise<ScanRowStateContext> {
     }
     return {
       canInstall,
+      // The tables the card resolves destinations against, so the server
+      // holds a row for review exactly when the card says Review (#3722).
+      tables: await destinationTablesFor(req),
       ...(modules && modules.length > 0
         ? { moduleState: (m: string) => { const x = modules!.find((y) => y.name === m); return !x ? "absent" : x.enabled ? "enabled" : "available"; } }
         : {}),
@@ -3607,7 +3691,19 @@ function withTitle<T extends ScanTriageRow & {
   // column a re-run wrote sits beside it as `replaced` (#2982).
   const named = withPersonName(withUser);
   const base = named !== withUser ? named : titled ? { ...withUser, suggested_name: titled } : withUser;
-  return withTriage(withDisplayCategory(base), containerKinds);
+  return withTriage(withDisplayCategory(withRetryState(base)), containerKinds);
+}
+
+/** A row still claiming a barcode retry that cannot be coming (its chain is
+ *  past its window: a lost job, a restart mid-chain) reads as the retries
+ *  having run out: the flags gone, the last word said, and the card's photo
+ *  and Name it on offer. Derived on the way out, so no row can promise a
+ *  retry for longer than the chain can take, whatever happened to its job
+ *  (#3710). */
+function withRetryState<T extends { status?: string | null; suggested_name?: string | null; suggested_metadata?: unknown; updated_at?: string | Date | null; ai_notes?: string | null; ai_suggested_at?: string | Date | null }>(row: T): T {
+  if (!retryHasRunOut({ ...row, suggested_metadata: (row.suggested_metadata ?? null) as Record<string, unknown> | null })) return row;
+  const { rate_limited: _r, retry_queued: _q, lookup_unreachable: _u, ...meta } = (row.suggested_metadata ?? {}) as Record<string, unknown>;
+  return { ...row, suggested_metadata: meta, ai_notes: LOOKUP_GAVE_UP, ai_suggested_at: row.ai_suggested_at ?? row.updated_at ?? null };
 }
 
 /** The requesting person's title format, for withTitle. */
@@ -4122,7 +4218,28 @@ inboxRouter.post(
           })
           .where("id", "=", id)
           .execute();
+        // "This is wrong" is a person turning the shown name down: stamped the
+        // same way "Not right" stamps it, so this re-run, a replay or a later
+        // lookup can never put it back (#3724). Only the name stamp and the
+        // person's own name are touched, DB-side.
+        const shownMeta = (row.suggested_metadata ?? {}) as Record<string, unknown>;
+        const rejectedMeta = applyRejectName(shownMeta, displayName({ suggested_name: row.suggested_name, suggested_metadata: shownMeta }));
+        if (rejectedMeta !== shownMeta) {
+          await db
+            .updateTable("core_scan_inbox_items")
+            .set({
+              suggested_metadata: mergeMeta({ [FIELD_PROVENANCE_KEY]: rejectedMeta[FIELD_PROVENANCE_KEY] }, [USER_NAME_KEY, FIELD_PROVENANCE_KEY]) as never,
+              updated_at: new Date(),
+            })
+            .where("id", "=", id)
+            .execute();
+        }
       }
+      const rejectedNames = rejectedNamesOf(
+        rerun?.wrong
+          ? applyRejectName((row.suggested_metadata ?? {}) as Record<string, unknown>, displayName({ suggested_name: row.suggested_name, suggested_metadata: row.suggested_metadata }))
+          : row.suggested_metadata,
+      );
       // Capture the caller now — the detached work runs after the request, so
       // route the AI through their personal connection (the 'own' path).
       const uid = sessionUser(req).id;
@@ -4157,6 +4274,8 @@ inboxRouter.post(
             visitorIp: req.ip ?? null,
             hint: photoHint,
             hints: effectiveHints,
+            // Names the person turned down are off the table for this read.
+            ...(rejectedNames.length ? { rejectedNames } : {}),
           });
           // A re-run is exactly when someone looks at a row that was filed as a
           // thing, sees it is a receipt, and presses the button. It has to reach
@@ -4601,8 +4720,7 @@ inboxRouter.post(
     // The AI chooses only among pictures that do not contradict the item's own
     // colour or material (picture-agrees.ts): a person can still pick any of
     // them by hand, but "Pick best" never hands back one the words rule out.
-    const observations = (row.suggested_metadata as { photo_observations?: string } | null)?.photo_observations ?? null;
-    const agreeing = picturesThatAgree({ name: rank.name ?? row.suggested_name, observations }, pool);
+    const agreeing = picturesThatAgree(looksOfRow(row, rank.name ?? row.suggested_name), pool);
     if (pool.length > 0 && agreeing.length === 0) {
       res.json({ chosen_url: null, reason: "Every picture here shows a different colour or material from this item. Search again, or choose one yourself." });
       return;
@@ -5193,20 +5311,16 @@ inboxRouter.get(
     const ctx = tenantContext(req);
     const row = await db
       .selectFrom("core_scan_inbox_items")
-      .select(["barcode_text", "suggested_name", "suggested_manufacturer", "status", "target_entity_id", "suggested_candidates"])
+      .select(["barcode_text", "suggested_name", "suggested_manufacturer", "status", "target_entity_id", "suggested_candidates", "suggested_metadata"])
       .where("id", "=", id ?? "")
       .executeTakeFirst();
     if (!row) {
       res.status(404).json({ error: { code: "not_found", message: "inbox item not found" } });
       return;
     }
-    const matches = await findTracked(ctx.org.id, {
-      barcode: row.barcode_text,
-      name: row.suggested_name,
-      fields: topCandidateFields(row.suggested_candidates),
-      brand: row.suggested_manufacturer,
-      category: topCandidateCategory(row.suggested_candidates),
-    });
+    // Asked the way the stamp is (the person's name first), so the banner
+    // never lists records the row's own match was not derived from (#3726).
+    const matches = await findTracked(ctx.org.id, matchQuery(row, topCandidateFields(row.suggested_candidates), topCandidateCategory(row.suggested_candidates)));
     res.json(matches);
   }),
 );
@@ -5575,6 +5689,10 @@ const AttachBody = z.object({
   /** For mode=move: target location; defaults to the item's own
    *  target_location_id (the active bin it was scanned into). */
   location_id: z.string().optional(),
+  /** How many were bought, for add-qty / replace, when the door says so (a
+   *  File everything line, a queue's count); else the row's own. Absent from
+   *  this schema, a door's count was stripped and the row's filed instead. */
+  qty: FiledQuantity.optional(),
 });
 
 // AI-REACH: takes or produces a file (multipart or binary), which an action cannot carry
@@ -5695,7 +5813,7 @@ inboxRouter.post(
         // a fresh lot on it is never overwritten by a snapshot taken before
         // the lot existed, and a PATCH that fails leaves the count unmoved.
         priorQty = Number.isFinite(cur) ? cur : 0;
-        qtyAdded = filedQuantityOf(row.quantity);
+        qtyAdded = parsed.data.qty ?? filedQuantityOf(row.quantity);
       }
       // Barcode-append: a scanned (not AI-read) code the entity doesn't have yet.
       const aiRead = isMachineReadCode(
@@ -5908,6 +6026,8 @@ inboxRouter.post(
       .updateTable("core_scan_inbox_items")
       .set({
         status: "resolved",
+        // The row says what was filed: the door's count when it gave one.
+        ...(parsed.data.qty != null && (parsed.data.mode === "add-qty" || parsed.data.mode === "replace") ? { quantity: parsed.data.qty } : {}),
         target_module: module ?? null,
         target_kind: parsed.data.kind,
         target_entity_id: parsed.data.entity_id,
@@ -6216,6 +6336,21 @@ inboxRouter.post(
     // "this looks wrong" correction offer earned by nothing. So an upload is
     // ATTACHED and nothing more; the card's existing re-identify action is
     // there when the user means it as evidence.
+    // Any photo joined to an item is READ as well as kept (#3731): a lot
+    // sticker photographed after the item's own barcode says how many there
+    // are, which lot and which colourway. Read with the OCR engine, no model;
+    // what it finds is written as read from the label, and never over what
+    // the person set (services/label-quantity.ts). An upload is read too: a
+    // count or a lot printed on it is the same fact, and nothing is taken
+    // over the person's own values.
+    {
+      const readOrg = tenantContext(req).org.id;
+      void (async () => {
+        const file = await platform().files.read(readOrg, parsed.data.file_id, "original");
+        const text = file ? (await ocrImageText(new Uint8Array(file.bytes)))?.text : null;
+        if (text?.trim()) await applyLabelFacts(db as never, updated.id, text);
+      })().catch((e) => console.error("[core-scan] reading the added photo's label threw:", (e as Error).message));
+    }
     if (!parsed.data.uploaded) {
       const orgId = tenantContext(req).org.id;
       const named =
@@ -6720,7 +6855,7 @@ const AutofileBody = z.object({
          *  means for it, the same answers the card and the detail offer
          *  (useRepurchaseChoices). add = +1; replaced = the old one ran out,
          *  this is what there is now; went_bad = the old one was thrown out. */
-        restock: z.enum(["add", "replaced", "went_bad"]).optional(),
+        restock: z.enum(RESTOCK_CHOICES).optional(),
       }),
     )
     .max(500)
@@ -6781,40 +6916,20 @@ inboxRouter.post(
     // read once for the page: the plan must file where the person saw it
     // headed, not where the raw route pointed (#3618).
     const tables = await destinationTablesFor(req);
-    for (const row of rows) {
-      const dest = filingDestination(row, tables, liveNow);
-      let matches: { barcode_matches: TrackedCandidate[]; name_matches: TrackedCandidate[] } = {
-        barcode_matches: [],
-        name_matches: [],
-      };
-      try {
-        matches = (await findTracked(ctx.org.id, {
-          barcode: row.barcode_text,
-          name: row.suggested_name,
-          fields: (dest?.fields as Record<string, unknown> | undefined) ?? {},
-          brand: row.suggested_manufacturer,
-          category: topCandidateCategory(row.suggested_candidates),
-        })) as never;
-      } catch {
-        // A matcher that fails must not turn into "nothing matched", which
-        // would create a duplicate. Treat it as ambiguous and leave it.
-        plans.push({ action: "skip", itemId: row.id, name: row.suggested_name, why: "could not check what you already have" });
-        continue;
-      }
-      const cand = dest;
-      plans.push(
-        planItem({
-          id: row.id,
-          suggested_name: row.suggested_name,
-          quantity: row.quantity,
-          candidate: cand as never,
-          barcodeMatches: matches.barcode_matches,
-          nameMatches: matches.name_matches,
-          canInstall,
-          review: scanReviewReason(row),
-        }),
-      );
-    }
+    // Every row matched fresh, by the card's own derivation, before anything
+    // is written (services/autofile.ts planInbox, #3726).
+    plans.push(
+      ...(await planInbox(rows, {
+        rematch: (row) => {
+          const pre = filingDestination(row, tables, liveNow);
+          return restampTrackedMatch(ctx.org.id, db as never, row.id, row, (pre?.fields as Record<string, unknown> | undefined) ?? null, topCandidateCategory(row.suggested_candidates));
+        },
+        candidate: (row) => filingDestination(row, tables, liveNow) as never,
+        review: (row) => scanReviewReason(row),
+        tables,
+        canInstall,
+      })),
+    );
 
     // The plan the sheet shows is the plan confirm acts on: every row it
     // planned. `total` is how many it planned and `more` says there are rows
@@ -7164,7 +7279,8 @@ inboxRouter.post(
         /* trait lookup is best-effort — fall back to the summing default */
       }
     }
-    const totalQty = combinedQuantity(rows.map((r) => filedQuantityOf(r.quantity)), uniqueKind);
+    // A case label beside one of its items is the case's count (#3729).
+    const totalQty = combinedQuantityOf(rows.map((r) => ({ quantity: filedQuantityOf(r.quantity), barcode_text: r.barcode_text })), uniqueKind);
     const barcodes = Array.from(new Set(rows.map((r) => r.barcode_text).filter(Boolean))) as string[];
     const meta = (primary.suggested_metadata ?? {}) as Record<string, unknown>;
     // Barcode authority: if the kept item's own barcode was READ BY AI (OCR, can
@@ -7935,15 +8051,18 @@ async function matchItem(opts: MatchItemOpts): Promise<unknown[] | null> {
     // expanded banner still queries live and stays authoritative — this stamp is
     // the hint that keeps the collapsed CTA honest. Best-effort: a lookup failure
     // must never fail the match.
-    const tracked = await findTracked(opts.orgId, {
-      barcode: row.barcode_text,
-      name: adoptName ? candName : row.suggested_name,
-      fields: (top as { fields?: Record<string, unknown> } | undefined)?.fields ?? null,
-      brand: row.suggested_manufacturer,
-      category: (top as { category?: string } | undefined)?.category ?? null,
-    }).catch(() => null);
-    const bestTracked =
-      tracked?.barcode_matches[0] ?? tracked?.name_matches[0] ?? null;
+    // The one derivation (services/tracked-stamp.ts): a person's name over
+    // the model's, so a re-run after a rename matches what the row is called.
+    const tracked = await findTracked(
+      opts.orgId,
+      matchQuery(
+        row,
+        (top as { fields?: Record<string, unknown> } | undefined)?.fields ?? null,
+        (top as { category?: string } | undefined)?.category ?? null,
+        adoptName ? candName : row.suggested_name,
+      ),
+    ).catch(() => null);
+    const trackedStamp = trackedMatchStamp(tracked);
 
     // A row the lookup could not name stays nameless (adopt-name.ts, guard
     // 0): the route and the fields are stored, the invented name on each
@@ -7964,26 +8083,7 @@ async function matchItem(opts: MatchItemOpts): Promise<unknown[] | null> {
           // Always written (null included): a re-run after you deleted the
           // duplicate must CLEAR a stale match, not leave the card offering to
           // merge into something that's gone.
-          tracked_match: bestTracked
-            ? {
-                kind: bestTracked.kind,
-                id: bestTracked.id,
-                title: bestTracked.title,
-                instance: bestTracked.instance,
-                matched_by: bestTracked.matched_by,
-                matched_label: bestTracked.matched_label ?? null,
-                // Whether the record keeps a count is what makes "+1 more"
-                // the right filing (scanRowState); a record with none is one
-                // unique thing. A row stamped before this key reads as
-                // uncounted, which is a look first, never a wrong +1.
-                qty: bestTracked.qty,
-                // The picture a person already chose for the thing they have.
-                // A re-purchase off a receipt searched the web again and came
-                // home with a tin, over a photo the owner had hand-picked for
-                // that very record (2026-09-06). The card shows this one first.
-                image_path: bestTracked.image_path,
-              }
-            : null,
+          tracked_match: trackedStamp,
           ...(photoObservations ? { photo_observations: photoObservations } : {}),
           ...(photoObservedFor ? { photo_observed_for: photoObservedFor } : {}),
           ...(photoPackaging ? { packaging: photoPackaging } : {}),

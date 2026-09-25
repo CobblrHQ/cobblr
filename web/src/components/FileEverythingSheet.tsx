@@ -14,6 +14,7 @@
 // look. The 10 to 20 second write shows as work, not a hang, and the result
 // carries per-line Undo (the ordinary unconfirm, which now takes an attach's
 // quantity back off the record) and Undo all.
+import type { RestockChoice } from "@cobblr/platform-contract/kind-label";
 import { useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { CheckCircle2, ChevronDown, Loader2, RotateCcw } from "lucide-react";
@@ -40,6 +41,7 @@ function Pile({
   onToggle,
   tone,
   trailing,
+  restockOf,
 }: {
   title: string;
   hint: string;
@@ -48,6 +50,9 @@ function Pile({
   onToggle: () => void;
   tone: "good" | "new" | "left";
   trailing?: (p: AutofilePlanLine) => React.ReactNode;
+  /** The restock answer chosen on a line, so its sentence says what filing
+   *  will do (#3709). */
+  restockOf?: (p: AutofilePlanLine) => RestockChoice | undefined;
 }) {
   const color =
     tone === "good"
@@ -73,7 +78,7 @@ function Pile({
       {open && lines.length > 0 && (
         <ul className="border-t border-line dark:border-slate-700 divide-y divide-line dark:divide-slate-800">
           {lines.map((p) => {
-            const l = lineFor(p);
+            const l = lineFor(p, restockOf?.(p));
             return (
               <li key={p.itemId} className="px-3 py-1.5 text-sm flex flex-col gap-0.5 sm:flex-row sm:items-baseline sm:gap-2">
                 {/* On a phone the name wraps and the quantity, destination and
@@ -129,7 +134,7 @@ export function FileEverythingSheet({
   // What each "added to what you have" line means for the record: +1 by
   // default, or the old one ran out or went bad. The same answers the card
   // and the detail offer (repurchaseOptions); the plan files by them.
-  const [restock, setRestock] = useState<Record<string, "add" | "replaced" | "went_bad">>({});
+  const [restock, setRestock] = useState<Record<string, RestockChoice>>({});
 
   const confirm = useMutation({
     mutationFn: () => {
@@ -251,6 +256,7 @@ export function FileEverythingSheet({
             open={openPiles.attach}
             onToggle={() => setOpenPiles((o) => ({ ...o, attach: !o.attach }))}
             tone="good"
+            restockOf={(p) => restock[p.itemId]}
             trailing={(p) =>
               p.action === "attach" ? (
                 <RestockPlanChoice

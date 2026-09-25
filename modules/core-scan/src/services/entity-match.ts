@@ -366,14 +366,18 @@ export async function findTracked(
     const perKind = await Promise.all(
       kinds.map(async (k) => {
         try {
-          const res = await platform().entities.list(orgId, k.kind, {
-            filter: { barcode },
-            limit: 3,
-          });
-          // Post-verify: only rows whose metadata REALLY carries this barcode
-          // count (a resolver that ignored the filter returns arbitrary rows).
-          const byBarcode = res.items
-            .filter((e) => metaBarcode(e.fields) === barcode)
+          // Every spelling of the code: a record stamped from the skein's
+          // UPC-A is the product its bulk sticker's GTIN-14 names (#3729).
+          const found = new Map<string, ResolvedEntity>();
+          for (const form of identifierForms(barcode)) {
+            const res = await platform().entities.list(orgId, k.kind, { filter: { barcode: form }, limit: 3 });
+            for (const e of res.items) found.set(`${e.kind}:${e.id}`, e);
+          }
+          // Post-verify: only rows whose metadata REALLY carries this code, in
+          // any spelling, count (a resolver that ignored the filter returns
+          // arbitrary rows).
+          const byBarcode = [...found.values()]
+            .filter((e) => identifierEquals(metaBarcode(e.fields), barcode))
             .map((e) => toMatch(e, k, "barcode", expiryByKind.get(e.kind)));
           // Identifier tier: the code equals an identifier-ROLE field on the
           // record (a book's ISBN, a declared serial). Probed by each form the

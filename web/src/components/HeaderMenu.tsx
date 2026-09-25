@@ -9,7 +9,7 @@
 
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import { createPortal } from "react-dom";
-import { PopoverLayer } from "@cobblr/platform-web";
+import { PopoverLayer, useLockPageScroll } from "@cobblr/platform-web";
 
 interface Props {
   /** The button. Gets the open state so it can show a pressed style. */
@@ -42,29 +42,19 @@ export function HeaderMenu({
 }: Props) {
   const [open, setOpen] = useState(false);
   const hostRef = useRef<HTMLSpanElement>(null);
-  const [pos, setPos] = useState<{ top: number; left: number; width: number; maxHeight: number } | null>(null);
+  const [pos, setPos] = useState<{ top?: number; bottom?: number; left: number; width: number; maxHeight: number } | null>(null);
 
   // A menu is a modal moment: the page must hold still under it. Without this
-  // the page scrolled behind an open panel on both phone and desktop.
+  // the page scrolled behind an open panel on both phone and desktop. The
+  // shared lock, never a hand-rolled one: locking <html> as well as <body>
+  // threw the page to the top on every open (#3718).
   //
   // DECLARED BEFORE the placement effect on purpose. Effects run in declaration
   // order, and locking the scroll changes the layout — so measuring the trigger
   // first means measuring a page that is about to move, and the panel lands
   // detached from the control that opened it (reported 2026-08-14: a menu opened
   // from a row far down the page rendered up near the top).
-  useEffect(() => {
-    if (!open) return;
-    const html = document.documentElement;
-    const body = document.body;
-    const prevHtml = html.style.overflow;
-    const prevBody = body.style.overflow;
-    html.style.overflow = "hidden";
-    body.style.overflow = "hidden";
-    return () => {
-      html.style.overflow = prevHtml;
-      body.style.overflow = prevBody;
-    };
-  }, [open]);
+  useLockPageScroll(open);
 
   useEffect(() => {
     if (!open || !hostRef.current) return;
@@ -85,12 +75,21 @@ export function HeaderMenu({
         : Math.min(width, window.innerWidth - 2 * M);
       let left = align === "right" ? r.right - w : r.left;
       left = Math.max(M, Math.min(left, window.innerWidth - w - M));
-      const top = r.bottom + 6;
-      // Never taller than the room below the trigger. A long menu used to run
-      // off the bottom of a phone with no way to reach the last item except
-      // scrolling the PAGE, which dragged the panel along with it (reported
-      // 2026-08-10). Cap it and let the panel scroll inside itself.
-      setPos({ top, left, width: w, maxHeight: Math.max(160, window.innerHeight - top - M) });
+      // Never taller than the room it opens into, and never off the screen. A
+      // long menu used to run off the bottom of a phone with no way to reach
+      // the last item except scrolling the PAGE, which dragged the panel along
+      // with it (reported 2026-08-10); capped at a 160px floor, a trigger near
+      // the bottom still drew its menu past the edge (#3718). So it opens
+      // BELOW when there is a menu's worth of room there, else on whichever
+      // side has more, capped to that side and scrolling inside itself.
+      const below = window.innerHeight - r.bottom - 6 - M;
+      const above = r.top - 6 - M;
+      const up = below < 160 && above > below;
+      setPos(
+        up
+          ? { bottom: window.innerHeight - r.top + 6, left, width: w, maxHeight: above }
+          : { top: r.bottom + 6, left, width: w, maxHeight: Math.max(0, below) },
+      );
     };
     place();
     // …and again on the next frame. Whatever the page does between the click and
@@ -145,7 +144,7 @@ export function HeaderMenu({
           <PopoverLayer
             data-header-menu
             role="menu"
-            style={{ top: pos.top, left: pos.left, width: pos.width, maxHeight: pos.maxHeight }}
+            style={{ top: pos.top, bottom: pos.bottom, left: pos.left, width: pos.width, maxHeight: pos.maxHeight }}
             className="z-[70] overflow-y-auto overscroll-contain rounded-lg border border-line dark:border-slate-700 bg-surface dark:bg-slate-900 shadow-xl py-1.5 text-sm"
           >
             {children({ close: () => setOpen(false) })}

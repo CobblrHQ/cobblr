@@ -13,7 +13,6 @@ import {
   isScanReadyToFile,
   isScanStale,
   matchesScanFacet,
-  needsScanReview,
   scanHasHome,
   scanReceiptReadFailed,
   type ScanRowStateContext,
@@ -69,7 +68,8 @@ export function inboxCounts(
     if (unread && (!r.scan_batch_id || !failedSessionIds.has(r.scan_batch_id))) failedRows++;
     if (home && matchesScanFacet(r, "ready", now, viewer)) ready++;
     if (isScanReadyToFile(r, viewer)) readyToFile++;
-    if (needsScanReview(r)) review++;
+    // The filter's own predicate, so the count is the filter's length (#3722).
+    if (matchesScanFacet(r, "needs_review", now, viewer)) review++;
     if (isScanStale(r, now)) waiting++;
     if (!r.target_location_id) loose.push(r.id);
   }

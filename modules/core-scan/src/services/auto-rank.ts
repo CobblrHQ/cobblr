@@ -14,7 +14,7 @@
 // provenance so it is legible as an automated choice and never claims the user's
 // lock.
 
-import { picturesThatAgree } from "./picture-agrees.js";
+import { looksOfRow, picturesThatAgree } from "./picture-agrees.js";
 import type { Kysely } from "kysely";
 import { platform } from "@cobblr/platform-contract";
 import type { CoreScanDB } from "../db.js";
@@ -287,9 +287,8 @@ export async function autoRankCatalogPhoto(opts: {
   // The model chooses among pictures that do not contradict the item's own
   // colour or material (picture-agrees.ts, #3584): a vision call is not asked
   // to rule out what the words already do.
-  const observations = (row.suggested_metadata as { photo_observations?: string } | null)?.photo_observations ?? null;
   const pool = picturesThatAgree(
-    { name: ctx.name ?? row.suggested_name, observations },
+    looksOfRow(row, ctx.name ?? row.suggested_name),
     (await pictureOptions({ query: ctx.query, name: ctx.name, brand: ctx.brand, color: ctx.color, fresh: isFreshCategory(ctx.category), limit: 24 })).items,
   );
   const candidates = selectTopCandidates(pool, ctx.brand, ctx.query, IMAGE_BUDGET, ctx.color);

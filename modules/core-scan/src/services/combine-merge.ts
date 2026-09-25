@@ -10,6 +10,7 @@
 // So: keep the richest item as the base, and fill its gaps from the others. Pure
 // + tested; the endpoint just persists the result.
 
+import { identifierEquals } from "./identifier-equals.js";
 import { isMachineReadCode } from "./barcode-source.js";
 
 export interface CombineCandidate {
@@ -87,6 +88,36 @@ export function combinedQuantity(quantities: number[], unique: boolean): number 
   const qs = quantities.map((q) => (Number.isFinite(q) && q > 0 ? q : 1));
   if (qs.length === 0) return 1;
   return unique ? Math.max(...qs) : qs.reduce((a, b) => a + b, 0);
+}
+
+/** A row that is the CASE of the others' item: its code is a GTIN-14 that
+ *  wraps the same item code another row carries (identifier-equals.ts). A
+ *  case's count is how many of the item there are; an item scan beside it is
+ *  one of them, not one more (#3729: a skein and its bulk sticker of 3 are 3,
+ *  not 4 and not 2). */
+function isCaseOf(row: { barcode_text?: string | null }, others: ReadonlyArray<{ barcode_text?: string | null }>): boolean {
+  const code = (row.barcode_text ?? "").replace(/\D/g, "");
+  if (code.length !== 14 || code[0] === "0" || code[0] === "9") return false;
+  return others.some((o) => {
+    const c = (o.barcode_text ?? "").replace(/\D/g, "");
+    return !!c && c.length < 14 && identifierEquals(c, code);
+  });
+}
+
+/** The combined quantity of rows being combined: the case count when one of
+ *  them is the case of the others' item (never fewer than the loose scans
+ *  beside it), else combinedQuantity's rule. */
+export function combinedQuantityOf(
+  rows: ReadonlyArray<{ quantity: number | null; barcode_text?: string | null }>,
+  unique: boolean,
+): number {
+  const q = (r: { quantity: number | null }) => (Number.isFinite(r.quantity) && (r.quantity ?? 0) > 0 ? (r.quantity as number) : 1);
+  const cases = rows.filter((r) => isCaseOf(r, rows.filter((o) => o !== r)));
+  if (cases.length) {
+    const loose = rows.filter((r) => !cases.includes(r));
+    return Math.max(cases.reduce((a, r) => a + q(r), 0), loose.reduce((a, r) => a + q(r), 0));
+  }
+  return combinedQuantity(rows.map(q), unique);
 }
 
 export function unionCandidateFields(

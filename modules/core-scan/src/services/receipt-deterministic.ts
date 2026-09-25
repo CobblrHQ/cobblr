@@ -26,7 +26,10 @@ export function enrichReceiptMeta(receipt: ParsedReceipt, text: string): ParsedR
   const cur = curMatch ? (SYMBOL_CURRENCY[curMatch[0]] ?? curMatch[0].toUpperCase()) : null;
   return {
     ...receipt,
-    vendor: receipt.vendor ?? firstLine,
+    // A merchant is taken only from a line that names one. A CSV's first line
+    // is its column header, and "description,qty,unit price,amount" became
+    // the merchant of a hundred lines (#3706).
+    vendor: receipt.vendor ?? (firstLine && merchantShaped(firstLine) ? firstLine : null),
     date: receipt.date ?? (dateMatch ? isoDate(dateMatch[1]) : null),
     total: receipt.total ?? (totalMatch ? num(totalMatch[1]) : null),
     currency: receipt.currency ?? cur,
@@ -35,13 +38,46 @@ export function enrichReceiptMeta(receipt: ParsedReceipt, text: string): ParsedR
 
 // ── column classification (shared by CSV + PDF tables) ───────────────────────
 
-type Col = "desc" | "qty" | "unit" | "amount";
+/** Column words a header row is made of that are not line-item columns but
+ *  still say "this row is a header": identifiers and dates. */
+const OTHER_HEADER_WORD = /^(sku|upc|ean|barcode|item\s*(no|number|#)|part\s*(no|number|#)|date|order|invoice|tax|category|unit|uom)$/;
+
+/** Is this row a table's column header, not data and never a name? At least
+ *  two of its cells are column words, the same vocabulary the parser maps
+ *  columns by. */
+export function isHeaderRow(cells: readonly string[]): boolean {
+  let words = 0;
+  for (const cell of cells) {
+    const c = cell.toLowerCase().trim();
+    if (!c) continue;
+    if (classifyHeader(c) || OTHER_HEADER_WORD.test(c)) words++;
+  }
+  return words >= 2;
+}
+
+/** The cells of one line of text, split on whatever separates columns. */
+function cellsOf(line: string): string[] {
+  return line.split(/\s*[,;\t|]\s*|\s{2,}/).filter((c) => c.trim() !== "");
+}
+
+/** Could this line of a receipt's text be the merchant's name? Not a
+ *  column header, not a row of a table, and it has words in it. */
+export function merchantShaped(line: string): boolean {
+  const cells = cellsOf(line);
+  if (isHeaderRow(cells)) return false;
+  if (/[,;\t|]/.test(line) && cells.length >= 3) return false;
+  return /\p{L}{2,}/u.test(line);
+}
+
+type Col = "merchant" | "desc" | "qty" | "unit" | "amount";
 
 /** Classify a header cell. Order matters: the more specific multi-word headers
- *  ("unit price", "line total") are tested before the bare word. */
+ *  ("unit price", "line total") are tested before the bare word, and the
+ *  merchant before the description ("store name" is not the item's name). */
 function classifyHeader(cell: string): Col | null {
   const c = cell.toLowerCase().trim();
   if (!c) return null;
+  if (/^(merchant|vendor|store|seller|shop|retailer|supplier)(\s*name)?$/.test(c)) return "merchant";
   // "unit price"/"unit cost" must win over qty (which would otherwise eat the
   // bare word "unit"), so test it FIRST.
   if (/unit\s*price|unit\s*cost|price\s*each|\brate\b|u\/?price/.test(c)) return "unit";
@@ -75,8 +111,16 @@ function priceLike(cell: string): boolean {
 /** Map header-aligned rows to line items. */
 function mapWithHeader(rows: string[][], headerIdx: number, map: Partial<Record<Col, number>>): ParsedReceipt | null {
   const items = [];
+  const merchants = new Set<string>();
   for (let i = headerIdx + 1; i < rows.length; i++) {
     const cells = rows[i]!;
+    // A header repeated inside the file (two exports pasted together) is a
+    // header again, never a line called "description".
+    if (isHeaderRow(cells)) continue;
+    if (map.merchant !== undefined) {
+      const m = str(cells[map.merchant]);
+      if (m) merchants.add(m);
+    }
     const description = map.desc !== undefined ? str(cells[map.desc]) : null;
     if (!description) continue;
     // Skip summary rows (subtotal / tax / shipping / total) — captured separately.
@@ -86,7 +130,10 @@ function mapWithHeader(rows: string[][], headerIdx: number, map: Partial<Record<
     const qty = map.qty !== undefined ? num(cells[map.qty]) : null;
     items.push({ description, qty: qty ?? 1, unit_price: unit, line_total: amount ?? null, weight: null, weight_unit: null });
   }
-  return buildReceipt({ items });
+  // The merchant is the file's own merchant column, when it names ONE shop.
+  // Several shops in one file is not one receipt's merchant; none is unknown.
+  const vendor = merchants.size === 1 ? [...merchants][0]! : null;
+  return buildReceipt({ items, vendor });
 }
 
 /** Headerless fallback: rows where a trailing cell is a price and the leading

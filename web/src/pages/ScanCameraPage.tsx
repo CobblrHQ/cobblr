@@ -36,7 +36,7 @@ import { createPortal } from "react-dom";
 import { useLocation, useNavigate, useSearchParams } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { AlertTriangle, ArrowLeftRight, ArrowRight, Camera, Check, Flashlight, ImagePlus, Loader2, MapPin, Package, Plus, ScanLine, SkipForward, Undo2, X, Zap } from "lucide-react";
-import { useLater, LiveSurfaceProvider, Modal, usePageTitle, useOverlayOpenFlag } from "@cobblr/platform-web";
+import { useLater, LiveSurfaceProvider, Modal, usePageTitle, useOverlayOpenFlag, useLockPageScroll } from "@cobblr/platform-web";
 import { classifyScanPayload, typedVerdict } from "../lib/scanPayload";
 import { doorPlan, frameFromImage, type DoorPlan } from "../lib/imageDoor";
 import { captureRoute } from "../lib/captureRoute";
@@ -1002,13 +1002,7 @@ export function ScanCameraPage() {
   }, [location.key, navigate, backToScan]);
 
   // The overlay covers the page — stop the page behind it from scrolling.
-  useEffect(() => {
-    const prev = document.body.style.overflow;
-    document.body.style.overflow = "hidden";
-    return () => {
-      document.body.style.overflow = prev;
-    };
-  }, []);
+  useLockPageScroll();
 
   // Beep support: create the audio context now, unlock it on the first tap
   // (iOS requires a gesture), so scan blips are audible by the first hit.

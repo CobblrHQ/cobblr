@@ -9,6 +9,8 @@
 // resolver is slow we return the bare row immediately and let
 // this finish detached.
 
+import { pictureColour, colourContradiction } from "./picture-colour.js";
+import { looksOfRow, pictureVerdict, statedColoursOf } from "./picture-agrees.js";
 import net from "node:net";
 import { isBookSource, recordImage, replayImage } from "./catalog-replay.js";
 import { lookup as dnsLookup } from "node:dns/promises";
@@ -490,7 +492,7 @@ export async function enrichBarcodeItem(ctx: EnrichContext): Promise<void> {
       .set({
         suggested_name: vendor.name,
         suggested_manufacturer: vendor.brand,
-        catalog_image_url: catalogImageUrlOrNull(vendor.imageUrl),
+        catalog_image_url: await agreeingCatalogUrl(ctx, vendor.imageUrl, vendor.name ?? null),
         // `fields` ride in suggested_metadata so the commit can land them on
         // the created entity's metadata (size / batch_code for a spool, …).
         suggested_metadata: identityMeta({
@@ -619,6 +621,7 @@ export async function enrichBarcodeItem(ctx: EnrichContext): Promise<void> {
 
   let hit: BarcodeHit | null = null;
   let rateLimited = false;
+  let lookupUnreachable = false;
   if (cacheVal) {
     if (!cacheVal.found) {
       // Cached definitive miss — nothing to do.
@@ -691,6 +694,7 @@ export async function enrichBarcodeItem(ctx: EnrichContext): Promise<void> {
     // Throttled, refused, or could not be asked: the code is UNRESOLVED, not
     // absent. All three ride the retry path below and none is cached.
     if (result.outcome === "rate_limited" || result.outcome === "unavailable") rateLimited = true;
+    if (result.outcome === "unavailable") lookupUnreachable = true;
     // An ISBN is a book. The chain's first answer for one can be a product
     // catalog's stray entry (Open Food Facts answered "Fit Shake" for
     // Designing Data-Intensive Applications, #3162), so an ISBN-13 that a
@@ -828,7 +832,7 @@ export async function enrichBarcodeItem(ctx: EnrichContext): Promise<void> {
           suggested_name: withBrandPrefix(web.name, web.brand),
           suggested_manufacturer: web.brand,
           suggested_sku: web.sku,
-          catalog_image_url: catalogImageUrlOrNull(web.imageUrl),
+          catalog_image_url: await agreeingCatalogUrl(ctx, web.imageUrl, web.name),
           suggested_metadata: identityMeta({
             source: "web-search",
             method: web.method,
@@ -932,7 +936,7 @@ export async function enrichBarcodeItem(ctx: EnrichContext): Promise<void> {
       .updateTable("core_scan_inbox_items")
       .set({
         ai_notes: rateLimited
-          ? retryNote(0)
+          ? retryNote(0, undefined, lookupUnreachable ? "unreachable" : "busy")
           : "No catalog hit for this barcode, and web search turned up nothing. Fill in manually.",
         // On a rate-limit, leave ai_suggested_at NULL (reads as unfinished) AND
         // tag the row so the client shows a distinct "retrying" state and paces
@@ -947,10 +951,14 @@ export async function enrichBarcodeItem(ctx: EnrichContext): Promise<void> {
         // transient outage must not be a data-loss event.
         ...(rateLimited
           ? {
-              suggested_metadata: mergeMeta({
-                rate_limited: true,
-                ...(armRetry ? { retry_queued: true } : {}),
-              }) as never,
+              suggested_metadata: mergeMeta(
+                {
+                  rate_limited: true,
+                  ...(lookupUnreachable ? { lookup_unreachable: true } : {}),
+                  ...(armRetry ? { retry_queued: true } : {}),
+                },
+                lookupUnreachable ? [] : ["lookup_unreachable"],
+              ) as never,
             }
           : { ai_suggested_at: new Date() }),
         updated_at: new Date(),
@@ -1025,7 +1033,7 @@ export async function enrichBarcodeItem(ctx: EnrichContext): Promise<void> {
       suggested_name: isbnFields ? decodedTitle || hit.title : withBrandPrefix(hit.title || null, hit.brand),
       suggested_manufacturer: hit.brand,
       suggested_sku: hit.model,
-      catalog_image_url: catalogImageUrlOrNull(hit.image_url),
+      catalog_image_url: await agreeingCatalogUrl(ctx, hit.image_url, hit.title),
       suggested_metadata: identityMeta({
         source: hit.source,
         category: hit.category,
@@ -1580,6 +1588,31 @@ export function catalogImageUrlOrNull(url: string | null | undefined): string | 
   return url && !isPlaceholderImageUrl(url) ? url : null;
 }
 
+/** The catalog picture address a writer may put on the row: never a stock
+ *  placeholder, and never one whose own words (title, address) contradict
+ *  what the row says it looks like (picture-agrees.ts). Every writer of a
+ *  lookup's, a web result's or a vendor's picture asks here; the pixels are
+ *  judged again when the picture is downloaded (#3729). */
+async function agreeingCatalogUrl(
+  ctx: Pick<EnrichContext, "db" | "itemId">,
+  url: string | null | undefined,
+  title: string | null | undefined,
+): Promise<string | null> {
+  const u = catalogImageUrlOrNull(url);
+  if (!u) return null;
+  const row = await ctx.db
+    .selectFrom("core_scan_inbox_items")
+    .select(["suggested_name", "suggested_candidates", "suggested_metadata"])
+    .where("id", "=", ctx.itemId)
+    .executeTakeFirst();
+  const verdict = row ? pictureVerdict(looksOfRow(row), { title: title ?? null, url: u }) : null;
+  if (verdict?.contradicts) {
+    console.warn(`[core-scan] catalog picture ${u} for ${ctx.itemId} ${verdict.contradicts}; not used`);
+    return null;
+  }
+  return u;
+}
+
 export async function downloadCatalogImage(
   ctx: Pick<EnrichContext, "db" | "orgId" | "itemId">,
   imageUrl: string,
@@ -1636,6 +1669,36 @@ export async function downloadCatalogImage(
         (opts.unitSide ? await cropToUnit(raw, opts.unitSide) : await cropToFirstUnit(raw)) ?? raw;
       const trim = await trimCatalogMarginsWithVerdict(single);
       const trimmed = trim.bytes ?? single;
+      // What colour the picture IS, from its pixels: a picture whose URL says
+      // nothing (a bare image hash) is judged by what it shows. One that
+      // contradicts every colour the row states is refused here, so the
+      // caller tries the next candidate or the row keeps the person's photo;
+      // the measurement rides on the row so a colour stated later is judged
+      // against it too (picture-agrees.ts catalogPictureContradicts, #3729).
+      const colour = await pictureColour(trimmed);
+      const looksRow = await ctx.db
+        .selectFrom("core_scan_inbox_items")
+        .select(["suggested_name", "suggested_candidates", "suggested_metadata"])
+        .where("id", "=", ctx.itemId)
+        .executeTakeFirst();
+      const why = looksRow ? colourContradiction(statedColoursOf(looksOfRow(looksRow)), colour) : null;
+      if (why) {
+        console.warn(`[core-scan] catalog picture ${imageUrl} for ${ctx.itemId}: ${why}; not used`);
+        // The writer that chose it may already have put its address on the
+        // row; that address is the same picture and goes with it.
+        await ctx.db
+          .updateTable("core_scan_inbox_items")
+          .set({
+            catalog_image_url: null,
+            suggested_metadata: sql`coalesce(suggested_metadata, '{}'::jsonb) || ${JSON.stringify({ catalog_image_withheld: { file_id: null, url: imageUrl, why, at: new Date().toISOString() } })}::jsonb`,
+            updated_at: new Date(),
+          })
+          .where("id", "=", ctx.itemId)
+          .where("catalog_image_url", "=", imageUrl)
+          .where(CATALOG_PICTURE_NOT_PERSONS)
+          .execute();
+        return false;
+      }
       const written = await platform().files.write(ctx.orgId, trimmed, {
         filename,
         mimeType: trimmed === raw ? blob.type || "image/jpeg" : "image/jpeg",
@@ -1651,7 +1714,7 @@ export async function downloadCatalogImage(
           // what keeps a search engine's block in place (2026-09-06).
           // What the trim did rides on the row (catalog_image_trim), so a
           // picture that arrives untrimmed can be read, not reproduced (#3002).
-          suggested_metadata: sql`(coalesce(suggested_metadata, '{}'::jsonb) - 'catalog_image_status') || ${JSON.stringify({ catalog_image_trim: trim.verdict })}::jsonb`,
+          suggested_metadata: sql`(coalesce(suggested_metadata, '{}'::jsonb) - 'catalog_image_status' - 'catalog_colour') || ${JSON.stringify({ catalog_image_trim: trim.verdict, ...(colour ? { catalog_colour: { ...colour, file_id: written.fileId } } : {}) })}::jsonb`,
           updated_at: new Date(),
         })
         .where("id", "=", ctx.itemId)

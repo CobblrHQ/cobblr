@@ -2,6 +2,27 @@
 
 User-facing changes, newest first. Dates are release dates.
 
+## 2026-09-25
+
+### Features
+- A photo of a label now fills in its item. Photograph a bulk bag or a lot sticker after scanning the item and the count, lot, colour, SKU and case code printed on it are written onto that item, marked as read from the label. Anything you typed yourself stays yours, and combining a case label with one of its items counts the case once.
+
+### Improvements
+- The community is now easy to find: a "Join the community" section in the account menu and at the foot of the phone menu lists the Discord and every other community place your instance offers, and it is hidden when none is set up.
+
+### Fixes
+- A barcode the lookup cannot answer right now no longer sits on "Trying again" for twenty minutes. It tries a few times over about eight minutes, says whether the service was busy or could not be reached, and then says "Couldn't look this up. Take a photo or name it." with both on offer.
+- A CSV of purchases with no shop in it no longer files its column header ("description,qty,unit price,amount") as the shop every line came from. The shop is taken only from a column that names one, and is left blank otherwise.
+- Opening a session's menu no longer jumps the page to the top and opens the menu off screen: the page stays put and the menu opens beside its button, above it when there is no room below. On a phone the menu button no longer catches taps meant for the File button next to it.
+- A session's merge now names the session it joins ("Merge with Sep 24, 6:00 PM, above") and joins exactly that one, the session shown directly above. It used to say "the session above" and join one further down, skipping past a receipt.
+- "Not right" on the camera now sticks: the wrong name is turned down on the item, and looking again, a replay or an empty name can no longer bring it back. The item waits for the name you type, and an empty name asks for one instead of being accepted.
+- A scanned item's picture now has to show the colour the item says it is. A catalog or web picture of another colour (a beige skein for a dark-blue yarn) is set aside and your own photo is shown instead, and a product's case barcode is recognised as the same product as the item's own barcode.
+- In File everything, a line added to something you have now says what your choice will do, with the count before and after ("Replace Sourdough loaf: 2 → 1 (the old one went bad)"). It used to keep saying "+1 to" whatever you picked.
+- A scan that matches something you already have now says where it goes. A receipt's milk that matched the milk in Groceries showed Inventory as its table while "Replaced the one that ran out" updated Groceries. The pill now reads "Whole milk in Groceries", and the dashboard, File N and File everything add to that record instead of making a second one. Picking another table, or "Not the same", files it as a new item and is remembered.
+- Renaming a scan now re-checks whether you already have it, and every button agrees. A renamed scan could offer "+1" to a record on its card while File everything planned a new one. The match is now worked out once, under the name you gave it, and the card, File N, the dashboard and File everything all read that answer. A scan that matches several things equally now asks you to pick instead of adding to the first.
+- A scan session's header on a phone keeps the shop's name, the date and the count on screen however long the order number is: the order number gives way first, and a date or time now drops a whole word ("Sep 1") instead of being cut to "Sep 1, 8:4…". The session's ⋯ also takes less of the line.
+- Every scan whose card says Review is now under "To review" and in its count, including a named item whose table is only a guess or not chosen yet. Before, those showed Review on the card but were missing from the filter.
+
 ## 2026-09-24
 
 ### Improvements

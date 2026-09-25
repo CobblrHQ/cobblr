@@ -291,6 +291,9 @@ if (FILE_ALL !== -1 && OPEN !== -1) {
 // controls, so a positioned thing elsewhere on the page is not this rule's
 // business.
 const headerJsx = src.slice(0, 26_000);
+// A pseudo-element is NOT exempt. A 44px ::after touch target over a 16px ⋯
+// lay over the File button, so a tap on File opened the menu (#3717). A
+// control's target comes from its own box; nothing positioned in the row.
 for (const m of headerJsx.matchAll(/className=[{"`][^"`}]*\babsolute\b/g)) {
   // `src` is already sliced from the anchor, so a line counted inside it is
   // relative to the slice. Count in the WHOLE file, which stripComments keeps

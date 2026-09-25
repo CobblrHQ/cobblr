@@ -4,6 +4,7 @@
 // you", then confirms exactly the first two. The route acts only on the ids it
 // is sent and only where the plan still holds, so what is sent is what was
 // seen: the ids of the two filing piles and each line's action and target.
+import { restockSentence, type RestockChoice } from "@cobblr/platform-contract/kind-label";
 import type { AutofilePlanLine } from "./api";
 
 export interface Piles {
@@ -27,10 +28,10 @@ export function pilesFrom(plans: readonly AutofilePlanLine[]): Piles {
 export function seenFrom(
   piles: Piles,
   /** A line's restock answer, when the person chose one other than +1. */
-  restock: Readonly<Record<string, "add" | "replaced" | "went_bad">> = {},
+  restock: Readonly<Record<string, RestockChoice>> = {},
 ): {
   item_ids: string[];
-  seen: Array<{ item_id: string; action: "attach" | "create"; to_id?: string | null; destination?: string | null; restock?: "add" | "replaced" | "went_bad" }>;
+  seen: Array<{ item_id: string; action: "attach" | "create"; to_id?: string | null; destination?: string | null; restock?: RestockChoice }>;
 } {
   const seen = [
     ...piles.attach.map((p) => ({ item_id: p.itemId, action: "attach" as const, to_id: p.to.id, ...(restock[p.itemId] ? { restock: restock[p.itemId] } : {}) })),
@@ -40,9 +41,11 @@ export function seenFrom(
 }
 
 /** "+2 to Cucumbers · same barcode": the line a person reads. */
-export function lineFor(p: AutofilePlanLine): { name: string; detail: string } {
+export function lineFor(p: AutofilePlanLine, restock: RestockChoice = "add"): { name: string; detail: string } {
   const name = p.name ?? "(unnamed)";
-  if (p.action === "attach") return { name, detail: `+${p.qty} to ${p.to.title} · ${p.why}` };
+  // The line says what the chosen restock will do, never "+N" under a
+  // "went bad" (#3709): the same function the counts are held to.
+  if (p.action === "attach") return { name, detail: `${restockSentence(restock, p.to.title, p.to.qty ?? null, p.qty)} · ${p.why}` };
   if (p.action === "create") {
     const where = p.destination ? `into ${p.destination}${p.installs ? " (installs it first)" : ""}` : "as new";
     return { name, detail: `${p.qty > 1 ? `×${p.qty} ` : ""}${where} · ${p.why}` };

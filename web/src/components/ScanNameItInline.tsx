@@ -58,7 +58,11 @@ export function ScanNameItInline({
           <span className="text-faint">{guess.source}</span>
         </div>
       )}
-      <div className="flex items-center gap-1.5">
+      {/* Wraps rather than overflows: an input's own minimum is its
+          intrinsic width, so at 320px with larger text the pair ran Identify
+          past the card. Now the input asks for 8rem and Identify takes the
+          next line when both cannot fit (#3705). */}
+      <div className="flex flex-wrap items-center gap-1.5">
         <input
           value={name}
           onChange={(e) => setName(e.target.value)}
@@ -66,7 +70,7 @@ export function ScanNameItInline({
           aria-label="Name this item"
           data-name-it={itemId}
           autoFocus={autoFocus}
-          className="input !py-1 text-xs flex-1"
+          className="input !py-1 text-xs min-w-0 grow basis-32"
           onKeyDown={(e) => {
             if (e.key === "Enter" && name.trim()) mut.mutate(name);
           }}

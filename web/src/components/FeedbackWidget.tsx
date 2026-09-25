@@ -10,9 +10,9 @@
 import { useState, useRef, useEffect } from "react";
 import { useLater, FloatingChrome } from "@cobblr/platform-web";
 import { Modal, useToast } from "@cobblr/platform-web";
-import { BookOpen, Copy, ExternalLink, Github, ImagePlus, MessageCircle, MessageSquare, Users, X, ChevronRight } from "lucide-react";
+import { Copy, ExternalLink, ImagePlus, MessageSquare, X, ChevronRight } from "lucide-react";
 import { api, type CommunityLink } from "../lib/api";
-import { communityLinksFor } from "../lib/community-links";
+import { CommunityLinks, communityPlaceUrl } from "./CommunityLinks";
 import { environmentBlock, newIssueUrl, reportBody, type ReportInput, type ServerDiagnostics } from "../lib/bug-report";
 import { useAuth } from "../auth/AuthContext";
 import { resolveHandle } from "../auth/ActiveOrgContext";
@@ -214,7 +214,7 @@ export function FeedbackWidget({ asRow = false }: { asRow?: boolean } = {}) {
   /** A fork's operator points "Open an issue" at their own tracker via
    *  COBBLR_ISSUES_URL (the "issues" community link); stock self-hosts fall
    *  back to the public upstream repo inside newIssueUrl. */
-  const issuesBase = user?.community_links?.find((l) => l.id === "issues")?.url;
+  const issuesBase = communityPlaceUrl(user, "issues") ?? undefined;
 
   async function copyReport() {
     try {
@@ -469,7 +469,7 @@ export function FeedbackWidget({ asRow = false }: { asRow?: boolean } = {}) {
               because there are three of them now and there was room for one.
               The server decides which exist and in what order (see
               api/src/platform/community.ts); this only draws them. */}
-          <CommunityLinks user={user} />
+          <WidgetCommunityLinks user={user} />
         </div>
       </Modal>
     </>
@@ -480,42 +480,17 @@ export function FeedbackWidget({ asRow = false }: { asRow?: boolean } = {}) {
  *
  *  Distinct from "Open an issue" above it on purpose: that button carries the
  *  report you just typed, so it SUBMITS this. These are places you go with a
- *  question, and they take nothing with them. */
-function CommunityLinks({ user }: { user?: { community_links?: CommunityLink[]; discord_invite_url?: string | null } | null }) {
-  const links = communityLinksFor(user);
-  if (links.length === 0) return null;
-
-  const icon: Record<CommunityLink["id"], typeof MessageCircle> = {
-    chat: MessageCircle,
-    forum: Users,
-    issues: Github,
-    docs: BookOpen,
-  };
-
+ *  question, and they take nothing with them. The places themselves are the
+ *  shared list every menu shows (CommunityLinks). */
+function WidgetCommunityLinks({ user }: { user?: { community_links?: CommunityLink[]; discord_invite_url?: string | null } | null }) {
   return (
-    <div className="border-t border-line dark:border-slate-700 pt-3 space-y-1.5">
-      <div className="text-[10px] font-mono uppercase tracking-widest text-faint dark:text-slate-500">
-        Or ask somewhere
-      </div>
-      {links.map((l) => {
-        const Icon = icon[l.id] ?? MessageCircle;
-        return (
-          <a
-            key={l.id}
-            href={l.url}
-            target="_blank"
-            rel="noopener noreferrer"
-            className="flex items-start gap-2.5 rounded-md px-2 py-1.5 -mx-2 hover:bg-subtle dark:hover:bg-slate-800/60 transition"
-          >
-            <Icon size={15} className="text-accent mt-0.5 shrink-0" />
-            <span className="min-w-0">
-              <span className="block text-sm text-content dark:text-mortar-100">{l.label}</span>
-              <span className="block text-xs text-muted dark:text-slate-400">{l.blurb}</span>
-            </span>
-            <ExternalLink size={12} className="ml-auto mt-1 shrink-0 text-faint" />
-          </a>
-        );
-      })}
-    </div>
+      <CommunityLinks
+        user={user}
+        containerClassName="border-t border-line dark:border-slate-700 pt-3 space-y-1.5"
+        withBlurb
+        iconClassName="text-accent mt-0.5"
+        heading={<div className="text-[10px] font-mono uppercase tracking-widest text-faint dark:text-slate-500">Or ask somewhere</div>}
+        itemClassName="flex items-start gap-2.5 rounded-md px-2 py-1.5 -mx-2 hover:bg-subtle dark:hover:bg-slate-800/60 transition"
+      />
   );
 }
