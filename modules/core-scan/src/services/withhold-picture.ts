@@ -12,14 +12,15 @@
 import type { Kysely } from "kysely";
 import { sql } from "kysely";
 import { platform } from "@cobblr/platform-contract";
-import { catalogPictureContradicts } from "./picture-agrees.js";
-import { pictureColour } from "./picture-colour.js";
+import { catalogPictureContradicts, looksOfRow, statedColoursOf } from "./picture-agrees.js";
+import { colourShows, pictureColour, type ColourFamily } from "./picture-colour.js";
 
 interface WithholdDB {
   core_scan_inbox_items: {
     id: string;
     status: string;
     suggested_name: string | null;
+    suggested_manufacturer: string | null;
     suggested_candidates: unknown;
     suggested_metadata: unknown;
     catalog_image_file_id: string | null;
@@ -75,4 +76,45 @@ export async function withholdContradictedPicture(orgId: string, db: Kysely<With
     .execute();
   console.log(`[core-scan] org ${orgId} row ${itemId}: set its catalog picture aside (${why})`);
   return "withheld";
+}
+
+export type RechooseOutcome = "shows" | "sought" | "already sought" | "nothing";
+
+/** Look for a picture that SHOWS the colour the row states, when its picture
+ *  does not (#3729). A colour can arrive after the picture: the label read
+ *  says "J7 DARK BLUE" for a row whose picture was chosen from the barcode
+ *  alone, or a withheld picture left none. The search runs once per stated
+ *  colour set (`catalog_colour_sought`), so a row whose web has no picture of
+ *  that colour does not search on every photo read. A picture the person
+ *  chose is never replaced. */
+export async function rechoosePictureForColour(orgId: string, db: Kysely<WithholdDB>, itemId: string): Promise<RechooseOutcome> {
+  const row = await db
+    .selectFrom("core_scan_inbox_items")
+    .select(["id", "status", "suggested_name", "suggested_manufacturer", "suggested_candidates", "suggested_metadata", "catalog_image_file_id", "catalog_image_url"])
+    .where("id", "=", itemId)
+    .executeTakeFirst();
+  if (!row?.suggested_name || row.status !== "pending") return "nothing";
+  const meta = (row.suggested_metadata ?? {}) as Record<string, unknown>;
+  if (meta.catalog_image_user_set) return "nothing";
+  const stated = statedColoursOf(looksOfRow(row));
+  if (stated.size === 0) return "nothing";
+  const measured = meta.catalog_colour as { family?: ColourFamily | null; share?: number; file_id?: string } | undefined;
+  if (
+    row.catalog_image_file_id &&
+    measured?.file_id === row.catalog_image_file_id &&
+    measured.family &&
+    colourShows(stated, { family: measured.family, share: measured.share ?? 0 })
+  )
+    return "shows";
+  const key = [...stated].sort().join("/");
+  if (meta.catalog_colour_sought === key) return "already sought";
+  await db
+    .updateTable("core_scan_inbox_items")
+    .set({ suggested_metadata: sql`coalesce(suggested_metadata, '{}'::jsonb) || ${JSON.stringify({ catalog_colour_sought: key })}::jsonb` as never })
+    .where("id", "=", itemId)
+    .execute();
+  // enrich-photo imports this module, so the search is reached lazily.
+  const { refreshCatalogImageByName } = await import("./enrich-photo.js");
+  await refreshCatalogImageByName(orgId, itemId, row.suggested_name, row.suggested_manufacturer);
+  return "sought";
 }

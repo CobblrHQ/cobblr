@@ -3,9 +3,11 @@
   "unreachable": [
     "blueprint.ts POST /install",
     "bundles.ts DELETE /:x",
+    "bundles.ts PATCH /:x/features",
     "bundles.ts POST /history/:x/revert",
     "bundles.ts POST /install",
     "dashboard.ts PUT /:x/dashboard-layout",
+    "instances.ts POST /:x/file-intake",
     "instances.ts POST /:x/scan-fallback",
     "orgs.ts POST /:x/import-app",
     "orgs.ts POST /:x/refresh-app",

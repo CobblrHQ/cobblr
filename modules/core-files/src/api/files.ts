@@ -1,13 +1,16 @@
 // /files — upload, list, get, delete, serve.
 
 import { Router } from "express";
-import { randomUUID } from "node:crypto";
+import { z } from "zod";
 import multer from "multer";
 import { platform } from "@cobblr/platform-contract";
 import { sessionUser, tenantContext, tenantDb } from "../db.js";
-import type { FileVariants } from "../db.js";
-import { asyncHandler, requireRole } from "./util.js";
-import { readVariant, readVariantBytes, removeStoredFile, storeUpload } from "./storage.js";
+import type { CoreFilesDB, FileKind, FileVariants } from "../db.js";
+import type { SelectQueryBuilder } from "kysely";
+import { asyncHandler, badBody, requireRole } from "./util.js";
+import { readVariant, readVariantBytes } from "./storage.js";
+import { intakeFile, resolveTarget, sameBytes } from "./intake.js";
+import { bytesUsed, QUOTA_BYTES, quotaDecision } from "./quota.js";
 
 export const filesRouter = Router({ mergeParams: true });
 
@@ -70,16 +73,24 @@ filesRouter.post(
     // with platform().files.write and never hits this route). No-op in open core /
     // self-host (no guard registered) and on paid plans (the overlay allows it —
     // files.upload has no configured limit, so it returns allow).
+    // The running total, for the plan's guard and the workspace's quota.
+    const used = await bytesUsed(tenantDb(req));
     const ent = await platform().entitlements.check({
       orgId: ctx.org.id,
       feature: "files.upload",
       userId: session?.id,
       quantity: file.buffer.length,
+      used,
     });
     if (!ent.allow) {
       res.status(402).json({
         error: { code: "plan_limit", message: ent.reason ?? "File uploads aren't available on your plan." },
       });
+      return;
+    }
+    const room = quotaDecision(used, file.buffer.length, QUOTA_BYTES);
+    if (!room.allow) {
+      res.status(413).json({ error: { code: "storage_full", message: room.reason } });
       return;
     }
 
@@ -114,126 +125,93 @@ filesRouter.post(
       return;
     }
 
-    // We pre-generate the id so storeUpload knows the target dir
-    // before the DB insert. If the insert fails we clean up the disk
-    // bytes — see catch below.
-    const fileId = randomUUID();
-    let stored;
-    try {
-      stored = await storeUpload(
-        ctx.org.id,
-        fileId,
-        file.buffer,
-        file.mimetype || "application/octet-stream",
-      );
-    } catch (err) {
-      console.error(`[core-files] storeUpload failed for ${fileId}:`, err);
-      res.status(500).json({
-        error: { code: "store_failed", message: "Failed to write file to disk." },
-      });
+    // Where it goes: a folder, or the top level. A folder that has gone
+    // since the page loaded is said, never silently swapped for the top.
+    // `folder_path` ("Patterns/Blankets") is made where missing, under
+    // `folder_id` when both are given.
+    const db0 = tenantDb(req);
+    const resolved = await resolveTarget(db0, readField("folder_id"), readField("folder_path"));
+    if (resolved === "missing") {
+      res.status(404).json({ error: { code: "folder_not_found", message: "That folder does not exist any more." } });
+      return;
+    }
+    const folderId = resolved;
+    // The same bytes already here: say which file, and with
+    // on_duplicate=skip keep the one copy instead of storing a second
+    // (a re-imported download folder, a pattern bought twice).
+    const same = await sameBytes(db0, file.buffer);
+    if (same && readField("on_duplicate") === "skip") {
+      res.status(200).json({ ...same, size_bytes: Number(same.size_bytes), duplicate: true, duplicate_of: { id: same.id, filename: same.filename, folder_id: same.folder_id, folder_names: same.folder_names } });
       return;
     }
 
+    let taken;
     try {
-      const db = tenantDb(req);
-      const row = await db
-        .insertInto("core_files_files")
-        .values({
-          id: fileId,
-          org_id: ctx.org.id,
-          owner_user_id: session?.id ?? null,
-          filename: file.originalname || "untitled",
-          mime_type: stored.mime_type,
-          size_bytes: String(stored.size_bytes),
-          sha256: stored.sha256,
-          variants: stored.variants,
-          kind: stored.kind,
-          width: stored.width,
-          height: stored.height,
-        })
-        .returning(["id", "filename", "mime_type", "kind", "width", "height", "created_at"])
-        .executeTakeFirstOrThrow();
-
-      // Usage-metering seam: the hosted overlay aggregates stored bytes for
-      // plan limits / billing. No-op in open core.
-      platform().metering.record({
-        orgId: ctx.org.id,
-        kind: "files.bytes_stored",
-        quantity: stored.size_bytes,
-        meta: { fileId: row.id, kind: stored.kind },
-      });
-
-      await platform().events.emit("core-files.file.uploaded", {
-        orgId: ctx.org.id,
-        fileId: row.id,
-        kind: stored.kind,
-        size_bytes: stored.size_bytes,
-      });
-      await platform().activity.log({
-        orgId: ctx.org.id,
-        userId: sessionUser(req)?.id ?? null,
-        action: "file_created",
-        ref: { module: "core-files", entityType: "file", entityId: row.id },
-        diff: { name: row.filename, kind: stored.kind },
-      });
-
-      // Best-effort attach if requested. If the attach row fails we
-      // still return the file (so the user has the upload), with the
-      // attachment_error explaining what went wrong.
-      let attachment:
-        | { id: string; source_module: string; source_type: string; source_id: string; role: string | null }
-        | null = null;
-      let attachmentError: string | null = null;
-      if (attachModule && attachType && attachId) {
-        try {
-          const aRow = await db
-            .insertInto("core_files_attachments")
-            .values({
-              file_id: fileId,
-              source_module: attachModule,
-              source_type: attachType,
-              source_id: attachId,
-              role: attachRole ?? null,
-              sort_order: 0,
-            })
-            .returning(["id", "source_module", "source_type", "source_id", "role"])
-            .executeTakeFirstOrThrow();
-          attachment = aRow;
-          await platform().events.emit("core-files.attachment.created", {
-            orgId: ctx.org.id,
-            attachmentId: aRow.id,
-            fileId,
-            source_module: aRow.source_module,
-            source_type: aRow.source_type,
-            source_id: aRow.source_id,
-            role: aRow.role,
-          });
-        } catch (err) {
-          if (
-            typeof err === "object" &&
-            err &&
-            (err as { code?: string }).code === "23505"
-          ) {
-            attachmentError = "already_attached";
-          } else {
-            console.error("[core-files] inline attach failed:", err);
-            attachmentError = "attach_failed";
-          }
-        }
-      }
-
-      res.status(201).json({
-        ...row,
-        size_bytes: stored.size_bytes,
-        sha256: stored.sha256,
-        variants: stored.variants,
-        attachment,
-        attachment_error: attachmentError,
+      taken = await intakeFile(db0, ctx.org.id, session?.id ?? null, {
+        buffer: file.buffer,
+        filename: file.originalname || "untitled",
+        mime: file.mimetype || "application/octet-stream",
+        folderId,
       });
     } catch (err) {
-      await removeStoredFile(ctx.org.id, fileId).catch(() => {});
-      throw err;
+      console.error("[core-files] storing an upload failed:", err);
+      res.status(500).json({ error: { code: "store_failed", message: "Failed to store the file." } });
+      return;
     }
+    const { row, stored } = taken;
+    const fileId = row.id;
+
+    // Best-effort attach if requested. If the attach row fails we
+    // still return the file (so the user has the upload), with the
+    // attachment_error explaining what went wrong.
+    let attachment:
+      | { id: string; source_module: string; source_type: string; source_id: string; role: string | null }
+      | null = null;
+    let attachmentError: string | null = null;
+    if (attachModule && attachType && attachId) {
+      try {
+        const aRow = await db0
+          .insertInto("core_files_attachments")
+          .values({
+            file_id: fileId,
+            source_module: attachModule,
+            source_type: attachType,
+            source_id: attachId,
+            role: attachRole ?? null,
+            sort_order: 0,
+          })
+          .returning(["id", "source_module", "source_type", "source_id", "role"])
+          .executeTakeFirstOrThrow();
+        attachment = aRow;
+        await platform().events.emit("core-files.attachment.created", {
+          orgId: ctx.org.id,
+          attachmentId: aRow.id,
+          fileId,
+          source_module: aRow.source_module,
+          source_type: aRow.source_type,
+          source_id: aRow.source_id,
+          role: aRow.role,
+        });
+      } catch (err) {
+        if (typeof err === "object" && err && (err as { code?: string }).code === "23505") {
+          attachmentError = "already_attached";
+        } else {
+          console.error("[core-files] inline attach failed:", err);
+          attachmentError = "attach_failed";
+        }
+      }
+    }
+
+    res.status(201).json({
+      ...row,
+      size_bytes: stored.size_bytes,
+      sha256: stored.sha256,
+      variants: stored.variants,
+      attachment,
+      attachment_error: attachmentError,
+      duplicate: false,
+      duplicate_of: same ? { id: same.id, filename: same.filename, folder_id: same.folder_id, folder_names: same.folder_names } : null,
+    });
   }),
 );
 
@@ -243,6 +221,23 @@ filesRouter.get(
     const db = tenantDb(req);
     const limit = Math.min(Number(req.query.limit ?? 50) || 50, 200);
     const kind = typeof req.query.kind === "string" ? req.query.kind : null;
+    // `folder=top` is the top level; a folder id is that folder; absent is
+    // every file wherever it lives. `q` matches the name.
+    const folder = typeof req.query.folder === "string" ? req.query.folder : null;
+    const text = typeof req.query.q === "string" ? req.query.q.trim() : "";
+    // Keyset pagination (docs/design-decisions/list-pagination.md): the
+    // cursor is the last row's created_at and id, newest first.
+    const cursor = typeof req.query.cursor === "string" ? req.query.cursor : "";
+    const [cursorAt, cursorId] = cursor.split("|");
+    const cursorDate = cursorAt ? new Date(cursorAt) : null;
+    const filtered = <O,>(qb: SelectQueryBuilder<CoreFilesDB, "core_files_files", O>) => {
+      let out = qb.where("deleted_at", "is", null);
+      if (kind) out = out.where("kind", "=", kind as FileKind);
+      if (folder === "top") out = out.where("folder_id", "is", null);
+      else if (folder && /^[0-9a-f-]{36}$/i.test(folder)) out = out.where("folder_id", "=", folder);
+      if (text) out = out.where("filename", "ilike", `%${text.replace(/[\\%_]/g, (c) => `\\${c}`)}%`);
+      return out;
+    };
     let q = db
       .selectFrom("core_files_files")
       .select([
@@ -255,15 +250,38 @@ filesRouter.get(
         "height",
         "variants",
         "created_at",
+        "folder_id",
       ])
-      .where("deleted_at", "is", null)
       .orderBy("created_at", "desc")
-      .limit(limit);
-    if (kind) q = q.where("kind", "=", kind as never);
-    const items = await q.execute();
+      .orderBy("id", "desc")
+      .limit(limit + 1);
+    q = filtered(q);
+    if (cursorDate && !Number.isNaN(cursorDate.getTime()) && cursorId) {
+      q = q.where((eb) => eb.or([eb("created_at", "<", cursorDate), eb.and([eb("created_at", "=", cursorDate), eb("id", "<", cursorId)])]));
+    }
+    const rows = await q.execute();
+    const page = rows.slice(0, limit);
+    const last = page[page.length - 1];
+    const counted = await filtered(db.selectFrom("core_files_files").select(db.fn.countAll<string>().as("n"))).executeTakeFirst();
+    const items = await platform().entities.withFieldLabels(
+      tenantContext(req).org.id,
+      "core-files:file",
+      page.map((r) => ({ ...r, size_bytes: Number(r.size_bytes) })),
+    );
     res.json({
-      items: items.map((r) => ({ ...r, size_bytes: Number(r.size_bytes) })),
+      items,
+      next_cursor: rows.length > limit && last ? `${new Date(last.created_at).toISOString()}|${last.id}` : null,
+      total: Number(counted?.n ?? 0),
     });
+  }),
+);
+
+// What the workspace keeps, and how much it may: the Files page's
+// "1.2 GB of 10 GB". `quota_bytes` is null when there is no limit.
+filesRouter.get(
+  "/usage",
+  asyncHandler(async (req, res) => {
+    res.json({ bytes_used: await bytesUsed(tenantDb(req)), quota_bytes: QUOTA_BYTES });
   }),
 );
 
@@ -286,7 +304,8 @@ filesRouter.get(
       res.status(404).json({ error: { code: "not_found", message: "file not found" } });
       return;
     }
-    res.json({ ...row, size_bytes: Number(row.size_bytes) });
+    const [labelled] = await platform().entities.withFieldLabels(tenantContext(req).org.id, "core-files:file", [{ ...row, size_bytes: Number(row.size_bytes) }]);
+    res.json(labelled);
   }),
 );
 
@@ -355,6 +374,47 @@ filesRouter.get(
       }
       res.send(bytes);
     }
+  }),
+);
+
+// Rename and move. The bytes never change; only the name a person knows
+// the file by and the folder it lives in.
+// AI-REACH: crud — the core-files:file kind's update endpoint (filename, folder_id)
+const FilePatch = z
+  .object({ filename: z.string().trim().min(1).max(255).optional(), folder_id: z.string().uuid().nullable().optional() })
+  .refine((b) => b.filename !== undefined || b.folder_id !== undefined, "filename or folder_id");
+filesRouter.patch(
+  "/:id",
+  asyncHandler(async (req, res) => {
+    if (!requireRole(req, res, "owner", "admin", "editor", "member")) return;
+    const id = req.params.id!;
+    const parsed = FilePatch.safeParse(req.body ?? {});
+    if (!parsed.success) return badBody(res, parsed.error);
+    const db = tenantDb(req);
+    const to = parsed.data.folder_id;
+    if (to && !(await db.selectFrom("core_files_folders").select("id").where("id", "=", to).executeTakeFirst())) {
+      res.status(404).json({ error: { code: "folder_not_found", message: "That folder does not exist any more." } });
+      return;
+    }
+    const row = await db
+      .updateTable("core_files_files")
+      .set({ ...(parsed.data.filename !== undefined ? { filename: parsed.data.filename } : {}), ...(to !== undefined ? { folder_id: to } : {}) })
+      .where("id", "=", id)
+      .where("deleted_at", "is", null)
+      .returning(["id", "filename", "folder_id", "mime_type", "kind", "size_bytes", "created_at"])
+      .executeTakeFirst();
+    if (!row) {
+      res.status(404).json({ error: { code: "not_found", message: "file not found" } });
+      return;
+    }
+    await platform().activity.log({
+      orgId: tenantContext(req).org.id,
+      userId: sessionUser(req)?.id ?? null,
+      action: "file_updated",
+      ref: { module: "core-files", entityType: "file", entityId: id },
+      diff: { ...(parsed.data.filename !== undefined ? { name: parsed.data.filename } : {}), ...(to !== undefined ? { folder_id: to } : {}) },
+    });
+    res.json({ ...row, size_bytes: Number(row.size_bytes) });
   }),
 );
 

@@ -2,6 +2,7 @@
 // keeps the splash → auth → dashboard journey one screen.
 
 import { useEffect, useRef, useState, type FormEvent } from "react";
+import { authorizeHref, rememberSource, rememberedSource } from "../lib/identity-door";
 import { useAuth } from "../auth/AuthContext";
 import { CobblestoneMark } from "../CobblestoneMark";
 import { api, ApiError, setToken } from "../lib/api";
@@ -49,7 +50,7 @@ function TurnstileWidget({ siteKey, onToken }: { siteKey: string; onToken: (t: s
   return <div ref={ref} className="mt-2 flex justify-center" />;
 }
 
-export function AuthPage({ initialMode }: { initialMode?: Mode } = {}) {
+export function AuthPage({ initialMode, carrying }: { initialMode?: Mode; carrying?: boolean } = {}) {
   usePageTitle("Sign in");
   const { login, signup } = useAuth();
   const { badge: envBadge } = useDeployEnv();
@@ -77,6 +78,18 @@ export function AuthPage({ initialMode }: { initialMode?: Mode } = {}) {
   // null (rather than showing the button optimistically) means we never offer a route
   // that fails after the redirect, on a site that cannot explain what went wrong.
   const identityCfg = authCfg.cfg?.identity ?? null;
+  // Sent here to sign up: /signup, ?mode=signup, or a sandbox arriving to be
+  // made someone's. Where the Cobblr account is the door, that account's
+  // Create form comes first.
+  // What was ASKED for, read once: the form's own mode is snapped back to sign
+  // in when this surface's sign-up is off, which is exactly this case.
+  // `mode` on the first render is the ?mode the page arrived with.
+  const [wantsSignup] = useState(() => !!carrying || mode === "signup" || window.location.pathname === "/signup");
+  // The link or QR that sent them (?source=), kept for the sign-up it leads to.
+  const [source] = useState(() => {
+    rememberSource(window.location.search);
+    return rememberedSource();
+  });
   const demoCfg = authCfg.cfg?.demo_signin ?? null;
   useEffect(() => {
     if (!authCfg.cfg) return;
@@ -135,6 +148,7 @@ export function AuthPage({ initialMode }: { initialMode?: Mode } = {}) {
           // undefined (not ""), which the server's `?? default` relies on.
           org_name: orgName.trim() || undefined,
           captcha_token: captchaToken || undefined,
+          ...(source ? { source } : {}),
         });
         // Trial tier: the account exists but must verify its email before it can
         // sign in. Show the "check your email" screen instead of entering the app.
@@ -200,6 +214,40 @@ export function AuthPage({ initialMode }: { initialMode?: Mode } = {}) {
             pieces you need.
           </p>
         </div>
+
+        {/* Where the Cobblr account is how people get in (this surface's own sign-up
+            is off), the page leads with it: Create a Cobblr account first for a
+            person sent here to sign up (/signup, ?mode=signup) or to make a sandbox
+            theirs, Sign in first for everyone else. The form below stays for
+            somebody who already has a password here. */}
+        {identityCfg && !signupEnabled && !provisioning && (
+          <div className="mb-4 rounded-xl border-2 border-cobble-400 dark:border-cobble-600 bg-surface dark:bg-slate-900 p-5 space-y-3" data-testid={carrying ? "carry-welcome" : "identity-first"}>
+            <div className="font-display text-lg font-bold text-content dark:text-mortar-100">
+              {carrying ? "Make your sandbox yours" : wantsSignup ? "Make your Cobblr account" : "Sign in to Cobblr"}
+            </div>
+            <p className="text-sm text-muted">
+              {carrying
+                ? "Make a free Cobblr account with your email, or sign in to one you have. What you added in the sandbox moves into it, photos too."
+                : wantsSignup
+                  ? "One free account, made with your email. It signs you in to Cobblr everywhere."
+                  : "Use your Cobblr account. New here? Make one in a minute, free."}
+            </p>
+            {(wantsSignup ? [true, false] : [false, true]).map((create, i) => (
+              <a
+                key={create ? "create" : "signin"}
+                href={authorizeHref(identityCfg, { signup: create, source })}
+                className={
+                  "block w-full text-center rounded-md text-sm font-medium px-3 py-2.5 transition " +
+                  (i === 0
+                    ? "bg-cobble-600 hover:bg-cobble-700 text-white"
+                    : "border border-mortar-300 dark:border-mortar-600 hover:bg-mortar-100 dark:hover:bg-mortar-800")
+                }
+              >
+                {create ? `Create a ${identityCfg.name ?? "Cobblr"} account` : `Sign in with your ${identityCfg.name ?? "Cobblr"} account`}
+              </a>
+            ))}
+          </div>
+        )}
 
         {provisioning ? (
           <div
@@ -348,7 +396,7 @@ export function AuthPage({ initialMode }: { initialMode?: Mode } = {}) {
                 <div className="h-px flex-1 bg-mortar-200 dark:bg-mortar-700" />
               </div>
               <a
-                href={`${identityCfg.authorize_url}?deployment=${encodeURIComponent(identityCfg.deployment)}&return_to=${encodeURIComponent(`${window.location.origin}/auth/callback`)}`}
+                href={authorizeHref(identityCfg, { signup: mode === "signup", source })}
                 className="block w-full text-center rounded-md border border-mortar-300 dark:border-mortar-600 hover:bg-mortar-100 dark:hover:bg-mortar-800 text-sm font-medium px-3 py-2 transition"
               >
                 Continue with your {identityCfg.name ?? "Cobblr"} account
@@ -569,6 +617,8 @@ export function IdentityCallbackPage() {
     // /start/<app> put the app on return_to, so a NEW account is provisioned as
     // the app and lands in it rather than on the generic home.
     const app = params.get("app") ?? undefined;
+    // The source the sign-up link carried, back on return_to beside the app.
+    const source = params.get("source") ?? undefined;
     if (!code) {
       setError("This sign-in link is missing its code.");
       return;
@@ -576,7 +626,7 @@ export function IdentityCallbackPage() {
     let cancelled = false;
     void (async () => {
       try {
-        const res = await api.identityCallback(app ? { code, app } : { code });
+        const res = await api.identityCallback({ code, ...(app ? { app } : {}), ...(source ? { source } : {}) });
         if (cancelled) return;
         setToken(res.token);
         // Hard redirect so AuthContext re-reads the new session, same as the magic link.

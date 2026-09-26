@@ -28,6 +28,8 @@ const HELPER = "signupFreshOrg";
 /** Files that are ABOUT signing up, inviting, or recovering an account, so the
  *  raw endpoint is the thing under test rather than a means to a workspace. */
 const SUBJECT_IS_SIGNUP = new Set([
+  // what a sign-up records about the link that sent it (the signed_up event)
+  "a-sign-up-records-the-source-that-sent-it.test.ts",
   "auth-pair-codes.test.ts",
   "auth-reset-verify.test.ts",
   "auth-signup-gate.test.ts",

@@ -80,7 +80,7 @@ function driver(): FilesDriver {
   return platform().files.getDriver() ?? localDriver;
 }
 
-interface StoredFile {
+export interface StoredFile {
   variants: FileVariants;
   sha256: string;
   size_bytes: number;

@@ -49,6 +49,23 @@ export function gtinItem(raw: string): string | null {
   return null;
 }
 
+/** The case codes that could wrap an item's own code: a GTIN-14 with
+ *  packaging indicator 1, 2, 3 in front of the item's 13-digit code and a new
+ *  check digit. A skein sold loose carries 877503009799 and a catalog may
+ *  hold only its case, 10877503009796. Indicators 1 to 3 cover the packs
+ *  seen in practice; each probe is a catalog lookup against a daily quota,
+ *  so the rarer 4 to 8 are not asked. Empty for anything that is not a valid
+ *  12 or 13 digit item code. */
+export function gtinCases(raw: string): string[] {
+  const c = clean(raw);
+  if (!/^\d{12,13}$/.test(c) || !gtinValid(c)) return [];
+  const item = c.length === 12 ? `0${c}` : c;
+  return ["1", "2", "3"].map((ind) => {
+    const body = ind + item.slice(0, 12);
+    return body + gtinCheck(body);
+  });
+}
+
 /** The canonical form used for equality. */
 export function identifierCanonical(v: unknown): string {
   const c = clean(v);

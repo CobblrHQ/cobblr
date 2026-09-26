@@ -9,7 +9,7 @@
 // resolver is slow we return the bare row immediately and let
 // this finish detached.
 
-import { pictureColour, colourContradiction } from "./picture-colour.js";
+import { pictureColour, colourContradiction, colourShows } from "./picture-colour.js";
 import { looksOfRow, pictureVerdict, statedColoursOf } from "./picture-agrees.js";
 import net from "node:net";
 import { isBookSource, recordImage, replayImage } from "./catalog-replay.js";
@@ -21,9 +21,11 @@ import { sql } from "kysely";
 import { browserImageHeaders } from "./image-fetch-headers.js";
 import { platform } from "@cobblr/platform-contract";
 import { isShortBarcode } from "@cobblr/platform-contract/scan-triage";
-import { answerAgreesWithCode, durableOutcome, lookupBarcode, type BarcodeHit, type DurableBarcodeOutcome } from "./barcode-lookup.js";
+import { answerAgreesWithCode, durableOutcome, type BarcodeHit, type DurableBarcodeOutcome } from "./barcode-lookup.js";
 import { resolveBarcodeViaWebSearch, productTitle } from "./barcode-websearch.js";
 import { reportBarcodeCorrection } from "./barcode-corrections.js";
+import { catalogAnswerForCode } from "./catalog-answer.js";
+import { cleanListingTitle } from "./listing-title.js";
 import { BookDoorUnavailable, classifyScanCode, resolveIsbn, resolveAsin, isbnFieldsForHit, ISBN_DECODER_ID, type ScanCodeType } from "./scan-router.js";
 import { crossCheckScanPhoto, identifyImage, parsePackSize, refreshCatalogImageByName } from "./enrich-photo.js";
 import { identityMeta, mergeMeta, CATALOG_PICTURE_NOT_PERSONS } from "./metadata.js";
@@ -120,9 +122,12 @@ async function cacheHit(ctx: EnrichContext, hit: BarcodeHit): Promise<void> {
  *  answer, refresh both caches and — when the item still shows the stale name —
  *  the item itself (the same lazy-fill pattern the enrich overrun uses). */
 async function revalidateStaleHit(ctx: EnrichContext, staleTitle: string | null): Promise<void> {
-  const result = await lookupBarcode(ctx.upc);
-  if (result.outcome !== "hit" || !result.hit) return; // keep serving the old value
-  const fresh = result.hit;
+  // The same catalog step a scan takes (case codes, the book catalog, the
+  // listing clean-up), so a refresh never renames an item back to what the
+  // scan had already corrected.
+  const answer = await catalogAnswerForCode(ctx.upc);
+  if (!answer.hit) return; // keep serving the old value
+  const fresh = answer.hit;
   const value: BarcodeCacheValue = {
     found: true,
     source: fresh.source,
@@ -634,7 +639,7 @@ export async function enrichBarcodeItem(ctx: EnrichContext): Promise<void> {
     }
     hit = {
       source: cacheVal.source as BarcodeHit["source"],
-      title: cacheVal.title ?? "",
+      title: cleanListingTitle(cacheVal.title ?? ""),
       brand: cacheVal.brand,
       model: cacheVal.model,
       description: cacheVal.description,
@@ -686,27 +691,14 @@ export async function enrichBarcodeItem(ctx: EnrichContext): Promise<void> {
     // mirror (free, instant, offline) and CDs/vinyl hit the MusicBrainz mirror,
     // instead of leaning on the live APIs. A miss on an ISBN still falls back to
     // the live Open Library API below (a brand-new book not yet in the mirror).
-    const result = await lookupBarcode(ctx.upc);
-    if (result.outcome === "hit") hit = result.hit;
-    // A product catalog's answer the lookup refused for this ISBN (#3674):
-    // not taken, but named as what the book displaced when the book is found.
-    const refused = result.outcome === "miss" ? result.refused : undefined;
+    // The chain, and for an ISBN the book catalog too, decided in one place
+    // (catalog-answer.ts) that a check without a scan can ask as well.
+    const answer = await catalogAnswerForCode(ctx.upc);
+    hit = answer.hit;
     // Throttled, refused, or could not be asked: the code is UNRESOLVED, not
     // absent. All three ride the retry path below and none is cached.
-    if (result.outcome === "rate_limited" || result.outcome === "unavailable") rateLimited = true;
-    if (result.outcome === "unavailable") lookupUnreachable = true;
-    // An ISBN is a book. The chain's first answer for one can be a product
-    // catalog's stray entry (Open Food Facts answered "Fit Shake" for
-    // Designing Data-Intensive Applications, #3162), so an ISBN-13 that a
-    // non-book source answered asks the book catalog before accepting it;
-    // the book's answer wins when there is one, the stray stands only when
-    // no book source knows the ISBN.
-    if (codeClass.type === "isbn" && hit && !isBookSource(hit.source) && !rateLimited) {
-      const book = await resolveIsbn(codeClass.code).catch(() => null);
-      if (book) hit = { ...book, raw: { ...book.raw, displaced: { source: hit.source, title: hit.title } } };
-      // No book source knows it: a non-book answer still never stands (#3674).
-      else if (!answerAgreesWithCode(ctx.upc, hit)) hit = null;
-    }
+    if (answer.rateLimited) rateLimited = true;
+    if (answer.lookupUnreachable) lookupUnreachable = true;
     // Cache a HIT or a DEFINITIVE MISS — both durable — to BOTH the tenant and
     // the cross-tenant cache. A `rate_limited` or `unavailable` outcome is
     // unresolved, not absent, so a later scan must retry; the writer's type
@@ -716,17 +708,11 @@ export async function enrichBarcodeItem(ctx: EnrichContext): Promise<void> {
     // being cached as a miss until 2026-09-17, against a comment on the type,
     // so a refused key or a catalog outage negative-cached every code scanned
     // in it. A comment asked; the type refuses.
-    const durable = durableOutcome(result);
-    if (durable) await cacheDurable(ctx, durable, hit);
-    // ISBN-13 not in any resolver tier (incl. the OL mirror) → the live Open
-    // Library API as a last resort before web search. A book it finds is
-    // cached like any other hit (over the miss the chain just wrote), so the
-    // next scan of it asks nobody.
-    if (codeClass.type === "isbn" && !hit && !rateLimited) {
-      hit = await resolveIsbn(codeClass.code).catch(() => null);
-      if (hit && refused) hit = { ...hit, raw: { ...hit.raw, displaced: { source: refused.source, title: refused.title } } };
-      if (hit) await cacheHit(ctx, hit);
-    }
+    const durable = durableOutcome(answer.result);
+    if (durable) await cacheDurable(ctx, durable, answer.bookAfterMiss ? null : hit);
+    // A book the live catalog found after the chain missed is cached over the
+    // miss the chain just wrote, so the next scan of it asks nobody.
+    if (answer.bookAfterMiss && hit) await cacheHit(ctx, hit);
   } else if (codeClass.type === "isbn") {
     // An ISBN-10 (manual entry — a scanned book is the ISBN-13 EAN handled above).
     // The live Open Library API; a miss falls through to web search.
@@ -1620,6 +1606,11 @@ export async function downloadCatalogImage(
     /** The rank pass saw several of the same unit in this photo and said which
      *  half holds one. Applied here because this is where the bytes land. */
     unitSide?: UnitSide | null;
+    /** Take the picture only when it SHOWS a colour the row states (a blue
+     *  skein, a blue picture). The ranking pass asks with this first and
+     *  without it after, so a matching picture wins over the first that
+     *  merely does not contradict (#3729). A refusal here stamps nothing. */
+    mustShow?: boolean;
   } = {},
 ): Promise<boolean> {
   // A stock "no image" graphic is not a photo. Refuse before spending a fetch.
@@ -1681,7 +1672,9 @@ export async function downloadCatalogImage(
         .select(["suggested_name", "suggested_candidates", "suggested_metadata"])
         .where("id", "=", ctx.itemId)
         .executeTakeFirst();
-      const why = looksRow ? colourContradiction(statedColoursOf(looksOfRow(looksRow)), colour) : null;
+      const stated = looksRow ? statedColoursOf(looksOfRow(looksRow)) : new Set<string>();
+      if (opts.mustShow && !colourShows(stated, colour)) return false;
+      const why = colourContradiction(stated, colour);
       if (why) {
         console.warn(`[core-scan] catalog picture ${imageUrl} for ${ctx.itemId}: ${why}; not used`);
         // The writer that chose it may already have put its address on the

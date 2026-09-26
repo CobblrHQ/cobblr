@@ -16,8 +16,7 @@ import type {
   FileVariant,
   FilesDriver,
   FileWriter,
-  FileWriteResult,
-} from "@cobblr/platform-contract";
+  FileWriteResult, FileAttachedTo, FileAttachmentsOfFile} from "@cobblr/platform-contract";
 
 let reader: FileReader | null = null;
 
@@ -74,6 +73,17 @@ export async function listAttachments(
 ): Promise<FileAttachmentRow[] | null> {
   if (!lister) return null;
   return lister(orgId, source);
+}
+
+let ofFile: FileAttachmentsOfFile | null = null;
+
+export function registerAttachmentsOfFile(l: FileAttachmentsOfFile): void {
+  ofFile = l;
+}
+
+export async function attachmentsOfFile(orgId: string, fileId: string): Promise<FileAttachedTo[] | null> {
+  if (!ofFile) return null;
+  return ofFile(orgId, fileId);
 }
 
 // Blob-storage driver override. Null → core-files uses its built-in local-disk

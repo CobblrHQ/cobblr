@@ -9,10 +9,16 @@
 //   previews  → <FilePreview src={...} />   (auth-fetches internally)
 //   downloads → openAuthedFile(...)          (web/src/lib/authed-file.ts)
 //
-// The lint flags DIRECT use of api.fileRawUrl(...) — or a literal
-// core-files /raw path — as the value of a src=/href= JSX attribute.
-// Passing fileRawUrl as a plain VALUE (storing a path, feeding FilePreview
-// or useImageSrc) is fine and not flagged.
+// The lint flags a raw file URL (api.fileRawUrl(...), a literal core-files
+// /raw path, or one built from a variable: `${base}/files/${id}/raw`) handed
+// straight to the browser: a src=/href= attribute, window.open(...), or a
+// location assignment. Passing it as a plain VALUE (storing a path, feeding
+// FilePreview, useImageSrc or openAuthedFile) is fine and not flagged.
+//
+// It reads every UI tree, module UIs included. A Design's pattern PDF link
+// sat in modules/projects/src/ui with its path built from `${base}`, outside
+// both the one directory and the one literal the first version read, and it
+// 401'd for everyone who pressed it (#3753).
 //
 //   cd <repo> && npx tsx scripts/lint-authed-media.ts
 //
@@ -21,27 +27,45 @@
 import { readdirSync, readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
 
-const ROOT = "web/src";
+const ROOTS = ["web/src", "packages/platform-web/src", ...moduleUiRoots()];
+
+function moduleUiRoots(): string[] {
+  const out: string[] = [];
+  for (const m of readdirSync("modules")) {
+    const ui = join("modules", m, "src", "ui");
+    try {
+      if (statSync(ui).isDirectory()) out.push(ui);
+    } catch {
+      /* a module with no UI */
+    }
+  }
+  return out;
+}
 
 // FilePreview auth-fetches internally — its src prop is the sanctioned home
 // for a raw URL. Everything else must not put one in src/href directly.
 const ALLOWED_ATTR_CONTEXT = /<FilePreview[\s\S]{0,200}$/;
 
-const OFFENSE =
-  /\b(?:src|href)=\{\s*(?:api\.fileRawUrl\(|[`"'][^}]*\/modules\/core-files\/files\/[^}]*\/raw)/;
+// A raw file URL: the helper, a literal core-files path, or a files/…/raw
+// path built from variables.
+const RAW = String.raw`(?:fileRawUrl\(|\/modules\/core-files\/files\/[^\s"'\`]*\/raw\b|\/files\/\$\{[^}]*\}\/raw\b)`;
+// ...handed to the browser directly.
+const OFFENSE = new RegExp(
+  String.raw`\b(?:src|href)=\{[^\n]*` + RAW + String.raw`|window\.open\([^\n]*` + RAW + String.raw`|\blocation(?:\.href)?\s*=\s*[^\n]*` + RAW,
+);
 
-function tsxFiles(dir: string): string[] {
+function uiFiles(dir: string): string[] {
   const out: string[] = [];
   for (const e of readdirSync(dir)) {
     const p = join(dir, e);
-    if (statSync(p).isDirectory()) out.push(...tsxFiles(p));
-    else if (p.endsWith(".tsx")) out.push(p);
+    if (statSync(p).isDirectory()) out.push(...uiFiles(p));
+    else if (/\.tsx?$/.test(p) && !/\.test\.tsx?$/.test(p)) out.push(p);
   }
   return out;
 }
 
 const findings: string[] = [];
-for (const file of tsxFiles(ROOT)) {
+for (const file of ROOTS.flatMap(uiFiles)) {
   const src = readFileSync(file, "utf8");
   const lines = src.split("\n");
   lines.forEach((line, i) => {

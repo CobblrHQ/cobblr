@@ -2294,6 +2294,7 @@ superAdminRouter.patch("/feedback/:id", async (req, res, next) => {
           discord_user_id: replyRoute.discord_user_id,
           // Same rule as the thread path: what somebody wrote is the message.
           text: feedbackReplyText(parsed.data.status ?? "", text),
+          summary: feedbackReplyText(parsed.data.status ?? "", text),
         });
         notified = dm.ok || notified;
         delivery.discord_dm = dmOutcome(dm);

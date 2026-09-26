@@ -20,7 +20,7 @@ import { defineModule } from "@cobblr/platform-contract";
 
 export default defineModule({
   name: "core-file-preview",
-  version: "0.1.1",
+  version: "0.2.0",
   displayName: "File preview",
   description:
     "Read-only previews of model + job files (STL, G-code, SVG, …) wherever a file is shown. Renders, never edits.",

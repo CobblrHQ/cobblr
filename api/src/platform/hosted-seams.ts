@@ -41,19 +41,10 @@ export async function sendAuthEmail(msg: AuthEmailMessage): Promise<boolean> {
 // enable a module, install a sandboxed module, store a file, … The overlay maps
 // `feature` → the org's plan allowance. Open core: no guard → everything allowed.
 
-export interface EntitlementCtx {
-  orgId: string;
-  /** Dotted feature key, e.g. "workspaces.create", "members.add",
-   *  "modules.enable", "files.store", "sandbox.install". */
-  feature: string;
-  /** Units being requested (default 1) — e.g. bytes for files.store. */
-  quantity?: number;
-  /** The user attempting the action, if known. */
-  userId?: string;
-}
-export type EntitlementGuard = (
-  ctx: EntitlementCtx,
-) => Promise<{ allow: boolean; reason?: string }>;
+// The contract's own types, not a copy: a second declaration here drifted
+// from the one modules call through (it never learned `used`).
+import type { EntitlementCtx, EntitlementGuard } from "@cobblr/platform-contract";
+export type { EntitlementCtx, EntitlementGuard };
 
 let entitlementGuard: EntitlementGuard | null = null;
 export function registerEntitlementGuard(g: EntitlementGuard): void {

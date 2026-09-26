@@ -624,7 +624,7 @@ function FilesSection({
               key={att.id}
               type="button"
               // Bearer-only auth: a plain href 401s (lint-authed-media).
-              onClick={() => void openAuthedFile(activeSlug, att.file_id)}
+              onClick={() => void openAuthedFile(activeSlug, att.file_id, { mime: att.mime_type, filename: att.filename })}
               className="aspect-square flex flex-col items-center justify-center text-xs text-muted border border-line dark:border-slate-700 rounded hover:border-cobble-500 transition p-2 text-center"
               title={att.filename}
             >

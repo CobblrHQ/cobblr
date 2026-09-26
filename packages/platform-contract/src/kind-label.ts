@@ -270,3 +270,60 @@ export function restockSentence(choice: RestockChoice, title: string, have: numb
   return `Replace ${title}: ${have == null ? "" : `${have} `}→ ${to} (${why})`;
 }
 
+
+// ─── The word the person picked for their things (#3650) ──────────────────
+//
+// A bundle can offer more than one word for what its table holds or counts
+// (Yarn: ball, skein or hank). Its labels, help and action text say
+// {{noun}} / {{nouns}} (or {{Noun}} / {{Nouns}} to start a sentence), and the
+// install fills them with the word chosen, so every screen, Cobb and every
+// export read the same word. `of` says what the word names: "unit" is what
+// records count in (Yarn's ball; records follow a change, the way the
+// skein-to-ball rename moved them), "item" is one record ("book" or "title").
+// The choice is stored on the instance (`noun_choice`); absent means the
+// bundle's default, so a workspace that never chose needs nothing healed.
+
+export interface NounWords {
+  singular: string;
+  plural: string;
+}
+
+export interface NounChoiceDecl extends NounWords {
+  of: "unit" | "item";
+  /** Other words the person may pick instead of the default. */
+  alternatives: NounWords[];
+}
+
+/** Every word on offer, the bundle's default first, each once. */
+export function nounOptions(decl: NounChoiceDecl): NounWords[] {
+  const out: NounWords[] = [];
+  for (const w of [{ singular: decl.singular, plural: decl.plural }, ...(decl.alternatives ?? [])]) {
+    if (!out.some((o) => o.singular.toLowerCase() === w.singular.toLowerCase())) out.push({ singular: w.singular, plural: w.plural });
+  }
+  return out;
+}
+
+/** The word in force: the stored choice when it is one on offer, else the
+ *  default. A stale or foreign value never leaks onto a screen. */
+export function chosenNoun(decl: NounChoiceDecl, stored: unknown): NounWords {
+  const opts = nounOptions(decl);
+  const s = stored as { singular?: unknown } | null | undefined;
+  const want = typeof s?.singular === "string" ? s.singular.toLowerCase() : "";
+  return opts.find((o) => o.singular.toLowerCase() === want) ?? opts[0]!;
+}
+
+const NOUN_TOKEN = /\{\{\s*(noun|nouns|Noun|Nouns)\s*\}\}/g;
+
+/** Whether a string carries a noun token. */
+export function hasNounToken(text: string): boolean {
+  NOUN_TOKEN.lastIndex = 0;
+  return NOUN_TOKEN.test(text);
+}
+
+/** A bundle string with its noun tokens filled. */
+export function fillNoun(text: string, noun: NounWords): string {
+  const cap = (w: string) => (w ? w[0]!.toUpperCase() + w.slice(1) : w);
+  return text.replace(NOUN_TOKEN, (_m, t: string) =>
+    t === "noun" ? noun.singular : t === "nouns" ? noun.plural : t === "Noun" ? cap(noun.singular) : cap(noun.plural),
+  );
+}

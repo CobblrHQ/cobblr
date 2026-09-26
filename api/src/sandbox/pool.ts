@@ -39,6 +39,7 @@ import { isModuleRoleReady, moduleRoleName } from "./module-role.js";
 // and reads/caps the body itself.
 import { pinnedRedirectingFetch, type PinnedFetchResult } from "@cobblr/platform-net";
 import { platform } from "@cobblr/platform-contract";
+import { envNumber } from "@cobblr/platform-contract/env-number";
 import {
   OP,
   SAB_DATA_OFFSET_BYTES,
@@ -91,9 +92,9 @@ async function resolveWorkerEntry(): Promise<URL> {
   return pathToFileURL(out);
 }
 
-const WORKER_IDLE_EVICT_MS = Number(process.env.SANDBOX_WORKER_IDLE_MS ?? 5 * 60 * 1000);
-const WORKER_POOL_MAX = Number(process.env.SANDBOX_WORKER_POOL_MAX ?? 64);
-const DEFAULT_DEADLINE_MS = Number(process.env.SANDBOX_DEFAULT_DEADLINE_MS ?? 1000);
+const WORKER_IDLE_EVICT_MS = envNumber("SANDBOX_WORKER_IDLE_MS", 5 * 60 * 1000);
+const WORKER_POOL_MAX = envNumber("SANDBOX_WORKER_POOL_MAX", 64);
+const DEFAULT_DEADLINE_MS = envNumber("SANDBOX_DEFAULT_DEADLINE_MS", 1000);
 
 /** Max simultaneous in-flight invocations for ONE workspace, summed
  *  across all its modules. Without this a single workspace could fan
@@ -126,10 +127,8 @@ class PoolExhaustedError extends Error {}
  *  is sufficient + much simpler to operate.
  *
  *  Default: 60s window, 30s of CPU budget. Tunable via env. */
-const CPU_WINDOW_MS = Number(process.env.SANDBOX_CPU_WINDOW_MS ?? 60_000);
-const CPU_QUOTA_MS_PER_WINDOW = Number(
-  process.env.SANDBOX_CPU_QUOTA_MS_PER_WINDOW ?? 30_000,
-);
+const CPU_WINDOW_MS = envNumber("SANDBOX_CPU_WINDOW_MS", 60_000);
+const CPU_QUOTA_MS_PER_WINDOW = envNumber("SANDBOX_CPU_QUOTA_MS_PER_WINDOW", 30_000);
 
 export interface InvocationContext {
   orgId: string;

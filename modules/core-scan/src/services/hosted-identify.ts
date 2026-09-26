@@ -22,6 +22,7 @@ import { seenCountOf, seenDistinctOf } from "./seen-count.js";
 import type { Kysely } from "kysely";
 import { sql } from "kysely";
 import { platform } from "@cobblr/platform-contract";
+import { envNumber } from "@cobblr/platform-contract/env-number";
 import type { CoreScanDB } from "../db.js";
 
 const TIMEOUT_MS = 120_000; // the engine can take most of 90s on a cold vision call
@@ -225,7 +226,7 @@ export async function workspaceIdentifyAllowance(
   orgId: string,
   now = Date.now(),
 ): Promise<{ ok: boolean; cap: number }> {
-  const cap = Number(process.env.COBBLR_IDENTIFY_PER_WORKSPACE_DAY ?? 0);
+  const cap = envNumber("COBBLR_IDENTIFY_PER_WORKSPACE_DAY", 0);
   if (!cap) return { ok: true, cap: 0 };
   try {
     return { ok: await store.claim(orgId, identifyUsageDay(now), cap), cap };

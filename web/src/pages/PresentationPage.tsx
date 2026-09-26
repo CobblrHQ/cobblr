@@ -7,9 +7,10 @@
 // doesn't clobber rows in this table (insertOnly on the server).
 
 import { useState } from "react";
+import type { NounChoiceDecl } from "@cobblr/platform-contract/kind-label";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Eye, EyeOff, Pencil, RotateCcw, SlidersHorizontal } from "lucide-react";
-import { Modal, changeWorkspaceShape, useChangeWorkspaceShape, useToast, useConfirm, usePageTitle } from "@cobblr/platform-web";
+import { Modal, NounChoiceButtons, nounChoiceHeading, changeWorkspaceShape, useChangeWorkspaceShape, useToast, useConfirm, usePageTitle } from "@cobblr/platform-web";
 import {
   ApiError,
   api,
@@ -495,6 +496,15 @@ function PresentationEditModal({
         }}
         className="space-y-3"
       >
+        {override.target_kind === "instance" && override.config?.noun ? (
+          <NounPicker
+            slug={activeSlug}
+            instance={override.target_id.split(":")[1] ?? ""}
+            offer={override.config.noun as NounChoiceDecl}
+            stored={override.config.noun_choice}
+            onChanged={onSaved}
+          />
+        ) : null}
         <PresentationFields
           label={label}
           setLabel={setLabel}
@@ -539,6 +549,42 @@ function PresentationEditModal({
         </div>
       </form>
     </Modal>
+  );
+}
+
+/** "What do you call these?" for a table whose bundle offers words (#3650).
+ *  Its own save: a change re-applies the bundle, so every label moves and,
+ *  for a counting word, the records on the old word follow. */
+function NounPicker({
+  slug,
+  instance,
+  offer,
+  stored,
+  onChanged,
+}: {
+  slug: string;
+  instance: string;
+  offer: NounChoiceDecl;
+  stored: unknown;
+  onChanged: () => void;
+}) {
+  const changeShape = useChangeWorkspaceShape();
+  const toast = useToast();
+  const current = (stored as { singular?: unknown } | null)?.singular;
+  const set = useMutation({
+    mutationFn: (singular: string) => changeShape(() => api.setTableNoun(slug, instance, singular)),
+    onSuccess: (r) => {
+      toast.success(`Every label now says ${r.noun.plural}.`);
+      onChanged();
+    },
+    onError: (e) => toast.error(e instanceof ApiError ? e.message : String(e)),
+  });
+  return (
+    <div className="rounded-lg border border-line dark:border-slate-700 p-3" data-testid="noun-picker">
+      <p className="text-sm font-medium text-content dark:text-mortar-100 mb-1.5">{nounChoiceHeading(offer)}</p>
+      <NounChoiceButtons offer={offer} current={typeof current === "string" ? current : null} disabled={set.isPending} onPick={(w) => set.mutate(w)} />
+      <p className="text-xs text-faint mt-1.5">{set.isPending ? "Changing every label…" : "Every label, and Cobb, say the word you pick."}</p>
+    </div>
   );
 }
 

@@ -28,6 +28,7 @@ import {
   type OverrideTarget,
 } from "../platform/entity-kind-overrides.js";
 import { mergeOverrideConfig } from "../platform/override-config-merge.js";
+import { intakeFiles, type FileIntakeDecl } from "../platform/instance-file-intake.js";
 
 export const instancesRouter = Router({ mergeParams: true });
 export const overridesRouter = Router({ mergeParams: true });
@@ -81,6 +82,75 @@ instancesRouter.get(
         })),
       );
       res.json({ items: enriched });
+    } catch (err) {
+      next(err);
+    }
+  },
+);
+
+// POST /:instance/file-intake — each dropped file becomes a record of this
+// table, the file attached to it (platform/instance-file-intake.ts). Takes the
+// lines core-files' intake answered, so the files are stored once, by the one
+// door, before this runs. Only a table whose bundle declares `file_intake`.
+//
+// AI-REACH: the person's own drop on a table's import door; the files are
+// already theirs and an agent can make records through the kind's own create.
+const FileIntakeBody = z.object({
+  lines: z
+    .array(
+      z.object({
+        status: z.string().max(40),
+        filename: z.string().min(1).max(500),
+        path: z.string().max(1000).optional(),
+        file_id: z.string().max(100).optional(),
+        mime_type: z.string().max(200).optional(),
+      }),
+    )
+    .max(2000),
+  values: z.record(z.string().max(80), z.string().max(200)).optional(),
+});
+
+instancesRouter.post(
+  "/:instance/file-intake",
+  requireAuth,
+  withTenant,
+  async (req, res, next) => {
+    try {
+      if (!requireRole(req, res, "owner", "admin", "member")) return;
+      const parsed = FileIntakeBody.safeParse(req.body);
+      if (!parsed.success) {
+        res.status(400).json({ error: { code: "invalid_body", message: "lines are required.", details: parsed.error.issues } });
+        return;
+      }
+      const orgId = req.tenant!.org.id;
+      const instance = String(req.params.instance ?? "");
+      const row = (await listInstances(orgId)).find((i) => i.instance_name === instance);
+      const declared = row
+        ? ((await listOverrides(orgId)).find((o) => o.target_kind === "instance" && o.target_id === `${row.module_name}:${instance}`)?.config as
+            | { file_intake?: FileIntakeDecl | null }
+            | undefined)
+        : undefined;
+      const decl = declared?.file_intake;
+      if (!row || !decl || !Array.isArray(decl.accept) || !decl.role) {
+        res.status(404).json({ error: { code: "no_file_intake", message: "This table does not make records from files." } });
+        return;
+      }
+      const results = await intakeFiles({
+        orgId,
+        slug: req.tenant!.org.slug,
+        userId: req.session!.id,
+        instance,
+        decl,
+        lines: parsed.data.lines,
+        values: parsed.data.values,
+      });
+      res.json({
+        results,
+        created: results.filter((r) => r.outcome === "created").length,
+        existing: results.filter((r) => r.outcome === "existing").length,
+        skipped: results.filter((r) => r.outcome === "skipped").length,
+        failed: results.filter((r) => r.outcome === "failed").length,
+      });
     } catch (err) {
       next(err);
     }

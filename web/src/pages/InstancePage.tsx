@@ -12,6 +12,7 @@
 import { useLocation, useParams, useSearchParams } from "react-router-dom";
 import { Link } from "react-router-dom";
 import { addressesInstanceItem } from "@cobblr/platform-contract/instance-detail";
+import { nounOptions, type NounChoiceDecl } from "@cobblr/platform-contract/kind-label";
 import { useQuery } from "@tanstack/react-query";
 import { CheckCircle2, Camera, Plus, X } from "lucide-react";
 import { InventoryUI } from "@cobblr/inventory/ui";
@@ -112,7 +113,12 @@ export function InstancePage({ instanceName }: { instanceName?: string } = {}) {
     item_noun_plural?: string;
     qty_unit?: string;
     parent?: { instance: string; label?: string; relationship_kind?: string };
+    file_intake?: import("@cobblr/platform-contract").FileIntakeDecl | null;
+    noun?: NounChoiceDecl | null;
   };
+  // Every word the table offers for what it counts in, with its declared
+  // plural, so "3 hanks" agrees on every row whichever word each record has.
+  const countWords = cfg.noun?.of === "unit" ? nounOptions(cfg.noun) : [];
 
   // The whole dispatch is wrapped so the one-time "created from your capture"
   // success strip (redesign A3) renders above WHICHEVER module UI wins.
@@ -130,6 +136,7 @@ export function InstancePage({ instanceName }: { instanceName?: string } = {}) {
         itemNoun={cfg.item_noun}
         itemNounPlural={cfg.item_noun_plural}
         qtyUnit={cfg.qty_unit}
+        countWords={countWords}
         parent={cfg.parent}
       />
     );
@@ -144,6 +151,7 @@ export function InstancePage({ instanceName }: { instanceName?: string } = {}) {
         instance={inst.instance_name}
         displayName={displayName}
         itemNoun={cfg.item_noun}
+        fileIntake={cfg.file_intake ?? undefined}
       />
     );
   }

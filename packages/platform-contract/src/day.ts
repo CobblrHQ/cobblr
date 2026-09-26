@@ -137,5 +137,5 @@ export function countdownWords(target: Day, today: Day, style: "short" | "long" 
   if (style === "short") return diff < 0 ? `${n}d ago` : `in ${n}d`;
   const unit = n < 14 ? "days" : n < 60 ? "weeks" : "months";
   const size = n < 14 ? n : n < 60 ? Math.round(n / 7) : Math.round(n / 30);
-  return diff < 0 ? `${size} ${unit} ago` : `in ${size} ${unit}`;
+  return diff < 0 ? `${size} ${unit} ago` : `in ${size} ${unit}`; // count-unit-ok: size is always 2 or more here and unit is already plural
 }

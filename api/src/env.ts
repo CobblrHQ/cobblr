@@ -123,6 +123,10 @@ const Schema = z.object({
   // Days until a trial workspace's expiry stamp. Reaping itself is DEFERRED —
   // the stamp is set at signup, but nothing sweeps until the reaper is added.
   TRY_TTL_DAYS: z.coerce.number().int().positive().default(30),
+  // How much of her own files a trial workspace may hold, in MB (#3753): enough
+  // to try the Files page and a few patterns, never enough to be free hosting.
+  // A demo unlocked for files.upload is uncapped. 0 means no uploads at all.
+  COBBLR_TRIAL_UPLOAD_CAP_MB: z.coerce.number().int().min(0).default(100),
 
   // ── the no-account sandbox (docs/design-decisions/try-sandbox.md) ──────────
   // OFF unless COBBLR_TRY_SANDBOX=true, so prod / staging / self-host never

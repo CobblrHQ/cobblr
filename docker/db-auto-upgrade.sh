@@ -410,6 +410,26 @@ upgrade_from() {
   fi
 }
 
+# A CURRENT-major cluster already on the mount, somewhere other than NEW_DATA,
+# is the live data: serve it. This is the state every legacy-mount instance is in
+# after its unattended upgrade (<mount>/pg17 = the rollback, <mount>/pg18 = live)
+# once it switches to the 18+ compose file, which mounts the SAME directory one
+# level up: PGDATA then defaults to <mount>/18/docker, which is empty, and without
+# this find_old_cluster picks pg17, the weeks-old rollback, and upgrades it into a
+# fresh cluster. The instance boots healthy on stale data and every write since
+# the first upgrade is gone. Found before it happened, on the try box
+# (2026-09-26, core #3734).
+if [ ! -s "$NEW_DATA/PG_VERSION" ]; then
+  for current in "$ROOT/pg$NEW_MAJOR" "$ROOT/data"; do
+    if [ -s "$current/PG_VERSION" ] && [ "$(cat "$current/PG_VERSION")" = "$NEW_MAJOR" ]; then
+      export PGDATA="$current"
+      NEW_DATA="$current"
+      log "serving the existing Postgres $NEW_MAJOR cluster at $current (PGDATA=$PGDATA); not upgrading an older one"
+      break
+    fi
+  done
+fi
+
 if [ ! -s "$NEW_DATA/PG_VERSION" ]; then
   if old_cluster="$(find_old_cluster)"; then
     upgrade_from "$old_cluster"

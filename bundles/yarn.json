@@ -1,12 +1,12 @@
 {
   "manifest": {
     "id": "cobblr.flagship.yarn",
-    "version": "0.6.4",
+    "version": "0.8.0",
     "name": "Yarn",
-    "description": "Yarn as its own inventory instance: counted by the ball, yarn-only fields, grouped by weight. Optional Hooks + Designs tables.",
+    "description": "Yarn as its own inventory instance: counted in balls, skeins or hanks, yarn-only fields, grouped by weight. Optional Hooks + Patterns tables.",
     "author": "Cobblr",
     "released_at": "2026-07-15",
-    "changelog": "Yarn now counts in balls, the word everyone knows: the unit, Length / ball, Full ball, Price / ball and the Consumption panel (Track each ball separately, Open a ball). Yarn you already have moves over to balls on this update; field names and your values are unchanged. Earlier: Says up front that it tracks stock, so counts and Use one or Used up are there from the first item rather than after one is counted. Earlier: Fixed: the Yarn update now installs: a bad field in the previous release made the update fail validation. New: track your yarn ball by ball. On a yarn's page, under Consumption, tap “Track each ball separately” and you get a plain count by state. “3 balls · 2 new · 1 open”, with the metres left in the ball you're actually knitting from shown quietly (never a confusing total across balls). Open a ball when you crack a new one, and log metres as you go; each open ball keeps its own running balance. It reads the “Length / ball” you already entered to know a full ball, so there's no capacity to type. It's opt-in per yarn and fully reversible, existing yarn is untouched until you turn it on. Earlier changes below.: Your Yarn table now reads “yarn” everywhere: the “New”, search box, and empty-state labels say “yarn” instead of “part”. (Earlier installs picked up the generic “part” wording; upgrading applies the fix.) Real yarn-user polish: the Color field is a swatch picker (type a hex or pick one), Brand + Price now show right on the “New yarn” modal, and a “Suggested needle size” field was added. Dropdowns (vendor, fibre…) let you add a new option on the fly that sticks for next time. Dropped the confusing “Summary” computed field.. Yarn is its OWN table (a Yarn instance), not a skin over generic inventory: only yarn fields show, the button reads “New yarn”, quantities are in balls. Hooks and Designs become their own tables too.",
+    "changelog": "Call your yarn what you call it: ball, skein or hank. Pick the word when you add Yarn, or change it in the Yarn table's settings, and every label, your yarn's counts and Cobb all say it. Earlier: Designs are now Patterns: a pattern keeps its PDF, photos and notes, its designer, where it came from and how hard it is, and the yarn it needs. Import patterns takes a pile of PDFs or a zipped folder: each PDF becomes a pattern with its file, a zip's folders fill in the category, and a PDF you already have is never added twice. Your Designs table is renamed on this update, and everything in it stays. Earlier: Yarn now counts in balls, the word everyone knows: the unit, Length / ball, Full ball, Price / ball and the Consumption panel (Track each ball separately, Open a ball). Yarn you already have moves over to balls on this update; field names and your values are unchanged. Earlier: Says up front that it tracks stock, so counts and Use one or Used up are there from the first item rather than after one is counted. Earlier: Fixed: the Yarn update now installs: a bad field in the previous release made the update fail validation. New: track your yarn ball by ball. On a yarn's page, under Consumption, tap “Track each ball separately” and you get a plain count by state. “3 balls · 2 new · 1 open”, with the metres left in the ball you're actually knitting from shown quietly (never a confusing total across balls). Open a ball when you crack a new one, and log metres as you go; each open ball keeps its own running balance. It reads the “Length / ball” you already entered to know a full ball, so there's no capacity to type. It's opt-in per yarn and fully reversible, existing yarn is untouched until you turn it on. Earlier changes below.: Your Yarn table now reads “yarn” everywhere: the “New”, search box, and empty-state labels say “yarn” instead of “part”.",
     "requires": [
       {
         "module": "inventory"
@@ -23,6 +23,21 @@
         "glyph": "🧶",
         "item_noun": "yarn",
         "qty_unit": "ball",
+        "noun": {
+          "of": "unit",
+          "singular": "ball",
+          "plural": "balls",
+          "alternatives": [
+            {
+              "singular": "skein",
+              "plural": "skeins"
+            },
+            {
+              "singular": "hank",
+              "plural": "hanks"
+            }
+          ]
+        },
         "field_defs": [
           {
             "entity_kind": "inventory:part",
@@ -101,20 +116,20 @@
           {
             "entity_kind": "inventory:part",
             "name": "length_per_skein",
-            "display_label": "Length / ball (m)",
+            "display_label": "Length / {{noun}} (m)",
             "type": "number",
             "unit": "m",
             "position": 6,
-            "help": "Metres per ball, from the label, used to estimate if you have enough for a project."
+            "help": "Metres per {{noun}}, from the label, used to estimate if you have enough for a project."
           },
           {
             "entity_kind": "inventory:part",
             "name": "capacity",
-            "display_label": "Full ball",
+            "display_label": "Full {{noun}}",
             "type": "computed",
             "template": "{{ length_per_skein }}",
             "position": 7,
-            "help": "Metres in one full ball, from the length above. When you track ball by ball, each opened ball's gauge is measured against this: you never type it."
+            "help": "Metres in one full {{noun}}, from the length above. When you track {{noun}} by {{noun}}, each opened {{noun}}'s gauge is measured against this: you never type it."
           },
           {
             "entity_kind": "inventory:part",
@@ -122,7 +137,7 @@
             "display_label": "Dye lot",
             "type": "text",
             "position": 8,
-            "help": "The batch code on the label, buy the same lot so colours match across balls."
+            "help": "The batch code on the label, buy the same lot so colours match across {{nouns}}."
           },
           {
             "entity_kind": "inventory:part",
@@ -159,7 +174,7 @@
           {
             "entity_kind": "inventory:part",
             "name": "cost",
-            "display_label": "Price / ball"
+            "display_label": "Price / {{noun}}"
           },
           {
             "entity_kind": "inventory:part",
@@ -232,9 +247,9 @@
     "features": [
       {
         "key": "designs",
-        "name": "Designs",
-        "question": "Want to track your designs & patterns too?",
-        "description": "A 'Designs' table (a projects instance): each design with its pattern (file/link) + category, and the yarn it needs allocated to it.",
+        "name": "Patterns",
+        "question": "Want to keep your patterns here too?",
+        "description": "A 'Patterns' table (a projects instance): each pattern with its PDF, photos and notes, its category, designer and source, and the yarn it needs allocated to it. Import a pile of PDFs or a zipped folder in one go.",
         "default": false,
         "requires": [
           {
@@ -243,19 +258,31 @@
         ],
         "next_steps": [
           {
-            "label": "Open your Designs table",
+            "label": "Open your Patterns",
             "module": "projects",
             "path": "/instances/designs",
-            "hint": "Each design with its pattern link + the yarn it needs."
+            "hint": "Import your pattern PDFs; each becomes a pattern with its file."
           }
         ],
         "provides_instances": [
           {
             "module": "projects",
             "instance_name": "designs",
-            "display_name": "Designs",
+            "display_name": "Patterns",
             "glyph": "🧵",
-            "item_noun": "design",
+            "item_noun": "pattern",
+            "file_intake": {
+              "accept": [
+                "application/pdf"
+              ],
+              "role": "pattern",
+              "folder": "Patterns",
+              "folder_field": "pattern_category",
+              "ask": [
+                "pattern_source"
+              ],
+              "label": "Import patterns"
+            },
             "field_defs": [
               {
                 "entity_kind": "projects:project",
@@ -264,7 +291,7 @@
                 "type": "url",
                 "position": 1,
                 "renderer": "url-link",
-                "help": "Link to the pattern (Ravelry, a PDF, a blog post…)."
+                "help": "Where the pattern lives online, if it does (Ravelry, a shop, a blog post). A PDF you import is kept on the pattern itself."
               },
               {
                 "entity_kind": "projects:project",
@@ -278,7 +305,46 @@
                   "Home-wear",
                   "Blankets"
                 ],
-                "help": "What kind of make this is."
+                "help": "What kind of make this is. Importing a zip, a top folder named like a category fills it in."
+              },
+              {
+                "entity_kind": "projects:project",
+                "name": "designer",
+                "display_label": "Designer",
+                "type": "text",
+                "position": 3,
+                "help": "Who wrote the pattern."
+              },
+              {
+                "entity_kind": "projects:project",
+                "name": "pattern_source",
+                "display_label": "Source",
+                "type": "text",
+                "position": 4,
+                "choices": [
+                  "Ribblr",
+                  "Ravelry",
+                  "Etsy",
+                  "LoveCrafts",
+                  "A book or magazine",
+                  "Free online",
+                  "My own"
+                ],
+                "help": "Where you got it. Asked once when you import a batch."
+              },
+              {
+                "entity_kind": "projects:project",
+                "name": "difficulty",
+                "display_label": "Difficulty",
+                "type": "text",
+                "position": 5,
+                "choices": [
+                  "Beginner",
+                  "Easy",
+                  "Intermediate",
+                  "Experienced"
+                ],
+                "help": "How hard the pattern says it is."
               }
             ],
             "saved_views": [
@@ -292,8 +358,9 @@
                   "visible_fields": [
                     "title",
                     "pattern_category",
-                    "status",
-                    "pattern_url"
+                    "designer",
+                    "pattern_source",
+                    "status"
                   ]
                 }
               }

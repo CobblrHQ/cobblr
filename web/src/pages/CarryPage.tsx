@@ -59,6 +59,18 @@ function Frame({ children }: { children: React.ReactNode }) {
   );
 }
 
+/** How new a workspace can be and still count as the one made for this carry. */
+const FRESH_WORKSPACE_MS = 30 * 60_000;
+
+/** The workspace to bring a sandbox into without asking: the person's only
+ *  one, and made in the last half hour. Null otherwise, or when the server
+ *  does not say when it was made. */
+export function autoBringTarget<O extends { slug: string; created_at?: string }>(all: O[], writable: O[], now: number = Date.now()): O | null {
+  if (all.length !== 1 || writable.length !== 1) return null;
+  const made = Date.parse(writable[0]!.created_at ?? "");
+  return Number.isFinite(made) && now - made < FRESH_WORKSPACE_MS ? writable[0]! : null;
+}
+
 function CarryInto({ grant, orgs }: { grant: PendingCarry; orgs: ReturnType<typeof useAuth>["orgs"] }) {
   const [preview, setPreview] = useState<CarryPreview | null>(null);
   // Somewhere they can build, and never the trial itself (one box can play
@@ -82,6 +94,16 @@ function CarryInto({ grant, orgs }: { grant: PendingCarry; orgs: ReturnType<type
   }, [grant]);
 
   const target = writable.find((o) => o.slug === slug) ?? null;
+  // Straight in, without a question, when the only workspace they have was
+  // made moments ago: the account they just made for exactly this. Anyone
+  // with a workspace they have been using picks, and presses Bring it in.
+  const fresh = autoBringTarget(orgs, writable);
+  const [auto, setAuto] = useState(false);
+  useEffect(() => {
+    if (auto || !preview || !fresh || fresh.slug !== target?.slug) return;
+    setAuto(true);
+    void bring();
+  }, [preview, fresh, target, auto]);
 
   async function bring() {
     if (!target || busy) return;

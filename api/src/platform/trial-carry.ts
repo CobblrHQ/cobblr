@@ -19,6 +19,7 @@ import { meta } from "../db/meta.js";
 import { env } from "../env.js";
 import { signSession } from "../auth/jwt.js";
 import { hashToken } from "./try-sandbox-token.js";
+import * as activity from "./activity.js";
 import { trialLedger, type TrialLedger } from "./trial-ledger.js";
 import { captureBlueprint, type BlueprintManifestT } from "../routes/blueprint.js";
 import { listKindsForOrg } from "./entities.js";
@@ -62,6 +63,10 @@ export interface CarryPackage {
   records: CarryRecord[];
   /** Records the ledger lists that could not be read here, and why. */
   unread: Array<{ kind: string; id: string; reason: string }>;
+  /** Where the visitor came from (the QR or link that started the sandbox,
+   *  `sandbox_started.detail.source`), so the account it lands in can say.
+   *  Absent from a package built before it existed. */
+  origin?: { source: string | null };
 }
 
 export async function mintCarryToken(orgId: string, userId: string): Promise<string> {
@@ -252,7 +257,76 @@ export async function carryPackage(orgId: string, userId: string): Promise<Carry
     public_surfaces: [],
   };
 
-  return { version: 1, workspace: { id: orgId, name: org.name }, ledger, blueprint, homes, records, unread };
+  return { version: 1, workspace: { id: orgId, name: org.name }, ledger, blueprint, homes, records, unread, origin: { source: await startedFrom(orgId) } };
+}
+
+/** The source the sandbox was started from, if a link or QR named one. */
+async function startedFrom(orgId: string): Promise<string | null> {
+  const row = await meta
+    .selectFrom("product_events")
+    .select("detail")
+    .where("org_id", "=", orgId)
+    .where("event", "=", "sandbox_started")
+    .orderBy("created_at", "desc")
+    .executeTakeFirst();
+  const s = (row?.detail as { source?: unknown } | null | undefined)?.source;
+  return typeof s === "string" && s ? s : null;
+}
+
+/** The activity row that says a sandbox was carried into a real account: its
+ *  presence is what "the carry is confirmed" means on this side. */
+export const SANDBOX_CARRIED = "sandbox_carried";
+
+/** How long a sandbox is held open once its person has left to make it
+ *  theirs: long enough to make an account and confirm an email, after which a
+ *  sandbox that was never carried ends the way any other does. */
+export const CARRY_HOLD_MS = 2 * 3_600_000;
+
+/** Hold a sandbox open for its carry: the package is read through the
+ *  workspace's own routes, which refuse a sandbox past its hour. Never
+ *  shortens one. */
+export async function holdSandboxForCarry(orgId: string, now: number = Date.now()): Promise<void> {
+  const until = new Date(now + CARRY_HOLD_MS);
+  await meta
+    .updateTable("orgs")
+    .set({ trial_expires_at: until })
+    .where("id", "=", orgId)
+    .where("sandbox", "=", true)
+    .where((eb) => eb.or([eb("trial_expires_at", "is", null), eb("trial_expires_at", "<", until)]))
+    .execute();
+}
+
+/** The other side says the carry landed: the sandbox (or kept trial) it came
+ *  from ends now, and the grant stops working. Idempotent, and only ever on a
+ *  live token: nothing but the grant's holder can end a workspace this way.
+ *  Returns false for an unknown or expired token. */
+export async function confirmCarry(plain: string, decisionMs: number, now: number = Date.now()): Promise<boolean> {
+  if (!plain || plain.length > 200) return false;
+  const row = await meta
+    .selectFrom("try_carry_tokens as t")
+    .innerJoin("orgs as o", "o.id", "t.org_id")
+    .select(["t.id", "t.org_id", "t.user_id", "t.expires_at", "o.sandbox"])
+    .where("t.token_hash", "=", hashToken(plain))
+    .executeTakeFirst();
+  if (!row || row.expires_at.getTime() <= now) return false;
+  await meta.transaction().execute(async (trx) => {
+    // A sandbox is over and past its hold at once, so the next sweep deletes
+    // it: there is nothing left to decide. A kept trial is over at the door.
+    await trx
+      .updateTable("orgs")
+      .set({ trial_expires_at: new Date(row.sandbox ? now - decisionMs - 60_000 : now) })
+      .where("id", "=", row.org_id)
+      .execute();
+    await trx.updateTable("try_carry_tokens").set({ expires_at: new Date(now) }).where("id", "=", row.id).execute();
+  });
+  await activity.log({
+    orgId: row.org_id,
+    userId: row.user_id,
+    action: SANDBOX_CARRIED,
+    ref: { module: null, entityType: "carry", entityId: hashToken(plain) },
+    diff: { name: "moved to a real account" },
+  });
+  return true;
 }
 
 /** The file ids a package names, so the file door serves those and nothing else. */

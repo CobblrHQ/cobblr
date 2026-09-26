@@ -101,7 +101,7 @@ export async function entityLongestMm(
     if (mm == null) continue;
     const asMm = v * mm; // scaling by the units service's factor — no hand-rolled conversion
     if (!best || asMm > best.longest_mm) {
-      best = { longest_mm: asMm, detail: `${def.display_label} ${v} ${def.unit}` };
+      best = { longest_mm: asMm, detail: `${def.display_label} ${v} ${def.unit}` }; // count-unit-ok: a dimension's measured length unit (mm, cm), never a counted word
     }
   }
   return best;

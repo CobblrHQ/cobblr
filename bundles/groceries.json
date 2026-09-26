@@ -1,7 +1,7 @@
 {
   "manifest": {
     "id": "cobblr.flagship.groceries",
-    "version": "0.11.2",
+    "version": "0.12.0",
     "scan_keywords": [
       "chips",
       "snack",
@@ -171,7 +171,7 @@
       "peanuts"
     ],
     "released_at": "2026-09-20",
-    "changelog": "A bag of sunflower, pumpkin, chia, flax or sesame seeds, a trail mix, mixed nuts, almonds, cashews or peanuts scanned from a receipt or a barcode files here: the bundle now declares them by name, so a snack no longer lands in Plants because its name ends in seeds. A seasoning, a herb or a marinade scanned from the food catalog files here: the bundle now declares those words, so a garlic seasoning blend no longer lands in a craft table because its name ends in Blend. The Groceries fields now live on the Groceries table only. An early install also put a copy of them on plain Inventory, which made every inventory table look perishable; food that was still filed in plain Inventory moves into Groceries on the next start, each move noted in the activity log, and the copy is removed. The installed Groceries table now routes with every word the bundle declares, so a scanned drink or snack lands here first instead of in plain Inventory. Groceries opens on What's on hand, the pantry board, rather than the table, and remembers the view you pick. Checking an item off the shopping list dates the fresh stock: bought today, good until today plus its shelf life, instead of inheriting the last lot's dates. The saved views that promise an order (Re-buy soonest, How often you re-buy, Use it or lose it) now deliver it on the table itself, soonest first. Checking an item off the shopping list now adds exactly what you bought, once: the restock and purchase wires were declared twice and both fired. The shopping row says what checking it off will do. Scanning a grocery now suggests this bundle. The scanner would pick it and then quietly file the item under plain Inventory instead, because a bundle's suggestion has to be corroborated by the item's own text and nothing called Tomatoes Roma or Croissant contains the word grocery. The bundle now says what its items are called. Earlier changes are in the bundle's history.",
+    "changelog": "Call them what you call them: items, groceries or pantry items. Pick the word when you install, or change it later in the table's settings, and every label says it. Earlier: A bag of sunflower, pumpkin, chia, flax or sesame seeds, a trail mix, mixed nuts, almonds, cashews or peanuts scanned from a receipt or a barcode files here: the bundle now declares them by name, so a snack no longer lands in Plants because its name ends in seeds. A seasoning, a herb or a marinade scanned from the food catalog files here: the bundle now declares those words, so a garlic seasoning blend no longer lands in a craft table because its name ends in Blend. The Groceries fields now live on the Groceries table only. An early install also put a copy of them on plain Inventory, which made every inventory table look perishable; food that was still filed in plain Inventory moves into Groceries on the next start, each move noted in the activity log, and the copy is removed. The installed Groceries table now routes with every word the bundle declares, so a scanned drink or snack lands here first instead of in plain Inventory. Groceries opens on What's on hand, the pantry board, rather than the table, and remembers the view you pick. Checking an item off the shopping list dates the fresh stock: bought today, good until today plus its shelf life, instead of inheriting the last lot's dates. The saved views that promise an order (Re-buy soonest, How often you re-buy, Use it or lose it) now deliver it on the table itself, soonest first. Checking an item off the shopping list now adds exactly what you bought, once: the restock and purchase wires were declared twice and both fired. The shopping row says what checking it off will do. Scanning a grocery now suggests this bundle.",
     "name": "Groceries",
     "description": "Turn inventory + lists into a kitchen system: track food with expiry + storage fields, an auto grocery list on low-stock/expiry, restock on check-off.",
     "author": "Cobblr",
@@ -298,6 +298,21 @@
         ],
         "display_name": "Groceries",
         "item_noun": "item",
+        "noun": {
+          "of": "item",
+          "singular": "item",
+          "plural": "items",
+          "alternatives": [
+            {
+              "singular": "grocery",
+              "plural": "groceries"
+            },
+            {
+              "singular": "pantry item",
+              "plural": "pantry items"
+            }
+          ]
+        },
         "glyph": "🥬",
         "qty_unit": "unit",
         "nav_group": {
@@ -340,7 +355,7 @@
               "refrigerated",
               "ambient"
             ],
-            "help": "How this has to be kept, which is not the same as where it currently is. Filled in from what the item is when you scan it, and left blank when that is not clear enough to say. Anything you choose here is used instead."
+            "help": "How this has to be kept, which is not the same as where it currently is. Filled in from what the {{noun}} is when you scan it, and left blank when that is not clear enough to say. Anything you choose here is used instead."
           },
           {
             "entity_kind": "groceries:item",

@@ -32,3 +32,9 @@ declare module "occt-import-js/dist/occt-import-js.wasm?url" {
   const url: string;
   export default url;
 }
+
+// pdf.js's worker, loaded by URL (Vite `?url`) so it runs off the main thread.
+declare module "pdfjs-dist/build/pdf.worker.min.mjs?url" {
+  const url: string;
+  export default url;
+}

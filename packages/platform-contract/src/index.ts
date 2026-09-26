@@ -11,7 +11,7 @@ import type { DateFieldDirection } from "@cobblr/platform-contract/date-field-di
 
 export type { DateFieldDirection } from "@cobblr/platform-contract/date-field-direction";
 export { dateFieldDirection, canBeOverdue, dateEventTitle } from "@cobblr/platform-contract/date-field-direction";
-export { pluralise, countOf, itemNounFor } from "@cobblr/platform-contract/plural";
+export { pluralise, countOf, wordForCount, countWordsFor, quantityWithUnit, itemNounFor, type CountWords } from "@cobblr/platform-contract/plural";
 export { PLATFORM_OWNER, PLATFORM_COMMANDS, PLATFORM_COMMANDS_VERSION } from "@cobblr/platform-contract/platform-commands";
 export { expiryState, expiryPhrase, EXPIRING_WITHIN_DAYS, type ExpiryState, type ExpiryReading } from "@cobblr/platform-contract/expiry-grace";
 export { fieldDay, fieldDayUnreadable } from "@cobblr/platform-contract/field-day";
@@ -4922,6 +4922,32 @@ export type FileAttachmentLister = (
   orgId: string,
   source: { source_module: string; source_type: string; source_id: string },
 ) => Promise<FileAttachmentRow[]>;
+/** Where one file is attached: the reverse of FileAttachmentLister. What
+ *  lets "each dropped file becomes a record" refuse to make a second record
+ *  for a file a record already owns. Live attachments of a live file only. */
+export interface FileAttachedTo {
+  attachmentId: string;
+  source_module: string;
+  source_type: string;
+  source_id: string;
+  role: string | null;
+}
+export type FileAttachmentsOfFile = (orgId: string, fileId: string) => Promise<FileAttachedTo[]>;
+
+/** A table's file intake, declared by its bundle: each file dropped on the
+ *  table becomes one of its records, the file attached with `role` (Yarn's
+ *  Patterns: every PDF is a pattern). Files arrive through core-files' one
+ *  intake and land in `folder`; a zip's top folder fills `folder_field` when
+ *  it names one of that field's choices; `ask` is asked once per batch. The
+ *  server side is POST /orgs/:slug/instances/:instance/file-intake. */
+export interface FileIntakeDecl {
+  accept: string[];
+  role: string;
+  folder?: string;
+  folder_field?: string;
+  ask?: string[];
+  label?: string;
+}
 
 /** One owner per named job, across every api process sharing this database.
  *
@@ -5069,6 +5095,11 @@ export interface PlatformFiles {
     orgId: string,
     source: { source_module: string; source_type: string; source_id: string },
   ): Promise<FileAttachmentRow[] | null>;
+  /** A file-storage module registers the reverse lookup once at boot. */
+  registerAttachmentsOfFile(lookup: FileAttachmentsOfFile): void;
+  /** Every entity one file is attached to. Null if no lookup is registered
+   *  (distinct from [] - attached to nothing). */
+  attachmentsOfFile(orgId: string, fileId: string): Promise<FileAttachedTo[] | null>;
   /** Override the blob-storage driver (the overlay injects S3/R2). If none is
    *  registered, core-files uses its built-in local-disk driver. */
   registerDriver(driver: FilesDriver): void;
@@ -5175,6 +5206,10 @@ export interface EntitlementCtx {
   feature: string;
   /** Units requested (default 1) — e.g. bytes for files.store. */
   quantity?: number;
+  /** Units the workspace already holds of the same thing (the bytes of its
+   *  stored files, for files.upload), so a guard can judge a running total
+   *  rather than one request at a time. Absent when the caller cannot say. */
+  used?: number;
   userId?: string;
 }
 export type EntitlementGuard = (

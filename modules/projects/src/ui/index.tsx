@@ -2,6 +2,7 @@
 // router; the navItems metadata drives the top-bar entry.
 
 import { Routes, Route } from "react-router-dom";
+import type { FileIntakeDecl } from "@cobblr/platform-contract";
 import { Layers } from "lucide-react";
 // Side-effect: registers the projects "at a glance" dashboard tile through
 // platform-web's registerDashboardWidget seam when this UI bundle loads.
@@ -23,11 +24,14 @@ interface ProjectsUIProps {
    *  page reads as the user's thing, not "projects" / "New project". */
   displayName?: string;
   itemNoun?: string;
+  /** The table's file intake, when its bundle declares one (Patterns: each
+   *  PDF dropped on it becomes a pattern). */
+  fileIntake?: FileIntakeDecl;
 }
 
-export function ProjectsUI({ orgSlug, getToken, instance, displayName, itemNoun }: ProjectsUIProps) {
+export function ProjectsUI({ orgSlug, getToken, instance, displayName, itemNoun, fileIntake }: ProjectsUIProps) {
   return (
-    <ProjectsProvider orgSlug={orgSlug} getToken={getToken} instance={instance} displayName={displayName} itemNoun={itemNoun}>
+    <ProjectsProvider orgSlug={orgSlug} getToken={getToken} instance={instance} displayName={displayName} itemNoun={itemNoun} fileIntake={fileIntake}>
       <Routes>
         <Route index element={<ProjectsListPage />} />
         {/* Bundle setup-cards / next-steps deep-link to

@@ -4,6 +4,7 @@
 // shorthand symbol, the full word, or both. Mirror of the server-side
 // units-catalog.ts formatter so display is identical wherever it runs.
 
+import { countWordsFor, wordForCount, type CountWords } from "@cobblr/platform-contract/plural";
 import type { PlatformUnitDef, UnitDisplayMode } from "./types";
 
 /** Resolve a raw unit string to a catalog entry by symbol → code →
@@ -46,22 +47,28 @@ export function convertQuantity(
 }
 
 /** Render a quantity + unit per the display mode, pluralising the full
- *  word by quantity ("1 gram" / "340 grams"). Unknown units fall back to
- *  the raw string. `qty` may be null to label a unit without a number. */
+ *  word by quantity ("1 gram" / "340 grams"). A unit the vocabulary does not
+ *  know agrees with its count too, from `known` (a bundle's declared words)
+ *  or the regular rules. `qty` may be null to label a unit without a number. */
 export function formatQuantity(
   qty: number | null | undefined,
   raw: string | null | undefined,
   units: PlatformUnitDef[],
   mode: UnitDisplayMode = "symbol",
+  known: readonly CountWords[] = [],
 ): string {
   const n = qty == null || Number.isNaN(qty) ? null : qty;
   // Clean number: integers as-is, otherwise trimmed to 3 decimals.
   const numPart = n == null ? "" : Number.isInteger(n) ? String(n) : String(parseFloat(n.toFixed(3)));
   const def = resolveUnit(raw, units);
   if (!def) {
-    return [numPart, (raw ?? "").trim()].filter(Boolean).join(" ");
+    // A word the vocabulary does not hold (a bundle's "hank", a typed "cone")
+    // still agrees with its count: "3 hanks", never "3 hank".
+    const typed = (raw ?? "").trim();
+    const word = typed && n != null ? wordForCount(n, countWordsFor(typed, known)) : typed;
+    return [numPart, word].filter(Boolean).join(" ");
   }
-  const word = n === 1 ? def.name : def.plural;
+  const word = n != null && Math.abs(n) === 1 ? def.name : def.plural;
   const unitPart =
     mode === "name" ? word : mode === "both" ? `${def.symbol} (${word})` : def.symbol;
   return [numPart, unitPart].filter(Boolean).join(" ");

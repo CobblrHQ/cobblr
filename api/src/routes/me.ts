@@ -1952,6 +1952,7 @@ async function fireDiscordTestDm(discordUserId: string, displayName: string | nu
   const res = await sendDiscordDm({
     discord_user_id: discordUserId,
     text: `${hi}This is Cobblr confirming we can reach you here. Tap the button below to turn on Discord notifications.`,
+    summary: "Cobblr can reach you here. Tap to turn on Discord notifications.",
     verify_token: token,
   });
   return { deliverable: res.deliverable };

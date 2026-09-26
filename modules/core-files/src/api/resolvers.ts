@@ -34,6 +34,22 @@ export function registerFileResolvers(): void {
     },
   );
 
+  // Search reaches a file by its name ("the beanie pattern"): core-search
+  // asks every kind's list resolver, and without one a file could only be
+  // found by scrolling (#3753). Newest first; `q` matches the name.
+  platform().entities.registerListResolver("core-files:file", async (orgId, query) => {
+    const db = (await platform().tenants.getDb(orgId)) as Kysely<CoreFilesDB>;
+    let q = db.selectFrom("core_files_files").selectAll().where("deleted_at", "is", null);
+    const text = (query.q ?? "").trim();
+    if (text) q = q.where("filename", "ilike", `%${text.replace(/[\\%_]/g, (c) => `\\${c}`)}%`);
+    const rows = await q
+      .orderBy("created_at", "desc")
+      .limit(Math.min(query.limit ?? 50, 200))
+      .offset(query.offset ?? 0)
+      .execute();
+    return { items: rows.map((r) => toResolvedFile(orgId, r)) };
+  });
+
   // The byte-reading seam. core-files owns the disk layout, so it's
   // the natural place to satisfy platform().files.read().
   platform().files.registerReader(async (orgId, fileId, variant) => {

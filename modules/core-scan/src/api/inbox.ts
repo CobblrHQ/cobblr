@@ -111,7 +111,7 @@ import { selectTopCandidates, deriveImageQuery, isFreshCategory } from "../servi
 import { pictureOptions } from "../services/picture-options.js";
 import { rankPhotoWithAi, isRankFailure, rankFailureSentence } from "../services/rank-photo.js";
 import { looksOfRow, picturesThatAgree } from "../services/picture-agrees.js";
-import { withholdContradictedPicture } from "../services/withhold-picture.js";
+import { rechoosePictureForColour, withholdContradictedPicture } from "../services/withhold-picture.js";
 import { themeFromReply, themeScope, type ThemeItem } from "../services/session-theme.js";
 import { scannerQueue } from "../services/scanner-queue.js";
 import { inboxCounts, type CountRow } from "../services/inbox-counts.js";
@@ -2120,6 +2120,11 @@ inboxRouter.patch(
         if ((await withholdContradictedPicture(tenantContext(req).org.id, db as never, id)) === "withheld") {
           out = (await db.selectFrom("core_scan_inbox_items").selectAll().where("id", "=", id).executeTakeFirst()) ?? out;
         }
+        // A colour the person gave the item that its picture does not show
+        // is looked for, in the background (the response does not wait).
+        void rechoosePictureForColour(tenantContext(req).org.id, db as never, id).catch((err) =>
+          console.error("[core-scan] choosing a picture in the item's colour after an edit failed:", (err as Error).message),
+        );
       } catch (err) {
         console.error("[core-scan] judging the picture after an edit failed:", (err as Error).message);
       }
@@ -6348,7 +6353,10 @@ inboxRouter.post(
       void (async () => {
         const file = await platform().files.read(readOrg, parsed.data.file_id, "original");
         const text = file ? (await ocrImageText(new Uint8Array(file.bytes)))?.text : null;
-        if (text?.trim()) await applyLabelFacts(db as never, updated.id, text);
+        if (text?.trim() && (await applyLabelFacts(db as never, updated.id, text))?.fields.colorway) {
+          // The label named the colourway: the picture should show it.
+          await rechoosePictureForColour(readOrg, db as never, updated.id);
+        }
       })().catch((e) => console.error("[core-scan] reading the added photo's label threw:", (e as Error).message));
     }
     if (!parsed.data.uploaded) {

@@ -264,7 +264,7 @@ export const GENERATED_SURFACE: Capability[] = [
   },
   {
     "feature": "Presentation",
-    "does": "Rename, re-icon, hide and reorder any nav entry in your workspace. Workspace edits override module + bundle defaults.",
+    "does": "Rename, re-icon, hide and reorder any nav entry in your workspace, and pick what a table calls its things (balls or skeins). Workspace edits override module + bundle defaults.",
     "where": "/configuration/presentation",
     "also": [
       "nav",
@@ -273,7 +273,14 @@ export const GENERATED_SURFACE: Capability[] = [
       "icons",
       "reorder",
       "customize",
-      "navigation"
+      "navigation",
+      "word",
+      "noun",
+      "call",
+      "unit",
+      "skein",
+      "ball",
+      "hank"
     ]
   },
   {

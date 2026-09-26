@@ -4,8 +4,14 @@
 // stores the canonical SYMBOL ("g"); the suggestion shows the full word so
 // the picker reads plainly ("grams (g)"). A resolved value shows its full
 // name beneath as confirmation; an unknown value is accepted as-is.
+//
+// Beside a count (`count`), the field READS the way the count does: 3 of a
+// stored "hank" shows "hanks", 1 shows "hank". Focus shows the stored word to
+// edit, and typing a declared plural ("hanks") stores its singular, so the
+// stored unit stays one word whatever the count was when somebody typed it.
 
 import { useId, useMemo, useState } from "react";
+import { countWordsFor, type CountWords } from "@cobblr/platform-contract/plural";
 import { useUnits } from "./useUnits";
 
 interface Props {
@@ -13,12 +19,17 @@ interface Props {
   onCommit: (value: string) => void;
   placeholder?: string;
   className?: string;
+  /** The quantity this unit sits beside, so the word agrees with it. */
+  count?: number;
+  /** The table's declared words for its units (a bundle's noun offer). */
+  known?: readonly CountWords[];
 }
 
-export function UnitInput({ value, onCommit, placeholder = "unit", className }: Props) {
+export function UnitInput({ value, onCommit, placeholder = "unit", className, count, known }: Props) {
   const units = useUnits();
   const listId = useId();
   const [draft, setDraft] = useState(value ?? "");
+  const [focused, setFocused] = useState(false);
 
   // Keep the draft in sync if the saved value changes underneath us.
   const initial = value ?? "";
@@ -26,9 +37,16 @@ export function UnitInput({ value, onCommit, placeholder = "unit", className }: 
 
   const resolved = units.resolve(draft);
   const commit = () => {
-    const v = draft.trim();
+    setFocused(false);
+    const typed = draft.trim();
+    const v = typed ? countWordsFor(typed, known).singular : typed;
     if (v !== (value ?? "")) onCommit(v);
   };
+  // A measured unit reads as its symbol whatever the count; only a counted
+  // word (free text, or the vocabulary's count category) changes with it.
+  const agrees =
+    !focused && count != null && Number.isFinite(count) && !!value && (!resolved || resolved.category === "count");
+  const shown = agrees && draft === (value ?? "") ? units.wordFor(count!, value, known) : draft;
 
   // Sort by category then name so the dropdown reads in sensible groups.
   const options = [...units.all].sort(
@@ -39,8 +57,9 @@ export function UnitInput({ value, onCommit, placeholder = "unit", className }: 
     <div className={className}>
       <input
         list={listId}
-        value={draft}
+        value={shown}
         onChange={(e) => setDraft(e.target.value)}
+        onFocus={() => setFocused(true)}
         onBlur={commit}
         onKeyDown={(e) => {
           if (e.key === "Enter") (e.target as HTMLInputElement).blur();

@@ -140,6 +140,7 @@ services:
       TRY_TTL_DAYS: ${TRY_TTL_DAYS:-}
       COBBLR_TRIAL_REAP_WARN_DAYS: ${COBBLR_TRIAL_REAP_WARN_DAYS:-}
       COBBLR_TRIAL_DENY_MODULES: ${COBBLR_TRIAL_DENY_MODULES:-}
+      COBBLR_TRIAL_UPLOAD_CAP_MB: ${COBBLR_TRIAL_UPLOAD_CAP_MB:-}
       # Signup gates: captcha (the site key is public and served at runtime
       # via /auth/config, so the shared web image bakes in no key),
       # disposable-address blocking, and verify-before-login.
@@ -199,9 +200,9 @@ services:
       DISCORD_CLIENT_SECRET: ${DISCORD_CLIENT_SECRET:-}
       DISCORD_REDIRECT_URI: ${DISCORD_REDIRECT_URI:-}
       DISCORD_INVITE_URL: ${DISCORD_INVITE_URL:-}
-      # The Google client behind "Connect Gmail" (a mailbox Cobblr reads).
-      GOOGLE_OAUTH_CLIENT_ID: ${GOOGLE_OAUTH_CLIENT_ID:-}
-      GOOGLE_OAUTH_CLIENT_SECRET: ${GOOGLE_OAUTH_CLIENT_SECRET:-}
+      # "Connect Gmail" (a mailbox Cobblr reads) uses the same Google client as the
+      # Drive backup broker above, GOOGLE_OAUTH_CLIENT_ID / _SECRET, and only adds
+      # its own redirect. Declaring the pair again here made the file unparseable.
       GOOGLE_OAUTH_REDIRECT_URI: ${GOOGLE_OAUTH_REDIRECT_URI:-}
       # Community links offered in the account menu + Send Feedback. The
       # COBBLR_-prefixed invite wins over the bare name above when both are set.
@@ -222,6 +223,7 @@ services:
       # User-uploaded files (core-files). Bind-mounted to ./data/files
       # so they survive image rebuilds.
       COBBLR_FILES_ROOT: /var/cobblr/files
+      COBBLR_FILES_QUOTA_MB: ${COBBLR_FILES_QUOTA_MB:-}
       # Optional: registry URL for /sandbox/install. Defaults to the PUBLIC
       # CobblrHQ/registry modules.json (raw URL, no token) — set this only to
       # point at an index of your own.

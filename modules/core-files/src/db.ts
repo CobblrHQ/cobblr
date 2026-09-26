@@ -33,6 +33,15 @@ export interface FilesTable {
   height: number | null;
   deleted_at: Date | null;
   created_at: Generated<Date>;
+  /** The folder the file lives in; null is the top level. */
+  folder_id: Generated<string | null>;
+}
+
+export interface FoldersTable {
+  id: Generated<string>;
+  parent_id: string | null;
+  name: string;
+  created_at: Generated<Date>;
 }
 
 export interface FileAttachmentsTable {
@@ -49,6 +58,7 @@ export interface FileAttachmentsTable {
 export interface CoreFilesDB {
   core_files_files: FilesTable;
   core_files_attachments: FileAttachmentsTable;
+  core_files_folders: FoldersTable;
 }
 
 /** Re-exported from the contract so this module cannot fall behind the

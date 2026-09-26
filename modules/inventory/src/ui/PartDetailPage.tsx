@@ -22,7 +22,7 @@ import { useDisclosure } from "./useDisclosure";
 import type { FaceName } from "@cobblr/platform-contract";
 import { adoptUnitsAdjustment } from "../reconcile";
 import type { Part } from "./api";
-import { pluralise } from "@cobblr/platform-contract";
+import { countWordsFor, pluralise, wordForCount } from "@cobblr/platform-contract";
 import {
   PER_UNIT_TRACKING_KEY,
   isPerUnitTracking,
@@ -157,7 +157,7 @@ const FACE_OF: Record<string, FaceName> = {
 };
 
 export function PartDetailPage({ id, onClose }: { id: string; onClose: () => void }) {
-  const { api, orgSlug, getToken, entityKind, instance, itemNoun, parent } = useInventory();
+  const { api, orgSlug, getToken, entityKind, instance, itemNoun, parent, countWords } = useInventory();
   const fp = useFieldPresentation(entityKind);
   const disclosure = useDisclosure();
   const units = useUnits();
@@ -557,6 +557,8 @@ export function PartDetailPage({ id, onClose }: { id: string; onClose: () => voi
                           <UnitInput
                             className="w-32"
                             value={p.unit}
+                            count={Number(p.qty)}
+                            known={countWords}
                             onCommit={(v) => {
                               const n = Number(p.qty);
                               const c = Number.isFinite(n) ? units.convert(n, p.unit, v) : null;
@@ -1094,7 +1096,7 @@ function FlatConsumptionPanel({
   onSetCapacity: (c: number | null) => void;
   onEnablePerUnit?: () => void;
 }) {
-  const { api } = useInventory();
+  const { api, countWords } = useInventory();
   const [editing, setEditing] = useState(false);
   const [cap, setCap] = useState(capacity != null ? String(capacity) : "");
   const log = useQuery({ queryKey: ["inventory-consumption", partId], queryFn: () => api.listConsumption(partId) });
@@ -1201,7 +1203,7 @@ function FlatConsumptionPanel({
                 <li key={r.id} className="py-1.5 flex items-center gap-2 text-[13px]">
                   <span className={"font-medium tabular-nums " + (d < 0 ? "text-ember-600 dark:text-ember-500" : "text-moss-600 dark:text-moss-400")}>
                     {d < 0 ? "" : "+"}
-                    {d} {unit}
+                    {units.format(d, unit, countWords)}
                   </span>
                   <span className="text-muted dark:text-slate-400 truncate flex-1">{r.reason ?? r.source_kind ?? "adjustment"}</span>
                   <span className="text-[11px] text-faint shrink-0">{new Date(r.at).toLocaleDateString()}</span>
@@ -1256,7 +1258,7 @@ function PerUnitConsumptionPanel({
   modelMetadata: Record<string, unknown>;
   onDisable: () => void;
 }) {
-  const { api, entityKind } = useInventory();
+  const { api, entityKind, countWords } = useInventory();
   const qc = useQueryClient();
   const toast = useToast();
 
@@ -1306,8 +1308,9 @@ function PerUnitConsumptionPanel({
   });
   const units = unitsQ.data ?? [];
   const pool = summarizePool(modelQty, units);
-  const nounSingular = countUnit || "unit";
-  const nounPlural = pluralizeUnit(nounSingular);
+  const unitWords = countWordsFor(countUnit || "unit", countWords);
+  const nounSingular = unitWords.singular;
+  const nounPlural = wordForCount(2, unitWords);
 
   // Project bindings (§3): a reserved allocation whose part_id is an open unit
   // binds that skein to a project. One instance-wide fetch, grouped by unit, so
@@ -1765,13 +1768,6 @@ function OpenUnitCard({
 /** Trim float dust for display (546 - 0.1 - 0.2 …) without forcing integers. */
 function round3(n: number): number {
   return Math.round(n * 1e6) / 1e6;
-}
-
-function pluralizeUnit(u: string): string {
-  if (!u) return "units";
-  if (/(s|x|z|ch|sh)$/i.test(u)) return `${u}es`;
-  if (/[^aeiou]y$/i.test(u)) return `${u.slice(0, -1)}ies`;
-  return `${u}s`;
 }
 
 function numOr(v: unknown): number | null {

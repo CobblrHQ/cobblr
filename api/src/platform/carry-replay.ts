@@ -15,6 +15,7 @@ import { meta } from "../db/meta.js";
 import { env } from "../env.js";
 import { signSession } from "../auth/jwt.js";
 import * as activity from "./activity.js";
+import { trackProductEvent } from "./product-events.js";
 import { hashToken } from "./try-sandbox-token.js";
 import { applyBlueprint, type BlueprintManifestT } from "../routes/blueprint.js";
 import { getFlagshipManifest } from "../lib/flagship-bundles.js";
@@ -45,6 +46,9 @@ export interface CarryLine {
   note?: string;
 }
 export interface CarryResult {
+  /** The source said it ended the sandbox. False when it could not be told;
+   *  the sandbox then ends at its own time. */
+  source_ended?: boolean;
   lines: CarryLine[];
   /** Count per state, for a one-line summary. */
   done: number;
@@ -192,10 +196,39 @@ export async function replayCarry(opts: {
   const key = `${orgId}\u0000${tokenHash}`;
   if (inFlight.has(key)) throw new CarryError("already", "This trial is already on its way into this workspace.");
   inFlight.add(key);
+  let result: CarryResult;
   try {
-    return await replay(opts, tokenHash);
+    result = await replay(opts, tokenHash);
   } finally {
     inFlight.delete(key);
+  }
+  // Landed: the sandbox it came from ends, and only now. Told after the replay
+  // and never before, so a carry that failed half way leaves the person their
+  // sandbox to try again from. Best-effort: the replay is done either way, and
+  // a sandbox never told ends at its own time.
+  const sourceEnded = await tellSourceItLanded(opts.source, token);
+  // The door the visitor came in by (the booth's QR, a link), onto this side's
+  // account, so the funnel reads show → sandbox → account in one place.
+  trackProductEvent({
+    orgId,
+    userId: opts.userId,
+    event: "sandbox_carried_in",
+    detail: { source: opts.pkg.origin?.source ?? null, from: opts.source, done: result.done, skipped: result.skipped },
+  });
+  return { ...result, source_ended: sourceEnded };
+}
+
+async function tellSourceItLanded(source: string, token: string): Promise<boolean> {
+  try {
+    const res = await fetch(`${source}/api/v1/try/carry/${encodeURIComponent(token)}/done`, {
+      method: "POST",
+      signal: AbortSignal.timeout(15_000),
+    });
+    if (!res.ok) console.error(`[carry] ${source} did not take the confirmation (HTTP ${res.status}); the sandbox ends at its own time`);
+    return res.ok;
+  } catch (err) {
+    console.error(`[carry] could not tell ${source} the carry landed (${(err as Error).message}); the sandbox ends at its own time`);
+    return false;
   }
 }
 

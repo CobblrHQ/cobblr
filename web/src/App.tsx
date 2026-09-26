@@ -368,7 +368,7 @@ function ConsoleEscape() {
 function CarryRoute() {
   const { user } = useAuth();
   const [grant] = useState(() => takeCarryGrant(window.location.search));
-  if (grant && !user) return <AuthPage initialMode="signup" />;
+  if (grant && !user) return <AuthPage initialMode="signup" carrying />;
   return <CarryPage grant={grant} />;
 }
 

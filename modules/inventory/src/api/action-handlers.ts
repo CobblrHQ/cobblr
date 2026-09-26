@@ -10,7 +10,7 @@
 //  module, bricklink-connector — it drives create-items + update-item.)
 
 import { sql, type Kysely } from "kysely";
-import { platform, requireActionEntity, type ActionInvokeContext } from "@cobblr/platform-contract";
+import { platform, quantityWithUnit, requireActionEntity, type ActionInvokeContext } from "@cobblr/platform-contract";
 import type { ActionUndoStep } from "@cobblr/platform-contract/action-undo";
 import { statedQuantity } from "@cobblr/platform-contract/stated-quantity";
 import type { InventoryDB } from "../db.js";
@@ -1100,7 +1100,7 @@ async function withBatches(
       instance: instance ?? "inventory",
       // The card and the reply say what was made and where; without a
       // sentence the card said only "Add an item".
-      summary: `Added ${created.name} (${qty} ${unit}) to ${instance ?? "Inventory"}`,
+      summary: `Added ${created.name} (${quantityWithUnit(Number(qty), unit, await platform().units.resolve(ctx.orgId, unit).catch(() => null))}) to ${instance ?? "Inventory"}`,
     };
   });
 

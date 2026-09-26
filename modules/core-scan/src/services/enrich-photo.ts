@@ -10,8 +10,8 @@
 // nothing auto-commits (every identified photo waits for a one-tap
 // confirm in the triage queue).
 
-import { looksOfRow, picturesThatAgree } from "./picture-agrees.js";
-import { withholdContradictedPicture } from "./withhold-picture.js";
+import { looksOfRow, picturesThatAgree, statedColoursOf } from "./picture-agrees.js";
+import { rechoosePictureForColour, withholdContradictedPicture } from "./withhold-picture.js";
 import { applyLabelFacts } from "./label-quantity.js";
 import type { Kysely } from "kysely";
 import { seenCountOf, seenDistinctOf } from "./seen-count.js";
@@ -31,7 +31,7 @@ import {
   type CheckBasis,
 } from "./crosscheck-policy.js";
 import { evictBarcodeCaches, rememberLocalIdentity } from "./barcode-cache.js";
-import { mediaSearchExtras, isFreshCategory, coverQuery } from "./ddg-images.js";
+import { mediaSearchExtras, isFreshCategory, coverQuery, colorWordOnly, colorFromText } from "./ddg-images.js";
 import { pictureOptions } from "./picture-options.js";
 import { curatedImageUrl } from "./curated-images.js";
 import { pickedImageUrl } from "./picked-images.js";
@@ -72,6 +72,41 @@ async function stampImageStatus(db: Kysely<CoreScanDB>, itemId: string, status: 
     })
     .where("id", "=", itemId)
     .execute();
+}
+
+/** The shade an item is said to be, in words: "Dark Blue" out of a name or a
+ *  colourway, or the bare colour when no shade word leads it. */
+export function shadePhrase(text: string | null | undefined): string | null {
+  const t = (text ?? "").toLowerCase();
+  const colour = colorFromText(t);
+  if (!colour) return null;
+  const m = new RegExp(`\\b((?:dark|light|pale|deep|bright|royal|navy|sky|baby|electric|hot)\\s+)?${colour}\\b`).exec(t);
+  return (m?.[0] ?? colour).trim();
+}
+
+/** Candidates whose own title names the item's exact shade first, the rest
+ *  after in their ranked order. "Royal blue" and "Dark Blue" are both blue to
+ *  the pixels; the words tell a dark blue skein which of them it is. */
+export function shadeFirst(urls: readonly string[], titles: ReadonlyMap<string, string>, shade: string | null): string[] {
+  if (!shade) return [...urls];
+  const says = (u: string) => (titles.get(u) ?? "").toLowerCase().includes(shade);
+  return [...urls.filter(says), ...urls.filter((u) => !says(u))];
+}
+
+/** The colour an item's fields say it is, in words a search can use. A
+ *  colourway often leads with the maker's shade code ("J7 Dark Blue"); the
+ *  code is dropped, and a hex swatch is never a word. */
+export function colourWordOfFields(candidates: unknown): string | null {
+  const cands = Array.isArray(candidates) ? (candidates as Array<{ fields?: Record<string, unknown> }>) : [];
+  for (const c of cands) {
+    for (const k of ["colorway", "colourway", "color", "colour"]) {
+      const v = c.fields?.[k];
+      if (typeof v !== "string") continue;
+      const word = colorWordOnly(v.replace(/^\s*[A-Z]{0,2}\d+[A-Z]?\s+/i, "").trim());
+      if (word) return word;
+    }
+  }
+  return null;
 }
 
 export async function refreshCatalogImageByName(
@@ -121,7 +156,12 @@ export async function refreshCatalogImageByName(
   // shop name answers with the most photographed thing of that name in that
   // shop's catalogue, which for tomatoes is a tin. The category itself rides
   // along too, as the colour and the form factor already do.
-  const extra = [author, mediaWord, form, fresh ? "fresh" : null, (category ?? "").trim() || null]
+  // The colour the item is, in words, from its colourway or colour field
+  // ("J7 Dark Blue" says Dark Blue): a search for the product alone answers
+  // with whatever shade was photographed most, and for a yarn that is rarely
+  // the one on the table (#3729). coverQuery drops words the name already says.
+  const colourWord = colourWordOfFields(cur?.suggested_candidates);
+  const extra = [author, mediaWord, colourWord, form, fresh ? "fresh" : null, (category ?? "").trim() || null]
     .filter(Boolean)
     .join(" ") || null;
   const q = coverQuery(name, brand, soldBy, extra, fresh);
@@ -149,6 +189,7 @@ export async function refreshCatalogImageByName(
   // phrase when the shop-prefixed one is empty, the library again when the
   // engine refuses. Ranked on the way out.
   let ranked: string[] = [];
+  let rankedTitles = new Map<string, string>();
   if (!chosen) {
     const found = await pictureOptions({
       query: q,
@@ -185,6 +226,7 @@ export async function refreshCatalogImageByName(
     const agreeing = picturesThatAgree(looksOfRow(cur ?? {}, name), found.items);
     if (found.items.length && !agreeing.length) console.warn(`[core-scan] every picture for ${JSON.stringify(q)} contradicts the item; keeping its own photo`);
     ranked = agreeing.map((r) => r.url).filter((u): u is string => !!u);
+    rankedTitles = new Map(agreeing.map((r) => [r.url, r.title ?? ""]));
   }
   // Try to DOWNLOAD the top candidates into core-files, falling through until one
   // stores. Storing just the top RAW url (as this did) left many tiles empty: a
@@ -200,6 +242,17 @@ export async function refreshCatalogImageByName(
     return "none";
   }
   const { downloadCatalogImage } = await import("./enrich.js");
+  // A picture that SHOWS the colour the item states wins over one that only
+  // does not contradict it: a dark blue skein gets a blue picture, not the
+  // first one whose pixels happened to be neutral (#3729). The first pass
+  // measures more candidates than the fallback keeps, since most are refused.
+  const stated = statedColoursOf(looksOfRow(cur ?? {}, name));
+  if (!chosen && stated.size) {
+    const shade = shadePhrase(colourWord ?? name);
+    for (const url of shadeFirst(ranked.slice(0, 8), rankedTitles, shade)) {
+      if (await downloadCatalogImage({ db, orgId, itemId }, url, { mustShow: true })) return "stored";
+    }
+  }
   for (const url of candidates) {
     if (await downloadCatalogImage({ db, orgId, itemId }, url)) return "stored"; // stored → done
   }
@@ -1295,6 +1348,11 @@ export async function enrichPhotoItem(ctx: PhotoEnrichContext): Promise<EnrichOu
   // whose label said "quantity contained 3" stayed x1.
   await applyLabelFacts(ctx.db as never, ctx.itemId).catch((err) =>
     console.error(`[core-scan] reading the label facts of ${ctx.itemId} failed:`, (err as Error).message),
+  );
+  // A colour the read (or the label) stated may not be the one the picture
+  // shows: look for one that shows it (withhold-picture.ts).
+  void rechoosePictureForColour(ctx.orgId, ctx.db as never, ctx.itemId).catch((err) =>
+    console.error(`[core-scan] choosing a picture in the item's colour for ${ctx.itemId} failed:`, (err as Error).message),
   );
   return outcome;
 }

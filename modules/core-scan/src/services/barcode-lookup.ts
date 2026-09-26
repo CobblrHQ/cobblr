@@ -38,6 +38,17 @@ export interface BarcodeHit {
   fields?: Record<string, string | number>;
   /** The registry id the fields decode under (`isbn`). Present iff `fields` is. */
   decoder_id?: string;
+  /** Which tier answered THIS install, apart from `source` (where the data
+   *  came from): the barcode network relays go-upc's answer as source
+   *  "go-upc", and a check read that as a direct call (#3713). Kept on `raw`
+   *  too, so a cached hit still says it. */
+  via?: BarcodeVia;
+}
+
+export type BarcodeVia = "bidb" | "resolver" | "direct";
+
+function withVia(hit: BarcodeHit, via: BarcodeVia): BarcodeHit {
+  return { ...hit, via, raw: { ...hit.raw, via } };
 }
 
 export type BarcodeOutcome =
@@ -45,7 +56,7 @@ export type BarcodeOutcome =
   // `refused`: a catalog answered, but not with the kind of thing the code
   // says it is (a food for a book's ISBN, #3674). No answer for the caller,
   // and not a definitive one either: the right catalog has not been heard.
-  | { outcome: "miss"; refused?: BarcodeHit }
+  | { outcome: "miss"; refused?: BarcodeHit; unconfirmed?: true }
   // A provider was reachable but throttled and no other provider had the
   // product. The UPC is UNRESOLVED, not absent — the caller must leave the
   // cache untouched so a later scan retries.
@@ -75,6 +86,10 @@ export function durableOutcome(o: BarcodeOutcome): DurableBarcodeOutcome | null 
   // A refused answer is not "no such product": caching it as a miss would
   // stop the book catalog ever being asked for that ISBN again.
   if (o.outcome === "miss" && o.refused) return null;
+  // The network said it could not ask yet (its primary still working): no
+  // answer for this scan, and no absence either, so nothing is cached and the
+  // next scan asks again, when the network has the real answer (#3713).
+  if (o.outcome === "miss" && o.unconfirmed) return null;
   return o.outcome === "hit" || o.outcome === "miss" ? o : null;
 }
 
@@ -84,7 +99,7 @@ const OPF_TIMEOUT_MS = 10_000;
 
 type ProviderResult =
   | { kind: "hit"; hit: BarcodeHit }
-  | { kind: "miss" }
+  | { kind: "miss"; unconfirmed?: true }
   | { kind: "rate_limited"; scope: "burst" | "daily" }
   // Asked and could not answer: a 5xx, a timeout, the network. Not a miss.
   | { kind: "unreachable" };
@@ -105,7 +120,10 @@ async function fetchJson(
       headers: { "user-agent": "cobblr-core-scan/0.2", accept: "application/json", ...headers },
       signal: controller.signal,
     });
-    const body = res.ok ? await res.json().catch(() => null) : null;
+    // A 429's body says which kind it is (a key over its limit, or a network
+    // that could not ask yet), and a 404's whether it is provisional, so both
+    // are read too (#3713).
+    const body = res.ok || res.status === 429 || res.status === 404 ? await res.json().catch(() => null) : null;
     return { status: res.status, body };
   } finally {
     clearTimeout(timer);
@@ -491,7 +509,17 @@ export async function tryBidb(upc: string): Promise<ProviderResult> {
     BIDB_TIMEOUT_MS,
     key ? { authorization: `Bearer ${key}` } : {},
   );
+  // A provisional 404: every source that answered in time said no, but the
+  // network's primary is still looking. A miss for this scan, never cached,
+  // so a product the slower source knows is not hidden behind it (#3713).
+  if (status === 404 && (body as { provisional?: unknown } | null)?.provisional === true) return { kind: "miss", unconfirmed: true };
   if (status === 404) return { kind: "miss" }; // known-absent — safe to cache
+  // "degraded": the network could not confirm the code within its deadline and
+  // is still asking its primary. A miss for THIS scan, which goes on to its
+  // own providers and the web at once rather than waiting out a retry
+  // schedule; unconfirmed, so it is never cached (#3713). Any other 429 is
+  // this key over its fair-use limit.
+  if (status === 429 && (body as { error?: unknown } | null)?.error === "degraded") return { kind: "miss", unconfirmed: true };
   if (status === 429) return { kind: "rate_limited", scope: "daily" }; // over fair-use
   // 401/403 is not a transport problem, it is a CONFIGURATION one: the URL is set and
   // reachable, the key is missing, wrong or revoked. Marked so the caller can say that
@@ -712,7 +740,7 @@ async function doLookupBarcode(norm: string): Promise<BarcodeOutcome> {
   if (process.env.COBBLR_BARCODE_RESOLVER_URL) {
     try {
       const r = await tryResolver(norm);
-      if (r.kind === "hit") return { outcome: "hit", hit: r.hit };
+      if (r.kind === "hit") return { outcome: "hit", hit: withVia(r.hit, "resolver") };
       if (r.kind === "rate_limited") return { outcome: "rate_limited", scope: r.scope };
       return { outcome: "miss" };
     } catch (e) {
@@ -727,11 +755,13 @@ async function doLookupBarcode(norm: string): Promise<BarcodeOutcome> {
   let bidbThrottled = false;
   let bidbAuthFailed = false;
   let bidbUnreachable = false;
+  let bidbUnconfirmed = false;
   if (bidbEnabled()) {
     try {
       const r = await tryBidb(norm);
-      if (r.kind === "hit") return { outcome: "hit", hit: r.hit };
+      if (r.kind === "hit") return { outcome: "hit", hit: withVia(r.hit, "bidb") };
       if (r.kind === "rate_limited") bidbThrottled = true;
+      if (r.kind === "miss" && r.unconfirmed) bidbUnconfirmed = true;
     } catch (e) {
       if ((e as { bidbAuth?: boolean }).bidbAuth) {
         bidbAuthFailed = true;
@@ -764,7 +794,9 @@ async function doLookupBarcode(norm: string): Promise<BarcodeOutcome> {
         ? { outcome: "unavailable", reason: "auth" }
         : unreachable || bidbUnreachable
           ? { outcome: "unavailable", reason: "unreachable" }
-          : { outcome: "miss" };
+          : bidbUnconfirmed
+            ? { outcome: "miss", unconfirmed: true }
+            : { outcome: "miss" };
 
   // Third-party direct lookups — master switch (self-host privacy). Off ⇒ no
   // external barcode calls at all; only the cache + box resolver (above) answer.
@@ -784,7 +816,7 @@ async function doLookupBarcode(norm: string): Promise<BarcodeOutcome> {
     // failing to answer: the APIs decide, and a miss from them stands.
     goRes = await tryGoUpc(norm).catch((): ProviderResult => ({ kind: "miss" }));
   }
-  if (goRes.kind === "hit") return { outcome: "hit", hit: goRes.hit };
+  if (goRes.kind === "hit") return { outcome: "hit", hit: withVia(goRes.hit, "direct") };
 
   // Fallback: upcitemdb ‖ Open Facts trio, each independently toggleable.
   const upcP: Promise<ProviderResult> = envBool("COBBLR_SCAN_UPCITEMDB", true)
@@ -795,9 +827,9 @@ async function doLookupBarcode(norm: string): Promise<BarcodeOutcome> {
     : Promise.resolve([]);
   const [upcRes, factsRes] = await Promise.all([upcP, factsP]);
 
-  if (upcRes.kind === "hit") return { outcome: "hit", hit: upcRes.hit };
+  if (upcRes.kind === "hit") return { outcome: "hit", hit: withVia(upcRes.hit, "direct") };
   const factsHit = factsRes.find((r) => r.kind === "hit");
-  if (factsHit && factsHit.kind === "hit") return { outcome: "hit", hit: factsHit.hit };
+  if (factsHit && factsHit.kind === "hit") return { outcome: "hit", hit: withVia(factsHit.hit, "direct") };
 
   // No catalog hit. If upcitemdb was throttled, the answer is
   // "unknown, retry" — not "doesn't exist".

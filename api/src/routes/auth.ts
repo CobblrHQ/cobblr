@@ -60,6 +60,7 @@ import { enableDefaultModulesForOrg } from "../modules/enable.js";
 import { provisionAppWorkspace, ProvisionAppError } from "../platform/provision-app.js";
 import { getManagedApp } from "../platform/managed-apps.js";
 import { planIdentityWorkspace } from "../platform/identity-provision.js";
+import { recordSignup } from "../platform/signup-source.js";
 import type { OrgRole } from "../db/schema.js";
 
 class SkipNotify extends Error {}
@@ -83,6 +84,9 @@ const SignupBody = z.object({
   // Optional when `app` is set — a managed-app signup names the workspace
   // after the app (the consumer never picks a workspace name).
   org_name: z.string().min(1).max(120).optional(),
+  /** The link or QR that sent the person here (`?source=`), recorded on the
+   *  account's signed_up event. Cleaned, never refused (signup-source.ts). */
+  source: z.string().max(100).optional(),
   /** Single-use signup-invite token. When public signup is disabled, a
    *  valid token authorises this registration (the invite-only gate). */
   invite_token: z.string().max(200).optional(),
@@ -548,6 +552,7 @@ authRouter.post("/signup", async (req, res, next) => {
 
     // Lifecycle seam: the hosted overlay attaches here. No-op in open core.
     await fireSignup({ userId, email, orgId: provisioned.orgId });
+    recordSignup({ orgId: provisioned.orgId, userId, via: "form", source: body.source });
 
     // Premade workspace: the invite carried a blueprint — apply it so the
     // invitee lands in a workspace already configured for them (modules,
@@ -809,6 +814,9 @@ const IdentityCallbackBody = z.object({
   // hand-off so a NEW account is provisioned as it. Unknown values are
   // ignored (see identity-provision.ts); a stale link must not strand a sign-in.
   app: z.string().min(1).max(40).optional(),
+  // The link or QR that sent the person to sign up, carried on return_to the
+  // way `app` is. Recorded on a NEW account only; cleaned, never refused.
+  source: z.string().max(100).optional(),
 });
 
 type AdoptResult =
@@ -838,6 +846,7 @@ async function adoptOrProvisionIdentity(
   identityId: string,
   identityToken: string,
   app?: string,
+  source?: string,
 ): Promise<AdoptResult> {
   const profile = await fetchIdentityProfile(identityToken);
   if (!profile) return NO_LOCAL_ACCOUNT;
@@ -909,6 +918,7 @@ async function adoptOrProvisionIdentity(
   // Same lifecycle seam signup uses, so the hosted overlay sees these accounts too
   // (trial stamping, welcome flows) rather than only the ones that came through a form.
   await fireSignup({ userId: created.id, email: profile.email, orgId: provisioned.orgId });
+  recordSignup({ orgId: provisioned.orgId, userId: created.id, via: "identity", source });
   try {
     await activity.log({
       orgId: provisioned.orgId,
@@ -970,7 +980,7 @@ authRouter.post("/identity/callback", async (req, res, next) => {
     if (!identityExchangeLimiter(req.ip ?? "unknown")) {
       return rateLimited(res);
     }
-    const { code, app } = IdentityCallbackBody.parse(req.body);
+    const { code, app, source } = IdentityCallbackBody.parse(req.body);
     const redeemed = await redeemIdentityCode(code);
     if (!redeemed) {
       return res.status(401).json({
@@ -1002,7 +1012,7 @@ authRouter.post("/identity/callback", async (req, res, next) => {
     let userId = linked?.id;
     let provisioned: { slug: string; app: string | null } | null = null;
     if (!userId) {
-      const outcome = await adoptOrProvisionIdentity(identityId, redeemed, app);
+      const outcome = await adoptOrProvisionIdentity(identityId, redeemed, app, source);
       if ("error" in outcome) return res.status(outcome.status).json({ error: outcome.error });
       userId = outcome.userId;
       provisioned = outcome.provisioned;

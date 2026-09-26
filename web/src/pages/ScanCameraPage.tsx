@@ -37,7 +37,7 @@ import { useLocation, useNavigate, useSearchParams } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { AlertTriangle, ArrowLeftRight, ArrowRight, Camera, Check, Flashlight, ImagePlus, Loader2, MapPin, Package, Plus, ScanLine, SkipForward, Undo2, X, Zap } from "lucide-react";
 import { useLater, LiveSurfaceProvider, Modal, usePageTitle, useOverlayOpenFlag, useLockPageScroll } from "@cobblr/platform-web";
-import { classifyScanPayload, typedVerdict } from "../lib/scanPayload";
+import { classifyScanPayload, scannerIgnores, typedVerdict } from "../lib/scanPayload";
 import { doorPlan, frameFromImage, type DoorPlan } from "../lib/imageDoor";
 import { captureRoute } from "../lib/captureRoute";
 import { useDeployEnv } from "../lib/deploy-env";
@@ -1086,6 +1086,9 @@ export function ScanCameraPage() {
       // ONE classification for the value, the same rule the typed field
       // applies (lib/scanPayload.ts): what it is decides where it goes.
       const payload = classifyScanPayload(raw);
+      // A link to Cobblr itself (a booth display's own QR behind the item):
+      // never filed, never held, no toast. Scanning simply goes on.
+      if (payload.kind === "own-link") return;
       if (isEchoOfHandled(raw, handledCodeRef.current, Date.now())) {
         // SLIDES. The decoder reads a label in view about ten times a second;
         // a fixed window expired with the can still in front of the lens and
@@ -1159,6 +1162,14 @@ export function ScanCameraPage() {
       // one goes.
       if (payload.kind === "cobblr-qr") {
         routeQr(payload.token, { freeze: !sortRetarget });
+        return;
+      }
+
+      // A link to a page of this instance (a record, a pairing or invite
+      // link): open it, as the phone's own camera would. Only a link that is
+      // not a page here (the site, the sandbox, the API) is ignored above.
+      if (payload.kind === "own-route") {
+        navigate(payload.path);
         return;
       }
 
@@ -1424,7 +1435,9 @@ export function ScanCameraPage() {
               lastStructureRef.current = !!text || regionWidth !== null;
               autoZoomTick(regionWidth, !!text);
               if (diagRef.current) recordDecode(performance.now() - t0, !!text, didRotate);
-              if (text) {
+              // A link to Cobblr itself never enters the window, so it cannot
+              // outvote the item's barcode (lib/scanPayload.ts scannerIgnores).
+              if (text && !scannerIgnores(text)) {
                 const picked = collect(text, Date.now());
                 if (picked) onDetectRef.current(picked);
               }
@@ -1480,7 +1493,7 @@ export function ScanCameraPage() {
           // candidate, and an order that flips frame-to-frame starves the
           // two-in-a-row agreement gate — books never scanned. Pick ONE
           // deterministically (retail codes first, then longest) instead.
-          const picked = pickDetection(results.map((r) => r.rawValue));
+          const picked = pickDetection(results.map((r) => r.rawValue).filter((v) => !scannerIgnores(v)));
           if (picked) onDetectRef.current(picked);
         })
         .catch(() => {
@@ -2711,6 +2724,7 @@ export function ScanCameraPage() {
               setPhase("result");
             }}
             onCobblrQr={(token) => routeQr(token, { freeze: phaseRef.current === "scanning" })}
+            onOpenPath={(path) => navigate(path)}
           />
         )}
 

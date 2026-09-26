@@ -19,6 +19,9 @@ import { registerFilePreviewRenderer, unregisterFilePreviewRenderer } from "@cob
 
 // Universal — on for everyone.
 registerFilePreviewRenderer(["svg"], () => import("./renderers/SvgRenderer"));
+// A PDF is the document everyone attaches (a pattern, a manual, a receipt):
+// read in the app, every page, rather than only downloaded.
+registerFilePreviewRenderer(["pdf"], () => import("./renderers/PdfRenderer"));
 
 // Fabrication formats — turned on by the host when a fabrication domain is
 // enabled. The module names the FORMATS, never the domains.

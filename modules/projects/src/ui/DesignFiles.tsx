@@ -13,7 +13,7 @@
 import { useEffect, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { FileText, Images, Trash2, Upload } from "lucide-react";
-import { useConfirm, useImageSrc, useToast } from "@cobblr/platform-web";
+import { canPreviewFile, FilePreview, Modal, openAuthedFile, useConfirm, useFilePreviewRegistry, useImageSrc, useToast } from "@cobblr/platform-web";
 import { useProjects } from "./context";
 import type { PatternPhotoState } from "./api";
 
@@ -42,6 +42,10 @@ export function DesignFiles({ designId }: { designId: string }) {
   const toast = useToast();
   const fileInput = useRef<HTMLInputElement>(null);
   const [stripOpen, setStripOpen] = useState(false);
+  // The pattern opens IN the app (every page, zoom, keep the screen on),
+  // with a new tab one tap away; a format with no viewer opens in a tab.
+  const [reading, setReading] = useState<AttachmentRow | null>(null);
+  useFilePreviewRegistry();
 
   const auth = (): Record<string, string> => {
     const t = getToken();
@@ -217,14 +221,19 @@ export function DesignFiles({ designId }: { designId: string }) {
           {files.map((a) => (
             <li key={a.id} className="flex items-center gap-2 text-sm">
               <FileText size={15} className="text-accent shrink-0" />
-              <a
-                href={`${base}/files/${a.file_id}/raw`}
-                target="_blank"
-                rel="noreferrer"
-                className="text-content dark:text-mortar-100 hover:text-accent truncate"
+              {/* Opened with the token: a plain link to /raw carries none and
+                  401s, so the pattern never opened (#3753). */}
+              <button
+                type="button"
+                onClick={() =>
+                  canPreviewFile(a.filename)
+                    ? setReading(a)
+                    : void openAuthedFile(`${base}/files/${a.file_id}/raw`, { getToken, mime: a.mime_type, filename: a.filename })
+                }
+                className="text-left text-content dark:text-mortar-100 hover:text-accent truncate"
               >
                 {a.filename}
-              </a>
+              </button>
               {a.role === "pattern" && (
                 <span className="shrink-0 text-[9px] font-mono uppercase tracking-widest border border-cobble-300 dark:border-cobble-700 text-accent rounded px-1.5 py-0.5">
                   pattern
@@ -260,6 +269,20 @@ export function DesignFiles({ designId }: { designId: string }) {
             />
           ))}
         </div>
+      )}
+      {reading && (
+        <Modal open onClose={() => setReading(null)} title={reading.filename} size="lg" fillHeight>
+          <div className="flex justify-end mb-2">
+            <button
+              type="button"
+              onClick={() => void openAuthedFile(`${base}/files/${reading.file_id}/raw`, { getToken, mime: reading.mime_type, filename: reading.filename })}
+              className="text-xs text-muted hover:text-accent underline decoration-dotted underline-offset-2"
+            >
+              Open in a new tab
+            </button>
+          </div>
+          <FilePreview src={`${base}/files/${reading.file_id}/raw`} filename={reading.filename} />
+        </Modal>
       )}
     </div>
   );

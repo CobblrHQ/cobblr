@@ -14,10 +14,11 @@
 // the waitlist, and nothing to fill in.
 
 import { useState, type FormEvent } from "react";
+import { authorizeHref, rememberedSource } from "../lib/identity-door";
 import { useParams } from "react-router-dom";
 import { ApiError } from "../lib/api";
 import { useAuth } from "../auth/AuthContext";
-import { getManagedAppMeta } from "../lib/managed-apps";
+import { getManagedAppMeta, managedAppCopy } from "../lib/managed-apps";
 import { isTouchPrimary } from "../lib/useIsTouch";
 import { useAuthConfig } from "../lib/useAuthConfig";
 import { AuthConfigUnavailable } from "../components/AuthConfigUnavailable";
@@ -97,11 +98,7 @@ export function StartAppPage() {
   // the callback can ask the server to provision AS the app. Without it a new
   // central account lands in a plain workspace, with the platform chrome this
   // page exists to hide.
-  const identityHref = cfg?.identity
-    ? `${cfg.identity.authorize_url}?deployment=${encodeURIComponent(cfg.identity.deployment)}&return_to=${encodeURIComponent(
-        `${window.location.origin}/auth/callback?app=${encodeURIComponent(meta.id)}`,
-      )}`
-    : null;
+  const identityHref = cfg?.identity ? authorizeHref(cfg.identity, { app: meta.id, source: rememberedSource() }) : null;
   const identityDoor = identityHref && (
     <a
       href={identityHref}
@@ -115,8 +112,8 @@ export function StartAppPage() {
     <div className="min-h-screen flex items-center justify-center p-6 bg-surface dark:bg-slate-950">
       <div className="w-full max-w-sm">
         <div className="mb-6 text-center">
-          <h1 className="font-display text-2xl font-extrabold text-content dark:text-mortar-100">{meta.headline}</h1>
-          <p className="mt-2 text-sm text-muted dark:text-slate-400">{meta.blurb}</p>
+          <h1 className="font-display text-2xl font-extrabold text-content dark:text-mortar-100">{managedAppCopy(meta).headline}</h1>
+          <p className="mt-2 text-sm text-muted dark:text-slate-400">{managedAppCopy(meta).blurb}</p>
         </div>
         {authCfg.status === "failed" ? (
           <AuthConfigUnavailable failure={authCfg.failure} onRetry={authCfg.retry} />

@@ -545,7 +545,7 @@ export async function notifyAccount(
       const text = args.link_url
         ? `${dmBody}\n${absoluteAppUrl(args.link_url)}`
         : dmBody;
-      const res = await sendDiscordDm({ discord_user_id: conn!.discord_user_id!, text });
+      const res = await sendDiscordDm({ discord_user_id: conn!.discord_user_id!, text, summary: text });
       if (res.ok) deliveredVia.push("discord_dm");
       outcomes.discord_dm = dmOutcome(res);
       if (dmResultUnverifies(res)) {

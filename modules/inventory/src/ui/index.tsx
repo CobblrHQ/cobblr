@@ -12,6 +12,7 @@ import { Boxes } from "lucide-react";
 // platform-web's registerDashboardWidget seam when this UI bundle loads.
 import "./DashboardWidget";
 import { InventoryProvider, useInventory, type ParentConfig } from "./context";
+import type { CountWords } from "@cobblr/platform-contract";
 import { PartsListPage } from "./PartsListPage";
 import { SettingsPage } from "./SettingsPage";
 
@@ -41,14 +42,16 @@ interface InventoryUIProps {
   itemNounPlural?: string;
   /** Default unit for new items (e.g. "skein"). */
   qtyUnit?: string;
+  /** The unit words the table declares, with plurals (see context). */
+  countWords?: readonly CountWords[];
   /** When items belong to a parent "type" in another instance (Spool → Filament
    *  type), the forms show a parent picker + write an `instance-of` pairing. */
   parent?: ParentConfig;
 }
 
-export function InventoryUI({ orgSlug, getToken, instance, displayName, itemNoun, itemNounPlural, qtyUnit, parent }: InventoryUIProps) {
+export function InventoryUI({ orgSlug, getToken, instance, displayName, itemNoun, itemNounPlural, qtyUnit, countWords, parent }: InventoryUIProps) {
   return (
-    <InventoryProvider orgSlug={orgSlug} getToken={getToken} instance={instance} itemNoun={itemNoun} itemNounPlural={itemNounPlural} qtyUnit={qtyUnit} parent={parent}>
+    <InventoryProvider orgSlug={orgSlug} getToken={getToken} instance={instance} itemNoun={itemNoun} itemNounPlural={itemNounPlural} qtyUnit={qtyUnit} countWords={countWords} parent={parent}>
       <div className="space-y-4">
         <Header title={displayName ?? "inventory"} />
         <Routes>

@@ -193,3 +193,40 @@ export function componentsV2For(
   }
   return undefined;
 }
+
+// ── The push line ─────────────────────────────────────────────────────────
+//
+// A Components V2 message cannot carry `content`, so a card-only DM arrived on
+// the owner's phone as a notification with no text at all: the push preview is
+// built from the message, and the message was all card (2026-09-26). Every DM
+// therefore carries ONE plain line saying what it is ("1 thing to use up:
+// Boneless Skinless Chicken, expires in 1d"), and the bot decides where it goes
+// so the push has words. Required on sendDiscordDm, and never empty: a caller
+// with nothing to say still gets the floor below rather than a blank push.
+
+/** Discord's push preview truncates long before this; one line reads best. */
+const SUMMARY_MAX = 150;
+const SUMMARY_FLOOR = "You have a new notification in Cobblr";
+
+/** The first non-empty candidate as ONE plain line: markdown headings, link
+ *  syntax and bold marks stripped, whitespace collapsed, capped with an
+ *  ellipsis. Never empty. */
+export function dmSummary(...candidates: Array<string | null | undefined>): string {
+  for (const c of candidates) {
+    const line = (c ?? "")
+      .split("\n")
+      .map((l) => l.trim())
+      .find((l) => l.length > 0);
+    if (!line) continue;
+    const plain = line
+      .replace(/^#{1,6}\s+/, "")
+      .replace(/^-#\s+/, "")
+      .replace(/\[([^\]]+)\]\([^)]*\)/g, "$1")
+      .replace(/(\*\*|__|\*|_|`)/g, "")
+      .replace(/\s+/g, " ")
+      .trim();
+    if (!plain) continue;
+    return plain.length > SUMMARY_MAX ? `${plain.slice(0, SUMMARY_MAX - 1).trimEnd()}…` : plain;
+  }
+  return SUMMARY_FLOOR;
+}

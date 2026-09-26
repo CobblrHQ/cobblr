@@ -470,6 +470,8 @@ async function boot() {
       detach: files.detach,
       registerAttachmentLister: files.registerAttachmentLister,
       listAttachments: files.listAttachments,
+      registerAttachmentsOfFile: files.registerAttachmentsOfFile,
+      attachmentsOfFile: files.attachmentsOfFile,
       registerDriver: files.registerDriver,
       getDriver: files.getDriver,
     },

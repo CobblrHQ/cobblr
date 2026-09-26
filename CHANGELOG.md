@@ -2,6 +2,26 @@
 
 User-facing changes, newest first. Dates are release dates.
 
+## 2026-09-26
+
+### Features
+- Call your things what you call them. Yarn asks whether you count in balls, skeins or hanks, and Groceries, Lego, Bookshelf and Home Inventory offer their own words (pantry items, kits, titles, belongings). Pick the word when you install, or change it later in the table's settings: every label, the New button, the count on each record and what Cobb says all use it, and an update never puts the old word back.
+- Files have folders now. Make folders inside folders on the Files page, upload straight into one, rename a file or move it with "Move to…", and find any file by name from search. Uploading a file you already have keeps the one copy and says where it is, and a folder that still holds something cannot be deleted, so tidying never loses a file.
+- Yarn's Designs are now Patterns, and your pattern PDFs have a home. Import patterns takes a pile of PDFs or a zipped downloads folder: each PDF becomes a pattern with its file, its cover photo pulled out of the PDF, a zip's category folders fill in the category, and a PDF you already have is never added twice. A pattern also keeps its designer, where it came from and how hard it is, and it opens right in the app, on a phone too.
+- A sandbox can become a real Cobblr account in one go. Make this yours on Cobblr sits beside Keep it on the sandbox's strip and first on the page at the end of the hour. Press it, make an account on Cobblr (or sign in), and what you added, photos included, moves into your new workspace. The sandbox then ends, so there is one copy and it is yours.
+- PDFs open in the app, every page. A pattern, a manual or any PDF on a record or on the Files page opens in a viewer with zoom, a fit-to-width button, pinch-zoom on a phone, and "Keep screen on" while you work from it. "Open in a new tab" and Download are one tap away.
+- Drop a whole folder of files in at once. Pick many files, or a zip of a folder, on the Files page: a zip is unpacked into its own folders under the one you are in, a file you already have is kept once, and one summary at the end says what was stored and why anything was not.
+
+### Improvements
+- A Discord notification says what it is before you open it. A digest arrived on your phone as a blank "Cobblr" alert, because the card it carried has no text a phone can show. Every direct message now leads with one line, like "1 thing to use up: Boneless Skinless Chicken, expires in 1d", and that line is the notification.
+- The Files page says how much your workspace keeps, and a free trial can now upload a few files of its own. A trial holds up to 100 MB of your files, where it used to take none, so you can try folders, the PDF viewer and bringing in your patterns. A server can cap how much each workspace keeps; past it, an upload says how full the workspace is instead of failing quietly.
+- Signing up on the hosted Cobblr now starts where it should. A link that says "Sign up" lands on Create a Cobblr account, opened straight on the account form, instead of a sign-in form you have no password for. The link you came from, such as a card you scanned at a show, is remembered through the sign-up, so we know it worked.
+
+### Fixes
+- A count and its word now agree everywhere: a yarn record reads "3 hanks" and "1 hank", not "3 hank", and the same goes for the stock history, what Cobb says when it adds something, and every word a table lets you pick.
+- A pattern's PDF opens again. Pressing the PDF on a Design (Yarn's patterns) showed an error page instead of the pattern. It now opens in a new tab, and a PDF anywhere in the app (a record's files, the Files page) opens in the browser's viewer instead of downloading, on a phone too.
+- Updating to the current compose file keeps your database. If your instance took the automatic Postgres 17 to 18 upgrade on the older compose file and you then switched to the current one, the database could come back from its pre-upgrade copy, losing everything written since. It now keeps serving the upgraded database it already has.
+
 ## 2026-09-25
 
 ### Features

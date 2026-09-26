@@ -20,6 +20,7 @@ import { ABI_VERSION, SandboxedModuleManifestSchema, type SandboxedModuleManifes
 import { invokeSandbox } from "./runtime.js";
 import { retireWorkersForWasmPath } from "./pool.js";
 import { setSandboxedModuleInfo, deleteSandboxedModuleInfo } from "./sandboxed-module-info.js";
+import { envNumber } from "@cobblr/platform-contract/env-number";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const SANDBOXED_MODULES_DIR = resolve(__dirname, "..", "..", "..", "sandboxed-modules");
@@ -163,7 +164,7 @@ const SANDBOX_MAX_DEADLINE_MS = Number(process.env.SANDBOX_MAX_DEADLINE_MS ?? 30
 // url-archive's clear). Env-tunable so CI can be generous (same rationale as the
 // 60s testTimeout) while prod keeps the tight default. Previously hardcoded —
 // the env knob existed in pool.ts but never reached this route path.
-const SANDBOX_DEFAULT_DEADLINE_MS = Number(process.env.SANDBOX_DEFAULT_DEADLINE_MS ?? 1000);
+const SANDBOX_DEFAULT_DEADLINE_MS = envNumber("SANDBOX_DEFAULT_DEADLINE_MS", 1000);
 
 /** Flatten the manifest's `reads` map into a Set of fully-qualified
  *  table names the host can match in O(1). Example:

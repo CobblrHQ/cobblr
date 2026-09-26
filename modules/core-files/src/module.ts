@@ -19,7 +19,7 @@ import { defineModule } from "@cobblr/platform-contract";
 
 export default defineModule({
   name: "core-files",
-  version: "0.1.1",
+  version: "0.3.0",
   displayName: "Files",
   description:
     "File uploads, image variants (thumb + medium), and polymorphic attachments. The platform answer to 'where does this photo live?' so every module doesn't reinvent storage.",
@@ -49,10 +49,11 @@ export default defineModule({
   provides: {
     entityKinds: [
       {
-        // AI-CRUD: no create/update — file records are born from multipart
-        // upload (no JSON create route) and their bytes are immutable; delete
-        // is the only generic verb.
+        // AI-CRUD: no create — file records are born from multipart upload
+        // (no JSON create route). Update renames or moves one (its name and
+        // folder; the bytes never change), and delete is soft.
         id: "core-files:file",
+        updateEndpoint: "/files/{id}",
         deleteEndpoint: "/files/{id}",
         displayName: "File",
         displayNamePlural: "Files",

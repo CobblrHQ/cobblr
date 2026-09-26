@@ -434,6 +434,20 @@ export async function keepSandbox(
  *  actions - resending the sign-in link and choosing a password - are gated
  *  on this, because each hands a way in to whoever holds the session, and
  *  that must only ever be the person who gave the email. */
+/** The no-account sandbox this session's person owns, still a sandbox (not
+ *  kept), whatever its clock says: the reaper, not this, decides it is gone. */
+export async function ownSandboxForUser(userId: string): Promise<{ orgId: string } | null> {
+  const row = await meta
+    .selectFrom("try_sandbox_tokens as t")
+    .innerJoin("orgs as o", "o.id", "t.org_id")
+    .select(["o.id as org_id"])
+    .where("t.user_id", "=", userId)
+    .where("o.sandbox", "=", true)
+    .orderBy("t.expires_at", "desc")
+    .executeTakeFirst();
+  return row ? { orgId: row.org_id } : null;
+}
+
 export async function keptSandboxForUser(
   userId: string,
 ): Promise<{ orgId: string; email: string } | null> {

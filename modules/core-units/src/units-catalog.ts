@@ -15,6 +15,8 @@
 // by symbol → code → name/plural (case-insensitive); an unmatched value
 // renders as-is. So existing data needs no migration.
 
+import { countWordsFor, wordForCount, type CountWords } from "@cobblr/platform-contract/plural";
+
 export type UnitCategory =
   | "count"
   | "mass"
@@ -129,17 +131,19 @@ export function formatQuantity(
   raw: string | null | undefined,
   mode: UnitDisplayMode = DEFAULT_DISPLAY_MODE,
   extra: UnitDef[] = [],
+  known: readonly CountWords[] = [],
 ): string {
   const n = qty == null || Number.isNaN(qty) ? null : qty;
   const def = resolveUnit(raw, extra);
   const numPart =
     n == null ? "" : Number.isInteger(n) ? String(n) : String(parseFloat(n.toFixed(3)));
   if (!def) {
-    // free-text unit: just join the number and whatever they typed
+    // A free-text unit still agrees with its count ("3 hanks", "1 cone").
     const u = (raw ?? "").trim();
-    return [numPart, u].filter(Boolean).join(" ");
+    const word = u && n != null ? wordForCount(n, countWordsFor(u, known)) : u;
+    return [numPart, word].filter(Boolean).join(" ");
   }
-  const word = n === 1 ? def.name : def.plural;
+  const word = n != null && Math.abs(n) === 1 ? def.name : def.plural;
   let unitPart: string;
   if (mode === "name") unitPart = word;
   else if (mode === "both") unitPart = `${def.symbol} (${word})`;

@@ -7,10 +7,12 @@
   "exports": {
     ".": "./src/index.ts",
     "./qr-token": "./src/qr-token.ts",
+    "./own-hosts": "./src/own-hosts.ts",
     "./jsonb-merge": "./src/jsonb-merge.ts",
     "./entity-tokens": "./src/entity-tokens.ts",
     "./hosted-identify": "./src/hosted-identify.ts",
     "./public-url": "./src/public-url.ts",
+    "./env-number": "./src/env-number.ts",
     "./entity-kind": "./src/entity-kind.ts",
     "./org-roles": "./src/org-roles.ts",
     "./blocked-action": "./src/blocked-action.ts",

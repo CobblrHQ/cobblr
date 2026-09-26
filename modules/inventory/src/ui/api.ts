@@ -6,6 +6,7 @@
 // mounted at /api/v1/orgs/:slug/modules/inventory/... — the platform
 // pre-applies auth + tenant resolution on every request.
 
+import type { NounChoiceDecl } from "@cobblr/platform-contract/kind-label";
 import type { FieldRendererId, FieldType } from "@cobblr/platform-web";
 import { describeUnreadableBody } from "@cobblr/platform-web";
 import { downloadBlob } from "@cobblr/platform-web";
@@ -354,7 +355,7 @@ export class InventoryApi {
 
   /** The instance's item noun (singular + plural). Empty for the default
    *  instance. Defaulted from the collection name at creation, editable here. */
-  getNouns = async (): Promise<{ singular?: string; plural?: string }> => {
+  getNouns = async (): Promise<{ singular?: string; plural?: string; offer?: NounChoiceDecl; choice?: string }> => {
     if (!this.opts.instance) return {};
     const { items } = await this.requestAbs<{
       items: Array<{ target_kind: string; target_id: string; config?: Record<string, unknown> }>;
@@ -365,7 +366,17 @@ export class InventoryApi {
     return {
       singular: row?.config?.item_noun as string | undefined,
       plural: row?.config?.item_noun_plural as string | undefined,
+      // A bundle that offers words for this table (#3650), and the one picked.
+      offer: (row?.config?.noun ?? undefined) as NounChoiceDecl | undefined,
+      choice: (row?.config?.noun_choice as { singular?: string } | null | undefined)?.singular,
     };
+  };
+
+  /** Pick one of the words the table's bundle offers. The platform re-applies
+   *  the bundle, so every label says it and records on the old unit follow. */
+  setOfferedNoun = async (singular: string): Promise<void> => {
+    if (!this.opts.instance) return;
+    await this.requestAbs("PUT", `/api/v1/orgs/${this.slug}/bundles/noun`, { instance: this.opts.instance, singular });
   };
 
   /** Rename what this instance calls its items. Merges into the override config

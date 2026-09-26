@@ -5,6 +5,7 @@
 import { useMemo } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { usePlatformWeb } from "./context";
+import type { CountWords } from "@cobblr/platform-contract/plural";
 import type { PlatformUnitDef, UnitDisplayMode } from "./types";
 import { convertQuantity, formatQuantity, formatUnit, quantitySuffix, resolveUnit, unitLens } from "./units";
 
@@ -15,8 +16,13 @@ export interface UseUnits {
   custom: PlatformUnitDef[];
   displayMode: UnitDisplayMode;
   loading: boolean;
-  /** render qty + unit per the workspace display mode */
-  format: (qty: number | null | undefined, raw: string | null | undefined) => string;
+  /** render qty + unit per the workspace display mode; the word agrees with
+   *  the count, using `known` (a table's declared words) for a unit the
+   *  vocabulary does not hold */
+  format: (qty: number | null | undefined, raw: string | null | undefined, known?: readonly CountWords[]) => string;
+  /** just the unit's word as it reads beside `qty` ("hank" / "hanks"); the
+   *  symbol for a measured unit */
+  wordFor: (qty: number, raw: string | null | undefined, known?: readonly CountWords[]) => string;
   /** render just the unit token per the workspace display mode */
   unit: (raw: string | null | undefined) => string;
   /** the unit to show beside a quantity in a list — the symbol for a measured
@@ -53,7 +59,8 @@ export function useUnits(): UseUnits {
       custom,
       displayMode,
       loading: q.isLoading,
-      format: (qty, raw) => formatQuantity(qty, raw, all, displayMode),
+      format: (qty, raw, known) => formatQuantity(qty, raw, all, displayMode, known),
+      wordFor: (qty, raw, known) => formatQuantity(qty, raw, all, displayMode, known).replace(/^\S+\s*/, ""),
       unit: (raw) => formatUnit(raw, all, displayMode),
       suffix: (raw) => quantitySuffix(raw, all),
       resolve: (raw) => resolveUnit(raw, all),

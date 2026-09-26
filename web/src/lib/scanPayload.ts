@@ -9,6 +9,7 @@
 // the capability row scan:payload-classifier keeps the doors from growing
 // their own again.
 import { qrTokenFromUrl } from "@cobblr/platform-contract/qr-token";
+import { isOwnCobblrLink, ownAppPath } from "@cobblr/platform-contract/own-hosts";
 
 export type ScanPayload =
   /** A printed Cobblr label: a navigation or a filing target, never a product. */
@@ -19,6 +20,13 @@ export type ScanPayload =
   | { kind: "code"; code: string }
   /** A generic web link (a product's marketing QR). */
   | { kind: "link"; url: string }
+  /** A link to Cobblr itself (the platform's site or sandbox, or this
+   *  instance), not a label: a booth's own display QR behind the item. The
+   *  scanner ignores it and keeps scanning (own-hosts.ts). */
+  | { kind: "own-link"; url: string }
+  /** A link to a page of the instance the scanner runs on: a record, the
+   *  open door, a pairing or invite link. Opens that page (own-hosts.ts). */
+  | { kind: "own-route"; path: string }
   /** Words, not a code. Only the typed door can produce this. */
   | { kind: "words"; text: string }
   | { kind: "empty" };
@@ -30,11 +38,20 @@ const PRODUCT_CODE = /^\d{8,14}$/;
  *  is written in capitals ("WX-00042", "SKU-A7"); "hello" is neither. */
 const SYMBOL = /^[A-Za-z0-9][A-Za-z0-9._\-\/:+#]{2,79}$/;
 
-export function classifyScanPayload(raw: string): ScanPayload {
+/** The instance the page runs on is "own" as well: a self-hosted workspace's
+ *  own address on its own display. */
+function pageOrigins(): string[] {
+  return typeof window !== "undefined" && window.location?.origin ? [window.location.origin] : [];
+}
+
+export function classifyScanPayload(raw: string, ownOrigins: readonly string[] = pageOrigins()): ScanPayload {
   const v = raw.trim();
   if (!v) return { kind: "empty" };
   const token = qrTokenFromUrl(v);
   if (token) return { kind: "cobblr-qr", token };
+  const path = ownAppPath(v, ownOrigins);
+  if (path) return { kind: "own-route", path };
+  if (isOwnCobblrLink(v, ownOrigins)) return { kind: "own-link", url: v };
   if (/^https?:\/\//i.test(v)) return { kind: "link", url: v };
   if (PRODUCT_CODE.test(v)) return { kind: "product-code", code: v };
   if (SYMBOL.test(v) && (/\d/.test(v) || v === v.toUpperCase())) return { kind: "code", code: v };
@@ -46,6 +63,7 @@ export function classifyScanPayload(raw: string): ScanPayload {
  *  has not typed a code, and filing it makes an inbox item nobody wanted. */
 export type TypedVerdict =
   | { action: "route-qr"; token: string }
+  | { action: "open"; path: string }
   | { action: "lookup"; code: string }
   | { action: "refuse"; sentence: string }
   | { action: "nothing" };
@@ -60,14 +78,24 @@ export function typedVerdict(raw: string): TypedVerdict {
   switch (p.kind) {
     case "cobblr-qr":
       return { action: "route-qr", token: p.token };
+    case "own-route":
+      return { action: "open", path: p.path };
     case "product-code":
     case "code":
       return { action: "lookup", code: p.code };
     case "link":
+    case "own-link":
       return { action: "refuse", sentence: "That is a web link, not a code. Type a barcode number, or paste a Cobblr QR link." };
     case "words":
       return { action: "refuse", sentence: "That is not a barcode. Type the number under the bars, or paste a Cobblr QR link." };
     case "empty":
       return { action: "nothing" };
   }
+}
+
+/** Codes the camera never acts on: a link to Cobblr itself. Filtered before a
+ *  frame's codes are ranked, so the display QR behind an item can neither be
+ *  filed nor crowd out the item's barcode read in the same frame. */
+export function scannerIgnores(raw: string, ownOrigins?: readonly string[]): boolean {
+  return classifyScanPayload(raw, ownOrigins).kind === "own-link";
 }

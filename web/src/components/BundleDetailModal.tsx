@@ -29,7 +29,7 @@ import {
 } from "../lib/featured-bundles";
 import { diffManifests, type Manifestish } from "../lib/bundle-diff";
 import { recordSetup } from "../lib/setupCards";
-import { changeWorkspaceShape, downloadBlob, Modal, useToast, useConfirm } from "@cobblr/platform-web";
+import { changeWorkspaceShape, downloadBlob, Modal, NounChoiceButtons, useToast, useConfirm } from "@cobblr/platform-web";
 import { installHeadline, installChanges } from "../lib/installSummary";
 import { featureChangeToast } from "../lib/featureChangeToast";
 import type { BundleInstallSummary } from "../lib/api";
@@ -244,9 +244,12 @@ export function BundleDetailModal(props: Props) {
     },
   });
 
+  // "What do you call these?": the word picked for each table that offers
+  // words (#3650), asked on a first install with the default preselected.
+  const [nounChoices, setNounChoices] = useState<Record<string, string>>({});
   const install = useMutation({
-    mutationFn: (vars: { manifest: PlatformBundleManifest; confirm: boolean; enabledFeatures?: string[]; takeTheirs?: Array<{ entity_kind: string; name: string }> }) =>
-      changeWorkspaceShape(qc, slug, () => api.installBundle(slug, vars.manifest, vars.confirm, vars.enabledFeatures, vars.takeTheirs)),
+    mutationFn: (vars: { manifest: PlatformBundleManifest; confirm: boolean; enabledFeatures?: string[]; takeTheirs?: Array<{ entity_kind: string; name: string }>; nounChoices?: Record<string, string> }) =>
+      changeWorkspaceShape(qc, slug, () => api.installBundle(slug, vars.manifest, vars.confirm, vars.enabledFeatures, vars.takeTheirs, vars.nounChoices)),
     onSuccess: (r) => {
       toast.success(
         isUpdate
@@ -373,6 +376,15 @@ export function BundleDetailModal(props: Props) {
     syncedFor.current = id;
     setSelectedFeatures(new Set(installedFeatureKeys));
   }, [showingInstalled, installedFeatureKeys, detail.data?.bundle.id]);
+
+  // Tables in what would be installed that offer a choice of word.
+  const nounOffers = useMemo(() => {
+    if (props.mode !== "featured") return [];
+    const resolved = resolveBundleManifest(props.manifest, selectedFeatures);
+    return (resolved.provides_instances ?? [])
+      .filter((i) => i.noun)
+      .map((i) => ({ instance: i.instance_name, table: i.display_name, of: i.noun!.of, offer: i.noun! }));
+  }, [props, selectedFeatures]);
 
   if (props.mode === null || !open) return null;
 
@@ -551,7 +563,7 @@ export function BundleDetailModal(props: Props) {
     // then the clean install. Each handled error sets up the next retry.
     for (let attempt = 0; attempt < 3; attempt++) {
       try {
-        const r = await install.mutateAsync({ manifest, confirm: confirmEnable, enabledFeatures, takeTheirs });
+        const r = await install.mutateAsync({ manifest, confirm: confirmEnable, enabledFeatures, takeTheirs, ...(isUpdate ? {} : { nounChoices }) });
         if (onInstalledCb) {
           await onInstalledCb(r);
           onClose();
@@ -913,6 +925,27 @@ export function BundleDetailModal(props: Props) {
           <Section title="walkthrough">
             <div className="prose prose-sm dark:prose-invert max-w-none text-content dark:text-mortar-100">
               <ReactMarkdown>{readme}</ReactMarkdown>
+            </div>
+          </Section>
+        )}
+
+        {props.mode === "featured" && !isUpdate && nounOffers.length > 0 && (
+          <Section title="what do you call these?">
+            <div className="space-y-3" data-testid="noun-question">
+              {nounOffers.map((o) => (
+                <div key={o.instance}>
+                  <p className="text-sm text-content dark:text-mortar-100 mb-1.5">
+                    {o.of === "unit" ? `Your ${o.table.toLowerCase()} is counted in` : `One thing in ${o.table} is a`}
+                  </p>
+                  <NounChoiceButtons
+                    offer={o.offer}
+                    current={nounChoices[o.instance] ?? null}
+                    label={`What do you call these in ${o.table}?`}
+                    onPick={(w) => setNounChoices((c) => ({ ...c, [o.instance]: w }))}
+                  />
+                </div>
+              ))}
+              <p className="text-xs text-faint">Every label says the word you pick. You can change it later in the table's settings.</p>
             </div>
           </Section>
         )}

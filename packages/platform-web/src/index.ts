@@ -46,6 +46,10 @@ export {
 export { EntityTile } from "./EntityTile";
 export { ViewModeToggle, useViewMode, type ViewMode } from "./ViewModeToggle";
 export { useImageSrc } from "./useImageSrc";
+export { openAuthedFile, type OpenAuthedFileOptions } from "./openAuthedFile";
+export { FileIntake, FileIntakePanels, useFileIntake, describeLine, type IntakeLine, type FileIntakeOptions } from "./FileIntake";
+export { TableFileIntake, intakeSummary, type TableFileIntakeResult, type AskField } from "./TableFileIntake";
+export { NounChoiceButtons, nounChoiceHeading } from "./NounChoice";
 export { BulkActionBar } from "./BulkActionBar";
 export { CustomFieldsPanel, RelationSelect } from "./CustomFieldsPanel";
 export { EditableCell, type EditableCellDef } from "./EditableCell";

@@ -275,6 +275,13 @@ docker compose -f docker-compose.yml -f deploy/selfhost/docker-compose.selfhost.
   exec db pg_dumpall -U cobblr | gzip > cobblr-backup-$(date +%F).sql.gz
 ```
 
+## How much each workspace keeps
+
+Uploaded files have no limit unless you set one. `COBBLR_FILES_QUOTA_MB=10240` in
+`.env` caps each workspace at 10 GB: an upload, or a zip, that would go past it is
+refused with how full the workspace is, and the Files page shows "used of 10 GB".
+Deleting files gives the room back.
+
 ## Privacy - what leaves the box
 
 Cobblr makes **no unsolicited phone-home**: nothing calls Cobblr's servers at

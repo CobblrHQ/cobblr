@@ -97,3 +97,15 @@ export function colourContradiction(stated: ReadonlySet<string>, picture: { fami
   if (said.includes(g)) return null;
   return `the picture is ${picture.family}, the item is ${[...stated].join("/")}`;
 }
+
+/** Does a picture of this dominant colour SHOW a colour the item states? The
+ *  positive side of colourContradiction: not only "not the wrong colour" but
+ *  the right one, so a blue skein gets a blue picture rather than the first
+ *  one that says nothing (#3729). A neutral colour shows only itself (a white
+ *  skein, a white picture); a hue shows its group (navy, blue, teal). */
+export function colourShows(stated: ReadonlySet<string>, picture: { family: ColourFamily; share: number } | null | undefined): boolean {
+  if (!picture || stated.size === 0 || picture.share < 0.35) return false;
+  const g = GROUP[picture.family];
+  if (g === "neutral") return stated.has(picture.family);
+  return [...stated].some((s) => (GROUP[s as ColourFamily] ?? s) === g);
+}

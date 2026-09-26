@@ -1,12 +1,12 @@
 {
   "manifest": {
     "id": "cobblr.community.lego",
-    "version": "0.5.4",
+    "version": "0.6.0",
     "name": "Lego",
     "description": "Lego as its own tables. Sets you own (sealed / built / disassembled) with optional Bricks bins, a Rebrickable catalog link, and a one-tap Disassemble that spawns the parts and opens the sorting planner.",
     "author": "Cobblr community",
     "released_at": "2026-07-11",
-    "changelog": "Opens as a catalog of things you own, and stays one: a number typed into one item no longer turns the whole collection into stock tracking with Use one, Used up and a reorder point. Earlier: The set number is the set's identity: two scans with different set numbers are never offered as one product, and a scanned or typed set number finds the set you already have. Earlier changes below.: Lego is now its OWN tables, not a skin over generic inventory. Installing it gives you a Sets table (each set sealed, built, or disassembled) with set number, theme, year, piece count and minifig count: the generic warranty/serial/supplier clutter is hidden. Turn on the checkboxes you want: track individual Bricks in bins, link to the Rebrickable catalog so sets and parts match real data, disassemble a built set into its parts and sort them into bins, print QR labels, or add by scanning.",
+    "changelog": "Call them sets or kits: pick the word when you install, or change it later in the table's settings, and every label says it. Earlier: Opens as a catalog of things you own, and stays one: a number typed into one item no longer turns the whole collection into stock tracking with Use one, Used up and a reorder point. Earlier: The set number is the set's identity: two scans with different set numbers are never offered as one product, and a scanned or typed set number finds the set you already have. Earlier changes below.: Lego is now its OWN tables, not a skin over generic inventory. Installing it gives you a Sets table (each set sealed, built, or disassembled) with set number, theme, year, piece count and minifig count: the generic warranty/serial/supplier clutter is hidden. Turn on the checkboxes you want: track individual Bricks in bins, link to the Rebrickable catalog so sets and parts match real data, disassemble a built set into its parts and sort them into bins, print QR labels, or add by scanning.",
     "requires": [
       {
         "module": "inventory"
@@ -22,6 +22,17 @@
         "display_name": "Sets",
         "glyph": "🧱",
         "item_noun": "set",
+        "noun": {
+          "of": "item",
+          "singular": "set",
+          "plural": "sets",
+          "alternatives": [
+            {
+              "singular": "kit",
+              "plural": "kits"
+            }
+          ]
+        },
         "scan_keywords": [
           "lego",
           "legos",
@@ -45,12 +56,12 @@
               "built",
               "disassembled"
             ],
-            "help": "Where this set is: still sealed in the box, built, or taken apart into bricks."
+            "help": "Where this {{noun}} is: still sealed in the box, built, or taken apart into bricks."
           },
           {
             "entity_kind": "inventory:part",
             "name": "set_number",
-            "display_label": "Set number",
+            "display_label": "{{Noun}} number",
             "type": "text",
             "position": 2,
             "field_role": "identifier",
@@ -70,7 +81,7 @@
             "display_label": "Release year",
             "type": "number",
             "position": 4,
-            "help": "The year the set was released."
+            "help": "The year the {{noun}} was released."
           },
           {
             "entity_kind": "inventory:part",
@@ -78,7 +89,7 @@
             "display_label": "Pieces",
             "type": "number",
             "position": 5,
-            "help": "How many pieces the set has, from the box."
+            "help": "How many pieces the {{noun}} has, from the box."
           },
           {
             "entity_kind": "inventory:part",
@@ -86,7 +97,7 @@
             "display_label": "Minifigs",
             "type": "number",
             "position": 6,
-            "help": "How many minifigures come with the set."
+            "help": "How many minifigures come with the {{noun}}."
           },
           {
             "entity_kind": "inventory:part",

@@ -64,10 +64,6 @@
     "text": "\"\" is not a view type — use one of: table, list, kanban, calendar, gantt"
   },
   {
-    "file": "modules/core-views/src/api/handlers.ts",
-    "text": "this workspace has no \"\" to build a view of — check the record kinds first"
-  },
-  {
     "file": "modules/digifab/src/api/failure.ts",
     "text": "no mapping for a \"\" connection — use the form"
   },
@@ -361,10 +357,6 @@
   },
   {
     "file": "web/src/pages/Dashboard.tsx",
-    "text": "Installed — filed ."
-  },
-  {
-    "file": "web/src/pages/Dashboard.tsx",
     "text": "Marked good — printer freed. Scrapped — effects reversed."
   },
   {
@@ -438,6 +430,10 @@
   {
     "file": "web/src/pages/RecordsPage.tsx",
     "text": "Couldn't read — that's a bug on our side, not your data."
+  },
+  {
+    "file": "web/src/pages/ScanInboxCard.tsx",
+    "text": ": — tap to edit"
   },
   {
     "file": "web/src/pages/ScanInboxCard.tsx",

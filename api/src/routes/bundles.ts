@@ -7,6 +7,8 @@ import { bundleTableWords } from "@cobblr/platform-contract/bundle-words";
 import { trackProductEvent } from "../platform/product-events.js";
 import { parseWireFilter } from "../platform/wire-filter.js";
 import { z } from "zod";
+import { chosenNoun, nounOptions, type NounChoiceDecl } from "@cobblr/platform-contract/kind-label";
+import { fillInstanceNoun, storedNounChoices, withNounsFilled } from "../platform/noun-choice.js";
 import { applyBundleLocations, previewBundleLocations } from "../platform/apply-bundle-locations.js";
 import { resolveEnabledFeatures, featuresToOffer as pickFeaturesToOffer } from "../platform/feature-defaults.js";
 import { sql, type Kysely } from "kysely";
@@ -233,6 +235,33 @@ const InstanceEntry = z.object({
   glyph: z.string().optional(),
   item_noun: z.string().optional(),
   qty_unit: z.string().optional(),
+  /** The words the person may pick for what this table holds or counts
+   *  (#3650). Labels, help and view names say {{noun}} / {{nouns}}, and the
+   *  install fills them with the choice (platform/noun-choice.ts). `of: unit`
+   *  sets qty_unit, so records follow a change; `of: item` sets item_noun. */
+  noun: z
+    .object({
+      of: z.enum(["unit", "item"]),
+      singular: z.string().min(1),
+      plural: z.string().min(1),
+      alternatives: z.array(z.object({ singular: z.string().min(1), plural: z.string().min(1) })).default([]),
+    })
+    .optional(),
+  /** Each file dropped on this table becomes a record, the file attached to
+   *  it with `role` (Yarn's Patterns: every PDF is a pattern). Files arrive
+   *  through core-files' intake and land in `folder`; a zip's top folder fills
+   *  `folder_field` when it names one of its choices; `ask` is asked once for
+   *  the batch. See platform/instance-file-intake.ts. */
+  file_intake: z
+    .object({
+      accept: z.array(z.string().min(1)).min(1),
+      role: z.string().min(1),
+      folder: z.string().min(1).optional(),
+      folder_field: z.string().min(1).optional(),
+      ask: z.array(z.string().min(1)).optional(),
+      label: z.string().min(1).optional(),
+    })
+    .optional(),
   /** When this instance's items belong to a parent "type" in another instance
    *  (e.g. Spools → Filament types), the create/edit forms show a parent picker
    *  and write an `instance-of` pairing. `instance` is the parent instance name.
@@ -1484,7 +1513,12 @@ export async function applyValidatedBundle(
   orgId: string,
   sess: { id: string; display_name?: string | null; auth_method: "session" | "api_token" | "system"; api_token_id?: string | null },
   v: BundleValidationResult,
-  opts: { takeTheirs?: Array<{ entity_kind: string; name: string }> } = {},
+  opts: {
+    takeTheirs?: Array<{ entity_kind: string; name: string }>;
+    /** The word picked for a table that offers them, by instance name
+     *  ("yarn" → "skein"). Absent: the stored choice, else the default. */
+    nounChoices?: Record<string, string>;
+  } = {},
 ): Promise<{
   bundle: { id: string; external_id: string; name: string; version: string };
   applied: {
@@ -1496,10 +1530,14 @@ export async function applyValidatedBundle(
     instances_created: string[]; instances_existing: string[];
   };
 }> {
-  const m = v.manifest!;
+  // The words each table's person picked, filled into its labels before any
+  // write, so every reader of the stored defs says the chosen word. The
+  // stored manifest keeps the {{noun}} tokens, so a later change re-fills.
+  const storedChoices = await storedNounChoices(orgId);
+  const m = withNounsFilled(v.manifest!, (name) => opts.nounChoices?.[name] ?? storedChoices.get(name) ?? null);
   // Apply the RESOLVED manifest (m); store the FULL manifest (features
   // intact) + which features were enabled, so they can be toggled later.
-  const fullManifest = v.fullManifest ?? m;
+  const fullManifest = v.fullManifest ?? v.manifest!;
   const enabledFeatures = v.enabledFeatures ?? [];
 
   // Phase 2 — "take theirs": drop the user override for each chosen field so
@@ -1559,10 +1597,19 @@ export async function applyValidatedBundle(
       : null;
   if (priorBundle) {
     const rawPm = priorBundle.manifest;
+    type PriorInstance = { instance_name?: string; display_name?: string; qty_unit?: string; noun?: NounChoiceDecl };
     const pm = (typeof rawPm === "string" ? JSON.parse(rawPm) : rawPm) as
-      | { provides_instances?: Array<{ instance_name?: string; display_name?: string; qty_unit?: string }> }
+      | { provides_instances?: PriorInstance[]; features?: Array<{ provides_instances?: PriorInstance[] }> }
       | null;
-    for (const pi of pm?.provides_instances ?? []) {
+    // A feature's tables too: Yarn's Designs table is an optional feature's
+    // instance, and reading only the top level left it saying "Designs" after
+    // the version that renamed it to Patterns.
+    // As they were ON SCREEN: a table whose person picked "skein" had skein
+    // as its unit, whatever the manifest's default said.
+    const priorInstances = [...(pm?.provides_instances ?? []), ...(pm?.features ?? []).flatMap((f) => f.provides_instances ?? [])].map((pi) =>
+      pi.noun && pi.instance_name ? fillInstanceNoun(pi, chosenNoun(pi.noun, { singular: storedChoices.get(pi.instance_name) ?? null })) : pi,
+    );
+    for (const pi of priorInstances) {
       if (pi.instance_name && typeof pi.display_name === "string") {
         priorInstanceLabels.set(pi.instance_name, pi.display_name);
       }
@@ -1620,7 +1667,7 @@ export async function applyValidatedBundle(
     // (2026-09-12). The instance's words come first so a table-specific term
     // wins any first-match read.
     const tableWords = bundleTableWords(inst.scan_keywords, m.scan_keywords);
-    const instConfig: Record<string, unknown> = { item_noun: inst.item_noun ?? null, qty_unit: inst.qty_unit ?? null, parent: inst.parent ?? null, nav_group: inst.nav_group ?? null, scan_keywords: tableWords.length ? tableWords : null, faces: inst.faces ?? null };
+    const instConfig: Record<string, unknown> = { item_noun: inst.item_noun ?? null, qty_unit: inst.qty_unit ?? null, parent: inst.parent ?? null, nav_group: inst.nav_group ?? null, scan_keywords: tableWords.length ? tableWords : null, faces: inst.faces ?? null, file_intake: inst.file_intake ?? null, noun: inst.noun ?? null, noun_choice: (inst as { noun_choice?: unknown }).noun_choice ?? null };
     // Creation-time stock signal: a bundle that declares a MEASURED unit (a
     // qty_unit that isn't blank or "each" — filament in kg, yarn in skeins)
     // carries stock character before any data exists, so latch it to stock at
@@ -2280,6 +2327,10 @@ bundlesRouter.post(
         /** Upgrade conflicts (preview.upgrade_conflicts) the user chose to
          *  "take theirs" on: drop the user override so the new bundle wins. */
         take_theirs: z.array(z.object({ entity_kind: z.string(), name: z.string() })).optional(),
+        /** The word picked for each table that offers them (#3650), by
+         *  instance name: { yarn: "skein" }. Omitted: the stored choice on
+         *  an update, the bundle's default on a first install. */
+        noun_choices: z.record(z.string().max(40), z.string().min(1).max(60)).optional(),
       });
       const body = ManifestBody.safeParse(req.body);
       if (!body.success) {
@@ -2369,7 +2420,7 @@ bundlesRouter.post(
         req.tenant!.org.id,
         { id: req.session!.id, display_name: req.session!.display_name ?? null, auth_method: req.session!.auth_method, api_token_id: req.session!.api_token_id ?? null },
         v,
-        { takeTheirs: body.data.take_theirs },
+        { takeTheirs: body.data.take_theirs, nounChoices: body.data.noun_choices },
       );
       // DID IT ACTUALLY DO IT?
       //
@@ -2455,6 +2506,86 @@ async function instanceLedger(orgId: string, involved: readonly PromisedInstance
 // AI-REACH: changes workspace composition (enables modules, moves fields,
 // wires and views) behind the bundle dialog's own confirmation; owner/admin,
 // the same door as install.
+// PUT /bundles/noun — change the word a table's things are called
+// (#3650). The installed bundle is applied again, as a feature change is, with
+// the new word: its labels are re-filled from the stored manifest's tokens,
+// and where the word is the unit the records still on the old one follow
+// (platform.instance.default-unit-changed), so every screen says it at once.
+//
+// AI-REACH: a presentation choice made in the table's settings or at install;
+// it re-applies a bundle, which is the person's to do, not an agent's.
+bundlesRouter.put(
+  "/noun",
+  requireAuth,
+  withTenant,
+  async (req, res, next) => {
+    try {
+      if (!requireRole(req, res, "owner", "admin")) return;
+      const Body = z.object({ instance: z.string().min(1).max(80), singular: z.string().min(1).max(60) });
+      const body = Body.safeParse(req.body);
+      if (!body.success) {
+        res.status(400).json({ error: { code: "invalid_body", message: "instance and singular are required.", details: body.error.issues } });
+        return;
+      }
+      const orgId = req.tenant!.org.id;
+      // The installed bundle that offers words for this table: the table's
+      // settings know the table, not which bundle made it.
+      type Full = {
+        provides_instances?: Array<{ instance_name?: string; noun?: NounChoiceDecl }>;
+        features?: Array<{ provides_instances?: Array<{ instance_name?: string; noun?: NounChoiceDecl }> }>;
+      };
+      const rows = await meta.selectFrom("bundles").select(["id", "manifest", "enabled_features"]).where("org_id", "=", orgId).execute();
+      let bundle: (typeof rows)[number] | null = null;
+      let full: Full = {};
+      let offer: NounChoiceDecl | undefined;
+      for (const r of rows) {
+        const f = (typeof r.manifest === "string" ? JSON.parse(r.manifest) : r.manifest) as Full;
+        const o = [...(f.provides_instances ?? []), ...(f.features ?? []).flatMap((x) => x.provides_instances ?? [])].find(
+          (i) => i.instance_name === body.data.instance && i.noun,
+        )?.noun;
+        if (o) {
+          bundle = r;
+          full = f;
+          offer = o;
+          break;
+        }
+      }
+      if (!bundle) {
+        res.status(404).json({ error: { code: "noun_not_offered", message: "This table does not offer a choice of word." } });
+        return;
+      }
+      const want = body.data.singular.trim().toLowerCase();
+      const word = offer ? nounOptions(offer).find((o) => o.singular.toLowerCase() === want) : undefined;
+      if (!offer || !word) {
+        res.status(400).json({
+          error: {
+            code: "noun_not_offered",
+            message: offer
+              ? `This table offers ${nounOptions(offer).map((o) => `"${o.singular}"`).join(", ")}.`
+              : "This table does not offer a choice of word.",
+          },
+        });
+        return;
+      }
+      const v = await validateBundle(orgId, full, { autoEnable: true, enabledFeatures: (bundle.enabled_features as string[] | null) ?? [] });
+      if (!v.valid) {
+        res.status(409).json({ error: { code: "invalid_bundle", message: v.errors.map((e) => e.message).join(" "), details: { errors: v.errors } } });
+        return;
+      }
+      const result = await applyValidatedBundle(
+        orgId,
+        { id: req.session!.id, display_name: req.session!.display_name ?? null, auth_method: req.session!.auth_method, api_token_id: req.session!.api_token_id ?? null },
+        v,
+        { nounChoices: { [body.data.instance]: word.singular } },
+      );
+      await bumpWorkspaceShape(orgId);
+      res.json({ bundle: result.bundle, instance: body.data.instance, noun: word });
+    } catch (err) {
+      next(err);
+    }
+  },
+);
+
 bundlesRouter.patch(
   "/:id/features",
   requireAuth,

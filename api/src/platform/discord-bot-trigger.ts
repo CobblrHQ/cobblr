@@ -4,6 +4,7 @@
 // bot is the only thing that holds a Discord connection; the API never talks to
 // Discord directly. `||` not `??` for the env default (core CLAUDE.md §14.6).
 
+import { dmSummary } from "./channels/discord-card.js";
 const BOT_URL = process.env.COBBLR_DISCORD_BOT_URL || "";
 
 export interface DiscordResolvePoke {
@@ -52,6 +53,11 @@ export interface DiscordDmResult {
 export async function sendDiscordDm(args: {
   discord_user_id: string;
   text: string;
+  /** ONE plain line saying what this DM is, for the phone's push preview. A
+   *  Components V2 message cannot carry `content`, so without it a card-only
+   *  DM pushes with no text (2026-09-26). Required so no DM kind can forget it;
+   *  normalized through dmSummary(), so it is never empty on the wire. */
+  summary: string;
   verify_token?: string;
   /** Message components, already in Discord's shape. The bot passes them
    *  through — it already attaches a button for `verify_token`, so this is the
@@ -83,7 +89,7 @@ export async function sendDiscordDm(args: {
     const r = await fetch(`${BOT_URL.replace(/\/+$/, "")}/dm`, {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify(args),
+      body: JSON.stringify({ ...args, summary: dmSummary(args.summary, args.text, args.fallback_text) }),
       signal: AbortSignal.timeout(8000),
     });
     // A non-2xx is the bot being up-but-unhappy (5xx, a rolling restart, a 429):

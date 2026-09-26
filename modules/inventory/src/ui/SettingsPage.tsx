@@ -8,7 +8,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Plus, X } from "lucide-react";
 import { useInventory } from "./context";
 import { InventoryApiError, type InvFieldDef } from "./api";
-import { changeWorkspaceShape, usePageTitle } from "@cobblr/platform-web";
+import { NounChoiceButtons, changeWorkspaceShape, nounChoiceHeading, usePageTitle } from "@cobblr/platform-web";
 
 export function SettingsPage() {
   usePageTitle("Inventory settings");
@@ -16,6 +16,7 @@ export function SettingsPage() {
     <div className="grid gap-5 sm:grid-cols-2">
       <FieldsCard />
       <NounCard />
+      <OfferedNounCard />
       <StockTrackingCard />
     </div>
   );
@@ -45,7 +46,9 @@ function NounCard() {
       void qc.invalidateQueries({ queryKey: ["entity-kind-overrides"] });
     },
   });
-  if (!instance) return null;
+  // A table whose bundle offers the item's word picks it from the offer
+  // (OfferedNounCard): a typed word would leave every label on the old one.
+  if (!instance || current.data?.offer?.of === "item") return null;
   const sVal = singular ?? current.data?.singular ?? "";
   const pVal = plural ?? current.data?.plural ?? "";
   const dirty = singular !== null || plural !== null;
@@ -72,6 +75,35 @@ function NounCard() {
       >
         {save.isPending ? "Saving…" : "Save"}
       </button>
+    </div>
+  );
+}
+
+/** The words a table's bundle offers for its things (Yarn: balls, skeins or
+ *  hanks). Picking one re-applies the bundle, so the labels, the New button
+ *  and the unit each record counts in all say it. */
+function OfferedNounCard() {
+  const { api, orgSlug, instance } = useInventory();
+  const qc = useQueryClient();
+  const current = useQuery({
+    queryKey: ["inv-nouns", orgSlug, instance],
+    queryFn: () => api.getNouns(),
+    enabled: !!instance,
+  });
+  const set = useMutation({
+    mutationFn: (singular: string) => changeWorkspaceShape(qc, orgSlug, () => api.setOfferedNoun(singular)),
+    onSuccess: () => void qc.invalidateQueries({ queryKey: ["inv-nouns", orgSlug, instance] }),
+  });
+  const offer = current.data?.offer;
+  if (!instance || !offer) return null;
+  return (
+    <div className="rounded-xl border border-line dark:border-slate-700 bg-surface dark:bg-slate-900 p-4" data-testid="offered-noun">
+      <h3 className="font-display text-sm font-bold text-content dark:text-mortar-100">{nounChoiceHeading(offer)}</h3>
+      <p className="mt-1 mb-3 text-xs text-muted dark:text-slate-400">
+        {set.isPending ? "Changing every label…" : "Every label, the add button and Cobb say the word you pick."}
+      </p>
+      <NounChoiceButtons offer={offer} current={current.data?.choice ?? null} disabled={set.isPending} onPick={(w) => set.mutate(w)} />
+      {set.isError && <p className="mt-2 text-xs text-red-600 dark:text-red-400">{(set.error as Error).message}</p>}
     </div>
   );
 }

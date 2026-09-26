@@ -717,7 +717,7 @@ export const FEATURED_BUNDLES: FeaturedBundle[] = [
       "Track the fridge/pantry with expiry + storage, and auto-build a shopping list when something runs low or is about to expire. Check an item off → it restocks.",
     manifest: {
       id: "cobblr.flagship.groceries",
-      version: "0.11.2",
+      version: "0.12.0",
       // What its items are actually CALLED. A bundle's suggestion has to be
       // corroborated by the capture's own text before it is trusted, and a
       // category whose members never share its name can never corroborate:
@@ -908,7 +908,7 @@ export const FEATURED_BUNDLES: FeaturedBundle[] = [
       ],
       released_at: "2026-09-20",
       changelog:
-        "A bag of sunflower, pumpkin, chia, flax or sesame seeds, a trail mix, mixed nuts, almonds, cashews or peanuts scanned from a receipt or a barcode files here: the bundle now declares them by name, so a snack no longer lands in Plants because its name ends in seeds. A seasoning, a herb or a marinade scanned from the food catalog files here: the bundle now declares those words, so a garlic seasoning blend no longer lands in a craft table because its name ends in Blend. The Groceries fields now live on the Groceries table only. An early install also put a copy of them on plain Inventory, which made every inventory table look perishable; food that was still filed in plain Inventory moves into Groceries on the next start, each move noted in the activity log, and the copy is removed. The installed Groceries table now routes with every word the bundle declares, so a scanned drink or snack lands here first instead of in plain Inventory. Groceries opens on What's on hand, the pantry board, rather than the table, and remembers the view you pick. Checking an item off the shopping list dates the fresh stock: bought today, good until today plus its shelf life, instead of inheriting the last lot's dates. The saved views that promise an order (Re-buy soonest, How often you re-buy, Use it or lose it) now deliver it on the table itself, soonest first. Checking an item off the shopping list now adds exactly what you bought, once: the restock and purchase wires were declared twice and both fired. The shopping row says what checking it off will do. Scanning a grocery now suggests this bundle. The scanner would pick it and then quietly file the item under plain Inventory instead, because a bundle's suggestion has to be corroborated by the item's own text and nothing called Tomatoes Roma or Croissant contains the word grocery. The bundle now says what its items are called. Earlier changes are in the bundle's history.",
+        "Call them what you call them: items, groceries or pantry items. Pick the word when you install, or change it later in the table's settings, and every label says it. Earlier: A bag of sunflower, pumpkin, chia, flax or sesame seeds, a trail mix, mixed nuts, almonds, cashews or peanuts scanned from a receipt or a barcode files here: the bundle now declares them by name, so a snack no longer lands in Plants because its name ends in seeds. A seasoning, a herb or a marinade scanned from the food catalog files here: the bundle now declares those words, so a garlic seasoning blend no longer lands in a craft table because its name ends in Blend. The Groceries fields now live on the Groceries table only. An early install also put a copy of them on plain Inventory, which made every inventory table look perishable; food that was still filed in plain Inventory moves into Groceries on the next start, each move noted in the activity log, and the copy is removed. The installed Groceries table now routes with every word the bundle declares, so a scanned drink or snack lands here first instead of in plain Inventory. Groceries opens on What's on hand, the pantry board, rather than the table, and remembers the view you pick. Checking an item off the shopping list dates the fresh stock: bought today, good until today plus its shelf life, instead of inheriting the last lot's dates. The saved views that promise an order (Re-buy soonest, How often you re-buy, Use it or lose it) now deliver it on the table itself, soonest first. Checking an item off the shopping list now adds exactly what you bought, once: the restock and purchase wires were declared twice and both fired. The shopping row says what checking it off will do. Scanning a grocery now suggests this bundle.",
       name: "Groceries",
       description:
         "Turn inventory + lists into a kitchen system: track food with expiry + storage fields, an auto grocery list on low-stock/expiry, restock on check-off.",
@@ -1045,6 +1045,7 @@ export const FEATURED_BUNDLES: FeaturedBundle[] = [
         ],
                       "display_name": "Groceries",
                       "item_noun": "item",
+                       "noun": { "of": "item", "singular": "item", "plural": "items", "alternatives": [{ "singular": "grocery", "plural": "groceries" }, { "singular": "pantry item", "plural": "pantry items" }] },
                       "glyph": "\ud83e\udd6c",
                       "qty_unit": "unit",
                       "nav_group": {
@@ -1087,7 +1088,7 @@ export const FEATURED_BUNDLES: FeaturedBundle[] = [
                                               "refrigerated",
                                               "ambient"
                                       ],
-                                      "help": "How this has to be kept, which is not the same as where it currently is. Filled in from what the item is when you scan it, and left blank when that is not clear enough to say. Anything you choose here is used instead."
+                                      "help": "How this has to be kept, which is not the same as where it currently is. Filled in from what the {{noun}} is when you scan it, and left blank when that is not clear enough to say. Anything you choose here is used instead."
                               },
                               {
                                       "entity_kind": "groceries:item",
@@ -1367,14 +1368,14 @@ export const FEATURED_BUNDLES: FeaturedBundle[] = [
     ],
     manifest: {
       id: "cobblr.community.lego",
-      version: "0.5.4",
+      version: "0.6.0",
       name: "Lego",
       description:
         "Lego as its own tables. Sets you own (sealed / built / disassembled) with optional Bricks bins, a Rebrickable catalog link, and a one-tap Disassemble that spawns the parts and opens the sorting planner.",
       author: "Cobblr community",
       released_at: "2026-07-11",
       changelog:
-        "Opens as a catalog of things you own, and stays one: a number typed into one item no longer turns the whole collection into stock tracking with Use one, Used up and a reorder point. Earlier: The set number is the set's identity: two scans with different set numbers are never offered as one product, and a scanned or typed set number finds the set you already have. Earlier changes below.: Lego is now its OWN tables, not a skin over generic inventory. Installing it gives you a Sets table (each set sealed, built, or disassembled) with set number, theme, year, piece count and minifig count: the generic warranty/serial/supplier clutter is hidden. Turn on the checkboxes you want: track individual Bricks in bins, link to the Rebrickable catalog so sets and parts match real data, disassemble a built set into its parts and sort them into bins, print QR labels, or add by scanning.",
+        "Call them sets or kits: pick the word when you install, or change it later in the table's settings, and every label says it. Earlier: Opens as a catalog of things you own, and stays one: a number typed into one item no longer turns the whole collection into stock tracking with Use one, Used up and a reorder point. Earlier: The set number is the set's identity: two scans with different set numbers are never offered as one product, and a scanned or typed set number finds the set you already have. Earlier changes below.: Lego is now its OWN tables, not a skin over generic inventory. Installing it gives you a Sets table (each set sealed, built, or disassembled) with set number, theme, year, piece count and minifig count: the generic warranty/serial/supplier clutter is hidden. Turn on the checkboxes you want: track individual Bricks in bins, link to the Rebrickable catalog so sets and parts match real data, disassemble a built set into its parts and sort them into bins, print QR labels, or add by scanning.",
       requires: [{ module: "inventory" }],
       // The always-on BASE: a Sets table (the noun everyone with Lego has). The
       // Bricks/bins world, the Rebrickable link, and Disassemble are opt-in
@@ -1387,16 +1388,18 @@ export const FEATURED_BUNDLES: FeaturedBundle[] = [
           display_name: "Sets",
           glyph: "🧱",
           item_noun: "set",
+          // Set or kit: the person's word for one boxed build (#3650).
+          noun: { of: "item", singular: "set", plural: "sets", alternatives: [{ singular: "kit", plural: "kits" }] },
           // "set" is a generic noun, so the table routes by these (a sheet set is not a Lego set).
           scan_keywords: ["lego", "legos", "lego set", "building set", "brick set", "minifigure", "minifig", "bricks"],
           qty_unit: "each",
           field_defs: [
-            { entity_kind: "inventory:part", name: "lifecycle", display_label: "State", type: "text", position: 1, choices: ["sealed", "built", "disassembled"], help: "Where this set is: still sealed in the box, built, or taken apart into bricks." },
-            { entity_kind: "inventory:part", name: "set_number", display_label: "Set number", type: "text", position: 2, field_role: "identifier", help: "The number printed on the box (e.g. 75192)." },
+            { entity_kind: "inventory:part", name: "lifecycle", display_label: "State", type: "text", position: 1, choices: ["sealed", "built", "disassembled"], help: "Where this {{noun}} is: still sealed in the box, built, or taken apart into bricks." },
+            { entity_kind: "inventory:part", name: "set_number", display_label: "{{Noun}} number", type: "text", position: 2, field_role: "identifier", help: "The number printed on the box (e.g. 75192)." },
             { entity_kind: "inventory:part", name: "theme", display_label: "Theme", type: "text", position: 3, help: "Star Wars, City, Technic, Botanicals…" },
-            { entity_kind: "inventory:part", name: "year", display_label: "Release year", type: "number", position: 4, help: "The year the set was released." },
-            { entity_kind: "inventory:part", name: "piece_count", display_label: "Pieces", type: "number", position: 5, help: "How many pieces the set has, from the box." },
-            { entity_kind: "inventory:part", name: "minifig_count", display_label: "Minifigs", type: "number", position: 6, help: "How many minifigures come with the set." },
+            { entity_kind: "inventory:part", name: "year", display_label: "Release year", type: "number", position: 4, help: "The year the {{noun}} was released." },
+            { entity_kind: "inventory:part", name: "piece_count", display_label: "Pieces", type: "number", position: 5, help: "How many pieces the {{noun}} has, from the box." },
+            { entity_kind: "inventory:part", name: "minifig_count", display_label: "Minifigs", type: "number", position: 6, help: "How many minifigures come with the {{noun}}." },
             { entity_kind: "inventory:part", name: "instructions_url", display_label: "Instructions", type: "url", position: 7, renderer: "url-link", help: "Link to the build instructions (a PDF or Rebrickable page)." },
           ],
           field_overrides: [
@@ -1734,8 +1737,8 @@ export const FEATURED_BUNDLES: FeaturedBundle[] = [
     manifest: {
       id: "cobblr.community.bookshelf",
       released_at: "2026-06-28",
-      changelog: "The shelf opens on its covers rather than the table, and remembers the view you pick. A book is not stock: the shelf no longer offers Use one, Used up or a reorder point, and the parts-category picker is gone from the book form. An ISBN scan fills author, year and ISBN, and a book you already have is offered instead of a second copy.",
-      version: "0.2.3",
+      changelog: "Call them books or titles: pick the word when you install, or change it later in the table's settings, and every label says it. Earlier: The shelf opens on its covers rather than the table, and remembers the view you pick. A book is not stock: the shelf no longer offers Use one, Used up or a reorder point, and the parts-category picker is gone from the book form. An ISBN scan fills author, year and ISBN, and a book you already have is offered instead of a second copy.",
+      version: "0.3.0",
       name: "Bookshelf",
       description:
         "Your books as their own shelf: author + ISBN + year + read status, on a lean catalog that opens as a cover wall. Spine-label wire bundled.",
@@ -1771,6 +1774,8 @@ export const FEATURED_BUNDLES: FeaturedBundle[] = [
           display_name: "Bookshelf",
           glyph: "📚",
           item_noun: "book",
+          // Book or title: the person's word for one thing on the shelf (#3650).
+          noun: { of: "item", singular: "book", plural: "books", alternatives: [{ singular: "title", plural: "titles" }] },
           qty_unit: "each",
           // A shelf is a catalog of unique things. Saying so here is what keeps
           // a book from wearing Use one, Used up and a reorder point the moment
@@ -2201,22 +2206,22 @@ export const FEATURED_BUNDLES: FeaturedBundle[] = [
     // (projects instance). The studio capabilities are the opt-in features.
     glyph: "🧶",
     blurb:
-      "Your yarn as its own thing: brand, colorway, fibre, weight, counted by the ball, with only yarn fields and a grouped 'My yarn stash' view. Turn on extras: a Hooks table, a Designs table with patterns, an auto shopping list, and scan-to-add.",
+      "Your yarn as its own thing: brand, colorway, fibre, weight, counted in balls, skeins or hanks (your word), with only yarn fields and a grouped 'My yarn stash' view. Turn on extras: a Hooks table, a Patterns table for your pattern PDFs, an auto shopping list, and scan-to-add.",
     // Land in the Yarn TABLE (the inventory instance), not bare /inventory —
     // so "where to start" points at the thing the bundle just made.
     next_steps: [
-      { label: "Add your yarn", module: "inventory", path: "/instances/yarn", hint: "Brand, colorway, fibre, weight, counted by the ball." },
+      { label: "Add your yarn", module: "inventory", path: "/instances/yarn", hint: "Brand, colorway, fibre, weight, counted in the word you picked." },
     ],
     manifest: {
       id: "cobblr.flagship.yarn",
-      version: "0.6.4",
+      version: "0.8.0",
       name: "Yarn",
       description:
-        "Yarn as its own inventory instance: counted by the ball, yarn-only fields, grouped by weight. Optional Hooks + Designs tables.",
+        "Yarn as its own inventory instance: counted in balls, skeins or hanks, yarn-only fields, grouped by weight. Optional Hooks + Patterns tables.",
       author: "Cobblr",
       released_at: "2026-07-15",
       changelog:
-        "Yarn now counts in balls, the word everyone knows: the unit, Length / ball, Full ball, Price / ball and the Consumption panel (Track each ball separately, Open a ball). Yarn you already have moves over to balls on this update; field names and your values are unchanged. Earlier: Says up front that it tracks stock, so counts and Use one or Used up are there from the first item rather than after one is counted. Earlier: Fixed: the Yarn update now installs: a bad field in the previous release made the update fail validation. New: track your yarn ball by ball. On a yarn's page, under Consumption, tap “Track each ball separately” and you get a plain count by state. “3 balls · 2 new · 1 open”, with the metres left in the ball you're actually knitting from shown quietly (never a confusing total across balls). Open a ball when you crack a new one, and log metres as you go; each open ball keeps its own running balance. It reads the “Length / ball” you already entered to know a full ball, so there's no capacity to type. It's opt-in per yarn and fully reversible, existing yarn is untouched until you turn it on. Earlier changes below.: Your Yarn table now reads “yarn” everywhere: the “New”, search box, and empty-state labels say “yarn” instead of “part”. (Earlier installs picked up the generic “part” wording; upgrading applies the fix.) Real yarn-user polish: the Color field is a swatch picker (type a hex or pick one), Brand + Price now show right on the “New yarn” modal, and a “Suggested needle size” field was added. Dropdowns (vendor, fibre…) let you add a new option on the fly that sticks for next time. Dropped the confusing “Summary” computed field.. Yarn is its OWN table (a Yarn instance), not a skin over generic inventory: only yarn fields show, the button reads “New yarn”, quantities are in balls. Hooks and Designs become their own tables too.",
+        "Call your yarn what you call it: ball, skein or hank. Pick the word when you add Yarn, or change it in the Yarn table's settings, and every label, your yarn's counts and Cobb all say it. Earlier: Designs are now Patterns: a pattern keeps its PDF, photos and notes, its designer, where it came from and how hard it is, and the yarn it needs. Import patterns takes a pile of PDFs or a zipped folder: each PDF becomes a pattern with its file, a zip's folders fill in the category, and a PDF you already have is never added twice. Your Designs table is renamed on this update, and everything in it stays. Earlier: Yarn now counts in balls, the word everyone knows: the unit, Length / ball, Full ball, Price / ball and the Consumption panel (Track each ball separately, Open a ball). Yarn you already have moves over to balls on this update; field names and your values are unchanged. Earlier: Says up front that it tracks stock, so counts and Use one or Used up are there from the first item rather than after one is counted. Earlier: Fixed: the Yarn update now installs: a bad field in the previous release made the update fail validation. New: track your yarn ball by ball. On a yarn's page, under Consumption, tap “Track each ball separately” and you get a plain count by state. “3 balls · 2 new · 1 open”, with the metres left in the ball you're actually knitting from shown quietly (never a confusing total across balls). Open a ball when you crack a new one, and log metres as you go; each open ball keeps its own running balance. It reads the “Length / ball” you already entered to know a full ball, so there's no capacity to type. It's opt-in per yarn and fully reversible, existing yarn is untouched until you turn it on. Earlier changes below.: Your Yarn table now reads “yarn” everywhere: the “New”, search box, and empty-state labels say “yarn” instead of “part”.",
       requires: [{ module: "inventory" }],
       // The always-on base: a "Yarn" instance of inventory.
       provides_instances: [
@@ -2228,21 +2233,33 @@ export const FEATURED_BUNDLES: FeaturedBundle[] = [
           glyph: "🧶",
           item_noun: "yarn",
           qty_unit: "ball",
+          // What the stash is counted in, the person's word (#3650): most
+          // people say ball, some skein or hank. The labels below say
+          // {{noun}}, filled with the choice; records follow a change.
+          noun: {
+            of: "unit",
+            singular: "ball",
+            plural: "balls",
+            alternatives: [
+              { singular: "skein", plural: "skeins" },
+              { singular: "hank", plural: "hanks" },
+            ],
+          },
           field_defs: [
             { entity_kind: "inventory:part", name: "color", display_label: "Color", type: "text", position: 1, renderer: "color-hex", help: "The basic shade. Pick a hex/colour for the swatch." },
             { entity_kind: "inventory:part", name: "colorway", display_label: "Colorway", type: "text", position: 2, help: "The maker's named shade, e.g. “Peacock Heather” (printed on the yarn label)." },
             { entity_kind: "inventory:part", name: "fiber", display_label: "Fibre", type: "text", position: 3, choices: ["Wool", "Merino", "Cotton", "Acrylic", "Nylon", "Chenille", "Alpaca", "Silk", "Linen", "Bamboo", "Cashmere", "Blend"], help: "What the yarn is made of." },
             { entity_kind: "inventory:part", name: "weight_class", display_label: "Weight", type: "text", position: 4, choices: ["0 – Lace", "1 – Fingering", "2 – Sport", "3 – DK", "4 – Worsted", "4 – Aran", "5 – Bulky", "6 – Super Bulky"], help: "Craft Yarn Council standard weight. 0 (Lace, thinnest) to 6 (Super Bulky, thickest)." },
             { entity_kind: "inventory:part", name: "vendor", display_label: "Vendor", type: "text", position: 5, choices: ["Michaels", "Hobby Lobby", "Walmart", "Joann", "Amazon", "Etsy", "Local yarn shop"], help: "Where you bought it." },
-            { entity_kind: "inventory:part", name: "length_per_skein", display_label: "Length / ball (m)", type: "number", unit: "m", position: 6, help: "Metres per ball, from the label, used to estimate if you have enough for a project." },
-            { entity_kind: "inventory:part", name: "capacity", display_label: "Full ball", type: "computed", template: "{{ length_per_skein }}", position: 7, help: "Metres in one full ball, from the length above. When you track ball by ball, each opened ball's gauge is measured against this: you never type it." },
-            { entity_kind: "inventory:part", name: "dye_lot", display_label: "Dye lot", type: "text", position: 8, help: "The batch code on the label, buy the same lot so colours match across balls." },
+            { entity_kind: "inventory:part", name: "length_per_skein", display_label: "Length / {{noun}} (m)", type: "number", unit: "m", position: 6, help: "Metres per {{noun}}, from the label, used to estimate if you have enough for a project." },
+            { entity_kind: "inventory:part", name: "capacity", display_label: "Full {{noun}}", type: "computed", template: "{{ length_per_skein }}", position: 7, help: "Metres in one full {{noun}}, from the length above. When you track {{noun}} by {{noun}}, each opened {{noun}}'s gauge is measured against this: you never type it." },
+            { entity_kind: "inventory:part", name: "dye_lot", display_label: "Dye lot", type: "text", position: 8, help: "The batch code on the label, buy the same lot so colours match across {{nouns}}." },
             { entity_kind: "inventory:part", name: "needle_size", display_label: "Suggested needle size", type: "text", position: 9, choices: ["2.0 mm", "2.5 mm", "3.0 mm", "3.5 mm", "4.0 mm", "4.5 mm", "5.0 mm", "5.5 mm", "6.0 mm", "6.5 mm", "7.0 mm", "8.0 mm", "9.0 mm", "10.0 mm", "12.0 mm"], help: "The needle/hook size the label recommends for this yarn (in mm)." },
           ],
           field_overrides: [
             // Relabel the few natives that matter for yarn…
             { entity_kind: "inventory:part", name: "manufacturer", display_label: "Brand" },
-            { entity_kind: "inventory:part", name: "cost", display_label: "Price / ball" },
+            { entity_kind: "inventory:part", name: "cost", display_label: "Price / {{noun}}" },
             // …and hide all the generic inventory cruft a yarn user doesn't want.
             { entity_kind: "inventory:part", name: "category", hidden: true },
             { entity_kind: "inventory:part", name: "location", hidden: true },
@@ -2268,28 +2285,42 @@ export const FEATURED_BUNDLES: FeaturedBundle[] = [
       features: [
       {
         key: "designs",
-        name: "Designs",
-        question: "Want to track your designs & patterns too?",
+        name: "Patterns",
+        question: "Want to keep your patterns here too?",
         description:
-          "A 'Designs' table (a projects instance): each design with its pattern (file/link) + category, and the yarn it needs allocated to it.",
+          "A 'Patterns' table (a projects instance): each pattern with its PDF, photos and notes, its category, designer and source, and the yarn it needs allocated to it. Import a pile of PDFs or a zipped folder in one go.",
         default: false,
         requires: [{ module: "projects" }],
         next_steps: [
-          { label: "Open your Designs table", module: "projects", path: "/instances/designs", hint: "Each design with its pattern link + the yarn it needs." },
+          { label: "Open your Patterns", module: "projects", path: "/instances/designs", hint: "Import your pattern PDFs; each becomes a pattern with its file." },
         ],
         provides_instances: [
           {
             module: "projects",
+            // The stored name stays "designs": a label change, never a move.
             instance_name: "designs",
-            display_name: "Designs",
+            display_name: "Patterns",
             glyph: "🧵",
-            item_noun: "design",
+            item_noun: "pattern",
+            // Every PDF dropped on the table is a pattern with that PDF as its
+            // pattern file (platform/instance-file-intake.ts).
+            file_intake: {
+              accept: ["application/pdf"],
+              role: "pattern",
+              folder: "Patterns",
+              folder_field: "pattern_category",
+              ask: ["pattern_source"],
+              label: "Import patterns",
+            },
             field_defs: [
-              { entity_kind: "projects:project", name: "pattern_url", display_label: "Pattern link", type: "url", position: 1, renderer: "url-link", help: "Link to the pattern (Ravelry, a PDF, a blog post…)." },
-              { entity_kind: "projects:project", name: "pattern_category", display_label: "Category", type: "text", position: 2, choices: ["Wearables", "Toys", "Home-wear", "Blankets"], help: "What kind of make this is." },
+              { entity_kind: "projects:project", name: "pattern_url", display_label: "Pattern link", type: "url", position: 1, renderer: "url-link", help: "Where the pattern lives online, if it does (Ravelry, a shop, a blog post). A PDF you import is kept on the pattern itself." },
+              { entity_kind: "projects:project", name: "pattern_category", display_label: "Category", type: "text", position: 2, choices: ["Wearables", "Toys", "Home-wear", "Blankets"], help: "What kind of make this is. Importing a zip, a top folder named like a category fills it in." },
+              { entity_kind: "projects:project", name: "designer", display_label: "Designer", type: "text", position: 3, help: "Who wrote the pattern." },
+              { entity_kind: "projects:project", name: "pattern_source", display_label: "Source", type: "text", position: 4, choices: ["Ribblr", "Ravelry", "Etsy", "LoveCrafts", "A book or magazine", "Free online", "My own"], help: "Where you got it. Asked once when you import a batch." },
+              { entity_kind: "projects:project", name: "difficulty", display_label: "Difficulty", type: "text", position: 5, choices: ["Beginner", "Easy", "Intermediate", "Experienced"], help: "How hard the pattern says it is." },
             ],
             saved_views: [
-              { entity_kind: "projects:project", name: "By category", view_type: "table", pinned: true, config: { group_by: "pattern_category", visible_fields: ["title", "pattern_category", "status", "pattern_url"] } },
+              { entity_kind: "projects:project", name: "By category", view_type: "table", pinned: true, config: { group_by: "pattern_category", visible_fields: ["title", "pattern_category", "designer", "pattern_source", "status"] } },
             ],
           },
         ],
@@ -2501,13 +2532,13 @@ export const FEATURED_BUNDLES: FeaturedBundle[] = [
     ],
     manifest: {
       id: "cobblr.flagship.home-inventory",
-      version: "0.5.8",
+      version: "0.6.0",
       name: "Home Inventory",
       description: "Your belongings as their own room-by-room catalog: make/model + condition, filed by room. Scan to add, print labels for boxes, optional insurance valuation.",
       author: "Cobblr",
       released_at: "2026-09-24",
       changelog:
-        "A plush or soft toy you scan goes to Home Inventory, with the other things you own, instead of plain Inventory. Earlier: Opens as a catalog of things you own, and stays one: a number typed into one item no longer turns the whole collection into stock tracking with Use one, Used up and a reorder point. Earlier: The Labels option says what it gives without a printer: a Print label button queues a QR label, the Labels page prints the queue, and a label printer under Print prints as you go. Earlier: Three optional extras, each a checkbox: Scan to add (point your phone at a thing and it lands in the catalog with a photo and a name), Labels (print a QR label for a thing or a box on a Bluetooth label printer), and Starter rooms (Kitchen, Living room, Bedroom, Bathroom, Garage, Closet, ready on day one). Earlier: Rooms are now real Locations. The separate “Room” field is gone: items file into the workspace’s Location tree (rooms, and bins inside them) like everything else, so a thing has one place, not two. Your existing room values move over automatically on this update: each becomes a Location and its items are filed into it, nothing lost. The pinned “By room” view still groups your catalog by room (now off the real Location), and the claim-ready Insurance view too. Earlier: Home Inventory became its OWN table (an inventory instance) with only the fields a home catalog needs, plain-language hints, and optional Insurance valuation.",
+        "Call them items or belongings: pick the word when you install, or change it later in the table's settings, and every label says it. Earlier: A plush or soft toy you scan goes to Home Inventory, with the other things you own, instead of plain Inventory. Earlier: Opens as a catalog of things you own, and stays one: a number typed into one item no longer turns the whole collection into stock tracking with Use one, Used up and a reorder point. Earlier: The Labels option says what it gives without a printer: a Print label button queues a QR label, the Labels page prints the queue, and a label printer under Print prints as you go. Earlier: Three optional extras, each a checkbox: Scan to add (point your phone at a thing and it lands in the catalog with a photo and a name), Labels (print a QR label for a thing or a box on a Bluetooth label printer), and Starter rooms (Kitchen, Living room, Bedroom, Bathroom, Garage, Closet, ready on day one). Earlier: Rooms are now real Locations. The separate “Room” field is gone: items file into the workspace’s Location tree (rooms, and bins inside them) like everything else, so a thing has one place, not two. Your existing room values move over automatically on this update: each becomes a Location and its items are filed into it, nothing lost. The pinned “By room” view still groups your catalog by room (now off the real Location), and the claim-ready Insurance view too. Earlier: Home Inventory became its OWN table (an inventory instance) with only the fields a home catalog needs, plain-language hints, and optional Insurance valuation.",
       requires: [{ module: "inventory" }],
       // Always-on base: a "Home Inventory" instance of inventory.
       provides_instances: [
@@ -2518,6 +2549,8 @@ export const FEATURED_BUNDLES: FeaturedBundle[] = [
           display_name: "Home Inventory",
           glyph: "🏠",
           item_noun: "item",
+          // Item or belonging: the person's word for one thing they own (#3650).
+          noun: { of: "item", singular: "item", plural: "items", alternatives: [{ singular: "belonging", plural: "belongings" }] },
           scan_keywords: ["sheets", "bedding", "linen", "towel", "pillow", "blanket", "comforter", "duvet", "curtain", "rug", "mattress", "furniture", "dresser", "sofa", "couch", "chair", "bookcase", "desk", "lamp", "mirror", "shelf", "cabinet", "appliance", "vacuum", "fan", "heater", "microwave", "toaster", "blender", "cookware", "utensil", "dishes", "monitor", "television", "speaker", "headphones", "toy", "plush", "stuffed animal", "teddy bear"],
           qty_unit: "each",
           field_defs: [

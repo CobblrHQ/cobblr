@@ -34,6 +34,7 @@ import { useAuth } from "../auth/AuthContext";
 import { sandboxExpiry, clearSandboxExpiry, markSandboxEnded } from "../lib/sandbox-session";
 import { SandboxSaveModal } from "./SandboxSaveModal";
 import { sandboxLine, signInLinkLead, trialLine } from "../lib/workspace-state-copy";
+import { makeItYours } from "../lib/make-it-yours";
 
 /** Below this, the sandbox bar is always visible. Above it, only the small chip is. */
 const URGENT_MS = 15 * 60_000;
@@ -120,6 +121,22 @@ export function WorkspaceStateBar({ slug }: { slug: string }) {
     // this off the render path of everything else.
     const t = setInterval(() => setNow(Date.now()), 30_000);
     return () => clearInterval(t);
+  }, [state?.kind]);
+
+  // Whether this box carries a sandbox into the hosted product. Asked once,
+  // for a sandbox only: the answer is the operator's and does not change.
+  const [carry, setCarry] = useState(false);
+  const [leaving, setLeaving] = useState<null | "going" | "failed">(null);
+  useEffect(() => {
+    if (state?.kind !== "sandbox") return;
+    let gone = false;
+    void api
+      .sandboxPaths()
+      .then((p) => !gone && setCarry(p.carry_available === true))
+      .catch(() => undefined);
+    return () => {
+      gone = true;
+    };
   }, [state?.kind]);
 
   // The strip's own clock reaching zero is the third teller of the end (the
@@ -227,6 +244,38 @@ export function WorkspaceStateBar({ slug }: { slug: string }) {
   // the one part the strip exists to say.
   const left = (state.expiresAt ?? now) - now;
   const urgent = left <= URGENT_MS;
+
+  // Where the box carries a sandbox into the hosted product, that is the first
+  // door for the whole hour, with Keep it beside it: the owner's two-row
+  // layout, the sentence on its own line and the doors below.
+  if (carry) {
+    return (
+      <>
+        <FloatingChrome anchor="bottom" className={STACK + (urgent ? LOUD : QUIET)} data-testid="workspace-state" data-strip={urgent ? "full" : "chip"}>
+          <span className={urgent ? "text-ember-700 dark:text-ember-300 font-medium text-center leading-snug" : "text-muted text-center leading-snug"}>
+            {leaving === "failed" ? "We could not start that. Please try again." : sandboxLine(left, urgent)}
+          </span>
+          <div className={DOORS}>
+            <button
+              type="button"
+              disabled={leaving === "going"}
+              onClick={() => {
+                setLeaving("going");
+                makeItYours().catch(() => setLeaving("failed"));
+              }}
+              className={PRIMARY + DOOR}
+            >
+              {leaving === "going" ? "One moment…" : "Make this yours on Cobblr"}
+            </button>
+            <button type="button" onClick={() => setModal("save")} className={SECONDARY + DOOR}>
+              Keep it
+            </button>
+          </div>
+        </FloatingChrome>
+        {modalEl}
+      </>
+    );
+  }
 
   return (
     <>

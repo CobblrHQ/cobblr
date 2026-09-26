@@ -21,7 +21,7 @@ import { meta } from "../../db/meta.js";
 import { sendDiscordDm, dmResultUnverifies } from "../discord-bot-trigger.js";
 import { canDeliverDiscordDm } from "../discord-connection.js";
 import { absoluteAppUrl } from "../public-url.js";
-import { COMPONENTS_V2_FLAG, componentsFor, componentsV2For } from "./discord-card.js";
+import { COMPONENTS_V2_FLAG, componentsFor, componentsV2For, dmSummary } from "./discord-card.js";
 import type { Channel, ChannelEvent } from "./types.js";
 
 export const discordDmChannel: Channel = {
@@ -90,6 +90,9 @@ export const discordDmChannel: Channel = {
     const res = await sendDiscordDm({
       discord_user_id: conn!.discord_user_id!,
       text,
+      // The push line: the notification's own sentence, which a card otherwise
+      // leaves out of the message entirely.
+      summary: dmSummary(event.message, event.card?.heading),
       ...(embeds ? { embeds } : {}),
       // Undefined when the notification offers nothing to do, which is most of
       // them — the bot then sends exactly what it sent before.

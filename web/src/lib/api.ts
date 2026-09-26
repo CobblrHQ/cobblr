@@ -343,6 +343,8 @@ export interface OrgMembership {
   name: string;
   slug: string;
   role: OrgRoleName;
+  /** When the workspace was made. Absent from an older server. */
+  created_at?: string;
   /** Display name of the workspace's owner — for the switcher's "Owner: …" on
    *  workspaces you don't own. Null if unresolved. */
   owner_name?: string | null;
@@ -936,6 +938,8 @@ export const api = {
     /** Captcha token (e.g. Turnstile), required only when the server has a
      *  captcha provider configured (the trial tier). */
     captcha_token?: string;
+    /** The link or QR that sent the person here, for the signed_up event. */
+    source?: string;
   }) =>
     request<AuthResponse | { needs_verification: true; email: string }>("POST", "/auth/signup", body),
   // Public preview of a single-use signup invite (the /join/:token page).
@@ -1069,7 +1073,7 @@ export const api = {
   // it server to server). See docs/architecture/central-identity.md.
   /** `app` is the managed app asked for on /start/<app>; `provisioned` says what
    *  this sign-in made (null when an existing account was adopted). */
-  identityCallback: (body: { code: string; app?: string }) =>
+  identityCallback: (body: { code: string; app?: string; source?: string }) =>
     request<AuthResponse & { provisioned: { slug: string; app: string | null } | null }>(
       "POST",
       "/auth/identity/callback",
@@ -1776,12 +1780,18 @@ export const api = {
     confirm?: boolean,
     enabledFeatures?: string[],
     takeTheirs?: Array<{ entity_kind: string; name: string }>,
+    /** The word picked for each table that offers them, by instance name. */
+    nounChoices?: Record<string, string>,
   ) =>
     request<{ bundle: PlatformBundle; applied: { wires: number; field_defs: number }; installed?: BundleInstallSummary }>(
       "POST",
       `/orgs/${slug}/bundles/install`,
-      { manifest, confirm, enabled_features: enabledFeatures, take_theirs: takeTheirs },
+      { manifest, confirm, enabled_features: enabledFeatures, take_theirs: takeTheirs, ...(nounChoices && Object.keys(nounChoices).length ? { noun_choices: nounChoices } : {}) },
     ),
+  /** Change the word a table's things are called (#3650). Every label and,
+   *  for a counting word, the records on the old word follow. */
+  setTableNoun: (slug: string, instance: string, singular: string) =>
+    request<{ instance: string; noun: { singular: string; plural: string } }>("PUT", `/orgs/${slug}/bundles/noun`, { instance, singular }),
   validateBundle: (slug: string, manifest: PlatformBundleManifest) =>
     request<BundleValidation>("POST", `/orgs/${slug}/bundles/validate`, { manifest }),
   /** Turn a bundle's optional features on or off. One call: the api re-applies
@@ -2139,13 +2149,34 @@ export const api = {
     }),
 
   // ─── core-files ───────────────────────────────────────────────────
-  listFiles: (slug: string, kind?: string) =>
-    request<{ items: FileRecord[] }>(
-      "GET",
-      `/orgs/${slug}/modules/core-files/files${kind ? `?kind=${encodeURIComponent(kind)}` : ""}`,
-    ),
-  uploadFile: async (slug: string, file: File): Promise<FileRecord> => {
+  /** `folder`: "top" for the top level, a folder id for that folder, absent
+   *  for every file wherever it lives. `q` matches the name. */
+  listFiles: (slug: string, kind?: string, opts: { folder?: string; q?: string; limit?: number; cursor?: string } = {}) => {
+    const p = new URLSearchParams();
+    if (kind) p.set("kind", kind);
+    if (opts.folder) p.set("folder", opts.folder);
+    if (opts.q) p.set("q", opts.q);
+    if (opts.limit) p.set("limit", String(opts.limit));
+    if (opts.cursor) p.set("cursor", opts.cursor);
+    const qs = p.toString();
+    return request<{ items: FileRecord[]; next_cursor?: string | null; total?: number }>("GET", `/orgs/${slug}/modules/core-files/files${qs ? `?${qs}` : ""}`);
+  },
+  /** What the workspace keeps in files, and its limit (null: none). */
+  fileUsage: (slug: string) => request<{ bytes_used: number; quota_bytes: number | null }>("GET", `/orgs/${slug}/modules/core-files/files/usage`),
+  listFileFolders: (slug: string) => request<{ items: FileFolder[]; top_level_file_count: number }>("GET", `/orgs/${slug}/modules/core-files/folders`),
+  createFileFolder: (slug: string, body: { name: string; parent_id?: string | null }) => request<FileFolder>("POST", `/orgs/${slug}/modules/core-files/folders`, body),
+  updateFileFolder: (slug: string, id: string, body: { name?: string; parent_id?: string | null }) => request<FileFolder>("PATCH", `/orgs/${slug}/modules/core-files/folders/${id}`, body),
+  deleteFileFolder: (slug: string, id: string) => request<void>("DELETE", `/orgs/${slug}/modules/core-files/folders/${id}`),
+  /** Rename a file, or move it to a folder (null: the top level). */
+  updateFile: (slug: string, id: string, body: { filename?: string; folder_id?: string | null }) => request<FileRecord>("PATCH", `/orgs/${slug}/modules/core-files/files/${id}`, body),
+  /** `folder_id` puts it in a folder. `onDuplicate: "skip"` keeps the copy
+   *  already here when the same bytes are uploaded again (`duplicate: true`
+   *  and the existing file come back); otherwise a second copy is stored and
+   *  `duplicate_of` names the first. */
+  uploadFile: async (slug: string, file: File, opts: { folderId?: string | null; onDuplicate?: "skip" } = {}): Promise<FileRecord> => {
     const form = new FormData();
+    if (opts.folderId) form.set("folder_id", opts.folderId);
+    if (opts.onDuplicate) form.set("on_duplicate", opts.onDuplicate);
     form.set("file", file);
     const token = getToken();
     const headers: Record<string, string> = {};
@@ -6473,6 +6504,20 @@ export interface FileRecord {
     thumb?: { path: string; bytes: number; width: number; height: number };
   };
   created_at: string;
+  /** The folder it lives in; null is the top level. */
+  folder_id?: string | null;
+  /** On an upload: the same bytes were already here. */
+  duplicate?: boolean;
+  duplicate_of?: { id: string; filename: string; folder_id: string | null } | null;
+}
+
+/** A folder files live in (core-files), nested by `parent_id`. */
+export interface FileFolder {
+  id: string;
+  parent_id: string | null;
+  name: string;
+  file_count: number;
+  created_at: string;
 }
 
 export interface SavedView {
@@ -7895,6 +7940,10 @@ export interface PlatformBundleInstance {
   item_noun?: string;
   /** Default unit for new items (e.g. "skein"). */
   qty_unit?: string;
+  /** Words the person may pick for what the table holds or counts (#3650). */
+  noun?: import("@cobblr/platform-contract/kind-label").NounChoiceDecl;
+  /** Each file dropped on the table becomes a record (FileIntakeDecl). */
+  file_intake?: import("@cobblr/platform-contract").FileIntakeDecl;
   /** When items belong to a parent "type" in another instance (Spool →
    *  Filament type), the forms show a parent picker + write an `instance-of`
    *  pairing. `instance` is the parent instance name. */

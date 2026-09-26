@@ -7,7 +7,7 @@ import {
   type ReactNode,
 } from "react";
 import { InventoryApi } from "./api";
-import { pluralise } from "@cobblr/platform-contract";
+import { pluralise, type CountWords } from "@cobblr/platform-contract";
 
 interface InventoryCtx {
   orgSlug: string;
@@ -28,6 +28,10 @@ interface InventoryCtx {
   itemNounPlural: string;
   /** Default unit for new items in this instance (e.g. "skein"). */
   qtyUnit?: string;
+  /** The unit words this table declares, with their plurals (a bundle's noun
+   *  offer: ball/balls, skein/skeins, hank/hanks), so a count beside one of
+   *  them agrees ("3 hanks") even though the unit vocabulary does not hold it. */
+  countWords: readonly CountWords[];
   /** When this instance's items belong to a parent "type" in another instance
    *  (e.g. a Spool → its Filament type), the create/edit forms show a parent
    *  picker and write an `instance-of` pairing. Seeded by the bundle. */
@@ -56,6 +60,7 @@ export function InventoryProvider({
   itemNoun,
   itemNounPlural,
   qtyUnit,
+  countWords,
   parent,
   children,
 }: {
@@ -65,6 +70,7 @@ export function InventoryProvider({
   itemNoun?: string;
   itemNounPlural?: string;
   qtyUnit?: string;
+  countWords?: readonly CountWords[];
   parent?: ParentConfig;
   children: ReactNode;
 }) {
@@ -81,7 +87,7 @@ export function InventoryProvider({
   const nounPlural = itemNounPlural ?? pluralise(noun);
   return (
     <Ctx.Provider
-      value={{ orgSlug, getToken, api, instance, entityKind, itemNoun: noun, itemNounPlural: nounPlural, qtyUnit, parent, basePath }}
+      value={{ orgSlug, getToken, api, instance, entityKind, itemNoun: noun, itemNounPlural: nounPlural, qtyUnit, countWords: countWords ?? [], parent, basePath }}
     >
       {children}
     </Ctx.Provider>

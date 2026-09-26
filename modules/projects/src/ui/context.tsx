@@ -1,4 +1,5 @@
 import { createContext, useContext, useMemo, type ReactNode } from "react";
+import type { FileIntakeDecl } from "@cobblr/platform-contract";
 import { ProjectsApi } from "./api";
 
 interface Ctx {
@@ -16,6 +17,7 @@ interface Ctx {
    *  the default /projects page. */
   displayName?: string;
   itemNoun?: string;
+  fileIntake?: FileIntakeDecl;
 }
 
 const Ctx = createContext<Ctx | null>(null);
@@ -26,6 +28,7 @@ export function ProjectsProvider({
   instance,
   displayName,
   itemNoun,
+  fileIntake,
   children,
 }: {
   orgSlug: string;
@@ -33,6 +36,7 @@ export function ProjectsProvider({
   instance?: string;
   displayName?: string;
   itemNoun?: string;
+  fileIntake?: FileIntakeDecl;
   children: ReactNode;
 }) {
   const api = useMemo(
@@ -41,7 +45,7 @@ export function ProjectsProvider({
   );
   const entityKind = instance ? `${instance}:item` : "projects:project";
   return (
-    <Ctx.Provider value={{ orgSlug, getToken, api, instance, entityKind, displayName, itemNoun }}>
+    <Ctx.Provider value={{ orgSlug, getToken, api, instance, entityKind, displayName, itemNoun, fileIntake }}>
       {children}
     </Ctx.Provider>
   );

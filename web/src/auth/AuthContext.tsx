@@ -104,6 +104,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       app?: string;
       manifest?: unknown;
       captcha_token?: string;
+      source?: string;
     }) => {
       const res = await api.signup(input);
       // Trial email-verify gate: the server withholds the session and asks the

@@ -56,5 +56,5 @@ export function parseLength(input: string, fallback: LengthUnit = "mm"): number 
 export function formatLength(mmv: number, unit: LengthUnit): string {
   const v = mmv / MM_PER[unit];
   const rounded = unit === "mm" ? Math.round(v) : Math.round(v * 10) / 10;
-  return `${rounded} ${unit}`;
+  return `${rounded} ${unit}`; // count-unit-ok: a length symbol (mm, in, ft), which does not inflect
 }

@@ -28,7 +28,9 @@ import {
   handOverSandbox,
   keepSandbox,
   keptSandboxForUser,
+  ownSandboxForUser,
   provisionSandboxWorkspace,
+  sandboxDecisionMs,
   setKeptSandboxPassword,
   redeemSandboxToken,
   sandboxCapacity,
@@ -37,7 +39,16 @@ import {
 } from "../platform/try-sandbox.js";
 import { seedSandbox } from "../platform/try-sandbox-seed.js";
 import { trialLedger } from "../platform/trial-ledger.js";
-import { carryPackage, mintCarryToken, packageFileIds, resolveCarryToken, CARRY_TOKEN_HOURS, type CarryPackage } from "../platform/trial-carry.js";
+import {
+  carryPackage,
+  confirmCarry,
+  holdSandboxForCarry,
+  mintCarryToken,
+  packageFileIds,
+  resolveCarryToken,
+  CARRY_TOKEN_HOURS,
+  type CarryPackage,
+} from "../platform/trial-carry.js";
 import { platform } from "@cobblr/platform-contract";
 import { publicBaseUrl } from "../platform/public-url.js";
 import { emptySandboxRecords } from "../platform/try-sandbox-records.js";
@@ -597,15 +608,22 @@ tryRouter.post(
         res.status(404).json({ error: { code: "not_found", message: "Not found" } });
         return;
       }
+      // A kept trial, or the person's own sandbox, live or inside its hold:
+      // "Make this yours" leaves from the sandbox itself, with no keep first.
+      // The sandbox is held open while they make their account, because the
+      // package is read through its routes, which refuse one past its hour.
       const kept = await keptSandboxForUser(req.session!.id);
-      if (!kept) {
-        res.status(400).json({ error: { code: "not_kept", message: "Keep the workspace first." } });
+      const own = kept ? null : await ownSandboxForUser(req.session!.id);
+      const orgId = kept?.orgId ?? own?.orgId;
+      if (!orgId) {
+        res.status(400).json({ error: { code: "not_kept", message: "There is no sandbox of yours to bring along." } });
         return;
       }
-      const token = await mintCarryToken(kept.orgId, req.session!.id);
+      if (own) await holdSandboxForCarry(own.orgId);
+      const token = await mintCarryToken(orgId, req.session!.id);
       // Where the other side reads it back: this box's own public address.
       const source = (publicBaseUrl() || `${req.protocol}://${req.get("host") ?? ""}`).replace(/\/+$/, "");
-      console.log(`[try-carry] org ${kept.orgId}: carry token minted`);
+      console.log(`[try-carry] org ${orgId}: carry token minted`);
       res.json({ token, source, expires_hours: CARRY_TOKEN_HOURS });
     } catch (err) {
       next(err);
@@ -647,6 +665,36 @@ tryRouter.get(
         return;
       }
       res.json(got.pkg);
+    } catch (err) {
+      next(err);
+    }
+  },
+);
+
+// POST /try/carry/:token/done — the other side says the carry landed, and the
+// sandbox ends. No session: like the package, the token is the grant, and it
+// is presented by the server that did the replay. An unknown or spent token is
+// a 404 and ends nothing.
+//
+// AI-REACH: server to server, on a grant that only the replaying server holds;
+// ending a workspace is not an agent's to do.
+tryRouter.post(
+  "/try/carry/:token/done",
+  async (req: Request, res: Response, next: NextFunction): Promise<void> => {
+    try {
+      if (!sandboxEnabled() || !env.COBBLR_TRY_CARRY) {
+        res.status(404).json({ error: { code: "not_found", message: "Not found" } });
+        return;
+      }
+      const token = String(req.params.token ?? "");
+      const ended = await confirmCarry(token, sandboxDecisionMs());
+      if (!ended) {
+        res.status(404).json({ error: { code: "not_found", message: "Not found" } });
+        return;
+      }
+      packages.delete(token);
+      console.log("[try-carry] a carry landed; its sandbox ends");
+      res.json({ ok: true, ended: true });
     } catch (err) {
       next(err);
     }

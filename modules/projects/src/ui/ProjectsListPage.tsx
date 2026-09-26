@@ -7,6 +7,7 @@ import { Plus, Search, Trash2 } from "lucide-react";
 import {
   BulkActionBar,
   CustomFieldsPanel,
+  TableFileIntake,
   Modal,
   useToast,
   useConfirm,
@@ -22,7 +23,7 @@ type SavedViewLite = {
   name: string;
   config?: { group_by?: string; visible_fields?: string[] };
 };
-type FieldDefLite = { name: string; display_label: string };
+type FieldDefLite = { name: string; display_label: string; choices?: string[] | null };
 
 const STATUS_LABEL: Record<string, string> = {
   planning: "Planning",
@@ -34,7 +35,7 @@ const STATUS_LABEL: Record<string, string> = {
 const STATUS_ORDER = ["planning", "active", "blocked", "done", "abandoned"];
 
 export function ProjectsListPage() {
-  const { api, orgSlug, getToken, displayName, itemNoun, instance, entityKind } = useProjects();
+  const { api, orgSlug, getToken, displayName, itemNoun, instance, entityKind, fileIntake } = useProjects();
   // An instance's rows must stay INSIDE the instance — the bare /projects
   // detail route filters to the default instance and 404s on instance rows
   // ("Project not found" on every Designs/Outfits click).
@@ -210,6 +211,21 @@ export function ProjectsListPage() {
           <Plus size={14} /> New {noun}
         </button>
       </div>
+
+      {/* The table's import door, where its bundle declares one: each file
+          dropped here becomes one of these, with its file (Patterns). */}
+      {fileIntake && instance && (
+        <TableFileIntake
+          orgSlug={orgSlug}
+          instance={instance}
+          decl={fileIntake}
+          askFields={projFieldDefs.data?.items ?? []}
+          noun={noun}
+          plural={nounPlural}
+          getToken={getToken}
+          onDone={() => void qc.invalidateQueries({ queryKey: ["projects-list", entityKind] })}
+        />
+      )}
 
       {/* Create modal — name + the instance's custom fields (a Design's pattern
           link + category) so you capture the pattern at creation, not just a

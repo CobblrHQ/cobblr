@@ -1,0 +1,10 @@
+{
+  "lint": "lint:compose-empty-env-reads",
+  "run": "tsx scripts/lint-compose-empty-env-reads.ts",
+  "rows": [
+    "selfhost-deploy"
+  ],
+  "ms": 1562,
+  "recorded": "2026-09-26",
+  "source": "scaffolded by new-lint.sh at twice a local run (a shared box); replaced from its first CI measurement"
+}

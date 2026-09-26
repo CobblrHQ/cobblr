@@ -204,6 +204,28 @@ export async function checkoutTestOrg(opts: { reserved?: boolean } = {}): Promis
   } catch (err) {
     console.warn(`[test-org-pool] placement sync for ${row.slug} skipped:`, err);
   }
+  // A form sign-up records its arrival (a signed_up product event, with the
+  // source its link carried: none, for a test). The pool stands in for that
+  // sign-up, so a handed-out org carries the same row, written here rather
+  // than at bake so a pool baked before the event existed carries it too.
+  // Written directly, not through the fire-and-forget tracker, so it is
+  // there before the test's first read. Idempotent.
+  try {
+    const has = await meta
+      .selectFrom("product_events")
+      .select("id")
+      .where("org_id", "=", row.org_id)
+      .where("event", "=", "signed_up")
+      .executeTakeFirst();
+    if (!has) {
+      await meta
+        .insertInto("product_events")
+        .values({ org_id: row.org_id, user_id: row.owner_user_id, event: "signed_up", detail: sql`${JSON.stringify({ via: "form", source: null })}::jsonb` })
+        .execute();
+    }
+  } catch (err) {
+    console.warn(`[test-org-pool] signed_up for ${row.slug} skipped:`, err);
+  }
   // The same at-handout self-heal for the 'user' claim: a pool baked before
   // the bake learned to claim (2026-09-22) hands out orgs whose chosen modules
   // are unpinned, so a bundle uninstall in a test could switch one off where

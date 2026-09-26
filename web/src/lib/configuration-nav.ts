@@ -232,9 +232,9 @@ export const CONFIG_DESTINATIONS: ConfigDestination[] = [
     icon: LayoutGrid,
     label: "Presentation",
     description:
-      "Rename, re-icon, hide and reorder any nav entry in your workspace. Workspace edits override module + bundle defaults.",
+      "Rename, re-icon, hide and reorder any nav entry in your workspace, and pick what a table calls its things (balls or skeins). Workspace edits override module + bundle defaults.",
     to: "/configuration/presentation",
-    keywords: ["nav", "sidebar", "rename", "icons", "reorder", "customize", "navigation"],
+    keywords: ["nav", "sidebar", "rename", "icons", "reorder", "customize", "navigation", "word", "noun", "call", "unit", "skein", "ball", "hank"],
   },
   {
     section: "workspace",

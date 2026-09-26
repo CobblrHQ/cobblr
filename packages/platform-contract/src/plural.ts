@@ -38,9 +38,57 @@ export function pluralise(noun: string): string {
   return `${n}s`;
 }
 
-/** "1 part" / "2 parts", with the noun kept as given. */
-export function countOf(n: number, noun: string): string {
-  return `${n} ${n === 1 ? noun.trim() : pluralise(noun)}`;
+/** A word and its plural as somebody declared them (a bundle's noun offer,
+ *  a unit vocabulary entry). `plural` absent means the regular rules. */
+export interface CountWords {
+  singular: string;
+  plural?: string | null;
+}
+
+/** The word a count takes: 1 (or a change of -1) is singular, everything
+ *  else (0, 3, 1.5) is plural, and a declared plural beats the rules. */
+export function wordForCount(n: number, words: string | CountWords): string {
+  const w = typeof words === "string" ? { singular: words } : words;
+  const singular = w.singular.trim();
+  if (Math.abs(n) === 1) return singular;
+  return w.plural?.trim() || pluralise(singular);
+}
+
+/** "1 part" / "2 parts", "1 hank" / "3 hanks". A count and its word always
+ *  agree, whether the word is typed text or a declared pair. */
+export function countOf(n: number, noun: string | CountWords): string {
+  return `${n} ${wordForCount(n, noun)}`;
+}
+
+/** The declared pair a stored word belongs to, matched on either form ("hank"
+ *  or "hanks" both find hank/hanks), else the word itself as a singular. A
+ *  unit is stored as whatever was typed, so the plural has to be found. */
+export function countWordsFor(raw: string, known: readonly CountWords[] = []): CountWords {
+  const q = raw.trim().toLowerCase();
+  for (const k of known) {
+    if (k.singular.trim().toLowerCase() === q || (k.plural ?? "").trim().toLowerCase() === q) {
+      return { singular: k.singular.trim(), plural: k.plural?.trim() || null };
+    }
+  }
+  return { singular: raw.trim() };
+}
+
+/** A quantity with its unit, wherever a sentence says one ("Added Wool (3
+ *  hanks)"). A measured unit the vocabulary knows reads as its symbol ("750
+ *  g"); a counted one agrees with the number, from the vocabulary's own words,
+ *  else the table's declared words (`known`), else the regular rules. */
+export function quantityWithUnit(
+  n: number,
+  raw: string | null | undefined,
+  resolved?: { symbol: string; name: string; plural: string; category: string; factor?: number | null } | null,
+  known: readonly CountWords[] = [],
+): string {
+  const num = Number.isInteger(n) ? String(n) : String(parseFloat(n.toFixed(3)));
+  const typed = (raw ?? "").trim();
+  if (!typed) return num;
+  if (resolved && resolved.category !== "count") return `${num} ${resolved.symbol}`;
+  const words = resolved ? { singular: resolved.name, plural: resolved.plural } : countWordsFor(typed, known);
+  return `${num} ${wordForCount(n, words)}`;
 }
 
 /**

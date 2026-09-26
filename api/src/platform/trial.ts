@@ -75,9 +75,27 @@ export const TRIAL_CAPPED_FEATURES: ReadonlySet<string> = new Set([
 const TRIAL_CAP_REASONS: Record<string, string> = {
   "workspaces.create": "The free trial is limited to one workspace — upgrade to add more.",
   "members.add": "The free trial is single-user — upgrade to invite members.",
-  "files.upload": "The free trial doesn't support file uploads — items you scan still get their image automatically.",
+  "files.upload": "The free trial holds only a little of your own files. Upgrade to keep more.",
   "plan.upgrade": "Keeping this workspace requires checkout — a free trial can't self-upgrade to a paid plan.",
 };
+
+const MB = 1024 * 1024;
+const mb = (n: number) => `${(n / MB).toFixed(n < 10 * MB ? 1 : 0)} MB`;
+
+/** A trial holds a small amount of its own files (#3753: the owner's call,
+ *  2026-09-26), where it used to hold none: enough to try the Files page and
+ *  a few patterns, never enough to be free hosting. Judged on the running
+ *  total the caller supplies (`used`), not one request at a time. Pure. */
+export function trialUploadDecision(used: number | undefined, adding: unknown, capBytes: number): { allow: boolean; reason?: string } {
+  if (typeof adding !== "number" || !Number.isFinite(adding) || adding < 0) return { allow: false, reason: "We could not size that upload." };
+  if (capBytes <= 0) return { allow: false, reason: "The free trial doesn't take uploads of your own files. Items you scan still get their image." };
+  const held = typeof used === "number" && Number.isFinite(used) && used > 0 ? used : 0;
+  if (held + adding <= capBytes) return { allow: true };
+  return {
+    allow: false,
+    reason: `The free trial holds up to ${mb(capBytes)} of your own files, and this workspace has ${mb(held)}. Delete a few, or upgrade to keep more.`,
+  };
+}
 
 /** The pure decision: does the trial tier withhold this feature, given the workspace's
  *  unlock list? Extracted so the (async, DB-touching) guard stays a thin wrapper. */
@@ -107,6 +125,10 @@ export const trialEntitlementGuard: EntitlementGuard = async (ctx) => {
   // the workspace's own deletion are what bound the rest.
   if (ctx.feature === "files.upload" && (await isSandboxOrg(ctx.orgId))) {
     return sandboxUploadDecision(ctx.quantity);
+  }
+  if (ctx.feature === "files.upload") {
+    if ((await orgDemoUnlocks(ctx.orgId)).has("files.upload")) return { allow: true };
+    return trialUploadDecision(ctx.used, ctx.quantity, env.COBBLR_TRIAL_UPLOAD_CAP_MB * MB);
   }
   // Only pay the unlock lookup for a feature the trial actually caps.
   const unlocks = TRIAL_CAPPED_FEATURES.has(ctx.feature) ? await orgDemoUnlocks(ctx.orgId) : EMPTY;

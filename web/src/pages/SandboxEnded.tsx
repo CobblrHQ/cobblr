@@ -32,6 +32,7 @@ import { api, ApiError } from "../lib/api";
 import { useAuth } from "../auth/AuthContext";
 import { sandboxKeptAtTheEnd, type EndingKind } from "../lib/sandbox-session";
 import { AddedLine } from "../components/BuiltHere";
+import { carryUrl, makeItYours } from "../lib/make-it-yours";
 import { endedCopy, holdPhrase } from "../lib/workspace-state-copy";
 import type { SandboxLedger } from "../lib/api";
 
@@ -93,9 +94,10 @@ export function SandboxEnded({
         <AddedLine preview={preview ? (ledgerPreview ?? null) : undefined} />
 
         <div className="mt-6 space-y-3">
+          {paths?.carry_available && kind === "sandbox" && held && <MakeYoursDoor />}
           {held && <KeepDoor trialDays={paths?.trial_days} />}
           <FreshDoor paths={paths} />
-          {paths?.carry_available && kind === "sandbox" && held ? <CarryDoor /> : <CarryNote />}
+          {paths?.carry_available && kind === "sandbox" && held ? null : <CarryNote />}
           {paths?.selfhost_url && (
             <p className="text-sm text-muted">
               Or{" "}
@@ -242,50 +244,31 @@ function FreshDoor({ paths }: { paths: EndingPaths | null }) {
   );
 }
 
-/** Door 3, where the replay exists: keep it for the trial length so there is
- *  something to read, get the person's own grant to read it, and leave for the
- *  real account's /carry page, which signs them up and brings it in. */
-export function carryUrl(cloudUrl: string | null, here: string, grant: { token: string; source: string }): string {
-  const url = new URL("/carry", new URL(cloudUrl || "/", here));
-  url.searchParams.set("token", grant.token);
-  url.searchParams.set("from", grant.source);
-  return url.toString();
-}
+export { carryUrl };
 
-function CarryDoor() {
-  const [email, setEmail] = useState("");
+/** The first door, where the carry is on: one button, and the account is made
+ *  on the other side. */
+function MakeYoursDoor() {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   async function go() {
-    if (busy || !email.trim()) return;
+    if (busy) return;
     setBusy(true);
     setError(null);
     try {
-      await api.keepSandbox(email.trim());
-      sandboxKeptAtTheEnd();
-      const [p, grant] = await Promise.all([api.sandboxPaths(), api.startCarry()]);
-      window.location.assign(carryUrl(p.cloud_url, window.location.origin, grant));
+      await makeItYours();
     } catch {
-      setError("Could not keep it to bring along. Try again?");
+      setError("We could not start that. Please try again.");
       setBusy(false);
     }
   }
   return (
-    <section className="rounded-xl border border-line dark:border-slate-700 bg-surface dark:bg-slate-900 p-4" data-testid="door-carry">
-      <h2 className="text-[11px] font-mono uppercase tracking-widest text-accent">Bring what I built to a real account</h2>
-      <p className="mt-1.5 text-sm text-muted">What you added comes with you into a new account on Cobblr.</p>
-      <form
-        className="mt-3 flex flex-wrap gap-2"
-        onSubmit={(e) => {
-          e.preventDefault();
-          void go();
-        }}
-      >
-        <input type="email" required value={email} onChange={(e) => setEmail(e.target.value)} placeholder="you@example.com" aria-label="Your email" className="input flex-1 min-w-[12rem]" />
-        <button type="submit" disabled={busy || !email.trim()} className={SECONDARY}>
-          {busy ? "One moment…" : "Bring it along"}
-        </button>
-      </form>
+    <section className="rounded-xl border-2 border-cobble-400 dark:border-cobble-600 bg-surface dark:bg-slate-900 p-4" data-testid="door-carry">
+      <h2 className="text-[11px] font-mono uppercase tracking-widest text-accent">Make this yours on Cobblr</h2>
+      <p className="mt-1.5 text-sm text-muted">Make an account on Cobblr, and what you added moves into it, photos too.</p>
+      <button type="button" onClick={() => void go()} disabled={busy} className={"mt-3 " + PRIMARY}>
+        {busy ? "One moment…" : "Make this yours on Cobblr"}
+      </button>
       {error && <p className="mt-2 text-sm text-ember-600 dark:text-ember-400">{error}</p>}
     </section>
   );

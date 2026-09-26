@@ -12,12 +12,15 @@ import { TYPED_FIELD_HINT, TYPED_FIELD_PLACEHOLDER, typedVerdict } from "../lib/
 export function ManualScanField({
   onLookup,
   onCobblrQr,
+  onOpenPath,
   className,
 }: {
   /** A code to look up: the result modal, as a decoded barcode would. */
   onLookup: (code: string) => void;
   /** A Cobblr label: route to the place or record it names, as the camera would. */
   onCobblrQr: (token: string) => void;
+  /** A link to a page of this instance (a record, a pairing link): open it. */
+  onOpenPath: (path: string) => void;
   className?: string;
 }) {
   const [value, setValue] = useState("");
@@ -32,6 +35,11 @@ export function ManualScanField({
             setValue("");
             setRefusal(null);
             onCobblrQr(v.token);
+            return;
+          case "open":
+            setValue("");
+            setRefusal(null);
+            onOpenPath(v.path);
             return;
           case "lookup":
             setValue("");
