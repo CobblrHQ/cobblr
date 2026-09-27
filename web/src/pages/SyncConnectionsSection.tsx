@@ -6,7 +6,7 @@
 import { useState } from "react";
 import { RefreshCw } from "lucide-react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Modal, JsonField, useToast, useConfirm } from "@cobblr/platform-web";
+import { Modal, JsonField, useToast, useConfirm, SecretInput } from "@cobblr/platform-web";
 import { api, ApiError, type SyncConnectorDef, type SyncConnection, type SyncSourceDef, type ImportPlanItem, type ModuleInstance } from "../lib/api";
 import { useActiveOrg } from "../auth/ActiveOrgContext";
 import { BridgePicker } from "../components/BridgePicker";
@@ -1209,8 +1209,8 @@ function AddSyncConnectionModal({
                 {Object.entries(def.credentials).map(([key, c]) => (
                   <label key={key} className="block">
                     <span className="block text-[10px] font-mono text-faint mb-0.5">{c.label}</span>
-                    <input
-                      type={c.secret ? "password" : "text"}
+                    <SecretInput
+                      secret={c.secret}
                       value={creds[key] ?? ""}
                       onChange={(e) => setCreds((p) => ({ ...p, [key]: e.target.value }))}
                       className="input font-mono"

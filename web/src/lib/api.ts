@@ -1055,8 +1055,15 @@ export const api = {
       `/super-admin/feedback/${id}`,
       body,
     ),
-  login: (body: { email: string; password: string }) =>
+  /** `app` / `source`: where an unconfirmed central account comes back to after
+   *  the fresh confirmation link the sign-in sends it. */
+  login: (body: { email: string; password: string; app?: string; source?: string }) =>
     request<AuthResponse>("POST", "/auth/login", body),
+  /** Make the central Cobblr account from this page. Always "check your email":
+   *  nobody is signed in until the address is confirmed, and the link brings
+   *  them back through /auth/callback with the app and source. */
+  identitySignup: (body: { display_name: string; email: string; password: string; captcha_token?: string; app?: string; source?: string; accept_terms?: boolean }) =>
+    request<{ status: "check_your_email" }>("POST", "/auth/identity/signup", body),
   magicRequest: (body: { email: string }) =>
     request<{
       ok: boolean;
@@ -4868,6 +4875,16 @@ export const api = {
   // The web shell renders /super-admin/* only when user.is_platform_admin.
   /** The thesis dashboard (audit F2): per workspace, walls-hit 7d/30d by event
    *  + time-to-first-working-app. Operator only. */
+  /** Sign-ups per source ("carry" for a sandbox brought in) per day, and who
+   *  (routes/super-admin.ts GET /signups). */
+  superAdminSignups: (days = 30) =>
+    request<{
+      since: string;
+      days: number;
+      totals: Array<{ source: string; count: number }>;
+      by_day: Array<{ day: string; source: string; count: number }>;
+      accounts?: Array<{ at: string; email: string | null; workspace: string | null; via: string | null; source: string; carried_origin: string | null }>;
+    }>("GET", `/super-admin/signups?days=${days}`),
   superAdminProductMetrics: () =>
     request<{
       now: string;

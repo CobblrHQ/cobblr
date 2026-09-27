@@ -11,12 +11,15 @@ import { registerProjectsHandlers } from "./handlers.js";
 import { registerProjectsNotificationMappers } from "./notification-mapper.js";
 import { registerProjectsCalendarSource } from "./calendar-source.js";
 import { registerPatternPhotoSubscriber } from "./pattern-photo.js";
+import { registerPatternNeedsSubscriber } from "./pattern-needs.js";
 
 registerProjectsCalendarSource();
 registerProjectsHandlers();
 registerProjectsNotificationMappers();
 // A pattern PDF attached to a design pulls its own photo out (issue #2402).
 registerPatternPhotoSubscriber();
+// ...and its text is read for the yarn and hooks it needs.
+registerPatternNeedsSubscriber();
 // Date custom-fields on projects:project (deadlines/milestones, …) land on the
 // workspace calendar via the generic kernel source. (Audit 2026-06-26 follow-up.)
 platform().calendar.registerDateFieldSource({

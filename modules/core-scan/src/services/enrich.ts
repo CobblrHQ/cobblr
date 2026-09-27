@@ -21,12 +21,13 @@ import { sql } from "kysely";
 import { browserImageHeaders } from "./image-fetch-headers.js";
 import { platform } from "@cobblr/platform-contract";
 import { isShortBarcode } from "@cobblr/platform-contract/scan-triage";
-import { answerAgreesWithCode, durableOutcome, type BarcodeHit, type DurableBarcodeOutcome } from "./barcode-lookup.js";
+import { answerAgreesWithCode, durableOutcome, namedByOnePerson, type BarcodeHit, type DurableBarcodeOutcome } from "./barcode-lookup.js";
 import { resolveBarcodeViaWebSearch, productTitle } from "./barcode-websearch.js";
-import { reportBarcodeCorrection } from "./barcode-corrections.js";
+import { reportBarcodeCorrection, unitLotsOf } from "./barcode-corrections.js";
 import { catalogAnswerForCode } from "./catalog-answer.js";
 import { cleanListingTitle } from "./listing-title.js";
 import { BookDoorUnavailable, classifyScanCode, resolveIsbn, resolveAsin, isbnFieldsForHit, ISBN_DECODER_ID, type ScanCodeType } from "./scan-router.js";
+import { readScanFrameLot } from "./scan-frame-label.js";
 import { crossCheckScanPhoto, identifyImage, parsePackSize, refreshCatalogImageByName } from "./enrich-photo.js";
 import { identityMeta, mergeMeta, CATALOG_PICTURE_NOT_PERSONS } from "./metadata.js";
 import { looksNonEnglish } from "./catalog-normalize.js";
@@ -458,6 +459,13 @@ export async function enrichBarcodeItem(ctx: EnrichContext): Promise<void> {
     .select(["catalog_image_url", "catalog_image_file_id", "suggested_metadata", "image_file_id"])
     .where("id", "=", ctx.itemId)
     .executeTakeFirst();
+  // The lot printed beside the barcode, read off the scan's own frame with the
+  // OCR engine: no model, in the background (scan-frame-label.ts, #3792).
+  if (lockRow?.image_file_id && !ctx.fromRetryWorker) {
+    void readScanFrameLot(ctx.orgId, ctx.itemId).catch((e) =>
+      console.error("[core-scan] reading the scan frame's lot threw:", (e as Error).message),
+    );
+  }
   // A scan photo means the barcode result can be CROSS-CHECKED against what the
   // user actually photographed. When one exists, a barcode hit is shown as
   // "checking…" at a damped confidence until crossCheckScanPhoto confirms or
@@ -971,7 +979,10 @@ export async function enrichBarcodeItem(ctx: EnrichContext): Promise<void> {
   // "Short" is the contract's word (isShortBarcode, 6..11 pure digits): the
   // same predicate the card's doubt reads, so the flag and the sentence
   // cannot drift apart (#3057).
-  const lowTrust = codeClass.type === "upc" && isShortBarcode(codeClass.code);
+  // One person's word on the barcode network (#3769) is shown the same way: the
+  // name is there, and the card asks for a look before it is trusted.
+  const onePerson = namedByOnePerson(hit);
+  const lowTrust = (codeClass.type === "upc" && isShortBarcode(codeClass.code)) || onePerson;
 
   // 2. Stash the catalog image URL on the row immediately; the
   // actual file download happens next and may take a moment.
@@ -991,7 +1002,11 @@ export async function enrichBarcodeItem(ctx: EnrichContext): Promise<void> {
   // it is open and retired by "Looks fine"; baked into the note it outlived
   // that tap and kept telling a person who had just said "looks fine" to
   // double-check (#3057).
-  const confirmedNotes = hit.title ? `Identified via ${provenanceLabel(hit)}.` : `Resolved via ${provenanceLabel(hit)}.`;
+  const confirmedNotes = onePerson
+    ? "Named by one person on the barcode network. Check it, or correct it."
+    : hit.title
+      ? `Identified via ${provenanceLabel(hit)}.`
+      : `Resolved via ${provenanceLabel(hit)}.`;
   // Gate the hit behind the photo cross-check only when there's a photo to check
   // AND a real product name to verify.
   const gateOnPhoto = hasScanPhoto && !!hit.title;
@@ -1450,11 +1465,12 @@ async function enrichThinHit(ctx: EnrichContext, hit: BarcodeHit): Promise<void>
   // The item's creator is the human whose correction this is.
   const creatorRow = await ctx.db
     .selectFrom("core_scan_inbox_items")
-    .select("created_by_user_id")
+    .select(["created_by_user_id", "suggested_metadata"])
     .where("id", "=", ctx.itemId)
     .executeTakeFirst();
   const creator = creatorRow?.created_by_user_id ?? null;
-  void reportBarcodeCorrection({ upc: ctx.upc, field: "title", was: thin, now: enriched, userId: creator }).catch(
+  const unitLots = unitLotsOf(creatorRow?.suggested_metadata);
+  void reportBarcodeCorrection({ upc: ctx.upc, field: "title", was: thin, now: enriched, userId: creator, lots: unitLots }).catch(
     () => {},
   );
   if (web.brand && web.brand !== hit.brand) {
@@ -1464,6 +1480,7 @@ async function enrichThinHit(ctx: EnrichContext, hit: BarcodeHit): Promise<void>
       was: hit.brand ?? null,
       now: web.brand,
       userId: creator,
+      lots: unitLots,
     }).catch(() => {});
   }
 }

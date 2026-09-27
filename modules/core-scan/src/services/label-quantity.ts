@@ -26,15 +26,19 @@ interface LabelDB {
 type Row = { quantity: number | null; suggested_name: string | null; suggested_candidates?: unknown; suggested_metadata: unknown };
 
 /** The label facts that would change this row, the person's own values left
- *  out. Pure. */
-export function labelChanges(row: Row, facts: LabelFacts): { quantity?: number; fields: Record<string, string> } {
+ *  out. Pure. The lot is a row fact (`lot`): routing seeds it into the
+ *  destination's lot-role field, and filing fills that field when it arrived
+ *  after routing (lot-field.ts). */
+export function labelChanges(row: Row, facts: LabelFacts): { quantity?: number; lot?: string; fields: Record<string, string> } {
   const stamps = fieldProvenanceOf(row.suggested_metadata);
   const mine = (k: string) => stamps[k]?.by === "person";
   const cands = Array.isArray(row.suggested_candidates) ? (row.suggested_candidates as Array<{ fields?: Record<string, unknown> }>) : [];
   const have = cands[0]?.fields ?? {};
-  const out: { quantity?: number; fields: Record<string, string> } = { fields: {} };
+  const meta = (row.suggested_metadata ?? {}) as Record<string, unknown>;
+  const out: { quantity?: number; lot?: string; fields: Record<string, string> } = { fields: {} };
   if (facts.quantity && facts.quantity !== row.quantity && !mine("quantity")) out.quantity = facts.quantity;
-  for (const k of ["dye_lot", "colorway", "sku", "pack_code"] as const) {
+  if (facts.lot && !mine("lot") && meta.lot !== facts.lot) out.lot = facts.lot;
+  for (const k of ["colorway", "sku", "pack_code"] as const) {
     const v = facts[k];
     if (!v || mine(k)) continue;
     if (typeof have[k] === "string" && have[k] === v) continue;
@@ -52,8 +56,16 @@ export function quantityFromLabel(row: Row): number | null {
 }
 
 /** Write a label's facts onto a pending row, each stamped as read from the
- *  label. `text` is the label's text; without it, the row's own observation. */
-export async function applyLabelFacts(db: Kysely<LabelDB>, itemId: string, text?: string | null): Promise<{ quantity?: number; fields: Record<string, string> } | null> {
+ *  label. `text` is the label's text; without it, the row's own observation.
+ *  `read` is what a model already read off the same label in a call it was
+ *  making anyway (the scan photo's cross-check); the text's own reading wins
+ *  where both have an answer, being the more literal of the two. */
+export async function applyLabelFacts(
+  db: Kysely<LabelDB>,
+  itemId: string,
+  text?: string | null,
+  read: LabelFacts = {},
+): Promise<{ quantity?: number; lot?: string; fields: Record<string, string> } | null> {
   const row = await db
     .selectFrom("core_scan_inbox_items")
     .select(["status", "quantity", "suggested_name", "suggested_candidates", "suggested_metadata"])
@@ -62,11 +74,12 @@ export async function applyLabelFacts(db: Kysely<LabelDB>, itemId: string, text?
   if (!row || row.status !== "pending") return null;
   const meta = (row.suggested_metadata ?? {}) as Record<string, unknown>;
   const source = text ?? (typeof meta.photo_observations === "string" ? meta.photo_observations : null);
-  const change = labelChanges(row, labelFactsOf(source));
-  if (change.quantity == null && Object.keys(change.fields).length === 0) return null;
+  const change = labelChanges(row, { ...read, ...labelFactsOf(source) });
+  if (change.quantity == null && change.lot == null && Object.keys(change.fields).length === 0) return null;
   const at = new Date().toISOString();
   const stamps: FieldProvenanceMap = { ...fieldProvenanceOf(meta) };
   if (change.quantity != null) stamps.quantity = { by: "evidence", from: "label", at };
+  if (change.lot != null) stamps.lot = { by: "evidence", from: "label", at };
   for (const k of Object.keys(change.fields)) stamps[k] = { by: "evidence", from: "label", at };
   const cands = Array.isArray(row.suggested_candidates) ? [...(row.suggested_candidates as Array<{ fields?: Record<string, unknown> }>)] : [];
   if (cands[0] && Object.keys(change.fields).length) cands[0] = { ...cands[0], fields: { ...(cands[0].fields ?? {}), ...change.fields } };
@@ -75,7 +88,11 @@ export async function applyLabelFacts(db: Kysely<LabelDB>, itemId: string, text?
     .set({
       ...(change.quantity != null ? { quantity: change.quantity } : {}),
       ...(cands[0] && Object.keys(change.fields).length ? { suggested_candidates: JSON.stringify(cands) as never } : {}),
-      suggested_metadata: sql`coalesce(suggested_metadata, '{}'::jsonb) || ${JSON.stringify({ [FIELD_PROVENANCE_KEY]: stamps, ...(cands[0] ? {} : { label_facts: change.fields }) })}::jsonb` as never,
+      suggested_metadata: sql`coalesce(suggested_metadata, '{}'::jsonb) || ${JSON.stringify({
+        [FIELD_PROVENANCE_KEY]: stamps,
+        ...(change.lot != null ? { lot: change.lot } : {}),
+        ...(cands[0] ? {} : { label_facts: change.fields }),
+      })}::jsonb` as never,
       updated_at: new Date(),
     })
     .where("id", "=", itemId)

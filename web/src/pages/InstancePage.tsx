@@ -25,9 +25,14 @@ import { api, getToken } from "../lib/api";
 import { useActiveOrg } from "../auth/ActiveOrgContext";
 import { initialViewId, rememberView, rememberedView } from "../lib/instance-view";
 import { SavedViewPage } from "./SavedViewPage";
+import { usePageWidth } from "@cobblr/platform-web";
 
 export function InstancePage({ instanceName }: { instanceName?: string } = {}) {
   const { activeSlug } = useActiveOrg();
+  // A collection is the same width whichever view it is on. The table asked
+  // for the whole screen and the views beside it did not, so Table -> Cards
+  // jumped from full width into the centred column and back on every tap.
+  usePageWidth("wide");
   // Reached two ways: the canonical `/instances/:name` (param) AND the clean
   // top-level alias `/<name>` registered in App.tsx (prop). The prop wins.
   const params = useParams<{ name: string; "*": string }>();

@@ -20,8 +20,7 @@ import {
   Modal,
   fieldNeed,
   useConfirm,
-  usePageTitle, useToast,
-} from "@cobblr/platform-web";
+  usePageTitle, useToast, PasswordInput } from "@cobblr/platform-web";
 import { useAuth } from "../auth/AuthContext";
 import {
   ApiError,
@@ -607,8 +606,16 @@ function AddBindingModal({
                         <input type="checkbox" checked={config[f.key] === "true"} onChange={(e) => setConfig((p) => ({ ...p, [f.key]: e.target.checked ? "true" : "" }))} />
                         <span>{config[f.key] === "true" ? "yes" : "no"}</span>
                       </label>
+                    ) : f.type === "password" ? (
+                        <PasswordInput
+                          what={/token/i.test(f.label) ? "token" : /key/i.test(f.label) ? "API key" : "password"}
+                          autoComplete="off"
+                          value={config[f.key] ?? ""}
+                          onChange={(e) => setConfig((p) => ({ ...p, [f.key]: e.target.value }))}
+                          placeholder={f.placeholder}
+                        />
                     ) : (
-                      <input className="input" type={f.type ?? "text"} value={config[f.key] ?? ""} onChange={(e) => setConfig((p) => ({ ...p, [f.key]: e.target.value }))} placeholder={f.placeholder} />
+                        <input className="input" type={f.type ?? "text"} value={config[f.key] ?? ""} onChange={(e) => setConfig((p) => ({ ...p, [f.key]: e.target.value }))} placeholder={f.placeholder} />
                     )}
                     {f.helpText && <div className="text-[10px] text-faint mt-0.5">{f.helpText}</div>}
                   </Field>

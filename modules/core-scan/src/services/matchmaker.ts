@@ -1,3 +1,6 @@
+// VOCAB-ENUMERATION OK: a menu entry carries one slot per field role the scan
+// fills from evidence (the category axis, the pack count, the lot), because each
+// is filled by its own rule; a role with no scan rule needs no slot here.
 // The scan matchmaker. The scanner is GLOBAL to a workspace — one session can
 // scan yarn, then groceries, then car parts — so there's no single target to
 // pre-fill. This joins two open sets: the LEFT half (what the scanner saw) and
@@ -91,6 +94,10 @@ export interface ScanMenuEntry extends FitTable {
    *  from the observed pack (metadata.pack_size), never a "usual buy" guess.
    *  Absent when the table declares no pack field. */
   pack_field?: { name: string; label: string };
+  /** This table's LOT field: the field declaring `field_role: "lot"` (a dye
+   *  lot, a lot number, a batch). Filled from the lot read off the label
+   *  (metadata.lot), never guessed. */
+  lot_field?: { name: string; label: string };
   /** The workspace's designated catch-all for this module: where an item that
    *  matches no table in particular lands, to then be told apart by its category.
    *  At most one entry per module carries this. */
@@ -456,6 +463,7 @@ export async function assembleScanMenu(
     let fields: MenuField[] = [];
     let categoryField: ScanMenuEntry["category_field"];
     let packField: ScanMenuEntry["pack_field"];
+    let lotField: ScanMenuEntry["lot_field"];
     try {
       const res = await fetch(`${baseUrl}/api/v1/orgs/${slug}/field-defs?kind=${encodeURIComponent(kind)}`, { headers: auth });
       if (res.ok) {
@@ -501,6 +509,8 @@ export async function assembleScanMenu(
         if (pack) {
           packField = { name: pack.name, label: pack.display_label };
         }
+        const lot = defs.find((d) => d.field_role === "lot");
+        if (lot) lotField = { name: lot.name, label: lot.display_label };
       }
     } catch {
       /* no fields → the table is still routable by its noun. */
@@ -516,6 +526,7 @@ export async function assembleScanMenu(
       ...(scanKeywords && scanKeywords.length ? { scan_keywords: scanKeywords } : {}),
       ...(categoryField ? { category_field: categoryField } : {}),
       ...(packField ? { pack_field: packField } : {}),
+      ...(lotField ? { lot_field: lotField } : {}),
       ...(fallbackByModule.get(inst.module_name) === inst.instance_name ? { is_fallback: true } : {}),
     });
   }
@@ -756,7 +767,8 @@ export function resolveCategory(
   return { value: proposed, isNew: true };
 }
 
-/** Seed a table's `pack`-role field from the OBSERVED package (metadata.pack_size
+/** Seed a table's `lot`-role field from the lot read off the label, and its
+ *  `pack`-role field from the OBSERVED package (metadata.pack_size
  *  — parsed deterministically by enrich / read off the photo). Heuristic-first:
  *  the parsed pack is more trustworthy than a model guess, so it WINS over any
  *  value already in `fields`. A no-op for a table without a pack axis. */
@@ -765,6 +777,8 @@ function seedPackSize(
   item: PerceivedItem,
   fields: Record<string, string | number | boolean>,
 ): void {
+  const lot = (item.metadata as { lot?: unknown } | null | undefined)?.lot;
+  if (entry.lot_field && typeof lot === "string" && lot.trim()) fields[entry.lot_field.name] = lot.trim();
   if (!entry.pack_field) return;
   const packSize = (item.metadata as { pack_size?: unknown } | null | undefined)?.pack_size;
   if ((typeof packSize === "number" || typeof packSize === "string") && String(packSize).trim() !== "") {

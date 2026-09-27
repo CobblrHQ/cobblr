@@ -171,6 +171,7 @@ export const FIELD_ROLE_VALUES = [
   "acquired-for",
   "seller",
   "location",
+  "lot",
 ] as const;
 export type FieldRole = (typeof FIELD_ROLE_VALUES)[number];
 
@@ -208,6 +209,10 @@ export const FIELD_ROLE_LABELS: Record<
   "acquired-for": { label: "What it cost", pickable: true },
   seller: { label: "Who sold it", pickable: true },
   location: { label: "Where it is kept", pickable: false, ownedBy: "core-locations" },
+  // The batch printed on this one unit's label (a dye lot, a food lot, a
+  // filament batch). Per unit, never a fact about the product: two balls of
+  // one yarn can be two lots, so it never leaves the workspace.
+  lot: { label: "Its lot or batch", pickable: true },
 };
 
 /** The capability that already owns this role's question, or null when the

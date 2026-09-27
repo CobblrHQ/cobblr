@@ -45,6 +45,10 @@ import {
   fetchIdentityProfile,
   browserBase,
   deploymentSecretMatches,
+  signupOnPageEnabled,
+  surfaceAccountCall,
+  callbackReturnTo,
+  currentAccountTerms,
 } from "../auth/identity-client.js";
 import { hardDeleteUser } from "../platform/delete-user.js";
 import { isPlatformAdmin, requireAuth } from "../auth/middleware.js";
@@ -101,6 +105,10 @@ const SignupBody = z.object({
 const LoginBody = z.object({
   email: z.string().email().max(255),
   password: z.string().min(1).max(128),
+  // Where an account whose address is still unconfirmed comes back to after the
+  // fresh link this sends it: the app and source the page was opened with.
+  app: z.string().min(1).max(40).optional(),
+  source: z.string().max(100).optional(),
 });
 
 /** Candidate slugs in preference order: the bare name, then `-2`, `-3`, … on
@@ -389,6 +397,9 @@ authRouter.get("/config", (req, res) => {
           // verified central account — and was invisible in the portal, because
           // signup_enabled said false and nothing else was on offer to read.
           auto_provision: autoProvisionEnabled(),
+          // The account can be made on THIS page (POST /auth/identity/signup), so
+          // the page shows a sign-up form rather than sending anyone away to make one.
+          signup_on_page: signupOnPageEnabled(),
         }
       : null,
   });
@@ -742,18 +753,45 @@ authRouter.post("/login", async (req, res, next) => {
       .where("email", "=", email)
       .executeTakeFirst();
 
-    if (!user || !user.active) {
-      // Spend the same ~bcrypt time as the real path so a missing/inactive
-      // account isn't distinguishable by latency. (Audit 2026-06-26 P2.)
+    // A disabled account is a decision somebody made; nothing below reopens it.
+    if (user && !user.active) {
       await verifyPassword(body.password, await dummyPasswordHash());
       if (!AUTH_LIMITS_OFF) await recordFailedLogin(email, now);
       return denied();
     }
-    const ok = await verifyPassword(body.password, user.password_hash);
+    const ok = user
+      ? await verifyPassword(body.password, user.password_hash)
+      : // Spend the same ~bcrypt time as the real path so a missing account
+        // isn't distinguishable by latency. (Audit 2026-06-26 P2.)
+        (await verifyPassword(body.password, await dummyPasswordHash()), false);
     if (!ok) {
+      // The central account. Where one fronts this surface, a person made on
+      // the account service (or on this page through it) has no password here
+      // at all, so the password is asked of the account service, from this
+      // server: the same form, no trip to another site.
+      if (identityCallbackEnabled()) {
+        const central = await surfaceAccountCall("login", {
+          email,
+          password: body.password,
+          clientIp: req.ip ?? "unknown",
+          returnTo: callbackReturnTo(pageOrigin(req), { app: body.app ?? null, source: body.source ?? null }),
+        });
+        if (central.ok && central.token) {
+          if (!AUTH_LIMITS_OFF) await clearLoginAttempts(email);
+          const out = await completeIdentitySignIn(central.token, body.app, body.source);
+          return res.status(out.status).json(out.body);
+        }
+        if (!central.ok && central.error === "email_unverified") {
+          return res.status(403).json({
+            error: { code: "email_unverified", message: "Confirm your email first. We just sent you a fresh link." },
+          });
+        }
+        if (!central.ok && central.status === 429) return rateLimited(res);
+      }
       if (!AUTH_LIMITS_OFF) await recordFailedLogin(email, now);
       return denied();
     }
+    if (!user) return denied();
     // Correct password — the credential is proven, so clear any prior failures
     // (the account is not brute-forced) before the email-verification gate.
     if (!AUTH_LIMITS_OFF) await clearLoginAttempts(email);
@@ -970,6 +1008,134 @@ authRouter.post("/identity/deleted", async (req, res, next) => {
   }
 });
 
+/** A verified central account, signed in here: the linked user, or the one this
+ *  surface adopts or makes for it (adoptOrProvisionIdentity). Shared by every door
+ *  a central account comes through: the hand-off's code, and the password typed
+ *  on this surface's own form. */
+async function completeIdentitySignIn(
+  identityToken: string,
+  app?: string,
+  source?: string,
+): Promise<{ status: number; body: unknown }> {
+  let identityId: string;
+  try {
+    identityId = await verifyIdentityToken(identityToken);
+  } catch {
+    // The account service handed us something we cannot verify. That is a
+    // configuration fault (issuer, audience, or a rotated key), not a bad user.
+    return {
+      status: 502,
+      body: { error: { code: "identity_token_invalid", message: "The account service returned a token this surface cannot verify." } },
+    };
+  }
+  const linked = await meta
+    .selectFrom("users")
+    .select(["id", "active"])
+    .where("identity_id", "=", identityId)
+    .executeTakeFirst();
+  // A disabled account is a decision somebody made, so it stops here rather than
+  // falling through to the path that would hand it a fresh workspace.
+  if (linked && !linked.active) {
+    return { status: 403, body: { error: { code: "account_disabled", message: "This account is disabled on this surface." } } };
+  }
+  let userId = linked?.id;
+  let provisioned: { slug: string; app: string | null } | null = null;
+  if (!userId) {
+    const outcome = await adoptOrProvisionIdentity(identityId, identityToken, app, source);
+    if ("error" in outcome) return { status: outcome.status, body: { error: outcome.error } };
+    userId = outcome.userId;
+    provisioned = outcome.provisioned;
+  }
+  await meta.updateTable("users").set({ last_login_at: new Date() }).where("id", "=", userId).execute();
+  // `provisioned` says what THIS sign-in made, so the page can land the person
+  // in the app they asked for rather than on the generic home.
+  return { status: 200, body: { ...(await buildAuthResponse(userId)), provisioned } };
+}
+
+/** The origin the page was opened on, for the address a confirmation link comes
+ *  back to. PUBLIC_BASE_URL when set; otherwise what the browser said it was on.
+ *  Either way the account service only sends people to an origin on its own
+ *  allow-list, so a forged header can name nowhere new. */
+function pageOrigin(req: { get(name: string): string | undefined }): string {
+  const configured = publicBaseUrl();
+  if (configured) return configured;
+  const origin = req.get("origin") ?? "";
+  return /^https?:\/\/[^/\s]+$/.test(origin) ? origin : "";
+}
+
+// ─────────── POST /identity/signup (the account, made on this page) ───────────
+//
+// A person making their Cobblr account types their name, email and password HERE.
+// The account is still the central one: this surface asks the account service to
+// make it (its /surface/signup, proven with this surface's deployment secret) and
+// to email the confirmation link. That link brings them back through the hand-off
+// to /auth/callback, signed in, with the app and source this page was opened with.
+// The trip to the account service's own site is what goes, not the account.
+//
+// The page's captcha is checked here, where its widget ran; the account service
+// cannot verify a token issued for this site's key. Same answer whatever is true
+// ("check your email"), as the account service's own signup.
+const IdentitySignupBody = z.object({
+  email: z.string().email().max(255),
+  password: z.string().min(8).max(128),
+  display_name: z.string().trim().min(1).max(120),
+  captcha_token: z.string().max(4096).optional(),
+  app: z.string().min(1).max(40).optional(),
+  source: z.string().max(100).optional(),
+  /** The form says, beside Create account, that making the account agrees to
+   *  the account's terms (linked). True records that agreement with the account
+   *  service, so confirming the address does not stop on a terms page. */
+  accept_terms: z.boolean().optional(),
+});
+
+authRouter.post("/identity/signup", async (req, res, next) => {
+  try {
+    if (!signupOnPageEnabled()) {
+      return res.status(404).json({
+        error: { code: "identity_signup_disabled", message: "Accounts are not made on this page here." },
+      });
+    }
+    if (overLimit(signupLimiter, req)) return rateLimited(res);
+    const body = IdentitySignupBody.parse(req.body);
+    const email = body.email.toLowerCase().trim();
+    if (!(await verifyCaptcha(body.captcha_token, req))) {
+      return res.status(400).json({
+        error: { code: "captcha_failed", message: "Captcha verification failed. Please try again." },
+      });
+    }
+    if (blockDisposableEnabled() && isDisposableEmail(email)) {
+      return res.status(400).json({
+        error: { code: "email_not_allowed", message: "Please sign up with a permanent email address." },
+      });
+    }
+    const reply = await surfaceAccountCall("signup", {
+      email,
+      password: body.password,
+      displayName: body.display_name,
+      acceptTerms: body.accept_terms ? await currentAccountTerms() : null,
+      clientIp: req.ip ?? "unknown",
+      returnTo: callbackReturnTo(pageOrigin(req), { app: body.app ?? null, source: body.source ?? null }),
+    });
+    if (reply.ok) return res.status(202).json({ status: "check_your_email" });
+    if (reply.status === 429) return rateLimited(res);
+    const said: Record<string, string> = {
+      bad_email: "That email address does not look right.",
+      weak_password: "Use a password of at least 8 characters.",
+      name_required: "Say what to call you.",
+    };
+    if (said[reply.error]) return res.status(400).json({ error: { code: reply.error, message: said[reply.error] } });
+    console.error(`[identity/signup] the account service answered ${reply.status} ${reply.error}`);
+    return res.status(502).json({
+      error: { code: "identity_unavailable", message: "Accounts cannot be made right now. Try again in a minute." },
+    });
+  } catch (err) {
+    if (err instanceof z.ZodError) {
+      return res.status(400).json({ error: { code: "invalid_body", message: "Name, email and a password of 8 or more characters, please.", details: err.issues } });
+    }
+    return next(err);
+  }
+});
+
 authRouter.post("/identity/callback", async (req, res, next) => {
   try {
     if (!identityCallbackEnabled()) {
@@ -987,40 +1153,8 @@ authRouter.post("/identity/callback", async (req, res, next) => {
         error: { code: "invalid_code", message: "That sign-in link has expired or was already used." },
       });
     }
-    let identityId: string;
-    try {
-      identityId = await verifyIdentityToken(redeemed);
-    } catch {
-      // The account service handed us something we cannot verify. That is a
-      // configuration fault (issuer, audience, or a rotated key), not a bad user.
-      return res.status(502).json({
-        error: { code: "identity_token_invalid", message: "The account service returned a token this surface cannot verify." },
-      });
-    }
-    const linked = await meta
-      .selectFrom("users")
-      .select(["id", "active"])
-      .where("identity_id", "=", identityId)
-      .executeTakeFirst();
-    // A disabled account is a decision somebody made, so it stops here rather than
-    // falling through to the path that would hand it a fresh workspace.
-    if (linked && !linked.active) {
-      return res.status(403).json({
-        error: { code: "account_disabled", message: "This account is disabled on this surface." },
-      });
-    }
-    let userId = linked?.id;
-    let provisioned: { slug: string; app: string | null } | null = null;
-    if (!userId) {
-      const outcome = await adoptOrProvisionIdentity(identityId, redeemed, app, source);
-      if ("error" in outcome) return res.status(outcome.status).json({ error: outcome.error });
-      userId = outcome.userId;
-      provisioned = outcome.provisioned;
-    }
-    await meta.updateTable("users").set({ last_login_at: new Date() }).where("id", "=", userId).execute();
-    // `provisioned` says what THIS sign-in made, so the page can land the person
-    // in the app they asked for rather than on the generic home.
-    return res.json({ ...(await buildAuthResponse(userId)), provisioned });
+    const out = await completeIdentitySignIn(redeemed, app, source);
+    return res.status(out.status).json(out.body);
   } catch (err) {
     if (err instanceof z.ZodError) {
       return res.status(400).json({ error: { code: "invalid_body", message: "Bad callback payload", details: err.issues } });

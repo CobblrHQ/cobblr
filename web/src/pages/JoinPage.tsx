@@ -8,7 +8,7 @@ import { useQuery } from "@tanstack/react-query";
 import { CheckCircle2, AlertTriangle } from "lucide-react";
 import { ApiError, api } from "../lib/api";
 import { useAuth } from "../auth/AuthContext";
-import { usePageTitle } from "@cobblr/platform-web";
+import { usePageTitle, PasswordInput } from "@cobblr/platform-web";
 
 export function JoinPage() {
   usePageTitle("Join");
@@ -100,7 +100,7 @@ export function JoinPage() {
               {lockedEmail && <span className="mt-1 block text-[10px] text-faint dark:text-slate-500">This invite is for {lockedEmail}.</span>}
             </Field>
             <Field label="Password">
-              <input type="password" required minLength={8} value={password} onChange={(e) => setPassword(e.target.value)} placeholder="at least 8 characters" className="input w-full" />
+              <PasswordInput required minLength={8} value={password} onChange={(e) => setPassword(e.target.value)} placeholder="at least 8 characters" className="input w-full" />
             </Field>
             <Field label="Your name">
               <input required value={displayName} onChange={(e) => setDisplayName(e.target.value)} placeholder="Sam" className="input w-full" />

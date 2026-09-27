@@ -14,9 +14,18 @@ import { requestFailureOf, type RequestFailure } from "./request-failure";
 
 export interface AuthConfigShape {
   signup_enabled: boolean;
-  identity: { authorize_url: string; deployment: string; name?: string } | null;
+  identity: {
+    authorize_url: string;
+    deployment: string;
+    name?: string;
+    auto_provision?: boolean;
+    /** The account can be made on this page (POST /auth/identity/signup). */
+    signup_on_page?: boolean;
+  } | null;
   captcha: { provider: string; site_key: string | null } | null;
   demo_signin: { email: string; password: string; note: string | null } | null;
+  /** The managed service (not a self-hosted install). */
+  hosted: boolean;
 }
 
 export type AuthConfigState =
@@ -41,6 +50,7 @@ export function useAuthConfig(): AuthConfigState & { retry: () => void } {
             signup_enabled: c.signup_enabled,
             identity: c.identity ?? null,
             captcha: c.captcha ?? null,
+            hosted: c.hosted === true,
             demo_signin: c.demo_signin ?? null,
           },
         });

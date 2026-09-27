@@ -34,6 +34,7 @@ import { loadAllModules } from "./modules/loader.js";
 import { loadAllSandboxedModules } from "./sandbox/loader.js";
 import { syncTenantMigrations, reconcileDefaultModules } from "./modules/enable.js";
 import { startDeliverySweeper } from "./platform/delivery-sweeper.js";
+import { startPhotoRetentionSweeper } from "./platform/photo-retention.js";
 import { tenantSweeps, startTenantSweeps } from "./platform/tenant-sweeps.js";
 import { startPoolWatch, poolCounts } from "./db/pool-stats.js";
 import { poolHolders } from "./db/client-error-guard.js";
@@ -91,6 +92,7 @@ import { backfillPlacements } from "./platform/migrate-location-to-placement.js"
 import { backfillDefaultBindings } from "./platform/seed-bindings.js";
 import { healApprovedButInactiveAi } from "./platform/heal-approved-ai.js";
 import { reconcileBundleUpdates, startBundleUpdateSweeper } from "./platform/bundle-updates.js";
+import { reconcileBundleFieldRoles } from "./platform/bundle-field-roles.js";
 import { healMentionEntityRef } from "./platform/heal-mention-entity-ref.js";
 import { repairReplayTruncatedNames } from "./platform/repair-replay-truncated-names.js";
 import { retireReceiptFailurePlaceholders } from "./platform/retire-receipt-failure-placeholders.js";
@@ -1247,6 +1249,11 @@ async function boot() {
   if (bundleUpdates.applied > 0) {
     console.log(`[cobblr-api] bundle updates: ${bundleUpdates.applied} applied, ${bundleUpdates.skipped} left for the prompt`);
   }
+  // A field a bundle owns carries the role its current manifest declares, even
+  // on an install whose update is waiting on the prompt (a lot the scan reads
+  // is filed by role). Fills a missing role only; meta-only.
+  const rolesFilled = await T("reconcileBundleFieldRoles", reconcileBundleFieldRoles());
+  if (rolesFilled > 0) console.log(`[cobblr-api] bundle field roles: ${rolesFilled} filled from the catalog`);
   if (aiHealed.length) console.log(`[cobblr-api] approved-but-idle AI switched on in ${aiHealed.length} workspace(s)`);
 
   // Correct the entity ref on discussion-mention notifications dispatched
@@ -1263,6 +1270,7 @@ async function boot() {
   // which is the failure this exists to prevent. Costs nothing on a box where
   // nobody has set a window (one indexed "any pending?" read per tick).
   startDeliverySweeper();
+  startPhotoRetentionSweeper();
   startBundleUpdateSweeper();
   // A pool whose callers are waiting says so in the log while it is
   // happening, once per stretch (#3033).

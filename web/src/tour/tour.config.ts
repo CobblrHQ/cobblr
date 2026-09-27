@@ -43,6 +43,11 @@ export type TourStep =
   // first one that is on screen (prefer anchor A, fall back to anchor B). A step
   // whose target(s) are all absent is skipped.
   | { kind: "spotlight"; target: string | string[]; title: string; body: StepBody; phone?: PhoneVariant }
+  // Put Cobblr on the home screen. A phone's step only: a desktop never sees
+  // it, and neither does an app already running from the home screen or a
+  // person who said not now. Its words depend on the browser (install-app.ts),
+  // so the step carries only its title.
+  | { kind: "installApp"; title: string }
   | { kind: "done"; title: string; body: string; phone?: PhoneVariant };
 
 export const DASHBOARD_TOUR: TourStep[] = [
@@ -111,6 +116,10 @@ export const DASHBOARD_TOUR: TourStep[] = [
     body: "Your account, feedback, and settings live here, and you can replay this tour whenever you like.",
   },
   {
+    kind: "installApp",
+    title: "Put Cobblr on your home screen",
+  },
+  {
     kind: "done",
     title: "You are all set",
     body: "That is the tour. Replay it any time from the account menu, and switch layout whenever you like.",
@@ -130,10 +139,10 @@ export const PHONE_MAX_WIDTH = 768;
  *  desktop (a row of places, ⌘K, a phone to pair) says the phone's version,
  *  pointing at the phone's own anchors. A desktop reads the steps as written. */
 export function tourStepsFor(steps: TourStep[], viewportWidth: number): TourStep[] {
-  if (viewportWidth >= PHONE_MAX_WIDTH) return steps;
+  if (viewportWidth >= PHONE_MAX_WIDTH) return steps.filter((s) => s.kind !== "installApp");
   return steps.map((s): TourStep => {
     if (s.kind === "chooseLayout") return { kind: "welcome", title: s.phone.title ?? s.title, body: s.phone.body };
-    if (s.kind === "welcome" || !s.phone) return s;
+    if (s.kind === "welcome" || s.kind === "installApp" || !s.phone) return s;
     if (s.kind === "spotlight") return { ...s, target: s.phone.target ?? s.target, title: s.phone.title ?? s.title, body: s.phone.body };
     return { ...s, title: s.phone.title ?? s.title, body: s.phone.body };
   });

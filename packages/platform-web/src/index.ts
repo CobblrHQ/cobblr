@@ -49,6 +49,7 @@ export { useImageSrc } from "./useImageSrc";
 export { openAuthedFile, type OpenAuthedFileOptions } from "./openAuthedFile";
 export { FileIntake, FileIntakePanels, useFileIntake, describeLine, type IntakeLine, type FileIntakeOptions } from "./FileIntake";
 export { TableFileIntake, intakeSummary, type TableFileIntakeResult, type AskField } from "./TableFileIntake";
+export { PasswordInput, SecretInput, type PasswordInputProps } from "./PasswordInput";
 export { NounChoiceButtons, nounChoiceHeading } from "./NounChoice";
 export { BulkActionBar } from "./BulkActionBar";
 export { CustomFieldsPanel, RelationSelect } from "./CustomFieldsPanel";

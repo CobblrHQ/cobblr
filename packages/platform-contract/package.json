@@ -11,6 +11,7 @@
     "./jsonb-merge": "./src/jsonb-merge.ts",
     "./entity-tokens": "./src/entity-tokens.ts",
     "./hosted-identify": "./src/hosted-identify.ts",
+    "./photo-retention": "./src/photo-retention.ts",
     "./public-url": "./src/public-url.ts",
     "./env-number": "./src/env-number.ts",
     "./entity-kind": "./src/entity-kind.ts",

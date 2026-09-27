@@ -12,7 +12,7 @@ import { defineModule } from "@cobblr/platform-contract";
 
 export default defineModule({
   name: "lists",
-  version: "0.1.11",
+  version: "0.1.12",
   displayName: "Lists",
   description:
     "Lightweight checklists: a list + check-off-able items. Shopping lists, to-do, packing. Other modules can auto-add items via a wire (e.g. 'running low' → shopping list).",
@@ -141,6 +141,21 @@ export default defineModule({
           note: { label: "Optional note on the item", type: "text" },
         },
         userInvokable: false,
+      },
+      {
+        // NO-PHRASING: a module taking back a line it put on a list itself
+        id: "lists:withdraw-item",
+        internal: true,
+        label: "Take back a line a module added",
+        description:
+          "Internal: remove an item another module added to a list (a pattern's missing yarn, once it is no longer missing). Only an item still unticked is removed; one somebody already ticked off stays.",
+        icon: "eraser",
+        scope: "workspace" as const,
+        userInvokable: false,
+        invokeHandler: "lists.withdraw-item",
+        argsSchema: {
+          item_id: { label: "The item's id", type: "text" },
+        },
       },
     ],
   },

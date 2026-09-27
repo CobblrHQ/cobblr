@@ -196,9 +196,10 @@ export function createApp(): AppHandles {
     // this answer, and db_ok says it did.
     const pools = { meta: poolCounts(metaPool), tenants: tenantPoolStats() };
     let pending: { count: number; modules: string[] } | null;
+    let ahead: { count: number; modules: string[]; peer: string | null } | null = null;
     let dbOk = true;
     try {
-      pending = await pendingMigrationSummary();
+      ({ pending, ahead } = await pendingMigrationSummary());
     } catch (err) {
       pending = null;
       dbOk = false;
@@ -212,6 +213,10 @@ export function createApp(): AppHandles {
       db_ok: dbOk,
       pools,
       migrations_pending: pending,
+      // Pairs whose ledger a declared shared-database peer has taken past
+      // this build, harmlessly (additive only). Information for the deploy
+      // readers, never a refusal: the canary channel is this state.
+      migrations_ahead: ahead,
       errors_5xx_5m: errors5xxRecent(),
       // The cross-tenant passes whose LAST round failed for at least one
       // workspace, with the first few named. A visit that throws every hour

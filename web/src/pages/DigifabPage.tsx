@@ -11,7 +11,7 @@ import { Plus, Trash2, Wifi, Printer, RefreshCw, Send, ListChecks, Boxes, X, Lis
 import { ApiError, api, type DigifabConnection, type DigifabJob, type DigifabFleet, type BambuMode, type DigifabLibraryItem, type DigifabHistory, type DigifabRun, type DigifabFailureConfig, type DigifabDetector, type DigifabDetectorCatalogEntry } from "../lib/api";
 import { useActiveOrg } from "../auth/ActiveOrgContext";
 import { PrintUpdatesPanel } from "./PrintUpdatesPanel";
-import { changeWorkspaceShape, Modal, useToast, useConfirm, usePageTitle, useImageSrc } from "@cobblr/platform-web";
+import { changeWorkspaceShape, Modal, useToast, useConfirm, usePageTitle, useImageSrc, PasswordInput, SecretInput } from "@cobblr/platform-web";
 import { Combobox } from "../components/Combobox";
 import { CreateConnectionModal, FleetView, PrintDetailModal, Lightbox, LIBRARY_DRAG_MIME, fetchAllMachines } from "../features/digifab/fleet";
 
@@ -930,7 +930,7 @@ function DetectorsModal({ slug, onClose }: { slug: string; onClose: () => void }
             <>
               <input value={label} onChange={(e) => setLabel(e.target.value)} placeholder="Label - e.g. Obico on the NAS" className={input} />
               <input value={baseUrl} onChange={(e) => setBaseUrl(e.target.value)} placeholder="Base URL - http://nas.lan:3333 (or cobblr-edge://<instance> from the cloud)" className={input} />
-              <input value={apiKey} onChange={(e) => setApiKey(e.target.value)} type="password" placeholder="API token (only if the service needs one)" className={input} />
+              <PasswordInput what="API key" value={apiKey} onChange={(e) => setApiKey(e.target.value)} placeholder="API token (only if the service needs one)" className={input} />
               {selectedCat?.shape === "camera-watcher" && (
                 <p className="text-[10px] text-faint">This service watches its own cameras - after adding, map each printer to its camera id on the detector's row below.</p>
               )}
@@ -1018,7 +1018,7 @@ function DetectorCard({ slug, det, cat, onChanged }: { slug: string; det: Digifa
         <div className="mt-2 space-y-2 border-t border-line/60 dark:border-mortar-700 pt-2">
           <input value={label} onChange={(e) => setLabel(e.target.value)} placeholder="Label" className={input} />
           <input value={baseUrl} onChange={(e) => setBaseUrl(e.target.value)} placeholder="Base URL" className={input} />
-          <input value={apiKey} onChange={(e) => setApiKey(e.target.value)} type="password" placeholder={det.has_credentials ? "API token (leave blank to keep)" : "API token (optional)"} className={input} />
+          <PasswordInput what="API key" value={apiKey} onChange={(e) => setApiKey(e.target.value)} placeholder={det.has_credentials ? "API token (leave blank to keep)" : "API token (optional)"} className={input} />
           {isWatcher && (
             <div className="space-y-1">
               <div className="flex items-center gap-2">
@@ -1162,7 +1162,7 @@ function PrinterRegister({ slug, detId, fleet, onDone }: { slug: string; detId: 
             <>
               <input value={name} onChange={(e) => setName(e.target.value)} placeholder="Name in the detector" className={input} />
               {Object.entries(props).map(([key, p]) => (
-                <input key={key} value={config[key] ?? ""} type={p.secret ? "password" : "text"} placeholder={p.title ?? p.placeholder ?? key}
+                <SecretInput key={key} value={config[key] ?? ""} secret={p.secret} placeholder={p.title ?? p.placeholder ?? key}
                   onChange={(e) => setConfig((c) => ({ ...c, [key]: e.target.value }))} className={input} />
               ))}
               <button type="button" disabled={!name || register.isPending} onClick={() => register.mutate()} className="rounded bg-cobble-600 hover:bg-cobble-700 disabled:opacity-50 text-white text-xs px-3 py-1.5">Register + watch</button>
@@ -1818,7 +1818,7 @@ function ConnectionEditModal({ connection, onClose, onSaved }: { connection: Dig
         {!isMock && (
           <label className="block">
             <span className={lbl}>Rotate API key (optional)</span>
-            <input type="password" value={apiKey} onChange={(e) => setApiKey(e.target.value)} placeholder="leave blank to keep the current key" className={field} />
+            <PasswordInput what="API key" value={apiKey} onChange={(e) => setApiKey(e.target.value)} placeholder="leave blank to keep the current key" className={field} />
           </label>
         )}
         <label className="flex items-center gap-2 text-sm text-content dark:text-mortar-100">

@@ -13,7 +13,7 @@ import { defineModule } from "@cobblr/platform-contract";
 
 export default defineModule({
   name: "inventory",
-  version: "0.9.29",
+  version: "0.9.30",
   displayName: "Inventory",
   description:
     "Parts, locations, categories, stock tracking, polymorphic allocations. The generalised toolkit you'd otherwise Frankenstein from a spreadsheet.",
@@ -73,6 +73,13 @@ export default defineModule({
           // Where it lives, by name (resolved from location_id through the
           // platform). Derived on read, like category_name.
           { name: "location_name", type: "text", readOnly: true },
+          // What of it is free: reserved for projects (assigned) and the rest
+          // (available), derived on read like the parts list's own columns, so
+          // a module matching a pattern's yarn sees what the stash page sees.
+          { name: "assigned_qty", type: "number", readOnly: true },
+          { name: "available_qty", type: "number", readOnly: true },
+          // Which of the workspace's tables (instances) it is in: yarn or hooks.
+          { name: "instance", type: "text", readOnly: true },
           // Free-form JSON attribute blob. Declared so we can also
           // include it in exposableFields below — cross-module readers
           // (bricklink-connector reading metadata.lego.color_id, etc.)
@@ -115,6 +122,9 @@ export default defineModule({
           "category_name",
           // Where it lives, by name: the answer to "where is my lamp".
           "location_name",
+          "assigned_qty",
+          "available_qty",
+          "instance",
           // `metadata` is the per-part free-form attribute blob —
           // already conceptually a cross-module surface (modules
           // stuff their own keys here, e.g. metadata.lego.color_id
@@ -474,6 +484,92 @@ export default defineModule({
         invokeHandler: "inventory.reopen-allocation",
         argsSchema: {
           allocation_id: { label: "The reservation's id", type: "text" },
+        },
+      },
+      {
+        // NO-PHRASING: driven by a consumer module's own record, never asked for
+        id: "inventory:reserve-for-line",
+        internal: true,
+        label: "Hold stock for one line of a target",
+        description: "Internal, driven by a consumer's own record (a pattern's yarn): hold `qty` unopened units of `part_id` for `for_kind` / `for_id` / `for_line`.",
+        icon: "bookmark",
+        scope: "workspace" as const,
+        userInvokable: false,
+        invokeHandler: "inventory.reserve-for-line",
+        argsSchema: {
+          part_id: { label: "The part", type: "text" },
+          qty: { label: "How many units", type: "number" },
+          for_kind: { label: "The target kind", type: "text" },
+          for_id: { label: "The target id", type: "text" },
+          for_line: { label: "The target's line", type: "text" },
+          reason: { label: "Statement line", type: "text" },
+        },
+      },
+      {
+        // NO-PHRASING: driven by a consumer module's own record, never asked for
+        id: "inventory:line-usage",
+        internal: true,
+        label: "What each line of a target has used",
+        description: "Internal, a read: per line of `for_kind` / `for_id`, what it has used so far, the units held and the open balls bound to it.",
+        icon: "bookmark",
+        scope: "workspace" as const,
+        userInvokable: false,
+        invokeHandler: "inventory.line-usage",
+        argsSchema: {
+          for_kind: { label: "The target kind", type: "text" },
+          for_id: { label: "The target id", type: "text" },
+        },
+      },
+      {
+        // NO-PHRASING: driven by a consumer module's own record, never asked for
+        id: "inventory:use-for-line",
+        internal: true,
+        label: "Use stock for one line of a target",
+        description: "Internal, driven by a consumer finishing (a pattern marked done, a yarn swapped halfway): take `measure` (in the part's consumption unit) or `units` of `part_id` for the line, bound balls first, then open partials, then fresh units, each a ledger line on its ball.",
+        icon: "bookmark",
+        scope: "workspace" as const,
+        userInvokable: false,
+        invokeHandler: "inventory.use-for-line",
+        argsSchema: {
+          part_id: { label: "The part", type: "text" },
+          measure: { label: "How much, in the consumption unit", type: "number" },
+          units: { label: "How many whole units", type: "number" },
+          for_kind: { label: "The target kind", type: "text" },
+          for_id: { label: "The target id", type: "text" },
+          for_line: { label: "The target's line", type: "text" },
+          reason: { label: "Statement line", type: "text" },
+        },
+      },
+      {
+        // NO-PHRASING: driven by a consumer module's own record, never asked for
+        id: "inventory:release-line",
+        internal: true,
+        label: "Let one line of a target go",
+        description: "Internal: release the line's reservations and return its bound balls to the pool as open partials. Nothing that was used comes back.",
+        icon: "bookmark",
+        scope: "workspace" as const,
+        userInvokable: false,
+        invokeHandler: "inventory.release-line",
+        argsSchema: {
+          for_kind: { label: "The target kind", type: "text" },
+          for_id: { label: "The target id", type: "text" },
+          for_line: { label: "The target's line", type: "text" },
+        },
+      },
+      {
+        // NO-PHRASING: driven by a consumer module's own record, never asked for
+        id: "inventory:settle-target",
+        internal: true,
+        label: "Settle a finished target's reservations",
+        description: "Internal, run when a target is done or abandoned: its whole-target reservations of unopened units are consumed (done) or released (abandoned); balls bound to it are released, their use already on their statements.",
+        icon: "bookmark",
+        scope: "workspace" as const,
+        userInvokable: false,
+        invokeHandler: "inventory.settle-target",
+        argsSchema: {
+          for_kind: { label: "The target kind", type: "text" },
+          for_id: { label: "The target id", type: "text" },
+          outcome: { label: "done or abandoned", type: "text" },
         },
       },
       {

@@ -665,7 +665,7 @@ function EntityTitleLink({ row, className }: { row: ViewRow; className?: string 
 // name from cfg (defaults suit the Groceries bundle), so the same renderer
 // serves a filament shelf or a medicine cabinet. Nothing here knows about food.
 function VendingRenderer({ items, cfg }: { items: ViewRow[]; cfg: ViewConfig }) {
-  const c = cfg as unknown as { qty_field?: string; expiry_field?: string; min_qty_field?: string; grace_field?: string };
+  const c = cfg as unknown as { qty_field?: string; expiry_field?: string; min_qty_field?: string; grace_field?: string; image_field?: string };
   const { activeSlug } = useActiveOrg();
   const toast = useToast();
   // OFF by default. The board's first job is to be readable from across the
@@ -719,6 +719,8 @@ function VendingRenderer({ items, cfg }: { items: ViewRow[]; cfg: ViewConfig }) 
   // not scream. Meaning lives in the shared expiryState so this dot and the
   // sweeper's event cannot drift on what "spoiled" is.
   const graceField = c.grace_field ?? "grace_days";
+  // The photo, the one thing a person recognises from across the kitchen.
+  const imageField = c.image_field ?? "image_path";
 
   // The one countdown (day.ts), from this browser's day: it rounded a UTC
   // midnight against a local one, so the wall and the dashboard could name
@@ -748,8 +750,9 @@ function VendingRenderer({ items, cfg }: { items: ViewRow[]; cfg: ViewConfig }) 
         <button
           type="button"
           onClick={() => { setEditing((v) => !v); setLastAction(null); }}
+          // A phone always shows the steppers, so the toggle is for a wall.
           className={
-            "rounded-full border px-3 py-1.5 text-xs font-medium transition " +
+            "hidden sm:inline-flex rounded-full border px-3 py-1.5 text-xs font-medium transition " +
             (editing
               ? "border-cobble-500 bg-cobble-600 text-white"
               : "border-line dark:border-slate-700 text-muted dark:text-slate-400 hover:border-cobble-400")
@@ -769,7 +772,7 @@ function VendingRenderer({ items, cfg }: { items: ViewRow[]; cfg: ViewConfig }) 
           </button>
         )}
       </div>
-    <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5">
+    <div className="grid grid-cols-2 gap-3 md:grid-cols-3 lg:grid-cols-4 2xl:grid-cols-5">
       {items.map((row) => {
         const f = row.fields ?? {};
         const qty = num(pick(f, qtyField));
@@ -818,58 +821,120 @@ function VendingRenderer({ items, cfg }: { items: ViewRow[]; cfg: ViewConfig }) 
                   ? `expires in ${days}d`
                   : "in stock";
 
+        const rawImage = pick(f, imageField);
         return (
-          <div
+          <VendingTile
             key={`${row.kind}:${row.id}`}
-            className={
-              "relative rounded-lg border p-3 transition " +
-              (out
-                ? "border-line dark:border-slate-700 bg-subtle/50 dark:bg-slate-900/50 opacity-70"
-                : "border-line dark:border-slate-700 bg-subtle dark:bg-slate-800 hover:border-cobble-400")
-            }
-          >
-            <span className={`absolute right-2 top-2 h-2 w-2 rounded-full ${dot}`} aria-hidden />
-            {qty !== null && !out && (
-              <span className="absolute bottom-2 right-2 rounded-full border border-line dark:border-slate-600 bg-panel dark:bg-slate-900 px-1.5 text-[11px] font-bold text-content dark:text-slate-100">
-                ×{qty}
-              </span>
-            )}
-            <EntityTitleLink row={row} className="block pr-4 text-sm font-semibold" />
-            <div className="mt-0.5 text-[11px] text-muted dark:text-slate-400">{meta}</div>
-            {out && !editing && (
-              <div className="mt-2 inline-block rounded bg-red-500/90 px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-wider text-white">
-                Sold out
-              </div>
-            )}
-            {editing && (
-              // Deliberately large. This is tapped standing up, one-handed,
-              // sometimes holding the thing it is about.
-              <div className="mt-2 flex items-stretch gap-2">
-                <button
-                  type="button"
-                  aria-label={`Used one ${row.title ?? ""}`}
-                  disabled={busy !== null || out}
-                  onClick={() => void tap(row, -1)}
-                  className="flex-1 rounded-md border border-line dark:border-slate-600 bg-panel dark:bg-slate-900 py-2 text-base font-bold text-content dark:text-slate-100 disabled:opacity-40 active:scale-95 transition"
-                >
-                  −
-                </button>
-                <button
-                  type="button"
-                  aria-label={`Another ${row.title ?? ""} arrived`}
-                  disabled={busy !== null}
-                  onClick={() => void tap(row, 1)}
-                  className="flex-1 rounded-md border border-line dark:border-slate-600 bg-panel dark:bg-slate-900 py-2 text-base font-bold text-content dark:text-slate-100 disabled:opacity-40 active:scale-95 transition"
-                >
-                  +
-                </button>
-              </div>
-            )}
-          </div>
+            row={row}
+            image={typeof rawImage === "string" && rawImage.trim() ? rawImage : null}
+            dot={dot}
+            meta={meta}
+            qty={qty}
+            out={out}
+            editing={editing}
+            busy={busy !== null}
+            onTap={(dir) => void tap(row, dir)}
+          />
         );
       })}
     </div>
     </>
+  );
+}
+
+/**
+ * One slot on the wall: the photo, the name, the count and the two steppers.
+ *
+ * The stepper row is ALWAYS in the layout, so a tile is the same size with the
+ * controls on or off: turning on "Use / restock" used to grow every tile and
+ * the whole wall jumped under the thumb. On a phone the steppers are simply
+ * there (the phone is in the hand in the kitchen, the one place quick +/- is
+ * the point); on a wider screen, read from across the room, they appear with
+ * the toggle and the space they sit in is kept empty until then.
+ */
+function VendingTile({
+  row,
+  image,
+  dot,
+  meta,
+  qty,
+  out,
+  editing,
+  busy,
+  onTap,
+}: {
+  row: ViewRow;
+  image: string | null;
+  dot: string;
+  meta: string;
+  qty: number | null;
+  out: boolean;
+  editing: boolean;
+  busy: boolean;
+  onTap: (dir: -1 | 1) => void;
+}) {
+  const src = useImageSrc(image);
+  const title = row.title ?? "";
+  const stepper =
+    "flex-1 rounded-md border border-line dark:border-slate-600 bg-panel dark:bg-slate-900 py-2.5 text-lg font-bold text-content dark:text-slate-100 disabled:opacity-40 active:scale-95 transition";
+  return (
+    <div
+      data-testid="vending-tile"
+      className={
+        "relative flex flex-col overflow-hidden rounded-lg border transition " +
+        (out
+          ? "border-line dark:border-slate-700 bg-subtle/50 dark:bg-slate-900/50"
+          : "border-line dark:border-slate-700 bg-subtle dark:bg-slate-800 hover:border-cobble-400")
+      }
+    >
+      <RecordLink row={row} className={"relative block aspect-[4/3] bg-panel dark:bg-slate-900 " + (out ? "opacity-60" : "")}>
+        {src ? (
+          <img src={src} alt={title} className="h-full w-full object-cover" loading="lazy" />
+        ) : (
+          <span className="flex h-full w-full items-center justify-center font-display text-3xl font-bold text-faint dark:text-slate-600">
+            {title.slice(0, 1).toUpperCase()}
+          </span>
+        )}
+        <span className={`absolute right-2 top-2 h-3 w-3 rounded-full ring-2 ring-white/80 dark:ring-slate-900/80 ${dot}`} aria-hidden />
+        {qty !== null && !out && (
+          <span className="absolute bottom-2 right-2 rounded-full border border-line dark:border-slate-600 bg-panel dark:bg-slate-900 px-2 py-0.5 text-sm font-bold shadow-sm text-content dark:text-slate-100">
+            ×{qty}
+          </span>
+        )}
+        {out && (
+          <span className="absolute bottom-2 left-2 rounded bg-red-500/90 px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-wider text-white">
+            Sold out
+          </span>
+        )}
+      </RecordLink>
+      <div className="flex flex-1 flex-col p-3">
+        <EntityTitleLink row={row} className="block text-base font-semibold leading-snug" />
+        <div className="mt-0.5 text-xs text-muted dark:text-slate-400">{meta}</div>
+        <div
+          data-testid="vending-steppers"
+          className={"mt-auto flex items-stretch gap-2 pt-3 " + (editing ? "" : "sm:invisible")}
+        >
+          <button
+            type="button"
+            aria-label={`Used one ${title}`}
+            disabled={busy || out}
+            onClick={() => onTap(-1)}
+            className={stepper}
+          >
+            −
+          </button>
+          <button
+            type="button"
+            aria-label={`Another ${title} arrived`}
+            disabled={busy}
+            onClick={() => onTap(1)}
+            className={stepper}
+          >
+            +
+          </button>
+        </div>
+      </div>
+    </div>
   );
 }
 

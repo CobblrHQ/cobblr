@@ -21,7 +21,7 @@ import { useActiveOrg } from "../auth/ActiveOrgContext";
 import { api, ApiError } from "../lib/api";
 import { accountSections } from "../lib/account-nav";
 import { useTheme } from "../theme/ThemeContext";
-import { useToast, usePageTitle } from "@cobblr/platform-web";
+import { useToast, usePageTitle, PasswordInput } from "@cobblr/platform-web";
 import { NAV_LAYOUTS, setNavLayout, useNavLayout } from "../lib/nav-mode";
 import { LayoutPreview } from "../components/LayoutPreview";
 import { DeleteAccountSection } from "../components/DeleteAccountSection";
@@ -477,8 +477,7 @@ function PasswordSection({ onChanged }: { onChanged: () => void }) {
       </h2>
       <label className="block">
         <div className="text-xs text-muted mb-1">Current password</div>
-        <input
-          type="password"
+        <PasswordInput
           value={current}
           autoComplete="current-password"
           onChange={(e) => setCurrent(e.target.value)}
@@ -487,8 +486,7 @@ function PasswordSection({ onChanged }: { onChanged: () => void }) {
       </label>
       <label className="block">
         <div className="text-xs text-muted mb-1">New password (min 8 chars)</div>
-        <input
-          type="password"
+        <PasswordInput
           value={next}
           autoComplete="new-password"
           onChange={(e) => setNext(e.target.value)}
@@ -507,8 +505,7 @@ function PasswordSection({ onChanged }: { onChanged: () => void }) {
       </label>
       <label className="block">
         <div className="text-xs text-muted mb-1">Confirm new password</div>
-        <input
-          type="password"
+        <PasswordInput
           value={confirm}
           autoComplete="new-password"
           onChange={(e) => setConfirm(e.target.value)}

@@ -68,6 +68,7 @@ import { assembleContext, compilePrompt, nativeFieldsByBaseKind, repairPrompt } 
 import { kindFieldsOf, modulesOf, shapeCandidate } from "@cobblr/core-authoring/services/shape";
 import { validateBundle } from "./bundles.js";
 import { operatorEmail } from "@cobblr/platform-contract/outbound-identity";
+import { signupsBySource } from "../platform/signups-by-source.js";
 
 // ── Feedback reply email (HTML) ──────────────────────────────────────
 // A small, email-client-safe HTML body for the transactional feedback reply,
@@ -675,6 +676,26 @@ superAdminRouter.get("/modules", async (_req, res, next) => {
 // `activation` sums the funnel for the 30-day, 90-day and all-time cohorts,
 // with founder / sandbox / test-pool workspaces excluded (platform/activation.ts
 // holds the rule). HTTP-first by design; the operator consoles render it.
+// ─────────── GET /super-admin/signups — sign-ups by the door that sent them ───────────
+//
+// Counts per source (the ?source= a link or a booth QR carried; "carry" for a
+// sandbox brought in from the demo box) per UTC day, over `?days=` (default 30,
+// at most the 180 product events are kept). A super-admin session also gets one
+// row per account (who, which workspace, from where); an ops:read token, which
+// leaves this deployment to be read by another process, gets the counts only.
+superAdminRouter.get("/signups", async (req, res, next) => {
+  try {
+    const days = Number(req.query.days ?? 30);
+    const report = await signupsBySource({
+      days: Number.isFinite(days) ? days : 30,
+      accounts: !req.session?.token_scopes,
+    });
+    res.json(report);
+  } catch (err) {
+    next(err);
+  }
+});
+
 superAdminRouter.get("/product-metrics", async (_req, res, next) => {
   try {
     const now = new Date();
@@ -3181,6 +3202,7 @@ const ScanEvalMenuEntry = z.object({
     .object({ name: z.string(), label: z.string(), values: z.array(z.string()) })
     .optional(),
   pack_field: z.object({ name: z.string(), label: z.string() }).optional(),
+  lot_field: z.object({ name: z.string(), label: z.string() }).optional(),
   is_fallback: z.boolean().optional(),
   unique: z.boolean().optional(),
 });
@@ -3307,6 +3329,7 @@ superAdminRouter.post("/scan-eval", async (req, res, next) => {
         ...(m.bundle_external_id ? { bundle_external_id: m.bundle_external_id } : {}),
         ...(m.category_field ? { category_field: m.category_field } : {}),
         ...(m.pack_field ? { pack_field: m.pack_field } : {}),
+        ...(m.lot_field ? { lot_field: m.lot_field } : {}),
         ...(m.is_fallback ? { is_fallback: true } : {}),
         ...(m.unique ? { unique: true } : {}),
       }));

@@ -14,6 +14,7 @@
 import { Navigate, useSearchParams } from "react-router-dom";
 import { useDeployEnv } from "../lib/deploy-env";
 import { SandboxEnded } from "./SandboxEnded";
+import { DEFAULT_TRIAL_DAYS } from "@cobblr/platform-contract/trial-length";
 import type { SandboxLedger } from "../lib/api";
 
 /** A ledger to look at on the preview route, so the words can be criticised
@@ -59,6 +60,8 @@ export function EndingPreview() {
         selfhost_url: "https://github.com/CobblrHQ/cobblr",
         decision_hours: Number.isFinite(hold) ? hold : 24,
         carry_available: params.get("carry") === "1",
+        // The length a real box says back, so the keep reads as it does there.
+        trial_days: DEFAULT_TRIAL_DAYS,
       }}
       ledgerPreview={params.get("built") === "1" ? SAMPLE_LEDGER : null}
     />

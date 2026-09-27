@@ -14,7 +14,7 @@
 import { useState, type FormEvent } from "react";
 import { useNavigate } from "react-router-dom";
 import { LogOut, ShieldAlert } from "lucide-react";
-import { usePageTitle } from "@cobblr/platform-web";
+import { usePageTitle, PasswordInput } from "@cobblr/platform-web";
 import { ApiError, api, setToken } from "../lib/api";
 import { useAuth } from "../auth/AuthContext";
 
@@ -80,8 +80,7 @@ export function ForcePasswordResetPage() {
             <span className="block text-[10px] font-mono uppercase tracking-widest text-faint dark:text-slate-500 mb-1">
               Current (temp) password
             </span>
-            <input
-              type="password"
+            <PasswordInput
               required
               autoFocus
               value={current}
@@ -94,8 +93,7 @@ export function ForcePasswordResetPage() {
             <span className="block text-[10px] font-mono uppercase tracking-widest text-faint dark:text-slate-500 mb-1">
               New password (8+ chars)
             </span>
-            <input
-              type="password"
+            <PasswordInput
               required
               value={next}
               onChange={(e) => setNext(e.target.value)}
@@ -107,8 +105,7 @@ export function ForcePasswordResetPage() {
             <span className="block text-[10px] font-mono uppercase tracking-widest text-faint dark:text-slate-500 mb-1">
               Confirm new password
             </span>
-            <input
-              type="password"
+            <PasswordInput
               required
               value={confirm}
               onChange={(e) => setConfirm(e.target.value)}

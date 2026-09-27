@@ -43,7 +43,7 @@ allocationsRouter.get(
       .select([
         "a.id", "a.part_id", "a.qty", "a.status",
         "a.target_module", "a.target_entity_type", "a.target_entity_id",
-        "a.reason", "a.reserved_at", "a.consumed_at", "a.released_at",
+        "a.reason", "a.target_line", "a.reserved_at", "a.consumed_at", "a.released_at",
         "p.name as part_name",
       ])
       .orderBy("a.reserved_at", "desc")
@@ -65,6 +65,7 @@ const AllocCreate = z.object({
   target_entity_type: z.string().min(1).max(80),
   target_entity_id: z.string().min(1).max(120),
   reason: z.string().max(500).optional(),
+  target_line: z.string().min(1).max(120).optional(),
 });
 
 const StatusChange = z.object({
@@ -78,6 +79,8 @@ export interface ReserveRequest {
   target_entity_type: string;
   target_entity_id: string;
   reason?: string | null;
+  /** The line of the target this serves (target-lines.ts). */
+  target_line?: string | null;
 }
 
 /** Reserve stock of a part against something. Shared with the
@@ -107,11 +110,12 @@ export async function reserveAllocation(
       target_entity_type: d.target_entity_type,
       target_entity_id: d.target_entity_id,
       reason: d.reason ?? null,
+      target_line: d.target_line ?? null,
     })
     .returning([
       "id", "part_id", "qty", "status",
       "target_module", "target_entity_type", "target_entity_id",
-      "reason", "reserved_at",
+      "reason", "target_line", "reserved_at",
     ])
     .executeTakeFirstOrThrow();
   await platform().activity.log({
@@ -194,6 +198,18 @@ export async function settleAllocation(
       return { error: "not_reserved" as const, current };
     }
 
+    // What consuming takes. A reservation of unopened units takes what it
+    // reserved. A binding on an OPEN ball (a child unit, consumption-ledger.md
+    // §3) takes what is left on the ball: its use was logged metre by metre as
+    // it happened, and the binding's qty is the ball's size when it was bound,
+    // so taking that as well took the same yarn off twice.
+    const onPart = await trx
+      .selectFrom("inventory_parts")
+      .select(["qty", sql<string | null>`metadata->>'unit_of'`.as("unit_of")])
+      .where("id", "=", current.part_id)
+      .executeTakeFirst();
+    const take = status === "consumed" && onPart?.unit_of ? String(Math.max(0, Number(onPart.qty))) : current.qty;
+
     if (status === "consumed") {
       await trx
         .updateTable("inventory_parts")
@@ -201,7 +217,7 @@ export async function settleAllocation(
           // Never below zero: the reservation was bounded when it was made,
           // but stock can have moved since (stock-floor.ts, and the column's
           // own CHECK).
-          qty: sql<string>`greatest(0, qty - ${current.qty}::numeric)`,
+          qty: sql<string>`greatest(0, qty - ${take}::numeric)`,
           updated_at: new Date(),
         })
         .where("id", "=", current.part_id)
@@ -218,7 +234,7 @@ export async function settleAllocation(
       // descriptor.
       await recordConsumption(trx, {
         partId: current.part_id,
-        delta: -Number(current.qty),
+        delta: -Number(take),
         reason: (current.reason && current.reason.trim())
           || `for ${current.target_entity_type}`,
         sourceKind: "allocation",
@@ -239,7 +255,7 @@ export async function settleAllocation(
         "consumed_at", "released_at",
       ])
       .executeTakeFirstOrThrow();
-    return { ok: true as const, next, partId: current.part_id, qty: current.qty };
+    return { ok: true as const, next, partId: current.part_id, qty: status === "consumed" ? take : current.qty };
   });
 
   if ("error" in result) {

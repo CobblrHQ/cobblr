@@ -1,54 +1,24 @@
 // Combined signup / login screen. Toggle at the bottom flips mode —
 // keeps the splash → auth → dashboard journey one screen.
 
-import { useEffect, useRef, useState, type FormEvent } from "react";
-import { authorizeHref, rememberSource, rememberedSource } from "../lib/identity-door";
+import { useEffect, useState, type FormEvent } from "react";
+import { rememberSource, rememberedSource } from "../lib/identity-door";
+import { AccountCard } from "../components/AccountCard";
+import { redeemOnce } from "../lib/redeem-once";
+import { TurnstileWidget } from "../components/TurnstileWidget";
+import { ForgotPasswordRow } from "../components/ForgotPasswordRow";
+import { MagicLinkPanel } from "../components/MagicLinkPanel";
 import { useAuth } from "../auth/AuthContext";
 import { CobblestoneMark } from "../CobblestoneMark";
 import { api, ApiError, setToken } from "../lib/api";
 import { getManagedAppMeta } from "../lib/managed-apps";
 import { isTouchPrimary } from "../lib/useIsTouch";
-import { usePageTitle } from "@cobblr/platform-web";
+import { usePageTitle, PasswordInput } from "@cobblr/platform-web";
 import { useDeployEnv } from "../lib/deploy-env";
 import { useAuthConfig } from "../lib/useAuthConfig";
 import { AuthConfigUnavailable } from "../components/AuthConfigUnavailable";
 
 type Mode = "login" | "signup";
-
-// Renders a Cloudflare Turnstile widget and hands the solved token upward. Only
-// mounted when the server reports a captcha site key (the trial tier); a normal
-// deployment never sees it. No npm dependency - the script is loaded on demand.
-function TurnstileWidget({ siteKey, onToken }: { siteKey: string; onToken: (t: string) => void }) {
-  const ref = useRef<HTMLDivElement>(null);
-  useEffect(() => {
-    const SRC = "https://challenges.cloudflare.com/turnstile/v0/api.js?render=explicit";
-    const render = () => {
-      const ts = (window as unknown as { turnstile?: { render: (el: HTMLElement, o: unknown) => void } }).turnstile;
-      if (ts && ref.current && !ref.current.hasChildNodes()) {
-        ts.render(ref.current, {
-          sitekey: siteKey,
-          callback: (t: string) => onToken(t),
-          "error-callback": () => onToken(""),
-          "expired-callback": () => onToken(""),
-        });
-      }
-    };
-    if ((window as unknown as { turnstile?: unknown }).turnstile) {
-      render();
-      return;
-    }
-    let s = document.querySelector<HTMLScriptElement>(`script[src="${SRC}"]`);
-    if (!s) {
-      s = document.createElement("script");
-      s.src = SRC;
-      s.async = true;
-      document.head.appendChild(s);
-    }
-    s.addEventListener("load", render);
-    return () => s?.removeEventListener("load", render);
-  }, [siteKey, onToken]);
-  return <div ref={ref} className="mt-2 flex justify-center" />;
-}
 
 export function AuthPage({ initialMode, carrying }: { initialMode?: Mode; carrying?: boolean } = {}) {
   usePageTitle("Sign in");
@@ -78,6 +48,9 @@ export function AuthPage({ initialMode, carrying }: { initialMode?: Mode; carryi
   // null (rather than showing the button optimistically) means we never offer a route
   // that fails after the redirect, on a site that cannot explain what went wrong.
   const identityCfg = authCfg.cfg?.identity ?? null;
+  // The central account is the door and can be made on this page: one card,
+  // Sign in or Create account (AccountCard), and nothing else to choose between.
+  const onPage = !!identityCfg?.signup_on_page && !signupEnabled;
   // Sent here to sign up: /signup, ?mode=signup, or a sandbox arriving to be
   // made someone's. Where the Cobblr account is the door, that account's
   // Create form comes first.
@@ -215,41 +188,26 @@ export function AuthPage({ initialMode, carrying }: { initialMode?: Mode; carryi
           </p>
         </div>
 
-        {/* Where the Cobblr account is how people get in (this surface's own sign-up
-            is off), the page leads with it: Create a Cobblr account first for a
-            person sent here to sign up (/signup, ?mode=signup) or to make a sandbox
-            theirs, Sign in first for everyone else. The form below stays for
-            somebody who already has a password here. */}
-        {identityCfg && !signupEnabled && !provisioning && (
-          <div className="mb-4 rounded-xl border-2 border-cobble-400 dark:border-cobble-600 bg-surface dark:bg-slate-900 p-5 space-y-3" data-testid={carrying ? "carry-welcome" : "identity-first"}>
-            <div className="font-display text-lg font-bold text-content dark:text-mortar-100">
-              {carrying ? "Make your sandbox yours" : wantsSignup ? "Make your Cobblr account" : "Sign in to Cobblr"}
-            </div>
-            <p className="text-sm text-muted">
-              {carrying
-                ? "Make a free Cobblr account with your email, or sign in to one you have. What you added in the sandbox moves into it, photos too."
-                : wantsSignup
-                  ? "One free account, made with your email. It signs you in to Cobblr everywhere."
-                  : "Use your Cobblr account. New here? Make one in a minute, free."}
-            </p>
-            {(wantsSignup ? [true, false] : [false, true]).map((create, i) => (
-              <a
-                key={create ? "create" : "signin"}
-                href={authorizeHref(identityCfg, { signup: create, source })}
-                className={
-                  "block w-full text-center rounded-md text-sm font-medium px-3 py-2.5 transition " +
-                  (i === 0
-                    ? "bg-cobble-600 hover:bg-cobble-700 text-white"
-                    : "border border-mortar-300 dark:border-mortar-600 hover:bg-mortar-100 dark:hover:bg-mortar-800")
-                }
-              >
-                {create ? `Create a ${identityCfg.name ?? "Cobblr"} account` : `Sign in with your ${identityCfg.name ?? "Cobblr"} account`}
-              </a>
-            ))}
+        {onPage ? (
+          <div data-testid={carrying ? "carry-welcome" : undefined}>
+            <AccountCard
+              initialMode={wantsSignup ? "signup" : "login"}
+              heading={carrying ? "Make your sandbox yours" : undefined}
+              lead={
+                carrying
+                  ? "Make a free account, or sign in to one you have. What you added in the sandbox moves into it, photos too."
+                  : wantsSignup
+                    ? "One free account. It signs you in to Cobblr everywhere."
+                    : null
+              }
+              source={source}
+              captchaSiteKey={authCfg.cfg?.captcha?.site_key ?? null}
+              resetHref={new URL("/reset", identityCfg!.authorize_url).toString()}
+              termsHref={new URL("/terms", identityCfg!.authorize_url).toString()}
+              hosted={authCfg.cfg?.hosted === true}
+            />
           </div>
-        )}
-
-        {provisioning ? (
+        ) : provisioning ? (
           <div
             role="status"
             aria-live="polite"
@@ -353,9 +311,8 @@ export function AuthPage({ initialMode, carrying }: { initialMode?: Mode; carryi
             />
           </Field>
           <Field label="Password">
-            <input
+            <PasswordInput
               required
-              type="password"
               minLength={mode === "signup" ? 8 : 1}
               autoComplete={mode === "login" ? "current-password" : "new-password"}
               value={password}
@@ -384,26 +341,6 @@ export function AuthPage({ initialMode, carrying }: { initialMode?: Mode; carryi
             {busy ? "…" : mode === "login" ? "Sign in" : "Create account"}
           </button>
 
-          {/* One account across every Cobblr surface. Shown only when this instance can
-              actually finish the hand-off, so the button never leads somewhere that
-              fails after the redirect. The account service brings you back to
-              /auth/callback with a one-time code. */}
-          {identityCfg && (
-            <>
-              <div className="flex items-center gap-3 py-1">
-                <div className="h-px flex-1 bg-mortar-200 dark:bg-mortar-700" />
-                <span className="text-[11px] uppercase tracking-wide text-muted">or</span>
-                <div className="h-px flex-1 bg-mortar-200 dark:bg-mortar-700" />
-              </div>
-              <a
-                href={authorizeHref(identityCfg, { signup: mode === "signup", source })}
-                className="block w-full text-center rounded-md border border-mortar-300 dark:border-mortar-600 hover:bg-mortar-100 dark:hover:bg-mortar-800 text-sm font-medium px-3 py-2 transition"
-              >
-                Continue with your {identityCfg.name ?? "Cobblr"} account
-              </a>
-            </>
-          )}
-
           {(signupEnabled || mode === "signup") && (
             <button
               type="button"
@@ -421,7 +358,7 @@ export function AuthPage({ initialMode, carrying }: { initialMode?: Mode; carryi
         </form>
         )}
 
-        {mode === "login" && !provisioning && (
+        {!onPage && mode === "login" && !provisioning && (
           <MagicLinkPanel email={email} />
         )}
 
@@ -429,62 +366,6 @@ export function AuthPage({ initialMode, carrying }: { initialMode?: Mode; carryi
           cobble together what works
         </p>
       </div>
-    </div>
-  );
-}
-
-/** "Forgot password?" — sends a reset link to the email typed above. In dev
- *  (no email sender) the server returns the link inline so the flow is
- *  exercisable; otherwise we just confirm it's been sent. */
-function ForgotPasswordRow({ email }: { email: string }) {
-  const [busy, setBusy] = useState(false);
-  const [sent, setSent] = useState(false);
-  const [devLink, setDevLink] = useState<string | null>(null);
-  const [error, setError] = useState<string | null>(null);
-  const cleanEmail = email.replace(/\s+/g, "");
-
-  async function request() {
-    if (!cleanEmail) {
-      setError("Enter your email above first.");
-      return;
-    }
-    setBusy(true);
-    setError(null);
-    try {
-      const res = await api.passwordForgot({ email: cleanEmail });
-      setSent(true);
-      if (res.dev_link) setDevLink(res.dev_link);
-    } catch (err) {
-      setError(err instanceof ApiError ? err.message : "Couldn't send a reset link.");
-    } finally {
-      setBusy(false);
-    }
-  }
-
-  if (sent) {
-    return (
-      <div className="text-[11px] text-muted dark:text-slate-400 bg-subtle/60 dark:bg-slate-800/40 rounded-md px-3 py-2 space-y-1">
-        <div>If that email is registered, a password-reset link is on its way.</div>
-        {devLink && (
-          <a href={devLink} className="inline-block text-accent hover:underline font-medium">
-            Dev mode - set a new password →
-          </a>
-        )}
-      </div>
-    );
-  }
-
-  return (
-    <div className="text-right -mt-1">
-      <button
-        type="button"
-        onClick={() => void request()}
-        disabled={busy}
-        className="text-[11px] text-faint dark:text-slate-500 hover:text-accent transition disabled:opacity-50"
-      >
-        {busy ? "…" : "Forgot password?"}
-      </button>
-      {error && <div className="mt-1 text-left text-xs text-ember-500">{error}</div>}
     </div>
   );
 }
@@ -497,97 +378,6 @@ function Field({ label, children }: { label: string; children: React.ReactNode }
       </span>
       {children}
     </label>
-  );
-}
-
-/** Passwordless: ask for a magic link emailed to the address typed
- *  above. In dev mode (no SMTP) the server returns the link in the
- *  response and this panel surfaces it as a clickable "sign in
- *  now" button. Production would deliver via email and this panel
- *  just shows the "check your inbox" confirmation. */
-function MagicLinkPanel({ email }: { email: string }) {
-  const [busy, setBusy] = useState(false);
-  const [devLink, setDevLink] = useState<string | null>(null);
-  const [error, setError] = useState<string | null>(null);
-  const [sent, setSent] = useState(false);
-  const cleanEmail = email.replace(/\s+/g, "");
-
-  async function request() {
-    if (!cleanEmail) {
-      setError("Enter your email above first.");
-      return;
-    }
-    setBusy(true);
-    setError(null);
-    setDevLink(null);
-    setSent(false);
-    try {
-      const res = await api.magicRequest({ email: cleanEmail });
-      setSent(true);
-      if (res.dev_token) {
-        setDevLink(res.dev_token);
-      }
-    } catch (err) {
-      setError(err instanceof ApiError ? err.message : "Couldn't send link.");
-    } finally {
-      setBusy(false);
-    }
-  }
-
-  async function signInWithDevToken() {
-    if (!devLink) return;
-    setBusy(true);
-    try {
-      const res = await api.magicConsume({ token: devLink });
-      setToken(res.token);
-      // Hard-redirect to reload the AuthContext with the new session.
-      window.location.href = "/";
-    } catch (err) {
-      setError(err instanceof ApiError ? err.message : "Couldn't consume token.");
-    } finally {
-      setBusy(false);
-    }
-  }
-
-  return (
-    <div className="mt-4 bg-surface/60 dark:bg-slate-900/40 border border-line dark:border-slate-700 rounded-xl p-4 space-y-3">
-      <div className="text-[10px] font-mono uppercase tracking-widest text-accent">
-        // or passwordless
-      </div>
-      <button
-        type="button"
-        onClick={() => void request()}
-        disabled={busy}
-        className="w-full rounded-md border border-line dark:border-slate-700 text-content dark:text-mortar-200 hover:bg-subtle dark:hover:bg-slate-800 text-sm font-medium px-3 py-2 transition disabled:opacity-50"
-      >
-        {busy
-          ? "…"
-          : sent && !devLink
-            ? "If that email has an account, check your inbox"
-            : "Send a magic link"}
-      </button>
-      {error && (
-        <div className="text-xs text-ember-500 bg-ember-50 rounded-md px-3 py-2">
-          {error}
-        </div>
-      )}
-      {devLink && (
-        <div className="text-xs text-content dark:text-mortar-200 bg-cobble-50 dark:bg-cobble-900/20 rounded-md px-3 py-2 space-y-2">
-          <div>
-            <strong>Dev mode</strong>  - no SMTP configured. The link
-            below is what would be emailed in production. Click to
-            sign in:
-          </div>
-          <button
-            type="button"
-            onClick={() => void signInWithDevToken()}
-            className="w-full px-2 py-1 text-xs rounded bg-cobble-600 hover:bg-cobble-700 text-white"
-          >
-            Sign in with this token
-          </button>
-        </div>
-      )}
-    </div>
   );
 }
 
@@ -626,8 +416,9 @@ export function IdentityCallbackPage() {
     let cancelled = false;
     void (async () => {
       try {
-        const res = await api.identityCallback({ code, ...(app ? { app } : {}), ...(source ? { source } : {}) });
-        if (cancelled) return;
+        const res = await redeemOnce(code, () => api.identityCallback({ code, ...(app ? { app } : {}), ...(source ? { source } : {}) }));
+        // A session that came back is used even if this mount was cleaned up:
+        // the code is spent, and dropping the one session it made is the bug.
         setToken(res.token);
         // Hard redirect so AuthContext re-reads the new session, same as the magic link.
         const made = res.provisioned;
@@ -688,8 +479,7 @@ export function MagicConsumePage() {
     let cancelled = false;
     void (async () => {
       try {
-        const res = await api.magicConsume({ token });
-        if (cancelled) return;
+        const res = await redeemOnce(token, () => api.magicConsume({ token }));
         setToken(res.token);
         // Hard redirect so AuthContext re-reads the new session.
         window.location.href = "/";

@@ -5,13 +5,13 @@
 import { useLayoutEffect, useRef, useState, type ComponentProps, type FormEvent } from "react";
 import { Link, useParams } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { ArrowLeft, Check, Plus, Sparkles, Trash2, Upload } from "lucide-react";
-import { ContributedDetailPanels, EntityActionsBar, CustomFieldsPanel, Modal, PresentationGate, useFieldDraft, usePageTitle, useUnits } from "@cobblr/platform-web";
-import { countOf } from "@cobblr/platform-contract";
+import { ArrowLeft, Check, Plus, Trash2 } from "lucide-react";
+import { ContributedDetailPanels, EntityActionsBar, CustomFieldsPanel, PresentationGate, useFieldDraft, usePageTitle, useUnits } from "@cobblr/platform-web";
 import { useProjects } from "./context";
 import { DesignFiles } from "./DesignFiles";
+import { PatternNeedsPanel, patternNeedsKey } from "./PatternNeeds";
 import { useFieldPresentation } from "./useFieldPresentation";
-import type { InvPart, PatternExtract, Priority, ProjectStatus, ProjectsApi, Task, TaskStatus } from "./api";
+import type { InvPart, Priority, ProjectStatus, ProjectsApi, Task, TaskStatus } from "./api";
 import { PART_PICKER_KEY, PartPicker } from "./PartPicker";
 
 const PROJECT_STATUSES: ProjectStatus[] = ["planning", "active", "blocked", "done", "abandoned"];
@@ -138,27 +138,17 @@ export function ProjectDetailPage() {
     },
   });
 
-  // Status drives the allocation lifecycle: finishing a project USES UP its
-  // reserved inventory (consume → stock decrements); abandoning RETURNS it
-  // (release → stock restored). Wrapped in try/catch so projects without the
-  // inventory module just change status. (Re-opening doesn't un-consume — a
-  // finished design's yarn is gone; that's the point.)
+  // Status drives what the pattern takes off the stash: finishing uses each
+  // yarn up (its own balls first) and whatever else was reserved for it;
+  // abandoning returns it all. The server does it on the status change itself
+  // (settlePattern), so a status set from a table, a board or the assistant
+  // settles the same way; this page only refreshes what it shows.
   async function handleStatusChange(newStatus: string) {
     await updateProject.mutateAsync({ status: newStatus });
     if (newStatus !== "done" && newStatus !== "abandoned") return;
-    try {
-      const { items } = await api.listDesignAllocations(id!);
-      const reserved = items.filter((a) => a.status === "reserved");
-      await Promise.all(
-        reserved.map((a) =>
-          api.setAllocationStatus(a.id, newStatus === "done" ? "consumed" : "released"),
-        ),
-      );
-      void qc.invalidateQueries({ queryKey: ["design-allocations", id] });
-      void qc.invalidateQueries({ queryKey: [PART_PICKER_KEY] });
-    } catch {
-      /* inventory module not enabled — nothing to settle */
-    }
+    void qc.invalidateQueries({ queryKey: ["design-allocations", id] });
+    void qc.invalidateQueries({ queryKey: patternNeedsKey(id!) });
+    void qc.invalidateQueries({ queryKey: [PART_PICKER_KEY] });
   }
 
   if (project.isLoading) return <div className="text-sm text-faint dark:text-slate-500">loading…</div>;
@@ -283,18 +273,7 @@ export function ProjectDetailPage() {
         />
       </div>
 
-      <PatternExtractPanel
-        designId={project.data.id}
-        api={api}
-        onAddHooks={(ids) => {
-          const cur = Array.isArray((project.data!.metadata as Record<string, unknown>)?.hooks_needed)
-            ? ((project.data!.metadata as Record<string, unknown>).hooks_needed as string[])
-            : [];
-          updateProject.mutate({
-            metadata: { hooks_needed: Array.from(new Set([...cur, ...ids])) },
-          });
-        }}
-      />
+      <PatternNeedsPanel designId={project.data.id} api={api} />
 
       <DesignFiles designId={project.data.id} />
 
@@ -555,7 +534,7 @@ function MaterialsPanel({
       {items.length === 0 ? (
         <p className="text-xs text-faint dark:text-slate-500 mb-3">
           No yarn / materials reserved yet. Reserve some below - it stays reserved while you
-          work, and is used up (stock decrements) when you mark this design{" "}
+          work, and is used up (stock decrements) when you set this page's status to{" "}
           <span className="font-medium">done</span>.
         </p>
       ) : (
@@ -747,243 +726,5 @@ function HooksNeededPanel({
         </div>
       )}
     </div>
-  );
-}
-
-// ── AI: extract yarn + hooks from a pasted pattern (Phase 3) ───────────
-// Pattern text → core-ai → a structured materials list. Yarn is shown as
-// guidance (reserve it in the Materials panel); matched hooks can be added
-// to "hooks needed" in one tap. Degrades cleanly when no AI provider is set.
-function PatternExtractPanel({
-  designId,
-  api,
-  onAddHooks,
-}: {
-  designId: string;
-  api: ProjectsApi;
-  onAddHooks: (ids: string[]) => void;
-}) {
-  const { orgSlug, getToken } = useProjects();
-  const qc = useQueryClient();
-  const units = useUnits();
-  const [open, setOpen] = useState(false);
-  const [text, setText] = useState("");
-  const [patternName, setPatternName] = useState<string | null>(null);
-  const [result, setResult] = useState<PatternExtract | null>(null);
-  // The stash the extracted materials are matched against: one page of
-  // 200. Matching reads weight, fibre and gauge off each row's own fields,
-  // which the list's search cannot see, so a bigger stash is matched on its
-  // first page and the panel says so; the pickers search all of it.
-  const parts = useQuery({
-    queryKey: [PART_PICKER_KEY, "match-window"],
-    queryFn: () => api.listInventoryParts({ limit: 200 }),
-    retry: false,
-  });
-  const matchWindowPartial = !!parts.data?.next_cursor;
-  const extract = useMutation({
-    mutationFn: () => api.extractPattern(designId, text),
-    onSuccess: (r) => setResult(r),
-  });
-  // The "store the pattern" path: upload the PDF to core-files, attach it to
-  // this design (role=pattern — it lives on the design like any file), then
-  // let the server read it. The design becomes the bridge between the
-  // pattern and the yarn/hooks actually on the shelf.
-  const uploadExtract = useMutation({
-    mutationFn: async (file: File) => {
-      const t = getToken();
-      const auth: Record<string, string> = t ? { Authorization: `Bearer ${t}` } : {};
-      const base = `/api/v1/orgs/${orgSlug}/modules/core-files`;
-      const fd = new FormData();
-      fd.append("file", file);
-      const ures = await fetch(`${base}/files`, { method: "POST", headers: auth, body: fd });
-      if (!ures.ok) throw new Error(`upload ${ures.status}`);
-      const uf = (await ures.json()) as { id: string };
-      await fetch(`${base}/attachments`, {
-        method: "POST",
-        headers: { ...auth, "Content-Type": "application/json" },
-        body: JSON.stringify({
-          file_id: uf.id,
-          source_module: "projects",
-          source_type: "project",
-          source_id: designId,
-          role: "pattern",
-        }),
-      });
-      setPatternName(file.name);
-      return api.extractPatternFile(designId, uf.id);
-    },
-    onSuccess: (r) => setResult(r),
-  });
-  const busy = extract.isPending || uploadExtract.isPending;
-  const norm = (v: string) => v.replace(/\s/g, "").toLowerCase();
-  const matchedHookIds = () => {
-    const all = parts.data?.items ?? [];
-    const ids: string[] = [];
-    for (const h of result?.hooks ?? []) {
-      const g = norm(h.gauge ?? "");
-      if (!g) continue;
-      const m = all.find((p) => {
-        const pg = norm(String((p.metadata as Record<string, unknown> | null)?.hook_gauge ?? ""));
-        return pg && (pg === g || pg.startsWith(g) || g.startsWith(pg));
-      });
-      if (m) ids.push(m.id);
-    }
-    return Array.from(new Set(ids));
-  };
-  const matched = result?.ai ? matchedHookIds() : [];
-  // Yarn requirement → the stash: a stock part matches when the pattern's
-  // weight ("Worsted") or fiber ("acrylic") shows up on the part's
-  // weight_class/fiber metadata or its name. Loose on purpose — it
-  // suggests, the user reserves.
-  const yarnMatch = (y: { weight?: string | null; fiber?: string | null }) => {
-    const all = parts.data?.items ?? [];
-    const w = norm(y.weight ?? "");
-    const fb = norm(y.fiber ?? "");
-    if (!w && !fb) return undefined;
-    return all.find((p) => {
-      const md = (p.metadata as Record<string, unknown> | null) ?? {};
-      if (md.hook_gauge) return false; // hooks aren't yarn
-      const hay = norm(`${p.name} ${String(md.weight_class ?? "")} ${String(md.fiber ?? "")}`);
-      const wOk = w ? hay.includes(w) : false;
-      const fOk = fb ? hay.includes(fb) : false;
-      return (w && fb && wOk && fOk) || (w && !fb && wOk) || (!w && fb && fOk);
-    });
-  };
-  const reserveMatch = useMutation({
-    mutationFn: (v: { partId: string; qty: number }) => api.reserveYarn(designId, v.partId, v.qty),
-    onSuccess: () => {
-      void qc.invalidateQueries({ queryKey: ["design-allocations", designId] });
-      void qc.invalidateQueries({ queryKey: [PART_PICKER_KEY] });
-    },
-  });
-
-  return (
-    <>
-      <button
-        type="button"
-        onClick={() => setOpen(true)}
-        className="inline-flex items-center gap-1.5 text-xs text-accent hover:text-content dark:hover:text-mortar-100 transition"
-      >
-        <Sparkles size={13} /> Suggest yarn &amp; hooks from the pattern
-      </button>
-      <Modal
-        open={open}
-        onClose={() => setOpen(false)}
-        title="Suggest from pattern"
-        subtitle="Upload the pattern PDF (it's saved onto this design) or paste its materials section — the AI pulls out the yarn and hooks it calls for and checks them against your stash."
-      >
-        <label className="flex items-center justify-between gap-3 rounded-lg border border-dashed border-line dark:border-slate-600 px-3 py-2.5 mb-3 cursor-pointer hover:border-accent transition">
-          <span className="inline-flex items-center gap-2 text-sm text-content dark:text-mortar-200">
-            <Upload size={14} className="text-accent" />
-            {patternName ?? "Upload the pattern (PDF)"}
-          </span>
-          <span className="text-[11px] text-faint dark:text-slate-500">
-            {uploadExtract.isPending ? "reading…" : "saved to this design"}
-          </span>
-          <input
-            type="file"
-            accept="application/pdf"
-            className="hidden"
-            onChange={(e) => {
-              const file = e.target.files?.[0];
-              if (file) uploadExtract.mutate(file);
-              e.target.value = "";
-            }}
-          />
-        </label>
-        {uploadExtract.isError && (
-          <p className="text-sm text-ember-600 dark:text-ember-400 mb-2">
-            Couldn't read that PDF: {(uploadExtract.error as Error).message}
-          </p>
-        )}
-        <textarea
-          value={text}
-          onChange={(e) => setText(e.target.value)}
-          rows={4}
-          placeholder="…or paste the materials section: “Worsted weight wool, ~400 m, in teal. 5 mm (H) crochet hook…”"
-          className="input text-sm w-full resize-y mb-2"
-        />
-        <button
-          type="button"
-          disabled={!text.trim() || busy}
-          onClick={() => extract.mutate()}
-          className="inline-flex items-center gap-1 rounded-md bg-cobble-600 hover:bg-cobble-700 text-white text-sm px-3 py-2 disabled:opacity-40"
-        >
-          <Sparkles size={14} /> {busy ? "Reading…" : "Extract"}
-        </button>
-
-        {result && !result.ai && (
-          <p className="text-sm text-ember-600 dark:text-ember-400 mt-3">{result.reason}</p>
-        )}
-        {result?.ai && (
-          <div className="mt-4 space-y-3">
-            {matchWindowPartial && (
-              <p className="text-[11px] text-faint dark:text-slate-500">
-                Matched against the first {parts.data?.items.length ?? 200} things in your stash; the materials and hooks pickers search all of it.
-              </p>
-            )}
-            <div>
-              <div className="text-[10px] font-mono uppercase tracking-widest text-accent mb-1">yarn</div>
-              {result.yarn.length === 0 ? (
-                <p className="text-xs text-faint dark:text-slate-500">None found.</p>
-              ) : (
-                <ul className="text-sm space-y-2">
-                  {result.yarn.map((y, i) => {
-                    const stock = yarnMatch(y);
-                    const want = y.skeins ?? 1;
-                    return (
-                      <li key={i} className="text-content dark:text-mortar-200">
-                        {[y.weight, y.fiber, y.color].filter(Boolean).join(" · ") || "yarn"}
-                        {y.length_m ? <span className="text-muted dark:text-slate-400"> — {y.length_m} m</span> : null}
-                        {y.skeins ? <span className="text-muted dark:text-slate-400"> ({countOf(y.skeins, "ball")})</span> : null}
-                        {stock ? (
-                          <span className="mt-1 flex items-center gap-2 text-xs">
-                            <span className="text-moss-600">✓ in your stash: {stock.name} ({[stock.available_qty, units.suffix(stock.unit)].filter(Boolean).join(" ")} free)</span>
-                            <button
-                              type="button"
-                              disabled={reserveMatch.isPending || stock.available_qty <= 0}
-                              onClick={() => reserveMatch.mutate({ partId: stock.id, qty: Math.min(want, stock.available_qty) })}
-                              className="inline-flex items-center gap-1 rounded bg-cobble-600 hover:bg-cobble-700 text-white px-2 py-0.5 disabled:opacity-40"
-                            >
-                              <Plus size={11} /> Reserve {Math.min(want, Math.max(stock.available_qty, 0))}
-                            </button>
-                          </span>
-                        ) : (
-                          <span className="block mt-0.5 text-xs text-faint dark:text-slate-500">not in the stash yet</span>
-                        )}
-                      </li>
-                    );
-                  })}
-                </ul>
-              )}
-            </div>
-            <div>
-              <div className="text-[10px] font-mono uppercase tracking-widest text-accent mb-1">hooks</div>
-              {result.hooks.length === 0 ? (
-                <p className="text-xs text-faint dark:text-slate-500">None found.</p>
-              ) : (
-                <ul className="text-sm space-y-1">
-                  {result.hooks.map((h, i) => (
-                    <li key={i} className="text-content dark:text-mortar-200">{h.gauge ?? "hook"}</li>
-                  ))}
-                </ul>
-              )}
-              {matched.length > 0 && (
-                <button
-                  type="button"
-                  onClick={() => {
-                    onAddHooks(matched);
-                    setOpen(false);
-                  }}
-                  className="mt-2 inline-flex items-center gap-1 rounded-md bg-cobble-600 hover:bg-cobble-700 text-white text-sm px-3 py-2"
-                >
-                  <Plus size={14} /> Add {matched.length} matching hook{matched.length === 1 ? "" : "s"} to “needed”
-                </button>
-              )}
-            </div>
-          </div>
-        )}
-      </Modal>
-    </>
   );
 }

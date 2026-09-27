@@ -96,6 +96,16 @@ export function registerListActionHandlers(): void {
     return { ok: true, added: true, itemId: row.id, listId, summary: `"${row.title}" added to ${listName}` };
   });
 
+  // A module takes back a line it added (a pattern's shortfall that is no
+  // longer short). Unticked only: a ticked line is somebody's record of buying it.
+  platform().actions.registerHandler("lists.withdraw-item", async (ctx) => {
+    const id = typeof (ctx.args as { item_id?: unknown } | null)?.item_id === "string" ? String((ctx.args as { item_id: string }).item_id) : "";
+    if (!id) return { ok: false, error: "say which item" };
+    const db = (await platform().tenants.getDb(ctx.orgId)) as Kysely<ListsDB>;
+    const res = await db.deleteFrom("lists_items").where("id", "=", id).where("checked", "=", false).executeTakeFirst();
+    return { ok: true, removed: Number(res.numDeletedRows ?? 0n) };
+  });
+
   // Clearing the ticked items had no door: add-item was the module's only
   // action, so the assistant could fill a list and never tidy it.
   platform().actions.registerHandler("lists.clear-done", async (ctx) => {

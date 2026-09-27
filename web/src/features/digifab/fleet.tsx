@@ -19,7 +19,7 @@ import { deviceBucket, fleetStatusChip } from "../../lib/fleet-status";
 import { BambuConnectWizard } from "../../components/BambuConnectWizard";
 import { BridgePicker } from "../../components/BridgePicker";
 import { useActiveOrg } from "../../auth/ActiveOrgContext";
-import { useLater, Modal, useToast, useConfirm, useImageSrc, OverlayLayer, relativeTime } from "@cobblr/platform-web";
+import { useLater, Modal, useToast, useConfirm, useImageSrc, OverlayLayer, relativeTime, PasswordInput } from "@cobblr/platform-web";
 import { Combobox } from "../../components/Combobox";
 import type { ModulePageTabCtx, EntityDetailPanelCtx } from "../../panels/types";
 
@@ -171,7 +171,7 @@ export function CreateConnectionModal({
             {authMode === "api_key" ? (
               <label className="block">
                 <span className={lbl}>API key</span>
-                <input type="password" value={apiKey} onChange={(e) => setApiKey(e.target.value)} placeholder="fdmm_api_…" className={field} />
+                <PasswordInput what="API key" value={apiKey} onChange={(e) => setApiKey(e.target.value)} placeholder="fdmm_api_…" className={field} />
               </label>
             ) : (
               <div className="grid grid-cols-2 gap-2">
@@ -181,7 +181,7 @@ export function CreateConnectionModal({
                 </label>
                 <label className="block">
                   <span className={lbl}>Password</span>
-                  <input type="password" value={password} onChange={(e) => setPassword(e.target.value)} className={field} />
+                  <PasswordInput value={password} onChange={(e) => setPassword(e.target.value)} className={field} />
                 </label>
               </div>
             )}

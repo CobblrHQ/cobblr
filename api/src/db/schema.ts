@@ -254,6 +254,8 @@ export interface OrgModulesTable {
   last_migration: string | null;
   /** Ledger size beside the last name; NULL = never counted (see modules/migration-currency.ts). */
   migration_count: number | null;
+  /** Newest ledger name that breaks an older api; NULL = none (see modules/migration-currency.ts). */
+  newest_breaking_migration: string | null;
 }
 
 /** Provenance/refcount for what each bundle (or the user) "owns" — so a bundle

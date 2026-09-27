@@ -19,7 +19,7 @@ interface AuthState {
 }
 
 interface AuthCtx extends AuthState {
-  login: (email: string, password: string) => Promise<void>;
+  login: (email: string, password: string, extra?: { app?: string; source?: string }) => Promise<void>;
   signup: (input: {
     email: string;
     password: string;
@@ -89,8 +89,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     };
   }, []);
 
-  const login = useCallback(async (email: string, password: string) => {
-    const res = await api.login({ email, password });
+  const login = useCallback(async (email: string, password: string, extra?: { app?: string; source?: string }) => {
+    const res = await api.login({ email, password, ...extra });
     setToken(res.token);
     setState({ user: res.user, orgs: res.orgs, loading: false });
   }, []);

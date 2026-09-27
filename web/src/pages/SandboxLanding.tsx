@@ -82,7 +82,7 @@ export function SandboxLanding() {
     );
   }
 
-  const heading = state.kind === "gone" ? "Your hour is up." : "Something went wrong.";
+  const heading = state.kind === "gone" ? "Your hour is over." : "Something went wrong.";
   const body = state.kind === "gone" ? state.reason : state.message;
 
   return (

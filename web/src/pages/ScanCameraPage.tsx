@@ -70,6 +70,7 @@ import { frameClockInitial, noteFrame, noteResume, shouldReacquire } from "../li
 import { zoomInitial, zoomPlan, zoomRange } from "../lib/scanZoom";
 import { ScanResultModal } from "./ScanResultModal";
 import { ScanCaptureDrawer } from "./ScanCaptureDrawer";
+import { InstallOfferAfterScan } from "../components/InstallWalk";
 import { ScanDiagPanel } from "./ScanDiagPanel";
 import { recordDecode, recordOrientation, recordStreamRecovery, recordTorchEvent, recordTorchSample, recordZoom, scanDiagEnabled } from "../lib/scanDiag";
 import { BinAdjustModal } from "../components/BinAdjustModal";
@@ -2631,6 +2632,7 @@ export function ScanCameraPage() {
             onClose={() => setDiagOpen(false)}
           />
         )}
+        <InstallOfferAfterScan landed={savedCount > 0} />
         {drawerVisible && (
           <ScanCaptureDrawer
             slug={activeSlug}

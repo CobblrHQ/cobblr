@@ -13,6 +13,9 @@
 
 import crypto from "node:crypto";
 import { isStoreCode } from "./barcode-lookup.js";
+import { filterToFiled, labelTarget } from "./label-words.js";
+import { publicBaseUrl } from "@cobblr/platform-contract/public-url";
+import { opaqueUserActor } from "@cobblr/platform-contract/photo-retention";
 
 const norm = (s: string | null | undefined): string =>
   (s ?? "").trim().toLowerCase().replace(/\s+/g, " ");
@@ -41,11 +44,38 @@ export function correctionTarget(env: NodeJS.ProcessEnv = process.env): { endpoi
   return null;
 }
 
-/** Opaque per-user actor id (HMAC) — never a username/workspace/PII (doc 13). */
+/** The lots a scanned unit carries: the one read off its label (the row's
+ *  `lot`) and any value filed into its lot-role field. Per unit, so none of
+ *  them may ever reach the shared network as a fact about the product. */
+export function unitLotsOf(meta: unknown, ...filed: unknown[]): string[] {
+  const out = [(meta as { lot?: unknown } | null)?.lot, ...filed]
+    .filter((v): v is string => typeof v === "string" && v.trim().length >= 2)
+    .map((v) => v.trim());
+  return [...new Set(out)];
+}
+
+const escapeRe = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+
+/** `text` with every lot taken out, and the word "lot" that introduced it. */
+export function withoutLots(text: string, lots: readonly string[]): string {
+  let t = text;
+  for (const lot of lots) {
+    if (!lot) continue;
+    t = t.replace(new RegExp(`(?:\\b(?:dye\\s*)?lot\\s*(?:no\\.?|number|#)?\\s*[:.]?\\s*)?(?<![A-Za-z0-9])${escapeRe(lot)}(?![A-Za-z0-9])`, "gi"), " ");
+  }
+  return t
+    .replace(/\s+/g, " ")
+    .replace(/\s+([,.;)])/g, "$1")
+    .replace(/([,;])(?:\s*[,;])+/g, "$1")
+    .replace(/^[\s,;:-]+|[\s,;:-]+$/g, "")
+    .trim();
+}
+
+/** Opaque per-user actor id (HMAC) — never a username/workspace/PII (doc 13).
+ *  The platform unlinks and forgets kept photos by the same id, so the rule
+ *  lives in one place. */
 function opaqueActor(userId: string | null | undefined): string | null {
-  const secret = process.env.JWT_SECRET ?? "";
-  if (!userId || !secret) return null;
-  return "u_" + crypto.createHmac("sha256", secret).update(userId).digest("hex").slice(0, 16);
+  return opaqueUserActor(userId, process.env.JWT_SECRET);
 }
 
 /** Opaque per-WORKSPACE actor id — the voter unit for an automatic downvote. The
@@ -59,12 +89,55 @@ function opaqueOrgActor(orgId: string | null | undefined): string | null {
   return "w_" + crypto.createHmac("sha256", secret).update(orgId).digest("hex").slice(0, 16);
 }
 
+/** Where a reported value came from (#3769): a catalogue's answer filed as
+ *  is, the AI or a web search, or the person typing it. Provenance only. */
+export type ValueOrigin = "catalog" | "ai" | "person";
+
+/** The origin of a scanned row's value: the person's when they changed it, the
+ *  AI's when the row was named from a photo or a web search, else the
+ *  catalogue that answered the barcode. */
+export function originOfValue(metaSource: unknown, edited: boolean): ValueOrigin {
+  if (edited) return "person";
+  return typeof metaSource === "string" && ["web-search", "photo", "vision", "crop"].includes(metaSource) ? "ai" : "catalog";
+}
+
+/** A picture address that may leave the workspace: an absolute https URL on
+ *  someone else's host. Never a link into a workspace's own files (an API or
+ *  file-store path, this instance's own address), never data: or blob:. A
+ *  person's own photo is kept as a file id and must never be shared by link,
+ *  and this is the one gate every picture report passes (#3769). */
+export function isShareablePictureUrl(value: string | null | undefined, ownOrigins: readonly string[] = ownInstanceOrigins()): boolean {
+  let u: URL;
+  try {
+    u = new URL(String(value ?? "").trim());
+  } catch {
+    return false;
+  }
+  if (u.protocol !== "https:") return false;
+  if (/\/api\/|\/modules\/core-files\/|\/files\//i.test(u.pathname)) return false;
+  const host = u.host.toLowerCase();
+  return !ownOrigins.some((o) => {
+    try {
+      return new URL(o).host.toLowerCase() === host;
+    } catch {
+      return false;
+    }
+  });
+}
+
+function ownInstanceOrigins(): string[] {
+  const base = publicBaseUrl();
+  return /^https?:\/\//.test(base) ? [base] : [];
+}
+
 export async function reportBarcodeCorrection(opts: {
   upc: string;
   field: "title" | "brand" | "category" | "image_url";
   was: string | null;
   now: string | null;
   userId?: string | null;
+  /** Where the value came from; see ValueOrigin. */
+  origin?: ValueOrigin;
   /** A deliberate CONFIRM ("this listing is good — lock it in"): verify the
    *  current value even though it didn't change. Bypasses the changed-guard so a
    *  user affirming a thin/crowdsourced hit promotes it to a verified entry.
@@ -85,6 +158,9 @@ export async function reportBarcodeCorrection(opts: {
    *  cross-check). Without an actor a vote can never count toward consensus,
    *  which is how photo corrections piled up as anonymous dead proposals. */
   orgId?: string | null;
+  /** The unit's lots (unitLotsOf). Required, so every door to the network says
+   *  what it holds: a dye lot is per ball, never a fact about the product. */
+  lots: readonly string[];
 }): Promise<void> {
   const target = correctionTarget();
   if (!target) return; // no resolver + no BIdb configured → nowhere to send
@@ -92,10 +168,13 @@ export async function reportBarcodeCorrection(opts: {
   // A shop's own label is meaningful only in that shop: a name somebody gives
   // it is not a fact about a product, and must never reach the shared DB.
   if (isStoreCode(opts.upc)) return;
-  if (!(opts.now ?? "").trim()) return; // never POST a blank value
+  const now = opts.field === "image_url" ? (opts.now ?? "") : withoutLots(opts.now ?? "", opts.lots);
+  if (!now.trim()) return; // never POST a blank value
+  // A picture leaves only as a public catalogue address, never a private link.
+  if (opts.field === "image_url" && !isShareablePictureUrl(opts.now)) return;
   // A confirm or a commit-signal both affirm the CURRENT value, so neither needs
   // it to have changed; a photo/triage correction must be a real change.
-  if (!opts.confirm && !opts.commitSignal && !meaningfullyChanged(opts.was, opts.now)) return;
+  if (!opts.confirm && !opts.commitSignal && !meaningfullyChanged(opts.was, now)) return;
   try {
     await fetch(target.endpoint, {
       method: "POST",
@@ -103,7 +182,8 @@ export async function reportBarcodeCorrection(opts: {
       body: JSON.stringify({
         upc: opts.upc,
         field: opts.field,
-        value: (opts.now ?? "").trim(),
+        value: now.trim(),
+        ...(opts.origin ? { origin: opts.origin } : {}),
         source_context: opts.confirm
           ? "scan-confirm"
           : opts.commitSignal
@@ -159,5 +239,54 @@ export async function reportBarcodeReject(opts: {
     });
   } catch (err) {
     console.error("[core-scan] barcode reject report failed:", (err as Error).message);
+  }
+}
+
+/** A filed product with no barcode, reported by its label's product words
+ *  (#3769): only the words also in what the person filed (filterToFiled), the
+ *  name, brand and category they settled on, where the name came from, and the
+ *  opaque actor. Fire-and-forget; off when no network is configured, when
+ *  fewer than three words survive, or when there is no actor (an anonymous
+ *  filing never counts, so it is not sent). */
+export async function reportLabelConfirm(opts: {
+  labelWords: readonly string[];
+  name: string;
+  brand?: string | null;
+  category?: string | null;
+  color?: string | null;
+  origin: ValueOrigin;
+  userId?: string | null;
+  /** The unit's lots (unitLotsOf); none of them is ever sent. */
+  lots: readonly string[];
+}): Promise<void> {
+  const target = labelTarget();
+  if (!target?.writeToken) return;
+  const name = withoutLots(opts.name, opts.lots);
+  if (!name) return;
+  const brand = opts.brand ? withoutLots(opts.brand, opts.lots) || null : null;
+  const lotWords = new Set(opts.lots.flatMap((l) => l.toLowerCase().split(/[^a-z0-9.]+/)).filter(Boolean));
+  const words = filterToFiled(
+    opts.labelWords.filter((w) => !lotWords.has(w)),
+    { name, brand, category: opts.category, color: opts.color },
+  ).filter((w) => !lotWords.has(w));
+  if (words.length < 3) return;
+  const actor = opaqueActor(opts.userId);
+  if (!actor) return;
+  try {
+    await fetch(target.confirm, {
+      method: "POST",
+      headers: { "content-type": "application/json", authorization: `Bearer ${target.writeToken}` },
+      body: JSON.stringify({
+        words,
+        name,
+        ...(brand ? { brand } : {}),
+        ...(opts.category ? { category: opts.category } : {}),
+        origin: opts.origin,
+        corrected_by: actor,
+      }),
+      signal: AbortSignal.timeout(8_000),
+    });
+  } catch {
+    /* fire-and-forget: a filing is never held up by the network */
   }
 }

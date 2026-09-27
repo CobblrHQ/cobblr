@@ -12,6 +12,9 @@ import { useTheme } from "../theme/ThemeContext";
 import { LayoutPreview } from "../components/LayoutPreview";
 import { LAYOUT_OPTIONS, tourStepsFor, type StepContext, type TourStep } from "./tour.config";
 import { OverlayLayer } from "@cobblr/platform-web";
+import { dismissInstall, installRoute, readInstallEnv, shouldOfferInstall } from "../lib/install-app";
+import { InstallWalkBody } from "../components/InstallWalk";
+
 
 const PAD = 8; // breathing room around the spotlit element
 const GAP = 14; // spotlight-to-card gap
@@ -37,8 +40,18 @@ export function GuidedTour({ steps: allSteps, onClose }: { steps: TourStep[]; on
   // Decided once, at open: a tour does not change shape mid-way if the window
   // is resized. A phone starts on the first step it can show.
   const [steps] = useState(() => tourStepsFor(allSteps, window.innerWidth));
+  // Which door this browser has, read once like the steps: an installed app,
+  // a desktop and a "not now" all skip the install step.
+  const [install] = useState(() => {
+    const route = installRoute(readInstallEnv());
+    return { route, offer: shouldOfferInstall(route) };
+  });
+  const available = useCallback(
+    (s: TourStep | undefined) => !!s && (s.kind === "spotlight" ? !!findVisible(s.target) : s.kind === "installApp" ? install.offer : true),
+    [install.offer],
+  );
   const [i, setI] = useState(() => {
-    const first = steps.findIndex((s) => s.kind !== "spotlight" || findVisible(s.target));
+    const first = steps.findIndex((s) => available(s));
     return first < 0 ? 0 : first;
   });
   const [rect, setRect] = useState<DOMRect | null>(null);
@@ -59,11 +72,10 @@ export function GuidedTour({ steps: allSteps, onClose }: { steps: TourStep[]; on
       for (;;) {
         n += dir;
         if (n < 0 || n >= steps.length) return onClose();
-        const s = steps[n];
-        if (!s || s.kind !== "spotlight" || findVisible(s.target)) return setI(n);
+        if (available(steps[n])) return setI(n);
       }
     },
-    [i, steps, onClose],
+    [i, steps, onClose, available],
   );
 
   // Track the target's rect (reposition on scroll/resize + a slow poll for late shifts).
@@ -222,6 +234,19 @@ export function GuidedTour({ steps: allSteps, onClose }: { steps: TourStep[]; on
             {i > 0 && <button type="button" className={ghost} onClick={() => move(-1)} aria-keyshortcuts="ArrowLeft"><ArrowLeft size={14} /> Back</button>}
             <button type="button" className={pri} onClick={() => move(1)} aria-keyshortcuts="ArrowRight">Next <ArrowRight size={14} /></button>
           </div>
+        </div>
+      )}
+
+      {step.kind === "installApp" && (
+        <div ref={cardRef} data-testid="tour-install-app" className={`absolute z-[210] left-1/2 top-[40%] -translate-x-1/2 -translate-y-1/2 w-[360px] max-w-[calc(100vw-24px)] rounded-2xl ${surface} shadow-2xl p-5`}>
+          <InstallWalkBody
+            route={install.route}
+            onDone={() => move(1)}
+            onNotNow={() => {
+              dismissInstall();
+              move(1);
+            }}
+          />
         </div>
       )}
 

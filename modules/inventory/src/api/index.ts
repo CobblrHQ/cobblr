@@ -7,6 +7,7 @@
 //   - Inventory's entity-kind resolvers register with the platform
 //     so platform.entities.lookup("inventory:part", id) works.
 
+import { registerTargetLineHandlers } from "./target-lines.js";
 import { Router } from "express";
 import { sql, type Kysely } from "kysely";
 import { platform } from "@cobblr/platform-contract";
@@ -24,6 +25,8 @@ import { registerReplaceClock } from "./replace-clock.js";
 
 registerInventoryResolvers();
 registerInventoryActionHandlers();
+// A consumer's lines (a pattern's yarns) drawing on stock ball by ball.
+registerTargetLineHandlers();
 registerInventoryComputedContext();
 registerInventoryWriter(); // silent cross-module writer (core-mobility et al.)
 registerCategoryWriter(); // the category tree, for a sync source that mirrors one

@@ -12,7 +12,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { Download, Upload, FileArchive, Layers, Loader2, AlertTriangle, HardDrive, Play, Trash2, Plus, Clock } from "lucide-react";
 import { getToken } from "../lib/api";
 import { useActiveOrg } from "../auth/ActiveOrgContext";
-import { downloadBlob, useToast, usePageTitle } from "@cobblr/platform-web";
+import { downloadBlob, useToast, usePageTitle, SecretInput } from "@cobblr/platform-web";
 
 interface BlueprintPlan {
   enable_modules: string[];
@@ -664,8 +664,8 @@ function DestinationsSection({ base, auth }: { base: string; auth: () => Record<
           {(selDriver?.configFields ?? []).map((cf) => (
             <label key={cf.key} className="flex flex-col gap-1">
               <span className="text-muted">{cf.label}</span>
-              <input
-                type={cf.secret ? "password" : "text"}
+              <SecretInput
+                secret={cf.secret}
                 autoComplete={cf.secret ? "new-password" : "off"}
                 className="bg-transparent border border-line dark:border-slate-600 rounded px-2 py-1"
                 placeholder={cf.placeholder}

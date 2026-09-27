@@ -7,7 +7,7 @@
 import { useEffect, useState } from "react";
 import { useParams, useSearchParams } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { usePageTitle, useToast, useConfirm } from "@cobblr/platform-web";
+import { usePageTitle, useToast, useConfirm, SecretInput } from "@cobblr/platform-web";
 import { ApiError, api } from "../lib/api";
 import { useActiveOrg } from "../auth/ActiveOrgContext";
 import { iconForName } from "../lib/panel-icons";
@@ -201,8 +201,8 @@ export function HostedPanelPage() {
             return (
               <div key={i}>
                 <label className="block text-sm font-medium mb-1">{b.label}</label>
-                <input
-                  type={b.secret ? "password" : "text"}
+                <SecretInput
+                  secret={b.secret}
                   value={inputs[b.key] ?? b.value ?? ""}
                   placeholder={b.placeholder}
                   onChange={(e) => setInputs((prev) => ({ ...prev, [b.key]: e.target.value }))}

@@ -456,7 +456,7 @@ async function tryResolver(upc: string): Promise<ProviderResult> {
           // request cost (cache hit vs live read) for the viewers.
           raw: {
             ...(typeof d.product.raw === "object" && d.product.raw ? (d.product.raw as object) : {}),
-            resolver: { cache: d.cache, took_ms: d.took_ms, resolved_at: d.resolved_at },
+            resolver: { cache: d.cache, took_ms: d.took_ms, resolved_at: d.resolved_at, confidence: (d as { confidence?: unknown }).confidence },
           } as Record<string, unknown>,
         },
       };
@@ -835,4 +835,13 @@ async function doLookupBarcode(norm: string): Promise<BarcodeOutcome> {
   // "unknown, retry" — not "doesn't exist".
   if (upcRes.kind === "rate_limited") return { outcome: "rate_limited", scope: upcRes.scope };
   return noHit([goRes, upcRes, ...factsRes].some((r) => r.kind === "unreachable"));
+}
+
+/** Did this answer come from ONE person's confirmation on the barcode network
+ *  (a code no catalogue knows, named once, #3769)? The network serves it so the
+ *  next person needs no AI, marked so it is shown lightly and can be corrected:
+ *  confidence "single" from the resolver, 0.5 through the edge. */
+export function namedByOnePerson(hit: BarcodeHit | null | undefined): boolean {
+  const raw = (hit?.raw ?? {}) as { bidb?: { confidence?: unknown }; resolver?: { confidence?: unknown } };
+  return raw.bidb?.confidence === 0.5 || raw.resolver?.confidence === "single";
 }

@@ -25,7 +25,7 @@ import {
   ShieldCheck,
   Trash2,
 } from "lucide-react";
-import { Modal, relativeTime, useToast, useConfirm, usePageTitle } from "@cobblr/platform-web";
+import { Modal, relativeTime, useToast, useConfirm, usePageTitle, SecretInput } from "@cobblr/platform-web";
 import {
   ApiError,
   api,
@@ -600,8 +600,8 @@ function ConnectorAddModal({
           Object.entries(picked.credentials).map(([key, def]) => (
             <div key={key}>
               <label className="block text-sm font-medium mb-1">{def.label}</label>
-              <input
-                type={def.secret ? "password" : "text"}
+              <SecretInput
+                secret={def.secret}
                 value={creds[key] ?? ""}
                 onChange={(e) => setCreds({ ...creds, [key]: e.target.value })}
                 className="w-full px-2 py-1.5 text-sm rounded border dark:border-slate-700 bg-surface dark:bg-slate-900 font-mono"
@@ -688,8 +688,8 @@ function ConnectorEditModal({
           Object.entries(def.credentials).map(([key, d]) => (
             <div key={key}>
               <label className="block text-sm font-medium mb-1">{d.label}</label>
-              <input
-                type={d.secret ? "password" : "text"}
+              <SecretInput
+                secret={d.secret}
                 value={creds[key] ?? ""}
                 onChange={(e) => setCreds({ ...creds, [key]: e.target.value })}
                 className="w-full px-2 py-1.5 text-sm rounded border dark:border-slate-700 bg-surface dark:bg-slate-900 font-mono"
@@ -893,8 +893,8 @@ function InboundTokenAddModal({
           Object.entries(handler.config).map(([key, d]) => (
             <div key={key}>
               <label className="block text-sm font-medium mb-1">{d.label}</label>
-              <input
-                type={d.secret ? "password" : "text"}
+              <SecretInput
+                secret={d.secret}
                 value={config[key] ?? ""}
                 onChange={(e) => setConfig({ ...config, [key]: e.target.value })}
                 className="w-full px-2 py-1.5 text-sm rounded border dark:border-slate-700 bg-surface dark:bg-slate-900 font-mono"

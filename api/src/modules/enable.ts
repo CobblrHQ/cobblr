@@ -13,7 +13,7 @@ import { readdirSync } from "node:fs";
 import { sql } from "kysely";
 import { meta } from "../db/meta.js";
 import { runMigrations } from "../db/migrate.js";
-import { describeMigrationFiles, moduleIsBehind, type ModuleMigrationFiles } from "./migration-currency.js";
+import { describeMigrationFiles, healthVerdict, moduleIsBehind, newerName, type ModuleMigrationFiles } from "./migration-currency.js";
 import { getTenantPool, evictTenantPool } from "../db/tenant.js";
 import { getEntry, listEntries } from "./registry.js";
 import * as activity from "../platform/activity.js";
@@ -192,6 +192,7 @@ export async function enableModuleForOrg(
   let lastMigration: string | null = null;
   let migrationsApplied: string[] = [];
   let migrationCount: number | null = 0;
+  let newestBreaking: string | null = null;
   if (entry.manifest.schema) {
     const migrationsDir = resolve(entry.rootPath, entry.manifest.schema.migrationsDir);
     const pool = await getTenantPool(orgId);
@@ -203,6 +204,7 @@ export async function enableModuleForOrg(
     migrationsApplied = result.applied;
     lastMigration = result.latest;
     migrationCount = result.total;
+    newestBreaking = result.breaking.reduce<string | null>((a, b) => newerName(a, b), null);
   }
 
   await meta
@@ -213,6 +215,7 @@ export async function enableModuleForOrg(
       version: entry.manifest.version,
       last_migration: lastMigration,
       migration_count: migrationCount,
+      newest_breaking_migration: newestBreaking,
     })
     .execute();
   clearEnabledModulesCache(orgId);
@@ -450,13 +453,13 @@ export async function syncTenantMigrations(): Promise<number> {
     const cached = filesByModule.get(moduleName);
     if (cached !== undefined) return cached;
     const entry = getEntry(moduleName);
-    let files: ModuleMigrationFiles = { latest: null, count: 0 };
+    let files: ModuleMigrationFiles = describeMigrationFiles([]);
     if (entry?.manifest.schema) {
       try {
         const dir = resolve(entry.rootPath, entry.manifest.schema.migrationsDir);
         files = describeMigrationFiles(readdirSync(dir));
       } catch {
-        files = { latest: null, count: 0 }; // unreadable/empty dir → nothing to apply (same net effect)
+        files = describeMigrationFiles([]); // unreadable/empty dir → nothing to apply (same net effect)
       }
     }
     filesByModule.set(moduleName, files);
@@ -508,7 +511,15 @@ export async function syncTenantMigrations(): Promise<number> {
           // SHAPE-UNCHANGED: migration bookkeeping on a module already on.
           await meta
             .updateTable("org_modules")
-            .set({ last_migration: result.latest, migration_count: result.total })
+            .set({
+              last_migration: result.latest,
+              migration_count: result.total,
+              // greatest() skips a NULL, so an api that applied nothing
+              // breaking never erases what a newer one recorded.
+              ...(result.breaking.length
+                ? { newest_breaking_migration: sql<string>`greatest(newest_breaking_migration, ${result.breaking.reduce<string | null>((a, b) => newerName(a, b), null)})` }
+                : {}),
+            })
             .where("org_id", "=", orgId)
             .where("module_name", "=", moduleName)
             .execute();
@@ -550,39 +561,60 @@ export async function syncTenantMigrations(): Promise<number> {
  *  behind this build's back: either way this container is serving a module
  *  whose tables may not match its queries, and the roll in front of it
  *  should refuse to swap it in (#2944). Meta-side only, cached briefly:
- *  healthz is polled by every open tab and by the deploy tooling. */
-let pendingCache: { at: number; value: { count: number; modules: string[] } } | null = null;
-export async function pendingMigrationSummary(): Promise<{ count: number; modules: string[] }> {
+ *  healthz is polled by every open tab and by the deploy tooling.
+ *
+ *  AHEAD is reported beside it, never inside it: a peer declared to share
+ *  this database (COBBLR_SHARED_DB_PEER, the canary channel) is a newer build
+ *  whose migrations reach this api's ledgers. When none of them breaks an
+ *  older reader that this build never shipped, the pair is information
+ *  ("the peer is ahead by N"), not a refusal; see healthVerdict. */
+export interface MigrationSummary {
+  pending: { count: number; modules: string[] };
+  ahead: { count: number; modules: string[]; peer: string | null };
+}
+let pendingCache: { at: number; value: MigrationSummary } | null = null;
+export async function pendingMigrationSummary(): Promise<MigrationSummary> {
   if (pendingCache && Date.now() - pendingCache.at < 5_000) return pendingCache.value;
   const rows = await meta
     .selectFrom("org_modules")
-    .select(["module_name", "last_migration", "migration_count"])
+    .select(["module_name", "last_migration", "migration_count", "newest_breaking_migration"])
     .execute();
   const filesByModule = new Map<string, ModuleMigrationFiles>();
   const filesFor = (moduleName: string): ModuleMigrationFiles => {
     const cached = filesByModule.get(moduleName);
     if (cached !== undefined) return cached;
     const entry = getEntry(moduleName);
-    let files: ModuleMigrationFiles = { latest: null, count: 0 };
+    let files: ModuleMigrationFiles = describeMigrationFiles([]);
     if (entry?.manifest.schema) {
       try {
         files = describeMigrationFiles(readdirSync(resolve(entry.rootPath, entry.manifest.schema.migrationsDir)));
       } catch {
-        files = { latest: null, count: 0 };
+        files = describeMigrationFiles([]);
       }
     }
     filesByModule.set(moduleName, files);
     return files;
   };
+  // `||`: compose passes an unset variable as "" (CLAUDE.md 14.6).
+  const peer = process.env.COBBLR_SHARED_DB_PEER?.trim() || undefined;
   let count = 0;
   const modules = new Set<string>();
+  let aheadCount = 0;
+  const aheadModules = new Set<string>();
   for (const row of rows) {
-    if (moduleIsBehind(row, filesFor(row.module_name))) {
+    const verdict = healthVerdict(row, filesFor(row.module_name), peer);
+    if (verdict === "pending") {
       count++;
       modules.add(row.module_name);
+    } else if (verdict === "ahead") {
+      aheadCount++;
+      aheadModules.add(row.module_name);
     }
   }
-  const value = { count, modules: [...modules].sort() };
+  const value: MigrationSummary = {
+    pending: { count, modules: [...modules].sort() },
+    ahead: { count: aheadCount, modules: [...aheadModules].sort(), peer: peer ?? null },
+  };
   pendingCache = { at: Date.now(), value };
   return value;
 }

@@ -5,7 +5,7 @@
 // from the end.
 import { useState } from "react";
 import { useMutation } from "@tanstack/react-query";
-import { Modal, useToast } from "@cobblr/platform-web";
+import { Modal, useToast, PasswordInput } from "@cobblr/platform-web";
 import { useAuth } from "../auth/AuthContext";
 import { api, ApiError } from "../lib/api";
 
@@ -106,8 +106,7 @@ export function DeleteAccountSection() {
           ) : (
             <>
               <div className="text-sm text-muted">Type your password to confirm. Every device is signed out and nothing of yours is kept.</div>
-              <input
-                type="password"
+              <PasswordInput
                 autoComplete="current-password"
                 aria-label="Current password"
                 value={password}

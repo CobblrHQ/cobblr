@@ -132,14 +132,30 @@ export class ProjectsApi {
   removeDependency = (taskId: string, depId: string) =>
     this.request<void>("DELETE", `/tasks/${taskId}/dependencies/${depId}`);
 
-  // ── AI: extract yarn + hooks from a pattern (Phase 3) ──────────────
-  extractPattern = (designId: string, text: string) =>
+  // ── What a pattern needs: its yarns, hooks and needles ─────────────
+  /** Read on open: a pattern never read is read now, one whose text named
+   *  nothing asks the AI now (status `pending` meanwhile). */
+  patternNeeds = (designId: string) =>
+    this.request<PatternNeedsState>("GET", `/projects/${designId}/needs`);
+  /** Read the pattern PDF again; rows nobody edited are replaced. */
+  rereadPattern = (designId: string) =>
+    this.request<PatternNeedsState>("POST", `/projects/${designId}/needs/read`, {});
+  /** Pasted materials text, read into the needs (its words first, then AI). */
+  readPastedMaterials = (designId: string, text: string) =>
     this.request<PatternExtract>("POST", `/projects/${designId}/extract-pattern`, { text });
-
-  /** The attached-PDF path: pattern file already in core-files → server
-   *  parses the PDF text + runs the same materials extraction. */
-  extractPatternFile = (designId: string, fileId: string) =>
-    this.request<PatternExtract>("POST", `/projects/${designId}/extract-pattern-file`, { file_id: fileId });
+  addNeed = (designId: string, b: PatternNeedInput) =>
+    this.request<PatternNeed>("POST", `/projects/${designId}/needs`, b);
+  updateNeed = (designId: string, needId: string, b: Partial<PatternNeedInput> & { length_choice?: string }) =>
+    this.request<PatternNeed>("PATCH", `/projects/${designId}/needs/${needId}`, b);
+  deleteNeed = (designId: string, needId: string) =>
+    this.request<void>("DELETE", `/projects/${designId}/needs/${needId}`);
+  /** Make a yarn requirement with this stash yarn (null lets it go). A second
+   *  pick is a swap; `used_so_far_m` says what the old yarn gave. */
+  useYarnFor = (designId: string, needId: string, b: { part_id: string | null; used_so_far_m?: number; used_so_far_units?: number }) =>
+    this.request<PatternNeedsState>("POST", `/projects/${designId}/needs/${needId}/use`, b);
+  /** Put what this requirement is missing on the shopping list. */
+  shopNeed = (designId: string, needId: string) =>
+    this.request<PatternNeedsState & { listed: boolean; title?: string }>("POST", `/projects/${designId}/needs/${needId}/shop`, {});
 
   /** Pull the finished-object photo out of the design's pattern PDF: the
    *  server extracts the embedded images, saves the largest as a core-file and
@@ -227,8 +243,75 @@ export class ProjectsApi {
 export interface PatternExtract {
   ai: boolean;
   reason?: string;
-  yarn: Array<{ fiber?: string | null; weight?: string | null; color?: string | null; length_m?: number | null; skeins?: number | null }>;
-  hooks: Array<{ gauge?: string | null }>;
+  needs: PatternNeed[];
+  read: PatternRead;
+}
+export type PatternNeedKind = "yarn" | "hook" | "needle";
+export interface PatternNeed {
+  id: string;
+  kind: PatternNeedKind;
+  position: number;
+  label: string | null;
+  brand: string | null;
+  product: string | null;
+  color: string | null;
+  color_code: string | null;
+  weight: string | null;
+  fiber: string | null;
+  quantity: number | null;
+  quantity_unit: string | null;
+  unit_length_m: number | null;
+  length_m: number | null;
+  length_choices: { label: string; unit_length_m: number }[] | null;
+  size_mm: number | null;
+  size_label: string | null;
+  source: "pattern" | "ai" | "hand";
+  pattern_file_id: string | null;
+  edited: boolean;
+  /** The stash yarn it is made with. */
+  part_id: string | null;
+  /** Its line on the shopping list, when one was added. */
+  list_item_id: string | null;
+  /** When the finished pattern took it off the stash, and what that did. */
+  settled_at: string | null;
+  settle_note: string | null;
+  /** What in the stash fits it (GET /needs only). */
+  match?: NeedMatch | null;
+}
+export interface StashYarnFit {
+  yarn: { id: string; name: string; free_units: number; unit: string | null; unit_length_m: number | null; partials_m: number[]; weight: string | null };
+  fit: "same" | "stand-in";
+  /** The pattern's own yarn line, another colour. */
+  same_line: boolean;
+  free_m: number | null;
+  enough: boolean | null;
+  short_m: number | null;
+  short_units: number | null;
+}
+export interface NeedMatch {
+  chosen: { id: string; name: string } | null;
+  used_m: number;
+  used_units: number;
+  still_m: number | null;
+  still_units: number | null;
+  bound: { name: string; left_m: number }[];
+  held_units: number;
+  status: "have" | "short" | "none" | "unknown";
+  short_m: number | null;
+  short_units: number | null;
+  fits: StashYarnFit[];
+  tools: { id: string; name: string; size_mm: number | null; qty: number }[];
+}
+export type PatternNeedInput = Omit<PatternNeed, "id" | "position" | "length_choices" | "source" | "pattern_file_id" | "edited" | "part_id" | "list_item_id" | "settled_at" | "settle_note" | "match">;
+export interface PatternRead {
+  status: "none" | "pending" | "ready" | "empty" | "failed";
+  method: "pattern" | "ai" | null;
+  reason: string | null;
+  pattern_file_id: string | null;
+}
+export interface PatternNeedsState {
+  read: PatternRead;
+  items: PatternNeed[];
 }
 export interface PatternPhoto {
   ok: boolean;

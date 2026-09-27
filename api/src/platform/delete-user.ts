@@ -14,6 +14,10 @@
 // handed a workspace by the identity hand-off again (the callback looks the
 // identity up by identity_id, which the tombstone no longer carries).
 //
+// Whichever shape the end takes, every registered account-lifecycle hook
+// (hosted-seams onAccountDelete) hears of it afterwards, and a person who could
+// have sent item photos has an unlink queued for them (photo-retention.ts).
+//
 // Workspaces: a person who is the only owner of a live workspace is refused
 // with the list, so nobody's shared workspace vanishes because one member
 // left. The operator and the identity hook pass deleteSoleOwnedWorkspaces,
@@ -27,6 +31,8 @@
 import { sql } from "kysely";
 import { meta } from "../db/meta.js";
 import { hardDeleteOrg } from "./delete-org.js";
+import { fireAccountDelete } from "./hosted-seams.js";
+import { queuePhotoRetention } from "./photo-retention.js";
 
 export interface SoleOwnedWorkspace {
   id: string;
@@ -102,12 +108,17 @@ export async function hardDeleteUser(
   const at = new Date();
   await meta.updateTable("users").set({ active: false, tokens_valid_from: at }).where("id", "=", userId).execute();
 
+  // Kept item photos stop pointing at this person (photo-retention.ts). Queued
+  // before the row goes: afterwards nothing could recompute the actor id.
+  await queuePhotoRetention("unlink", userId);
+
   for (const ref of await cascadingReferences()) {
     await sql`delete from ${sql.table(ref.table)} where ${sql.ref(ref.column)} = ${userId}`.execute(meta);
   }
 
   try {
     await sql`delete from users where id = ${userId}`.execute(meta);
+    await fireAccountDelete({ userId, email: user.email });
     return { mode: "deleted", workspaces_deleted: sole };
   } catch (err) {
     if ((err as { code?: string }).code !== "23503") throw err;
@@ -131,5 +142,6 @@ export async function hardDeleteUser(
     })
     .where("id", "=", userId)
     .execute();
+  await fireAccountDelete({ userId, email: user.email });
   return { mode: "tombstoned", workspaces_deleted: sole };
 }

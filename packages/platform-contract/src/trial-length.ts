@@ -21,3 +21,12 @@ export function trialLengthPhrase(days: number): string {
   if (days % 7 === 0 && days / 7 < words.length) return `${words[days / 7]} weeks`;
   return `${days} days`;
 }
+
+/** The same length said as time ON TOP of what someone has had: "two more
+ *  weeks", "another week", "10 more days". */
+export function trialLengthMorePhrase(days: number): string {
+  const p = trialLengthPhrase(days);
+  if (p.startsWith("a ")) return `another ${p.slice(2)}`;
+  const [n, ...rest] = p.split(" ");
+  return `${n} more ${rest.join(" ")}`;
+}

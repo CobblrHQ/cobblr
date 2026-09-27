@@ -258,3 +258,94 @@ export async function fetchIdentityProfile(token: string): Promise<IdentityProfi
     return null;
   }
 }
+/** Can a person make their central account on THIS page, rather than being sent
+ *  to the account service to do it? Needs the hand-off (the confirmation link
+ *  brings them back through it) and a surface that gives a new account a
+ *  workspace; without the second, a new account would arrive to "nothing here". */
+export function signupOnPageEnabledFrom(callbackEnabled: boolean, autoProvision: boolean): boolean {
+  return callbackEnabled && autoProvision;
+}
+export function signupOnPageEnabled(): boolean {
+  return signupOnPageEnabledFrom(identityCallbackEnabled(), autoProvisionEnabled());
+}
+
+/** What a surface form asks the account service to do, and where to send the
+ *  person back once their address is confirmed. */
+export interface SurfaceAccountCall {
+  email: string;
+  password: string;
+  displayName?: string;
+  /** The person's address as this surface saw it: the account service rate-limits
+   *  by it, since every call it receives comes from this one server. */
+  clientIp: string;
+  /** Where the confirmation link lands the person, signed in: this surface's own
+   *  /auth/callback, carrying the app and the source. */
+  returnTo: string | null;
+  /** The terms the person agreed to beside Create account (signup only). */
+  acceptTerms?: { document: string; version: string } | null;
+}
+
+export type SurfaceReply =
+  | { ok: true; status: number; token?: string }
+  | { ok: false; status: number; error: string };
+
+/** The account service's own form, called from this surface's page
+ *  (`/surface/signup`, `/surface/login` there). Proven with the deployment secret
+ *  this surface already redeems sign-in codes with. Never throws: an account
+ *  service that cannot be reached is a 502 the page can say plainly. */
+export async function surfaceAccountCall(kind: "signup" | "login", call: SurfaceAccountCall): Promise<SurfaceReply> {
+  if (!env.IDENTITY_URL || !env.IDENTITY_DEPLOYMENT_SECRET) return { ok: false, status: 404, error: "identity_disabled" };
+  try {
+    const res = await fetch(`${base()}/surface/${kind}`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        deployment: deploymentId(),
+        secret: env.IDENTITY_DEPLOYMENT_SECRET,
+        client_ip: call.clientIp,
+        email: call.email,
+        password: call.password,
+        ...(call.displayName !== undefined ? { display_name: call.displayName } : {}),
+        ...(call.returnTo ? { handoff: { deployment: deploymentId(), return_to: call.returnTo } } : {}),
+        ...(call.acceptTerms ? { accept_terms: call.acceptTerms } : {}),
+      }),
+      signal: AbortSignal.timeout(15_000),
+    });
+    const body = (await res.json().catch(() => ({}))) as { token?: string; error?: string };
+    if (res.ok) return { ok: true, status: res.status, ...(body.token ? { token: body.token } : {}) };
+    return { ok: false, status: res.status, error: body.error ?? `http_${res.status}` };
+  } catch {
+    return { ok: false, status: 502, error: "identity_unreachable" };
+  }
+}
+
+/** This surface's /auth/callback, where a confirmed account lands signed in, with
+ *  what the page asked for riding the query the way the hand-off link carries it. */
+export function callbackReturnTo(origin: string, opts: { app?: string | null; source?: string | null }): string | null {
+  let url: URL;
+  try {
+    url = new URL("/auth/callback", origin);
+  } catch {
+    return null;
+  }
+  if (opts.app) url.searchParams.set("app", opts.app);
+  if (opts.source) url.searchParams.set("source", opts.source);
+  return url.toString();
+}
+
+/** The terms an account agrees to when it is made (the account service's
+ *  `issuance` document and its current version), or null when it cannot say.
+ *  Asked at the moment of signup, never cached: a new version must be what the
+ *  next person agrees to, not the one this process saw an hour ago. */
+export async function currentAccountTerms(): Promise<{ document: string; version: string } | null> {
+  if (!env.IDENTITY_URL) return null;
+  try {
+    const res = await fetch(`${base()}/terms`, { headers: { accept: "application/json" }, signal: AbortSignal.timeout(10_000) });
+    if (!res.ok) return null;
+    const body = (await res.json()) as { issuance?: { document?: unknown; version?: unknown } };
+    const d = body.issuance?.document, v = body.issuance?.version;
+    return typeof d === "string" && typeof v === "string" ? { document: d, version: v } : null;
+  } catch {
+    return null;
+  }
+}

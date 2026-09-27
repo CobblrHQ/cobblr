@@ -130,6 +130,9 @@ export interface InventoryAllocationsTable {
   target_entity_type: string;
   target_entity_id: string;
   reason: string | null;
+  /** The target's own name for the line this serves (a pattern's
+   *  requirement); null for the whole target. */
+  target_line: Generated<string | null>;
   reserved_at: Generated<Date>;
   consumed_at: Date | null;
   released_at: Date | null;

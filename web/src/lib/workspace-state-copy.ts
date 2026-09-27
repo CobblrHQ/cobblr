@@ -52,11 +52,10 @@ export function endedCopy(
       body: "This workspace was a trial on our demo site, and it will be deleted soon.",
     };
   }
+  // The owner's words (2026-09-27): what happened, and what happened to the
+  // work, before anything asks for a decision.
   if (e.holdHours > 0) {
-    return {
-      heading: "Your hour is up.",
-      body: `This sandbox is closed. What you made is kept for ${holdPhrase(e.holdHours)}, then deleted.`,
-    };
+    return { heading: "Your hour is over.", body: `Your sandbox is saved for ${holdPhrase(e.holdHours)}.` };
   }
-  return { heading: "Your hour is up.", body: "This sandbox is closed and has been deleted." };
+  return { heading: "Your hour is over.", body: "This sandbox is closed and has been deleted." };
 }

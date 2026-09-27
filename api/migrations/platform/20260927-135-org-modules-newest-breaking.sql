@@ -1,0 +1,11 @@
+-- The newest migration in a workspace's module ledger that an OLDER api could
+-- not survive (a drop, rename, retype or new constraint; the rule lives in
+-- api/src/db/migration-shape.ts), written by whichever api applied it.
+--
+-- Two api builds share one database (the canary channel), and the pinned one
+-- sees the canary's migrations in its ledger. Additive ones are harmless to it,
+-- and /healthz says so; a breaking one it has never shipped means a newer
+-- build changed what it reads, and /healthz still refuses. Only the applier has
+-- the SQL, so the applier records it. NULL is none (every migration applied
+-- before this column: all of them are shipped by every api still deployed).
+alter table org_modules add column if not exists newest_breaking_migration text;

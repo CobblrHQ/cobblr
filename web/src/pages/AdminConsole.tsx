@@ -2234,6 +2234,69 @@ function ActivationFunnelCard({ label, f }: { label: string; f: ActivationFunnel
   );
 }
 
+/** Who each sign-up link, QR or booth brought in: counts per source, then the
+ *  accounts. "carry" is a sandbox brought over from the demo site. */
+function SignupsBySourceCard() {
+  const [days, setDays] = useState(30);
+  const q = useQuery({ queryKey: ["super-admin-signups", days], queryFn: () => api.superAdminSignups(days), refetchInterval: 60_000 });
+  const total = (q.data?.totals ?? []).reduce((n, t) => n + t.count, 0);
+  return (
+    <div className="rounded-xl border border-line dark:border-slate-700 bg-surface dark:bg-slate-900 p-4 space-y-3" data-testid="signups-by-source">
+      <div className="flex items-center justify-between gap-3">
+        <h3 className="text-sm font-semibold text-content dark:text-mortar-100">Sign-ups by source</h3>
+        <select value={days} onChange={(e) => setDays(Number(e.target.value))} className="input !w-auto text-xs" aria-label="Period">
+          <option value={7}>7 days</option>
+          <option value={30}>30 days</option>
+          <option value={90}>90 days</option>
+          <option value={180}>180 days</option>
+        </select>
+      </div>
+      {q.isLoading ? (
+        <div className="text-sm text-muted">Loading…</div>
+      ) : total === 0 ? (
+        <div className="text-sm text-muted">No sign-ups in this period.</div>
+      ) : (
+        <>
+          <div className="flex flex-wrap gap-2">
+            {q.data!.totals.map((t) => (
+              <span key={t.source} className="rounded-md border border-line dark:border-slate-700 px-2 py-1 text-sm">
+                <b>{t.count}</b> <span className="text-muted">{t.source}</span>
+              </span>
+            ))}
+          </div>
+          {q.data!.accounts && q.data!.accounts.length > 0 && (
+            <div className="overflow-x-auto">
+              <table className="w-full text-sm">
+                <thead>
+                  <tr className="text-left text-muted">
+                    <Th>When</Th>
+                    <Th>Source</Th>
+                    <Th>Email</Th>
+                    <Th>Workspace</Th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {q.data!.accounts.map((a) => (
+                    <tr key={`${a.at}-${a.email}`} className="border-t border-line dark:border-slate-800">
+                      <td className="px-3 py-1.5 whitespace-nowrap">{new Date(a.at).toLocaleString()}</td>
+                      <td className="px-3 py-1.5">
+                        {a.source}
+                        {a.carried_origin ? <span className="text-muted"> (sandbox from {a.carried_origin})</span> : null}
+                      </td>
+                      <td className="px-3 py-1.5">{a.email ?? "—"}</td>
+                      <td className="px-3 py-1.5">{a.workspace ?? "—"}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </>
+      )}
+    </div>
+  );
+}
+
 function ProductMetricsTab() {
   const q = useQuery({
     queryKey: ["super-admin-product-metrics"],
@@ -2254,6 +2317,7 @@ function ProductMetricsTab() {
         and <b>time to first working app</b> (signup → first real item).
         Interpretation notes: docs/operations/product-metrics.md.
       </p>
+      <SignupsBySourceCard />
       {q.data && (
         <div className="flex flex-wrap gap-3">
           <ActivationFunnelCard label="Last 30 days" f={q.data.activation.d30} />

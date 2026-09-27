@@ -4,6 +4,11 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { App } from "./App";
 import { ThemeProvider } from "./theme/ThemeContext";
 import "./index.css";
+import { listenForInstallPrompt } from "./lib/install-app";
+
+// Chromium's install prompt fires early and once per page; kept here so the
+// tour's install step, minutes later, can raise the real one.
+listenForInstallPrompt();
 
 const queryClient = new QueryClient({
   defaultOptions: {

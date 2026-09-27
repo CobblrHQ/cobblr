@@ -22,7 +22,7 @@
 //      (`/orgs/:slug/backup`, `/qr`, …) are kept as OPAQUE PREFIXES: any path
 //      under a real prefix is assumed served (that granularity is enough to
 //      catch the backup class without parsing every leaf of every module).
-//   2. Extracts CLIENT paths from web/src/**: `request(METHOD, `/…`)`,
+//   2. Extracts CLIENT paths from web/src/** and modules/*/src/ui/**: `request(METHOD, `/…`)`,
 //      `api.request(…)`, and raw `fetch(`/api/v1/…`)` — including the
 //      `const base = `/api/v1/orgs/${slug}…`` + `${base}/suffix` concatenation
 //      that defeated eyeballing. `${primaryBase(slug,"mod/ent",…)}` is resolved
@@ -170,7 +170,15 @@ function isTopLevelApi(tpl: string): boolean {
 
 // ── 2. CLIENT FETCH PATH EXTRACTION ──────────────────────────────────────────
 
-const WEB_DIR = "web/src";
+// The web app, and every module's own UI: a module page fetches the api the
+// same way (the yarn table's Ravelry button called two routes that had been
+// removed, and nothing looked there).
+const CLIENT_DIRS = [
+  "web/src",
+  ...readdirSync(resolve(ROOT, "modules"), { withFileTypes: true })
+    .filter((d) => d.isDirectory() && existsSync(resolve(ROOT, "modules", d.name, "src", "ui")))
+    .map((d) => `modules/${d.name}/src/ui`),
+];
 interface Finding {
   file: string;
   line: number;
@@ -203,7 +211,7 @@ interface Raw {
 const CALL_RE =
   /(?:\bfetch\(|\b(?:api\.)?request(?:<[^>]*>)?\(\s*"[A-Z]+"\s*,)\s*([`"'])((?:\\.|(?!\1).)*)\1/g;
 
-for (const file of walk(WEB_DIR)) {
+for (const file of CLIENT_DIRS.flatMap((d) => walk(d))) {
   const src = read(file);
   const lineStarts = buildLineIndex(src);
   const raws: Raw[] = [];
@@ -356,7 +364,7 @@ if (checkedOk < CHECKED_FLOOR) {
   process.exit(1);
 }
 
-const summary = `[lint:client-fetch-mounts] scanned web/src — ${moduleNames.length} modules, ${leafRoutes.length} leaf routes, ${opaquePrefixes.length} prefixes; ${checkedOk} client paths OK, ${skipped.length} dynamic paths skipped.`;
+const summary = `[lint:client-fetch-mounts] scanned web/src + ${CLIENT_DIRS.length - 1} module UIs — ${moduleNames.length} modules, ${leafRoutes.length} leaf routes, ${opaquePrefixes.length} prefixes; ${checkedOk} client paths OK, ${skipped.length} dynamic paths skipped.`;
 
 if (offenders.length > 0) {
   console.error(summary);

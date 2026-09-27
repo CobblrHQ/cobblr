@@ -13,8 +13,10 @@
 // AS the app rather than as a plain workspace; neither, a plain sentence and
 // the waitlist, and nothing to fill in.
 
+import { PasswordInput } from "@cobblr/platform-web";
 import { useState, type FormEvent } from "react";
 import { authorizeHref, rememberedSource } from "../lib/identity-door";
+import { AccountCard } from "../components/AccountCard";
 import { useParams } from "react-router-dom";
 import { ApiError } from "../lib/api";
 import { useAuth } from "../auth/AuthContext";
@@ -28,7 +30,7 @@ const WAITLIST_URL = "https://cobblr.xyz/#start";
 
 type StartConfig = {
   signup_enabled: boolean;
-  identity: { authorize_url: string; deployment: string; name?: string } | null;
+  identity: { authorize_url: string; deployment: string; name?: string; signup_on_page?: boolean } | null;
 };
 
 export function StartAppPage() {
@@ -48,6 +50,9 @@ export function StartAppPage() {
   // The shared hook says failed, and the page says so and offers to retry.
   const authCfg = useAuthConfig();
   const cfg: StartConfig | null = authCfg.cfg ? { signup_enabled: authCfg.cfg.signup_enabled, identity: authCfg.cfg.identity } : null;
+  // The account is made right here, with the app riding along to the new
+  // account's first workspace (AccountCard), rather than on another site.
+  const onPage = !!cfg && !cfg.signup_enabled && !!cfg.identity?.signup_on_page;
 
   if (!meta) {
     return (
@@ -117,7 +122,19 @@ export function StartAppPage() {
         </div>
         {authCfg.status === "failed" ? (
           <AuthConfigUnavailable failure={authCfg.failure} onRetry={authCfg.retry} />
-        ) : cfg === null ? null : !cfg.signup_enabled ? (
+        ) : cfg === null ? null : onPage ? (
+          <AccountCard
+            initialMode="signup"
+            heading={null}
+            app={meta.id}
+            source={rememberedSource()}
+            captchaSiteKey={authCfg.cfg?.captcha?.site_key ?? null}
+            resetHref={new URL("/reset", cfg.identity!.authorize_url).toString()}
+            termsHref={new URL("/terms", cfg.identity!.authorize_url).toString()}
+            submitLabel="Start free"
+            hosted={authCfg.cfg?.hosted === true}
+          />
+        ) : !cfg.signup_enabled ? (
           <div className="space-y-3 rounded-xl border border-line dark:border-slate-700 p-5 bg-white dark:bg-slate-900">
             {identityDoor ? (
               <>
@@ -157,7 +174,7 @@ export function StartAppPage() {
           </label>
           <label className="block">
             <span className="block text-[10px] font-mono uppercase tracking-widest text-faint dark:text-slate-500 mb-1">Password</span>
-            <input type="password" autoComplete="new-password" value={password} onChange={(e) => setPassword(e.target.value)} required minLength={8}
+            <PasswordInput autoComplete="new-password" value={password} onChange={(e) => setPassword(e.target.value)} required minLength={8}
               className="w-full rounded border border-line dark:border-slate-600 bg-surface dark:bg-slate-900 px-3 py-2 text-sm" />
             <span className="block text-[10px] text-faint dark:text-slate-500 mt-1">At least 8 characters.</span>
           </label>
@@ -166,16 +183,6 @@ export function StartAppPage() {
             className="w-full rounded-md bg-cobble-600 hover:bg-cobble-700 text-white text-sm font-medium px-3 py-2.5 transition disabled:opacity-50">
             {busy ? "Setting up your workspace…" : "Start free"}
           </button>
-          {identityDoor && (
-            <>
-              <div className="flex items-center gap-3 py-1">
-                <div className="h-px flex-1 bg-mortar-200 dark:bg-mortar-700" />
-                <span className="text-[11px] uppercase tracking-wide text-muted">or</span>
-                <div className="h-px flex-1 bg-mortar-200 dark:bg-mortar-700" />
-              </div>
-              {identityDoor}
-            </>
-          )}
           <p className="text-center text-[11px] text-faint dark:text-slate-500">
             Free to start. Already have an account? <a href="/" className="text-accent hover:underline">Sign in</a>
           </p>

@@ -16,6 +16,7 @@ import { FileText, Images, Trash2, Upload } from "lucide-react";
 import { canPreviewFile, FilePreview, Modal, openAuthedFile, useConfirm, useFilePreviewRegistry, useImageSrc, useToast } from "@cobblr/platform-web";
 import { useProjects } from "./context";
 import type { PatternPhotoState } from "./api";
+import { patternNeedsKey } from "./PatternNeeds";
 
 interface AttachmentRow {
   id: string;
@@ -116,7 +117,8 @@ export function DesignFiles({ designId }: { designId: string }) {
         // The pull starts server-side on attach; the state read picks it up
         // as pending and the poll above carries it to ready.
         void qc.invalidateQueries({ queryKey: patternKey });
-        toast.info("Reading the pattern for its photo…");
+        void qc.invalidateQueries({ queryKey: patternNeedsKey(designId) });
+        toast.info("Reading the pattern for its photo, yarn and hooks…");
       }
     },
   });

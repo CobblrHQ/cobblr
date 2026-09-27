@@ -26,6 +26,7 @@
 import { readFile, readdir } from "node:fs/promises";
 import { join } from "node:path";
 import type { Pool, PoolClient } from "pg";
+import { findBreakingChanges, hasContractMarker } from "./migration-shape.js";
 
 export interface MigrationRunOptions {
   /** Pool pointing at the target DB. */
@@ -56,6 +57,16 @@ export interface MigrationResult {
    *  forever (#2944). */
   total: number;
   latest: string | null;
+  /** What this run applied that an OLDER api could not survive: a declared
+   *  contract migration (`-- PHASE: contract`) that drops, renames, retypes
+   *  or constrains (migration-shape.ts). Recorded beside the marker so an
+   *  older api sharing the database can tell a harmless newer build from one
+   *  that changed what it reads. Only DECLARED ones: lint:migration-additive
+   *  refuses every other breaking file except four grandfathered ones that
+   *  predate every api still deployed, so those can never be ahead of anyone,
+   *  and naming them would make a workspace born today differ from one that
+   *  applied them before this was recorded. */
+  breaking: string[];
 }
 
 function storedName(scope: string, file: string): string {
@@ -202,15 +213,17 @@ export async function runMigrations(opts: MigrationRunOptions): Promise<Migratio
       else if (report) console.log(report.message);
 
       const justRan: string[] = [];
+      const breaking: string[] = [];
       for (const file of pending) {
         const sql = await readFile(join(directory, file), "utf8");
         console.log(`[migrate:${scope}] applying ${file}`);
         await applyOne(client, scope, file, sql);
         justRan.push(file);
+        if (hasContractMarker(sql) && findBreakingChanges(sql).length > 0) breaking.push(file);
       }
 
       const all = [...applied, ...justRan].sort();
-      return { applied: justRan, alreadyApplied: applied.size, total: all.length, latest: all.length ? all[all.length - 1]! : null };
+      return { applied: justRan, alreadyApplied: applied.size, total: all.length, latest: all.length ? all[all.length - 1]! : null, breaking };
     } finally {
       await releaseScopeLock(client, scope);
     }

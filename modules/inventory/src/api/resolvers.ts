@@ -64,10 +64,10 @@ export function registerInventoryResolvers(): void {
     q = applyPartFilters(q, query);
     const sortedQ = applyPartSort(q, query.sort);
     const rows = await sortedQ.limit(limit).offset(offset).execute();
-    const [names, places, left] = await Promise.all([categoryNames(db, rows), locationNames(orgId, rows), remainingFor(orgId, db, rows)]);
+    const [names, places, left, held] = await Promise.all([categoryNames(db, rows), locationNames(orgId, rows), remainingFor(orgId, db, rows), reservedFor(db, rows)]);
     return {
       items: rows.map((r) =>
-        toResolvedPart(r, names.get(r.category_id ?? "") ?? null, places.get(r.location_id ?? "") ?? null, left.get(r.id) ?? null),
+        withReserved(toResolvedPart(r, names.get(r.category_id ?? "") ?? null, places.get(r.location_id ?? "") ?? null, left.get(r.id) ?? null), r, held),
       ),
     };
   };
@@ -138,6 +138,31 @@ async function categoryNames(
   if (!ids.length) return new Map();
   const cats = await db.selectFrom("inventory_categories").select(["id", "name"]).where("id", "in", ids).execute();
   return new Map(cats.map((c) => [c.id, c.name]));
+}
+
+/** What is reserved of each row, in ONE query for the page. */
+async function reservedFor(db: Kysely<InventoryDB>, rows: readonly { id: string }[]): Promise<Map<string, number>> {
+  if (rows.length === 0) return new Map();
+  const sums = await db
+    .selectFrom("inventory_allocations")
+    .select(["part_id", sql<string>`sum(qty)`.as("held")])
+    .where("status", "=", "reserved")
+    .where("part_id", "in", rows.map((r) => r.id))
+    .groupBy("part_id")
+    .execute();
+  return new Map(sums.map((x) => [x.part_id, Number(x.held)]));
+}
+
+/** A listed part carries its instance and what of it is free, the figures the
+ *  parts list shows (assigned_qty / available_qty), so a reader in another
+ *  module (a pattern matching its yarn) sees what the stash page sees. */
+function withReserved(e: ResolvedEntity, row: { id: string; qty: string; instance: string }, held: Map<string, number>): ResolvedEntity {
+  const assigned = held.get(row.id) ?? 0;
+  const qty = Number(row.qty);
+  return {
+    ...e,
+    fields: { ...e.fields, instance: row.instance, assigned_qty: assigned, available_qty: (Number.isFinite(qty) ? qty : 0) - assigned },
+  };
 }
 
 export function toResolvedPart(row: {

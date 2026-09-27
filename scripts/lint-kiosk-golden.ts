@@ -64,8 +64,10 @@ const CHECKS: Check[] = [
   },
   {
     file: YARN,
-    needle: /route\(\s*"\*\*\/extract-pattern-file"/,
-    why: "the AI extraction is staged — no live model belongs in a recording",
+    needle: /getByTestId\("pattern-need-verdict"\)/,
+    why:
+      "the pattern beat waits for the needs panel's own verdict: the yarn and hook are read from the " +
+      "PDF's words with no model, so there is nothing to stage, only something to wait for",
   },
   // ── overlay correctness (invariant 2) ──
   {

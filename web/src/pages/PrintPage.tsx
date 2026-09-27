@@ -10,7 +10,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Plus, Trash2, Printer as PrinterIcon, Wifi, Send, Pencil, Star, Bluetooth, Activity } from "lucide-react";
 import { ApiError, api, type Printer, type PrinterInput } from "../lib/api";
 import { useActiveOrg } from "../auth/ActiveOrgContext";
-import { Modal, useToast, useConfirm, usePageTitle, printLabelOverBluetooth, connectPrinter, closePrinter, isWebBluetoothAvailable, NO_WEB_BLUETOOTH, readSerialPrinterStatus, ConnectPrinterModal, setPrinterStatus, clearPrinterStatus, type SerialPrinterIdentity, type BluetoothPrinterSettings, isLocalBridgePrinter, testLocalBridge, printerDisplayName, describeReportedMedia, usePrinterStatus, PrinterReadout, allowLocalAccess } from "@cobblr/platform-web";
+import { Modal, useToast, useConfirm, usePageTitle, printLabelOverBluetooth, connectPrinter, closePrinter, isWebBluetoothAvailable, NO_WEB_BLUETOOTH, readSerialPrinterStatus, ConnectPrinterModal, setPrinterStatus, clearPrinterStatus, type SerialPrinterIdentity, type BluetoothPrinterSettings, isLocalBridgePrinter, testLocalBridge, printerDisplayName, describeReportedMedia, usePrinterStatus, PrinterReadout, allowLocalAccess, PasswordInput } from "@cobblr/platform-web";
 import { mmToDots, dotsToMm, mmToInch, thermalFootprint, matchProfile, type FeedType } from "@cobblr/thermal-print";
 
 import { EdgeConnectField, type EdgeConnectValue } from "../components/EdgeConnectField";
@@ -893,7 +893,7 @@ function PrinterModal({
               </label>
               <label className="block">
                 <div className="text-xs text-muted mb-1">Bridge token (optional)</div>
-                <input className={field} type="password" value={brToken} onChange={(e) => setBrToken(e.target.value)} autoComplete="off" />
+                <PasswordInput what="token" className={field} value={brToken} onChange={(e) => setBrToken(e.target.value)} autoComplete="off" />
               </label>
             </div>
             {brLocalUrl.trim() !== "" && (
@@ -921,7 +921,7 @@ function PrinterModal({
           </label>
           <label className="block">
             <div className="text-xs text-muted mb-1">Password (optional)</div>
-            <input className={field} type="password" value={password} onChange={(e) => setPassword(e.target.value)} autoComplete="new-password" placeholder={printer?.has_credentials ? "•••• (unchanged)" : ""} />
+            <PasswordInput className={field} value={password} onChange={(e) => setPassword(e.target.value)} autoComplete="new-password" placeholder={printer?.has_credentials ? "•••• (unchanged)" : ""} />
           </label>
         </div>
         <div className="grid grid-cols-2 gap-2">

@@ -13,6 +13,9 @@
 import { looksOfRow, picturesThatAgree, statedColoursOf } from "./picture-agrees.js";
 import { rechoosePictureForColour, withholdContradictedPicture } from "./withhold-picture.js";
 import { applyLabelFacts } from "./label-quantity.js";
+import { applyLabelLot } from "./scan-frame-label.js";
+import { labelFactsOf } from "./label-facts.js";
+import { labelWordsOf, matchLabelWords } from "./label-words.js";
 import type { Kysely } from "kysely";
 import { seenCountOf, seenDistinctOf } from "./seen-count.js";
 import { titleVariantsOf, type TitleVariants } from "@cobblr/platform-contract/display-identity";
@@ -21,7 +24,7 @@ import { asPackaging, packagingFromProse, type Packaging } from "@cobblr/platfor
 import { platform } from "@cobblr/platform-contract";
 import { tidyTruncatedName } from "./item-name.js";
 import type { CoreScanDB } from "../db.js";
-import { reportBarcodeCorrection, reportBarcodeReject } from "./barcode-corrections.js";
+import { reportBarcodeCorrection, reportBarcodeReject, unitLotsOf } from "./barcode-corrections.js";
 import { identityMeta, mergeMeta, CATALOG_PICTURE_NOT_PERSONS } from "./metadata.js";
 import {
   earnsMatchesYourPhoto,
@@ -899,6 +902,35 @@ export function isNameEcho(correctName: string, rejectedName: string): boolean {
   return a === b || a.includes(b) || b.includes(a);
 }
 
+/** The question the scan-photo cross-check asks of the picture: does it show
+ *  the product the barcode named, and what is printed on it (the maker, the
+ *  brand, the title, and this unit's lot). One vision call answers all of it.
+ *  Exported so its recorded answers (tests/fixtures/label-lots) are pinned to
+ *  this exact wording. */
+export function crossCheckPhotoPrompt(resolvedName: string): string {
+  return (
+    `A scanned barcode resolved this item to: "${resolvedName}". ` +
+    "Look at the photo and decide whether the product visible in it plausibly " +
+    "matches that name/identity — consider the product type, packaging, and any " +
+    "readable label text, and allow for a generic or differently-angled shot. " +
+    'Only answer "no" when the photo clearly shows a DIFFERENT kind of product. ' +
+    "When (and ONLY when) it's a clear mismatch AND the photo's label makes the " +
+    "real product unambiguous, also return what the item actually IS — a concise " +
+    "retail product name, plus brand if visible. Omit them if you can't read it " +
+    "confidently. " +
+    'Separately, in "printed", report what is PRINTED on the item or its cover, ' +
+    "verbatim and only when clearly legible: the author, artist or maker as " +
+    "printed (a book's cover author, a record's artist), the brand as printed, " +
+    "the title as printed, and the lot or batch code as printed (a dye lot, a lot " +
+    "number, a batch: the code that changes from one production run to the next, " +
+    "never the barcode digits, a colour number or an article number). " +
+    "Never complete or translate them; null when not shown. " +
+    'Reply with JSON only: {"match":"yes"|"no"|"unsure","reason":"<one short sentence>",' +
+    '"correct_name":"<the real product name, optional>","correct_brand":"<brand, optional>",' +
+    '"printed":{"creator":<string|null>,"brand":<string|null>,"title":<string|null>,"lot":<string|null>}}.'
+  );
+}
+
 export interface CrossCheckOptions {
   /** Check THIS photo rather than the item's own scan shot. Set when someone
    *  deliberately added a picture: that is the evidence they meant to supply,
@@ -990,7 +1022,7 @@ export async function crossCheckScanPhoto(
     correct_brand?: string;
     /** What the photo shows AS PRINTED, kept apart from the verdict: the
      *  evidence a route's guess is checked against (scan-evidence.ts). */
-    printed?: { creator?: string | null; brand?: string | null; title?: string | null } | null;
+    printed?: { creator?: string | null; brand?: string | null; title?: string | null; lot?: string | null } | null;
   };
   const parseVerdict = (r: { text: string }): Verdict => {
     const raw = r.text;
@@ -1038,23 +1070,7 @@ export async function crossCheckScanPhoto(
         input: {
           image_b64: Buffer.from(file.bytes).toString("base64"),
           image_media_type: file.mimeType,
-          prompt:
-            `A scanned barcode resolved this item to: "${resolvedName}". ` +
-            "Look at the photo and decide whether the product visible in it plausibly " +
-            "matches that name/identity — consider the product type, packaging, and any " +
-            "readable label text, and allow for a generic or differently-angled shot. " +
-            'Only answer "no" when the photo clearly shows a DIFFERENT kind of product. ' +
-            "When (and ONLY when) it's a clear mismatch AND the photo's label makes the " +
-            "real product unambiguous, also return what the item actually IS — a concise " +
-            "retail product name, plus brand if visible. Omit them if you can't read it " +
-            "confidently. " +
-            'Separately, in "printed", report what is PRINTED on the item or its cover, ' +
-            "verbatim and only when clearly legible: the author, artist or maker as " +
-            "printed (a book's cover author, a record's artist), the brand as printed, " +
-            "and the title as printed. Never complete or translate them; null when not shown. " +
-            'Reply with JSON only: {"match":"yes"|"no"|"unsure","reason":"<one short sentence>",' +
-            '"correct_name":"<the real product name, optional>","correct_brand":"<brand, optional>",' +
-            '"printed":{"creator":<string|null>,"brand":<string|null>,"title":<string|null>}}.',
+          prompt: crossCheckPhotoPrompt(resolvedName),
         },
         source: { kind: "core-scan:photo-crosscheck", id: itemId },
       }),
@@ -1082,6 +1098,18 @@ export async function crossCheckScanPhoto(
   // an author the cover contradicts (#3070). Only a look at the pixels can
   // have read it.
   if (basis === "image") await keepPhotoRead(orgId, itemId, row.image_file_id!, verdict?.printed);
+  // The lot printed on THIS unit, from the same answer: the pixels' reading
+  // when it looked, else the description it compared against. No extra call.
+  // A row fact, per unit, filed into the lot-role field (lot-field.ts).
+  {
+    const lot = basis === "image" ? verdict?.printed?.lot : labelFactsOf(observation).lot;
+    if (typeof lot === "string" && lot.trim()) {
+      const lotDb = (await platform().tenants.getDb(orgId)) as unknown as Parameters<typeof applyLabelLot>[0];
+      await applyLabelLot(lotDb, itemId, lot).catch((e) =>
+        console.error("[core-scan] keeping the photo's lot threw:", (e as Error).message),
+      );
+    }
+  }
   const matchVerdict = String(verdict?.match ?? "").toLowerCase();
   if (matchVerdict !== "no") {
     // "yes" / "unsure" → the photo does not contradict the barcode. Release the
@@ -1104,10 +1132,11 @@ export async function crossCheckScanPhoto(
   const freshDb = (await platform().tenants.getDb(orgId)) as unknown as Kysely<CoreScanDB>;
   const existing = await freshDb
     .selectFrom("core_scan_inbox_items")
-    .select(["suggested_name", "barcode_text"])
+    .select(["suggested_name", "barcode_text", "suggested_metadata"])
     .where("id", "=", itemId)
     .executeTakeFirst();
   const prevName = (existing?.suggested_name as string | null) ?? resolvedName;
+  const unitLots = unitLotsOf(existing?.suggested_metadata, verdict?.printed?.lot);
 
   // A "correct name" that merely echoes the name we're REJECTING is not a
   // correction (a self-contradictory vision reply) — don't rename to the exact
@@ -1168,6 +1197,7 @@ export async function crossCheckScanPhoto(
         now: correctName,
         photoCorrect: true,
         orgId,
+        lots: unitLots,
       }).catch(() => {});
       if (correctBrand) {
         void reportBarcodeCorrection({
@@ -1177,6 +1207,7 @@ export async function crossCheckScanPhoto(
           now: correctBrand,
           photoCorrect: true,
           orgId,
+          lots: unitLots,
         }).catch(() => {});
       }
       // EVICT the shared/tenant caches that taught us the wrong name, then
@@ -1452,14 +1483,24 @@ async function readPhotoItem(ctx: PhotoEnrichContext): Promise<EnrichOutcome> {
   // AI-read (OCR'd digits can be off — lower trust, surfaced for the user to
   // confirm/scan). This is the "photograph it → recover the barcode" arc.
   let captureBarcode: string | null = null;
-  if (identity.barcode) {
-    const cur = await ctx.db
-      .selectFrom("core_scan_inbox_items")
-      .select("barcode_text")
-      .where("id", "=", ctx.itemId)
-      .executeTakeFirst();
-    if (!cur?.barcode_text) captureBarcode = identity.barcode;
-  }
+  const scanned = await ctx.db
+    .selectFrom("core_scan_inbox_items")
+    .select("barcode_text")
+    .where("id", "=", ctx.itemId)
+    .executeTakeFirst();
+  if (identity.barcode && !scanned?.barcode_text) captureBarcode = identity.barcode;
+
+  // A product with no barcode is known by its label's product words (#3769):
+  // what someone filed under the same words is taken before the AI's own
+  // answer, under the network's trust rules (one person's name is shown as
+  // such; two people's agreement is not overwritten by one). The words stay on
+  // the row, in this workspace, until the item is filed.
+  const photoOnly = !scanned?.barcode_text && !captureBarcode;
+  const labelWords = photoOnly ? labelWordsOf(identity) : [];
+  const known = labelWords.length >= 3 ? await matchLabelWords(labelWords) : null;
+  const named: PhotoIdentity = known
+    ? { ...identity, name: known.name, brand: known.brand ?? identity.brand, category: known.category ?? identity.category }
+    : identity;
 
   // The ONE thing we need from the current row: which image the stored observation
   // describes. That decides whether a reply carrying no observation of its own can
@@ -1471,22 +1512,27 @@ async function readPhotoItem(ctx: PhotoEnrichContext): Promise<EnrichOutcome> {
     .select("suggested_metadata")
     .where("id", "=", ctx.itemId)
     .executeTakeFirst())?.suggested_metadata ?? {}) as { photo_observed_for?: string };
-  const overlay = identityOverlay(identity, {
+  const overlay = identityOverlay(named, {
     imageFileId: ctx.imageFileId,
     captureBarcode,
     hint: ctx.hint,
     priorObservedFor: priorObservedFor.photo_observed_for ?? null,
   });
+  if (labelWords.length >= 3) Object.assign(overlay.set, { label_words: labelWords });
+  if (known) Object.assign(overlay.set, { label_known: known.confidence, ...(known.confidence === "single" ? { low_trust: true } : {}) });
   await ctx.db
     .updateTable("core_scan_inbox_items")
     .set({
-      suggested_name: identity.name,
-      suggested_manufacturer: identity.brand,
+      suggested_name: named.name,
+      suggested_manufacturer: named.brand,
       ...(captureBarcode ? { barcode_text: captureBarcode } : {}),
       suggested_metadata: identityMeta(overlay.set, { keep: overlay.keep }) as never,
       ai_confidence: String(identity.confidence),
-      ai_notes:
-        identity.confidence < 0.5
+      ai_notes: known
+        ? known.confidence === "single"
+          ? "Named by one person on the barcode network. Check it, or correct it."
+          : "Named from its label by the people who filed it."
+        : identity.confidence < 0.5
           ? "Identified from photo by vision — low confidence, please verify."
           : "Identified from photo by vision.",
       ai_suggested_at: new Date(),
@@ -1508,7 +1554,7 @@ async function readPhotoItem(ctx: PhotoEnrichContext): Promise<EnrichOutcome> {
   // resolved name gives a nicer display. Previously this only ran on a barcode
   // mismatch, so a clean photo identify never got a catalog photo. Best-effort;
   // honors a user-picked image (refreshCatalogImageByName checks the lock).
-  void refreshCatalogImageByName(ctx.orgId, ctx.itemId, identity.name, identity.brand).catch(() => {});
+  void refreshCatalogImageByName(ctx.orgId, ctx.itemId, named.name, named.brand).catch(() => {});
   return "identified";
 }
 

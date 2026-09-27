@@ -99,7 +99,7 @@ interface AdjustStockPayload {
  *  decrease at/below min_qty — so every consumption route trips the same
  *  "running low → shopping list" wire. Honours the tracked_by external-tracker
  *  opt-out. A non-zero `delta` is assumed (callers guard). */
-async function applyStockDelta(
+export async function applyStockDelta(
   orgId: string,
   p: { partId: string; delta: number; reason: string; sourceKind?: string | null; sourceId?: string | null },
 ): Promise<Record<string, unknown>> {

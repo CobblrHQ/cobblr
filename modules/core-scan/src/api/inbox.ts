@@ -21,6 +21,7 @@
 
 import { ocrImageText } from "../services/ocr.js";
 import { applyLabelFacts } from "../services/label-quantity.js";
+import { lotFieldOf, lotPatchFor } from "../services/lot-field.js";
 import { RESTOCK_CHOICES } from "@cobblr/platform-contract/kind-label";
 import { LOOKUP_GAVE_UP, retryHasRunOut } from "../services/retry-lookup.js";
 import { rememberPickedImage } from "../services/picked-images.js";
@@ -148,7 +149,7 @@ import { looksLikeReceiptPhoto, routeScannedReceiptPhoto } from "../services/rec
 import { readFailureFrom, readFailureHistory, readHistoryAfterSuccess } from "../services/receipt-read-state.js";
 import { cleanOrderRef, receiptDedupKey,
   receiptContentKey, receiptSessionLabel, vendorFromLabel, type ParsedReceipt, type ParseMethod } from "../services/receipt-shared.js";
-import { reportBarcodeCorrection, meaningfullyChanged } from "../services/barcode-corrections.js";
+import { reportBarcodeCorrection, reportLabelConfirm, meaningfullyChanged, originOfValue, unitLotsOf } from "../services/barcode-corrections.js";
 import { claimGlanceAnswer, readContextFor, readGlanceEnabled, writeGlanceEnabled } from "../services/glance.js";
 import { normalizeBarcode, barcodeFromHint } from "../services/barcode-correction.js";
 import { findBinContents, findTracked } from "../services/entity-match.js";
@@ -2065,6 +2066,7 @@ inboxRouter.patch(
         was: prior.suggested_name,
         now: parsed.data.name.trim(),
         userId: sessionUser(req).id,
+        lots: unitLotsOf(row.suggested_metadata),
       });
     }
 
@@ -2533,8 +2535,15 @@ inboxRouter.post(
     // A default like the storage requirement: the matchmaker's fields and the
     // person's own answers both win below.
     let expiryPatch: Record<string, string | number> = {};
+    // A lot read off the label (label-quantity.ts) goes into whichever field
+    // carries the `lot` role: a dye lot, a lot number, a batch. Evidence, so
+    // it outranks the route's guess and yields to the person (lot-field.ts).
+    let lotPatch: Record<string, string> = {};
+    let lotFieldName: string | null = null;
     try {
       const roledForExpiry = await platform().entities.roledFieldsFor(ctx.org.id, effectiveKindId);
+      lotPatch = lotPatchFor(meta, roledForExpiry);
+      lotFieldName = lotFieldOf(roledForExpiry);
       const expiryField = roledForExpiry.find((f) => f.field_role === "expiry")?.name;
       if (expiryField) {
         expiryPatch =
@@ -2561,8 +2570,9 @@ inboxRouter.post(
       ),
     );
     const at = new Date().toISOString();
+    for (const k of Object.keys(lotPatch)) if (rowStamps[k]?.by !== "person") entityStamps[k] = { by: "evidence", from: "label", at };
     for (const k of Object.keys(typedMetadata)) {
-      const was = matchedCandidate?.fields?.[k] ?? provenancePatch[k];
+      const was = matchedCandidate?.fields?.[k] ?? provenancePatch[k] ?? lotPatch[k];
       // Untouched on the form (the value the route or the receipt put there
       // came back as typed) keeps its stamp; a change is the person's.
       if (was !== undefined && String(was) === String(typedMetadata[k])) continue;
@@ -2651,6 +2661,7 @@ inboxRouter.post(
         // machine-derived value should defer to the model, and the model's
         // "Facebook Marketplace" won over the receipt's "eBay" (#3008).
         ...provenancePatch,
+        ...lotPatch,
         ...personValues,
         ...typedMetadata,
         // Who put each of these there, kept on the record (#3008).
@@ -3045,9 +3056,15 @@ inboxRouter.post(
     // absolute "lock it in". This is why a plain Confirm now teaches BIdb without
     // anyone reaching for the (operator-only) green button. Fire-and-forget;
     // inert unless the resolver + a correction token are configured.
+    // The lots this unit carries (read off its label, or filed by the person):
+    // per unit, so none of them ever reaches the shared network.
+    const unitLots = unitLotsOf(meta, ...Object.values(lotPatch), lotFieldName ? typedMetadata[lotFieldName] : undefined);
     if (row.barcode_text) {
       const committedName = String(body.name ?? filingName(row) ?? "").trim();
       const renamed = meaningfullyChanged(row.suggested_name, committedName);
+      // Where each value came from (#3769): the person's if they changed it,
+      // else the AI's or the catalogue's, by how the row was named.
+      const rowSource = (row.suggested_metadata as { source?: unknown } | null)?.source;
       if (committedName) {
         void reportBarcodeCorrection({
           upc: row.barcode_text,
@@ -3055,6 +3072,8 @@ inboxRouter.post(
           was: row.suggested_name,
           now: committedName,
           userId: sess.id,
+          lots: unitLots,
+          origin: originOfValue(rowSource, renamed),
           // Renamed → a correction; filed as-is → a confirm vote.
           ...(renamed ? {} : { commitSignal: true }),
         });
@@ -3075,6 +3094,8 @@ inboxRouter.post(
           was: row.suggested_manufacturer,
           now: committedBrand,
           userId: sess.id,
+          lots: unitLots,
+          origin: originOfValue(rowSource, brandChanged),
           ...(brandChanged ? {} : { commitSignal: true }),
         });
       }
@@ -3086,6 +3107,8 @@ inboxRouter.post(
           was: committedCategory,
           now: committedCategory,
           userId: sess.id,
+          lots: unitLots,
+          origin: originOfValue(rowSource, false),
           commitSignal: true,
         });
       }
@@ -3096,7 +3119,32 @@ inboxRouter.post(
           was: row.catalog_image_url,
           now: row.catalog_image_url,
           userId: sess.id,
+          lots: unitLots,
+          origin: originOfValue(rowSource, false),
           commitSignal: true,
+        });
+      }
+    }
+
+    // A product with no barcode is reported by its label's product words
+    // (#3769): only the words also in what the person filed ever leave, with
+    // the name, brand and category they settled on. Fire-and-forget.
+    const labelWords = (meta as { label_words?: unknown }).label_words;
+    if (!row.barcode_text && Array.isArray(labelWords) && labelWords.length >= 3) {
+      const filedName = String(body.name ?? filingName(row) ?? "").trim();
+      const filedBrand = String((restExtras as { manufacturer?: unknown }).manufacturer ?? row.suggested_manufacturer ?? "").trim() || null;
+      const filedCategory = typeof (meta as { category?: unknown }).category === "string" ? String((meta as { category?: unknown }).category) : null;
+      const filedColor = typeof (meta as { color?: unknown }).color === "string" ? String((meta as { color?: unknown }).color) : null;
+      if (filedName) {
+        void reportLabelConfirm({
+          labelWords: labelWords.filter((w): w is string => typeof w === "string"),
+          name: filedName,
+          brand: filedBrand,
+          category: filedCategory,
+          color: filedColor,
+          origin: originOfValue((row.suggested_metadata as { source?: unknown } | null)?.source ?? "vision", meaningfullyChanged(row.suggested_name, filedName)),
+          userId: sess.id,
+          lots: unitLots,
         });
       }
     }
@@ -5191,6 +5239,7 @@ inboxRouter.post(
         was: row.catalog_image_url,
         now: url,
         userId: sessionUser(req).id,
+        lots: unitLotsOf(row.suggested_metadata),
       });
     } else if (!isAiPick) {
       // No barcode - a receipt line. The shop and the line's name are the
@@ -6806,10 +6855,10 @@ inboxRouter.post(
     const cat = typeof meta.category === "string" ? meta.category : null;
     // Verify each non-blank field (the helper no-ops a blank `now`).
     await Promise.allSettled([
-      reportBarcodeCorrection({ upc: row.barcode_text, field: "title", was: row.suggested_name, now: row.suggested_name, userId, confirm: true }),
-      reportBarcodeCorrection({ upc: row.barcode_text, field: "brand", was: row.suggested_manufacturer, now: row.suggested_manufacturer, userId, confirm: true }),
-      reportBarcodeCorrection({ upc: row.barcode_text, field: "category", was: cat, now: cat, userId, confirm: true }),
-      reportBarcodeCorrection({ upc: row.barcode_text, field: "image_url", was: row.catalog_image_url, now: row.catalog_image_url, userId, confirm: true }),
+      reportBarcodeCorrection({ upc: row.barcode_text, field: "title", was: row.suggested_name, now: row.suggested_name, userId, confirm: true, lots: unitLotsOf(row.suggested_metadata) }),
+      reportBarcodeCorrection({ upc: row.barcode_text, field: "brand", was: row.suggested_manufacturer, now: row.suggested_manufacturer, userId, confirm: true, lots: unitLotsOf(row.suggested_metadata) }),
+      reportBarcodeCorrection({ upc: row.barcode_text, field: "category", was: cat, now: cat, userId, confirm: true, lots: unitLotsOf(row.suggested_metadata) }),
+      reportBarcodeCorrection({ upc: row.barcode_text, field: "image_url", was: row.catalog_image_url, now: row.catalog_image_url, userId, confirm: true, lots: unitLotsOf(row.suggested_metadata) }),
     ]);
     await appendScanHistory(db, id, { action: "confirm" });
     res.json(await db.selectFrom("core_scan_inbox_items").selectAll().where("id", "=", id).executeTakeFirst());

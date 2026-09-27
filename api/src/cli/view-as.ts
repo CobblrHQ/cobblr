@@ -39,6 +39,7 @@ import { env } from "../env.js";
 import { signSession, signImpersonation } from "../auth/jwt.js";
 import { ImpersonationRefused, startImpersonation, describeSession } from "../platform/impersonation.js";
 import { isPlatformAdmin } from "../auth/middleware.js";
+import { signupsBySource } from "../platform/signups-by-source.js";
 
 const AGENT_PREFIX = "[agent] ";
 
@@ -195,9 +196,17 @@ async function log(): Promise<void> {
   out(JSON.stringify({ sessions }, null, 2) + "\n");
 }
 
+/** Sign-ups by the door that sent them (signups-by-source.ts): the same read
+ *  the admin console shows, with the per-account rows an operator on the box
+ *  may see. Read-only: counts and who, never a workspace's contents. */
+async function signups(): Promise<void> {
+  const days = Number(arg("days") ?? 30);
+  out(JSON.stringify(await signupsBySource({ days: Number.isFinite(days) ? days : 30, accounts: true }), null, 2) + "\n");
+}
+
 const cmd = process.argv[2];
-const run = { list, start, read, end, log }[cmd ?? ""];
-if (!run) fail("usage: view-as.js <list|start|read|end|log> ...");
+const run = { list, start, read, end, log, signups }[cmd ?? ""];
+if (!run) fail("usage: view-as.js <list|start|read|end|log|signups> ...");
 run()
   .then(() => process.exit(0))
   .catch((e: unknown) => fail(e instanceof Error ? e.message : String(e)));

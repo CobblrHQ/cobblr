@@ -55,7 +55,7 @@ export const TOKEN_SCOPES: TokenScopeDef[] = [
     key: "ops:read",
     label: "Operator read-only",
     description:
-      "Read the operator dashboards - overview counts and product metrics. No tenant " +
+      "Read the operator dashboards - overview counts, product metrics and sign-ups by source. No tenant " +
       "data, no writes, nothing else. For a cross-instance ops console that reports on " +
       "several deployments at once.",
     // GET only, and only the two aggregate surfaces. Deliberately NOT /workspaces,
@@ -65,6 +65,9 @@ export const TOKEN_SCOPES: TokenScopeDef[] = [
     allow: [
       ["GET", /^\/super-admin\/overview$/],
       ["GET", /^\/super-admin\/product-metrics$/],
+      // Sign-ups per source per day. Counts only: the route leaves out the
+      // per-account rows for any token (routes/super-admin.ts).
+      ["GET", /^\/super-admin\/signups$/],
     ],
   },
   {

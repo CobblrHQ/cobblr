@@ -13,7 +13,10 @@ import { gtinItem } from "./identifier-equals.js";
 
 export interface LabelFacts {
   quantity?: number;
-  dye_lot?: string;
+  /** The batch printed on this unit (a dye lot, a food lot, a filament
+   *  batch). Lands in whichever field of the destination carries the `lot`
+   *  role; per unit, so never a fact about the product. */
+  lot?: string;
   colorway?: string;
   sku?: string;
   /** A GTIN-14 case code (packaging indicator 1 to 8), kept as the pack's
@@ -21,7 +24,7 @@ export interface LabelFacts {
   pack_code?: string;
 }
 
-const LOT = /\b(?:dye\s*)?lot\s*(?:no\.?|number|#)?\s*[:.]?\s*([A-Z0-9][A-Z0-9-]{1,11})\b/i;
+const LOT = /\b(?:dye\s*)?lot\s*(?:no\.?|number|#)?\s*[:.]?\s*([A-Z0-9][A-Z0-9-]{1,11})\b/gi;
 const COLOUR = /\b(?:colou?r(?:way)?|shade)\s*(?:code|name)?\s*[:.]?\s*([A-Z0-9][A-Za-z0-9 ]{1,28}?)(?=\s*(?:\/|,|\.|;|\n|$|\band\b|\blot\b|\bsku\b|\bqty\b|\bquantity\b|\d{4,}))/i;
 const SKU = /\bSKU\s*(?:no\.?|#)?\s*[:.]?\s*([A-Z0-9][A-Z0-9-]{3,19})\b/i;
 const CODE14 = /\b(\d{14})\b/g;
@@ -33,8 +36,14 @@ export function labelFactsOf(text: string | null | undefined): LabelFacts {
   const out: LabelFacts = {};
   const n = labelCountOf(t);
   if (n) out.quantity = n;
-  const lot = LOT.exec(t)?.[1];
-  if (lot && /\d/.test(lot)) out.dye_lot = lot;
+  // The first "lot" followed by a value with a digit in it: a label that says
+  // "DYE LOT / TEINTURE" before its number is not answered with the next word.
+  for (const m of t.matchAll(LOT)) {
+    if (/\d/.test(m[1]!)) {
+      out.lot = m[1]!;
+      break;
+    }
+  }
   const colour = COLOUR.exec(t)?.[1]?.trim();
   if (colour && /[a-z]/i.test(colour)) out.colorway = colour.replace(/\b([A-Za-z])([A-Za-z]*)\b/g, (_, a: string, b: string) => a.toUpperCase() + b.toLowerCase());
   const sku = SKU.exec(t)?.[1];

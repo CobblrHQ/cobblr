@@ -2214,14 +2214,14 @@ export const FEATURED_BUNDLES: FeaturedBundle[] = [
     ],
     manifest: {
       id: "cobblr.flagship.yarn",
-      version: "0.8.0",
+      version: "0.8.3",
       name: "Yarn",
       description:
         "Yarn as its own inventory instance: counted in balls, skeins or hanks, yarn-only fields, grouped by weight. Optional Hooks + Patterns tables.",
       author: "Cobblr",
       released_at: "2026-07-15",
       changelog:
-        "Call your yarn what you call it: ball, skein or hank. Pick the word when you add Yarn, or change it in the Yarn table's settings, and every label, your yarn's counts and Cobb all say it. Earlier: Designs are now Patterns: a pattern keeps its PDF, photos and notes, its designer, where it came from and how hard it is, and the yarn it needs. Import patterns takes a pile of PDFs or a zipped folder: each PDF becomes a pattern with its file, a zip's folders fill in the category, and a PDF you already have is never added twice. Your Designs table is renamed on this update, and everything in it stays. Earlier: Yarn now counts in balls, the word everyone knows: the unit, Length / ball, Full ball, Price / ball and the Consumption panel (Track each ball separately, Open a ball). Yarn you already have moves over to balls on this update; field names and your values are unchanged. Earlier: Says up front that it tracks stock, so counts and Use one or Used up are there from the first item rather than after one is counted. Earlier: Fixed: the Yarn update now installs: a bad field in the previous release made the update fail validation. New: track your yarn ball by ball. On a yarn's page, under Consumption, tap “Track each ball separately” and you get a plain count by state. “3 balls · 2 new · 1 open”, with the metres left in the ball you're actually knitting from shown quietly (never a confusing total across balls). Open a ball when you crack a new one, and log metres as you go; each open ball keeps its own running balance. It reads the “Length / ball” you already entered to know a full ball, so there's no capacity to type. It's opt-in per yarn and fully reversible, existing yarn is untouched until you turn it on. Earlier changes below.: Your Yarn table now reads “yarn” everywhere: the “New”, search box, and empty-state labels say “yarn” instead of “part”.",
+        "A pattern now knows what it needs: its yarns and hooks are read from the PDF, matched against your stash, and what is missing goes on your shopping list in one tap. Finishing a pattern takes each yarn off its own balls. Earlier: The scanner fills Dye lot from the lot printed on a label, and a dye lot is never shared as a fact about the yarn. Earlier: Call your yarn what you call it: ball, skein or hank. Pick the word when you add Yarn, or change it in the Yarn table's settings, and every label, your yarn's counts and Cobb all say it. Earlier: Designs are now Patterns: a pattern keeps its PDF, photos and notes, its designer, where it came from and how hard it is, and the yarn it needs. Import patterns takes a pile of PDFs or a zipped folder: each PDF becomes a pattern with its file, a zip's folders fill in the category, and a PDF you already have is never added twice. Your Designs table is renamed on this update, and everything in it stays. Earlier: Yarn now counts in balls, the word everyone knows: the unit, Length / ball, Full ball, Price / ball and the Consumption panel (Track each ball separately, Open a ball). Yarn you already have moves over to balls on this update; field names and your values are unchanged. Earlier: per-ball tracking (Track each ball separately, Open a ball) and the stock counts from the first item.",
       requires: [{ module: "inventory" }],
       // The always-on base: a "Yarn" instance of inventory.
       provides_instances: [
@@ -2253,7 +2253,7 @@ export const FEATURED_BUNDLES: FeaturedBundle[] = [
             { entity_kind: "inventory:part", name: "vendor", display_label: "Vendor", type: "text", position: 5, choices: ["Michaels", "Hobby Lobby", "Walmart", "Joann", "Amazon", "Etsy", "Local yarn shop"], help: "Where you bought it." },
             { entity_kind: "inventory:part", name: "length_per_skein", display_label: "Length / {{noun}} (m)", type: "number", unit: "m", position: 6, help: "Metres per {{noun}}, from the label, used to estimate if you have enough for a project." },
             { entity_kind: "inventory:part", name: "capacity", display_label: "Full {{noun}}", type: "computed", template: "{{ length_per_skein }}", position: 7, help: "Metres in one full {{noun}}, from the length above. When you track {{noun}} by {{noun}}, each opened {{noun}}'s gauge is measured against this: you never type it." },
-            { entity_kind: "inventory:part", name: "dye_lot", display_label: "Dye lot", type: "text", position: 8, help: "The batch code on the label, buy the same lot so colours match across {{nouns}}." },
+            { entity_kind: "inventory:part", name: "dye_lot", display_label: "Dye lot", type: "text", position: 8, field_role: "lot", help: "The batch code on the label, buy the same lot so colours match across {{nouns}}." },
             { entity_kind: "inventory:part", name: "needle_size", display_label: "Suggested needle size", type: "text", position: 9, choices: ["2.0 mm", "2.5 mm", "3.0 mm", "3.5 mm", "4.0 mm", "4.5 mm", "5.0 mm", "5.5 mm", "6.0 mm", "6.5 mm", "7.0 mm", "8.0 mm", "9.0 mm", "10.0 mm", "12.0 mm"], help: "The needle/hook size the label recommends for this yarn (in mm)." },
           ],
           field_overrides: [
@@ -2288,7 +2288,7 @@ export const FEATURED_BUNDLES: FeaturedBundle[] = [
         name: "Patterns",
         question: "Want to keep your patterns here too?",
         description:
-          "A 'Patterns' table (a projects instance): each pattern with its PDF, photos and notes, its category, designer and source, and the yarn it needs allocated to it. Import a pile of PDFs or a zipped folder in one go.",
+          "A 'Patterns' table (a projects instance): each pattern with its PDF, photos and notes, its category, designer and source, and the yarn and hooks it needs, read from the PDF and matched against your stash; finishing it takes each yarn off its own balls. Import a pile of PDFs or a zipped folder in one go.",
         default: false,
         requires: [{ module: "projects" }],
         next_steps: [

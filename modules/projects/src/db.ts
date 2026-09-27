@@ -81,12 +81,57 @@ export interface ProjectsPatternPhotoCandidatesTable {
   thumb: Buffer;
 }
 
+export type PatternNeedKind = "yarn" | "hook" | "needle";
+export type PatternNeedSource = "pattern" | "ai" | "hand";
+
+export interface ProjectsPatternNeedsTable {
+  id: Generated<string>;
+  project_id: string;
+  kind: PatternNeedKind;
+  position: Generated<number>;
+  label: string | null;
+  brand: string | null;
+  product: string | null;
+  color: string | null;
+  color_code: string | null;
+  weight: string | null;
+  fiber: string | null;
+  quantity: string | number | null;
+  quantity_unit: string | null;
+  unit_length_m: string | number | null;
+  length_m: string | number | null;
+  length_choices: { label: string; unit_length_m: number }[] | null;
+  size_mm: string | number | null;
+  size_label: string | null;
+  source: Generated<PatternNeedSource>;
+  pattern_file_id: string | null;
+  edited: Generated<boolean>;
+  part_id: string | null;
+  list_item_id: string | null;
+  settled_at: Date | null;
+  settle_note: string | null;
+  created_at: Generated<Date>;
+  updated_at: Generated<Date>;
+}
+
+export interface ProjectsPatternReadsTable {
+  project_id: string;
+  pattern_file_id: string;
+  status: "ready" | "empty" | "failed";
+  method: "pattern" | "ai" | null;
+  ai_tried: Generated<boolean>;
+  reason: string | null;
+  read_at: Generated<Date>;
+}
+
 export interface ProjectsDB {
   projects_projects: ProjectsProjectsTable;
   projects_tasks: ProjectsTasksTable;
   projects_task_dependencies: ProjectsTaskDependenciesTable;
   projects_pattern_photos: ProjectsPatternPhotosTable;
   projects_pattern_photo_candidates: ProjectsPatternPhotoCandidatesTable;
+  projects_pattern_needs: ProjectsPatternNeedsTable;
+  projects_pattern_reads: ProjectsPatternReadsTable;
 }
 
 /** Re-exported from the contract so this module cannot fall behind the

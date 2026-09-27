@@ -5,6 +5,7 @@
 // it brings anything (CarryPage), so the two pages cannot disagree about it.
 import { useEffect, useState } from "react";
 import { api, type SandboxLedger } from "../lib/api";
+import { countOf } from "@cobblr/platform-contract";
 
 /** Every line of the ledger as one sentence each, in the order a person would
  *  tell it: what they set up, then what they filled it with. */
@@ -24,19 +25,29 @@ export function ledgerLines(l: SandboxLedger): string[] {
 /** The ending page's one line: "Bookshelf, Groceries · 4 items · 3 photos".
  *  The names of what they set up, then counts in the words people use, photos
  *  called photos. Null when they made nothing of their own. */
+/** "A", "A and B", "A, B and C". */
+function andList(xs: string[]): string {
+  return xs.length <= 1 ? (xs[0] ?? "") : `${xs.slice(0, -1).join(", ")} and ${xs[xs.length - 1]}`;
+}
+
 export function addedSummary(l: SandboxLedger): string | null {
   const names = [...new Set([...l.bundles.map((b) => b.name), ...l.instances.map((i) => i.display_name), ...l.modules.map((m) => m.name)])];
   const items = l.records.reduce((n, r) => n + r.ids.length, 0);
-  const photos = l.scans.reduce((n, s) => n + s.photo_file_ids.length, 0);
-  const count = (n: number, one: string, many: string) => (n === 1 ? `1 ${one}` : `${n} ${many}`);
-  const parts = [
-    ...(names.length ? [names.join(", ")] : []),
-    ...(items ? [count(items, "item", "items")] : []),
-    ...(photos ? [count(photos, "photo", "photos")] : []),
-    ...(l.fields.length ? [count(l.fields.length, "field", "fields")] : []),
-    ...(l.automations.length ? [count(l.automations.length, "automation", "automations")] : []),
-  ];
-  return parts.length ? parts.join(" · ") : null;
+  // What was set up, then what was added: "You set up Pantry and Spices, and
+  // added 8 items." Photos, fields and automations are said only when there
+  // is nothing bigger to say.
+  const counts = items
+    ? [countOf(items, "item")]
+    : [
+        ...[l.scans.reduce((n, s) => n + s.photo_file_ids.length, 0)].filter(Boolean).map((n) => countOf(n, "photo")),
+        ...(l.fields.length ? [countOf(l.fields.length, "field")] : []),
+        ...(l.automations.length ? [countOf(l.automations.length, "automation")] : []),
+      ];
+  const setUp = names.length ? `set up ${andList(names)}` : "";
+  const added = counts.length ? `added ${andList(counts)}` : "";
+  if (setUp && added) return `You ${setUp}, and ${added}.`;
+  if (setUp || added) return `You ${setUp || added}.`;
+  return null;
 }
 
 /** What the ending page shows of the ledger: one line, or one sentence when
@@ -59,9 +70,7 @@ export function AddedLine({ preview }: { preview?: SandboxLedger | null }) {
   return (
     <p className="mt-4 text-sm text-content dark:text-mortar-100" data-testid="built-here">
       {summary ? (
-        <>
-          <strong>You added:</strong> <span data-testid="built-lines">{summary}</span>
-        </>
+        <span data-testid="built-lines">{summary}</span>
       ) : (
         <span className="text-muted" data-testid="built-nothing">
           You did not add anything of your own.

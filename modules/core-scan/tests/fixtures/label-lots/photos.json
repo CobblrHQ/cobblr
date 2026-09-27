@@ -1,0 +1,42 @@
+{
+  "note": "Real photos of yarn labels, for the scan photo's lot read (#3792). Each one's cross-check answer is recorded once beside it (<file>.crosscheck.json) by scripts/record-label-lot-cassettes.ts and replayed in CI.",
+  "photos": [
+    {
+      "file": "spinnerin-dressy.jpg",
+      "resolved_name": "Spinnerin Dressy Wool Yarn",
+      "printed_lot": "5293",
+      "why": "A real ball band: COLOR 228 beside DYE-LOT 5293, the lot's last digit cut off at the frame's edge. The lot is not the colour number.",
+      "source": "https://www.flickr.com/photos/23470998@N04/2271902077",
+      "title": "Spinnerin 'Dressy' wool yarn labels",
+      "author": "ShimmerGreen",
+      "license": "CC BY-SA 2.0",
+      "license_url": "https://creativecommons.org/licenses/by-sa/2.0/",
+      "fetched": "2026-09-27"
+    },
+    {
+      "file": "dye-lot-label.jpg",
+      "resolved_name": "Acrylic Yarn",
+      "printed_lot": null,
+      "printed_numbers": ["118026", "11108", "241011"],
+      "why": "A real trilingual label: DYE LOT / TEINTURE / LOTE DEL TINTE with its numbers on other lines. Which number is the lot is not certain from the picture, so the assertion is only that a lot read here is one of the printed numbers and never the colour number 11108.",
+      "source": "https://commons.wikimedia.org/wiki/File:Dye_lot.jpg",
+      "title": "File:Dye lot.jpg",
+      "author": "Durova",
+      "license": "CC BY-SA 4.0",
+      "license_url": "https://creativecommons.org/licenses/by-sa/4.0/",
+      "fetched": "2026-09-27"
+    },
+    {
+      "file": "same-dye-lot-skeins.jpg",
+      "resolved_name": "Chenille Yarn",
+      "printed_lot": null,
+      "why": "Skeins with no label in frame: nothing is printed, so no lot may be read (downscaled to 1024 px wide).",
+      "source": "https://commons.wikimedia.org/wiki/File:Samedyelot.jpg",
+      "title": "File:Samedyelot.jpg",
+      "author": "Durova",
+      "license": "CC BY-SA 4.0",
+      "license_url": "https://creativecommons.org/licenses/by-sa/4.0/",
+      "fetched": "2026-09-27"
+    }
+  ]
+}

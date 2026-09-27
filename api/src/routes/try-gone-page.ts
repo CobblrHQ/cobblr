@@ -26,7 +26,7 @@ export function goneHtml(reason: "expired" | "unknown" | "revoked"): string {
  a.ghost{background:transparent;color:#3D4451;margin-left:.5rem}
  ${brandHeaderCss()}
 </style></head><body>${brandHeaderHtml()}<main><div class="card">
-<h1>Your hour is up.</h1><p>${line}</p>
+<h1>Your hour is over.</h1><p>${line}</p>
 <a href="/api/v1/try">Start another</a><a class="ghost" href="/?mode=signup">Make an account</a>
 </div></main></body></html>`;
 }

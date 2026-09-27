@@ -13,6 +13,8 @@ import {
   runPatternPhoto,
   usePatternPhoto,
 } from "./pattern-photo.js";
+import { listNeeds, readPastedMaterials, readPatternNeedsState, runPatternRead, type PatternNeedsState } from "./pattern-needs.js";
+import { matchNeeds, settlePattern, syncShoppingLine, useYarn } from "./pattern-yarn.js";
 
 export const projectsRouter = Router({ mergeParams: true });
 
@@ -175,6 +177,13 @@ projectsRouter.patch(
       orgId: ctx.org.id,
       projectId: updated.id,
     });
+    // Finishing takes each yarn off the stash (its own balls first); giving up
+    // lets it all go. Here, on the one route every door writes status through,
+    // so a pattern marked done from its page, a table, a board or the
+    // assistant is settled the same way (pattern-yarn.ts).
+    if (parsed.data.status === "done" || parsed.data.status === "abandoned") {
+      await settlePattern(ctx.org.id, session.id, updated.id, parsed.data.status);
+    }
 
     res.json(updated);
   }),
@@ -209,47 +218,35 @@ projectsRouter.delete(
 // configured, so the UI can prompt the user instead of erroring.
 const ExtractBody = z.object({ text: z.string().min(1).max(20_000) });
 
-/** The materials-extraction prompt + call, shared by the paste-text and
- *  attached-PDF paths. Returns the {ai, yarn, hooks} shape both render. */
-async function extractMaterials(orgId: string, designId: string, text: string, userId?: string | null) {
-  const system =
-    "You read a crochet/knitting pattern and extract ONLY the materials it " +
-    "calls for. Reply with ONLY a JSON object, no prose:\n" +
-    '{"yarn":[{"fiber":<string|null>,"weight":<string|null, e.g. "Worsted",' +
-    '"DK","Aran">,"color":<string|null>,"length_m":<number|null total metres>,' +
-    '"skeins":<number|null>}],"hooks":[{"gauge":<string, e.g. "4.0 mm">}]}\n' +
-    "Use null when the pattern doesn't state something. If it lists no yarn or " +
-    "no hooks, use an empty array. Convert yards to metres (×0.9144).";
-  const r = await platform().ai.invoke({
-    orgId,
-    userId: userId ?? undefined,
-    capability: "chat",
-    input: {
-      messages: [
-        { role: "system", content: system },
-        { role: "user", content: text.slice(0, 20_000) },
-      ],
-    },
-    source: { kind: "projects:pattern-extract", id: designId },
-  });
-  const content = r.text;
-  const m = content.match(/\{[\s\S]*\}/);
-  const obj = m ? (JSON.parse(m[0]) as Record<string, unknown>) : null;
-  if (!obj) return null;
+const ExtractFileBody = z.object({ file_id: z.string().uuid() });
+
+/** Read a pattern file now, asking the AI if its text names nothing. A read
+ *  the upload already started (text only) is waited for, then finished. */
+async function readPatternNow(orgId: string, projectId: string, fileId: string, userId: string | null) {
+  await runPatternRead(orgId, projectId, fileId, { ai: true, userId });
+  const again = await readPatternNeedsState(orgId, projectId, userId);
+  if (again.read.status === "pending") await runPatternRead(orgId, projectId, fileId, { ai: true, userId });
+  return readPatternNeedsState(orgId, projectId, userId);
+}
+
+/** The shape the older "suggest from the pattern" door answered in, kept for
+ *  API callers: yarn by weight/fibre/colour/length, hooks by gauge. */
+function legacyShape(state: PatternNeedsState) {
+  const ok = state.read.status === "ready" || state.items.length > 0;
   return {
-    ai: true as const,
-    yarn: Array.isArray(obj.yarn) ? obj.yarn : [],
-    hooks: Array.isArray(obj.hooks) ? obj.hooks : [],
+    ai: ok,
+    ...(ok ? {} : { reason: state.read.reason ?? "Couldn't read that pattern." }),
+    yarn: state.items
+      .filter((n) => n.kind === "yarn")
+      .map((n) => ({ fiber: n.fiber, weight: n.weight, color: n.color, length_m: n.length_m, skeins: n.quantity })),
+    hooks: state.items.filter((n) => n.kind !== "yarn").map((n) => ({ gauge: n.size_mm != null ? `${n.size_mm} mm` : null })),
+    needs: state.items,
+    read: state.read,
   };
 }
 
-const ExtractFileBody = z.object({ file_id: z.string().uuid() });
-
-// The "store the pattern, let the AI read it" path: a pattern PDF attached
-// to the design (core-files) → text via pdf-parse → the same materials
-// extraction as paste-text. The webapp matches the result against stock
-// (hooks by gauge, yarn by weight/fiber) — the design becomes the bridge
-// between the pattern and the yarn/hooks actually on the shelf.
+// Read an attached pattern PDF into the pattern's needs, now. The page reads
+// by itself (GET /:id/needs); this is the explicit door, and the older name.
 // AI-REACH: takes an uploaded pattern file/images; the assistant cannot carry a file
 projectsRouter.post(
   "/:id/extract-pattern-file",
@@ -257,42 +254,216 @@ projectsRouter.post(
     const parsed = ExtractFileBody.safeParse(req.body);
     if (!parsed.success) return badBody(res, parsed.error);
     const ctx = tenantContext(req);
-    const bytes = await platform().files.read(ctx.org.id, parsed.data.file_id, "original");
-    if (!bytes) {
-      res.status(404).json({ error: { code: "file_not_found", message: "pattern file not found" } });
+    const state = await readPatternNow(ctx.org.id, req.params.id ?? "", parsed.data.file_id, sessionUser(req)?.id ?? null);
+    res.json(legacyShape(state));
+  }),
+);
+
+// What the pattern needs: its yarns, hooks and needles, and how the pattern
+// was read. Opening a pattern finishes its reading (pattern-needs.ts).
+projectsRouter.get(
+  "/:id/needs",
+  asyncHandler(async (req, res) => {
+    const ctx = tenantContext(req);
+    const userId = sessionUser(req)?.id ?? null;
+    const projectId = req.params.id ?? "";
+    const state = await readPatternNeedsState(ctx.org.id, projectId, userId);
+    res.json(await withMatches(ctx.org.id, userId, projectId, state));
+  }),
+);
+
+/** Each need with what in the stash fits it, what it has used and holds, and
+ *  what is short. The stash is read once per page. */
+async function withMatches(orgId: string, userId: string | null, projectId: string, state: PatternNeedsState) {
+  const matches = await matchNeeds(orgId, userId, projectId, state.items).catch((e: unknown) => {
+    console.warn("[projects] pattern match unavailable:", (e as Error).message);
+    return new Map();
+  });
+  return { ...state, items: state.items.map((n) => ({ ...n, match: matches.get(n.id) ?? null })) };
+}
+
+const UseBody = z.object({
+  part_id: z.string().uuid().nullable(),
+  /** On a swap, what the old yarn has given so far, when more than was logged. */
+  used_so_far_m: z.number().min(0).optional(),
+  used_so_far_units: z.number().min(0).optional(),
+});
+
+// Make this yarn requirement with a stash yarn (null lets it go). A second
+// pick is a swap: used so far stays on the old yarn's balls, the rest is held
+// on the new one, and the shopping line follows.
+// AI-REACH: exempt media - picks among the yarns the pattern page shows for one requirement; the assistant reserves through inventory:reserve-stock
+projectsRouter.post(
+  "/:id/needs/:needId/use",
+  asyncHandler(async (req, res) => {
+    const parsed = UseBody.safeParse(req.body ?? {});
+    if (!parsed.success) return badBody(res, parsed.error);
+    const ctx = tenantContext(req);
+    const userId = sessionUser(req)?.id ?? null;
+    const projectId = req.params.id ?? "";
+    const r = await useYarn(ctx.org.id, userId, projectId, req.params.needId ?? "", parsed.data.part_id, {
+      ...(parsed.data.used_so_far_m != null ? { m: parsed.data.used_so_far_m } : {}),
+      ...(parsed.data.used_so_far_units != null ? { units: parsed.data.used_so_far_units } : {}),
+    });
+    if (!r.ok) {
+      res.status(409).json({ error: { code: "cannot_use", message: r.error } });
       return;
     }
-    let text = "";
-    try {
-      const { PDFParse } = await import("pdf-parse");
-      const parser = new PDFParse({ data: new Uint8Array(bytes.bytes) });
-      text = (await parser.getText()).text ?? "";
-    } catch {
-      res.json({ ai: false, reason: "Couldn't read that PDF.", yarn: [], hooks: [] });
+    res.json(await withMatches(ctx.org.id, userId, projectId, await readPatternNeedsState(ctx.org.id, projectId, userId)));
+  }),
+);
+
+// Put what this requirement is missing on the shopping list.
+// AI-REACH: exempt media - the assistant adds to a list through lists:add-item
+projectsRouter.post(
+  "/:id/needs/:needId/shop",
+  asyncHandler(async (req, res) => {
+    const ctx = tenantContext(req);
+    const userId = sessionUser(req)?.id ?? null;
+    const projectId = req.params.id ?? "";
+    const r = await syncShoppingLine(ctx.org.id, userId, projectId, req.params.needId ?? "", { add: true });
+    if (!r.ok) {
+      res.status(409).json({ error: { code: "cannot_list", message: r.error } });
       return;
     }
-    if (!text.trim()) {
-      res.json({ ai: false, reason: "That PDF has no extractable text (a scan?).", yarn: [], hooks: [] });
+    res.json({ ...r, ...(await withMatches(ctx.org.id, userId, projectId, await readPatternNeedsState(ctx.org.id, projectId, userId))) });
+  }),
+);
+
+// Read the pattern again: every row nobody edited is replaced.
+// AI-REACH: exempt media - re-reads the pattern PDF the person is looking at; the assistant edits needs through the needs routes
+projectsRouter.post(
+  "/:id/needs/read",
+  asyncHandler(async (req, res) => {
+    const ctx = tenantContext(req);
+    const projectId = req.params.id ?? "";
+    const fileId = await latestPatternFileId(ctx.org.id, projectId);
+    if (!fileId) {
+      res.status(404).json({ error: { code: "no_pattern_file", message: "No pattern PDF is attached to this pattern. Upload one first." } });
       return;
     }
-    try {
-      const out = await extractMaterials(ctx.org.id, req.params.id ?? "", text, sessionUser(req)?.id ?? null);
-      if (!out) {
-        res.json({ ai: false, reason: "Couldn't read that pattern.", yarn: [], hooks: [] });
+    res.json(await readPatternNow(ctx.org.id, projectId, fileId, sessionUser(req)?.id ?? null));
+  }),
+);
+
+const NeedFields = z.object({
+  kind: z.enum(["yarn", "hook", "needle"]),
+  label: z.string().max(80).nullable().optional(),
+  brand: z.string().max(120).nullable().optional(),
+  product: z.string().max(120).nullable().optional(),
+  color: z.string().max(120).nullable().optional(),
+  color_code: z.string().max(40).nullable().optional(),
+  weight: z.string().max(40).nullable().optional(),
+  fiber: z.string().max(40).nullable().optional(),
+  quantity: z.number().positive().nullable().optional(),
+  quantity_unit: z.string().max(20).nullable().optional(),
+  unit_length_m: z.number().positive().nullable().optional(),
+  length_m: z.number().positive().nullable().optional(),
+  size_mm: z.number().positive().max(50).nullable().optional(),
+  size_label: z.string().max(20).nullable().optional(),
+});
+const NeedCreate = NeedFields;
+/** An edit; `length_choice` picks one of the per-ball lengths the pattern gave
+ *  ("solid" / "print"), which sets the per-ball and total length together. */
+const NeedUpdate = NeedFields.partial().extend({ length_choice: z.string().max(40).optional() });
+
+async function ensureProject(req: Parameters<typeof tenantDb>[0], id: string) {
+  return tenantDb(req)
+    .selectFrom("projects_projects")
+    .select(["id"])
+    .where("id", "=", id)
+    .where("instance", "=", instanceOf(req))
+    .executeTakeFirst();
+}
+
+// AI-REACH: exempt hand edits to a pattern's needs list on its page; the assistant reads the list through GET /needs
+projectsRouter.post(
+  "/:id/needs",
+  asyncHandler(async (req, res) => {
+    const parsed = NeedCreate.safeParse(req.body ?? {});
+    if (!parsed.success) return badBody(res, parsed.error);
+    const projectId = req.params.id ?? "";
+    if (!(await ensureProject(req, projectId))) {
+      res.status(404).json({ error: { code: "not_found", message: "pattern not found" } });
+      return;
+    }
+    const db = tenantDb(req);
+    const last = await db
+      .selectFrom("projects_pattern_needs")
+      .select((eb) => eb.fn.max("position").as("p"))
+      .where("project_id", "=", projectId)
+      .executeTakeFirst();
+    const d = parsed.data;
+    const length = d.length_m ?? (d.quantity != null && d.unit_length_m != null ? Math.round(d.quantity * d.unit_length_m) : null);
+    const row = await db
+      .insertInto("projects_pattern_needs")
+      .values({ ...d, length_m: length, project_id: projectId, position: Number(last?.p ?? -1) + 1, source: "hand", edited: true } as never)
+      .returning("id")
+      .executeTakeFirstOrThrow();
+    const items = await listNeeds(db, projectId);
+    res.status(201).json(items.find((n) => n.id === row.id));
+  }),
+);
+
+// AI-REACH: exempt hand edits to a pattern's needs list on its page; the assistant reads the list through GET /needs
+projectsRouter.patch(
+  "/:id/needs/:needId",
+  asyncHandler(async (req, res) => {
+    const parsed = NeedUpdate.safeParse(req.body ?? {});
+    if (!parsed.success) return badBody(res, parsed.error);
+    const projectId = req.params.id ?? "";
+    const db = tenantDb(req);
+    const cur = (await listNeeds(db, projectId)).find((n) => n.id === req.params.needId);
+    if (!cur) {
+      res.status(404).json({ error: { code: "not_found", message: "no such need on this pattern" } });
+      return;
+    }
+    const { length_choice, ...fields } = parsed.data;
+    const patch: Record<string, unknown> = { ...fields, edited: true, updated_at: new Date() };
+    if (length_choice !== undefined) {
+      const pick = (cur.length_choices ?? []).find((c) => c.label === length_choice);
+      if (!pick) {
+        res.status(400).json({ error: { code: "bad_choice", message: `The pattern gives no "${length_choice}" length.` } });
         return;
       }
-      res.json(out);
-    } catch (e) {
-      res.json({
-        ai: false,
-        reason:
-          e instanceof Error && /provider|capability|budget/i.test(e.message)
-            ? "No AI provider is set up for this workspace yet (Configuration → AI)."
-            : "AI is unavailable right now.",
-        yarn: [],
-        hooks: [],
-      });
+      patch.unit_length_m = pick.unit_length_m;
     }
+    const quantity = "quantity" in fields ? fields.quantity : cur.quantity;
+    const unit = (patch.unit_length_m as number | null | undefined) ?? ("unit_length_m" in fields ? fields.unit_length_m : cur.unit_length_m);
+    if (!("length_m" in fields) && ("quantity" in fields || "unit_length_m" in patch)) {
+      patch.length_m = quantity != null && unit != null ? Math.round(quantity * unit) : cur.length_m;
+    }
+    await db.updateTable("projects_pattern_needs").set(patch as never).where("id", "=", cur.id).execute();
+    if (cur.list_item_id) await syncShoppingLine(tenantContext(req).org.id, sessionUser(req)?.id ?? null, projectId, cur.id);
+    res.json((await listNeeds(db, projectId)).find((n) => n.id === cur.id));
+  }),
+);
+
+// AI-REACH: exempt hand edits to a pattern's needs list on its page; the assistant reads the list through GET /needs
+projectsRouter.delete(
+  "/:id/needs/:needId",
+  asyncHandler(async (req, res) => {
+    const db = tenantDb(req);
+    const projectId = req.params.id ?? "";
+    const cur = (await listNeeds(db, projectId)).find((n) => n.id === req.params.needId);
+    // Its balls go back to the pool and its shopping line comes off, first.
+    if (cur && !cur.settled_at && (cur.part_id || cur.list_item_id)) {
+      const orgId = tenantContext(req).org.id;
+      const userId = sessionUser(req)?.id ?? null;
+      if (cur.part_id) await useYarn(orgId, userId, projectId, cur.id, null);
+      await syncShoppingLine(orgId, userId, projectId, cur.id, { withdraw: true }).catch(() => undefined);
+    }
+    const gone = await db
+      .deleteFrom("projects_pattern_needs")
+      .where("id", "=", req.params.needId ?? "")
+      .where("project_id", "=", req.params.id ?? "")
+      .returning("id")
+      .executeTakeFirst();
+    if (!gone) {
+      res.status(404).json({ error: { code: "not_found", message: "no such need on this pattern" } });
+      return;
+    }
+    res.status(204).end();
   }),
 );
 
@@ -405,6 +576,7 @@ projectsRouter.post(
   }),
 );
 
+// Pasted materials text: read into the pattern's needs, its own words first.
 // AI-REACH: takes an uploaded pattern file/images; the assistant cannot carry a file
 projectsRouter.post(
   "/:id/extract-pattern",
@@ -412,50 +584,13 @@ projectsRouter.post(
     const parsed = ExtractBody.safeParse(req.body);
     if (!parsed.success) return badBody(res, parsed.error);
     const ctx = tenantContext(req);
-    const system =
-      "You read a crochet/knitting pattern and extract ONLY the materials it " +
-      "calls for. Reply with ONLY a JSON object, no prose:\n" +
-      '{"yarn":[{"fiber":<string|null>,"weight":<string|null, e.g. "Worsted",' +
-      '"DK","Aran">,"color":<string|null>,"length_m":<number|null total metres>,' +
-      '"skeins":<number|null>}],"hooks":[{"gauge":<string, e.g. "4.0 mm">}]}\n' +
-      "Use null when the pattern doesn't state something. If it lists no yarn or " +
-      "no hooks, use an empty array. Convert yards to metres (×0.9144).";
-    try {
-      const r = await platform().ai.invoke({
-        orgId: ctx.org.id,
-        userId: sessionUser(req)?.id ?? null,
-        capability: "chat",
-        input: {
-          messages: [
-            { role: "system", content: system },
-            { role: "user", content: parsed.data.text.slice(0, 20_000) },
-          ],
-        },
-        source: { kind: "projects:pattern-extract", id: req.params.id ?? "" },
-      });
-      const content = r.text;
-      const m = content.match(/\{[\s\S]*\}/);
-      const obj = m ? (JSON.parse(m[0]) as Record<string, unknown>) : null;
-      if (!obj) {
-        res.json({ ai: false, reason: "Couldn't read that pattern. Try pasting more of it.", yarn: [], hooks: [] });
-        return;
-      }
-      res.json({
-        ai: true,
-        yarn: Array.isArray(obj.yarn) ? obj.yarn : [],
-        hooks: Array.isArray(obj.hooks) ? obj.hooks : [],
-      });
-    } catch (e) {
-      // No provider / over budget / provider error → graceful degrade.
-      res.json({
-        ai: false,
-        reason:
-          e instanceof Error && /provider|capability|budget/i.test(e.message)
-            ? "No AI provider is set up for this workspace yet (Configuration → AI)."
-            : "AI is unavailable right now.",
-        yarn: [],
-        hooks: [],
-      });
+    const projectId = req.params.id ?? "";
+    const r = await readPastedMaterials(ctx.org.id, projectId, parsed.data.text, sessionUser(req)?.id ?? null);
+    const state = await readPatternNeedsState(ctx.org.id, projectId, sessionUser(req)?.id ?? null);
+    if ("error" in r) {
+      res.json({ ai: false, reason: r.error, yarn: [], hooks: [], needs: state.items, read: state.read });
+      return;
     }
+    res.json(legacyShape({ ...state, read: { ...state.read, status: "ready", method: r.method } }));
   }),
 );

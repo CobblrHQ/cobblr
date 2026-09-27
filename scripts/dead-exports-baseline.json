@@ -1,10 +1,5 @@
 [
   {
-    "file": "api/src/platform/hosted-seams.ts",
-    "name": "fireAccountDelete",
-    "reason": "baselined 2026-07-30 \u2014 pre-existing dead/half-wired export; remove or wire up, never grow."
-  },
-  {
     "file": "api/src/platform/reap-trials.ts",
     "name": "stopTrialReaper",
     "reason": "baselined 2026-07-30 \u2014 pre-existing dead/half-wired export; remove or wire up, never grow."

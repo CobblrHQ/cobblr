@@ -2,6 +2,24 @@
 
 User-facing changes, newest first. Dates are release dates.
 
+## 2026-09-27
+
+### Features
+- A pattern knows what it needs, and takes it off your stash when you finish. Upload or import a pattern PDF and its yarns and hooks are read from its own materials list, each yarn with its brand, colour, weight and length, with no AI needed for the usual layouts. Each yarn is matched against your stash: you have it, you are short by so much, or nothing fits, with Add to shopping list for what is missing. Use it holds the balls for that yarn, Change yarn halfway keeps what you used on the old balls and moves the rest to the new one, and marking the pattern done takes each yarn's length off its own balls, from any screen.
+- A product somebody has already named is known to the next person who scans it. When you file a barcode item that no catalogue knew, the name you settled on goes to Cobblr's shared barcode network, so the next scan of that barcode anywhere is named at once, without an AI identification. It shows as named by one person until someone else agrees, and you can always correct it.
+- Scanning a barcode now fills the lot printed beside it: Yarn's Dye lot, or any field you mark as a lot or batch. A lot belongs to that one unit and is never shared with the barcode network.
+- Making your Cobblr account happens right on the sign-in page now: your name, email and a password, then Create account, and the link in your email brings you straight back, signed in. The sign-in page is one card, Sign in or Create an account, with "Email me a sign-in link" underneath, instead of four different ways in.
+- The guided tour on a phone now walks you through putting Cobblr on your home screen, step by step, with a drawing of each screen and an arrow at the first tap. It is offered again once after your first scan, on Android it raises the browser's own Install prompt, an app already installed is never asked, and "Not now" is remembered.
+- A product without a barcode is now known to the next person who photographs it. When you file something the AI named from a photo, the product words on its label that are also in what you filed go to Cobblr's shared barcode network, so the next photo of that product gets the name you settled on.
+
+### Improvements
+- The page at the end of a sandbox's hour says what happened and what you can do: "Your hour is over. Your sandbox is saved for 24 hours." The main button is Create my account, which moves everything you made into your own Cobblr account; if you want more time first, Give me two weeks keeps the sandbox going and emails you the link. Download what I made, Start with an empty account, Try a new sandbox and Self-host Cobblr are a short list of links, and it all fits a phone screen.
+- What's on hand shows your photos and fills the page. Each tile now leads with the item's picture and is bigger, the board is as wide as the table beside it, and on a phone every tile has its plus and minus right there. On a wider screen Use / restock still shows and hides them, without the tiles changing size.
+- Every password field has an eye button now, so you can check what you typed before you create an account, sign in or set a new password. It works the same on API keys and tokens in connection settings.
+
+### Fixes
+- The Yarn table no longer shows an Import from Ravelry button that did nothing. It called an importer that had been replaced by the Ravelry sync connection, so pressing it only ever sent you to a page that could not connect Ravelry either. In a full workspace, Ravelry connects under Configuration → Integrations → Live sync, which brings your stash and projects into the tables you pick. The Pattern page's materials suggestion is also described as what it is today: a one-off reading by your AI, matched by weight and fibre, and not saved on the pattern.
+
 ## 2026-09-26
 
 ### Features

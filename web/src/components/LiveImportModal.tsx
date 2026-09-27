@@ -13,7 +13,7 @@
 
 import { useState, type ReactNode } from "react";
 import { Loader2, CheckCircle2, AlertTriangle, ArrowRight, Link2, Camera, Info } from "lucide-react";
-import { Modal, useToast } from "@cobblr/platform-web";
+import { Modal, useToast, PasswordInput } from "@cobblr/platform-web";
 import { useQueryClient } from "@tanstack/react-query";
 import { api, ApiError, type ImportPlan, type SyncRunResult } from "../lib/api";
 import { useActiveOrg } from "../auth/ActiveOrgContext";
@@ -198,8 +198,7 @@ export function LiveImportModal({ source, open, onClose }: { source: LiveImportS
             </label>
             <label className="block">
               <span className="block text-[11px] font-medium text-content dark:text-mortar-200 mb-1">API token</span>
-              <input
-                type="password"
+              <PasswordInput what="token"
                 value={token}
                 onChange={(e) => setToken(e.target.value)}
                 className="input font-mono"

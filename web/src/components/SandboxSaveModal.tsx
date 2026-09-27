@@ -25,7 +25,7 @@
 // the workspace they just decided to keep. So they can choose a password
 // right here, and the strip at the foot of the page opens this same view.
 import { useEffect, useState } from "react";
-import { Modal } from "@cobblr/platform-web";
+import { Modal, PasswordInput } from "@cobblr/platform-web";
 import { api, ApiError } from "../lib/api";
 import { holdSandboxEnd } from "../lib/sandbox-session";
 import { Cloud, Server, Download } from "lucide-react";
@@ -219,8 +219,7 @@ export function SandboxSaveModal({
                   So you can get back in without the email. At least 8 characters.
                 </p>
                 <div className="flex gap-2">
-                  <input
-                    type="password"
+                  <PasswordInput
                     autoFocus
                     autoComplete="new-password"
                     minLength={8}
@@ -228,7 +227,7 @@ export function SandboxSaveModal({
                     onChange={(e) => setPassword(e.target.value)}
                     placeholder="Choose a password"
                     aria-label="New password"
-                    className="input flex-1"
+                    className="input" wrapperClassName="flex-1"
                   />
                   <button
                     type="submit"

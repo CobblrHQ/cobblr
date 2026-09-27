@@ -74,9 +74,10 @@ for (const file of files) {
     }
   });
   // A script that calls on_box must actually have it in scope.
-  if (/\bon_box\b/.test(src) && !/on-box\.sh|shippable\.sh/.test(src)) {
+  // shippable.sh and surfaces.sh both source on-box.sh themselves.
+  if (/\bon_box\b/.test(src) && !/on-box\.sh|shippable\.sh|surfaces\.sh/.test(src)) {
     failures.push(
-      `${file}: calls on_box but sources neither lib/on-box.sh nor lib/shippable.sh — it would die with "on_box: command not found".`,
+      `${file}: calls on_box but sources none of lib/on-box.sh, lib/shippable.sh, lib/surfaces.sh — it would die with "on_box: command not found".`,
     );
   }
 }

@@ -71,13 +71,29 @@ export function isPhoto(m: PhotoMetrics): boolean {
   );
 }
 
+/** A largest photograph this faintly coloured, off the first page, is not
+ *  trusted over a clearly photographic image on page one. The case: a Red
+ *  Heart corner-to-corner throw whose page-two stitch chart (two inks,
+ *  anti-aliased at 1749 px) scores saturation 0.028 and smoothness 0.377 and
+ *  so passes the floor, while the cover photo on page one (0.232) is smaller.
+ *  The floor itself cannot move to catch it: the Prusa manual's real cover
+ *  photo is 0.027. */
+export const FAINT_SATURATION = 0.05;
+/** What "clearly photographic" means for that override: strong colour AND a
+ *  full tonal range. Every corpus cover photo on page one is ≥ 0.07 / ≥ 5.7,
+ *  and the page-one images a maker guide carries (a banner, a board on white)
+ *  are below one or the other, so their later-page heroes stand. */
+export const CLEAR_SATURATION = 0.1;
+export const CLEAR_ENTROPY = 7.0;
+
 /**
  * Score every candidate and pick the hero.
  *
  * `hero` is the LARGEST image that passes the floor, or null when none does —
  * never the least-bad diagram. Among photographs size still decides: the
  * finished object is the picture the layout gave the most room to, and on
- * every corpus PDF with more than one photo that held.
+ * every corpus PDF with more than one photo that held. One exception, for a
+ * faint largest image off page one (FAINT_SATURATION above).
  */
 export async function pickPhoto(images: ExtractedImage[]): Promise<{
   hero: ScoredImage | null;
@@ -88,7 +104,20 @@ export async function pickPhoto(images: ExtractedImage[]): Promise<{
     const metrics = await photoMetrics(image.png);
     scored.push({ image, index, metrics, photo: isPhoto(metrics) });
   }
-  // Input is largest-first already; the first photograph is the largest one.
+  return { hero: chooseHero(scored), scored };
+}
+
+/** The hero among scored candidates (largest first): the largest photograph,
+ *  unless it is faint and off page one while page one holds a clear photo. */
+export function chooseHero<T extends { photo: boolean; image: { page: number }; metrics: Pick<PhotoMetrics, "saturation" | "entropy"> }>(
+  scored: readonly T[],
+): T | null {
   const hero = scored.find((s) => s.photo) ?? null;
-  return { hero, scored };
+  if (hero && hero.image.page > 1 && hero.metrics.saturation < FAINT_SATURATION) {
+    const cover = scored.find(
+      (s) => s.photo && s.image.page === 1 && s.metrics.saturation >= CLEAR_SATURATION && s.metrics.entropy >= CLEAR_ENTROPY,
+    );
+    if (cover) return cover;
+  }
+  return hero;
 }

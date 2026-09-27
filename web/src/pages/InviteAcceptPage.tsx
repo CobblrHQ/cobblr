@@ -11,7 +11,7 @@ import { CheckCircle2, AlertTriangle } from "lucide-react";
 import { ApiError, api } from "../lib/api";
 import { useAuth } from "../auth/AuthContext";
 import { urlHandleFor } from "../auth/ActiveOrgContext";
-import { useToast, usePageTitle } from "@cobblr/platform-web";
+import { useToast, usePageTitle, PasswordInput } from "@cobblr/platform-web";
 
 export function InviteAcceptPage() {
   usePageTitle("Accept invite");
@@ -132,7 +132,7 @@ export function InviteAcceptPage() {
             {lockedEmail && <span className="mt-1 block text-[10px] text-faint dark:text-slate-500">This invite is for {lockedEmail}.</span>}
           </Field>
           <Field label="Password">
-            <input type="password" required minLength={8} value={su.password}
+            <PasswordInput required minLength={8} value={su.password}
               onChange={(e) => setSu((s) => ({ ...s, password: e.target.value }))}
               placeholder="at least 8 characters" className="input w-full" />
           </Field>
