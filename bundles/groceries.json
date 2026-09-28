@@ -1,7 +1,7 @@
 {
   "manifest": {
     "id": "cobblr.flagship.groceries",
-    "version": "0.12.0",
+    "version": "0.13.0",
     "scan_keywords": [
       "chips",
       "snack",
@@ -148,7 +148,6 @@
       "beverages",
       "drinks",
       "beer",
-      "wine",
       "cider",
       "pizza",
       "ice cream",
@@ -170,8 +169,8 @@
       "cashews",
       "peanuts"
     ],
-    "released_at": "2026-09-20",
-    "changelog": "Call them what you call them: items, groceries or pantry items. Pick the word when you install, or change it later in the table's settings, and every label says it. Earlier: A bag of sunflower, pumpkin, chia, flax or sesame seeds, a trail mix, mixed nuts, almonds, cashews or peanuts scanned from a receipt or a barcode files here: the bundle now declares them by name, so a snack no longer lands in Plants because its name ends in seeds. A seasoning, a herb or a marinade scanned from the food catalog files here: the bundle now declares those words, so a garlic seasoning blend no longer lands in a craft table because its name ends in Blend. The Groceries fields now live on the Groceries table only. An early install also put a copy of them on plain Inventory, which made every inventory table look perishable; food that was still filed in plain Inventory moves into Groceries on the next start, each move noted in the activity log, and the copy is removed. The installed Groceries table now routes with every word the bundle declares, so a scanned drink or snack lands here first instead of in plain Inventory. Groceries opens on What's on hand, the pantry board, rather than the table, and remembers the view you pick. Checking an item off the shopping list dates the fresh stock: bought today, good until today plus its shelf life, instead of inheriting the last lot's dates. The saved views that promise an order (Re-buy soonest, How often you re-buy, Use it or lose it) now deliver it on the table itself, soonest first. Checking an item off the shopping list now adds exactly what you bought, once: the restock and purchase wires were declared twice and both fired. The shopping row says what checking it off will do. Scanning a grocery now suggests this bundle.",
+    "released_at": "2026-09-28",
+    "changelog": "Where a grocery is kept is its Location now, the same place its shelf label lists: the separate Storage field is gone, a scan that reads Pantry files the item into your Pantry, and the Storage you had already set moves over on this update. Earlier: Wine has its own collection now, so a scanned bottle files there when both are installed; Groceries no longer claims the word wine. Earlier: Call them what you call them: items, groceries or pantry items. Pick the word when you install, or change it later in the table's settings, and every label says it.",
     "name": "Groceries",
     "description": "Turn inventory + lists into a kitchen system: track food with expiry + storage fields, an auto grocery list on low-stock/expiry, restock on check-off.",
     "author": "Cobblr",
@@ -240,7 +239,7 @@
           "visible_fields": [
             "title",
             "expires_on",
-            "storage",
+            "location",
             "qty"
           ]
         }
@@ -382,20 +381,6 @@
           },
           {
             "entity_kind": "groceries:item",
-            "name": "storage",
-            "display_label": "Storage",
-            "type": "text",
-            "position": 3,
-            "choices": [
-              "Fridge",
-              "Freezer",
-              "Pantry",
-              "Counter",
-              "Spice rack"
-            ]
-          },
-          {
-            "entity_kind": "groceries:item",
             "name": "food_category",
             "display_label": "Category",
             "type": "text",
@@ -471,7 +456,7 @@
               "visible_fields": [
                 "title",
                 "expires_on",
-                "storage",
+                "location",
                 "qty"
               ]
             }
@@ -602,6 +587,16 @@
             ]
           }
         ]
+      }
+    ],
+    "migrations": [
+      {
+        "to_version": "0.13.0",
+        "action": "inventory:field-to-location",
+        "args": {
+          "field": "storage",
+          "instance": "groceries"
+        }
       }
     ]
   }

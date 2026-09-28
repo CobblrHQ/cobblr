@@ -73,3 +73,84 @@ export function requiredArgsRefusal(
   for (const g of groups) parts.push(`one of ${describeArgs(schema, g)}`);
   return `${actionId} requires ${parts.join(", and ")}, and the call does not carry ${missing.length + groups.length === 1 ? "it" : "them"}.`;
 }
+
+/** One question a button asks before it runs. `required`: the action cannot
+ *  run without it (the door would refuse). `oneOf`: at least one of the
+ *  questions naming the same group must be answered. */
+export interface PressAsk {
+  arg: string;
+  label: string;
+  kind: "text" | "number" | "boolean";
+  placeholder?: string;
+  required?: boolean;
+  oneOf?: string;
+}
+
+function askKind(type: string | undefined): PressAsk["kind"] {
+  return type === "number" ? "number" : type === "boolean" ? "boolean" : "text";
+}
+
+/** What a press must ask before it runs: the button's own questions (a
+ *  binding's optional `ask`), then every argument the action requires that
+ *  the button does not already carry. LOG SERVICE fired bare for ten days
+ *  and every press met the door's refusal, because no button knew its
+ *  action required "What was done" (#3865). Empty when the press can run
+ *  as it is. */
+export function askBeforePress(
+  schema: Record<string, ActionArgSpec> | null | undefined,
+  fixed: unknown,
+  own: readonly { arg: string; label: string; kind?: "text" | "number"; placeholder?: string }[] = [],
+): PressAsk[] {
+  const missing = new Set(requiredArgsMissing(schema, fixed));
+  const groups = requiredGroupsMissing(schema, fixed);
+  const out: PressAsk[] = own.map((q) => ({
+    arg: q.arg,
+    label: q.label,
+    kind: q.kind ?? "text",
+    ...(q.placeholder ? { placeholder: q.placeholder } : {}),
+    ...(missing.has(q.arg) ? { required: true } : {}),
+  }));
+  const asked = new Set(out.map((q) => q.arg));
+  for (const name of missing) {
+    if (asked.has(name)) continue;
+    out.push({ arg: name, label: schema?.[name]?.label ?? name, kind: askKind(schema?.[name]?.type), required: true });
+    asked.add(name);
+  }
+  for (const members of groups) {
+    for (const name of members) {
+      const spec = schema?.[name];
+      const existing = out.find((q) => q.arg === name);
+      if (existing) existing.oneOf = spec?.oneOf;
+      else out.push({ arg: name, label: spec?.label ?? name, kind: askKind(spec?.type), ...(spec?.oneOf ? { oneOf: spec.oneOf } : {}) });
+    }
+  }
+  return out;
+}
+
+/** The answers, as the action's arguments: blanks left out, a number as a
+ *  number, a yes/no as a boolean. */
+export function pressAnswersToArgs(ask: readonly PressAsk[], answers: Record<string, string>): Record<string, unknown> {
+  const out: Record<string, unknown> = {};
+  for (const q of ask) {
+    const v = (answers[q.arg] ?? "").trim();
+    if (!v) continue;
+    if (q.kind === "number") {
+      const n = Number(v);
+      if (Number.isFinite(n)) out[q.arg] = n;
+    } else if (q.kind === "boolean") out[q.arg] = v === "true";
+    else out[q.arg] = v.slice(0, 1000);
+  }
+  return out;
+}
+
+/** The questions still unanswered that stop the press, by label; empty when
+ *  it may run. The sheet's run button waits on this, so what it sends is
+ *  never something the door refuses. */
+export function pressStillNeeds(ask: readonly PressAsk[], answers: Record<string, string>): string[] {
+  const blank = (q: PressAsk) => !(answers[q.arg] ?? "").trim();
+  const out = ask.filter((q) => q.required && blank(q)).map((q) => q.label);
+  const groups = new Map<string, PressAsk[]>();
+  for (const q of ask) if (q.oneOf) groups.set(q.oneOf, [...(groups.get(q.oneOf) ?? []), q]);
+  for (const members of groups.values()) if (members.every(blank)) out.push(members.map((q) => q.label).join(" or "));
+  return out;
+}

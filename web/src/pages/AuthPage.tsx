@@ -8,6 +8,7 @@ import { redeemOnce } from "../lib/redeem-once";
 import { TurnstileWidget } from "../components/TurnstileWidget";
 import { ForgotPasswordRow } from "../components/ForgotPasswordRow";
 import { MagicLinkPanel } from "../components/MagicLinkPanel";
+import { hereAsLanding, landingPath } from "../lib/landing-path";
 import { useAuth } from "../auth/AuthContext";
 import { CobblestoneMark } from "../CobblestoneMark";
 import { api, ApiError, setToken } from "../lib/api";
@@ -359,7 +360,7 @@ export function AuthPage({ initialMode, carrying }: { initialMode?: Mode; carryi
         )}
 
         {!onPage && mode === "login" && !provisioning && (
-          <MagicLinkPanel email={email} />
+          <MagicLinkPanel email={email} next={hereAsLanding()} />
         )}
 
         <p className="mt-6 text-center text-[11px] font-mono text-faint dark:text-slate-500">
@@ -481,8 +482,9 @@ export function MagicConsumePage() {
       try {
         const res = await redeemOnce(token, () => api.magicConsume({ token }));
         setToken(res.token);
-        // Hard redirect so AuthContext re-reads the new session.
-        window.location.href = "/";
+        // Hard redirect so AuthContext re-reads the new session, back to the
+        // page the link was asked from (the item they scanned) when there is one.
+        window.location.href = landingPath(res.next) ?? "/";
       } catch (err) {
         if (cancelled) return;
         setError(

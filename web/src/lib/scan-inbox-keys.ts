@@ -16,4 +16,7 @@ export const scanInboxKeys = {
   resolved: (slug: string) => ["scan-inbox", slug, "resolved"] as const,
   discarded: (slug: string) => ["scan-inbox", slug, "discarded"] as const,
   stats: (slug: string, batchId: string | null = null) => ["scan-inbox", slug, "stats", batchId] as const,
+  /** Waiting rows a search finds (the ⌘K palette), under the family so an
+   *  inbox write refreshes them. */
+  search: (slug: string, q: string) => ["scan-inbox", slug, "search", q] as const,
 };

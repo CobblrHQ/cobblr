@@ -17,7 +17,7 @@
 
 import { platform } from "@cobblr/platform-contract";
 import { providerReasonOf, providerSentence, type ProviderReason } from "@cobblr/platform-contract/provider-reason";
-import { guardedImageFetch, isPlaceholderImageUrl } from "./enrich.js";
+import { guardedImageFetch, isUnusablePictureUrl } from "./enrich.js";
 import { browserImageHeaders } from "./image-fetch-headers.js";
 import type { DdgImageResult } from "./ddg-images.js";
 import { composeContactSheet } from "./contact-sheet.js";
@@ -75,7 +75,7 @@ export function shouldAutoRank(row: AutoRankRow, askedQuery: string | null): boo
  *  too big, blocked, or a non-image). Guarded: a web-search result URL is
  *  attacker-influenceable, so it goes through the SSRF check, never plain. */
 export async function fetchImageBase64(url: string): Promise<{ b64: string; mediaType: string } | null> {
-  if (!url || isPlaceholderImageUrl(url)) return null;
+  if (!url || isUnusablePictureUrl(url)) return null;
   try {
     // guardedImageFetch runs the safe-URL check per hop, so a guard failure
     // throws here and is caught below (returns null), same as before.

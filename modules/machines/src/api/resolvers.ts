@@ -1,4 +1,4 @@
-import { platform, parseSort, type EntityListQuery, type ResolvedEntity, textSearchWhere } from "@cobblr/platform-contract";
+import { columnSet, platform, parseSort, type EntityListQuery, type ResolvedEntity, textSearchWhere } from "@cobblr/platform-contract";
 import { sql, type Kysely } from "kysely";
 import type { MachinesDB } from "../db.js";
 import { resolveDetailPath } from "@cobblr/platform-contract/instance-detail";
@@ -6,7 +6,7 @@ import { resolveDetailPath } from "@cobblr/platform-contract/instance-detail";
 // Native columns the list resolver will order by. Anything outside this set
 // (custom metadata fields, unknown keys) is dropped by parseSort rather than
 // interpolated into SQL. Mirrors the NATIVE/COMPARABLE whitelists below.
-const SORTABLE = new Set([
+const SORTABLE = columnSet<MachinesDB["machines_machines"]>()([
   "name",
   "state",
   "family",
@@ -50,7 +50,7 @@ export function registerMachinesResolvers(): void {
     if (instance) q = q.where("instance", "=", instance);
     if (query.q?.trim()) q = q.where((eb) => textSearchWhere(eb, query.q, { text: ["name", "short_name", "manufacturer", "type", "family", "notes", "state"], json: ["metadata"] })!);
     if (query.filter) {
-      const NATIVE = new Set(["state", "family", "type", "manufacturer", "serial_number", "location_id"]);
+      const NATIVE = columnSet<MachinesDB["machines_machines"]>()(["state", "family", "type", "manufacturer", "serial_number", "location_id"]);
       for (const [key, val] of Object.entries(query.filter)) {
         if (val === undefined || val === null) continue;
         if (key === "_tag") {
@@ -82,7 +82,7 @@ export function registerMachinesResolvers(): void {
     }
     // D10: comparison predicates on numeric / date columns.
     if (query.where) {
-      const COMPARABLE = new Set(["excitement", "quantity", "created_at", "updated_at"]);
+      const COMPARABLE = columnSet<MachinesDB["machines_machines"]>()(["excitement", "quantity", "created_at", "updated_at"]);
       for (const p of query.where) {
         if (!COMPARABLE.has(p.col)) continue;
         if (!["<", "<=", ">", ">=", "=", "!="].includes(p.op)) continue;

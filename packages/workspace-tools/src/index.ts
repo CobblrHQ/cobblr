@@ -18,6 +18,7 @@ export {
   toolOk,
   toolFail,
   apiErrorMessage,
+  workspaceLinks,
 } from "./api.js";
 export {
   fetchKinds,

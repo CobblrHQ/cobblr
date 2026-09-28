@@ -43,6 +43,7 @@ export function MeNotificationsPage() {
     onSuccess: () => {
       void qc.invalidateQueries({ queryKey: notificationKeys.all() });
     },
+    onError: (e: unknown) => toast.error(`Couldn't mark that read: ${e instanceof Error ? e.message : String(e)}`),
   });
   const markAll = useMutation({
     mutationFn: () => api.meMarkAllNotificationsRead(),
@@ -50,6 +51,7 @@ export function MeNotificationsPage() {
       toast.success(`Marked ${count} read`);
       void qc.invalidateQueries({ queryKey: notificationKeys.all() });
     },
+    onError: (e: unknown) => toast.error(`Couldn't mark them read: ${e instanceof Error ? e.message : String(e)}`),
   });
 
   let items = q.data?.items ?? [];

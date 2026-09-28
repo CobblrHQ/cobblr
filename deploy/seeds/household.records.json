@@ -149,7 +149,7 @@
         "name": "Whole milk",
         "qty": 2,
         "unit": "each",
-        "storage": "Fridge",
+        "storage_requirement": "refrigerated",
         "food_category": "Dairy",
         "shelf_life_days": 10,
         "expires_on": {
@@ -171,7 +171,7 @@
         "name": "Free-range eggs",
         "qty": 12,
         "unit": "each",
-        "storage": "Fridge",
+        "storage_requirement": "refrigerated",
         "food_category": "Dairy",
         "shelf_life_days": 28,
         "expires_on": {
@@ -193,7 +193,7 @@
         "name": "Sourdough loaf",
         "qty": 1,
         "unit": "each",
-        "storage": "Counter",
+        "storage_requirement": "ambient",
         "food_category": "Bakery",
         "shelf_life_days": 4,
         "expires_on": {
@@ -215,7 +215,7 @@
         "name": "Cheddar",
         "qty": 1,
         "unit": "each",
-        "storage": "Fridge",
+        "storage_requirement": "refrigerated",
         "food_category": "Dairy",
         "shelf_life_days": 60,
         "expires_on": {
@@ -237,7 +237,7 @@
         "name": "Baby spinach",
         "qty": 1,
         "unit": "each",
-        "storage": "Fridge",
+        "storage_requirement": "refrigerated",
         "food_category": "Produce",
         "shelf_life_days": 7,
         "expires_on": {
@@ -259,7 +259,7 @@
         "name": "Cherry tomatoes",
         "qty": 2,
         "unit": "each",
-        "storage": "Counter",
+        "storage_requirement": "ambient",
         "food_category": "Produce",
         "shelf_life_days": 9,
         "expires_on": {
@@ -281,7 +281,7 @@
         "name": "Chicken thighs",
         "qty": 1,
         "unit": "kg",
-        "storage": "Fridge",
+        "storage_requirement": "refrigerated",
         "food_category": "Meat",
         "shelf_life_days": 3,
         "expires_on": {
@@ -303,7 +303,7 @@
         "name": "Frozen peas",
         "qty": 1,
         "unit": "each",
-        "storage": "Freezer",
+        "storage_requirement": "frozen",
         "food_category": "Frozen",
         "shelf_life_days": 365,
         "expires_on": {
@@ -325,7 +325,7 @@
         "name": "Greek yogurt",
         "qty": 4,
         "unit": "each",
-        "storage": "Fridge",
+        "storage_requirement": "refrigerated",
         "food_category": "Dairy",
         "shelf_life_days": 21,
         "expires_on": {
@@ -347,7 +347,7 @@
         "name": "Chopped tomatoes",
         "qty": 6,
         "unit": "each",
-        "storage": "Pantry",
+        "storage_requirement": "ambient",
         "food_category": "Canned",
         "shelf_life_days": 730,
         "expires_on": {
@@ -369,7 +369,7 @@
         "name": "Olive oil",
         "qty": 1,
         "unit": "each",
-        "storage": "Pantry",
+        "storage_requirement": "ambient",
         "food_category": "Pantry",
         "shelf_life_days": 540,
         "expires_on": {
@@ -391,7 +391,7 @@
         "name": "Smoked paprika",
         "qty": 1,
         "unit": "each",
-        "storage": "Spice rack",
+        "storage_requirement": "ambient",
         "food_category": "Pantry",
         "shelf_life_days": 900,
         "expires_on": {

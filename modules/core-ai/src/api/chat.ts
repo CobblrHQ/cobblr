@@ -40,6 +40,7 @@ import {
   resolveUpdatePath,
   resolveDeletePath,
   fetchKinds,
+  workspaceLinks,
   type KindRec,
   type WorkspaceApi,
 } from "@cobblr/workspace-tools";
@@ -155,6 +156,8 @@ const WRITE_NAMES = new Set(WRITE_TOOLS.map((t) => t.name));
  *  read tools run with exactly the caller's permissions. */
 export function chatWorkspaceApi(c: Ctx): WorkspaceApi {
   return {
+    // The chat is read in the app, on this origin: same-origin paths open.
+    link: workspaceLinks({ apiBase: "/api/v1", appOrigin: "" }, c.slug),
     async request(method, path, body) {
       return callApi(c, method, path, body);
     },

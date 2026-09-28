@@ -40,6 +40,7 @@ export function SurfacesPage() {
       toast.success("Surface revoked - URL is now 404");
       void qc.invalidateQueries({ queryKey: ["surfaces", activeSlug] });
     },
+    onError: (e: unknown) => toast.error(`Couldn't revoke that: ${e instanceof ApiError ? e.message : String(e)}`),
   });
 
   const items = list.data?.items ?? [];

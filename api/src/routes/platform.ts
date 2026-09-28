@@ -7,6 +7,7 @@
 import { detailPathForEntity, titleForEntity } from "../platform/entities.js";
 import { Router, type Request } from "express";
 import { z } from "zod";
+import { BindingAsk, BindingLabel, bindingAskOf } from "@cobblr/platform-contract/binding-ask";
 import { parseWireFilter } from "../platform/wire-filter.js";
 import { sql } from "kysely";
 import { platform, isActionRefusal, crashSentence } from "@cobblr/platform-contract";
@@ -15,14 +16,16 @@ import { requireAuth, appTokenMayInvoke } from "../auth/middleware.js";
 import { requireCapability, requireRole } from "../auth/capability.js";
 import { withTenant } from "../middleware/tenant.js";
 import { meta } from "../db/meta.js";
+import { getTenantDb } from "../db/tenant.js";
 import { listEntries } from "../modules/registry.js";
 import * as activity from "../platform/activity.js";
-import { checkAvailability as checkAiAvailability } from "../platform/ai.js";
-import { hostedIdentifyEnabled } from "@cobblr/platform-contract/hosted-identify";
+import { checkAvailability as checkAiAvailability, aiChainFor, getProvider as getAiProvider, type AiChainStep } from "../platform/ai.js";
+import { verificationFrom, verificationLabel } from "@cobblr/platform-contract/connection-verification";
+import { hostedIdentifyReach } from "@cobblr/platform-contract/hosted-identify";
 import { ocrAvailable } from "@cobblr/core-scan/services/ocr";
 import { AiCapabilities, type AiCapability } from "@cobblr/platform-contract";
 import { clearComputedDefsCache } from "../platform/computed-fields.js";
-import { actionRecordOptional, effectiveAppliesTo, enabledActionOwners, matchAction, getActionScope, planFor, undoFor, hasUndo } from "../platform/actions.js";
+import { actionRecordOptional, effectiveAppliesTo, enabledActionOwners, listDormant, matchAction, getActionScope, planFor, undoFor, hasUndo } from "../platform/actions.js";
 import { facesForKind } from "../platform/faces.js";
 import { platformActionMinRole } from "../platform/platform-actions.js";
 import { roleSatisfies } from "@cobblr/platform-contract/org-roles";
@@ -64,15 +67,42 @@ platformOrgRouter.get(
       // each kind, so a schema-reading consumer (the AI tool registry, the MCP
       // server, form builders) sees the WHOLE shape, not just the manifest's
       // native fields. Custom-field values live in the record's metadata blob;
-      // the writers fold unknown body keys there (routeUnknownToMetadata), so
-      // knowing the names/types is exactly what makes them settable.
+      // a writer names them at the top level and a name that is not here is
+      // refused, so knowing the names/types is exactly what makes them settable.
       if (String(req.query.include ?? "").split(",").includes("custom_fields")) {
         const defs = await meta
           .selectFrom("module_field_defs")
-          .select(["entity_kind", "name", "display_label", "type", "required", "choices", "help"])
+          .select(["entity_kind", "name", "display_label", "type", "required", "choices", "help", "applies_to"])
           .where("org_id", "=", req.tenant!.org.id)
           .orderBy("position")
           .execute();
+        // A workspace-wide field (every physical thing: "Acquired from") is a
+        // field of each kind it applies to, and its form shows it there. A
+        // schema reader that saw only the kind's own defs could not discover
+        // the field it was meant to fill (#3855). Only a workspace that has
+        // such fields pays for resolving them, once per kind.
+        const scopedByKind = new Map<string, Array<Record<string, unknown>>>();
+        if (defs.some((d) => d.applies_to != null)) {
+          await Promise.all(
+            items.map(async (k) => {
+              const effective = await resolveFieldDefsForKind(req.tenant!.org.id, k.id);
+              const scoped = effective.filter((d) => d.scope);
+              if (!scoped.length) return;
+              scopedByKind.set(
+                k.id,
+                scoped.map((d) => ({
+                  name: d.name,
+                  label: d.display_label,
+                  type: d.type,
+                  required: d.required,
+                  ...(Array.isArray(d.choices) && d.choices.length ? { choices: d.choices } : {}),
+                  ...(d.help ? { help: d.help } : {}),
+                  scope: d.scope_label ?? d.scope,
+                })),
+              );
+            }),
+          );
+        }
         const byKind = new Map<string, Array<Record<string, unknown>>>();
         for (const d of defs) {
           const list = byKind.get(d.entity_kind) ?? [];
@@ -104,7 +134,7 @@ platformOrgRouter.get(
             ...(Array.isArray(k.fields)
               ? { fields: k.fields.map((f) => { const label = labelOf.get(`${k.id} ${f.name}`); return label ? { ...f, label } : f; }) }
               : {}),
-            custom_fields: byKind.get(k.id) ?? [],
+            custom_fields: [...(byKind.get(k.id) ?? []), ...(scopedByKind.get(k.id) ?? [])],
           })),
         });
         return;
@@ -391,7 +421,10 @@ platformOrgRouter.get(
           "b.id as binding_id",
           "b.action_id",
           "b.template",
-          "a.label",
+          // The binding's own label when it has one ("Open a bottle"), else
+          // the action's ("Use one").
+          sql<string>`coalesce(b.label, a.label)`.as("label"),
+          "b.ask",
           // What it actually does, in the module's own words. A row shows the
           // LABEL, and "Print label" does not say whether paper comes out now
           // or a line joins the queue; the description does ("Queue a
@@ -405,15 +438,25 @@ platformOrgRouter.get(
           // needs to know which ones deserve a second tap. Printing a label is
           // the motivating case: nothing breaks, but a label comes out.
           "a.undoable",
+          // What the button already carries and what the action requires, so
+          // a press asks for whatever is still missing instead of meeting the
+          // door's refusal (#3865).
+          "b.args",
+          "a.args_schema",
         ])
         .where("b.org_id", "=", req.tenant!.org.id)
         .where("b.source_kind", "=", kind)
         .where("b.trigger_type", "=", "user-invoked")
         .where("b.enabled", "=", true)
         .execute();
+      // What the record would offer with a module turned on: a door, never a
+      // button that runs (#3883). Best-effort: a registry hiccup here costs
+      // the doors, never the record's real actions.
+      const dormant = await listDormant(kind, req.tenant!.org.id).catch(() => []);
       res.json({
         items: applicable.filter((a) => installedSet.has(a.module_name)),
-        bindings,
+        dormant: dormant.map((a) => ({ id: a.id, label: a.label, description: a.description, icon: a.icon, module_name: a.module_name, module_label: a.module_label })),
+        bindings: bindings.map((b) => ({ ...b, ask: bindingAskOf(b.ask) })),
       });
     } catch (err) {
       next(err);
@@ -433,6 +476,32 @@ const InvokeBody = z.object({
   bindingId: z.string().uuid().optional(),
   args: z.record(z.unknown()).optional(),
 });
+
+/** The arguments a binding was given, under what this press adds. A button a
+ *  collection declared ("Buy again" → `{ listTitle: "Shopping list" }`) ran
+ *  with its template and none of its arguments, so every binding with args
+ *  behaved like the bare action. What the person answered (the ask) wins over
+ *  what the binding fixed. */
+async function withBindingArgs(
+  orgId: string,
+  bindingId: string | undefined,
+  actionId: string,
+  args: Record<string, unknown> | undefined,
+): Promise<Record<string, unknown> | undefined> {
+  if (!bindingId) return args;
+  // Only a binding OF this action lends its arguments: an id sent beside a
+  // different action must not hand that action somebody else's args.
+  const b = await meta
+    .selectFrom("entity_action_bindings")
+    .select(["args"])
+    .where("id", "=", bindingId)
+    .where("org_id", "=", orgId)
+    .where("action_id", "=", actionId)
+    .executeTakeFirst();
+  const fixed = b?.args && typeof b.args === "object" && !Array.isArray(b.args) ? (b.args as Record<string, unknown>) : null;
+  if (!fixed) return args;
+  return { ...fixed, ...(args ?? {}) };
+}
 
 /** The door has one slot called entityKind, for the record an action runs
  *  on, and the field actions take an argument of the same name for the kind
@@ -468,7 +537,7 @@ platformOrgRouter.post(
       }
       if (!(await requireCapability(req, res, parsed.data.actionId))) return;
       const isWorkspaceAction = (await getActionScope(parsed.data.actionId)) === "workspace";
-      const args = argsOf(parsed.data, isWorkspaceAction);
+      const args = await withBindingArgs(req.tenant!.org.id, parsed.data.bindingId, parsed.data.actionId, argsOf(parsed.data, isWorkspaceAction));
       const plan = await planFor(parsed.data.actionId, {
         orgId: req.tenant!.org.id,
         userId: req.session!.id,
@@ -596,7 +665,7 @@ platformOrgRouter.post(
       // "Unknown action" below.)
       const isWorkspaceAction =
         (await getActionScope(parsed.data.actionId)) === "workspace";
-      const args = argsOf(parsed.data, isWorkspaceAction);
+      const args = await withBindingArgs(req.tenant!.org.id, parsed.data.bindingId, parsed.data.actionId, argsOf(parsed.data, isWorkspaceAction));
       // An entity action that may also run with no record (its manifest says
       // `recordOptional`) is let through without one: "put milk on the
       // shopping list" has no record to name (#3255).
@@ -787,6 +856,9 @@ const BindingCreate = z
     template: z.string().max(2000).nullish(),
     filter: z.record(z.unknown()).optional(),
     args: z.record(z.unknown()).optional(),
+    /** A button's own label and what it asks before it runs (binding-ask.ts). */
+    label: BindingLabel.nullish(),
+    ask: BindingAsk.nullish(),
     /** What entity the action fires on. Default "self" (action runs on
      *  the source entity); object form opts into cross-module pairing
      *  traversal. See wires-and-bundles.md Q1. */
@@ -817,6 +889,13 @@ const BindingCreate = z
         message:
           "trigger_event is only meaningful when trigger_type is 'event' — remove it or change trigger_type",
         path: ["trigger_event"],
+      });
+    }
+    if ((data.label || data.ask?.length) && data.trigger_type !== "user-invoked") {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "label and ask are for a button (trigger_type 'user-invoked'); a wire that fires on its own has nobody to ask",
+        path: ["label"],
       });
     }
     if (data.trigger_type !== "schedule" && data.trigger_schedule) {
@@ -918,6 +997,8 @@ platformOrgRouter.post(
           args: parsed.data.args
             ? sql`${JSON.stringify(parsed.data.args)}::jsonb`
             : null,
+          label: parsed.data.label ?? null,
+          ask: parsed.data.ask?.length ? sql`${JSON.stringify(parsed.data.ask)}::jsonb` : null,
           // Default "self" (column default + explicit here so the
           // returning row carries it). Object form serialises to jsonb.
           target: parsed.data.target
@@ -972,6 +1053,8 @@ platformOrgRouter.patch(
         args: z.record(z.unknown()).nullable().optional(),
         target: BindingTarget.optional(),
         enabled: z.boolean().optional(),
+        label: BindingLabel.nullish(),
+        ask: BindingAsk.nullish(),
       });
       const parsed = Patch.safeParse(req.body);
       if (!parsed.success) {
@@ -1001,6 +1084,8 @@ platformOrgRouter.patch(
       if (d.filter !== undefined) setObj.filter = d.filter ? sql`${JSON.stringify(d.filter)}::jsonb` : null;
       if (d.args !== undefined) setObj.args = d.args ? sql`${JSON.stringify(d.args)}::jsonb` : null;
       if (d.target !== undefined) setObj.target = sql`${JSON.stringify(d.target)}::jsonb`;
+      if (d.label !== undefined) setObj.label = d.label ?? null;
+      if (d.ask !== undefined) setObj.ask = d.ask?.length ? sql`${JSON.stringify(d.ask)}::jsonb` : null;
       const updated = await meta
         .updateTable("entity_action_bindings")
         .set(setObj)
@@ -1350,23 +1435,107 @@ platformOrgRouter.get(
       // axis is "can THIS person's photo be read here", which the hosted
       // service answers, or a provider with the image capability routed to
       // them: their own connection, the workspace's, or the plan's.
-      const identify = hostedIdentifyEnabled()
+      //
+      // "The hosted service is on" is not "it serves THIS workspace": a
+      // deployment can scope it to some workspaces (#3867). The reach is the
+      // same function the scan asks before every call. Outside the scope, the
+      // person's own AI is still a way in, and the reason says so.
+      const hosted = await hostedIdentifyReach(req.tenant!.org.id);
+      const identify = hosted.available
         ? { available: true, source: "hosted" as const }
         : await checkAiAvailability(req.tenant!.org.id, req.session?.id ?? null, "classify-image").then(
             (r) => ({ available: r.available, source: r.available ? r.source : undefined }),
             () => ({ available: false, source: undefined }),
           );
+      const identifyReason = !identify.available && !hosted.available && hosted.why === "scope" ? "hosted_scope" : undefined;
       // A third axis: can this deployment read the TEXT off an image with no
       // model at all (the OCR engine behind the receipt-shape check and the
       // receipt door's line tier)? Reported so "the receipt went to the
       // model" is a fact a person can read off the deployment rather than
       // infer from what happened.
-      res.json({ ...status, identify_available: identify.available, identify_source: identify.source, ocr_available: await ocrAvailable() });
+      res.json({
+        ...status,
+        identify_available: identify.available,
+        identify_source: identify.source,
+        ...(identifyReason ? { identify_reason: identifyReason } : {}),
+        ocr_available: await ocrAvailable(),
+      });
     } catch (err) {
       next(err);
     }
   },
 );
+
+// Who answers an AI call here, in the order they are asked (#3842): for the
+// person asking, and for automations (no person at the keyboard, so only
+// connections shared with the workspace). Member-readable. A connection that
+// belongs to somebody else shows as theirs and no more: its label and
+// provider stay private, as they do everywhere a Share is shown.
+platformOrgRouter.get("/:slug/ai-chain", requireAuth, withTenant, async (req, res, next) => {
+  try {
+    const q = typeof req.query.capability === "string" ? req.query.capability : "chat";
+    if (!(AiCapabilities as readonly string[]).includes(q)) {
+      res.status(400).json({ error: { code: "invalid_capability", message: `capability must be one of: ${AiCapabilities.join(", ")}` } });
+      return;
+    }
+    const capability = q as AiCapability;
+    const orgId = req.tenant!.org.id;
+    const me = req.session?.id ?? null;
+    const [mine, automations] = await Promise.all([aiChainFor(orgId, me, capability), aiChainFor(orgId, null, capability)]);
+    const credIds = [...new Set([...mine.steps, ...automations.steps].map((s) => s.credential_id).filter((x): x is string => !!x))];
+    const creds = credIds.length
+      ? await meta.selectFrom("user_credentials").select(["id", "verification"]).where("id", "in", credIds).execute()
+      : [];
+    const ownerIds = [...new Set([...mine.steps, ...automations.steps].map((s) => s.owner_user_id).filter((x): x is string => !!x))];
+    const owners = ownerIds.length ? await meta.selectFrom("users").select(["id", "display_name"]).where("id", "in", ownerIds).execute() : [];
+    const rowIds = [...new Set([...mine.steps, ...automations.steps].map((s) => s.provider_row_id).filter((x): x is string => !!x))];
+    let rows: Array<{ id: string; verification: unknown }> = [];
+    if (rowIds.length) {
+      try {
+        const tdb = (await getTenantDb(orgId)) as unknown as {
+          selectFrom: (t: string) => { select: (c: string[]) => { where: (a: string, o: string, v: unknown) => { execute: () => Promise<Array<{ id: string; verification: unknown }>> } } };
+        };
+        rows = await tdb.selectFrom("core_ai_providers").select(["id", "verification"]).where("id", "in", rowIds).execute();
+      } catch {
+        rows = [];
+      }
+    }
+    const shown = (s: AiChainStep) => {
+      const v = verificationFrom(s.credential_id ? creds.find((c) => c.id === s.credential_id)?.verification : rows.find((r) => r.id === s.provider_row_id)?.verification);
+      const def = getAiProvider(s.provider_id);
+      const vision = !!def?.capabilities["identify-image"];
+      const common = {
+        position: s.position,
+        asked: s.asked,
+        source: s.source,
+        status: v ? verificationLabel(v) : null,
+        verified: v?.state === "verified",
+        // "declared": takes images and is not in doubt. null: in doubt and
+        // not yet shown the test picture.
+        reads_photos: !vision ? ("no" as const) : (v?.photos ?? (def?.checksPhotosInTest ? null : ("declared" as const))),
+      };
+      if (s.source === "shared" && s.owner_user_id !== me) {
+        const owner = owners.find((o) => o.id === s.owner_user_id)?.display_name ?? "a member";
+        return { ...common, label: `Shared by ${owner}` };
+      }
+      return {
+        ...common,
+        label: s.label,
+        provider_id: s.provider_id,
+        model: s.model,
+        floating: s.floating,
+        ...(s.credential_id ? { credential_id: s.credential_id } : {}),
+      };
+    };
+    res.json({
+      capability,
+      you: { steps: mine.steps.map(shown), ...(mine.refusal ? { refusal: mine.refusal } : {}) },
+      automations: { steps: automations.steps.map(shown), ...(automations.refusal ? { refusal: automations.refusal } : {}) },
+    });
+  } catch (err) {
+    next(err);
+  }
+});
 
 // Per-workspace AI opt-out setting. GET is member-readable (drives the toggle +
 // honest banner); the write is owner/admin. Turning it off disables the

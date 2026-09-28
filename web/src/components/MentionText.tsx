@@ -23,6 +23,7 @@ import { splitMentions } from "@cobblr/platform-contract/entity-tokens";
 import { useActiveOrg } from "../auth/ActiveOrgContext";
 import { useDetailRoute } from "../lib/useDetailRoute";
 import { Link } from "react-router-dom";
+import { SearchIncomplete } from "./SearchIncomplete";
 
 /** A comment body with its mentions rendered as live chips. */
 export function MentionText({
@@ -262,8 +263,11 @@ export function useMentionPicker(
   };
 
   const element =
-    query !== null && candidates.length > 0 ? (
+    query !== null && (candidates.length > 0 || (hits.data?.kinds_failed?.length ?? 0) > 0) ? (
       <div className="mb-2 rounded-md border border-line dark:border-slate-700 bg-surface dark:bg-slate-900 shadow-lg overflow-hidden">
+        {(hits.data?.kinds_failed?.length ?? 0) > 0 && (
+          <div className="p-1.5"><SearchIncomplete compact failed={hits.data?.kinds_failed} /></div>
+        )}
         {candidates.map((c, i) => (
           <button
             key={c.token}

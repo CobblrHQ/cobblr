@@ -12,7 +12,7 @@ import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from "@tansta
 import { ChevronRight, File as FileIcon, Folder, FolderPlus, Pencil, Search, Trash2, Upload } from "lucide-react";
 import { api, ApiError, type FileFolder, type FileRecord } from "../lib/api";
 import { useActiveOrg } from "../auth/ActiveOrgContext";
-import { canPreviewFile, FilePreview, FileIntakePanels, Modal, useFileIntake, useFilePreviewRegistry, useImageSrc, useToast, useConfirm, usePageTitle } from "@cobblr/platform-web";
+import { canPreviewFile, FilePreview, FileIntakePanels, Modal, useFileIntake, useFilePreviewRegistry, useToast, useConfirm, usePageTitle, EntityPhoto } from "@cobblr/platform-web";
 
 const TOP = "top";
 
@@ -395,9 +395,5 @@ function formatBytes(n: number): string {
 
 /** Image-grid thumbnail via useImageSrc (token-authenticated blob). */
 function AuthedThumb({ slug, file }: { slug: string; file: FileRecord }) {
-  const src = useImageSrc(api.fileRawUrl(slug, file.id, "thumb"));
-  if (!src) {
-    return <div className="w-full h-full bg-subtle/60 dark:bg-slate-800/60 animate-pulse" />;
-  }
-  return <img src={src} alt={file.filename} className="w-full h-full object-cover" />;
+  return <EntityPhoto src={api.fileRawUrl(slug, file.id, "thumb")} alt={file.filename} fill />;
 }

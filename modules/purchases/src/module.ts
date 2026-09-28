@@ -7,7 +7,7 @@ import { defineModule } from "@cobblr/platform-contract";
 
 export default defineModule({
   name: "purchases",
-  version: "0.10.17",
+  version: "0.11.0",
   displayName: "Purchases",
   description:
     "Orders, line items, and cost rollup. Each order is a vendor purchase; line items can link to inventory parts and to whatever consumed them: printer mods, projects, anything.",
@@ -172,7 +172,7 @@ export default defineModule({
         undoable: true,
         label: "Add a line to this order",
         description:
-          "Put another line on an order that already exists. Pass `qty` and either `description` (free text) or `part_id` for a part you already track, optionally `unit_cost`. Removing a line has no action on purpose: an order is a financial record, so deleting from it is done in the app.",
+          "Put another line on an order that already exists. Pass `qty` and either `description` (free text) or what it bought: `part_id` for a part you already track, or `for_kind` + `for_id` for any record (a printer, an asset), optionally `unit_cost`. A line that names what it bought links it to the order and fills its Acquired from / Acquired on / Paid from the order, never over a value someone typed. Removing a line has no action on purpose: an order is a financial record, so deleting from it is done in the app.",
         icon: "plus",
         appliesTo: { kinds: ["purchases:order"] },
         invokeHandler: "purchases.add-line",
@@ -180,6 +180,8 @@ export default defineModule({
           qty: { label: "How many", type: "number", required: true },
           description: { label: "What it is", type: "text" },
           part_id: { label: "Id of a tracked part (optional)", type: "text" },
+          for_kind: { label: "Kind of the record it bought (optional)", type: "text" },
+          for_id: { label: "Id of the record it bought (optional)", type: "text" },
           unit_cost: { label: "Cost each (optional)", type: "number" },
         },
       },

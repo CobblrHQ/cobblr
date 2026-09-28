@@ -65,17 +65,21 @@ export function TrackedMatchNudges({ item, match }: { item: ScanInboxItem; match
       )}
       {mismatch && picture && <span className="text-faint">·</span>}
       {picture && (
-        <>
-          <span className="text-amber-800 dark:text-amber-200">No picture yet</span>
+        // The RECORD you already have has no picture; this scan does. Said
+        // quietly, about the record, beside a card that plainly shows a photo
+        // ("No picture yet" read as if the scan itself had none, #3884).
+        <span className="inline-flex items-center gap-1 text-muted">
+          <ImagePlus size={12} className="shrink-0" />
+          Its record has no picture ·
           <button
             type="button"
             disabled={givePicture.isPending}
             onClick={() => givePicture.mutate(picture)}
-            className={amberPill}
+            className="underline decoration-dotted underline-offset-2 hover:text-content disabled:opacity-50"
           >
-            <ImagePlus size={12} /> {givePicture.isPending ? "Setting…" : "Use this scan's"}
+            {givePicture.isPending ? "setting…" : "use this one"}
           </button>
-        </>
+        </span>
       )}
       {mismatch && (
         <MoveToInstanceModal

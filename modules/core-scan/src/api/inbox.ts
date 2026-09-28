@@ -20,9 +20,12 @@
 // body limits sane.
 
 import { ocrImageText } from "../services/ocr.js";
+import { pictureHash, recentTwin } from "../services/same-picture.js";
 import { applyLabelFacts } from "../services/label-quantity.js";
-import { lotFieldOf, lotPatchFor } from "../services/lot-field.js";
+import { locationForPlaces, stripPlaceFields } from "../services/place-fields.js";
+import { lotFieldOf, lotPatchFor, yearMadeFieldOf, yearMadePatchFor } from "../services/lot-field.js";
 import { RESTOCK_CHOICES } from "@cobblr/platform-contract/kind-label";
+import { SCAN_COUNT_REASONS, scanCountLedgerReason, scanCountLeftLow } from "@cobblr/platform-contract/scan-count";
 import { LOOKUP_GAVE_UP, retryHasRunOut } from "../services/retry-lookup.js";
 import { rememberPickedImage } from "../services/picked-images.js";
 import { TITLE_VARIANTS_KEY, asTitleFormat, formatTitleVariants, titleVariantsOf, type TitleFormat } from "@cobblr/platform-contract/display-identity";
@@ -172,6 +175,7 @@ import {
 } from "@cobblr/platform-contract/acquisition-source";
 import { applyNameFacts, nameFactWords } from "../services/name-facts.js";
 import { applyPersonName, applyRejectName, withPersonName } from "../services/user-name.js";
+import { headedFor, rowMatchesText } from "../services/inbox-search.js";
 import { displayName, filingName, rejectedNamesOf, USER_NAME_KEY } from "@cobblr/platform-contract/display-identity";
 import { extractLocation, type LocationLite } from "../services/note-location.js";
 import { suggestLocationForItem } from "../services/suggest-location.js";
@@ -472,6 +476,9 @@ const ScanBody = z.object({
    *  the response returns the bare row and enrichment continues
    *  detached. Default 12s. */
   enrich_ms: z.number().int().positive().max(30_000).optional(),
+  /** The same picture was just added: add it again anyway. Without it, a
+   *  repeat within the window answers with the existing item (#3852). */
+  allow_duplicate: z.boolean().optional(),
 });
 
 // AI-REACH: a step of the guided scan/put-away flow, driven from the scanner screen with a camera in hand; the assistant reaches the inbox through list_scan_inbox and the plan through get_putaway_plan
@@ -635,6 +642,19 @@ inboxRouter.post(
       }
     }
 
+    // The same picture pasted twice is one item (services/same-picture.ts,
+    // #3852): a repeat within the window is answered with the item it
+    // already made, and the person may still ask for another copy.
+    const imageHash = body.source_kind === "photo" && body.image_file_id ? await pictureHash(ctx.org.id, body.image_file_id) : null;
+    if (imageHash && !body.allow_duplicate) {
+      const twin = await recentTwin(db, imageHash);
+      if (twin) {
+        const existing = await db.selectFrom("core_scan_inbox_items").selectAll().where("id", "=", twin.id).executeTakeFirstOrThrow();
+        res.status(200).json({ ...(await served(req, existing)), duplicate_of_recent: true });
+        return;
+      }
+    }
+
     noteScanCaptured(ctx.org.id, session.id, body.source_kind);
     // A store's own label is known from its prefix: its verdict, its reason
     // and its "done" stamp go on at insert, so the scanner's sheet reads the
@@ -672,7 +692,9 @@ inboxRouter.post(
               ai_suggested_at: storeStamps.ai_suggested_at,
               suggested_metadata: JSON.stringify({ code_type: storeStamps.code_type }) as never,
             }
-          : {}),
+          : imageHash
+            ? { suggested_metadata: JSON.stringify({ image_sha256: imageHash }) as never }
+            : {}),
       },
       // Race inline enrichment against the budget. Whichever lands first
       // wins the response; the other keeps running detached.
@@ -1543,6 +1565,14 @@ const ListQuery = z.object({
    *  page (the assistant, a script) can ask for "the ones that need me" without
    *  paging the whole queue and re-deriving it. Implies pending. */
   triage: z.enum(SCAN_TRIAGE_FACETS as [ScanTriageFacet, ...ScanTriageFacet[]]).optional(),
+  /** Waiting rows whose name (as the card shows it), code or maker contains
+   *  this. Search's door into the inbox: a thing scanned but not yet filed
+   *  is in no table, so searching the tables could not find it (#3823). */
+  q: z.string().trim().min(1).max(200).optional(),
+  /** With `q`: only rows headed for this table (an instance's name, or a
+   *  module's for its default table), by the row's one resolved destination.
+   *  A collection's own search shows what is waiting to come to it. */
+  destination: z.string().trim().min(1).max(120).optional(),
 });
 
 /** How many pending rows a facet query will look at. The facets read jsonb
@@ -1692,6 +1722,35 @@ inboxRouter.get(
     if (!q.success) return badBody(res, q.error);
     const db = tenantDb(req);
     const { status, source_kind, batch_id, limit, cursor, triage } = q.data;
+
+    // A search: the waiting rows a word finds, each served with where it is
+    // headed. Matched on the raw rows first (the name as the card shows it),
+    // so only the matches pay for serving; the destination is judged on the
+    // served row, the one answer the card and filing read.
+    if (q.data.q) {
+      const scanned = await db
+        .selectFrom("core_scan_inbox_items")
+        .selectAll()
+        .where("status", "=", "pending")
+        .orderBy("created_at", "desc")
+        .orderBy("id", "desc")
+        .limit(TRIAGE_SCAN_CAP)
+        .execute();
+      const text = q.data.q;
+      const matched = scanned.filter((row) => rowMatchesText(row, text));
+      const served = await servedAll(req, matched);
+      const dest = q.data.destination;
+      const found = dest ? served.filter((row) => headedFor(row, dest)) : served;
+      res.json({
+        items: found.slice(0, limit),
+        batches: {},
+        sessions: {},
+        next_cursor: null,
+        total: found.length,
+        ...(scanned.length === TRIAGE_SCAN_CAP ? { partial: `searched the newest ${TRIAGE_SCAN_CAP} waiting items` } : {}),
+      });
+      return;
+    }
 
     // A facet query is a different read: scan the pending queue (capped) and
     // decide membership with the shared predicate, rather than paginate. It
@@ -2538,12 +2597,16 @@ inboxRouter.post(
     // A lot read off the label (label-quantity.ts) goes into whichever field
     // carries the `lot` role: a dye lot, a lot number, a batch. Evidence, so
     // it outranks the route's guess and yields to the person (lot-field.ts).
-    let lotPatch: Record<string, string> = {};
+    let lotPatch: Record<string, string | number> = {};
     let lotFieldName: string | null = null;
+    let yearFieldName: string | null = null;
     try {
       const roledForExpiry = await platform().entities.roledFieldsFor(ctx.org.id, effectiveKindId);
-      lotPatch = lotPatchFor(meta, roledForExpiry);
+      // The year a unit was made rides with the lot: read off the same label,
+      // per unit, filed by role (lot-field.ts).
+      lotPatch = { ...lotPatchFor(meta, roledForExpiry), ...yearMadePatchFor(meta, roledForExpiry) };
       lotFieldName = lotFieldOf(roledForExpiry);
+      yearFieldName = yearMadeFieldOf(roledForExpiry);
       const expiryField = roledForExpiry.find((f) => f.field_role === "expiry")?.name;
       if (expiryField) {
         expiryPatch =
@@ -2689,6 +2752,36 @@ inboxRouter.post(
       ...restExtras,
     };
 
+    // WHERE it goes, when nothing above said: the place the route read off
+    // the item and took out of a field because it names a Location
+    // ("storage: Pantry", place-fields.ts). It was recorded and then dropped,
+    // so the item filed with no location and Pantry's label showed nothing.
+    // Only when no location, stored home or container was chosen, and only
+    // when the place names exactly one Location.
+    if (
+      body.location_id === undefined &&
+      !(row.target_container_kind && row.target_container_id) &&
+      (meta as { box_state?: string }).box_state !== "empty-box"
+    ) {
+      try {
+        const listed = await platform().entities.list(ctx.org.id, "core-locations:location", { limit: 1000 });
+        const locs = listed.items.map((l) => ({
+          id: l.id,
+          name: l.title ?? String((l.fields as Record<string, unknown> | undefined)?.name ?? ""),
+          short_name: l.subtitle ?? null,
+        }));
+        const names = locs.flatMap((l) => (l.short_name ? [l.name, l.short_name] : [l.name]));
+        const places = {
+          ...(((matchedCandidate as { place_fields?: Record<string, unknown> } | undefined)?.place_fields) ?? {}),
+          ...stripPlaceFields({ ...candidateFields, ...typedMetadata }, names).stripped,
+        };
+        const locId = Object.keys(places).length > 0 ? locationForPlaces(places, locs) : null;
+        if (locId) body.location_id = locId;
+      } catch {
+        /* locations unavailable: the item files unplaced, as before */
+      }
+    }
+
     // Re-issue through the api against the SAME bearer token so
     // requireAuth + withTenant + role gating fire on the target
     // endpoint.
@@ -2734,6 +2827,28 @@ inboxRouter.post(
         body: JSON.stringify(body),
       });
     let createRes = await doCreate();
+    // A value the scan found for a field the kind does not have (a book's
+    // read status filed as a part) goes where the confirm door already puts
+    // it: inside the record's explicit `metadata`, not at the top level where
+    // the write route refuses an undeclared name (#3855). The route names the
+    // keys it does not own, so nothing here guesses which are native.
+    if (createRes.status === 422) {
+      const refused = (await createRes.clone().json().catch(() => null)) as {
+        error?: { code?: string; details?: { unknown?: unknown } };
+      } | null;
+      const unknownKeys = refused?.error?.code === "unknown_field" && Array.isArray(refused.error.details?.unknown)
+        ? (refused.error.details!.unknown as unknown[]).filter((k): k is string => typeof k === "string")
+        : [];
+      if (unknownKeys.length) {
+        const bag = { ...((body.metadata as Record<string, unknown> | undefined) ?? {}) };
+        for (const k of unknownKeys) {
+          if (!(k in bag)) bag[k] = body[k];
+          delete body[k];
+        }
+        body.metadata = bag;
+        createRes = await doCreate();
+      }
+    }
     // Capture-first "one-tap materialize": you can scan into a flagship-bundle
     // shape before its module is enabled. If the create dead-ends on the
     // module-not-enabled gate, enable the target module (idempotent) and retry
@@ -2795,6 +2910,7 @@ inboxRouter.post(
           orderId: oid,
           itemId: lid,
           partId: created.id,
+          subjectKind: kindKey,
         });
       }
     }
@@ -3058,7 +3174,12 @@ inboxRouter.post(
     // inert unless the resolver + a correction token are configured.
     // The lots this unit carries (read off its label, or filed by the person):
     // per unit, so none of them ever reaches the shared network.
-    const unitLots = unitLotsOf(meta, ...Object.values(lotPatch), lotFieldName ? typedMetadata[lotFieldName] : undefined);
+    const unitLots = unitLotsOf(
+      meta,
+      ...Object.values(lotPatch),
+      lotFieldName ? typedMetadata[lotFieldName] : undefined,
+      yearFieldName ? typedMetadata[yearFieldName] : undefined,
+    );
     if (row.barcode_text) {
       const committedName = String(body.name ?? filingName(row) ?? "").trim();
       const renamed = meaningfullyChanged(row.suggested_name, committedName);
@@ -5582,7 +5703,7 @@ inboxRouter.post(
       // attached to the wrong thing is undoable line by line.
       const who = sessionUser(req)?.id ?? null;
       const restored =
-        attached.mode === "add-qty" || attached.mode === "replace"
+        attached.mode === "add-qty" || attached.mode === "replace" || attached.mode === "count"
           ? await restoreAttachedRecord(ctx.org.id, id, attached, who).catch(() => null)
           : null;
       if (restored) {
@@ -5710,6 +5831,13 @@ inboxRouter.post(
 // All writes go through the module's OWN HTTP endpoint under the caller's
 // bearer (same inherited-capability pattern as confirm) — never raw SQL into
 // another module's table. The inbox item resolves as "attached".
+/** A record's number field as it came off its route: a numeric column is a
+ *  string there, and an absent one is null. */
+function numOrNull(v: unknown): number | null {
+  const n = typeof v === "number" ? v : typeof v === "string" && v.trim() !== "" ? Number(v) : NaN;
+  return Number.isFinite(n) ? n : null;
+}
+
 const AttachBody = z.object({
   kind: z.string().min(1),
   entity_id: z.string().min(1),
@@ -5721,7 +5849,7 @@ const AttachBody = z.object({
    *  hears the old one consumed (or discarded, when `resolution` says it went
    *  bad) and the new one bought. The everyday re-buy, said in one tap; `+N`
    *  used to be the only door, and it counted the empty box as still there. */
-  mode: z.enum(["add-qty", "replace", "link-barcode", "move", "merge-fields"]),
+  mode: z.enum(["add-qty", "replace", "link-barcode", "move", "merge-fields", "count"]),
   /** What this re-purchase means, for the consumption ledger. Only add-qty is
    *  a purchase ("+N, more of the same"); the other modes teach or move an
    *  entity and consume nothing.
@@ -5747,6 +5875,14 @@ const AttachBody = z.object({
    *  File everything line, a queue's count); else the row's own. Absent from
    *  this schema, a door's count was stripped and the row's filed instead. */
   qty: FiledQuantity.optional(),
+  /** `count`: what is in your hands, signed (+3 arrived, -1 used up). The
+   *  card's Change by. Exactly one of change / total. */
+  change: z.number().int().min(-1_000_000).max(1_000_000).optional(),
+  /** `count`: the count as it actually is, the card's Set total. Filed in
+   *  the ledger as a correction, never as use or a purchase. */
+  total: z.number().int().min(0).max(1_000_000).optional(),
+  /** `count`: why, for the ledger line. A chip on the card, never asked. */
+  reason: z.enum(SCAN_COUNT_REASONS).optional(),
 });
 
 // AI-REACH: takes or produces a file (multipart or binary), which an action cannot carry
@@ -5757,6 +5893,10 @@ inboxRouter.post(
     const id = req.params.id;
     const parsed = AttachBody.safeParse(req.body);
     if (!parsed.success) return badBody(res, parsed.error);
+    if (parsed.data.mode === "count" && !(parsed.data.total != null ? parsed.data.change == null : parsed.data.change != null && parsed.data.change !== 0)) {
+      res.status(400).json({ error: { code: "count_needs_one", message: "a count is a non-zero change or a total, exactly one" } });
+      return;
+    }
     const db = tenantDb(req);
     const ctx = tenantContext(req);
     const token = bearer(req);
@@ -5856,7 +5996,12 @@ inboxRouter.post(
     /** The way back for the quantity moves, in undo order, from the door. */
     const undoSteps: NonNullable<QuantityMove["undo"]> = [];
     const mergedFields: string[] = [];
-    if (parsed.data.mode === "add-qty" || parsed.data.mode === "replace") {
+    const counting = parsed.data.mode === "count";
+    if (counting && !scannable.qtyField) {
+      res.status(400).json({ error: { code: "not_counted", message: `${parsed.data.kind} keeps no count` } });
+      return;
+    }
+    if (parsed.data.mode === "add-qty" || parsed.data.mode === "replace" || counting) {
       // A kind without a native quantity (qtyField absent) has nothing to
       // bump — the attach still merges the barcode below.
       if (scannable.qtyField) {
@@ -5867,7 +6012,7 @@ inboxRouter.post(
         // a fresh lot on it is never overwritten by a snapshot taken before
         // the lot existed, and a PATCH that fails leaves the count unmoved.
         priorQty = Number.isFinite(cur) ? cur : 0;
-        qtyAdded = parsed.data.qty ?? filedQuantityOf(row.quantity);
+        qtyAdded = counting ? 0 : (parsed.data.qty ?? filedQuantityOf(row.quantity));
       }
       // Barcode-append: a scanned (not AI-read) code the entity doesn't have yet.
       const aiRead = isMachineReadCode(
@@ -6032,6 +6177,33 @@ inboxRouter.post(
       if (arrived.undo) undoSteps.unshift(...arrived.undo);
     }
 
+    // `count`: the change in your hands, or the total as it really is,
+    // through the same quantity door. A total is a correction in the ledger.
+    let counted = 0;
+    const correction = counting && parsed.data.total != null;
+    if (counting && scannable.qtyField) {
+      const want = correction ? parsed.data.total! - priorQty : (parsed.data.change ?? 0);
+      newQty = priorQty;
+      if (want !== 0) {
+        const moved = await moveQuantity(ctx.org.id, target, { kind: parsed.data.kind, id: parsed.data.entity_id }, want, {
+          userId: sessionUser(req)?.id ?? null,
+          reason: scanCountLedgerReason({ change: want, correction, reason: parsed.data.reason ?? null }),
+          ...(want > 0 && !correction ? { restock: true } : {}),
+          ...(correction ? { correction: true } : {}),
+          source: { kind: "core-scan:inbox", id: id ?? "" },
+          door: { baseUrl, slug: ctx.org.slug, headers: authHeaders },
+          current: priorQty,
+        });
+        if (!moved.ok) {
+          res.status(409).json({ error: { code: "attach_failed", message: moved.refused ?? "the record's quantity could not be changed" } });
+          return;
+        }
+        counted = moved.delta;
+        newQty = moved.newQty ?? priorQty + moved.delta;
+        if (moved.undo) undoSteps.unshift(...moved.undo);
+      }
+    }
+
     // add-qty / replace: give the entity the scan's photo when it has none
     // (best-effort). A picture the person CHOSE on the card is different: they
     // picked it looking at the "same as X" banner, for X, and it lands on the
@@ -6042,7 +6214,7 @@ inboxRouter.post(
       row.catalog_image_file_id
         ? row.catalog_image_file_id
         : null;
-    if ((parsed.data.mode === "add-qty" || parsed.data.mode === "replace") && (chosenId || !entity.image_path)) {
+    if ((parsed.data.mode === "add-qty" || parsed.data.mode === "replace" || counting) && (chosenId || !entity.image_path)) {
       const photoId = chosenId ?? row.catalog_image_file_id ?? row.image_file_id;
       if (photoId) {
         // Both halves from one split. This used to hand-roll it and pass the
@@ -6095,6 +6267,7 @@ inboxRouter.post(
             mode: parsed.data.mode,
             // What the bump was, so unconfirm can take exactly it back off.
             ...(qtyAdded > 0 && scannable.qtyField ? { qty_added: qtyAdded, qty_field: scannable.qtyField, qty_after: newQty } : {}),
+            ...(counting && scannable.qtyField ? { qty_changed: counted, qty_field: scannable.qtyField, qty_after: newQty, ...(correction ? { correction: true } : {}) } : {}),
             // The action's own inverse (the record as it was, lot and all),
             // run by unconfirm while the record still reads what this left.
             ...(undoSteps.length ? { undo: undoSteps } : {}),
@@ -6128,8 +6301,9 @@ inboxRouter.post(
       cadence: parsed.data.cadence,
       kind: baseKind,
       entityId: parsed.data.entity_id,
-      added: qtyAdded,
+      added: counting ? counted : qtyAdded,
       priorQty: priorQty,
+      ...(counting ? { correction, reason: parsed.data.reason ?? null } : {}),
     });
     for (const ev of cadenceEvents) {
       await platform().events.emit("core-scan.stock.observed", {
@@ -6148,6 +6322,9 @@ inboxRouter.post(
       prev_location_id: prevLocationId,
       merged_fields: mergedFields,
       cadence_recorded: cadenceEvents.map((e) => e.event_type),
+      // A take (or a recount down) that left it at its minimum or empty: the
+      // card offers the shopping list.
+      ...(counting ? { low: scanCountLeftLow(newQty, numOrNull(entity.min_qty), newQty != null && newQty < priorQty) } : {}),
     });
   }),
 );
@@ -6246,6 +6423,7 @@ inboxRouter.post(
           userId: sessionUser(req)?.id ?? null,
           reason: parsed.data.set != null ? "recounted from the bin label" : delta > 0 ? "added from the bin label" : "removed from the bin label",
           ...(delta > 0 && parsed.data.set == null ? { restock: true } : {}),
+          ...(parsed.data.set != null ? { correction: true } : {}),
           source: { kind: "core-locations:location", id: req.params.locationId ?? "" },
           door: { baseUrl, slug: ctx.org.slug, headers: authHeaders },
           current: oldQty,

@@ -17,6 +17,8 @@ import { ArrowLeft, Plus, Search } from "lucide-react";
 import { useState } from "react";
 import { EntityThumb, usePageTitle } from "@cobblr/platform-web";
 import { NewPartDialog, InventoryProvider } from "@cobblr/inventory/ui";
+import { useViewData } from "../lib/useViewData";
+import { ViewMore } from "../components/ViewMore";
 import { api, getToken } from "../lib/api";
 import { createCapabilityForKind } from "@cobblr/platform-contract/create-capability";
 import { AskForItButton } from "../components/AskForItButton";
@@ -35,12 +37,10 @@ export function PortalViewPage() {
   const [createOpen, setCreateOpen] = useState(false);
   const qc = useQueryClient();
 
-  const data = useQuery({
-    queryKey: ["portal-view-data", activeSlug, viewId, q],
-    queryFn: () => api.viewData(activeSlug!, viewId!, { q: q || undefined, limit: 100 }),
-    enabled: !!activeSlug && !!viewId,
-  });
-  usePageTitle(data.data?.view.entity_kind ?? "View");
+  // Every record the view holds (the rest offered past the server's walk): a
+  // hard 100 cut the list off with nothing to say so.
+  const data = useViewData(activeSlug, viewId, null, { q });
+  usePageTitle(data.view?.entity_kind ?? "View");
 
   // User capabilities — drives whether to show the "+ New" button.
   const caps = useQuery({
@@ -51,7 +51,7 @@ export function PortalViewPage() {
 
   if (!viewId || !activeSlug) return null;
 
-  const entityKind = data.data?.view.entity_kind;
+  const entityKind = data.view?.entity_kind;
   const createCap = createCapabilityForKind(entityKind) ?? undefined;
   const canCreate =
     createCap !== undefined &&
@@ -68,7 +68,7 @@ export function PortalViewPage() {
 
       <div className="flex items-center justify-between gap-3 border-b border-line dark:border-slate-700 pb-3">
         <h1 className="text-xl font-semibold text-content dark:text-mortar-100">
-          {data.data?.view.entity_kind ?? "…"}
+          {data.view?.entity_kind ?? "…"}
         </h1>
         <div className="flex items-center gap-2">
           {canCreate && (
@@ -87,7 +87,7 @@ export function PortalViewPage() {
               slug={activeSlug}
               remedies={[{ kind: "capability", key: createCap }]}
               doing="Adding here"
-              subject={`Add to ${data.data?.view.name ?? "this view"}`}
+              subject={`Add to ${data.view?.name ?? "this view"}`}
             />
           )}
           <div className="flex items-center gap-2 rounded-md border border-line dark:border-slate-700 bg-surface dark:bg-slate-900 px-2">
@@ -107,16 +107,16 @@ export function PortalViewPage() {
         <div className="text-xs text-faint italic">Loading…</div>
       )}
       {data.isError && (
-        <QueryError what="this view" onRetry={() => data.refetch()} />
+        <QueryError what="this view" onRetry={() => data.refetch?.()} />
       )}
-      {data.data && data.data.items.length === 0 && (
+      {!data.isLoading && !data.isError && data.items.length === 0 && (
         <div className="text-xs text-faint italic py-8 text-center">
           No items match.
         </div>
       )}
-      {data.data && data.data.items.length > 0 && (
+      {data.items.length > 0 && (
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
-          {data.data.items.map((item) => (
+          {data.items.map((item) => (
             <div
               key={`${item.kind}:${item.id}`}
               className="rounded-lg border border-line dark:border-slate-700 bg-surface dark:bg-slate-900 p-3 flex items-center gap-3"
@@ -140,6 +140,7 @@ export function PortalViewPage() {
           ))}
         </div>
       )}
+      <ViewMore data={data} />
 
       {/* Create dialog. Per-entity-kind branching as more kinds opt in. */}
       {createOpen && entityKind === "inventory:part" && (
@@ -151,7 +152,7 @@ export function PortalViewPage() {
               // Refresh the view so the new row appears in place;
               // stay on the portal (no navigate to admin shell).
               void qc.invalidateQueries({
-                queryKey: ["portal-view-data", activeSlug, viewId],
+                queryKey: ["view-data", activeSlug, viewId],
               });
             }}
           />

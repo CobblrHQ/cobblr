@@ -12,11 +12,11 @@ import { displayName } from "@cobblr/platform-contract/display-identity";
 import { scanToolsFold, scanToolsFoldGroups } from "@cobblr/platform-contract/scan-triage";
 import { thumbnailFit, thumbnailTextHeavy, type ThumbFit } from "@cobblr/platform-contract/thumbnail-fit";
 import type { ScanTool, ScanToolHints } from "@cobblr/platform-contract/scan-tools";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { Camera, CheckCircle, ChevronDown, ChevronRight, Download, Loader2, MoreHorizontal, PackagePlus, RotateCcw, ScanLine, Scissors } from "lucide-react";
 import type { ScanInboxItem } from "../lib/api";
-import { OverlayLayer, BackdropLayer, useLockPageScroll } from "@cobblr/platform-web";
+import { OverlayLayer, BackdropLayer, PopoverLayer, useLockPageScroll } from "@cobblr/platform-web";
 import { ScanReceiptUnread, type ScanReceiptUnreadProps } from "../components/ScanReceiptUnread";
 import { RECEIPT_UNREAD_TITLE } from "@cobblr/platform-contract/scan-copy";
 
@@ -67,7 +67,16 @@ export interface ScanPhoneRowProps {
   failure: { text: string; recovery: "retry" | "connect" | null; connectHref?: string } | null;
   /** The quantity, with its editing flow. Null for a row that is not an
    *  item yet (a receipt whose lines could not be read): nothing to count. */
-  quantity: { value: number; busy: boolean; onChange: (n: number) => void } | null;
+  quantity: {
+    value: number;
+    busy: boolean;
+    onChange: (n: number) => void;
+    /** A match on a record the workspace counts: the stepper is a CHANGE to
+     *  that record, not how many this scan holds. It reads +1 / −1, goes
+     *  below zero down to `floor` (taking what is there), and skips zero
+     *  (#3884: "where is my −1 button"). */
+    signed?: { floor: number };
+  } | null;
   /** A few of the destination table's own fields, as compact tokens in the
    *  metadata lines. `confirmed` = the person set it; `swatch` = a colour. */
   chips: Array<{ key: string; label: string; value: string; confirmed: boolean; swatch?: string | null }>;
@@ -276,15 +285,30 @@ export function ScanPhoneRow(p: ScanPhoneRowProps) {
           </div>
         )}
         {/* Two control rows. Quantity and the tools (a better photo, a fresh
-            read with its live state, the rest); then the filing pair. */}
-        <div data-row="controls" className="flex flex-nowrap items-center gap-1.5" onClick={stop}>
+            read with its live state, the rest); then the filing pair. The
+            tools wrap under the quantity when they do not fit: held on one
+            line at a phone's larger text, they made the page wider than the
+            screen and the browser zoomed the whole app out (#3930). */}
+        <div data-row="controls" className="flex flex-wrap items-center gap-1.5" onClick={stop}>
           {p.quantity && (() => {
             const q = p.quantity;
             return (
               <span className="inline-flex shrink-0 items-center overflow-hidden rounded-md border border-line dark:border-slate-700 text-xs" title="Quantity">
-                <button type="button" aria-label="Decrease quantity" disabled={q.busy || q.value <= 1} onClick={() => q.onChange(q.value - 1)} className="min-h-9 w-7 text-muted disabled:opacity-40">−</button>
-                <span className="min-w-[1.75rem] text-center font-semibold tabular-nums text-content dark:text-mortar-100">×{q.value}</span>
-                <button type="button" aria-label="Increase quantity" disabled={q.busy} onClick={() => q.onChange(q.value + 1)} className="min-h-9 w-7 text-muted disabled:opacity-40">+</button>
+                {q.signed ? (
+                  <>
+                    <button type="button" aria-label="One less" disabled={q.busy || q.value <= q.signed.floor} onClick={() => q.onChange(q.value - 1 === 0 ? -1 : q.value - 1)} className="min-h-9 w-7 text-muted disabled:opacity-40">−</button>
+                    <span data-testid="row-change" className={"min-w-[1.75rem] text-center font-semibold tabular-nums " + (q.value < 0 ? "text-ember-700 dark:text-ember-300" : "text-content dark:text-mortar-100")}>
+                      {q.value > 0 ? `+${q.value}` : `−${-q.value}`}
+                    </span>
+                    <button type="button" aria-label="One more" disabled={q.busy} onClick={() => q.onChange(q.value + 1 === 0 ? 1 : q.value + 1)} className="min-h-9 w-7 text-muted disabled:opacity-40">+</button>
+                  </>
+                ) : (
+                  <>
+                    <button type="button" aria-label="Decrease quantity" disabled={q.busy || q.value <= 1} onClick={() => q.onChange(q.value - 1)} className="min-h-9 w-7 text-muted disabled:opacity-40">−</button>
+                    <span className="min-w-[1.75rem] text-center font-semibold tabular-nums text-content dark:text-mortar-100">×{q.value}</span>
+                    <button type="button" aria-label="Increase quantity" disabled={q.busy} onClick={() => q.onChange(q.value + 1)} className="min-h-9 w-7 text-muted disabled:opacity-40">+</button>
+                  </>
+                )}
               </span>
             );
           })()}
@@ -356,10 +380,26 @@ function PhoneCommit({ c, open, setOpen, onReview }: { c: NonNullable<ScanPhoneR
         : c.kind === "merge"
           ? { label: c.label, cls: "border-emerald-600 bg-emerald-600 text-white", icon: <PackagePlus size={13} />, onClick: c.onAdd, title: c.reason }
           : { label: c.label, cls: "border-emerald-600 bg-emerald-600 text-white", icon: <CheckCircle size={13} />, onClick: c.onAdd, title: `File into ${c.destination}` };
+  // The menu portals to the page and keeps itself on the screen. Anchored
+  // inside the row it took 20rem from wherever the pill sat, and with a
+  // phone's larger text it ran off the right edge (#3930).
+  const pill = useRef<HTMLButtonElement | null>(null);
+  const [at, setAt] = useState<{ top: number; left: number; above: number } | null>(null);
+  useEffect(() => {
+    if (!open) return;
+    const r = pill.current?.getBoundingClientRect();
+    if (r) setAt({ top: r.bottom + 4, left: r.left, above: r.top });
+    // Measured once at open, so a scroll underneath would leave it floating
+    // away from the pill: close instead of chasing it.
+    const onScroll = () => setOpen(false);
+    window.addEventListener("scroll", onScroll, { capture: true, passive: true });
+    return () => window.removeEventListener("scroll", onScroll, { capture: true });
+  }, [open, setOpen]);
   return (
     <div className="relative flex min-w-0 max-w-full flex-wrap items-stretch">
       <button
         type="button"
+        ref={pill}
         onClick={() => setOpen(!open)}
         aria-label={`Destination: ${c.destination}. Choose a different destination`}
         aria-haspopup="listbox"
@@ -381,10 +421,10 @@ function PhoneCommit({ c, open, setOpen, onReview }: { c: NonNullable<ScanPhoneR
         {action.icon}
         {action.label}
       </button>
-      {open && (
+      {open && at && createPortal(
         <>
-          <BackdropLayer className="z-30" onClick={() => setOpen(false)} />
-          <div role="listbox" className="absolute left-0 top-full z-40 mt-1 w-[min(20rem,calc(100vw-2rem))] overflow-hidden rounded-xl border border-line dark:border-slate-700 bg-surface dark:bg-slate-900 shadow-xl">
+          <BackdropLayer className="z-[60]" onClick={() => setOpen(false)} />
+          <PopoverLayer role="listbox" style={{ top: at.top, left: at.left }} flipAbove={at.above} className="z-[61] w-80 overflow-hidden rounded-xl border border-line dark:border-slate-700 bg-surface dark:bg-slate-900 shadow-xl">
             <div className="px-3 pt-2 pb-1 text-[10px] font-mono uppercase tracking-widest text-faint">File into</div>
             {c.options.map((o) => (
               <button
@@ -403,8 +443,9 @@ function PhoneCommit({ c, open, setOpen, onReview }: { c: NonNullable<ScanPhoneR
                 {o.installs && <span className="ml-auto shrink-0 text-[11px] text-faint">installs on add</span>}
               </button>
             ))}
-          </div>
-        </>
+          </PopoverLayer>
+        </>,
+        document.body,
       )}
     </div>
   );

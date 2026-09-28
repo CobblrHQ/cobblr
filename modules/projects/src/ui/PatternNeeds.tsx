@@ -9,8 +9,8 @@
 import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Pencil, Plus, RefreshCw, X } from "lucide-react";
-import { Modal, useUnits } from "@cobblr/platform-web";
-import { countOf } from "@cobblr/platform-contract";
+import { Modal, MutationError, useUnits } from "@cobblr/platform-web";
+import { countOf, NOTION_NAMES } from "@cobblr/platform-contract";
 import type { NeedMatch, PatternNeed, PatternNeedInput, PatternNeedKind, PatternNeedsState, ProjectsApi } from "./api";
 
 export const patternNeedsKey = (designId: string) => ["pattern-needs", designId] as const;
@@ -21,7 +21,8 @@ export function yarnTitle(n: Pick<PatternNeed, "brand" | "product" | "color" | "
   const line = [n.brand, n.product].filter(Boolean).join(" ");
   const colour = n.color ? `${n.color}${n.color_code ? ` (${n.color_code})` : ""}` : n.color_code ? `#${n.color_code}` : "";
   const out = [line, colour].filter(Boolean).join(" · ");
-  return out || [n.weight, n.fiber].filter(Boolean).join(" ") || "Yarn";
+  // No brand, line or colour: the pattern takes any yarn of its weight.
+  return out || "Yarn, any brand";
 }
 
 export function toolTitle(n: Pick<PatternNeed, "kind" | "size_mm" | "size_label">): string {
@@ -79,7 +80,8 @@ export function PatternNeedsPanel({ designId, api }: { designId: string; api: Pr
   if (needs.isError) return null;
   const s = needs.data;
   const yarns = (s?.items ?? []).filter((n) => n.kind === "yarn");
-  const tools = (s?.items ?? []).filter((n) => n.kind !== "yarn");
+  const tools = (s?.items ?? []).filter((n) => n.kind === "hook" || n.kind === "needle");
+  const notions = (s?.items ?? []).filter((n) => n.kind === "notion");
   const line = readLine(s);
   const metres = (m: number) => units.format(Math.round(m), "m");
 
@@ -99,6 +101,9 @@ export function PatternNeedsPanel({ designId, api }: { designId: string; api: Pr
           </button>
         )}
       </div>
+      <MutationError mutation={reread} className="block mb-2">Could not read it again:</MutationError>
+      <MutationError mutation={pickLength} className="block mb-2">Could not pick that length:</MutationError>
+      <MutationError mutation={remove} className="block mb-2">Could not remove that row:</MutationError>
       {line && (
         <p className={`text-xs mb-3 ${line.tone === "warn" ? "text-ember-600 dark:text-ember-400" : "text-faint dark:text-slate-500"}`} data-testid="pattern-needs-read">
           {line.text}
@@ -111,12 +116,15 @@ export function PatternNeedsPanel({ designId, api }: { designId: string; api: Pr
             <li key={n.id} className="rounded-lg border border-line dark:border-slate-700 px-3 py-2" data-testid="pattern-need">
               <div className="flex items-start gap-2">
                 <div className="min-w-0 flex-1">
-                  {n.label && (
+                  {/* The pattern's own short name (MC, A) is a tag; a longer note
+                      ("Designer used …") reads as a line under the title. */}
+                  {n.label && n.label.length <= 16 && (
                     <span className="inline-block mb-1 text-[10px] font-mono uppercase tracking-widest px-1.5 py-0.5 rounded border border-line dark:border-slate-600 text-muted">
                       {n.label}
                     </span>
                   )}
                   <div className="text-sm text-content dark:text-mortar-100 break-words">{yarnTitle(n)}</div>
+                  {n.label && n.label.length > 16 && <div className="text-xs italic text-muted dark:text-slate-400">{n.label}</div>}
                   {(n.weight || n.fiber) && (
                     <div className="text-xs text-muted dark:text-slate-400">{[n.weight, n.fiber].filter(Boolean).join(" · ")}</div>
                   )}
@@ -171,12 +179,29 @@ export function PatternNeedsPanel({ designId, api }: { designId: string; api: Pr
         </ul>
       )}
 
+      {notions.length > 0 && (
+        <ul className="space-y-2 mb-3" data-testid="pattern-needs-notions">
+          {notions.map((n) => (
+            <li key={n.id} className="rounded-lg border border-line dark:border-slate-700 px-3 py-2" data-testid="pattern-need">
+              <div className="flex items-center gap-2">
+                <span className="text-sm text-content dark:text-mortar-100 flex-1 min-w-0">{notionTitle(n)}</span>
+                <RowTools onEdit={() => setEditing(n)} onRemove={() => remove.mutate(n.id)} />
+              </div>
+              <NotionMatch designId={designId} api={api} need={n} onChanged={refresh} />
+            </li>
+          ))}
+        </ul>
+      )}
+
       <div className="flex flex-wrap gap-x-4 gap-y-2">
         <button type="button" onClick={() => setEditing({ kind: "yarn" })} className="inline-flex items-center gap-1 text-xs text-accent hover:underline min-h-9">
           <Plus size={12} /> Add a yarn
         </button>
         <button type="button" onClick={() => setEditing({ kind: "hook" })} className="inline-flex items-center gap-1 text-xs text-accent hover:underline min-h-9">
           <Plus size={12} /> Add a hook or needle
+        </button>
+        <button type="button" onClick={() => setEditing({ kind: "notion" })} className="inline-flex items-center gap-1 text-xs text-accent hover:underline min-h-9">
+          <Plus size={12} /> Add a notion
         </button>
         <button type="button" onClick={() => setPasting((v) => !v)} className="inline-flex items-center gap-1 text-xs text-muted hover:text-accent min-h-9">
           Paste the materials list
@@ -202,6 +227,7 @@ export function PatternNeedsPanel({ designId, api }: { designId: string; api: Pr
           {paste.data && !paste.data.ai && paste.data.reason && (
             <p className="text-xs text-ember-600 dark:text-ember-400 mt-2">{paste.data.reason}</p>
           )}
+          <MutationError mutation={paste} className="block mt-2" />
         </div>
       )}
 
@@ -377,10 +403,10 @@ function ToolMatch({ designId, api, need, onChanged }: { designId: string; api: 
   const shop = useMutation({ mutationFn: () => api.shopNeed(designId, need.id), onSuccess: onChanged });
   if (!m) return null;
   return (
-    <div className="mt-1 flex flex-wrap items-center gap-2" data-testid="pattern-need-match">
-      <span className={`text-xs ${m.tools.length ? "text-moss-700 dark:text-moss-400" : "text-ember-600 dark:text-ember-400"}`} data-testid="pattern-need-verdict">
+    <div className="mt-1 space-y-1.5" data-testid="pattern-need-match">
+      <p className={`text-xs ${m.tools.length ? "text-moss-700 dark:text-moss-400" : "text-ember-600 dark:text-ember-400"}`} data-testid="pattern-need-verdict">
         {m.tools.length ? `You have it: ${m.tools[0]!.name}.` : `No ${need.size_mm} mm ${need.kind === "needle" ? "needle" : "hook"} in your stash.`}
-      </span>
+      </p>
       {!m.tools.length && !need.list_item_id && (
         <button
           type="button"
@@ -392,7 +418,43 @@ function ToolMatch({ designId, api, need, onChanged }: { designId: string; api: 
           Add to shopping list
         </button>
       )}
-      {need.list_item_id && <span className="text-xs text-muted">On your shopping list.</span>}
+      {need.list_item_id && <p className="text-xs text-muted">On your shopping list.</p>}
+    </div>
+  );
+}
+
+export function notionTitle(n: Pick<PatternNeed, "label" | "size_mm" | "quantity">): string {
+  return [n.quantity != null ? `${n.quantity} ×` : "", n.label ?? "Notion", n.size_mm != null ? `${n.size_mm} mm` : ""].filter(Boolean).join(" ");
+}
+
+function NotionMatch({ designId, api, need, onChanged }: { designId: string; api: ProjectsApi; need: PatternNeed; onChanged: () => void }) {
+  const m = need.match;
+  const shop = useMutation({ mutationFn: () => api.shopNeed(designId, need.id), onSuccess: onChanged });
+  if (!m) return null;
+  const what = (need.label ?? "notion").toLowerCase();
+  const verdict =
+    m.status === "have"
+      ? `You have it: ${m.tools[0]?.name ?? need.label}.`
+      : m.status === "short"
+        ? `You have ${m.tools.reduce((a, t) => a + t.qty, 0)}; the pattern wants ${need.quantity}.`
+        : `No ${what}${need.size_mm != null ? ` of ${need.size_mm} mm` : ""} on hand.`;
+  return (
+    <div className="mt-1 space-y-1.5" data-testid="pattern-need-match">
+      <p className={`text-xs ${m.status === "have" ? "text-moss-700 dark:text-moss-400" : "text-ember-600 dark:text-ember-400"}`} data-testid="pattern-need-verdict">
+        {verdict}
+      </p>
+      {m.status !== "have" && !need.list_item_id && (
+        <button
+          type="button"
+          disabled={shop.isPending}
+          onClick={() => shop.mutate()}
+          className="min-h-9 rounded-md border border-line dark:border-slate-600 text-xs px-3 disabled:opacity-40"
+          data-testid="pattern-need-shop"
+        >
+          Add to shopping list
+        </button>
+      )}
+      {need.list_item_id && <p className="text-xs text-muted">On your shopping list.</p>}
     </div>
   );
 }
@@ -451,7 +513,24 @@ function NeedEditor({
     mutationFn: () => {
       const s = (v: string) => (v.trim() ? v.trim() : null);
       const body: PatternNeedInput =
-        kind === "yarn"
+        kind === "notion"
+          ? {
+              kind,
+              label: s(f.label),
+              brand: null,
+              product: null,
+              color: null,
+              color_code: null,
+              weight: null,
+              fiber: null,
+              quantity: numOrNull(f.quantity),
+              quantity_unit: null,
+              unit_length_m: null,
+              length_m: null,
+              size_mm: numOrNull(f.size_mm),
+              size_label: null,
+            }
+          : kind === "yarn"
           ? {
               kind,
               label: s(f.label),
@@ -495,9 +574,27 @@ function NeedEditor({
     </label>
   );
   return (
-    <Modal open onClose={onClose} title={existing ? "Change what the pattern needs" : kind === "yarn" ? "Add a yarn" : "Add a hook or needle"} size="sm">
+    <Modal open onClose={onClose} title={existing ? "Change what the pattern needs" : kind === "yarn" ? "Add a yarn" : kind === "notion" ? "Add a notion" : "Add a hook or needle"} size="sm">
       <div className="space-y-2.5">
-        {kind === "yarn" ? (
+        {kind === "notion" ? (
+          <>
+            <label className="block">
+              <span className="block text-xs text-muted mb-0.5">What it is</span>
+              <select value={f.label} onChange={set("label")} className="input text-sm">
+                <option value="">Pick one</option>
+                {NOTION_NAMES.map((n) => (
+                  <option key={n} value={n}>
+                    {n}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <div className="grid grid-cols-2 gap-2">
+              {field("How many", "quantity", { type: "number", min: 0, step: "any", inputMode: "decimal" })}
+              {field("Size in mm (eyes, buttons)", "size_mm", { type: "number", min: 0, step: "any", inputMode: "decimal" })}
+            </div>
+          </>
+        ) : kind === "yarn" ? (
           <>
             {field("Pattern's name for it (MC, A…)", "label")}
             <div className="grid grid-cols-2 gap-2">
@@ -548,7 +645,7 @@ function NeedEditor({
           <button
             type="button"
             onClick={() => save.mutate()}
-            disabled={save.isPending || (kind !== "yarn" && !(Number(f.size_mm) > 0))}
+            disabled={save.isPending || (kind === "notion" ? !f.label : kind !== "yarn" && !(Number(f.size_mm) > 0))}
             className="rounded-md bg-cobble-600 hover:bg-cobble-700 text-white text-sm px-3 py-2 disabled:opacity-40"
           >
             Save

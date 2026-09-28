@@ -46,6 +46,7 @@ import { roleSatisfies } from "@cobblr/platform-contract/org-roles";
 import { TestConnectionButton, VerificationBadge } from "../components/ConnectionState";
 import { keyRefusedBy, refusalDialog, verificationToast } from "../lib/connection-state";
 import { useAiStatus } from "../components/AiStatusNotice";
+import { WhoAnswersSection } from "../components/WhoAnswersSection";
 import { PayloadView, usageLine } from "../components/PayloadView";
 import { FEED_SCROLL, FEED_SCROLL_INNER } from "../lib/feed";
 
@@ -131,6 +132,8 @@ export function AiPage() {
         onEdit={setEditing}
       />
 
+      <WhoAnswersSection />
+
       <AutoPickPhotosSection
         slug={activeSlug}
         canEdit={roleSatisfies(activeOrg?.role, ["owner", "admin"])}
@@ -158,7 +161,10 @@ export function AiPage() {
                 <div className="flex items-center gap-2 text-sm shrink-0">
                   {row ? (
                     <span className="text-right">
-                      <span className="text-muted">{row.provider_id}</span>
+                      {/* A job pinned to a connection names the connection: its
+                          provider id alone read as a workspace provider that
+                          does not exist here. */}
+                      <span className="text-muted">{row.credential_id ? pinnedConnectionName(row.credential_id, sharesQ.data?.items ?? []) : row.provider_id}</span>
                       <span className="mx-1 text-faint">·</span>
                       <span className="font-mono text-xs">{row.model}</span>
                     </span>
@@ -289,6 +295,14 @@ export function AiPage() {
       <AiActivitySection slug={activeSlug} />
     </div>
   );
+}
+
+/** How a job pinned to a connection names it: yours by its own name, somebody
+ *  else's as theirs (its name is private to them). */
+function pinnedConnectionName(credentialId: string, offers: WorkspaceAiOffer[]): string {
+  const o = offers.find((x) => x.credential_id === credentialId);
+  if (!o) return "a connection no longer here";
+  return o.is_own ? o.label : `shared by ${o.offered_by_name}`;
 }
 
 function ProviderRow({
@@ -1346,7 +1360,7 @@ function AiActivitySection({ slug }: { slug: string }) {
         <table className="w-full text-xs">
           <thead>
             <tr className="border-b border-line dark:border-slate-700 bg-subtle/60 dark:bg-slate-800/40 text-left">
-              {["When", "Capability", "Model", "Tokens", "Source", ""].map((h) => (
+              {["When", "Capability", "AI", "Model", "Tokens", "Source", ""].map((h) => (
                 <th key={h} className="px-3 py-1.5 font-mono text-[10px] uppercase text-muted tracking-wider whitespace-nowrap">{h}</th>
               ))}
             </tr>
@@ -1356,6 +1370,9 @@ function AiActivitySection({ slug }: { slug: string }) {
               <tr key={c.id} className="border-b border-line dark:border-slate-800 last:border-0 hover:bg-subtle/40 dark:hover:bg-slate-800/30 cursor-pointer" onClick={() => setDetail(c)}>
                 <td className="px-3 py-1.5 text-muted whitespace-nowrap">{new Date(c.invoked_at).toLocaleString()}</td>
                 <td className="px-3 py-1.5"><span className="font-mono text-[11px]">{c.capability}</span></td>
+                {/* Which connection, by the name somebody gave it; the kind
+                    of provider rides as the hover. */}
+                <td className="px-3 py-1.5 text-muted whitespace-nowrap" title={c.provider_id}>{c.provider_label || c.provider_id}</td>
                 <td className="px-3 py-1.5 text-muted whitespace-nowrap">{c.model ?? "—"}</td>
                 <td className="px-3 py-1.5 text-muted whitespace-nowrap">{(c.input_tokens ?? 0) + (c.output_tokens ?? 0) || "—"}</td>
                 <td className="px-3 py-1.5 text-faint whitespace-nowrap">{c.cached ? "cache" : c.source_kind ?? "—"}{c.ok ? "" : " ⚠"}</td>
@@ -1363,7 +1380,7 @@ function AiActivitySection({ slug }: { slug: string }) {
               </tr>
             ))}
             {items.length === 0 && (
-              <tr><td colSpan={6} className="px-3 py-4 text-center text-faint italic">{q.isLoading ? "Loading…" : "No AI calls yet."}</td></tr>
+              <tr><td colSpan={7} className="px-3 py-4 text-center text-faint italic">{q.isLoading ? "Loading…" : "No AI calls yet."}</td></tr>
             )}
           </tbody>
         </table>
@@ -1381,7 +1398,7 @@ function AiActivityDetail({ slug, item, onClose }: { slug: string; item: AiActiv
     <Modal open onClose={onClose} title={`AI call · ${item.capability}`} size="lg">
       <div className="space-y-3 text-sm">
         <div className="text-xs text-muted" title={usage.title}>
-          {item.model ?? "—"} · {new Date(item.invoked_at).toLocaleString()} · {usage.text}
+          {item.provider_label || item.provider_id} · {item.model ?? "—"} · {new Date(item.invoked_at).toLocaleString()} · {usage.text}
         </div>
         {!d ? (
           <div className="text-faint text-xs">Loading full text…</div>

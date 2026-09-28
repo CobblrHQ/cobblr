@@ -23,7 +23,7 @@ import { Laptop, Bluetooth, Loader2 } from "lucide-react";
  *  two repos cannot share a constant, so the contract is written down in
  *  docs/architecture/edge-bridge-relay.md. */
 const APP = "http://127.0.0.1:8079";
-import { localFetch, allowLocalAccess } from "@cobblr/platform-web";
+import { localFetch, allowLocalAccess, MutationError } from "@cobblr/platform-web";
 
 interface DesktopApp {
   app: string;
@@ -263,6 +263,7 @@ export function DesktopAppCard() {
             : res.error}
         </p>
       )}
+      <MutationError mutation={probe} className="block pl-6">Couldn't reach the printer:</MutationError>
 
       {app.data.bluetooth && (
         <p className="text-[11px] pl-6 text-faint dark:text-slate-500">

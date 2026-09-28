@@ -10,7 +10,7 @@ import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import ReactMarkdown from "react-markdown";
 import { Check, MessageCircleQuestion, Pencil, Plus, RotateCcw, Trash2, Wand2 } from "lucide-react";
-import { Modal, useConfirm, useToast, usePageTitle } from "@cobblr/platform-web";
+import { Modal, useConfirm, useToast, usePageTitle, MutationError } from "@cobblr/platform-web";
 import { ApiError, api, type BasicRuleRow, type BasicAnswer, type BasicMissRow, type CommandCandidate } from "../lib/api";
 import { useActiveOrg } from "../auth/ActiveOrgContext";
 import { ConfigHeaderActions } from "../components/ConfigPageHeader";
@@ -218,6 +218,7 @@ function Tester({ slug }: { slug: string }) {
           Test
         </button>
       </form>
+      <MutationError mutation={run} className="block mt-2">The test did not run:</MutationError>
       {result && (
         <div className="mt-3 text-sm">
           <div className="prose prose-sm dark:prose-invert max-w-none text-content dark:text-mortar-100">

@@ -100,7 +100,7 @@ export function JoinPage() {
               {lockedEmail && <span className="mt-1 block text-[10px] text-faint dark:text-slate-500">This invite is for {lockedEmail}.</span>}
             </Field>
             <Field label="Password">
-              <PasswordInput required minLength={8} value={password} onChange={(e) => setPassword(e.target.value)} placeholder="at least 8 characters" className="input w-full" />
+              <PasswordInput autoComplete="new-password" required minLength={8} value={password} onChange={(e) => setPassword(e.target.value)} placeholder="at least 8 characters" className="input w-full" />
             </Field>
             <Field label="Your name">
               <input required value={displayName} onChange={(e) => setDisplayName(e.target.value)} placeholder="Sam" className="input w-full" />

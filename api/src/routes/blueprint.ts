@@ -17,6 +17,7 @@
 import { Router } from "express";
 import { randomBytes } from "node:crypto";
 import { z } from "zod";
+import { bindingAskOf } from "@cobblr/platform-contract/binding-ask";
 import { sql, type Kysely } from "kysely";
 import { requireAuth } from "../auth/middleware.js";
 import { requireRole } from "../auth/capability.js";
@@ -94,6 +95,8 @@ export const BlueprintManifest = z.object({
         template: z.string().nullish(),
         filter: z.unknown().optional(),
         args: z.unknown().optional(),
+        label: z.string().nullish(),
+        ask: z.unknown().optional(),
         target: z.unknown().optional(),
       }),
     )
@@ -193,6 +196,8 @@ export async function captureBlueprint(orgId: string): Promise<BlueprintManifest
       "template",
       "filter",
       "args",
+      "label",
+      "ask",
       "target",
     ])
     .where("org_id", "=", orgId)
@@ -292,6 +297,8 @@ export async function captureBlueprint(orgId: string): Promise<BlueprintManifest
       template: w.template ?? undefined,
       filter: w.filter ?? undefined,
       args: w.args ?? undefined,
+      label: w.label ?? undefined,
+      ask: w.ask ?? undefined,
       target:
         w.target && w.target !== "self" && typeof w.target === "object"
           ? (w.target as Record<string, unknown>)
@@ -486,6 +493,8 @@ export async function applyBlueprint(
           template: w.template ?? null,
           filter: w.filter ? sql`${JSON.stringify(w.filter)}::jsonb` : null,
           args: w.args ? sql`${JSON.stringify(w.args)}::jsonb` : null,
+          label: w.trigger_type === "user-invoked" ? (w.label ?? null) : null,
+          ask: w.trigger_type === "user-invoked" && bindingAskOf(w.ask).length ? sql`${JSON.stringify(bindingAskOf(w.ask))}::jsonb` : null,
           bundle_id: null,
           source_module: null,
           target: w.target ? sql`${JSON.stringify(w.target)}::jsonb` : sql`'"self"'::jsonb`,

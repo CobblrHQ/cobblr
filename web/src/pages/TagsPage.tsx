@@ -127,6 +127,7 @@ export function TagsPage() {
       toast.success("Tag deleted");
       void qc.invalidateQueries({ queryKey: ["tags", activeSlug] });
     },
+    onError: (e: unknown) => toast.error(`Couldn't delete that tag: ${e instanceof ApiError ? e.message : String(e)}`),
   });
 
   const pin = useMutation({

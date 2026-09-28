@@ -51,8 +51,8 @@ const MACHINE_STATES = [
 ];
 import { useActiveOrg } from "../auth/ActiveOrgContext";
 import { useFieldPresentation } from "../lib/useFieldPresentation";
-import { ContentsPanel } from "../components/ContentsPanel";
-import { CustomFieldsPanel, EditField, EditSelect, EntityActionsBar, FaceSection, FacesOn, FieldPack, RecordFaces, editFieldItem, fieldNeed, useAskCobbAboutSelection, Modal, useToast, useConfirm, usePageTitle, usePageWidth, BackdropLayer } from "@cobblr/platform-web";
+import { ContentsPanel, useHoldsContents } from "../components/ContentsPanel";
+import { CustomFieldsPanel, EditField, EditSelect, EntityActionsBar, FaceSection, FacesOn, faceShows, FieldPack, RecordFaces, editFieldItem, fieldNeed, useAskCobbAboutSelection, Modal, useToast, useConfirm, usePageTitle, usePageWidth, BackdropLayer, TILE_GRID, InboxWaitingStrip } from "@cobblr/platform-web";
 import {
   BulkActionBar,
   EntityThumb,
@@ -65,6 +65,7 @@ import { EntityAttachments } from "../components/EntityAttachments";
 import { LocationTreePicker } from "../components/LocationTreePicker";
 import { itemNounFor, pluralise } from "@cobblr/platform-contract";
 import { PresentationGate, useFaces } from "@cobblr/platform-web";
+import { TableTitle } from "@cobblr/platform-web";
 
 const ENTITY_KIND = "machines:machine";
 
@@ -72,7 +73,8 @@ export function MachinesPage({
   instance,
   displayName,
   itemNoun,
-}: { instance?: string; displayName?: string; itemNoun?: string } = {}) {
+  hint,
+}: { instance?: string; displayName?: string; itemNoun?: string; hint?: string | null } = {}) {
   // When `instance` is set we're rendering ONE named collection of machines
   // (e.g. "3D Printers"), reached at the clean /<instance> URL. Same rich page
   // as /machines — fields, detail/edit, digifab — just scoped to the instance's
@@ -400,9 +402,7 @@ export function MachinesPage({
   return (
     <div className="space-y-4">
       <div className="flex flex-wrap items-baseline gap-x-3 gap-y-2 border-b border-line dark:border-slate-700 pb-3">
-        <h1 className="font-display text-2xl font-extrabold text-content dark:text-mortar-100 page-title">
-          {displayName ?? "machines"}
-        </h1>
+        <TableTitle title={displayName ?? "machines"} hint={hint} />
         {!instance && lensModule && (
           <Link
             to="/machines"
@@ -656,8 +656,12 @@ export function MachinesPage({
           ))}
         </div>
       )}
+      {/* What is waiting in the scan inbox to come here, under the filed
+          results: a thing just scanned is in no table until it is filed. */}
+      {pageTab === "items" && <InboxWaitingStrip destination={instance ?? "machines"} q={query} />}
 
       <MachineDetailModal
+
         machineId={selectedId}
         instance={instance}
         specialisations={instance ? [] : availableLenses}
@@ -1135,25 +1139,21 @@ function MachineTileGrid({
   live?: Map<string, { dev: DigifabFleetDevice; connId: string }>;
 }) {
   return (
-    <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-3">
+    <div className={TILE_GRID}>
       {rows.map((m) => (
         <button
           key={m.id}
           type="button"
           onClick={() => onRowClick(m.id)}
-          className="text-left"
+          className="text-left h-full"
         >
           <EntityTile
             src={m.image_path}
             title={m.name}
             subtitle={m.family || m.manufacturer || m.short_name || null}
             badge={m.state}
+            status={live?.get(m.id) ? <LiveChip dev={live.get(m.id)!.dev} /> : undefined}
           />
-          {live?.get(m.id) && (
-            <div className="mt-1 px-0.5">
-              <LiveChip dev={live.get(m.id)!.dev} />
-            </div>
-          )}
         </button>
       ))}
     </div>
@@ -1186,6 +1186,7 @@ export function MachineDetailModal({
       void qc.invalidateQueries({ queryKey: ["machine", activeSlug, machineId] });
       void qc.invalidateQueries({ queryKey: ["machines", activeSlug] });
     },
+    onError: (e: unknown) => toast.error(`Couldn't save that change: ${e instanceof ApiError ? e.message : String(e)}`),
   });
   // The machine ROW is always `machines:machine` (attachments, actions, native
   // fields), but a bundle ships its custom field defs (hotend, firmware, …) and
@@ -1198,6 +1199,7 @@ export function MachineDetailModal({
   // native fields per workspace. No-op (fallback label, not hidden) until an
   // override exists. Same pattern as AssetsPage.
   const fp = useFieldPresentation(customKind);
+  const holdsContents = useHoldsContents(activeSlug, { kind: "machines:machine", id: machineId ?? "" });
   // The collection's faces decide sections and verbs; the body waits for them.
   const shape = useFaces(instance ? `${instance}:item` : ENTITY_KIND);
   const remove = useMutation({
@@ -1403,10 +1405,12 @@ export function MachineDetailModal({
           {/* The native fields, packed from what each needs (#3067). Short
               name + Type are low-signal: shown only when set (keeps the
               default compact). Quantity is an inventory-ism: a tracked
-              machine is one unit, so it shows only with the stock face on
-              and never for a specialised instance; the face is read from
-              inside the record's faces (this component mounts RecordFaces,
-              so a hook in its own body would answer true). */}
+              machine is one unit, so it folds unless the stock face is on
+              outside a specialised instance, and it always shows when the
+              record says anything but 1 (an import that brought "5 of
+              these"). The face is read from inside the record's faces (this
+              component mounts RecordFaces, so a hook in its own body would
+              answer true). */}
           <FacesOn kind={instance ? `${instance}:item` : ENTITY_KIND} faces={["stock"] as const}>
             {({ stock: stockOn }) => (
           <FieldPack
@@ -1424,7 +1428,7 @@ export function MachineDetailModal({
                     node: <EditSelect label={fp.label("state", "State")} value={m.state} options={MACHINE_STATES} onCommit={(v) => update.mutate({ state: v })} />,
                   }
                 : null,
-              stockOn && !fp.hidden("quantity") && !instance ? editFieldItem("quantity", { label: fp.label("quantity", "Quantity"), value: String(m.quantity), numeric: true, onCommit: (v) => update.mutate({ quantity: Number(v) || 0 }) }) : null,
+              !fp.hidden("quantity") && faceShows(stockOn && !instance, m.quantity, 1) ? editFieldItem("quantity", { label: fp.label("quantity", "Quantity"), value: String(m.quantity), numeric: true, onCommit: (v) => update.mutate({ quantity: Number(v) || 0 }) }) : null,
               {
                 need: fieldNeed("location", { control: "picker", label: "Location" }),
                 node: <LocationTreePicker label="Location" kind="area" value={m.location_id} onChange={(id) => update.mutate({ location_id: id })} size="sm" />,
@@ -1446,7 +1450,7 @@ export function MachineDetailModal({
 
           {/* What's installed inside this machine (a printer's mods/parts). The
               generic placement panel — same one a server asset or a drawer uses. */}
-          <FaceSection face="container" kind={instance ? `${instance}:item` : ENTITY_KIND}>
+          <FaceSection face="container" kind={instance ? `${instance}:item` : ENTITY_KIND} holds={holdsContents}>
             <ContentsPanel slug={activeSlug} container={{ kind: "machines:machine", id: m.id }} title="Installed components" />
           </FaceSection>
 
@@ -1459,7 +1463,10 @@ export function MachineDetailModal({
               slug: activeSlug,
               entityId: m.id,
               entityTitle: m.name,
-              hints: { printer_kind: typeof m.metadata?.printer_kind === "string" ? (m.metadata.printer_kind as string) : undefined },
+              hints: {
+                printer_kind: typeof m.metadata?.printer_kind === "string" ? (m.metadata.printer_kind as string) : undefined,
+                collection: instance ? `${instance}:item` : undefined,
+              },
             }}
           />
 
@@ -1473,7 +1480,7 @@ export function MachineDetailModal({
               kind={ENTITY_KIND}
               entityId={m.id}
               compact
-              omit={["tags", "discussion"]}
+              omit={["tags", "discussion", "pairings"]}
             />
             {!(m.notes || notesOpen) && (
               <button

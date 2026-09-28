@@ -18,8 +18,11 @@ import { ApiError, api, fetchAuthBlobUrl, type DigifabFleet, type DigifabFleetDe
 import { deviceBucket, fleetStatusChip } from "../../lib/fleet-status";
 import { BambuConnectWizard } from "../../components/BambuConnectWizard";
 import { BridgePicker } from "../../components/BridgePicker";
+import { HomeNetworkHint } from "../../components/HomeNetworkHint";
+import { useHosted } from "../../lib/useHosted";
+import { needsBridge } from "@cobblr/platform-contract/address-reach";
 import { useActiveOrg } from "../../auth/ActiveOrgContext";
-import { useLater, Modal, useToast, useConfirm, useImageSrc, OverlayLayer, relativeTime, PasswordInput } from "@cobblr/platform-web";
+import { useLater, Modal, useToast, useConfirm, useImageSrc, OverlayLayer, relativeTime, EntityPhoto, SecretInput, AddressInput } from "@cobblr/platform-web";
 import { Combobox } from "../../components/Combobox";
 import type { ModulePageTabCtx, EntityDetailPanelCtx } from "../../panels/types";
 
@@ -74,6 +77,7 @@ export function CreateConnectionModal({
   const { activeSlug } = useActiveOrg();
   const toast = useToast();
   const [type, setType] = useState(presetType ?? types[0] ?? "fdm_monster");
+  const hosted = useHosted();
   // For a Bambu, the user chooses HOW it connects: cloud account (monitor) or LAN
   // via the edge bridge (full control). They're different connection shapes.
   const [bambuWay, setBambuWay] = useState<"cloud" | "lan">("cloud");
@@ -152,7 +156,17 @@ export function CreateConnectionModal({
         </label>
         <label className="block">
           <span className={lbl}>Base URL</span>
-          <input value={baseUrl} onChange={(e) => setBaseUrl(e.target.value)} placeholder="http://farm.local:4000" className={field} />
+          <AddressInput value={baseUrl} onChange={(e) => setBaseUrl(e.target.value)} placeholder="http://farm.local:4000" className={field} />
+          {needsBridge(baseUrl, { hosted }) && (
+            <span className="block mt-1 space-y-1">
+              <HomeNetworkHint address={baseUrl} hosted={hosted} />
+              {types.includes("edge_adapter") && (
+                <button type="button" onClick={() => setType("edge_adapter")} className="text-[11px] underline text-accent">
+                  Connect it through my bridge instead
+                </button>
+              )}
+            </span>
+          )}
         </label>
         {type !== "mock" && (
           <>
@@ -171,17 +185,17 @@ export function CreateConnectionModal({
             {authMode === "api_key" ? (
               <label className="block">
                 <span className={lbl}>API key</span>
-                <PasswordInput what="API key" value={apiKey} onChange={(e) => setApiKey(e.target.value)} placeholder="fdmm_api_…" className={field} />
+                <SecretInput secret what="API key" value={apiKey} onChange={(e) => setApiKey(e.target.value)} placeholder="fdmm_api_…" className={field} />
               </label>
             ) : (
               <div className="grid grid-cols-2 gap-2">
                 <label className="block">
                   <span className={lbl}>Username</span>
-                  <input value={username} onChange={(e) => setUsername(e.target.value)} className={field} />
+                  <SecretInput what="username" value={username} onChange={(e) => setUsername(e.target.value)} className={field} />
                 </label>
                 <label className="block">
                   <span className={lbl}>Password</span>
-                  <PasswordInput value={password} onChange={(e) => setPassword(e.target.value)} className={field} />
+                  <SecretInput secret what="password" value={password} onChange={(e) => setPassword(e.target.value)} className={field} />
                 </label>
               </div>
             )}
@@ -1085,17 +1099,19 @@ export function FleetView({ slug, machineIds, scopeNoun }: {
  *  show the machine's own portrait instead of a dark void, with a quiet "no
  *  camera" chip so nobody mistakes it for a live feed. */
 function MachinePhotoFill({ src, alt }: { src: string; alt: string }) {
-  const resolved = useImageSrc(src);
-  const [failed, setFailed] = useState(false);
-  if (!resolved || failed) {
-    return <span className="flex flex-col items-center gap-1 text-faint text-[11px]"><Camera size={18} /> no camera</span>;
-  }
   return (
     <div className="relative w-full h-full">
-      <img src={resolved} alt={alt} draggable={false} className="w-full h-full object-cover" onError={() => setFailed(true)} />
-      <span className="absolute bottom-1 right-1 px-1.5 py-0.5 rounded bg-black/55 text-[9px] font-mono uppercase tracking-wider text-white/85 inline-flex items-center gap-1">
-        <Camera size={9} /> no camera
-      </span>
+      <EntityPhoto
+        src={src}
+        alt={alt}
+        fill
+        className="!bg-transparent"
+        placeholder={<span className="flex flex-col items-center gap-1 text-faint text-[11px] font-sans"><Camera size={18} /> no camera</span>}
+      >
+        <span className="absolute bottom-1 right-1 px-1.5 py-0.5 rounded bg-black/55 text-[9px] font-mono uppercase tracking-wider text-white/85 inline-flex items-center gap-1">
+          <Camera size={9} /> no camera
+        </span>
+      </EntityPhoto>
     </div>
   );
 }
@@ -1133,6 +1149,7 @@ export function RelaySnapshot({ slug, connId, deviceId, name, live }: { slug: st
     return () => { alive = false; if (id) clearInterval(id); if (current) URL.revokeObjectURL(current); };
   }, [slug, connId, deviceId, live]);
   if (!url) return null;
+  // photo-frame: a live frame from the printer's camera, not a stored photo
   // EXTERNAL-IMAGE-OK: a blob: object URL this component already built from an
   // authenticated snapshot fetch (and revokes on unmount).
   return <img src={url} alt={`${name} camera`} className="mb-1.5 w-full h-24 object-cover rounded bg-black/30" />;
@@ -1155,6 +1172,7 @@ function RelaySnapshotFill({ slug, connId, deviceId, name, live }: { slug: strin
     return () => { alive = false; if (id) clearInterval(id); if (current) URL.revokeObjectURL(current); };
   }, [slug, connId, deviceId, live]);
   if (!url) return <span className="flex flex-col items-center gap-1 text-faint text-[11px]"><Camera size={18} /> waiting for a frame…</span>;
+  // photo-frame: a live frame from the printer's camera, not a stored photo
   // EXTERNAL-IMAGE-OK: a blob: object URL this component already built from an
   // authenticated snapshot fetch (and revokes on unmount).
   return <img src={url} alt={`${name} camera`} draggable={false} className="w-full h-full object-cover" />;
@@ -1222,6 +1240,7 @@ function LanCameraFill({ slug, connId, deviceId, name, live, klass }: { slug: st
       </span>
     );
   }
+  // photo-frame: a live frame from the printer's camera, not a stored photo
   // EXTERNAL-IMAGE-OK: a blob: object URL this component already built from an
   // authenticated snapshot fetch (and revokes on unmount).
   return <img src={url} alt={`${name} camera`} draggable={false} className="w-full h-full object-cover" />;
@@ -1369,6 +1388,7 @@ function DeviceCard({ d, connId, slug, title, subtitle, dense, cams, selecting, 
               <LanCameraFill slug={slug} connId={connId} deviceId={d.id} name={d.name} live={d.klass === "printing" || d.klass === "paused"} klass={d.klass} />
             ) : d.camera_url ? (
               // EXTERNAL-IMAGE-OK: the printer's own LAN camera URL, not a stored file.
+              // photo-frame: a live frame from the printer's camera, not a stored photo
               <img src={d.camera_url} alt={`${d.name} camera`} draggable={false} className="w-full h-full object-cover" onError={(e) => { (e.currentTarget as HTMLImageElement).style.display = "none"; }} />
             ) : d.linked_machine?.image_path ? (
               <MachinePhotoFill src={d.linked_machine.image_path} alt={`${title ?? d.name} photo`} />
@@ -1466,6 +1486,7 @@ function DeviceCard({ d, connId, slug, title, subtitle, dense, cams, selecting, 
           live={d.klass === "printing" || d.klass === "paused"}
         />
       ) : (d.klass === "printing" || d.klass === "paused") && d.camera_url ? (
+        // photo-frame: a live frame from the printer's camera, not a stored photo
         <img
           src={d.camera_url}
           alt={`${d.name} camera`}
@@ -1983,13 +2004,11 @@ function FileRow({
   return (
     <li ref={ref} className="px-2 py-1 text-xs">
       <div className="flex items-center gap-2">
-        <div className="w-10 h-10 shrink-0 rounded border border-line dark:border-slate-700 bg-subtle dark:bg-slate-800 overflow-hidden flex items-center justify-center">
-          {thumb ? (
-            // EXTERNAL-IMAGE-OK: a gcode-embedded thumbnail (data: URI) or the vendor cover URL.
-            <img src={thumb} alt="" loading="lazy" className="w-full h-full object-contain cursor-zoom-in" onClick={() => onZoom?.(thumb)} />
-          ) : (
-            <span className="text-faint text-[9px]">{visible && fq.isFetching ? "…" : ""}</span>
-          )}
+        <div className="w-10 h-10 shrink-0 rounded border border-line dark:border-slate-700 overflow-hidden">
+          {/* EXTERNAL-IMAGE-OK: a gcode-embedded thumbnail (data: URI) or the vendor cover URL. */}
+          <button type="button" className="block cursor-zoom-in" disabled={!thumb} onClick={() => thumb && onZoom?.(thumb)}>
+            <EntityPhoto src={thumb} alt="" size={40} fit="contain" placeholder={<span className="text-faint text-[9px]">{visible && fq.isFetching ? "…" : ""}</span>} />
+          </button>
         </div>
         <div className="flex-1 min-w-0">
           <button type="button" onClick={() => setExpanded((v) => !v)} className="block w-full truncate text-left text-content dark:text-mortar-100 hover:text-accent" title="Show print estimate">
@@ -2192,7 +2211,7 @@ function FilesPanel({ slug, connId, deviceId, onZoom, history, onOpenPrint, onRe
               <li key={r.id} className="px-2 py-1 text-xs flex items-center gap-2">
                 {r.cover ? (
                   // EXTERNAL-IMAGE-OK: the vendor task cover URL from the printer's own API.
-                  <img src={r.cover} alt="" loading="lazy" className="w-10 h-10 rounded object-cover bg-subtle shrink-0 border border-line dark:border-slate-700" />
+                  <EntityPhoto src={r.cover} alt="" size={40} className="rounded border border-line dark:border-slate-700" placeholder={null} />
                 ) : (
                   <span className={"w-10 h-10 rounded shrink-0 flex items-center justify-center border border-line dark:border-slate-700 " + (r.status === "completed" ? "bg-moss-500/10" : "bg-ember-500/10")}>
                     <span className={"w-1.5 h-1.5 rounded-full " + (r.status === "completed" ? "bg-moss-500" : "bg-ember-500")} />
@@ -2223,6 +2242,7 @@ export function Lightbox({ src, onClose }: { src: string; onClose: () => void })
   return createPortal(
     <OverlayLayer className="z-[120] bg-black/80 flex items-center justify-center p-6 cursor-zoom-out" onClick={onClose}>
       {/* EXTERNAL-IMAGE-OK: the caller hands this an already-resolved URL. */}
+      {/* photo-frame: the fleet's lightbox shows the whole picture at its own shape */}
       <img src={src} alt="" className="max-w-full max-h-full object-contain rounded shadow-2xl" />
     </OverlayLayer>,
     document.body,
@@ -2268,6 +2288,7 @@ function LanCameraView({ slug, connId, deviceId, name, onZoom }: { slug: string;
   }, [slug, connId, deviceId]);
   if (failed && !url) return <div className="text-[11px] text-faint italic">Camera not reachable over LAN yet (bridge online + LAN access on the printer?).</div>;
   if (!url) return <div className="text-[11px] text-faint">Connecting to the camera…</div>;
+  // photo-frame: a live frame from the printer's camera, not a stored photo
   // EXTERNAL-IMAGE-OK: a blob: object URL this component already built from an
   // authenticated snapshot fetch (and revokes on unmount).
   return <img src={url} alt={`${name} camera`} className="w-full max-h-72 object-contain rounded bg-black/30 cursor-zoom-in" onClick={() => onZoom?.(url)} />;
@@ -2353,8 +2374,8 @@ function LanAccessPanel({ slug, connId, deviceId, lan }: { slug: string; connId:
         ) : (
           <div className="space-y-2">
             <div className="flex gap-1.5">
-              <input value={host} onChange={(e) => setHost(e.target.value)} placeholder="Printer IP - 192.168.1.x" className={field + " flex-1"} />
-              <input value={code} onChange={(e) => setCode(e.target.value)} placeholder="Access code" className={field + " w-32"} />
+              <SecretInput what="printer address" value={host} onChange={(e) => setHost(e.target.value)} placeholder="Printer IP - 192.168.1.x" className={field + " flex-1"} />
+              <SecretInput secret what="access code" wrapperClassName="w-32" value={code} onChange={(e) => setCode(e.target.value)} placeholder="Access code" className={field + " w-full"} />
               <button type="button" onClick={() => save.mutate()} disabled={save.isPending || !host.trim() || !code.trim()} className="px-2.5 py-1 text-xs rounded bg-cobble-600 hover:bg-cobble-700 text-white disabled:opacity-50">{save.isPending ? "…" : "Enable"}</button>
             </div>
             <span className="text-[11px] text-faint">On the printer: Settings → network for its IP + Access Code. Needs your edge bridge online on the same LAN.</span>
@@ -2519,9 +2540,9 @@ export function PrinterDetailModal({ slug, connId, device, onClose }: { slug: st
                   {detail.data?.lan?.camera ? (
                     <LanCameraView slug={slug} connId={connId} deviceId={device.id} name={device.name} onZoom={setLightbox} />
                   ) : (
-                    <div className="rounded-lg border border-line dark:border-slate-700 bg-subtle dark:bg-slate-800 overflow-hidden aspect-video">
-                      <img src={machineImg!} alt={device.name} className="w-full h-full object-cover cursor-zoom-in" onClick={() => setLightbox(machineImg!)} />
-                    </div>
+                    <button type="button" className="block w-full cursor-zoom-in" onClick={() => setLightbox(machineImg!)}>
+                      <EntityPhoto src={machineImg} alt={device.name} aspect="16/9" className="rounded-lg border border-line dark:border-slate-700" />
+                    </button>
                   )}
                   {/* The verdict, ON the frame it judges. */}
                   {fail?.watching && !fail.paused && (
@@ -2653,6 +2674,7 @@ export function PrintDetailModal({ item, onClose, onZoom, onReprint }: { item: D
       <div className="space-y-3">
         {item.cover && (
           // EXTERNAL-IMAGE-OK: the vendor task cover URL from the printer's own API.
+          // photo-frame: the print's cover shown whole in its detail dialog, a viewer rather than a tile
           <img src={item.cover} alt="" className="w-full max-h-72 object-contain rounded bg-subtle dark:bg-slate-800 cursor-zoom-in" onClick={() => onZoom?.(item.cover!)} />
         )}
         <div>

@@ -10,7 +10,7 @@ import { z } from "zod";
 import { platform } from "@cobblr/platform-contract";
 import { instanceOf, sessionUser, tenantContext, tenantDb } from "../db.js";
 import { asyncHandler, badBody, requireRole } from "./util.js";
-import { routeUnknownToMetadata, withMetadataMerged } from "@cobblr/platform-contract/entity-metadata";
+import { routeUnknownToMetadata, refuseUnknownFields, withMetadataMerged } from "@cobblr/platform-contract/entity-metadata";
 
 export const vendorsRouter = Router({ mergeParams: true });
 
@@ -93,6 +93,7 @@ vendorsRouter.get(
 vendorsRouter.post(
   "/",
   asyncHandler(async (req, res) => {
+    await refuseUnknownFields(req, req.body, VENDOR_NATIVE_KEYS, "purchases:vendor");
     const routed = routeUnknownToMetadata(req.body, VENDOR_NATIVE_KEYS);
     const parsed = VendorCreate.safeParse(routed);
     if (!parsed.success) return badBody(res, parsed.error);
@@ -120,6 +121,7 @@ vendorsRouter.patch(
   "/:id",
   asyncHandler(async (req, res) => {
     const id = req.params.id!;
+    await refuseUnknownFields(req, req.body, VENDOR_NATIVE_KEYS, "purchases:vendor");
     const routed = routeUnknownToMetadata(req.body, VENDOR_NATIVE_KEYS);
     const parsed = VendorUpdate.safeParse(routed);
     if (!parsed.success) return badBody(res, parsed.error);

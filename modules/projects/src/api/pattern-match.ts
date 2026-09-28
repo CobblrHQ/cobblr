@@ -46,6 +46,26 @@ export interface StashTool {
   qty: number;
 }
 
+/** A notion in the stash: what it is (the Notions table's name for it), its
+ *  size when it has one (6 mm safety eyes), and how many are free. */
+export interface StashNotion {
+  id: string;
+  name: string;
+  notion: string;
+  size_mm: number | null;
+  qty: number;
+}
+
+/** The notions of the kind (and size, when the pattern gives one) a pattern
+ *  wants, and whether there are enough of them. */
+export function notionFits(kind: string, sizeMm: number | null, want: number | null, stash: readonly StashNotion[]): { fits: StashNotion[]; short: number | null } {
+  const fits = stash.filter(
+    (n) => n.notion.toLowerCase() === kind.toLowerCase() && (sizeMm == null || n.size_mm == null || Math.abs(n.size_mm - sizeMm) < 0.05) && n.qty > 0,
+  );
+  const have = fits.reduce((a, b) => a + b.qty, 0);
+  return { fits, short: want != null ? Math.max(0, want - have) : fits.length ? 0 : null };
+}
+
 export interface YarnReq {
   brand: string | null;
   product: string | null;

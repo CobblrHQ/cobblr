@@ -23,21 +23,26 @@ interface LabelDB {
   };
 }
 
+/** What a label would change on a row. `lot` and `year_made` are row facts,
+ *  per unit, filed by role (lot-field.ts). */
+export type LabelChange = { quantity?: number; lot?: string; year_made?: string; fields: Record<string, string> };
+
 type Row = { quantity: number | null; suggested_name: string | null; suggested_candidates?: unknown; suggested_metadata: unknown };
 
 /** The label facts that would change this row, the person's own values left
  *  out. Pure. The lot is a row fact (`lot`): routing seeds it into the
  *  destination's lot-role field, and filing fills that field when it arrived
  *  after routing (lot-field.ts). */
-export function labelChanges(row: Row, facts: LabelFacts): { quantity?: number; lot?: string; fields: Record<string, string> } {
+export function labelChanges(row: Row, facts: LabelFacts): LabelChange {
   const stamps = fieldProvenanceOf(row.suggested_metadata);
   const mine = (k: string) => stamps[k]?.by === "person";
   const cands = Array.isArray(row.suggested_candidates) ? (row.suggested_candidates as Array<{ fields?: Record<string, unknown> }>) : [];
   const have = cands[0]?.fields ?? {};
   const meta = (row.suggested_metadata ?? {}) as Record<string, unknown>;
-  const out: { quantity?: number; lot?: string; fields: Record<string, string> } = { fields: {} };
+  const out: LabelChange = { fields: {} };
   if (facts.quantity && facts.quantity !== row.quantity && !mine("quantity")) out.quantity = facts.quantity;
   if (facts.lot && !mine("lot") && meta.lot !== facts.lot) out.lot = facts.lot;
+  if (facts.year_made && !mine("year_made") && meta.year_made !== facts.year_made) out.year_made = facts.year_made;
   for (const k of ["colorway", "sku", "pack_code"] as const) {
     const v = facts[k];
     if (!v || mine(k)) continue;
@@ -65,7 +70,7 @@ export async function applyLabelFacts(
   itemId: string,
   text?: string | null,
   read: LabelFacts = {},
-): Promise<{ quantity?: number; lot?: string; fields: Record<string, string> } | null> {
+): Promise<LabelChange | null> {
   const row = await db
     .selectFrom("core_scan_inbox_items")
     .select(["status", "quantity", "suggested_name", "suggested_candidates", "suggested_metadata"])
@@ -75,11 +80,12 @@ export async function applyLabelFacts(
   const meta = (row.suggested_metadata ?? {}) as Record<string, unknown>;
   const source = text ?? (typeof meta.photo_observations === "string" ? meta.photo_observations : null);
   const change = labelChanges(row, { ...read, ...labelFactsOf(source) });
-  if (change.quantity == null && change.lot == null && Object.keys(change.fields).length === 0) return null;
+  if (change.quantity == null && change.lot == null && change.year_made == null && Object.keys(change.fields).length === 0) return null;
   const at = new Date().toISOString();
   const stamps: FieldProvenanceMap = { ...fieldProvenanceOf(meta) };
   if (change.quantity != null) stamps.quantity = { by: "evidence", from: "label", at };
   if (change.lot != null) stamps.lot = { by: "evidence", from: "label", at };
+  if (change.year_made != null) stamps.year_made = { by: "evidence", from: "label", at };
   for (const k of Object.keys(change.fields)) stamps[k] = { by: "evidence", from: "label", at };
   const cands = Array.isArray(row.suggested_candidates) ? [...(row.suggested_candidates as Array<{ fields?: Record<string, unknown> }>)] : [];
   if (cands[0] && Object.keys(change.fields).length) cands[0] = { ...cands[0], fields: { ...(cands[0].fields ?? {}), ...change.fields } };
@@ -91,6 +97,7 @@ export async function applyLabelFacts(
       suggested_metadata: sql`coalesce(suggested_metadata, '{}'::jsonb) || ${JSON.stringify({
         [FIELD_PROVENANCE_KEY]: stamps,
         ...(change.lot != null ? { lot: change.lot } : {}),
+        ...(change.year_made != null ? { year_made: change.year_made } : {}),
         ...(cands[0] ? {} : { label_facts: change.fields }),
       })}::jsonb` as never,
       updated_at: new Date(),

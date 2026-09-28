@@ -87,6 +87,7 @@ function Frame({
       <div className={className + " flex items-center justify-center text-white/40 text-[10px]"}>…</div>
     );
   }
+  // photo-frame: the lightbox shows the whole picture at its own shape; it is a viewer, not a tile
   return (
     <img
       src={src}

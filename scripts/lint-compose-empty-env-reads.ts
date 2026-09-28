@@ -24,7 +24,7 @@
 //
 //   npx tsx scripts/lint-compose-empty-env-reads.ts   (pnpm lint compose-empty-env-reads)
 import { readFileSync } from "node:fs";
-import { execFileSync } from "node:child_process";
+import { repoFiles } from "./lib/repo-files.js";
 
 /** Where the rule bites. Keep it narrow: a lint over the whole repo judges
  *  files whose authors never heard of it. */
@@ -37,7 +37,7 @@ interface Violation {
   what: string;
 }
 
-const tracked = (): string[] => execFileSync("git", ["ls-files"], { encoding: "utf8" }).split("\n").filter(Boolean);
+const tracked = (): string[] => repoFiles();
 
 /** Every NAME a tracked compose file forwards with an empty default. */
 export function forwardedEmpty(files: { path: string; text: string }[]): Set<string> {

@@ -151,13 +151,21 @@ function OrderDetailModal({ api, orgSlug, orderId, onClose }: { api: SalesApi; o
     void qc.invalidateQueries({ queryKey: ["sales-order", orderId] });
     void qc.invalidateQueries({ queryKey: ["sales-orders", orgSlug] });
   };
-  const update = useMutation({ mutationFn: (patch: Partial<SalesOrder>) => api.updateOrder(orderId, patch), onSuccess: invalidate });
+  const update = useMutation({
+    mutationFn: (patch: Partial<SalesOrder>) => api.updateOrder(orderId, patch),
+    onSuccess: invalidate,
+    onError: (e) => toast.error(e instanceof SalesApiError ? e.message : String(e)),
+  });
   const addItem = useMutation({
     mutationFn: (b: { part_id: string | null; description: string | null; qty: number; unit_price: number | null }) => api.addItem(orderId, b),
     onSuccess: invalidate,
     onError: (e) => toast.error(e instanceof SalesApiError ? e.message : String(e)),
   });
-  const removeItem = useMutation({ mutationFn: (itemId: string) => api.removeItem(orderId, itemId), onSuccess: invalidate });
+  const removeItem = useMutation({
+    mutationFn: (itemId: string) => api.removeItem(orderId, itemId),
+    onSuccess: invalidate,
+    onError: (e) => toast.error(e instanceof SalesApiError ? e.message : String(e)),
+  });
   const fulfill = useMutation({
     mutationFn: () => api.fulfillOrder(orderId),
     onSuccess: (r) => { toast.success(`Fulfilled — ${r.decremented.length} part${r.decremented.length === 1 ? "" : "s"} drawn from stock`); invalidate(); },

@@ -1234,11 +1234,25 @@ import {
   issueSignInLink,
 } from "../platform/sign-in-link.js";
 import { revokeSandboxLinksForUser } from "../platform/try-sandbox.js";
+import { inviteStatus, joinThroughInvite, REFUSAL } from "../platform/join-invite.js";
 import { publicBaseUrl } from "@cobblr/platform-contract/public-url";
 
 
+/** A page on this site to come back to: a path, never another origin. */
+const NextPath = z
+  .string()
+  .max(500)
+  .regex(/^\/(?![\/\\])[^\s]*$/, "next must be a path on this site");
+
 const MagicRequest = z.object({
   email: z.string().email().max(255),
+  /** Where they asked from (the item they scanned); the link lands there. */
+  next: NextPath.optional(),
+  /** A workspace invite the link redeems as it signs in: how someone with
+   *  no password joins through the club's join link (#3801). */
+  invite: z.string().min(8).max(200).optional(),
+  /** The name a new account made through the invite goes by. */
+  display_name: z.string().trim().min(1).max(120).optional(),
 });
 
 authRouter.post("/magic/request", async (req, res, next) => {
@@ -1263,7 +1277,33 @@ authRouter.post("/magic/request", async (req, res, next) => {
       .select("id")
       .where("email", "=", email)
       .executeTakeFirst();
-    if (!existingForLink && !isPlatformAdmin(email) && !publicSignupEnabled()) {
+    // An open invite is standing to sign up, the same as the invite page's
+    // own form: it authorises one new account into that workspace. Refused
+    // in words (it is the invite's holder asking, not an enumeration probe).
+    let viaInvite: { token: string; org_name: string } | null = null;
+    if (parsed.data.invite) {
+      const invite = await meta
+        .selectFrom("workspace_invites as i")
+        .innerJoin("orgs as o", "o.id", "i.org_id")
+        .select(["i.id", "i.token", "i.invited_email", "i.revoked_at", "i.consumed_at", "i.expires_at", "i.reusable", "i.max_uses", "i.use_count", "o.name as org_name"])
+        .where("i.token", "=", parsed.data.invite)
+        .executeTakeFirst();
+      if (!invite) {
+        res.status(404).json({ error: { code: "not_found", message: "Invite not found." } });
+        return;
+      }
+      const status = inviteStatus(invite);
+      if (status !== "open") {
+        res.status(410).json({ error: { code: status, message: REFUSAL[status] } });
+        return;
+      }
+      if (invite.invited_email && invite.invited_email.toLowerCase().trim() !== email) {
+        res.status(403).json({ error: { code: "invite_email_mismatch", message: `This invite is for ${invite.invited_email}.` } });
+        return;
+      }
+      viaInvite = { token: invite.token, org_name: invite.org_name };
+    }
+    if (!existingForLink && !viaInvite && !isPlatformAdmin(email) && !publicSignupEnabled()) {
       res.status(202).json({
         ok: true,
         expires_at: new Date(Date.now() + MAGIC_TTL_MS).toISOString(),
@@ -1283,6 +1323,12 @@ authRouter.post("/magic/request", async (req, res, next) => {
       absBase: `${req.protocol}://${req.get("host") ?? ""}`,
       requestIp: req.ip ?? null,
       requestUa: req.get("user-agent") ?? null,
+      ...(viaInvite
+        ? { subject: `Join "${viaInvite.org_name}" on Cobblr`, intro: `Open this to join "${viaInvite.org_name}":` }
+        : {}),
+      nextPath: parsed.data.next ?? null,
+      inviteToken: viaInvite?.token ?? null,
+      displayName: viaInvite ? (parsed.data.display_name ?? null) : null,
     });
     const plain = issued.plain;
     const link = issued.path;
@@ -1351,12 +1397,25 @@ authRouter.post("/magic/consume", async (req, res, next) => {
 
     // Find-or-create the user for this email. If they're new, we
     // also provision a default workspace so the post-login flow has
-    // somewhere to land.
+    // somewhere to land, unless the link joins them to one.
     const existing = await meta
       .selectFrom("users")
       .select(["id", "active"])
       .where("email", "=", row.email)
       .executeTakeFirst();
+    // The invite this link redeems, read again now: it may have filled up or
+    // been revoked while the email was in flight, and a new account must not
+    // be made for a door that has since closed.
+    const invite = row.invite_token
+      ? await meta.selectFrom("workspace_invites").selectAll().where("token", "=", row.invite_token).executeTakeFirst()
+      : undefined;
+    if (row.invite_token && (!invite || (!existing && inviteStatus(invite) !== "open"))) {
+      const status = invite ? inviteStatus(invite) : "revoked";
+      res.status(410).json({
+        error: { code: status, message: status === "open" ? REFUSAL.revoked : REFUSAL[status] },
+      });
+      return;
+    }
 
     let userId: string;
     if (existing) {
@@ -1372,7 +1431,7 @@ authRouter.post("/magic/consume", async (req, res, next) => {
       // fresh account if public signup is open, OR the email is a platform admin
       // (the operator's own first-login bootstrap). Everyone else must join via
       // an invite (/join/:token) — which collects their workspace name properly.
-      if (!publicSignupEnabled() && !isPlatformAdmin(row.email)) {
+      if (!invite && !publicSignupEnabled() && !isPlatformAdmin(row.email)) {
         res.status(403).json({
           error: {
             code: "signup_closed",
@@ -1384,7 +1443,7 @@ authRouter.post("/magic/consume", async (req, res, next) => {
       // Fresh user via magic link — no password set (they'll always
       // be magic-only unless they later use POST /me/password).
       // Display name defaults to the email's local-part.
-      const defaultName = row.email.split("@")[0] ?? "user";
+      const defaultName = row.display_name || (row.email.split("@")[0] ?? "user");
       userId = await createAccount(
         meta,
         {
@@ -1396,12 +1455,27 @@ authRouter.post("/magic/consume", async (req, res, next) => {
         },
         { via: "magic-link" },
       );
-      // Give them a starter workspace named after them.
-      try {
-        await provisionOrgForUser(userId, `${defaultName}'s workspace`);
-      } catch (err) {
-        console.error("[magic/consume] org provision failed:", err);
+      // Give them a starter workspace named after them, unless they came to
+      // join one: the club member gets the club, not an empty workspace of
+      // their own beside it.
+      if (!invite) {
+        try {
+          await provisionOrgForUser(userId, `${defaultName}'s workspace`);
+        } catch (err) {
+          console.error("[magic/consume] org provision failed:", err);
+        }
       }
+    }
+
+    let joinedSlug: string | null = null;
+    if (invite) {
+      const joined = await joinThroughInvite(invite, userId, { newAccount: !existing });
+      if (!joined.ok) {
+        res.status(410).json({ error: { code: joined.code, message: joined.message } });
+        return;
+      }
+      joinedSlug =
+        (await meta.selectFrom("orgs").select("slug").where("id", "=", joined.orgId).executeTakeFirst())?.slug ?? null;
     }
 
     await meta
@@ -1433,7 +1507,9 @@ authRouter.post("/magic/consume", async (req, res, next) => {
       diff: { method: "magic_link" },
     }).catch((err) => console.error("[magic] activity log failed:", err));
     const out = await buildAuthResponse(userId);
-    return res.json(out);
+    // Back to the page they asked from (the item they scanned), else into the
+    // workspace the link joined them to.
+    return res.json({ ...out, next: row.next_path ?? (joinedSlug ? `/w/${joinedSlug}` : null) });
   } catch (err) {
     return next(err);
   }

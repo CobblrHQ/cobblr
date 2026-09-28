@@ -28,6 +28,9 @@ import { promptFingerprint } from "./prompt-fingerprint.js";
 
 /** The personal-connections resolver injects the channel owner's user id here. */
 const CONNECTION_USER_KEY = "__connection_user_id";
+/** A 16x16 solid red square, the picture the connection test asks about. */
+const RED_SQUARE_PNG =
+  "iVBORw0KGgoAAAANSUhEUgAAABAAAAAQCAIAAACQkWg2AAAAFklEQVR4nGO4IyJCEmIY1TCqYfhqAAACcQQQFwFJQgAAAABJRU5ErkJggg==";
 
 export const EDGE_BRIDGE_ID = "edge-bridge";
 
@@ -183,6 +186,7 @@ export function register(): void {
     // and routed via a personal Connection. Excluding it from auto-select keeps a
     // no-provider workspace's degrade path a clean no_ai_provider.
     autoSelectable: false,
+    checksPhotosInTest: true,
     capabilities: SUPPORTED,
     // The prompt this adapter INJECTS (absent from `input` for the image
     // capabilities) joins the cache key — so editing a prompt actually invalidates
@@ -314,8 +318,48 @@ export function register(): void {
           throw new Error(`edge bridge: capability ${ctx.capability} not implemented`);
       }
     },
-    // No testConnection: it gets only credentials (no orgId), so it can't check
-    // THIS workspace's channel. Liveness is surfaced via the edge-status route
-    // (platform().edge.hasChannel). The test endpoint reports "assumed ok".
+    // The channel is keyed by the connection's OWNER, which the test is
+    // handed as __connection_user_id, so the test reaches the same bridge a
+    // call would. It used to have none ("gets no workspace"), and every
+    // bridge read "Unverified" forever, including one that worked (#3842).
+    testConnection: async (credentials) => {
+      let channelKey: string;
+      try {
+        channelKey = channelKeyOf(credentials);
+      } catch (err) {
+        return { ok: false, reason: "unknown", error: (err as Error).message };
+      }
+      if (!(await platform().edge.hasChannel(channelKey).catch(() => false))) {
+        return { ok: false, reason: "unreachable", error: "The bridge is not connected right now. Start its agent, then test again." };
+      }
+      const model = typeof credentials.model === "string" && credentials.model.trim() ? credentials.model.trim() : (SUPPORTED.chat?.defaultModel ?? "sonnet");
+      let said = "";
+      try {
+        const body = await edgePost(channelKey, "/api/chat", {
+          model,
+          stream: false,
+          messages: [{ role: "user", content: "Reply with the single word OK." }],
+        });
+        said = (body as { message?: { content?: string } }).message?.content ?? "";
+      } catch (err) {
+        return { ok: false, reason: "unreachable", error: (err as Error).message };
+      }
+      if (!said.trim()) return { ok: false, reason: "unknown", error: "The bridge answered with nothing." };
+      // A known picture: a bridge whose backend drops the image answers the
+      // question anyway, from nothing, so only naming the colour counts.
+      let photos: { read: boolean; said?: string };
+      try {
+        const body = await edgePost(channelKey, "/api/chat", {
+          model,
+          stream: false,
+          messages: [{ role: "user", content: "What colour is this square? Answer with one word.", images: [RED_SQUARE_PNG] }],
+        });
+        const answer = (body as { message?: { content?: string } }).message?.content ?? "";
+        photos = /\bred\b/i.test(answer) ? { read: true } : { read: false, said: answer.trim() };
+      } catch (err) {
+        photos = { read: false, said: (err as Error).message };
+      }
+      return { ok: true, models: [model], photos };
+    },
   });
 }

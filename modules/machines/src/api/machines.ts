@@ -9,7 +9,7 @@ import { sql } from "kysely";
 import { platform } from "@cobblr/platform-contract";
 import { instanceOf, sessionUser, tenantContext, tenantDb } from "../db.js";
 import { asyncHandler, badBody, requireRole } from "./util.js";
-import { routeUnknownToMetadata, withMetadataMerged } from "@cobblr/platform-contract/entity-metadata";
+import { routeUnknownToMetadata, refuseUnknownFields, withMetadataMerged } from "@cobblr/platform-contract/entity-metadata";
 
 export const machinesRouter = Router({ mergeParams: true });
 
@@ -83,6 +83,7 @@ machinesRouter.get(
 machinesRouter.post(
   "/",
   asyncHandler(async (req, res) => {
+    await refuseUnknownFields(req, req.body, MACHINE_NATIVE_KEYS, "machines:machine");
     const routed = routeUnknownToMetadata(req.body, MACHINE_NATIVE_KEYS);
     const parsed = MachineCreate.safeParse(routed);
     if (!parsed.success) return badBody(res, parsed.error);
@@ -136,6 +137,7 @@ machinesRouter.patch(
       res.status(400).json({ error: { code: "missing_id", message: "id required" } });
       return;
     }
+    await refuseUnknownFields(req, req.body, MACHINE_NATIVE_KEYS, "machines:machine");
     const routed = routeUnknownToMetadata(req.body, MACHINE_NATIVE_KEYS);
     const parsed = MachineUpdate.safeParse(routed);
     if (!parsed.success) return badBody(res, parsed.error);

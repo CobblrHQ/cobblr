@@ -20,7 +20,10 @@ import * as activity from "./activity.js";
 const ENDPOINT_CAPABILITIES = [
   { action_id: "inventory:create-part", label: "Create parts", description: "Add new parts to inventory." },
   { action_id: "inventory:update-part", label: "Edit parts", description: "Edit existing part fields and counts." },
+  { action_id: "inventory:count-stock", label: "Take and put back stock", description: "Change how many of a thing there are (take one, put one back), without editing anything else about it." },
 ];
+
+export { MEMBER_DEFAULT_CAPABILITIES, memberHoldsByDefault } from "./member-defaults.js";
 
 /** The module a capability belongs to, for grouping in the admin UI.
  *  Registered actions know theirs; everything else is namespaced

@@ -23,7 +23,7 @@ import { useMemo, useRef, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { changeWorkspaceShape, useToast } from "@cobblr/platform-web";
-import { Search, Camera, Sparkles, ArrowRight, Loader2, Boxes, Wand2, Plus, ChevronDown, ChevronUp, ScanLine, X } from "lucide-react";
+import { FileSpreadsheet, Search, Camera, Sparkles, ArrowRight, Loader2, Boxes, Wand2, Plus, ChevronDown, ChevronUp, ScanLine, X } from "lucide-react";
 import { api } from "../lib/api";
 import { useBundleCatalog, type CatalogBundle } from "../lib/useBundleCatalog";
 import { fuzzyMatch } from "../lib/fuzzy";
@@ -38,6 +38,7 @@ import { useIsTouch } from "../lib/useIsTouch";
 import { AddPhotosTile } from "./AddPhotosTile";
 import { itemEnriching } from "../pages/scan-status";
 import { useMaterializeCapture } from "../lib/useMaterializeCapture";
+import { openSheetImport } from "../lib/sheet-import";
 
 function firstSentence(s: string): string {
   const m = s.match(/^.*?[.!?](\s|$)/);
@@ -73,6 +74,7 @@ function NameIt({ slug, itemId }: { slug: string; itemId: string }) {
       void qc.invalidateQueries({ queryKey: ["capture-inbox", slug] });
       toast.success("Got it - finding the right home…");
     },
+    onError: (e) => toast.error(e instanceof Error ? e.message : "Couldn't save that name"),
   });
   return (
     <div className="mt-1.5 flex items-center gap-1.5">
@@ -336,6 +338,7 @@ export function WhatToDoPanel({
   const discardMut = useMutation({
     mutationFn: (id: string) => api.discardScanItem(slug, id),
     onSuccess: () => void qc.invalidateQueries({ queryKey: ["capture-inbox", slug] }),
+    onError: (e) => toast.error(e instanceof Error ? e.message : "Couldn't remove that"),
   });
   // File a captured item into a tracker — a matched existing instance, a matched
   // module's generic table, or (no body) the backend's generic default home.
@@ -843,6 +846,18 @@ export function WhatToDoPanel({
               {isTouch ? "try a sample scan" : "try a sample scan without one"}
             </button>
             {isTouch ? " and watch it land." : "."}
+          </p>
+          <p className="text-[11px] text-faint dark:text-slate-500 mt-1">
+            Already keep a list somewhere?{" "}
+            <button
+              type="button"
+              data-testid="bring-your-spreadsheet"
+              onClick={() => openSheetImport()}
+              className="inline-flex items-center gap-1 text-accent hover:underline font-medium"
+            >
+              <FileSpreadsheet size={11} /> Bring your spreadsheet
+            </button>
+            , see where everything goes, and undo it whole if it is not right.
           </p>
 
           {/* Starter chips — a fresh panel demos the magic in one tap. Only when

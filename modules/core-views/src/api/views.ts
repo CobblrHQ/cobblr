@@ -32,6 +32,9 @@ const DataQuery = z.object({
   limit: z.coerce.number().int().min(1).max(500).optional(),
   offset: z.coerce.number().int().min(0).optional(),
   q: z.string().optional(),
+  /** The reader's calendar day, for a view that compares a date with
+   *  "today" (a "Ready to drink" window). */
+  today: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
 });
 
 // AI-ACTION: core-views:save-view
@@ -217,23 +220,35 @@ viewsRouter.get(
     }
     const parsedQuery = DataQuery.safeParse(req.query);
     if (!parsedQuery.success) return badBody(res, parsedQuery.error);
-    const result = await platform().entities.list(
-      ctx.org.id,
-      view.entity_kind,
-      {
-        limit: parsedQuery.data.limit,
-        offset: parsedQuery.data.offset,
-        q: parsedQuery.data.q,
-        // The view's own query (filter, where, sort), read the one way every
-        // surface reads it. Resolvers ignore what they cannot honour, so a
-        // request-level override layered on top is safe.
-        ...viewQuery(view.config as Record<string, unknown>),
-      },
-      // H2 — viewer identity so the kernel applies per-field read-scope:
-      // a member sees only the fields their capabilities permit (e.g.
-      // parts but not prices); owner/admin see everything.
-      { userId: sessionUser(req)?.id, role: ctx.role },
-    );
+    // The day the view's "today" means: the one the client says it is in,
+    // else the person's (their zone, else the day that has arrived
+    // everywhere). Never the server's UTC day.
+    const today = await platform().accounts.dayFor(sessionUser(req)?.id ?? null, { said: parsedQuery.data.today });
+    const query = {
+      q: parsedQuery.data.q,
+      today,
+      // The view's own query (filter, where, sort), read the one way every
+      // surface reads it. Resolvers ignore what they cannot honour, so a
+      // request-level override layered on top is safe.
+      ...viewQuery(view.config as Record<string, unknown>),
+    };
+    // H2 — viewer identity so the kernel applies per-field read-scope:
+    // a member sees only the fields their capabilities permit (e.g.
+    // parts but not prices); owner/admin see everything.
+    const viewer = { userId: sessionUser(req)?.id, role: ctx.role };
+    // A view asked for without a limit is the WHOLE view: a board's columns
+    // and counts are about every record, and one resolver page (50) drew
+    // "50 3D printers" of 56 and dropped a column. A caller that wants a
+    // preview asks for a limit and gets that page with the true total.
+    const { limit, offset } = parsedQuery.data;
+    const result =
+      limit === undefined && offset === undefined
+        ? await platform().entities.listAll(ctx.org.id, view.entity_kind, query, viewer)
+        : await (async () => {
+            const page = await platform().entities.list(ctx.org.id, view.entity_kind, { ...query, limit, offset }, viewer);
+            const total = page.total ?? null;
+            return { ...page, total, complete: total !== null && (offset ?? 0) + page.items.length >= total };
+          })();
     // An empty answer is one of two things, and the page cannot tell them
     // apart from the rows alone: the collection has nothing yet (a fresh
     // install opening its cover wall) or the view's own filter excluded

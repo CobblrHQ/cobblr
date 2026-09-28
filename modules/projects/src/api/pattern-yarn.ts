@@ -25,7 +25,7 @@ import type { Kysely } from "kysely";
 import { countOf, platform } from "@cobblr/platform-contract";
 import type { ProjectsDB } from "../db.js";
 import { listNeeds, type PatternNeed } from "./pattern-needs.js";
-import { shoppingLine, toolFits, yarnFits, type StashTool, type YarnFit } from "./pattern-match.js";
+import { notionFits, shoppingLine, toolFits, yarnFits, type StashTool, type YarnFit } from "./pattern-match.js";
 import { readStash, type Stash } from "./pattern-stash.js";
 
 export const PATTERN_TARGET = { for_kind: "projects:project" } as const;
@@ -113,6 +113,15 @@ export async function matchNeeds(orgId: string, userId: string | null, projectId
   const s = stash ?? (await readStash(orgId));
   const usage = await usageOf(orgId, userId, projectId);
   for (const n of needs) {
+    if (n.kind === "notion") {
+      const { fits, short } = notionFits(n.label ?? "", n.size_mm, n.quantity, s.notions);
+      out.set(n.id, {
+        chosen: null, used_m: 0, used_units: 0, still_m: null, still_units: null, bound: [], held_units: 0,
+        status: fits.length === 0 ? "none" : short ? "short" : "have", short_m: null, short_units: short || null, fits: [],
+        tools: fits.map((f) => ({ id: f.id, name: f.name, size_mm: f.size_mm, qty: f.qty })),
+      });
+      continue;
+    }
     if (n.kind !== "yarn") {
       const tools = n.size_mm != null ? toolFits(n.size_mm, s.tools) : [];
       out.set(n.id, {
@@ -271,7 +280,9 @@ export async function syncShoppingLine(
   const line =
     need.kind === "yarn"
       ? shoppingLine(need, m?.short_m ?? null, m?.short_units ?? null)
-      : { title: `${need.kind === "needle" ? "Knitting needle" : "Crochet hook"} ${need.size_mm} mm${need.size_label ? ` (${need.size_label})` : ""}`, qty: null };
+      : need.kind === "notion"
+        ? { title: `${need.label ?? "Notion"}${need.size_mm != null ? ` ${need.size_mm} mm` : ""}`, qty: m?.short_units != null ? String(m.short_units) : need.quantity != null ? String(need.quantity) : null }
+        : { title: `${need.kind === "needle" ? "Knitting needle" : "Crochet hook"} ${need.size_mm} mm${need.size_label ? ` (${need.size_label})` : ""}`, qty: null };
   const name = await projectName(db, projectId);
 
   // Whatever the line said before, it comes off; a true one goes back on.

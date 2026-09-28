@@ -35,20 +35,37 @@ function expand(scope: string[]): string[] {
       out.push(rel);
       continue;
     }
-    const hits = globSync(rel, { cwd: ROOT }).map(String).sort();
+    const hits = globOnce(rel);
     if (hits.length === 0) missing.push(`${rel} (matches no file)`);
     out.push(...hits);
   }
   return out;
 }
 
-function read(rel: string): string | null {
-  const abs = join(ROOT, rel);
-  if (!existsSync(abs)) {
-    missing.push(rel);
-    return null;
+// ONE GLOB PER PATTERN, ONE READ PER FILE. Every row expanded its own scope
+// and read and stripped every file it named, with no cache, so a broad row
+// (`web/src/**`) re-read the whole web tree once per row that scoped it, and
+// the lint's time grew as rows x tree: 1.1 s when recorded, 6-14 s in CI a
+// fortnight later, and 48 s on a busy runner, which failed main on its time
+// budget (2026-09-28). Neither the tree nor a file changes during one run.
+const globCache = new Map<string, string[]>();
+function globOnce(rel: string): string[] {
+  let hits = globCache.get(rel);
+  if (!hits) {
+    hits = globSync(rel, { cwd: ROOT }).map(String).sort();
+    globCache.set(rel, hits);
   }
-  return stripComments(readFileSync(abs, "utf8"));
+  return hits;
+}
+const readCache = new Map<string, string | null>();
+function read(rel: string): string | null {
+  if (!readCache.has(rel)) {
+    const abs = join(ROOT, rel);
+    readCache.set(rel, existsSync(abs) ? stripComments(readFileSync(abs, "utf8")) : null);
+  }
+  const text = readCache.get(rel) ?? null;
+  if (text === null) missing.push(rel);
+  return text;
 }
 
 /** Is the phrase acting as a control LABEL - a short standalone string - rather

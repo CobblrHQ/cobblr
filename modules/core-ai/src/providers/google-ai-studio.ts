@@ -102,6 +102,15 @@ export function register(): void {
       requireModel: false,
       defaultModel: GOOGLE_AI_STUDIO_DEFAULT_MODEL,
       modelForCapability: { "design-workspace": GOOGLE_AI_STUDIO_BUILDER_MODEL },
+      // Each alias is overloaded on its own schedule: Lite answered "high
+      // demand" for over an hour while the same key could still reach Flash.
+      // Both float, so neither dies on a retirement date. Flash's smaller
+      // daily cap is fine for the minutes Lite is busy; its "limit" then
+      // moves the call to the workspace's next AI.
+      busyAlternates: {
+        [GOOGLE_AI_STUDIO_DEFAULT_MODEL]: [GOOGLE_AI_STUDIO_BUILDER_MODEL],
+        [GOOGLE_AI_STUDIO_BUILDER_MODEL]: [GOOGLE_AI_STUDIO_DEFAULT_MODEL],
+      },
       // The menu the chat's model pill offers. Two, on purpose: the free tier
       // has exactly two models worth choosing between, and the choice is a
       // quota decision the note makes visible. Google reports fifty-one models

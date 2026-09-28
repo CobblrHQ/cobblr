@@ -9,7 +9,7 @@
 import { useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Camera, Scissors, Star, Trash2, Upload, X } from "lucide-react";
-import { useConfirm, useImageSrc, useToast } from "@cobblr/platform-web";
+import { useConfirm, useImageSrc, useToast, EntityPhoto, MutationError } from "@cobblr/platform-web";
 import { useInventory } from "./context";
 import { cutoutPlainBackground } from "./remove-background";
 import { isCoverFile } from "./gallery-cover";
@@ -297,6 +297,7 @@ export function PartGallery({ partId, coverImagePath, onSetCover }: Props) {
           })}
         </div>
       )}
+      <MutationError mutation={detach} className="block mt-2" />
       {/* Surface a tiny X if uploading mid-drag so the user can cancel/reset if needed. */}
       {upload.isPending && (
         <div className="text-[10px] font-mono text-accent mt-2 inline-flex items-center gap-1">
@@ -327,7 +328,7 @@ function GalleryImg({ thumb, full, alt }: { thumb: string; full: string; alt: st
   }
   return (
     <a href={resolvedFull ?? resolvedThumb} target="_blank" rel="noopener noreferrer">
-      <img src={resolvedThumb} alt={alt} className="w-full aspect-square object-cover" loading="lazy" />
+      <EntityPhoto src={resolvedThumb} alt={alt} aspect="square" />
     </a>
   );
 }

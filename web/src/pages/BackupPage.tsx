@@ -666,7 +666,6 @@ function DestinationsSection({ base, auth }: { base: string; auth: () => Record<
               <span className="text-muted">{cf.label}</span>
               <SecretInput
                 secret={cf.secret}
-                autoComplete={cf.secret ? "new-password" : "off"}
                 className="bg-transparent border border-line dark:border-slate-600 rounded px-2 py-1"
                 placeholder={cf.placeholder}
                 value={form.config[cf.key] ?? ""}

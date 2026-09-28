@@ -24,7 +24,7 @@ import { platform } from "@cobblr/platform-contract";
 import { classifyAiFailure } from "@cobblr/platform-contract/ai-refusal";
 import { providerReasonOf } from "@cobblr/platform-contract/provider-reason";
 import { receiptReadWords } from "@cobblr/platform-contract/scan-session";
-import { hostedIdentify, hostedIdentifyEnabled, receiptAsModelReply } from "./hosted-identify.js";
+import { hostedIdentify, receiptAsModelReply } from "./hosted-identify.js";
 import {
   buildReceipt,
   type ParsedReceipt,
@@ -151,7 +151,7 @@ async function visionExtract(
   // receipt schema, so a stringify is the whole shim and the parser downstream
   // never learns which engine answered. We send OUR receipt prompt - its
   // recorded fixtures pin the exact text, and the endpoint honors the override.
-  if (hostedIdentifyEnabled()) {
+  {
     const hosted = await hostedIdentify({ orgId, imageB64, receiptPrompt: RECEIPT_VISION_PROMPT, visitorIp, userId });
     if (hosted?.kind === "receipt" && hosted.receipt) return receiptAsModelReply(hosted.receipt);
     // Any other outcome - an item mistaken for a receipt upstream, a hosted

@@ -29,6 +29,7 @@ export interface ModuleApiModule {
  *  can re-trigger mount safely without double-registering routes. */
 const mountedNames = new Set<string>();
 /** moduleName → its primary-entity router, for instance-scoped item CRUD. */
+import { applyCustomFieldValues } from "../platform/custom-field-values.js";
 import { applyComputedFields } from "../platform/computed-fields.js";
 import { withServedTitle } from "../platform/served-title.js";
 import { markModulesMounted } from "./mount-state.js";
@@ -117,17 +118,20 @@ async function withComputedFields(orgId: string, kind: string, body: unknown): P
 
   const apply = async (row: Record<string, unknown>) => {
     if (typeof row.id !== "string") return row;
-    const resolved = await applyComputedFields(orgId, {
+    // A custom field reads back where it was written (custom-field-values.ts):
+    // the response to an update carries it at the top level too.
+    const withValues = await applyCustomFieldValues(orgId, {
       kind,
       id: row.id,
       title: String(row.name ?? ""),
       fields: row,
     } as Parameters<typeof applyComputedFields>[1]);
+    const resolved = await applyComputedFields(orgId, withValues);
     // The same trap one step further: how a titled work's title READS is a
     // platform step too (served-title.ts, #3061), and an instance item that
     // read through here showed the stored name while the generic pipeline
     // composed it. `title` beside `name`; the name is never touched.
-    return withServedTitle({ ...row, metadata: resolved.fields.metadata });
+    return withServedTitle({ ...withValues.fields, metadata: resolved.fields.metadata });
   };
 
   if (rows) return { ...(body as object), items: await Promise.all(rows.map(apply)) };

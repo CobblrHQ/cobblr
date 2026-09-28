@@ -315,6 +315,53 @@ export interface ApiTokensTable {
   source: string | null;
   /** Provenance payload ({ kind, action, org }); NULL = none. */
   meta: unknown | null;
+  /** The one workspace this token may reach; NULL = every workspace. */
+  org_id: string | null;
+  /** 'look' | 'change' | 'full'; NULL = full (every token before this). See auth/token-access.ts. */
+  access: string | null;
+  /** The connector connection (oauth_grants) this access token was issued for; NULL = a personal token. */
+  grant_id: string | null;
+}
+
+export interface OauthClientsTable {
+  id: Generated<string>;
+  client_id: string;
+  client_name: string | null;
+  redirect_uris: string[];
+  created_at: Generated<Date>;
+}
+
+export interface OauthGrantsTable {
+  id: Generated<string>;
+  client_id: string;
+  user_id: string;
+  org_id: string;
+  access: string;
+  resource: string;
+  created_at: Generated<Date>;
+  last_used_at: Date | null;
+  revoked_at: Date | null;
+}
+
+export interface OauthCodesTable {
+  code_hash: string;
+  client_id: string;
+  user_id: string;
+  org_id: string;
+  access: string;
+  redirect_uri: string;
+  code_challenge: string;
+  resource: string;
+  expires_at: Date;
+  used_at: Date | null;
+}
+
+export interface OauthRefreshTokensTable {
+  token_hash: string;
+  grant_id: string;
+  created_at: Generated<Date>;
+  expires_at: Date;
+  used_at: Date | null;
 }
 
 /** A personal (user-scoped) credential — a BYO AI provider config a user sets
@@ -339,6 +386,9 @@ export interface UserCredentialsTable {
  *  credential reaches, plus the PER-WORKSPACE mode (Just me vs Share with
  *  members). Row present = routed to this org; absent = Off. */
 export interface UserCredentialOrgsTable {
+  /** Surrogate key (20260928-144): a connection has a general row and one row
+   *  per job it is ordered for, in the same workspace. */
+  id: Generated<string>;
   credential_id: string;
   org_id: string;
   mode: Generated<"my-calls" | "workspace-default">;
@@ -416,6 +466,23 @@ export interface WorkspaceInvitesTable {
   consumed_by_user: string | null;
   revoked_at: Date | null;
   created_at: Generated<Date>;
+  /** A join link (#3801): many people may use it; it counts uses instead of
+   *  being consumed. `max_uses` null = no cap. */
+  reusable: Generated<boolean>;
+  max_uses: number | null;
+  use_count: Generated<number>;
+  /** A join link the workspace's item labels may offer to someone who scans
+   *  one signed out. Off unless the admin turns it on. */
+  offer_on_labels: Generated<boolean>;
+}
+
+/** One person joining through a reusable invite. */
+export interface WorkspaceInviteUsesTable {
+  id: Generated<string>;
+  invite_id: string;
+  user_id: string;
+  new_account: Generated<boolean>;
+  used_at: Generated<Date>;
 }
 
 /** Single-use SIGNUP invite (platform-admin minted) — lets one new person
@@ -521,6 +588,12 @@ export interface ActivityLogTable {
   auth_method: Generated<AuthMethod>;
   /** Set when auth_method='api_token'; nullable otherwise. */
   api_token_id: string | null;
+  /** HOW the write was made, beside who (#3833): 'mcp' (an assistant over
+   *  MCP), 'assistant' (the in-app assistant), 'automation' (a wire). Null for
+   *  a plain hand edit, and on rows older than the column. */
+  via_kind: string | null;
+  /** The automation's label, when via_kind='automation'. */
+  via_label: string | null;
   occurred_at: Generated<Date>;
 }
 
@@ -774,6 +847,8 @@ export interface EntityActionsTable {
    *  reads the record when there is one and its arguments when there is not
    *  (lists:add-item, "put milk on the shopping list", #3255). */
   record_optional: Generated<boolean>;
+  /** What it does to a due, dated thing (manifest `finishes`), or null. */
+  finishes: string | null;
   /** Machine-readable arg shape { name: { label, type } } from the action
    *  manifest; null = none. Drives the wire composer's per-arg fields. */
   args_schema: unknown | null;
@@ -831,6 +906,10 @@ export interface EntityActionBindingsTable {
   /** Q4: RRULE for schedule-triggered wires (null otherwise).
    *  See docs/architecture/wires-and-bundles.md (Q4). */
   trigger_schedule: string | null;
+  /** A user-invoked binding's own button label, or null for the action's. */
+  label: string | null;
+  /** What to ask the person before it runs (BindingAsk[]), or null. */
+  ask: unknown | null;
   created_at: Generated<Date>;
   updated_at: Generated<Date>;
 }
@@ -1208,9 +1287,14 @@ export interface MetaDB {
   bundle_resource_claims: BundleResourceClaimsTable;
   scan_url_resolvers: ScanUrlResolversTable;
   workspace_invites: WorkspaceInvitesTable;
+  workspace_invite_uses: WorkspaceInviteUsesTable;
   signup_invites: SignupInvitesTable;
   waitlist: WaitlistTable;
   api_tokens: ApiTokensTable;
+  oauth_clients: OauthClientsTable;
+  oauth_grants: OauthGrantsTable;
+  oauth_codes: OauthCodesTable;
+  oauth_refresh_tokens: OauthRefreshTokensTable;
   user_credentials: UserCredentialsTable;
   user_credential_orgs: UserCredentialOrgsTable;
   platform_announce_settings: PlatformAnnounceSettingsTable;
@@ -1409,6 +1493,12 @@ export interface AuthMagicTokensTable {
   created_at: Generated<Date>;
   request_ip: string | null;
   request_ua: string | null;
+  /** Where the person asked from; the consume sends them back there. */
+  next_path: string | null;
+  /** A workspace invite this link redeems as it signs in. */
+  invite_token: string | null;
+  /** The name a new account made by this link goes by. */
+  display_name: string | null;
 }
 
 /** Password-reset tokens — hashed, single-use, 1h default. See

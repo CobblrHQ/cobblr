@@ -1,0 +1,10 @@
+{
+  "lint": "lint:typed-column-sets",
+  "run": "tsx scripts/lint-typed-column-sets.ts",
+  "rows": [
+    "new-module"
+  ],
+  "ms": 9396,
+  "recorded": "2026-09-28",
+  "source": "scaffolded by new-lint.sh at twice a local run (a shared box); replaced from its first CI measurement"
+}

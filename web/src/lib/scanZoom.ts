@@ -51,6 +51,11 @@ export interface ZoomConfig {
    *  instead: if it will not read, get closer. Bounded by max and the step
    *  cooldown like every other move. */
   starveMs: number;
+  /** The code in view grew by this factor since the last measurement: the
+   *  person is bringing the phone closer, so the lens steps back rather than
+   *  holding a zoom that now crops the code (#3933, "it zooms in on a label
+   *  from far away and I can't get closer"). */
+  growFactor: number;
 }
 
 export const ZOOM_DEFAULTS: ZoomConfig = {
@@ -63,6 +68,7 @@ export const ZOOM_DEFAULTS: ZoomConfig = {
   emptyMs: 4000,
   implausibleFrac: 0.85,
   starveMs: 1500,
+  growFactor: 1.3,
 };
 
 export interface ZoomState {
@@ -71,10 +77,20 @@ export interface ZoomState {
   emptySince: number | null;
   /** Since when we have been aimed at something and reading nothing. */
   starvingSince: number | null;
+  /** The person chose a zoom (the 1×/2× chip): automatic zoom never moves the
+   *  lens again this session. */
+  manual?: boolean;
+  /** The last plausible code width, to see the phone moving closer. */
+  lastWidth?: number | null;
 }
 
 export function zoomInitial(zoom = 1): ZoomState {
-  return { zoom, lastChangeAt: 0, emptySince: null, starvingSince: null };
+  return { zoom, lastChangeAt: 0, emptySince: null, starvingSince: null, manual: false, lastWidth: null };
+}
+
+/** The person picked a zoom: hold it, and stop the automatic one for good. */
+export function zoomManual(s: ZoomState, zoom: number): ZoomState {
+  return { ...s, zoom, manual: true, emptySince: null, starvingSince: null };
 }
 
 export interface ZoomSample {
@@ -93,6 +109,8 @@ export function zoomPlan(
   now: number,
   cfg: ZoomConfig = ZOOM_DEFAULTS,
 ): { state: ZoomState; target: number | null } {
+  // The person's choice stands: nothing automatic moves the lens after it.
+  if (s.manual) return { state: s, target: null };
   // It is working. Never move the lens out from under a successful read —
   // whatever this zoom is, it is the right one for what the user is doing.
   if (sample.decoded) return { state: { ...s, emptySince: null, starvingSince: null }, target: null };
@@ -115,27 +133,41 @@ export function zoomPlan(
   // size rules below may have nothing usable to say, and then leaning in is
   // the only move left.
   const starvingSince = s.starvingSince ?? now;
-  if (!canStep) return { state: { ...s, emptySince: null, starvingSince }, target: null };
 
   // Only a PLAUSIBLE region may argue about size. An implausible one used to
   // reach the "too big" branch below and zoom OUT of a code that was already
   // too small to read.
   const measured = sample.regionWidth < cfg.implausibleFrac;
+  // The code's size as it would be at 1×: zooming in makes the code LOOK
+  // bigger, and that must never read as the phone coming closer, or the lens
+  // would undo its own step. The baseline is the smallest seen since the lens
+  // last moved out.
+  const atOne = measured ? sample.regionWidth / s.zoom : null;
+  const baseline = atOne === null ? s.lastWidth ?? null : Math.min(s.lastWidth ?? atOne, atOne);
+  if (!canStep) return { state: { ...s, emptySince: null, starvingSince, lastWidth: baseline }, target: null };
+
+  // The code is growing in the frame: the phone is coming closer. Step back
+  // out rather than hold a zoom the person is now working against.
+  if (atOne !== null && s.lastWidth && atOne >= s.lastWidth * cfg.growFactor && s.zoom > cfg.min) {
+    const zoom = Math.max(cfg.min, round(s.zoom - cfg.step));
+    return { state: { zoom, lastChangeAt: now, emptySince: null, starvingSince: null, lastWidth: atOne }, target: zoom };
+  }
+  const lastWidth = baseline;
 
   if (measured && sample.regionWidth < cfg.smallFrac && s.zoom < cfg.max) {
     const zoom = Math.min(cfg.max, round(s.zoom + cfg.step));
-    return { state: { zoom, lastChangeAt: now, emptySince: null, starvingSince }, target: zoom };
+    return { state: { zoom, lastChangeAt: now, emptySince: null, starvingSince, lastWidth }, target: zoom };
   }
   if (measured && sample.regionWidth > cfg.bigFrac && s.zoom > cfg.min) {
     const zoom = Math.max(cfg.min, round(s.zoom - cfg.step));
-    return { state: { zoom, lastChangeAt: now, emptySince: null, starvingSince: null }, target: zoom };
+    return { state: { zoom, lastChangeAt: now, emptySince: null, starvingSince: null, lastWidth }, target: zoom };
   }
   // No usable measurement, and still nothing read: lean in.
   if (!measured && now - starvingSince >= cfg.starveMs && s.zoom < cfg.max) {
     const zoom = Math.min(cfg.max, round(s.zoom + cfg.step));
     return { state: { zoom, lastChangeAt: now, emptySince: null, starvingSince }, target: zoom };
   }
-  return { state: { ...s, emptySince: null, starvingSince }, target: null };
+  return { state: { ...s, emptySince: null, starvingSince, lastWidth }, target: null };
 }
 
 /** Keep the value clean — a float drift like 2.4999999 is a nuisance in the

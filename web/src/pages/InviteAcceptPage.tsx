@@ -2,26 +2,32 @@
 // name + inviter + the role you'll get. Three states: signed-in → one-click
 // Join; signed-out + no account → a signup form that creates the account AND
 // joins (the invite authorises it past the public-signup gate); signed-out +
-// existing account → "sign in to join".
+// existing account → "sign in to join", which comes back here afterwards.
+// `?next=` (a label scan's item, #3801) is where a join lands; a new person
+// without a password may instead ask for an emailed link that joins them.
 
-import { useState, type FormEvent } from "react";
+import { useEffect, useState, type FormEvent } from "react";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { useNavigate, useParams } from "react-router-dom";
 import { CheckCircle2, AlertTriangle } from "lucide-react";
-import { ApiError, api } from "../lib/api";
+import { ApiError, api, setToken } from "../lib/api";
 import { useAuth } from "../auth/AuthContext";
 import { urlHandleFor } from "../auth/ActiveOrgContext";
 import { useToast, usePageTitle, PasswordInput } from "@cobblr/platform-web";
+import { landingPath } from "../lib/landing-path";
 
 export function InviteAcceptPage() {
   usePageTitle("Accept invite");
   const { token } = useParams<{ token: string }>();
-  const { user, joinViaInvite } = useAuth();
+  const { user, orgs, joinViaInvite } = useAuth();
   const navigate = useNavigate();
   const toast = useToast();
   const [su, setSu] = useState({ email: "", password: "", displayName: "" });
   const [suBusy, setSuBusy] = useState(false);
   const [suErr, setSuErr] = useState<string | null>(null);
+  const [link, setLink] = useState<{ sent: boolean; devToken?: string } | null>(null);
+  // The item a label scan sent them from: where joining lands.
+  const [next] = useState(() => landingPath(new URLSearchParams(window.location.search).get("next")));
 
   const preview = useQuery({
     queryKey: ["invite-preview", token],
@@ -41,6 +47,7 @@ export function InviteAcceptPage() {
       // This page renders OUTSIDE ActiveOrgProvider, so land in the new
       // workspace with a HARD navigation — it re-mounts the app with the new
       // membership and the provider initialized to that workspace.
+      if (next) return window.location.assign(next);
       const list = await api.listOrgs();
       const org = list.items.find((o) => o.slug === r.org.slug);
       window.location.assign(org ? `/w/${urlHandleFor(org, list.items)}` : "/");
@@ -50,7 +57,23 @@ export function InviteAcceptPage() {
     },
   });
 
+  // A member scanning the club's wall QR is already in: take them straight
+  // to the workspace, no button to press and nothing counted (#3801).
+  const mine = preview.data ? orgs.find((o) => o.slug === preview.data!.org_slug) : undefined;
+  const alreadyIn = !!user && !!mine && preview.data?.status !== "revoked";
+  useEffect(() => {
+    if (alreadyIn && mine) window.location.assign(next ?? `/w/${urlHandleFor(mine, orgs)}`);
+  }, [alreadyIn, mine, orgs, next]);
+
   if (!token) return null;
+
+  if (alreadyIn) {
+    return (
+      <CenteredCard tone="info" title={`You're in ${preview.data!.org_name}`}>
+        <p className="text-sm">Taking you there…</p>
+      </CenteredCard>
+    );
+  }
 
   if (preview.isLoading) {
     return (
@@ -81,6 +104,7 @@ export function InviteAcceptPage() {
       consumed: "This invite has already been used.",
       revoked: "This invite was revoked by the workspace owner.",
       expired: "This invite has expired.",
+      full: "This join link has already let in everyone it was made for. Ask the workspace for a new one.",
     };
     return (
       <CenteredCard tone="error" title="Invite unavailable">
@@ -97,6 +121,37 @@ export function InviteAcceptPage() {
   // workspace. Someone who already has an account uses the "sign in" link.
   if (!user) {
     const lockedEmail = p.invited_email;
+    const emailLink = async () => {
+      const email = effEmail.replace(/\s+/g, "");
+      if (!email || !su.displayName.trim()) {
+        setSuErr("Fill in your email and your name first.");
+        return;
+      }
+      setSuBusy(true); setSuErr(null);
+      try {
+        const r = await api.magicRequest({
+          email,
+          invite: token,
+          display_name: su.displayName.trim(),
+          ...(next ? { next } : {}),
+        });
+        setLink({ sent: true, ...(r.dev_token ? { devToken: r.dev_token } : {}) });
+      } catch (err) {
+        setSuErr(err instanceof ApiError ? err.message : "Couldn't send the link.");
+      } finally {
+        setSuBusy(false);
+      }
+    };
+    const openDevLink = async () => {
+      if (!link?.devToken) return;
+      try {
+        const r = await api.magicConsume({ token: link.devToken });
+        setToken(r.token);
+        window.location.href = landingPath(r.next) ?? "/";
+      } catch (err) {
+        setSuErr(err instanceof ApiError ? err.message : "Couldn't open the link.");
+      }
+    };
     const effEmail = lockedEmail ?? su.email;
     const submit = async (e: FormEvent) => {
       e.preventDefault();
@@ -108,6 +163,7 @@ export function InviteAcceptPage() {
           display_name: su.displayName.trim(),
         });
         toast.success(`Welcome to ${p.org_name}.`);
+        if (next) return window.location.assign(next);
         const list = await api.listOrgs();
         const org = list.items.find((o) => o.slug === p.org_slug);
         window.location.assign(org ? `/w/${urlHandleFor(org, list.items)}` : "/");
@@ -120,9 +176,18 @@ export function InviteAcceptPage() {
     return (
       <CenteredCard tone="info" title={`Join ${p.org_name}`}>
         <p className="text-sm text-content dark:text-mortar-200">
-          <strong>{p.invited_by_name}</strong> invited you to{" "}
-          <strong>{p.org_name}</strong> as <strong>{p.role}</strong>. Create an
-          account to join.
+          {p.reusable ? (
+            <>
+              Join <strong>{p.org_name}</strong> as a <strong>{p.role}</strong>. You do this once; after that,
+              scan the label on anything you take.
+            </>
+          ) : (
+            <>
+              <strong>{p.invited_by_name}</strong> invited you to{" "}
+              <strong>{p.org_name}</strong> as <strong>{p.role}</strong>. Create an
+              account to join.
+            </>
+          )}
         </p>
         <form onSubmit={submit} className="mt-4 space-y-3">
           <Field label="Your email">
@@ -132,7 +197,7 @@ export function InviteAcceptPage() {
             {lockedEmail && <span className="mt-1 block text-[10px] text-faint dark:text-slate-500">This invite is for {lockedEmail}.</span>}
           </Field>
           <Field label="Password">
-            <PasswordInput required minLength={8} value={su.password}
+            <PasswordInput autoComplete="new-password" required minLength={8} value={su.password}
               onChange={(e) => setSu((s) => ({ ...s, password: e.target.value }))}
               placeholder="at least 8 characters" className="input w-full" />
           </Field>
@@ -147,9 +212,37 @@ export function InviteAcceptPage() {
             {suBusy ? "Joining…" : `Create account & join`}
           </button>
         </form>
+        <div className="mt-3 rounded-md border border-line dark:border-slate-700 p-3 text-left space-y-2">
+          <p className="text-xs text-muted dark:text-slate-400">
+            No password? Fill in your email and name above and we&apos;ll email you a link that joins you.
+          </p>
+          {link?.sent ? (
+            link.devToken ? (
+              <button type="button" onClick={() => void openDevLink()} data-testid="invite-dev-link"
+                className="w-full rounded-md border border-line dark:border-slate-700 text-sm px-3 py-2">
+                No mail on this server: open the link here
+              </button>
+            ) : (
+              <p className="text-xs text-content dark:text-mortar-200" data-testid="invite-link-sent">
+                Check your email for the link to {p.org_name}.
+              </p>
+            )
+          ) : (
+            <button type="button" onClick={() => void emailLink()} disabled={suBusy} data-testid="invite-email-link"
+              className="w-full rounded-md border border-line dark:border-slate-700 text-sm px-3 py-2 disabled:opacity-50">
+              Email me a link to join
+            </button>
+          )}
+        </div>
         <button
-          onClick={() => navigate(`/auth?next=${encodeURIComponent(`/invite/${token}`)}`)}
+          onClick={() => {
+            // The sign-in page sends them back here (LandingRedirect reads
+            // ?next=), where the session offers Join or, for a member, goes in.
+            const here = `/invite/${token}${next ? `?next=${encodeURIComponent(next)}` : ""}`;
+            window.location.assign(`/?next=${encodeURIComponent(here)}`);
+          }}
           className="mt-3 text-xs text-accent hover:underline"
+          data-testid="invite-sign-in"
         >
           Already have an account? Sign in to join
         </button>

@@ -39,15 +39,34 @@ const CONSUMER_EXT = new Set([".ts", ".tsx", ".mjs", ".js", ".yml", ".yaml", ".s
 
 const VAR = /(COBBLR_[A-Z0-9_]+)/g;
 
+// ONE READ PER FILE, ONE WALK PER DIRECTORY. The template check below asks,
+// for each variable, whether any consumer file mentions it, and it used to
+// walk and re-read every file for every variable: 608 MB read per run, the
+// heaviest lint in the suite by twenty times (measured 2026-09-29).
+const readCache = new Map<string, string>();
 function read(p: string): string {
-  try {
-    return readFileSync(join(ROOT, p), "utf8");
-  } catch {
-    return "";
+  let text = readCache.get(p);
+  if (text === undefined) {
+    try {
+      text = readFileSync(join(ROOT, p), "utf8");
+    } catch {
+      text = "";
+    }
+    readCache.set(p, text);
   }
+  return text;
 }
 
-function walk(dir: string, out: string[] = []): string[] {
+const walkCache = new Map<string, string[]>();
+function walk(dir: string): string[] {
+  let files = walkCache.get(dir);
+  if (!files) {
+    files = walkInto(dir, []);
+    walkCache.set(dir, files);
+  }
+  return files;
+}
+function walkInto(dir: string, out: string[]): string[] {
   let entries: string[];
   try {
     entries = readdirSync(join(ROOT, dir));
@@ -57,7 +76,7 @@ function walk(dir: string, out: string[] = []): string[] {
   for (const e of entries) {
     if (e === "node_modules" || e === "dist" || e === ".git") continue;
     const rel = `${dir}/${e}`;
-    if (statSync(join(ROOT, rel)).isDirectory()) walk(rel, out);
+    if (statSync(join(ROOT, rel)).isDirectory()) walkInto(rel, out);
     else if (CONSUMER_EXT.has(e.slice(e.lastIndexOf(".")))) out.push(rel);
   }
   return out;

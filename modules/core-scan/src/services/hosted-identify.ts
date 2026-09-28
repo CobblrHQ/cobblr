@@ -30,7 +30,14 @@ const TIMEOUT_MS = 120_000; // the engine can take most of 90s on a cold vision 
 // The kernel's AI-status route needs this same answer to avoid telling a
 // visitor "AI isn't connected" on a deployment that identifies things fine,
 // so the predicate lives in the contract and both sides import it.
-export { hostedIdentifyEnabled } from "@cobblr/platform-contract/hosted-identify";
+export {
+  hostedIdentifyEnabled,
+  hostedIdentifyReach,
+  identifyAppsAllowed,
+  setIdentifyOrgLookup,
+  workspaceInIdentifyScope,
+} from "@cobblr/platform-contract/hosted-identify";
+import { hostedIdentifyReach } from "@cobblr/platform-contract/hosted-identify";
 
 /** One install key serves MANY workspaces (every sandbox on the try box; every
  *  customer on the hosted product), so the edge's per-key cap cannot give each
@@ -101,69 +108,6 @@ export function inMemoryIdentifyUsageStore(): IdentifyUsageStore & { count(orgId
     },
     count: (orgId, day) => m.get(k(orgId, day)) ?? 0,
   };
-}
-
-/** Which workspaces get hosted identification at all.
- *
- *  `COBBLR_IDENTIFY_APPS` unset or `*` = every workspace on this deployment
- *  (the try box: every sandbox). A comma list of managed-app ids (`yarn`, or
- *  `yarn,lego`) = only workspaces locked into one of those apps; a platform
- *  workspace on the same box gets nothing and degrades to its own AI path.
- *
- *  An entry may also name ONE workspace by slug, written `@slug`
- *  (`@e2e-scan-walk`, or `yarn,@e2e-scan-walk`). Managed apps are a closed
- *  registry, so an app id alone cannot admit a workspace that is not one of
- *  them - and "turn this on for that workspace and nothing else" is a real
- *  need: a deployment with one workspace doing the exercising, and a mirror of
- *  somebody's real scans sitting beside it that must not spend the key
- *  (2026-09-03). One knob still answers one question, and it still fails
- *  closed.
- *  That is what lets the hosted product hand a free daily allowance to the
- *  yarn app without handing it to everyone who signs up for anything.
- *
- *  Per USER, in practice: a managed-app workspace is one person, so the
- *  per-workspace counter below is a per-person counter for exactly the
- *  workspaces this scope admits. */
-export function identifyAppsAllowed(): "*" | Set<string> {
-  const raw = (process.env.COBBLR_IDENTIFY_APPS ?? "*").trim();
-  if (!raw || raw === "*") return "*";
-  // `@slug` entries are lowercased so the comparison above can be too.
-  return new Set(
-    raw
-      .split(",")
-      .map((s) => s.trim())
-      .filter(Boolean)
-      .map((s) => (s.startsWith("@") ? s.toLowerCase() : s)),
-  );
-}
-
-type OrgLookup = (orgId: string) => Promise<{ slug?: string; app_mode: { app: string } | null } | null>;
-const platformOrgLookup: OrgLookup = (orgId) => platform().orgs.get(orgId);
-let orgLookup: OrgLookup = platformOrgLookup;
-/** Swap the workspace lookup (tests). `null` restores the platform one. */
-export function setIdentifyOrgLookup(fn: OrgLookup | null): void {
-  orgLookup = fn ?? platformOrgLookup;
-}
-
-/** Fails CLOSED. This is entitlement, not accounting: a workspace we cannot
- *  place must not spend the shared key. (The allowance counter below fails
- *  open, because there the edge's own cap still bounds the spend; here nothing
- *  would.) */
-export async function workspaceInIdentifyScope(orgId: string): Promise<boolean> {
-  const allowed = identifyAppsAllowed();
-  if (allowed === "*") return true;
-  try {
-    const org = await orgLookup(orgId);
-    const app = org?.app_mode?.app;
-    if (app && allowed.has(app)) return true;
-    // Named outright, by slug. Kept case-insensitive because a slug is a URL
-    // word and an operator writing one into an env file is not typing it twice.
-    const slug = org?.slug?.trim().toLowerCase();
-    return !!slug && allowed.has(`@${slug}`);
-  } catch (err) {
-    console.error(`[hosted-identify] could not place workspace ${orgId} - refusing:`, (err as Error).message);
-    return false;
-  }
 }
 
 /** The hosted plan's say.
@@ -297,12 +241,14 @@ export async function hostedIdentifyWhy(opts: {
    *  sweeps, email ingest) sends nothing and rides the key cap. */
   visitorIp?: string | null;
 }): Promise<{ answer: HostedAnswer | null; degraded?: HostedDegrade }> {
-  const url = process.env.COBBLR_IDENTIFY_URL?.trim();
-  if (!url) return { answer: null, degraded: "off" };
-  if (!(await workspaceInIdentifyScope(opts.orgId))) {
-    console.log(`[hosted-identify] workspace ${opts.orgId} is outside COBBLR_IDENTIFY_APPS — degrading`);
-    return { answer: null, degraded: "scope" };
+  // The same answer /ai-status gives, so what a person is promised and what
+  // the scan does cannot disagree (#3867).
+  const reach = await hostedIdentifyReach(opts.orgId);
+  if (!reach.available) {
+    if (reach.why === "scope") console.log(`[hosted-identify] workspace ${opts.orgId} is outside COBBLR_IDENTIFY_APPS — degrading`);
+    return { answer: null, degraded: reach.why };
   }
+  const url = process.env.COBBLR_IDENTIFY_URL!.trim();
   if (!(await entitlement(opts.orgId, opts.userId))) {
     console.log(`[hosted-identify] plan says no for ${opts.userId ?? "workspace " + opts.orgId} today — degrading`);
     return { answer: null, degraded: "plan" };

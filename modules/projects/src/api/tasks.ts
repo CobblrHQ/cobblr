@@ -8,7 +8,7 @@ import { sql } from "kysely";
 import { platform } from "@cobblr/platform-contract";
 import { sessionUser, tenantContext, tenantDb } from "../db.js";
 import { asyncHandler, badBody, requireRole } from "./util.js";
-import { routeUnknownToMetadata } from "@cobblr/platform-contract/entity-metadata";
+import { routeUnknownToMetadata, refuseUnknownFields } from "@cobblr/platform-contract/entity-metadata";
 
 export const tasksRouter = Router({ mergeParams: true });
 
@@ -123,6 +123,7 @@ tasksRouter.get(
 tasksRouter.post(
   "/",
   asyncHandler(async (req, res) => {
+    await refuseUnknownFields(req, req.body, TASK_NATIVE_KEYS, "projects:task");
     const routed = routeUnknownToMetadata(req.body, TASK_NATIVE_KEYS);
     const parsed = TaskCreate.safeParse(routed);
     if (!parsed.success) return badBody(res, parsed.error);
@@ -167,6 +168,7 @@ tasksRouter.post(
 tasksRouter.patch(
   "/:id",
   asyncHandler(async (req, res) => {
+    await refuseUnknownFields(req, req.body, TASK_NATIVE_KEYS, "projects:task");
     const routed = routeUnknownToMetadata(req.body, TASK_NATIVE_KEYS);
     const parsed = TaskUpdate.safeParse(routed);
     if (!parsed.success) return badBody(res, parsed.error);

@@ -13,6 +13,7 @@ import { api } from "../lib/api";
 import { searchFeatures } from "../lib/feature-index";
 import { useActiveOrg } from "../auth/ActiveOrgContext";
 import { recordHref } from "@cobblr/platform-contract/instance-detail";
+import { SearchIncomplete } from "./SearchIncomplete";
 
 export function SearchBar() {
   const { activeSlug } = useActiveOrg();
@@ -117,8 +118,11 @@ export function SearchBar() {
           />
         </div>
       )}
-      {open && expanded && (items.length > 0 || featureHits.length > 0) && (
+      {open && expanded && (items.length > 0 || featureHits.length > 0 || (hits.data?.kinds_failed?.length ?? 0) > 0) && (
         <div className="absolute right-0 mt-1 w-80 max-h-96 overflow-y-auto bg-surface dark:bg-slate-900 border border-line dark:border-slate-700 rounded shadow-lg z-50 divide-y divide-line dark:divide-slate-800">
+          {(hits.data?.kinds_failed?.length ?? 0) > 0 && (
+            <div className="p-1.5"><SearchIncomplete compact failed={hits.data?.kinds_failed} /></div>
+          )}
           {/* Cobblr FEATURES rank above data — "edge bridge" must find the
               app surface, not nothing (feature-index.ts). */}
           {featureHits.map((f) => (

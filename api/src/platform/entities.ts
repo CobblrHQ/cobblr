@@ -14,6 +14,7 @@
 // before returning. Anything not declared is private to the owning
 // module. See docs/architecture/entity-resolver.md.
 
+import { noteResolverFailure } from "./resolver-failures.js";
 import { sql } from "kysely";
 import type {
   EntityKindRecord,
@@ -26,7 +27,8 @@ import type {
   EntityWriter,
   ResolvedEntity,
 } from "@cobblr/platform-contract";
-import { TRAIT_PRESETS, stockDisclosureFromConfig, traitAxisValue } from "@cobblr/platform-contract";
+import { walkListPages } from "./entity-list-walk.js";
+import { TRAIT_PRESETS, stockDisclosureFromConfig, traitAxisValue, type FilterPredicate } from "@cobblr/platform-contract";
 import { meta } from "../db/meta.js";
 import { instanceKindName } from "./instance-kind.js";
 import { INSTANCE_ITEM_DETAIL, resolveDetailPath } from "@cobblr/platform-contract/instance-detail";
@@ -37,6 +39,7 @@ import { assertModulesMounted } from "../modules/mount-state.js";
 // Re-export so callers reaching detail-path logic through `entities` keep working
 // while the ONE decision lives in the DB-free instance-detail module.
 export { resolveDetailPath } from "@cobblr/platform-contract/instance-detail";
+import { applyCustomFieldValues } from "./custom-field-values.js";
 import { applyComputedFields } from "./computed-fields.js";
 import { applyRelationFields } from "./relation-fields.js";
 import { applyMemberFields } from "./member-fields.js";
@@ -552,7 +555,7 @@ export async function lookup(
       // whitelist above was already computed from the requested kind, so this is
       // consistent.
       const projected = { ...applyExposableProjection(resolved, whitelist, fieldReadScopes, undefined, publicRead), kind };
-      return applyServedTitle(await applyMemberFields(orgId, await applyRelationFields(orgId, await applyComputedFields(orgId, projected))));
+      return applyServedTitle(await applyMemberFields(orgId, await applyRelationFields(orgId, await applyComputedFields(orgId, await applyCustomFieldValues(orgId, projected)))));
     }
   } catch (err) {
     console.error(`[entities] resolver for ${kind} failed:`, err);
@@ -825,8 +828,13 @@ export async function list(
   // Own-workspace results first.
   let items: ResolvedEntity[] = [];
   let total: number | undefined;
+  // What the resolver could not filter by, said rather than swallowed: a
+  // view that could not run its date window must not look like one that did.
+  let unapplied: FilterPredicate[] | undefined;
+  let failed = false;
   try {
     const result = await resolver(orgId, query);
+    unapplied = result.unapplied?.length ? result.unapplied : undefined;
     // Compute AFTER projection (see lookup() — gated fields are stripped
     // before the template runs, so a computed field can't leak them).
     items = await Promise.all(
@@ -838,7 +846,7 @@ export async function list(
             // Present each row as the REQUESTED kind so computed defs keyed by an
             // instance kind (`<name>:item`) resolve — same override + reasoning as
             // lookup(). No-op for base kinds (resolver already returns them).
-            { ...applyExposableProjection(r, whitelist, fieldReadScopes, readScope, publicRead), kind },
+            await applyCustomFieldValues(orgId, { ...applyExposableProjection(r, whitelist, fieldReadScopes, readScope, publicRead), kind }),
           ),
         ))),
       ),
@@ -846,6 +854,8 @@ export async function list(
     total = result.total;
   } catch (err) {
     console.error(`[entities] list resolver for ${kind} failed:`, err);
+    noteResolverFailure(kind, err);
+    failed = true;
   }
 
   // M1: union with any active+nonexpired workspace_links where THIS
@@ -891,7 +901,24 @@ export async function list(
   if (total === undefined && typeof query.limit === "number" && items.length < query.limit) {
     total = (query.offset ?? 0) + items.length;
   }
-  return { items, total };
+  return { items, total, ...(unapplied ? { unapplied } : {}), ...(failed ? { failed: true as const } : {}) };
+}
+
+/** Every record a list query answers, walked a page at a time.
+ *
+ *  A resolver asked for no limit answers ONE page (50 for most), so a surface
+ *  that shows "all of them" and calls list() once shows the first 50 and
+ *  counts those: a fleet board read "50 3D printers" with 56 on file, and a
+ *  state column whose only machine fell past row 50 was not drawn at all.
+ *  The walk itself is walkListPages (entity-list-walk.ts), pure and tested. */
+export async function listAll(
+  orgId: string,
+  kind: string,
+  query: EntityListQuery = {},
+  viewer?: { userId?: string; role?: string; publicRead?: boolean },
+  opts: { pageSize?: number; cap?: number } = {},
+): Promise<Omit<EntityListResult, "total"> & { total: number | null; complete: boolean }> {
+  return walkListPages((limit, offset) => list(orgId, kind, { ...query, limit, offset }, viewer), opts);
 }
 
 export async function listKinds(): Promise<EntityKindRecord[]> {
@@ -1082,9 +1109,15 @@ export async function listKindsForOrg(orgId: string): Promise<EntityKindRecord[]
       }
     }
 
+    const id = `${inst.instance_name}:item`;
     synthesized.push({
       ...primary,
-      id: `${inst.instance_name}:item`,
+      id,
+      // What a read of this kind actually strips, from the function the read
+      // path itself asks (list/lookup → getExposableFields(kind)). Copying the
+      // primary's list told an assistant that notes and serial numbers were
+      // unreadable on an instance whose reads return them (#3807).
+      exposable_fields: await getExposableFields(id),
       display_name: inst.display_name,
       display_name_plural: inst.display_name,
       traits,

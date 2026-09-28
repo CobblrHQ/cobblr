@@ -11,7 +11,7 @@ import { Plus, Trash2, Wifi, Printer, RefreshCw, Send, ListChecks, Boxes, X, Lis
 import { ApiError, api, type DigifabConnection, type DigifabJob, type DigifabFleet, type BambuMode, type DigifabLibraryItem, type DigifabHistory, type DigifabRun, type DigifabFailureConfig, type DigifabDetector, type DigifabDetectorCatalogEntry } from "../lib/api";
 import { useActiveOrg } from "../auth/ActiveOrgContext";
 import { PrintUpdatesPanel } from "./PrintUpdatesPanel";
-import { changeWorkspaceShape, Modal, useToast, useConfirm, usePageTitle, useImageSrc, PasswordInput, SecretInput } from "@cobblr/platform-web";
+import { changeWorkspaceShape, Modal, useToast, useConfirm, usePageTitle, useImageSrc, SecretInput, EntityPhoto, AddressInput } from "@cobblr/platform-web";
 import { Combobox } from "../components/Combobox";
 import { CreateConnectionModal, FleetView, PrintDetailModal, Lightbox, LIBRARY_DRAG_MIME, fetchAllMachines } from "../features/digifab/fleet";
 
@@ -929,8 +929,8 @@ function DetectorsModal({ slug, onClose }: { slug: string; onClose: () => void }
           {key && (
             <>
               <input value={label} onChange={(e) => setLabel(e.target.value)} placeholder="Label - e.g. Obico on the NAS" className={input} />
-              <input value={baseUrl} onChange={(e) => setBaseUrl(e.target.value)} placeholder="Base URL - http://nas.lan:3333 (or cobblr-edge://<instance> from the cloud)" className={input} />
-              <PasswordInput what="API key" value={apiKey} onChange={(e) => setApiKey(e.target.value)} placeholder="API token (only if the service needs one)" className={input} />
+              <AddressInput value={baseUrl} onChange={(e) => setBaseUrl(e.target.value)} placeholder="Base URL - http://nas.lan:3333 (or cobblr-edge://<instance> from the cloud)" className={input} />
+              <SecretInput secret what="API key" value={apiKey} onChange={(e) => setApiKey(e.target.value)} placeholder="API token (only if the service needs one)" className={input} />
               {selectedCat?.shape === "camera-watcher" && (
                 <p className="text-[10px] text-faint">This service watches its own cameras - after adding, map each printer to its camera id on the detector's row below.</p>
               )}
@@ -1017,8 +1017,8 @@ function DetectorCard({ slug, det, cat, onChanged }: { slug: string; det: Digifa
       {editing && (
         <div className="mt-2 space-y-2 border-t border-line/60 dark:border-mortar-700 pt-2">
           <input value={label} onChange={(e) => setLabel(e.target.value)} placeholder="Label" className={input} />
-          <input value={baseUrl} onChange={(e) => setBaseUrl(e.target.value)} placeholder="Base URL" className={input} />
-          <PasswordInput what="API key" value={apiKey} onChange={(e) => setApiKey(e.target.value)} placeholder={det.has_credentials ? "API token (leave blank to keep)" : "API token (optional)"} className={input} />
+          <AddressInput value={baseUrl} onChange={(e) => setBaseUrl(e.target.value)} placeholder="Base URL - http://nas.lan:3333" className={input} />
+          <SecretInput secret what="API key" value={apiKey} onChange={(e) => setApiKey(e.target.value)} placeholder={det.has_credentials ? "API token (leave blank to keep)" : "API token (optional)"} className={input} />
           {isWatcher && (
             <div className="space-y-1">
               <div className="flex items-center gap-2">
@@ -1270,7 +1270,7 @@ function PrintHistorySection({ slug }: { slug: string }) {
                         <button type="button" onClick={() => setPrintOpen(r)} className="w-full flex items-center gap-2 px-2 py-1.5 text-xs text-left hover:bg-subtle dark:hover:bg-slate-800">
                           {r.cover ? (
                             // EXTERNAL-IMAGE-OK: the vendor task cover URL from the printer's own API.
-                            <img src={r.cover} alt="" loading="lazy" className="w-9 h-9 rounded object-cover bg-subtle shrink-0" />
+                            <EntityPhoto src={r.cover} alt="" size={36} className="rounded" placeholder={null} />
                           ) : (
                             <span className={"w-9 h-9 rounded shrink-0 flex items-center justify-center " + (r.status === "completed" ? "bg-moss-500/15" : r.status === "failed" ? "bg-ember-500/15" : "bg-subtle")}>
                               <span className={"w-1.5 h-1.5 rounded-full " + (r.status === "completed" ? "bg-moss-500" : r.status === "failed" ? "bg-ember-500" : "bg-faint")} />
@@ -1813,12 +1813,12 @@ function ConnectionEditModal({ connection, onClose, onSaved }: { connection: Dig
         </label>
         <label className="block">
           <span className={lbl}>Base URL</span>
-          <input value={baseUrl} onChange={(e) => setBaseUrl(e.target.value)} className={field} />
+          <AddressInput value={baseUrl} onChange={(e) => setBaseUrl(e.target.value)} placeholder="http://printer.local" className={field} />
         </label>
         {!isMock && (
           <label className="block">
             <span className={lbl}>Rotate API key (optional)</span>
-            <PasswordInput what="API key" value={apiKey} onChange={(e) => setApiKey(e.target.value)} placeholder="leave blank to keep the current key" className={field} />
+            <SecretInput secret what="API key" value={apiKey} onChange={(e) => setApiKey(e.target.value)} placeholder="leave blank to keep the current key" className={field} />
           </label>
         )}
         <label className="flex items-center gap-2 text-sm text-content dark:text-mortar-100">
@@ -2432,9 +2432,7 @@ function LibraryCard({ item, slug }: { item: DigifabLibraryItem; slug: string })
       }}
       title="Drag onto a fleet machine to print it there"
     >
-      <div className="aspect-square bg-subtle dark:bg-slate-800 flex items-center justify-center">
-        {thumb ? <img src={thumb} alt="" className="w-full h-full object-contain" /> : <Boxes size={26} className="text-faint" />}
-      </div>
+      <EntityPhoto src={thumb} alt="" aspect="square" fit="contain" placeholder={<Boxes size={26} className="text-faint" />} />
       <div className="p-2 space-y-1 flex-1 flex flex-col">
         <div className="text-xs text-content dark:text-mortar-100 truncate" title={item.name}>{item.name}</div>
         <div className="flex items-center gap-1 text-[10px] text-faint flex-wrap">
@@ -2778,7 +2776,7 @@ function FdmmImportModal({ slug, onClose, onDone }: { slug: string; onClose: () 
         </p>
         <label className="block">
           <span className={lbl}>FDM Monster URL</span>
-          <input value={baseUrl} onChange={(e) => setBaseUrl(e.target.value)} placeholder="http://fdm-monster.local:4000" className={field} autoFocus />
+          <AddressInput value={baseUrl} onChange={(e) => setBaseUrl(e.target.value)} placeholder="http://fdm-monster.local:4000" className={field} autoFocus />
         </label>
         <label className="block">
           <span className={lbl}>API key (optional)</span>

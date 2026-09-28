@@ -246,7 +246,7 @@ export interface PatternExtract {
   needs: PatternNeed[];
   read: PatternRead;
 }
-export type PatternNeedKind = "yarn" | "hook" | "needle";
+export type PatternNeedKind = "yarn" | "hook" | "needle" | "notion";
 export interface PatternNeed {
   id: string;
   kind: PatternNeedKind;

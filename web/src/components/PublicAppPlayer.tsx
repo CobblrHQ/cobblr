@@ -12,9 +12,10 @@
 
 import { useEffect, useState } from "react";
 import ReactMarkdown from "react-markdown";
-import { EntityTile } from "@cobblr/platform-web";
+import { EntityTile, TILE_GRID } from "@cobblr/platform-web";
 import { publicFrameDocUrl } from "../lib/frame-doc";
 import type { AppTheme, AppBlock, AppPage } from "../lib/api";
+import { statKey } from "@cobblr/platform-contract/stat-value";
 import {
   themeWrapperStyle,
   fontFaceCss,
@@ -135,7 +136,7 @@ function customSrcDoc(html: string, theme: AppTheme | null | undefined, data: Pu
 }
 
 function StatBlock({ block, data, theme }: { block: Extract<AppBlock, { type: "stat" }>; data: PublicAppData; theme: AppTheme | null | undefined }) {
-  const key = block.agg === "sum" && block.field ? `${block.view_id}:${block.field}` : block.view_id;
+  const key = statKey(block.view_id, block);
   const n = data.statsById[key] ?? 0;
   return (
     <div className="rounded-xl border p-4 min-w-[120px]" style={cardStyle(theme)}>
@@ -157,7 +158,7 @@ function ViewBlock({ block, data, theme }: { block: Extract<AppBlock, { type: "v
       {items.length === 0 ? (
         <div className="text-sm italic" style={mutedStyle(theme)}>nothing here.</div>
       ) : (
-        <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-3">
+        <div className={TILE_GRID}>
           {items.map((i) => (
             <EntityTile key={`${i.kind}:${i.id}`} src={i.image_path} title={i.title} subtitle={i.subtitle ?? null} />
           ))}

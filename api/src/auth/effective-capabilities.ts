@@ -16,6 +16,18 @@
 
 import { roleHoldsEveryCapability } from "@cobblr/platform-contract/org-roles";
 import { meta } from "../db/meta.js";
+import { MEMBER_DEFAULT_CAPABILITIES, memberHoldsByDefault } from "../platform/capability-grants.js";
+
+async function hasAnyCustomRole(orgId: string, userId: string): Promise<boolean> {
+  const row = await meta
+    .selectFrom("workspace_role_assignments")
+    .select("user_id")
+    .where("org_id", "=", orgId)
+    .where("user_id", "=", userId)
+    .limit(1)
+    .executeTakeFirst();
+  return !!row;
+}
 
 export interface EffectiveCapabilities {
   /** The admin tier (owner, admin, editor) holds every capability
@@ -50,11 +62,15 @@ export async function effectiveCapabilities(
       .where("a.user_id", "=", userId)
       .execute(),
   ]);
+  // A plain member (no custom role) holds the member defaults; a custom role
+  // decides for itself. Same rule as userHasCapability (memberHoldsByDefault).
+  const hasCustomRole = viaRole.length > 0 || (await hasAnyCustomRole(orgId, userId));
   return {
     all: false,
     caps: new Set([
       ...direct.map((r) => r.action_id),
       ...viaRole.map((r) => r.action_id),
+      ...MEMBER_DEFAULT_CAPABILITIES.filter((c) => memberHoldsByDefault(role, c, hasCustomRole)),
     ]),
   };
 }

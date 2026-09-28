@@ -31,6 +31,10 @@
     "version": "0.1.3",
     "hash": "48d6fce04498f6f121006cd48d16104119e310d9d6228480cfa84a0cf8057619"
   },
+  "cobblr.community.printer-mods": {
+    "version": "0.1.0",
+    "hash": "d9673ac5a93b6833a343fa88d7709ba34f220a76df1bff24248fbe6881be64b2"
+  },
   "cobblr.community.printer-parts": {
     "version": "0.2.0",
     "hash": "ae75074f70ad9c065303685553dd803f0a5152e142bbf0dca7d7225f3b0ac7d0"
@@ -72,8 +76,8 @@
     "hash": "e5ed9eef35ed52f215a571f0b71dc4ebd1e8cfa3b69e5753faa8b5d49e580f2c"
   },
   "cobblr.flagship.groceries": {
-    "version": "0.12.0",
-    "hash": "a5ac91194dc6076eae7f39be0ec99393dada8ec0876485731d4fbd75616eae2b"
+    "version": "0.13.0",
+    "hash": "62186730274405bae4a7ab4702a103d306cb0c2cc6cbcaca9116ce87cf5484f0"
   },
   "cobblr.flagship.grocery-spend": {
     "version": "0.1.2",
@@ -131,8 +135,12 @@
     "version": "0.2.3",
     "hash": "516f9cd197dd835f37011c012eb73f73e8b3ba712a648411e267e5084f15e6f9"
   },
+  "cobblr.flagship.wine": {
+    "version": "0.1.0",
+    "hash": "17aecc03b2cb3838391c7f2db0e55cb7ca41f6a1a2f884868462e3b90a8e9a89"
+  },
   "cobblr.flagship.yarn": {
-    "version": "0.8.3",
-    "hash": "0528da9535b5da27f841ebcd9eb99567e46a4aef21bfe706dd4e9c7e64737cbb"
+    "version": "0.9.0",
+    "hash": "39ca3f03fca8ae496143be1dc793da3182735e45e66c559838e67ac614e1673a"
   }
 }

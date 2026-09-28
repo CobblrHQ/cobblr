@@ -12,6 +12,7 @@ import { createContext, useContext, useMemo, useState, type ReactNode } from "re
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { FACE_LABELS, FACE_NAMES, type FaceName } from "@cobblr/platform-contract";
 import { usePlatformWeb } from "./context";
+import { MutationError } from "./MutationError";
 
 export interface FacesVerdict {
   kind: string;
@@ -119,6 +120,7 @@ export function RecordFaces({
           ))}
         </div>
       )}
+      <MutationError mutation={turnOn} className="block pt-1">Shown here for now, but not kept on for this collection:</MutationError>
     </Opened.Provider>
   );
 }
@@ -140,9 +142,25 @@ export function useFaceOn(face: FaceName | undefined, kind: string): boolean {
   return on.has(face) || opened.opened.has(face);
 }
 
-/** Wrap one section: rendered only while its face is on. */
-export function FaceSection({ face, kind, children }: { face: FaceName; kind: string; children: ReactNode }) {
-  return useFaceOn(face, kind) ? <>{children}</> : null;
+/** Does a field a face governs belong on this record? When the face is on,
+ *  yes. When it is off, only while the field is empty or at its default: a
+ *  face folds what a record does not use, and never hides a value the record
+ *  holds. A machine imported as "5 of these" in a collection that does not
+ *  wear the stock face showed no quantity at all, and nothing on the record
+ *  could see or change it. lint:folded-faces-keep-values refuses a face gate
+ *  that does not come through here. */
+export function faceShows(on: boolean, value: unknown, fallback: unknown = null): boolean {
+  if (on) return true;
+  if (value === null || value === undefined || value === "") return false;
+  if (typeof fallback === "number" || typeof value === "number") return Number(value) !== Number(fallback);
+  return value !== fallback;
+}
+
+/** Wrap one section: rendered while its face is on, or while the record
+ *  holds something the section shows (`holds`), so a folded face never
+ *  hides what is there. */
+export function FaceSection({ face, kind, holds = false, children }: { face: FaceName; kind: string; holds?: boolean; children: ReactNode }) {
+  return useFaceOn(face, kind) || holds ? <>{children}</> : null;
 }
 
 /** Read several faces from INSIDE the record's faces and hand the answers to

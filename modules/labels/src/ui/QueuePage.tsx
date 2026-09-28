@@ -623,11 +623,13 @@ export function QueuePage() {
   const remove = useMutation({
     mutationFn: (id: string) => api.removeFromQueue(id),
     onSuccess: () => void qc.invalidateQueries({ queryKey: ["labels-queue"] }),
+    onError: (e) => toast.error(e instanceof Error ? e.message : "Couldn't take it out of the queue"),
   });
 
   const setQty = useMutation({
     mutationFn: ({ id, qty }: { id: string; qty: number }) => api.updateQueueQty(id, qty),
     onSuccess: () => void qc.invalidateQueries({ queryKey: ["labels-queue"] }),
+    onError: (e) => toast.error(e instanceof Error ? e.message : "Couldn't change the copies"),
   });
 
   const rename = useMutation({

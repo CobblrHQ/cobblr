@@ -5,7 +5,7 @@
 
 import { useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { usePageTitle } from "@cobblr/platform-web";
+import { usePageTitle, MutationError } from "@cobblr/platform-web";
 import { api, type MyFeedbackItem } from "../lib/api";
 import { QueryError } from "../components/QueryError";
 
@@ -96,6 +96,7 @@ function FeedbackThread({ item }: { item: MyFeedbackItem }) {
           {reply.isPending ? "Sending…" : "Reply"}
         </button>
       </div>
+      <MutationError mutation={reply} className="block">Not sent:</MutationError>
     </li>
   );
 }

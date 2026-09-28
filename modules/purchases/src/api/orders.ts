@@ -8,7 +8,8 @@ import { z } from "zod";
 import { platform } from "@cobblr/platform-contract";
 import { instanceOf, sessionUser, tenantContext, tenantDb } from "../db.js";
 import { asyncHandler, badBody, requireRole } from "./util.js";
-import { routeUnknownToMetadata, withMetadataMerged } from "@cobblr/platform-contract/entity-metadata";
+import { routeUnknownToMetadata, refuseUnknownFields, withMetadataMerged } from "@cobblr/platform-contract/entity-metadata";
+import { claimLine, stampLine } from "./line-subject.js";
 
 export const ordersRouter = Router({ mergeParams: true });
 
@@ -55,6 +56,9 @@ const OrderUpdate = OrderCreate.partial();
 
 const ItemCreate = z.object({
   part_id: z.string().uuid().nullable().optional(),
+  /** What the line bought, when it is not a part: any record (#3856). */
+  subject_kind: z.string().min(1).max(80).nullable().optional(),
+  subject_id: z.string().min(1).max(120).nullable().optional(),
   description: z.string().max(500).nullable().optional(),
   qty: z.number(),
   unit_cost: z.number().nullable().optional(),
@@ -166,6 +170,7 @@ ordersRouter.get(
 ordersRouter.post(
   "/",
   asyncHandler(async (req, res) => {
+    await refuseUnknownFields(req, req.body, ORDER_NATIVE_KEYS, "purchases:order");
     const routed = routeUnknownToMetadata(req.body, ORDER_NATIVE_KEYS);
     const parsed = OrderCreate.safeParse(routed);
     if (!parsed.success) return badBody(res, parsed.error);
@@ -213,6 +218,7 @@ ordersRouter.patch(
       res.status(400).json({ error: { code: "missing_id", message: "id required" } });
       return;
     }
+    await refuseUnknownFields(req, req.body, ORDER_NATIVE_KEYS, "purchases:order");
     const routed = routeUnknownToMetadata(req.body, ORDER_NATIVE_KEYS);
     const parsed = OrderUpdate.safeParse(routed);
     if (!parsed.success) return badBody(res, parsed.error);
@@ -248,6 +254,11 @@ ordersRouter.patch(
       .where("instance", "=", instanceOf(req))
       .returningAll()
       .executeTakeFirstOrThrow();
+    // One way: the order is evidence for what it bought, so a changed vendor
+    // or date reaches the things it bought, never over what a person typed.
+    if ("vendor" in parsed.data || "vendor_id" in parsed.data || "ordered_at" in parsed.data) {
+      await stampLine(db, ctx.org.id, id).catch(() => 0);
+    }
     await platform().activity.log({
       orgId: ctx.org.id,
       userId: session.id,
@@ -348,15 +359,21 @@ ordersRouter.post(
     const db = tenantDb(req);
     const ctx = tenantContext(req);
     const session = sessionUser(req);
-    const inserted = await db
+    const { subject_kind, subject_id, ...lineFields } = parsed.data;
+    let inserted = await db
       .insertInto("purchases_order_items")
       .values({
-        ...parsed.data,
+        ...lineFields,
+        part_id: null,
         order_id: orderId,
         metadata: parsed.data.metadata ?? {},
       } as never)
       .returningAll()
       .executeTakeFirstOrThrow();
+    const subject = subject_kind && subject_id ? { kind: subject_kind, id: subject_id } : parsed.data.part_id ? { kind: "inventory:part", id: parsed.data.part_id } : null;
+    if (subject) {
+      inserted = ((await claimLine({ db, orgId: ctx.org.id, userId: session.id, orderId, itemId: inserted.id, subject })) ?? inserted) as typeof inserted;
+    }
     await platform().activity.log({
       orgId: ctx.org.id,
       userId: session.id,
@@ -391,7 +408,13 @@ ordersRouter.get(
   }),
 );
 
-// Claim, or release, one line of an order for a part.
+const ItemClaim = z.union([
+  z.object({ part_id: z.string().uuid().nullable() }),
+  z.object({ subject_kind: z.string().min(1).max(80), subject_id: z.string().min(1).max(120) }),
+  z.object({ subject_kind: z.null(), subject_id: z.null() }),
+]);
+
+// Claim, or release, one line of an order for what it bought (any record).
 //
 // A receipt's order is born when the receipt is read, with one line per parsed
 // item and part_id NULL on every one - a line on a receipt is not a thing you
@@ -405,7 +428,6 @@ ordersRouter.get(
 // AI-REACH: exempt — internal reconciliation surface for the scan inbox's
 // confirm/unconfirm, not a user or Cobb action (a person edits an order via
 // the order UI, not this endpoint).
-const ItemClaim = z.object({ part_id: z.string().uuid().nullable() });
 ordersRouter.patch(
   "/:id/items/:itemId",
   asyncHandler(async (req, res) => {
@@ -420,13 +442,11 @@ ordersRouter.patch(
     const db = tenantDb(req);
     const ctx = tenantContext(req);
     const session = sessionUser(req);
-    const updated = await db
-      .updateTable("purchases_order_items")
-      .set({ part_id: parsed.data.part_id } as never)
-      .where("id", "=", itemId)
-      .where("order_id", "=", orderId)
-      .returningAll()
-      .executeTakeFirst();
+    // Any record, not only a part: a printer bought on a marketplace is a
+    // machine. `part_id` alone still means a part.
+    const d = parsed.data as { part_id?: string | null; subject_kind?: string | null; subject_id?: string | null };
+    const subject = d.subject_kind && d.subject_id ? { kind: d.subject_kind, id: d.subject_id } : d.part_id ? { kind: "inventory:part", id: d.part_id } : null;
+    const updated = await claimLine({ db, orgId: ctx.org.id, userId: session.id, orderId, itemId, subject });
     if (!updated) {
       res.status(404).json({ error: { code: "not_found", message: "order line not found" } });
       return;
@@ -434,9 +454,9 @@ ordersRouter.patch(
     await platform().activity.log({
       orgId: ctx.org.id,
       userId: session.id,
-      action: parsed.data.part_id ? "order_item_claimed" : "order_item_released",
+      action: subject ? "order_item_claimed" : "order_item_released",
       ref: { module: "purchases", entityType: "order_item", entityId: itemId },
-      diff: { order_id: orderId, part_id: parsed.data.part_id },
+      diff: { order_id: orderId, subject_kind: subject?.kind ?? null, subject_id: subject?.id ?? null },
     });
     res.json(updated);
   }),

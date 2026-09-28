@@ -30,7 +30,7 @@
 import { createHash } from "node:crypto";
 import type { Kysely } from "kysely";
 import { actionSaid } from "./action-summary.js";
-import { getTool, fetchKinds, resolveUpdatePath, resolveDeletePath, type WorkspaceApi } from "@cobblr/workspace-tools";
+import { getTool, fetchKinds, resolveUpdatePath, resolveDeletePath, type KindRec, type WorkspaceApi } from "@cobblr/workspace-tools";
 import { imageId, platform, pluralise } from "@cobblr/platform-contract";
 import { isActionStep, type ActionUndoStep } from "@cobblr/platform-contract/action-undo";
 import type { CoreAiDB } from "../db.js";
@@ -498,6 +498,20 @@ export async function performWrite(
   return { ok: true, message: `Deleted ${label}.`, entity: { kind: entity_kind, id, label }, ledger_id: row?.id, undoable: true };
 }
 
+/** The part of a stored row the kind's write routes take: its declared
+ *  fields, its custom fields, and an explicit `metadata`. A before-image
+ *  also holds derived columns (a search index, timestamps), and a write
+ *  route refuses a name it does not own, so an undo that sends the image
+ *  back whole fails on a column nobody set. Kinds unreadable: unchanged,
+ *  and the route's own refusal says which name. */
+async function settableOnly(wsApi: WorkspaceApi, kind: string, cols: Record<string, unknown>): Promise<Record<string, unknown>> {
+  const kinds = await fetchKinds(wsApi).catch(() => [] as KindRec[]);
+  const rec = kinds.find((k) => k.id === kind);
+  if (!rec) return cols;
+  const settable = new Set([...(rec.fields ?? []).filter((f) => !f.readOnly).map((f) => f.name), ...(rec.custom_fields ?? []).map((f) => f.name), "metadata"]);
+  return Object.fromEntries(Object.entries(cols).filter(([k]) => settable.has(k)));
+}
+
 /** Put a stored row back through the kind's own restore seam.
  *
  *  False means this kind has no seam yet, NOT that the undo failed — the caller
@@ -704,11 +718,15 @@ export async function undoWrite(
           const merged = { ...current, ...revert };
           const ok = await restoreState(orgId, row.entity_kind, imageWithId(merged as RecordImage, row.entity_id));
           if (!ok) {
+            // Through the kind's own update route, which takes the fields a
+            // person can set and refuses any other name. A column the write
+            // changed as a side effect (a search index, a derived total) is
+            // recomputed from the fields that go back, not written.
             outcome = await performWrite(
               wsApi,
               db,
               userId,
-              { tool: "update", entity_kind: row.entity_kind, entity_id: row.entity_id, fields: revert },
+              { tool: "update", entity_kind: row.entity_kind, entity_id: row.entity_id, fields: await settableOnly(wsApi, row.entity_kind, revert) },
               { auto: false, orgId, undoOf: row.id },
             );
           } else {
@@ -749,11 +767,9 @@ export async function undoWrite(
           entity: { kind: row.entity_kind, id: row.entity_id ?? undefined },
         };
       } else {
-        const kinds = await fetchKinds(wsApi).catch(() => []);
-        const declared = new Set((kinds.find((k) => k.id === row.entity_kind)?.fields ?? []).map((f) => f.name));
         const fields: Record<string, unknown> = {};
-        for (const [k, v] of Object.entries(image)) {
-          if ((declared.size === 0 || declared.has(k)) && v !== undefined && v !== null && k !== "id") fields[k] = v;
+        for (const [k, v] of Object.entries(await settableOnly(wsApi, row.entity_kind, image))) {
+          if (v !== undefined && v !== null && k !== "id") fields[k] = v;
         }
         outcome = await performWrite(
           wsApi,

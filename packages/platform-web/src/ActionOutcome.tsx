@@ -8,20 +8,28 @@
 // Every surface that mounts the hook mounts this; lint:action-outcome-shown
 // holds that.
 import { X } from "lucide-react";
+import { AskBeforeRun, type Asking } from "./AskBeforeRun";
 
 export function ActionOutcome({
   note,
   failure,
   onDismiss,
+  asking,
   className,
 }: {
   note: string | null;
   failure: string | null;
   onDismiss: () => void;
+  /** What the running binding asks first, from the same hook. Required, so a
+   *  surface that runs bindings cannot forget to ask: a question with nowhere
+   *  to appear would leave the button doing nothing. */
+  asking: Asking | null;
   className?: string;
 }) {
-  if (!note && !failure) return null;
+  if (!note && !failure) return <AskBeforeRun asking={asking} />;
   return (
+    <>
+    <AskBeforeRun asking={asking} />
     <span className={`inline-flex items-center gap-1.5 self-center text-[11px] ${className ?? ""}`}>
       {note && <span className="text-muted dark:text-slate-400">{note}</span>}
       {failure && (
@@ -46,5 +54,6 @@ export function ActionOutcome({
         </span>
       )}
     </span>
+    </>
   );
 }

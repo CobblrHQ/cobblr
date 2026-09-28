@@ -649,6 +649,7 @@ function OrderDetailModal({ orderId, onClose }: { orderId: string | null; onClos
       void qc.invalidateQueries({ queryKey: ["order", activeSlug, orderId] });
       void qc.invalidateQueries({ queryKey: ["orders", activeSlug] });
     },
+    onError: (e: unknown) => toast.error(`Couldn't save that change: ${e instanceof ApiError ? e.message : String(e)}`),
   });
   // Native-field presentation (relabel + show/hide via bundle/config); no-op
   // until an override exists. Same pattern as AssetsPage.

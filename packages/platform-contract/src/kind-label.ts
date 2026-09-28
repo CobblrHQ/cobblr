@@ -312,6 +312,22 @@ export function chosenNoun(decl: NounChoiceDecl, stored: unknown): NounWords {
   return opts.find((o) => o.singular.toLowerCase() === want) ?? opts[0]!;
 }
 
+/** The names a table answers to besides the one it shows: every word its
+ *  offer lists, so a Supplies table that also offers "notions" is found by
+ *  someone who calls them notions, and a Yarn table by "skeins". The label
+ *  itself is left out; each name once, capitalised. */
+export function tableOtherNames(label: string, decl: NounChoiceDecl | null | undefined): string[] {
+  if (!decl) return [];
+  const cap = (w: string) => (w ? w[0]!.toUpperCase() + w.slice(1) : w);
+  const out: string[] = [];
+  for (const w of nounOptions(decl)) {
+    for (const name of [cap(w.plural), cap(w.singular)]) {
+      if (name.toLowerCase() !== label.toLowerCase() && !out.some((o) => o.toLowerCase() === name.toLowerCase())) out.push(name);
+    }
+  }
+  return out;
+}
+
 const NOUN_TOKEN = /\{\{\s*(noun|nouns|Noun|Nouns)\s*\}\}/g;
 
 /** Whether a string carries a noun token. */

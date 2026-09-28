@@ -9,7 +9,8 @@
 // and each is a different sentence; this is the one place that holds them,
 // for the server's note and the card's chip alike. Which answer a refusal IS
 // comes from the router's code (ai-refusal.ts), never from its prose.
-// Buildless subpath: no runtime import of a sibling.
+// Buildless subpath: no runtime import of a sibling (a type is not one).
+import type { ProviderReason } from "./provider-reason.js";
 
 export type AiFallback =
   /** No provider anywhere for this workspace: connecting one is the remedy. */
@@ -26,7 +27,7 @@ export type AiFallback =
 
 /** The provider's own reason, when a provider-error carried one
  *  (provider-reason.ts): the sentence then says what to do about THAT. */
-export type ProviderErrorReason = "invalid_key" | "quota" | "model_unavailable" | "unreachable" | "unknown";
+export type ProviderErrorReason = ProviderReason;
 
 function providerErrorWords(reason: ProviderErrorReason | undefined): { hint: string; chip: string; retry: boolean } | null {
   switch (reason) {
@@ -38,6 +39,8 @@ function providerErrorWords(reason: ProviderErrorReason | undefined): { hint: st
       return { hint: "Matched by keywords: the AI's model is not available.", chip: "Matched by keywords: the AI's model is not available.", retry: false };
     case "unreachable":
       return { hint: "Matched by keywords: the AI could not be reached. Retry with AI.", chip: "Matched by keywords: the AI could not be reached.", retry: true };
+    case "busy":
+      return { hint: "Matched by keywords: the AI is busy. Retry with AI in a minute.", chip: "Matched by keywords: the AI is busy right now.", retry: true };
     default:
       return null;
   }
@@ -119,6 +122,9 @@ export interface IdentifyFailure {
   code: IdentifyFailureCode;
   ai?: AiFallback;
   ai_reason?: ProviderErrorReason;
+  /** The provider that failed, as a person reads it ("Google AI Studio"),
+   *  so the sentence can name it: it was asked, and it said no (#3819). */
+  ai_provider?: string;
   /** The raw reason, for the log; the sentence never shows it. */
   reason?: string;
   /** The hosted identify did not run, and why, when the tenant path then
@@ -148,6 +154,11 @@ export function identifyFailureWords(f: IdentifyFailure): { sentence: string; de
   if (f.code === "no_answer") {
     return { sentence: "Couldn't identify this photo: the AI's answer could not be read.", detail: "Identify it again.", retry: true, connect: false };
   }
+  if (f.ai === "no-provider" && f.hosted === "scope") {
+    // The deployment's free photo identify serves other workspaces, and
+    // "no AI provider is connected" alone reads as if nothing here could.
+    return { sentence: "Free photo identify here doesn't cover this workspace.", detail: "Connect your own AI under Account to read photos, or name it yourself.", retry: false, connect: true };
+  }
   switch (f.ai) {
     case "no-provider":
       return { sentence: "Couldn't identify this photo: no AI provider is connected.", detail: "Connect one under Configuration, AI, or your own under Account, or name it yourself.", retry: false, connect: true };
@@ -164,7 +175,9 @@ export function identifyFailureWords(f: IdentifyFailure): { sentence: string; de
         case "model_unavailable":
           return { sentence: "Couldn't identify this photo: the AI's model is not available.", detail: "Pick another model on the connection, then identify it again.", retry: false, connect: true };
         case "unreachable":
-          return { sentence: "Couldn't identify this photo: the AI could not be reached.", detail: "Identify it again.", retry: true, connect: false };
+          return { sentence: `Couldn't identify this photo: ${f.ai_provider ?? "the AI"} could not be reached.`, detail: "Identify it again.", retry: true, connect: false };
+        case "busy":
+          return { sentence: `Couldn't identify this photo: ${f.ai_provider ?? "the AI"} is busy right now.`, detail: "It usually clears within a minute. Identify it again.", retry: true, connect: false };
         default:
           return { sentence: "Couldn't identify this photo: the AI errored.", detail: "Identify it again.", retry: true, connect: false };
       }

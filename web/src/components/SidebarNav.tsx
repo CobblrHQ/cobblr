@@ -223,6 +223,13 @@ export function SidebarNav({
     if (next) writeNavOrder(activeSlug, next);
   };
 
+  // The end of the collections: every module, whatever its state, one row
+  // away (#3883). The owner could not find Purchases once it was not a row.
+  const allAppsRow = !appMode && (
+    <NavLink to="/apps" data-testid="nav-all-apps" className={linkCls}>
+      <span className="truncate">All apps</span>
+    </NavLink>
+  );
   const homeRow = !appMode && (
     <NavLink to="/" end className={linkCls}>
       <span className="truncate">Home</span>
@@ -254,6 +261,7 @@ export function SidebarNav({
               </div>
               {homeRow}
               {sortable(groups.collections)}
+              {allAppsRow}
               <div data-nav-group="tools" className={stemCls + " pt-3"}>
                 Tools
               </div>
@@ -263,6 +271,7 @@ export function SidebarNav({
             <>
               {homeRow}
               {sortable(tops)}
+              {allAppsRow}
             </>
           )}
         </DndContext>

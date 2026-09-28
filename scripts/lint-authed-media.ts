@@ -7,6 +7,7 @@
 // through the blob-fetch layer instead:
 //   images    → useImageSrc(...)            (@cobblr/platform-web)
 //   previews  → <FilePreview src={...} />   (auth-fetches internally)
+//   photos    → <EntityPhoto src={...} />   (the frame; auth-fetches internally)
 //   downloads → openAuthedFile(...)          (web/src/lib/authed-file.ts)
 //
 // The lint flags a raw file URL (api.fileRawUrl(...), a literal core-files
@@ -44,7 +45,9 @@ function moduleUiRoots(): string[] {
 
 // FilePreview auth-fetches internally — its src prop is the sanctioned home
 // for a raw URL. Everything else must not put one in src/href directly.
-const ALLOWED_ATTR_CONTEXT = /<FilePreview[\s\S]{0,200}$/;
+// FilePreview and the photo frame (EntityPhoto, and EntityThumb/EntityTile
+// which draw through it) fetch an internal URL with the token themselves.
+const ALLOWED_ATTR_CONTEXT = /<(?:FilePreview|EntityPhoto|EntityThumb|EntityTile)\b[\s\S]{0,200}$/;
 
 // A raw file URL: the helper, a literal core-files path, or a files/…/raw
 // path built from variables.

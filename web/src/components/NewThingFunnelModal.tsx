@@ -71,9 +71,14 @@ const SUGGEST: Array<{ module: string; re: RegExp }> = [
   { module: "projects", re: /\b(project|task|build|job)s?\b/i },
   { module: "sales", re: /\b(sale|customer|shipment)s?\b/i },
 ];
-function suggestModule(name: string, available: string[]): string | null {
+/** Judged by the name's HEAD noun, its last word, the way English compounds
+ *  work: "Printer mods" are mods, not printers, and "3D Printers" are
+ *  printers. Matching anywhere in the name suggested Machines for mods and
+ *  for "Printer parts" (#3875). */
+export function suggestModule(name: string, available: string[]): string | null {
+  const head = name.trim().split(/\s+/).pop() ?? "";
   for (const s of SUGGEST) {
-    if (s.re.test(name) && available.includes(s.module)) return s.module;
+    if (s.re.test(head) && available.includes(s.module)) return s.module;
   }
   return null;
 }

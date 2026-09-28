@@ -5,7 +5,7 @@
 // workspace slug, and normalises errors into a shape the tools can surface.
 
 import type { Config } from "./config.js";
-import type { WorkspaceApi } from "@cobblr/workspace-tools";
+import { workspaceLinks, type WorkspaceApi } from "@cobblr/workspace-tools";
 
 export class CobblrApiError extends Error {
   constructor(
@@ -54,6 +54,9 @@ export class CobblrClient {
         method,
         headers: {
           authorization: `Bearer ${this.cfg.token}`,
+          // Says the call comes from an assistant over MCP, so the activity
+          // row reads "via MCP" rather than as a hand edit (#3833).
+          "x-cobblr-client": "mcp",
           ...(body !== undefined ? { "content-type": "application/json" } : {}),
         },
         body: body !== undefined ? JSON.stringify(body) : undefined,
@@ -98,7 +101,12 @@ export class CobblrClient {
   workspaceApi(slug: string): WorkspaceApi {
     const base = `${this.cfg.baseUrl}/orgs/${encodeURIComponent(slug)}`;
     const token = this.cfg.token;
+    // The install this server talks to is the one the person uses, so its
+    // REST root is a link they can open; the web app is on the same origin
+    // only when the root is the standard /api/v1 under it.
+    const origin = /\/api\/v1$/.test(this.cfg.baseUrl) ? this.cfg.baseUrl.replace(/\/api\/v1$/, "") : null;
     return {
+      link: workspaceLinks({ apiBase: this.cfg.baseUrl, appOrigin: origin }, slug),
       async request(method, path, body) {
         let res: Response;
         try {
@@ -106,6 +114,7 @@ export class CobblrClient {
             method,
             headers: {
               authorization: `Bearer ${token}`,
+              "x-cobblr-client": "mcp",
               ...(body !== undefined ? { "content-type": "application/json" } : {}),
             },
             body: body !== undefined ? JSON.stringify(body) : undefined,

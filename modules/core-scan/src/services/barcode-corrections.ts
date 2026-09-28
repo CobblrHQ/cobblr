@@ -12,6 +12,7 @@
 // CobblrHQ/barcode-intelligence/docs/correction-feedback.md.
 
 import crypto from "node:crypto";
+import { isStockPreviewUrl } from "./stock-preview.js";
 import { isStoreCode } from "./barcode-lookup.js";
 import { filterToFiled, labelTarget } from "./label-words.js";
 import { publicBaseUrl } from "@cobblr/platform-contract/public-url";
@@ -44,11 +45,15 @@ export function correctionTarget(env: NodeJS.ProcessEnv = process.env): { endpoi
   return null;
 }
 
-/** The lots a scanned unit carries: the one read off its label (the row's
- *  `lot`) and any value filed into its lot-role field. Per unit, so none of
- *  them may ever reach the shared network as a fact about the product. */
+/** The per-unit facts a scanned unit carries: the lot and the year it was
+ *  made read off its label (the row's `lot` and `year_made`), and any value
+ *  filed into its lot-role or year-made field. Per unit, so none of them may
+ *  ever reach the shared network as a fact about the product: one barcode
+ *  covers every dye lot of a yarn and every vintage of a wine. */
 export function unitLotsOf(meta: unknown, ...filed: unknown[]): string[] {
-  const out = [(meta as { lot?: unknown } | null)?.lot, ...filed]
+  const m = meta as { lot?: unknown; year_made?: unknown } | null;
+  const out = [m?.lot, m?.year_made, ...filed]
+    .map((v) => (typeof v === "number" && Number.isInteger(v) ? String(v) : v))
     .filter((v): v is string => typeof v === "string" && v.trim().length >= 2)
     .map((v) => v.trim());
   return [...new Set(out)];
@@ -102,7 +107,7 @@ export function originOfValue(metaSource: unknown, edited: boolean): ValueOrigin
 }
 
 /** A picture address that may leave the workspace: an absolute https URL on
- *  someone else's host. Never a link into a workspace's own files (an API or
+ *  someone else's host, and not a stock agency's preview. Never a link into a workspace's own files (an API or
  *  file-store path, this instance's own address), never data: or blob:. A
  *  person's own photo is kept as a file id and must never be shared by link,
  *  and this is the one gate every picture report passes (#3769). */
@@ -115,6 +120,8 @@ export function isShareablePictureUrl(value: string | null | undefined, ownOrigi
   }
   if (u.protocol !== "https:") return false;
   if (/\/api\/|\/modules\/core-files\/|\/files\//i.test(u.pathname)) return false;
+  // A stock agency's preview is a watermark, never a catalog picture (#3804).
+  if (isStockPreviewUrl(u.href)) return false;
   const host = u.host.toLowerCase();
   return !ownOrigins.some((o) => {
     try {

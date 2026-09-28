@@ -13,7 +13,7 @@
 import { useEffect, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { FileText, Images, Trash2, Upload } from "lucide-react";
-import { canPreviewFile, FilePreview, Modal, openAuthedFile, useConfirm, useFilePreviewRegistry, useImageSrc, useToast } from "@cobblr/platform-web";
+import { canPreviewFile, FilePreview, Modal, openAuthedFile, useConfirm, useFilePreviewRegistry, useImageSrc, useToast, EntityPhoto } from "@cobblr/platform-web";
 import { useProjects } from "./context";
 import type { PatternPhotoState } from "./api";
 import { patternNeedsKey } from "./PatternNeeds";
@@ -63,7 +63,7 @@ export function DesignFiles({ designId }: { designId: string }) {
         `${base}/attachments?source_module=projects&source_type=project&source_id=${encodeURIComponent(designId)}`,
         { headers: auth() },
       );
-      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      if (!res.ok) throw await refusal(res, "Couldn't take that file off");
       return ((await res.json()) as { items: AttachmentRow[] }).items;
     },
     enabled: !!orgSlug,
@@ -94,7 +94,7 @@ export function DesignFiles({ designId }: { designId: string }) {
       const fd = new FormData();
       fd.append("file", file);
       const ures = await fetch(`${base}/files`, { method: "POST", headers: auth(), body: fd });
-      if (!ures.ok) throw new Error(`upload ${ures.status}`);
+      if (!ures.ok) throw await refusal(ures, "Couldn't upload that file");
       const f = (await ures.json()) as { id: string };
       const role = file.type === "application/pdf" ? "pattern" : "gallery";
       const ares = await fetch(`${base}/attachments`, {
@@ -108,7 +108,7 @@ export function DesignFiles({ designId }: { designId: string }) {
           role,
         }),
       });
-      if (!ares.ok) throw new Error(`attach ${ares.status}`);
+      if (!ares.ok) throw await refusal(ares, "Couldn't attach that file");
       return role;
     },
     onSuccess: (role) => {
@@ -121,6 +121,7 @@ export function DesignFiles({ designId }: { designId: string }) {
         toast.info("Reading the pattern for its photo, yarn and hooks…");
       }
     },
+    onError: (e) => toast.error((e as Error).message),
   });
 
   const detach = useMutation({
@@ -132,6 +133,7 @@ export function DesignFiles({ designId }: { designId: string }) {
       void qc.invalidateQueries({ queryKey: filesKey });
       void qc.invalidateQueries({ queryKey: patternKey });
     },
+    onError: (e) => toast.error((e as Error).message),
   });
 
   const usePhoto = useMutation({
@@ -343,7 +345,6 @@ function CandidateTile({
   disabled: boolean;
   onClick: () => void;
 }) {
-  const resolved = useImageSrc(src);
   return (
     <button
       type="button"
@@ -359,11 +360,7 @@ function CandidateTile({
           : "border-line dark:border-slate-700 hover:border-accent"
       } ${photo ? "" : "opacity-60 hover:opacity-100"} disabled:cursor-default`}
     >
-      {resolved ? (
-        <img src={resolved} alt={label} className="w-full h-full object-cover" />
-      ) : (
-        <div className="w-full h-full bg-subtle dark:bg-slate-800 animate-pulse" />
-      )}
+      <EntityPhoto src={src} alt={label} fill placeholder={null} />
       {inUse && (
         <span className="absolute bottom-0 inset-x-0 bg-accent text-white text-[9px] font-mono uppercase tracking-widest text-center py-0.5">
           in use
@@ -375,11 +372,7 @@ function CandidateTile({
 
 /** Authed thumbnail — a bare <img> can't send the Bearer token. */
 function DesignThumb({ thumb, full, alt, fromPattern }: { thumb: string; full: string; alt: string; fromPattern?: boolean }) {
-  const resolved = useImageSrc(thumb);
   const resolvedFull = useImageSrc(full);
-  if (!resolved) {
-    return <div className="aspect-square rounded-md bg-subtle dark:bg-slate-800 animate-pulse" />;
-  }
   return (
     <a
       href={resolvedFull ?? undefined}
@@ -389,16 +382,20 @@ function DesignThumb({ thumb, full, alt, fromPattern }: { thumb: string; full: s
       className="relative block"
       data-testid={fromPattern ? "design-photo-from-pattern" : undefined}
     >
-      <img
-        src={resolved}
-        alt={alt}
-        className="aspect-square w-full object-cover rounded-md border border-line dark:border-slate-700 hover:border-accent transition"
-      />
-      {fromPattern && (
-        <span className="absolute bottom-1 left-1 bg-surface/90 dark:bg-slate-900/90 text-accent text-[9px] font-mono uppercase tracking-widest rounded px-1 py-0.5">
-          from pattern
-        </span>
-      )}
+      <EntityPhoto src={thumb} alt={alt} aspect="square" placeholder={null} className="rounded-md border border-line dark:border-slate-700 hover:border-accent transition">
+        {fromPattern && (
+          <span className="absolute bottom-1 left-1 bg-surface/90 dark:bg-slate-900/90 text-accent text-[9px] font-mono uppercase tracking-widest rounded px-1 py-0.5">
+            from pattern
+          </span>
+        )}
+      </EntityPhoto>
     </a>
   );
+}
+
+/** The server's own reason for refusing, else what was being tried. */
+async function refusal(res: Response, what: string): Promise<Error> {
+  const body = (await res.json().catch(() => null)) as { message?: string; error?: string } | null;
+  const why = body?.message ?? body?.error;
+  return new Error(why ? `${what}: ${why}` : `${what} (${res.status}).`);
 }

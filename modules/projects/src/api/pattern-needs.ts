@@ -23,7 +23,7 @@ import type { Kysely } from "kysely";
 import { platform } from "@cobblr/platform-contract";
 import type { PatternNeedKind, PatternNeedSource, ProjectsDB } from "../db.js";
 import { latestPatternFileId } from "./pattern-photo.js";
-import { readPatternMaterials, weightFromWords, type PatternMaterials, type ToolNeed, type YarnNeed } from "./pattern-materials.js";
+import { NOTIONS, readPatternMaterials, weightFromWords, type NotionNeed, type PatternMaterials, type ToolNeed, type YarnNeed } from "./pattern-materials.js";
 
 export interface PatternNeed {
   id: string;
@@ -134,7 +134,8 @@ const AI_SYSTEM =
   '"fiber":<string|null>,"quantity":<number of balls/skeins/hanks, or null>,' +
   '"quantity_unit":<"ball"|"skein"|"hank"|null>,"unit_length_m":<metres in ONE ball, or null>,' +
   '"length_m":<total metres of this yarn, or null>}],' +
-  '"tools":[{"kind":"hook"|"needle","size_mm":<number>,"size_label":<e.g. "US H-8", or null>}]}\n' +
+  '"tools":[{"kind":"hook"|"needle","size_mm":<number>,"size_label":<e.g. "US H-8", or null>}],' +
+  '"notions":[{"name":<one of ' + NOTIONS.map((n) => JSON.stringify(n.name)).join(", ") + '>,"quantity":<number|null>,"size_mm":<number|null>}]}\n' +
   "Copy only what the text states. One entry per yarn or colour. Do not work out a length the " +
   "pattern does not give; when it gives different lengths per kind of colour (solid, print) and " +
   "does not say which a colour is, use null. Convert yards to metres (x 0.9144). " +
@@ -214,7 +215,15 @@ export async function aiReadMaterials(
       return { kind: t.kind === "needle" ? "needle" : "hook", size_mm: size, size_label: str(t.size_label) } as ToolNeed;
     })
     .filter((t): t is ToolNeed => t !== null);
-  return { materials: { yarns, tools } };
+  const names = new Set<string>(NOTIONS.map((n) => n.name));
+  const notions: NotionNeed[] = (Array.isArray(obj.notions) ? obj.notions : [])
+    .map((raw) => {
+      const n = (raw ?? {}) as Record<string, unknown>;
+      const name = str(n.name);
+      return name && names.has(name) ? { name, quantity: pos(n.quantity), size_mm: pos(n.size_mm) } : null;
+    })
+    .filter((n): n is NotionNeed => n !== null);
+  return { materials: { yarns, tools, notions } };
 }
 
 /** Replace what the pattern's last reading wrote (never a row somebody edited
@@ -273,6 +282,16 @@ async function writeNeeds(
         source,
         pattern_file_id: fileId,
       })),
+      ...m.notions.map((n) => ({
+        project_id: projectId,
+        kind: "notion" as const,
+        position: position++,
+        label: n.name,
+        quantity: n.quantity,
+        size_mm: n.size_mm,
+        source,
+        pattern_file_id: fileId,
+      })),
     ];
     if (rows.length) await trx.insertInto("projects_pattern_needs").values(rows as never).execute();
   });
@@ -315,7 +334,7 @@ export function runPatternRead(
       return;
     }
     const fromText = readPatternMaterials(got.text);
-    if (fromText.yarns.length || fromText.tools.length) {
+    if (fromText.yarns.length || fromText.tools.length || fromText.notions.length) {
       await writeNeeds(db, projectId, fileId, "pattern", fromText);
       await recordRead(db, projectId, fileId, { status: "ready", method: "pattern", ai_tried: false, reason: null });
       return;
@@ -329,7 +348,7 @@ export function runPatternRead(
       await recordRead(db, projectId, fileId, { status: "empty", method: null, ai_tried: true, reason: ai.error });
       return;
     }
-    if (!ai.materials.yarns.length && !ai.materials.tools.length) {
+    if (!ai.materials.yarns.length && !ai.materials.tools.length && !ai.materials.notions.length) {
       await recordRead(db, projectId, fileId, {
         status: "empty",
         method: "ai",
@@ -402,7 +421,7 @@ export async function readPastedMaterials(
 ): Promise<{ method: "pattern" | "ai" } | { error: string }> {
   const db = await tenant(orgId);
   const fromText = readPatternMaterials(text);
-  if (fromText.yarns.length || fromText.tools.length) {
+  if (fromText.yarns.length || fromText.tools.length || fromText.notions.length) {
     await writeNeeds(db, projectId, null, "pattern", fromText);
     return { method: "pattern" };
   }

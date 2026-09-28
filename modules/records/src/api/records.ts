@@ -3,7 +3,7 @@ import { z } from "zod";
 import { platform } from "@cobblr/platform-contract";
 import { instanceOf, sessionUser, tenantContext, tenantDb } from "../db.js";
 import { asyncHandler, badBody, requireRole } from "./util.js";
-import { routeUnknownToMetadata, coerceMetadata, withMetadataMerged } from "@cobblr/platform-contract/entity-metadata";
+import { routeUnknownToMetadata, refuseUnknownFields, coerceMetadata, withMetadataMerged } from "@cobblr/platform-contract/entity-metadata";
 
 export const recordsRouter = Router({ mergeParams: true });
 
@@ -69,6 +69,7 @@ recordsRouter.get(
 recordsRouter.post(
   "/",
   asyncHandler(async (req, res) => {
+    await refuseUnknownFields(req, req.body, RECORD_NATIVE_KEYS, "records:record");
     const routed = routeUnknownToMetadata(req.body, RECORD_NATIVE_KEYS);
     const parsed = RecordCreate.safeParse(routed);
     if (!parsed.success) return badBody(res, parsed.error);
@@ -122,6 +123,7 @@ recordsRouter.patch(
       res.status(400).json({ error: { code: "missing_id", message: "id required" } });
       return;
     }
+    await refuseUnknownFields(req, req.body, RECORD_NATIVE_KEYS, "records:record");
     const routed = routeUnknownToMetadata(req.body, RECORD_NATIVE_KEYS);
     const parsed = RecordUpdate.safeParse(routed);
     if (!parsed.success) return badBody(res, parsed.error);

@@ -116,7 +116,7 @@ function topFields(candidates: unknown): Record<string, unknown> {
 /** Fields each piece reads off its own crop, not off the product: two balls
  *  of one yarn are two colourways, two dye lots. The twin rule leaves these
  *  alone; everything else on a product is one fact for both twins. */
-export const PER_UNIT_FIELD_NAMES = /^(colou?r|colou?rway|shade|dye_lot|lot|batch|serial(?:_number)?|remaining|length_remaining|condition|notes?)$/;
+export const PER_UNIT_FIELD_NAMES = /^(colou?r|colou?rway|shade|dye_lot|lot|batch|vintage|year_made|serial(?:_number)?|remaining|length_remaining|condition|notes?)$/;
 
 /**
  * Which identity fields this row and its same-named siblings disagree on.

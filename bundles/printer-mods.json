@@ -1,0 +1,67 @@
+{
+  "manifest": {
+    "id": "cobblr.community.printer-mods",
+    "version": "0.1.0",
+    "name": "Printer mods",
+    "description": "A Printer mods table: each upgrade or change you make to a printer, linked to the printer it is installed on and to the parts it uses. The printer lists what it has installed and each part what uses it.",
+    "author": "Cobblr community",
+    "released_at": "2026-09-28",
+    "changelog": "First release: a Printer mods table; each mod links to the printer it is installed on and the parts it uses, and both show the link.",
+    "requires": [
+      {
+        "module": "records"
+      }
+    ],
+    "provides_instances": [
+      {
+        "module": "records",
+        "instance_name": "printer-mods",
+        "display_name": "Printer mods",
+        "item_noun": "mod",
+        "glyph": "🔧",
+        "hint": "upgrades and changes to your printers, and the parts they use",
+        "links": [
+          {
+            "kind": "installed-on",
+            "label": "installed on",
+            "inverse": "has installed",
+            "to": [
+              "machines:machine"
+            ]
+          },
+          {
+            "kind": "uses-part",
+            "label": "uses part",
+            "inverse": "used by",
+            "to": [
+              "inventory:part"
+            ]
+          }
+        ],
+        "field_defs": [
+          {
+            "entity_kind": "records:record",
+            "name": "mod_status",
+            "display_label": "Status",
+            "type": "text",
+            "position": 1,
+            "choices": [
+              "Planned",
+              "Ordered",
+              "Installed",
+              "Removed"
+            ]
+          },
+          {
+            "entity_kind": "records:record",
+            "name": "mod_source",
+            "display_label": "Source",
+            "type": "url",
+            "position": 2,
+            "help": "Where the design or instructions are: a model page, a forum thread."
+          }
+        ]
+      }
+    ]
+  }
+}

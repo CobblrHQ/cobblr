@@ -27,7 +27,7 @@
 // never what anybody meant.
 //
 //   npx tsx scripts/lint-continuation-comment.ts   (pnpm lint continuation-comment)
-import { execFileSync } from "node:child_process";
+import { repoFiles } from "./lib/repo-files.js";
 import { readFileSync, readdirSync, existsSync } from "node:fs";
 import { join } from "node:path";
 
@@ -47,8 +47,7 @@ export function targets(root = LINT_ROOT): string[] {
   const wf = join(root, ".forgejo/workflows");
   if (existsSync(wf)) for (const n of readdirSync(wf)) if (/\.ya?ml$/.test(n)) out.push(join(".forgejo/workflows", n));
   try {
-    const listed = execFileSync("git", ["-C", root, "ls-files", "*.sh"], { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] });
-    out.push(...listed.split("\n").filter(Boolean));
+    out.push(...repoFiles(["*.sh"], root));
   } catch {
     const walk = (d: string): void => {
       for (const n of readdirSync(join(root, d), { withFileTypes: true })) {

@@ -6,7 +6,7 @@
 // fire, so hierarchy + wires + views stay consistent with the HTTP path.
 
 import { duplicateSiblingMessage, siblingNamed } from "./siblings.js";
-import { platform, restoreRow, snapshotRow } from "@cobblr/platform-contract";
+import { DuplicateRecordError, findRowIdByKey, platform, restoreRow, snapshotRow } from "@cobblr/platform-contract";
 import { sql, type Kysely } from "kysely";
 import type { CoreLocationsDB } from "../db.js";
 
@@ -17,6 +17,9 @@ export function registerLocationsWriter(): void {
   registered = true;
 
   platform().entities.registerWriter("core-locations:location", {
+    // A record that already carries the source's key is adopted by a sync, never
+    // duplicated (#3836).
+    findByKey: async (orgId, key, value) => findRowIdByKey(await platform().tenants.getDb(orgId), "core_locations_locations", key, value),
     async create(orgId, fields) {
       const db = (await platform().tenants.getDb(orgId)) as Kysely<CoreLocationsDB>;
       // Same rule as the REST route, because this is the door an assistant
@@ -35,7 +38,7 @@ export function registerLocationsWriter(): void {
                 .where("id", "=", parentId)
                 .executeTakeFirst()
             : null;
-          throw new Error(duplicateSiblingMessage(name, place?.name ?? null));
+          throw new DuplicateRecordError(duplicateSiblingMessage(name, place?.name ?? null), clash.id);
         }
       }
       const inserted = await db

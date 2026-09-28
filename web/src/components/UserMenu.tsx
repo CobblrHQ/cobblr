@@ -8,7 +8,7 @@
 
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
-import { Link } from "react-router-dom";
+import { Link, NavLink } from "react-router-dom";
 import {
   ArrowRight,
   Cable,
@@ -24,6 +24,7 @@ import {
   SlidersHorizontal,
   Sun,
   UserCog,
+  UserRound,
   Compass,
   DoorOpen,
 } from "lucide-react";
@@ -188,11 +189,9 @@ export function UserMenu({ themed, inline = false }: { themed: boolean; inline?:
             )}
           </div>
 
-          {!inline && (
-            <Link to="/me" onClick={() => setOpen(false)} className={itemCls} role="menuitem">
-              <UserCog size={14} className="text-faint dark:text-slate-400" /> Your account
-            </Link>
-          )}
+          <Link to="/me" onClick={() => setOpen(false)} className={itemCls} role="menuitem">
+            <UserCog size={14} className="text-faint dark:text-slate-400" /> Your account
+          </Link>
           <Link to="/me/feedback" onClick={() => setOpen(false)} className={itemCls} role="menuitem">
             <MessageSquare size={14} className="text-faint dark:text-slate-400" /> Your feedback
           </Link>
@@ -336,21 +335,40 @@ export function UserMenu({ themed, inline = false }: { themed: boolean; inline?:
           </PopoverLayer>,
           document.body,
         )}
-        {/* The collapsed row is the person's name and a chevron, nothing else:
-            "Your account" is its own row above this one, so an icon here would
-            offer the same door twice. The menu it opens is what is left
-            (feedback, what's new, sign out); the identity header inside it
-            carries the admin chip. */}
-        <button
-          ref={btnRef}
-          data-tour="account"
-          onClick={() => setOpen((v) => !v)}
-          className="w-full flex items-center gap-2.5 px-3 py-1.5 rounded text-[13px] text-muted dark:text-slate-400 hover:text-accent hover:bg-subtle/60 dark:hover:bg-slate-800/40 transition"
-          title={`${user.display_name} — account menu`}
-        >
-          <span className="font-medium truncate">{user.display_name}</span>
-          <ChevronDown size={12} className={"ml-auto shrink-0 transition " + (open ? "" : "rotate-180")} />
-        </button>
+        {/* ONE row for the person (#3879): the name is the door to Your
+            account, one tap as #594 wanted it, and the chevron beside it opens
+            the menu. Until then the foot spent two rows on this, a Your account
+            row over a name row that only opened the menu. The identity header
+            inside the menu carries the admin chip. */}
+        <div data-tour="account" className="w-full flex items-center rounded">
+          <NavLink
+            to="/me"
+            end
+            title="Your account"
+            aria-label={`${user.display_name}, your account`}
+            className={({ isActive }) =>
+              "flex-1 min-w-0 flex items-center gap-2.5 px-3 py-1.5 rounded text-[13px] transition " +
+              (isActive
+                ? "text-accent font-semibold bg-subtle/60 dark:bg-slate-800/40"
+                : "text-muted dark:text-slate-400 hover:text-accent hover:bg-subtle/60 dark:hover:bg-slate-800/40")
+            }
+          >
+            <UserRound size={16} className="shrink-0" />
+            <span className="font-medium truncate">{user.display_name}</span>
+          </NavLink>
+          <button
+            ref={btnRef}
+            type="button"
+            onClick={() => setOpen((v) => !v)}
+            aria-label="Account menu"
+            aria-haspopup="menu"
+            aria-expanded={open}
+            title={`${user.display_name} — account menu`}
+            className="shrink-0 self-stretch px-2.5 rounded text-muted dark:text-slate-400 hover:text-accent hover:bg-subtle/60 dark:hover:bg-slate-800/40 transition"
+          >
+            <ChevronDown size={14} className={"transition " + (open ? "rotate-90" : "-rotate-90")} />
+          </button>
+        </div>
         {appMode && <GrowModal open={growOpen} onClose={() => setGrowOpen(false)} />}
       </div>
     );
@@ -407,11 +425,9 @@ export function UserMenu({ themed, inline = false }: { themed: boolean; inline?:
             )}
           </div>
 
-          {!inline && (
-            <Link to="/me" onClick={() => setOpen(false)} className={itemCls} role="menuitem">
-              <UserCog size={14} className="text-faint dark:text-slate-400" /> Your account
-            </Link>
-          )}
+          <Link to="/me" onClick={() => setOpen(false)} className={itemCls} role="menuitem">
+            <UserCog size={14} className="text-faint dark:text-slate-400" /> Your account
+          </Link>
           <Link to="/me/feedback" onClick={() => setOpen(false)} className={itemCls} role="menuitem">
             <MessageSquare size={14} className="text-faint dark:text-slate-400" /> Your feedback
           </Link>

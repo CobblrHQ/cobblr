@@ -22,6 +22,7 @@ import { meta } from "../db/meta.js";
 import { FrameDocTooLarge, putFrameDoc } from "../platform/frame-docs.js";
 import { FrameDocBody } from "./frame-docs.js";
 import { env } from "../env.js";
+import { statKey, statValue } from "@cobblr/platform-contract/stat-value";
 
 export const publicRouter = Router();
 
@@ -79,6 +80,7 @@ interface AppBlock {
   view_id?: string;
   agg?: "count" | "sum";
   field?: string;
+  times?: string;
   label?: string;
   title?: string;
   html?: string;
@@ -358,17 +360,9 @@ publicRouter.get("/:token", (req, res, next) => {
         for (const b of page.blocks ?? []) {
           if (b.type !== "stat" || !b.view_id) continue;
           const rows = (viewsById[b.view_id] ?? []) as Array<{ fields?: Record<string, unknown> }>;
-          if (b.agg === "sum" && b.field) {
-            statsById[b.view_id + ":" + b.field] = rows.reduce((acc, r) => {
-              const fields = r.fields ?? {};
-              const meta = (fields.metadata as Record<string, unknown> | undefined) ?? {};
-              const raw = fields[b.field!] ?? meta[b.field!];
-              const n = Number(raw);
-              return acc + (Number.isFinite(n) ? n : 0);
-            }, 0);
-          } else {
-            statsById[b.view_id] = rows.length;
-          }
+          // The same number the member's own App Player shows (stat-value.ts).
+          const spec = { agg: b.agg ?? "count", field: b.field, times: b.times } as const;
+          statsById[statKey(b.view_id, spec)] = statValue(rows, spec);
         }
       }
 

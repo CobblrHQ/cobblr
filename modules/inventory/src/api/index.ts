@@ -13,6 +13,7 @@ import { sql, type Kysely } from "kysely";
 import { platform } from "@cobblr/platform-contract";
 import { categoriesRouter } from "./categories.js";
 import { partsRouter } from "./parts.js";
+import { holdingsRouter, registerHoldingActions } from "./holdings.js";
 import { allocationsRouter } from "./allocations.js";
 import { importRouter } from "./import.js";
 import { spoolmanRouter } from "./spoolman.js";
@@ -25,6 +26,7 @@ import { registerReplaceClock } from "./replace-clock.js";
 
 registerInventoryResolvers();
 registerInventoryActionHandlers();
+registerHoldingActions();
 // A consumer's lines (a pattern's yarns) drawing on stock ball by ball.
 registerTargetLineHandlers();
 registerInventoryComputedContext();
@@ -111,6 +113,8 @@ router.use("/categories", categoriesRouter);
 // instanceOf the queries use. Mounted on the module router it only ever had
 // the first door, so a Bookshelf's own import filed its books as parts.
 partsRouter.use(importRouter);
+// One thing kept in several places: its rows ride the same two doors.
+partsRouter.use(holdingsRouter);
 router.use("/parts", partsRouter);
 router.use("/allocations", allocationsRouter);
 router.use("/spoolman", spoolmanRouter);

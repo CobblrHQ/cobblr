@@ -10,11 +10,12 @@
 // the phone's version is the camera's Sort mode), Fill missing photos,
 // Export and Import, Drive this screen, the Auto-pick and First-look
 // toggles, Same thing twice (docs/design-decisions/scan-inbox-device-split.md §3.1).
-import { Copy, Download, Image as ImageIcon, LayoutGrid, MonitorSmartphone, MoreHorizontal, ReceiptText, Sparkles, Tv, Upload, Wand2, Zap } from "lucide-react";
+import { Copy, Download, FileSpreadsheet, Image as ImageIcon, LayoutGrid, MonitorSmartphone, MoreHorizontal, ReceiptText, Sparkles, Tv, Upload, Wand2, Zap } from "lucide-react";
 import { useNavigate } from "react-router-dom";
 import { HeaderMenu, MenuFilterLine, MenuHead, MenuItem, MenuSep } from "../components/HeaderMenu";
 import { ReceiptAddressMenuBlock } from "../components/ReceiptAddressChip";
 import { PairPhoneButton } from "../components/PairPhoneButton";
+import { openSheetImport } from "../lib/sheet-import";
 
 export interface ScanInboxMenuProps {
   handheld: boolean;
@@ -155,6 +156,17 @@ export function ScanInboxMenu(p: ScanInboxMenuProps) {
               }}
             />
           )}
+          {/* A list someone already keeps is not a scan: it has its own
+              sheet, which shows where every row goes before anything moves. */}
+          <MenuItem
+            icon={<FileSpreadsheet size={14} />}
+            label="Bring your spreadsheet"
+            hint="Excel, CSV or a Google Sheets link"
+            onClick={() => {
+              close();
+              openSheetImport();
+            }}
+          />
           {/* SHOW the address, don't just copy it invisibly. As a plain
               menu row this said "Email receipts to…" and put something on
               the clipboard you never saw - the desktop chip reveals the

@@ -1,0 +1,466 @@
+{
+  "manifest": {
+    "id": "cobblr.flagship.wine",
+    "version": "0.1.4",
+    "released_at": "2026-09-28",
+    "name": "Wine",
+    "author": "Cobblr",
+    "description": "Your bottles as their own table: producer, vintage, region and drink window, what is ready to open tonight, and what the cellar is worth.",
+    "changelog": "First release. Wine gets its own table with the fields a cellar needs: producer, wine, vintage, grapes, region, style, size, where you bought it, and a drink window. Scanning a bottle reads the vintage off its label. Ready to drink and Past peak answer for today. Open a bottle takes one off and keeps your tasting note, dated; Buy again puts it on the shopping list, and checking it off adds a bottle back.",
+    "requires": [
+      {
+        "module": "inventory"
+      },
+      {
+        "module": "lists"
+      },
+      {
+        "module": "core-apps"
+      }
+    ],
+    "wires": [],
+    "field_defs": [],
+    "saved_views": [],
+    "features": [
+      {
+        "key": "cellar-places",
+        "name": "Set up your cellar",
+        "question": "Shall we set up a Cellar with two racks and a Wine fridge you can file bottles into?",
+        "description": "Adds a Cellar with Rack A and Rack B inside it, and a Wine fridge, so you can label each and scan bottles straight in. If you already have them these are reused, and nothing already in them is moved. Decline and everything else works the same.",
+        "default": true,
+        "provides_locations": [
+          {
+            "name": "Cellar",
+            "kind": "area",
+            "children": [
+              {
+                "name": "Rack A",
+                "kind": "container"
+              },
+              {
+                "name": "Rack B",
+                "kind": "container"
+              }
+            ]
+          },
+          {
+            "name": "Wine fridge",
+            "kind": "container",
+            "children": []
+          }
+        ]
+      }
+    ],
+    "provides_instances": [
+      {
+        "module": "inventory",
+        "instance_name": "wine",
+        "faces": {
+          "stock": true
+        },
+        "nav_group": {
+          "key": "kitchen",
+          "label": "Kitchen"
+        },
+        "display_name": "Wine",
+        "item_noun": "bottle",
+        "noun": {
+          "of": "item",
+          "singular": "bottle",
+          "plural": "bottles"
+        },
+        "glyph": "🍷",
+        "qty_unit": "bottle",
+        "scan_keywords": [
+          "wine",
+          "red wine",
+          "white wine",
+          "rosé",
+          "rose wine",
+          "sparkling wine",
+          "champagne",
+          "prosecco",
+          "cava",
+          "cabernet",
+          "cabernet sauvignon",
+          "merlot",
+          "pinot noir",
+          "pinot grigio",
+          "chardonnay",
+          "sauvignon blanc",
+          "riesling",
+          "syrah",
+          "shiraz",
+          "malbec",
+          "tempranillo",
+          "zinfandel",
+          "rioja",
+          "chianti",
+          "bordeaux",
+          "burgundy",
+          "port wine",
+          "sherry",
+          "vintage"
+        ],
+        "field_defs": [
+          {
+            "entity_kind": "wine:item",
+            "name": "cuvee",
+            "display_label": "Wine",
+            "type": "text",
+            "position": 1,
+            "help": "The wine's own name on the label (the cuvée), beside the producer: \"Reserva\", \"Les Clos\"."
+          },
+          {
+            "entity_kind": "wine:item",
+            "name": "vintage",
+            "display_label": "Vintage",
+            "type": "number",
+            "position": 2,
+            "field_role": "year-made",
+            "help": "The year on the label. Read off the {{noun}} when you scan it, and never shared as a fact about the barcode: one barcode covers every vintage."
+          },
+          {
+            "entity_kind": "wine:item",
+            "name": "grapes",
+            "display_label": "Grape(s)",
+            "type": "text",
+            "position": 3
+          },
+          {
+            "entity_kind": "wine:item",
+            "name": "region",
+            "display_label": "Region",
+            "type": "text",
+            "position": 4,
+            "help": "Region or appellation: Rioja, Napa Valley, Sauternes."
+          },
+          {
+            "entity_kind": "wine:item",
+            "name": "country",
+            "display_label": "Country",
+            "type": "text",
+            "position": 5
+          },
+          {
+            "entity_kind": "wine:item",
+            "name": "style",
+            "display_label": "Style",
+            "type": "text",
+            "position": 6,
+            "choices": [
+              "Red",
+              "White",
+              "Rosé",
+              "Sparkling",
+              "Dessert",
+              "Fortified"
+            ]
+          },
+          {
+            "entity_kind": "wine:item",
+            "name": "bottle_size",
+            "display_label": "{{Noun}} size",
+            "type": "text",
+            "position": 7,
+            "choices": [
+              "187 ml",
+              "375 ml",
+              "500 ml",
+              "750 ml",
+              "1.5 l (magnum)",
+              "3 l"
+            ]
+          },
+          {
+            "entity_kind": "wine:item",
+            "name": "abv",
+            "display_label": "ABV",
+            "type": "number",
+            "position": 8,
+            "unit": "%",
+            "help": "Alcohol by volume, off the label: 13.5"
+          },
+          {
+            "entity_kind": "wine:item",
+            "name": "bought_from",
+            "display_label": "Bought from",
+            "type": "text",
+            "position": 9,
+            "field_role": "seller"
+          },
+          {
+            "entity_kind": "wine:item",
+            "name": "drink_from",
+            "display_label": "Drink from",
+            "type": "date",
+            "position": 10,
+            "field_role": "ready-from",
+            "help": "When it is ready. Ready to drink lists it from this day."
+          },
+          {
+            "entity_kind": "wine:item",
+            "name": "drink_by",
+            "display_label": "Drink by",
+            "type": "date",
+            "position": 11,
+            "field_role": "ready-until",
+            "help": "When it is at its best until. Past it, it shows in Past peak; nothing is thrown out."
+          },
+          {
+            "entity_kind": "wine:item",
+            "name": "rating",
+            "display_label": "Rating",
+            "type": "number",
+            "position": 12,
+            "help": "Your score out of 100."
+          },
+          {
+            "entity_kind": "wine:item",
+            "name": "tasting_notes",
+            "display_label": "Tasting notes",
+            "type": "text",
+            "position": 13,
+            "help": "What you think of it overall. A note for one {{noun}} goes on Open a {{noun}} instead, dated in its history."
+          },
+          {
+            "entity_kind": "wine:item",
+            "name": "pairings",
+            "display_label": "Goes with",
+            "type": "text",
+            "position": 14
+          }
+        ],
+        "field_overrides": [
+          {
+            "entity_kind": "wine:item",
+            "name": "manufacturer",
+            "display_label": "Producer"
+          },
+          {
+            "entity_kind": "wine:item",
+            "name": "cost",
+            "display_label": "Price paid"
+          },
+          {
+            "entity_kind": "wine:item",
+            "name": "min_qty",
+            "display_label": "Buy more when down to"
+          },
+          {
+            "entity_kind": "wine:item",
+            "name": "warranty",
+            "hidden": true
+          },
+          {
+            "entity_kind": "wine:item",
+            "name": "serial_number",
+            "hidden": true
+          },
+          {
+            "entity_kind": "wine:item",
+            "name": "model_number",
+            "hidden": true
+          },
+          {
+            "entity_kind": "wine:item",
+            "name": "maintenance",
+            "hidden": true
+          },
+          {
+            "entity_kind": "wine:item",
+            "name": "supplier_url",
+            "hidden": true
+          },
+          {
+            "entity_kind": "wine:item",
+            "name": "category",
+            "hidden": true
+          }
+        ],
+        "saved_views": [
+          {
+            "entity_kind": "wine:item",
+            "name": "Cellar",
+            "view_type": "gallery",
+            "pinned": true,
+            "config": {
+              "sort": [
+                "region"
+              ],
+              "visible_fields": [
+                "title",
+                "manufacturer",
+                "vintage",
+                "qty",
+                "drink_by"
+              ]
+            }
+          },
+          {
+            "entity_kind": "wine:item",
+            "name": "Ready to drink",
+            "view_type": "table",
+            "pinned": true,
+            "config": {
+              "where": [
+                {
+                  "col": "drink_from",
+                  "op": "<=",
+                  "value": "today"
+                },
+                {
+                  "col": "drink_by",
+                  "op": ">=",
+                  "value": "today"
+                }
+              ],
+              "sort": [
+                "drink_by"
+              ],
+              "visible_fields": [
+                "title",
+                "manufacturer",
+                "vintage",
+                "qty",
+                "drink_by",
+                "location"
+              ]
+            }
+          },
+          {
+            "entity_kind": "wine:item",
+            "name": "Past peak",
+            "view_type": "table",
+            "config": {
+              "where": [
+                {
+                  "col": "drink_by",
+                  "op": "<",
+                  "value": "today"
+                }
+              ],
+              "sort": [
+                "drink_by"
+              ],
+              "visible_fields": [
+                "title",
+                "manufacturer",
+                "vintage",
+                "qty",
+                "drink_by",
+                "location"
+              ]
+            }
+          },
+          {
+            "entity_kind": "wine:item",
+            "name": "By region",
+            "view_type": "table",
+            "config": {
+              "group_by": "region",
+              "visible_fields": [
+                "title",
+                "manufacturer",
+                "vintage",
+                "style",
+                "qty"
+              ]
+            }
+          }
+        ],
+        "wires": [
+          {
+            "source_kind": "wine:item",
+            "action_id": "inventory:use-one",
+            "trigger_type": "user-invoked",
+            "label": "Open a bottle",
+            "ask": [
+              {
+                "arg": "note",
+                "label": "Tasting note",
+                "placeholder": "How it tasted, what it was for"
+              }
+            ]
+          },
+          {
+            "source_kind": "wine:item",
+            "action_id": "lists:add-item",
+            "trigger_type": "user-invoked",
+            "label": "Buy again",
+            "args": {
+              "listTitle": "Shopping list"
+            }
+          },
+          {
+            "source_kind": "wine:item",
+            "action_id": "inventory:adjust-stock",
+            "trigger_type": "event",
+            "trigger_event": "lists.item.checked",
+            "args": {
+              "delta": 1,
+              "restock": true,
+              "reason": "Bought, checked off the shopping list"
+            }
+          },
+          {
+            "source_kind": "wine:item",
+            "action_id": "lists:add-item",
+            "trigger_type": "event",
+            "trigger_event": "inventory.stock.low",
+            "args": {
+              "listTitle": "Shopping list"
+            }
+          }
+        ]
+      }
+    ],
+    "provides_apps": [
+      {
+        "slug": "cellar",
+        "name": "Cellar",
+        "icon": "🍷",
+        "pages": [
+          {
+            "slug": "tonight",
+            "title": "Tonight",
+            "blocks": [
+              {
+                "type": "stat",
+                "view_name": "Cellar",
+                "view_kind": "wine:item",
+                "agg": "sum",
+                "field": "qty",
+                "label": "Bottles"
+              },
+              {
+                "type": "stat",
+                "view_name": "Cellar",
+                "view_kind": "wine:item",
+                "agg": "sum",
+                "field": "cost",
+                "times": "qty",
+                "label": "Cellar value"
+              },
+              {
+                "type": "view",
+                "view_name": "Ready to drink",
+                "view_kind": "wine:item",
+                "title": "Ready to drink"
+              },
+              {
+                "type": "markdown",
+                "body": "### Past its best\n\nStill good to open, just past the window you set. Nothing here is thrown out."
+              },
+              {
+                "type": "view",
+                "view_name": "Past peak",
+                "view_kind": "wine:item"
+              }
+            ]
+          }
+        ]
+      }
+    ]
+  }
+}

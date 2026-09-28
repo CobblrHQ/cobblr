@@ -14,7 +14,7 @@ import { platform, type SyncConnector } from "@cobblr/platform-contract";
 import { tenantDb, tenantContext } from "../db.js";
 import { asyncHandler, badBody, requireRole } from "./util.js";
 import { loadConnectionRef } from "../sync/connection.js";
-import { ReconcileBusyError, runReconcile, planReconcile } from "../sync/engine.js";
+import { ReconcileBusyError, runReconcile, planReconcile, runStatusOf } from "../sync/engine.js";
 import { DEFAULT_CADENCE_MIN, ensureSyncScan } from "../sync/worker.js";
 import { installedSyncConnectors, resolveSyncConnector } from "../sync/resolve.js";
 
@@ -452,7 +452,7 @@ syncRouter.post(
           cadence_min: DEFAULT_CADENCE_MIN,
           import_approved_at: now,
           last_run_at: now,
-          last_status: "ok",
+          ...runStatusOf(result),
           last_synced_count: result.total,
           next_run_at: nextRunAt,
         })
@@ -461,8 +461,7 @@ syncRouter.post(
             enabled: true,
             import_approved_at: now, // idempotent — first approval wins, re-import keeps it set
             last_run_at: now,
-            last_status: "ok",
-            last_error: null,
+            ...runStatusOf(result),
             last_synced_count: result.total,
             next_run_at: sql`${nextRunAt}::timestamptz`,
             updated_at: now,
@@ -513,8 +512,7 @@ syncRouter.post(
         .updateTable("core_integrations_sync_state")
         .set({
           last_run_at: new Date(),
-          last_status: "ok",
-          last_error: null,
+          ...runStatusOf(result),
           last_synced_count: result.total,
           next_run_at: sql`now() + make_interval(mins => coalesce(cadence_min, ${DEFAULT_CADENCE_MIN}))`,
           updated_at: new Date(),

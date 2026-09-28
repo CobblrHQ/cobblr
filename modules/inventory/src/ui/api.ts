@@ -7,9 +7,11 @@
 // pre-applies auth + tenant resolution on every request.
 
 import type { NounChoiceDecl } from "@cobblr/platform-contract/kind-label";
+import type { CardRollup } from "@cobblr/platform-contract/holdings";
 import type { FieldRendererId, FieldType } from "@cobblr/platform-web";
 import { describeUnreadableBody } from "@cobblr/platform-web";
 import { downloadBlob } from "@cobblr/platform-web";
+import { dayHere } from "@cobblr/platform-contract/day";
 
 export type AllocationStatus = "reserved" | "consumed" | "released";
 
@@ -129,6 +131,24 @@ export interface PartListItem extends HomeBoxFields {
   /** Computed: positive = days until expiry, negative = already
    *  expired, null = no warranty date. */
   warranty_days_until: number | null;
+  /** When this thing is kept in several places: a row per place, its own
+   *  first (docs/design-decisions/holdings-and-units.md). Absent for a record
+   *  kept in one place, and in the flat view. */
+  holdings?: HoldingRow[];
+  /** The card's top line over those rows. */
+  rollup?: CardRollup;
+}
+
+/** One place a thing is kept, as the card's row shows it. */
+export interface HoldingRow {
+  id: string;
+  own: boolean;
+  location_id: string | null;
+  location_name: string | null;
+  qty: number;
+  min_qty: number | null;
+  low: boolean;
+  expires_on: string | null;
 }
 
 export interface Part extends HomeBoxFields {
@@ -451,6 +471,8 @@ export class InventoryApi {
     warranty_expires_within_days?: number;
     /** Lego-style lifecycle filter, see the API ListQuery comment. */
     lifecycle?: "bulk" | "kit" | "parted-out";
+    /** "flat": one line per place instead of one card per thing. */
+    rows?: "flat";
     cursor?: string;
     /** A saved view's own query (filter / where / sort), see viewQuery. */
     filter?: Record<string, unknown>;
@@ -458,6 +480,9 @@ export class InventoryApi {
     sort?: string[];
   } = {}) => {
     const params = new URLSearchParams();
+    // This browser's day: a view's "today" (a "Ready to drink" window) is the
+    // reader's, and the server cannot tell it from a UTC clock.
+    params.set("today", dayHere());
     if (q.search) params.set("search", q.search);
     if (q.filter && Object.keys(q.filter).length) params.set("filter", JSON.stringify(q.filter));
     if (q.where && q.where.length) params.set("where", JSON.stringify(q.where));
@@ -472,9 +497,10 @@ export class InventoryApi {
     if (q.warranty_expires_within_days)
       params.set("warranty_expires_within_days", String(q.warranty_expires_within_days));
     if (q.lifecycle) params.set("lifecycle", q.lifecycle);
+    if (q.rows) params.set("rows", q.rows);
     if (q.cursor) params.set("cursor", q.cursor);
     const qs = params.toString();
-    return this.partsRequest<{ items: PartListItem[]; next_cursor: string | null }>(
+    return this.partsRequest<{ items: PartListItem[]; next_cursor: string | null; unapplied?: Array<{ col: string; op: string; value?: unknown; ref_col?: string }> }>(
       "GET",
       qs ? `?${qs}` : "",
     );
@@ -585,6 +611,18 @@ export class InventoryApi {
   mintUnit = (id: string, body: { serial_number?: string; name?: string }) =>
     this.partsRequest<{ id: string; name: string; serial_number: string | null }>("POST", `/${id}/units`, body);
 
+  /** The places this thing is kept, its own first, and the card's top line. */
+  listHoldings = (id: string) =>
+    this.partsRequest<{ card_id: string; rows: HoldingRow[]; rollup: CardRollup }>("GET", `/${id}/holdings`);
+  /** Keep it in one more place. */
+  addHolding = (id: string, body: { location_id: string; qty?: number; min_qty?: number | null }) =>
+    this.partsRequest<{ id: string; card_id: string }>("POST", `/${id}/holdings`, body);
+  /** These records are the same thing kept elsewhere: rows of this card. */
+  combineHoldings = (id: string, ids: string[]) =>
+    this.partsRequest<{ card_id: string; combined: string[] }>("POST", `/${id}/holdings/combine`, { ids });
+  /** A place's stock becomes a record of its own again. */
+  splitHolding = (cardId: string, holdingId: string) =>
+    this.partsRequest<{ id: string }>("POST", `/${cardId}/holdings/${holdingId}/split`, {});
   stockAdjust = (
     id: string,
     delta: number,

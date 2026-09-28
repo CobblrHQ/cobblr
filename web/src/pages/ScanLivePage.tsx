@@ -17,7 +17,7 @@
 import { useEffect, useRef, useState } from "react";
 import { Link } from "react-router-dom";
 import { Loader2, ScanLine } from "lucide-react";
-import { usePageTitle, useImageSrc } from "@cobblr/platform-web";
+import { usePageTitle, EntityPhoto } from "@cobblr/platform-web";
 import { api, type ScanInboxItem } from "../lib/api";
 import { leadPhoto } from "../lib/scanPhoto";
 import { leadYours, rowPictures, scanFileUrl } from "../lib/rowPictures";
@@ -48,24 +48,20 @@ function Thumb({ row, big, slug }: { row: ScanInboxItem; big?: boolean; slug: st
   // it (lib/scanPhoto, lint:scan-photo-lead).
   const resolved = rowPictures(slug, row);
   const yours = leadYours(resolved.pictures);
-  const src = useImageSrc(
+  const src =
     leadPhoto(row, {
       catalog: [
         row.catalog_image_file_id ? scanFileUrl(slug, row.catalog_image_file_id) : null,
         row.catalog_image_url ?? null,
       ],
       yours: yours ? resolved.src(yours) : null,
-    }).src,
-  );
+    }).src;
   const size = big ? "h-36 w-36 sm:h-56 sm:w-56" : "h-12 w-12";
-  if (!src) {
-    return (
-      <div className={`${size} shrink-0 rounded-2xl bg-subtle dark:bg-slate-800 flex items-center justify-center text-faint`}>
-        <ScanLine size={big ? 48 : 18} />
-      </div>
-    );
-  }
-  return <img src={src} alt="" className={`${size} shrink-0 rounded-2xl object-cover bg-subtle dark:bg-slate-800`} />;
+  return (
+    <div className={`${size} relative shrink-0 overflow-hidden rounded-2xl`}>
+      <EntityPhoto src={src} alt="" fill placeholder={<ScanLine size={big ? 48 : 18} className="text-faint" />} />
+    </div>
+  );
 }
 
 export function ScanLivePage() {

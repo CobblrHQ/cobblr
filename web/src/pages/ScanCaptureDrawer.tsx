@@ -30,7 +30,7 @@ import { COULD_NOT_TELL } from "@cobblr/platform-contract/scan-copy";
 import { needsScanReview } from "@cobblr/platform-contract/scan-triage";
 import { identifyFailureWords, type IdentifyFailure } from "@cobblr/platform-contract/scan-fallback";
 import { Camera, Check, ChevronDown, Loader2, MapPin, Minus, Plus, RefreshCw, Trash2, Undo2, X } from "lucide-react";
-import { useImageSrc } from "@cobblr/platform-web";
+import { useImageSrc, EntityPhoto, MutationError } from "@cobblr/platform-web";
 import { api, type ScanInboxItem } from "../lib/api";
 import { useScanQuantity } from "../lib/scanQuantity";
 import { GlanceQuestion, pendingGlance } from "../components/GlanceQuestion";
@@ -293,6 +293,11 @@ export function ScanCaptureDrawer({
       void qc.invalidateQueries({ queryKey: ["scan-item-live", slug, item?.id] });
     },
   });
+  // A refusal belongs to the item it was about: a new capture starts clean.
+  useEffect(() => {
+    answerGlance.reset(); correct.reset(); reject.reset(); rename.reset(); photo.reset();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [item?.id]);
   // The quantity and its persistence come as one thing — see lib/scanQuantity.
   const { value: shownQty, bump } = useScanQuantity(slug, it ?? null);
 
@@ -394,6 +399,11 @@ export function ScanCaptureDrawer({
       className="relative max-w-md mx-auto rounded-2xl border border-white/15 bg-black/70 backdrop-blur-md overflow-hidden"
     >
       <div ref={slide.innerRef}>
+      <MutationError mutation={answerGlance} className="block px-3 pt-2 pr-8 !text-ember-300">Answer not saved:</MutationError>
+      <MutationError mutation={correct} className="block px-3 pt-2 pr-8 !text-ember-300">Could not look again:</MutationError>
+      <MutationError mutation={reject} className="block px-3 pt-2 pr-8 !text-ember-300">Not saved:</MutationError>
+      <MutationError mutation={rename} className="block px-3 pt-2 pr-8 !text-ember-300">Name not saved:</MutationError>
+      <MutationError mutation={photo} className="block px-3 pt-2 pr-8 !text-ember-300">Photo not changed:</MutationError>
       {expanded ? (
         <ExpandedSheet
           slug={slug}
@@ -611,14 +621,9 @@ export function ScanCaptureDrawer({
 function Thumb({ url, name }: { url: string | null; name: string }) {
   // File-served sources need the auth token; object URLs and external catalog
   // art load plain.
-  const resolved = useImageSrc(url && url.startsWith("/api/") ? url : null) ?? (url && !url.startsWith("/api/") ? url : null);
   return (
-    <div className="w-[52px] h-[52px] rounded-lg border border-white/20 bg-white/5 overflow-hidden grid place-items-center shrink-0">
-      {resolved ? (
-        <img src={resolved} alt={name} className="w-full h-full object-cover" />
-      ) : (
-        <Camera size={18} className="text-white/40" />
-      )}
+    <div className="w-[52px] h-[52px] rounded-lg border border-white/20 overflow-hidden shrink-0">
+      <EntityPhoto src={url} alt={name} size={52} className="!bg-white/5" placeholder={<Camera size={18} className="text-white/40" />} />
     </div>
   );
 }
@@ -692,12 +697,8 @@ function ExpandedSheet({
       </button>
 
       <div className="px-3">
-        <div className="w-full h-[124px] rounded-xl border border-white/15 bg-white/5 overflow-hidden grid place-items-center">
-          {cover ? (
-            <img src={cover} alt={name ?? "capture"} className="w-full h-full object-cover" />
-          ) : (
-            <Camera size={26} className="text-white/30" />
-          )}
+        <div className="relative w-full h-[124px] rounded-xl border border-white/15 overflow-hidden">
+          <EntityPhoto src={cover} alt={name ?? "capture"} fill className="!bg-white/5" placeholder={<Camera size={26} className="text-white/30" />} />
         </div>
         {/* Gallery: cover first, then the extras. Tap one to make it the cover;
             ✕ removes it. */}
@@ -856,7 +857,7 @@ function GalleryTile({
   onRemove?: () => void;
   busy?: boolean;
 }) {
-  const src = useImageSrc(`/api/v1/orgs/${slug}/modules/core-files/files/${fileId}/raw?variant=thumb`);
+  const src = `/api/v1/orgs/${slug}/modules/core-files/files/${fileId}/raw?variant=thumb`;
   return (
     <div className="relative shrink-0">
       <button
@@ -865,11 +866,11 @@ function GalleryTile({
         onClick={onMakeCover}
         aria-label={primary ? "Cover photo" : "Make this the cover"}
         className={
-          "w-11 h-11 rounded-lg overflow-hidden border bg-white/5 " +
+          "relative w-11 h-11 rounded-lg overflow-hidden border bg-white/5 " +
           (primary ? "border-cobble-400 ring-1 ring-cobble-400" : "border-white/20")
         }
       >
-        {src ? <img src={src} alt="" className="w-full h-full object-cover" /> : null}
+        <EntityPhoto src={src} alt="" fill className="!bg-white/5" placeholder={null} />
       </button>
       {!primary && onRemove && (
         <button

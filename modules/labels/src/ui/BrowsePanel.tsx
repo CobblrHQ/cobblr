@@ -9,7 +9,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Check, Plus, Search, X } from "lucide-react";
-import { EntityThumb, buildLocationForest, flattenLocationForest } from "@cobblr/platform-web";
+import { EntityThumb, buildLocationForest, flattenLocationForest, useToast } from "@cobblr/platform-web";
 import { useLabels } from "./context";
 import type { LabelableItem } from "./api";
 
@@ -34,6 +34,7 @@ function groupByRoot<R extends { depth: number }>(rows: R[]): R[][] {
 export function BrowsePanel() {
   const { api, orgSlug } = useLabels();
   const qc = useQueryClient();
+  const toast = useToast();
 
   const tabsQ = useQuery({
     queryKey: ["labels-browse-tabs", orgSlug],
@@ -85,11 +86,13 @@ export function BrowsePanel() {
     mutationFn: (it: LabelableItem) =>
       api.queueLabelForEntity({ entity_kind: it.kind, entity_id: it.id, description: it.title }),
     onSuccess: () => void qc.invalidateQueries({ queryKey: ["labels-queue"] }),
+    onError: (e) => toast.error(e instanceof Error ? e.message : "Couldn't add it to the queue"),
   });
 
   const remove = useMutation({
     mutationFn: (queueItemId: string) => api.removeFromQueue(queueItemId),
     onSuccess: () => void qc.invalidateQueries({ queryKey: ["labels-queue"] }),
+    onError: (e) => toast.error(e instanceof Error ? e.message : "Couldn't take it out of the queue"),
   });
 
   const items = itemsQ.data?.items ?? [];

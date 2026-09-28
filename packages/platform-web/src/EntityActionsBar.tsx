@@ -1,13 +1,14 @@
 // Generic actions bar — drop onto any entity-detail page; renders
 // platform-registered + user-bound actions for the kind.
 
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { usePlatformWeb } from "./context";
 import { useInvokeEntityAction } from "./use-invoke-action";
 import { ActionOutcome } from "./ActionOutcome";
 import { AskCobbAbout } from "./AskCobbAbout";
 import { HEADER_ACTION_IDS } from "./RecordHeaderChips";
+import { DormantActionButton } from "./DormantActionButton";
 import type { PlatformAction, PlatformActionBinding } from "./types";
 
 interface Props {
@@ -37,6 +38,8 @@ export function EntityActionsBar({ entityKind, entityId, entityLabel, className,
   });
   const rawActions = data?.items ?? [];
   const bindings = data?.bindings ?? [];
+  // What an off module would add here: a door each, after the real actions.
+  const dormant = (data?.dormant ?? []).filter((a) => !(excludeActionIds ?? []).includes(a.id));
   const excluded = new Set(excludeActionIds ?? []);
   // A user-invoked binding overrides the platform-registered action
   // (it carries the user's template). Suppress the raw button so we
@@ -71,9 +74,19 @@ export function EntityActionsBar({ entityKind, entityId, entityLabel, className,
   // behind one chip that says how many there are. User-bound actions (the
   // person's own templates) count as the front of the list.
   const [showAll, setShowAll] = useState(false);
+  // A door that turned its module on hands the action to the live button
+  // that replaces it, which runs it once and keeps the outcome beside it. Run
+  // from the door, the result would vanish as the door unmounts.
+  const [armed, setArmed] = useState<string | null>(null);
+  const arm = (id: string) => {
+    setArmed(id);
+    setShowAll(true);
+  };
+  const disarm = () => setArmed(null);
   const buttons = [
-    ...visibleBindings.map((b) => <BindingButton key={`b:${b.binding_id}`} entityKind={entityKind} entityId={entityId} binding={b} />),
-    ...actions.map((a) => <ActionButton key={a.id} entityKind={entityKind} entityId={entityId} action={a} />),
+    ...visibleBindings.map((b) => <BindingButton key={`b:${b.binding_id}`} entityKind={entityKind} entityId={entityId} binding={b} runNow={armed === b.action_id} onRan={disarm} />),
+    ...actions.map((a) => <ActionButton key={a.id} entityKind={entityKind} entityId={entityId} action={a} runNow={armed === a.id} onRan={disarm} />),
+    ...dormant.map((a) => <DormantActionButton key={`off:${a.id}`} entityKind={entityKind} action={a} onTurnedOn={arm} />),
   ];
   if (buttons.length === 0) {
     return ask ? <div className={`flex flex-wrap gap-2 ${className ?? ""}`}>{ask}</div> : null;
@@ -102,16 +115,35 @@ export function EntityActionsBar({ entityKind, entityId, entityLabel, className,
  *  toolbar; sixteen reads as a wall. */
 const ACTIONS_IN_THE_OPEN = 5;
 
+/** Runs `go` once when `runNow` turns true: the action a door just turned on. */
+function useRunOnce(runNow: boolean | undefined, go: () => void, onRan: (() => void) | undefined) {
+  const ran = useRef(false);
+  useEffect(() => {
+    if (!runNow || ran.current) return;
+    ran.current = true;
+    go();
+    onRan?.();
+  });
+}
+
 function ActionButton({
   entityKind,
   entityId,
   action,
+  runNow,
+  onRan,
 }: {
   entityKind: string;
   entityId: string;
   action: PlatformAction;
+  runNow?: boolean;
+  onRan?: () => void;
 }) {
-  const { run, flash, note, failure, dismissFailure, pending } = useInvokeEntityAction({ entityKind, entityId });
+  const { run, flash, note, failure, asking, dismissFailure, pending } = useInvokeEntityAction({ entityKind, entityId });
+  // One press, whether a person made it or a door that just turned the module
+  // on: the same arguments either way.
+  const go = () => run({ actionId: action.id, label: action.label, argsSchema: action.args_schema, invokeRoute: action.invoke_route, invokeHandler: action.invoke_handler });
+  useRunOnce(runNow, go, onRan);
 
   return (
     <>
@@ -120,7 +152,7 @@ function ActionButton({
         onClick={(e) => {
           e.stopPropagation();
           e.preventDefault();
-          run({ actionId: action.id, invokeRoute: action.invoke_route, invokeHandler: action.invoke_handler });
+          go();
         }}
         disabled={pending}
         title={action.description ?? action.label}
@@ -135,7 +167,7 @@ function ActionButton({
       >
         {flash === "ok" ? "done" : flash === "err" ? "err" : pending ? "…" : action.label}
       </button>
-      <ActionOutcome note={note} failure={failure} onDismiss={dismissFailure} />
+      <ActionOutcome note={note} failure={failure} onDismiss={dismissFailure} asking={asking} />
     </>
   );
 }
@@ -144,12 +176,18 @@ function BindingButton({
   entityKind,
   entityId,
   binding,
+  runNow,
+  onRan,
 }: {
   entityKind: string;
   entityId: string;
   binding: PlatformActionBinding;
+  runNow?: boolean;
+  onRan?: () => void;
 }) {
-  const { run, flash, note, failure, dismissFailure, pending } = useInvokeEntityAction({ entityKind, entityId });
+  const { run, flash, note, failure, asking, dismissFailure, pending } = useInvokeEntityAction({ entityKind, entityId });
+  const go = () => run({ actionId: binding.action_id, argsSchema: binding.args_schema, binding });
+  useRunOnce(runNow, go, onRan);
   return (
     <>
       <button
@@ -157,7 +195,7 @@ function BindingButton({
         onClick={(e) => {
           e.stopPropagation();
           e.preventDefault();
-          run({ actionId: binding.action_id, bindingId: binding.binding_id });
+          go();
         }}
         disabled={pending}
         title={binding.label}
@@ -172,7 +210,7 @@ function BindingButton({
       >
         {flash === "ok" ? "done" : flash === "err" ? "err" : pending ? "…" : binding.label}
       </button>
-      <ActionOutcome note={note} failure={failure} onDismiss={dismissFailure} />
+      <ActionOutcome note={note} failure={failure} onDismiss={dismissFailure} asking={asking} />
     </>
   );
 }

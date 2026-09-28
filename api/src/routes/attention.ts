@@ -17,6 +17,7 @@ import { Router } from "express";
 import { requireAuth } from "../auth/middleware.js";
 import { withTenant } from "../middleware/tenant.js";
 import { facesForKind } from "../platform/faces.js";
+import { listApplicable } from "../platform/actions.js";
 import { resolveKind } from "../platform/entities.js";
 import { hasPrimaryRouter } from "../modules/mount.js";
 import { countdownWords, fieldDay, fieldDayUnreadable, viewQuery } from "@cobblr/platform-contract";
@@ -52,6 +53,24 @@ interface AttentionEntry {
    *  low?" named Cumin in plain text with nothing to open when the feed
    *  carried titles only (2026-09-13). Absent for a capture or a device. */
   record?: { kind: string; id: string; name: string };
+  /** For a dated entry: when, in the reader's words ("3d ago", "in 2d"). */
+  when?: string;
+}
+
+/** The collection a dated row belongs to. Its overdue, due-today and
+ *  coming-up rows share it, so a surface can show them as ONE thing ("22
+ *  overdue and 4 coming up in Groceries" was two cards). `due` says how the
+ *  dates behave, which decides what finishing an entry means: `goes-off`
+ *  goes off (used up, tossed, still good), a `window` is past its best, and a
+ *  `deadline` is something to do. */
+interface AttentionCollection {
+  key: string;
+  label: string;
+  route: string;
+  due: "goes-off" | "window" | "deadline";
+  /** The verbs that settle a due entry here, as the collection's applicable
+   *  actions declare them (`finishes`): used up, thrown out, still good. */
+  finish?: Array<{ action_id: string; label: string; finishes: "used" | "discarded" | "still-good" }>;
 }
 
 interface AttentionRow {
@@ -63,6 +82,11 @@ interface AttentionRow {
   route: string;
   /** Up to 8 individual items for the row's inline expansion (act-in-place). */
   entries?: AttentionEntry[];
+  /** The collection a dated row belongs to (overdue / due_today / upcoming). */
+  collection?: AttentionCollection;
+  /** Every record the row counts, beyond the eight entries, for an action on
+   *  all of them ("mark all overdue as tossed"). Capped at the item cap. */
+  all_ids?: string[];
 }
 
 async function j<T>(path: string, token: string): Promise<T | null> {
@@ -149,7 +173,7 @@ attentionRouter.get("/", requireAuth, withTenant, async (req, res, next) => {
           ? (await resolveKind(req.tenant!.org.id, `${inst.instance_name}:item`).catch(() => ({ base: `${inst.instance_name}:item` }))).base
           : `${inst.instance_name}:item`;
         const [defs, items] = await Promise.all([
-          j<{ items: Array<{ name: string; type: string; display_label?: string }> }>(
+          j<{ items: Array<{ name: string; type: string; display_label?: string; field_role?: string | null }> }>(
             `/orgs/${slug}/field-defs?kind=${encodeURIComponent(recordKind)}&effective=1`,
             token,
           ),
@@ -221,7 +245,12 @@ attentionRouter.get("/", requireAuth, withTenant, async (req, res, next) => {
           });
 
         // Deadline-semantic date fields, from the tracker's own declarations.
-        const dueFields = dateFields.filter((d) => DUE_RE.test(`${d.name} ${d.display_label ?? ""}`));
+        // A declared role says it outright: an expiry goes off, and the end of
+        // a window (a wine's drink-by) is past its best. The label words are
+        // for fields nobody declared.
+        const dueFields = dateFields.filter(
+          (d) => d.field_role === "expiry" || d.field_role === "ready-until" || DUE_RE.test(`${d.name} ${d.display_label ?? ""}`),
+        );
         if (dueFields.length === 0) return;
         // A stock-face record with nothing on hand has nothing left to date:
         // exhausted milk is not overdue, it is gone (the calendar and the
@@ -284,6 +313,22 @@ attentionRouter.get("/", requireAuth, withTenant, async (req, res, next) => {
         overdue.sort((a, b) => a.when - b.when);
         upcoming.sort((a, b) => a.when - b.when);
         const kind = `${inst.instance_name}:item`;
+        const roleOf = new Map(dueFields.map((f) => [f.name, f.field_role ?? null]));
+        const roles = new Set([...overdue, ...dueToday, ...upcoming].map((d) => roleOf.get(d.field)));
+        const collection: AttentionCollection = {
+          key: kind,
+          label: inst.display_name,
+          route: dueRoute,
+          due: roles.has("expiry") ? "goes-off" : roles.has("ready-until") ? "window" : "deadline",
+        };
+        // The verbs that settle one, from what the collection's own actions
+        // declare, never a list of action ids kept here.
+        const ORDER = { used: 0, discarded: 1, "still-good": 2 } as const;
+        const finish = (await listApplicable(kind, req.tenant!.org.id).catch(() => []))
+          .filter((a) => a.finishes && a.user_invokable !== false)
+          .map((a) => ({ action_id: a.id, label: a.label, finishes: a.finishes! }))
+          .sort((a, b) => ORDER[a.finishes] - ORDER[b.finishes]);
+        if (finish.length > 0) collection.finish = finish;
         if (overdue.length > 0)
           rows.push({
             kind: "overdue",
@@ -291,7 +336,9 @@ attentionRouter.get("/", requireAuth, withTenant, async (req, res, next) => {
             count: overdue.length,
             sample: overdue.slice(0, 3).map((d) => d.name),
             route: dueRoute,
-            entries: overdue.slice(0, 8).map((d) => ({ id: d.id, title: `${d.name} — ${ago(d.day)}`, action: { record: d.id, kind }, record: recordOf(d.id, d.name) })),
+            collection,
+            all_ids: overdue.map((d) => d.id),
+            entries: overdue.slice(0, 8).map((d) => ({ id: d.id, title: `${d.name} — ${ago(d.day)}`, when: ago(d.day), action: { record: d.id, kind }, record: recordOf(d.id, d.name) })),
           });
         if (dueToday.length > 0)
           rows.push({
@@ -300,7 +347,8 @@ attentionRouter.get("/", requireAuth, withTenant, async (req, res, next) => {
             count: dueToday.length,
             sample: dueToday.slice(0, 3).map((d) => d.name),
             route: dueRoute,
-            entries: dueToday.slice(0, 8).map((d) => ({ id: d.id, title: `${d.name} — today`, action: { record: d.id, kind }, record: recordOf(d.id, d.name) })),
+            collection,
+            entries: dueToday.slice(0, 8).map((d) => ({ id: d.id, title: `${d.name} — today`, when: "today", action: { record: d.id, kind }, record: recordOf(d.id, d.name) })),
           });
         if (upcoming.length > 0)
           rows.push({
@@ -309,7 +357,8 @@ attentionRouter.get("/", requireAuth, withTenant, async (req, res, next) => {
             count: upcoming.length,
             sample: upcoming.slice(0, 3).map((d) => d.name),
             route: dueRoute,
-            entries: upcoming.slice(0, 8).map((d) => ({ id: d.id, title: `${d.name} — ${ahead(d.day)}`, action: { record: d.id, kind }, record: recordOf(d.id, d.name) })),
+            collection,
+            entries: upcoming.slice(0, 8).map((d) => ({ id: d.id, title: `${d.name} — ${ahead(d.day)}`, when: ahead(d.day), action: { record: d.id, kind }, record: recordOf(d.id, d.name) })),
           });
       }),
     );
@@ -329,6 +378,7 @@ attentionRouter.get("/", requireAuth, withTenant, async (req, res, next) => {
       );
       const overdueTasks = openTasks.filter((t) => dueState(t.due_date, today, WINDOW_DAYS) === "overdue");
       const upcomingTasks = openTasks.filter((t) => ["today", "upcoming"].includes(dueState(t.due_date, today, WINDOW_DAYS)));
+      const tasksCollection: AttentionCollection = { key: "projects:task", label: "Tasks", route: "/projects", due: "deadline" };
       const taskEntry = (t: { id?: string; title: string }) => ({
         id: String(t.id ?? t.title),
         title: t.title,
@@ -342,6 +392,8 @@ attentionRouter.get("/", requireAuth, withTenant, async (req, res, next) => {
           count: overdueTasks.length,
           sample: overdueTasks.slice(0, 3).map((t) => t.title),
           route: "/projects",
+          collection: tasksCollection,
+          all_ids: overdueTasks.map((t) => String(t.id ?? t.title)),
           entries: overdueTasks.slice(0, 8).map(taskEntry),
         });
       if (upcomingTasks.length > 0)
@@ -351,6 +403,7 @@ attentionRouter.get("/", requireAuth, withTenant, async (req, res, next) => {
           count: upcomingTasks.length,
           sample: upcomingTasks.slice(0, 3).map((t) => t.title),
           route: "/projects",
+          collection: tasksCollection,
           entries: upcomingTasks.slice(0, 8).map(taskEntry),
         });
     }

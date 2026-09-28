@@ -18,6 +18,7 @@ import { useState, type ReactNode } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Loader2 } from "lucide-react";
 import { ActionOutcome, useInvokeEntityAction, usePlatformWeb } from "@cobblr/platform-web";
+import { askBeforePress } from "@cobblr/platform-contract/action-args";
 
 export function EntityActionChip({
   entityKind,
@@ -42,7 +43,7 @@ export function EntityActionChip({
     queryFn: () => api.listActions(orgSlug, entityKind),
     staleTime: 60_000,
   });
-  const { run, pending, note, failure, dismissFailure } = useInvokeEntityAction({ entityKind, entityId });
+  const { run, pending, note, failure, asking, flash, dismissFailure } = useInvokeEntityAction({ entityKind, entityId });
   const [sent, setSent] = useState(false);
   const binding = (data?.bindings ?? []).find((b) => b.action_id === actionId);
   const action = (data?.items ?? []).find((a) => a.id === actionId && a.user_invokable !== false);
@@ -58,25 +59,33 @@ export function EntityActionChip({
           dismissFailure();
           setSent(false);
         }}
+        asking={null}
       />
     );
   }
-  if (sent) return <span className="text-xs opacity-80">{note ?? doneLabel}</span>;
+  if (sent || flash === "ok") return <span className="text-xs opacity-80">{note ?? doneLabel}</span>;
   return (
+    <>
+    <ActionOutcome note={null} failure={null} onDismiss={dismissFailure} asking={asking} />
     <button
       type="button"
       disabled={pending}
       onClick={() => {
-        setSent(true);
+        // A press that asks first (the binding's question, or an argument
+        // the action requires) is not sent until it is answered; the hook's
+        // flash says when it was.
+        const asks = askBeforePress(binding?.args_schema ?? action?.args_schema, binding?.args ?? null, binding?.ask ?? []);
+        if (asks.length === 0) setSent(true);
         run(
           binding
             ? {
                 actionId: binding.action_id,
-                bindingId: binding.binding_id,
+                argsSchema: binding.args_schema ?? action?.args_schema,
+                binding,
                 invokeRoute: binding.invoke_route,
                 invokeHandler: binding.invoke_handler ?? action?.invoke_handler ?? null,
               }
-            : { actionId: action!.id, invokeRoute: action!.invoke_route, invokeHandler: action!.invoke_handler },
+            : { actionId: action!.id, label, argsSchema: action!.args_schema, invokeRoute: action!.invoke_route, invokeHandler: action!.invoke_handler },
         );
       }}
       className="inline-flex items-center gap-1 rounded-md border border-current/30 px-2 py-0.5 text-xs font-medium hover:bg-black/5 transition disabled:opacity-50"
@@ -84,5 +93,6 @@ export function EntityActionChip({
       {pending ? <Loader2 size={12} className="animate-spin" /> : icon}
       {label}
     </button>
+    </>
   );
 }

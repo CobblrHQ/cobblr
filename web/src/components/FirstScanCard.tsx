@@ -21,7 +21,9 @@ import { useQueryClient } from "@tanstack/react-query";
 import { useConfirm, useToast } from "@cobblr/platform-web";
 import { api } from "../lib/api";
 import { ScanLine } from "lucide-react";
-import { Link } from "react-router-dom";
+import { Link, useNavigate } from "react-router-dom";
+import { useActiveOrg } from "../auth/ActiveOrgContext";
+import { sampleArrivedWords, useFollowSample } from "../lib/useSampleScanArrival";
 import { Ean13 } from "./Ean13";
 import { PairPhoneButton } from "./PairPhoneButton";
 import { isTouchPrimary } from "../lib/useIsTouch";
@@ -34,6 +36,11 @@ export function FirstScanCard() {
   const confirm = useConfirm();
   const toast = useToast();
   const qc = useQueryClient();
+  // A desk shows the barcode for a phone to scan; when that scan arrives,
+  // this card says so and opens it (useSampleScanArrival).
+  const { activeSlug } = useActiveOrg();
+  const navigate = useNavigate();
+  const arrived = useFollowSample(activeSlug, !touch, navigate);
 
   async function empty() {
     const ok = await confirm({
@@ -84,6 +91,12 @@ export function FirstScanCard() {
           <div className="rounded-md border border-line dark:border-slate-700 bg-white p-2 w-fit">
             <Ean13 code={DEMO_BARCODE} height={54} />
           </div>
+          {arrived ? (
+            <div data-testid="sample-arrived" className="text-sm">
+              <div className="font-medium text-content dark:text-mortar-100">{sampleArrivedWords(arrived)}</div>
+              <div className="text-xs text-muted">Opening it…</div>
+            </div>
+          ) : (
           <ol className="text-sm text-muted space-y-1.5 list-decimal list-inside">
             {/* The button carries its own icon and the words "Pair phone", so
                 the step must not say them again. */}
@@ -96,6 +109,7 @@ export function FirstScanCard() {
               Watch it arrive in your scan inbox, named, with its photo.
             </li>
           </ol>
+          )}
         </div>
       )}
       {/* The alternative to asking "stocked or blank?" at the door, which makes

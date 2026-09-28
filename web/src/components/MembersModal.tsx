@@ -5,7 +5,7 @@
 
 import { useEffect, useRef, useState, type FormEvent } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Copy, Plus, Trash2, X } from "lucide-react";
+import { Copy, Plus, Printer, Trash2, X } from "lucide-react";
 import {
   ApiError, api,
   type OrgMembership, type WorkspaceInvite, type WorkspaceMember,
@@ -13,6 +13,8 @@ import {
 import { Modal, useToast, useConfirm } from "@cobblr/platform-web";
 import { displaySlug } from "../lib/workspaceSlug";
 import { usePrefill } from "../lib/prefill";
+import { printJoinSheet } from "../lib/joinSheet";
+import { useActiveOrg } from "../auth/ActiveOrgContext";
 import { ORG_ROLES, INVITABLE_ORG_ROLES } from "@cobblr/platform-contract/org-roles";
 
 interface Props {
@@ -81,6 +83,14 @@ export function MembersModal({ open, onClose, slug, inline, chromeless, focus }:
   // copy of THIS workspace's setup (its blueprint — config only, no data).
   const [seedFromHere, setSeedFromHere] = useState(false);
   const inviteRef = useRef<HTMLInputElement>(null);
+  // A join link: one link many people use, for a QR on a wall (#3801).
+  const [joinLink, setJoinLink] = useState(false);
+  const [maxUses, setMaxUses] = useState("");
+  // Item labels may offer the join link to someone who scans one signed out.
+  // Off unless asked: a label leaves the room with the thing it is stuck to.
+  const [onLabels, setOnLabels] = useState(false);
+  const { activeOrg } = useActiveOrg();
+  const workspaceName = activeOrg?.slug === slug && activeOrg.name ? activeOrg.name : displaySlug(slug);
   useEffect(() => {
     if (!open || focus !== "invite") return;
     // After the lists paint, or the scroll lands on a shorter page than the
@@ -94,11 +104,26 @@ export function MembersModal({ open, onClose, slug, inline, chromeless, focus }:
 
   const createInvite = useMutation({
     mutationFn: () =>
-      api.createInvite(slug, {
-        email: inviteEmail.trim() || undefined,
-        role: inviteRole,
-      }),
+      api.createInvite(
+        slug,
+        joinLink
+          ? {
+              role: inviteRole,
+              reusable: true,
+              ...(Number(maxUses) > 0 ? { max_uses: Math.floor(Number(maxUses)) } : {}),
+              ...(onLabels ? { offer_on_labels: true } : {}),
+            }
+          : { email: inviteEmail.trim() || undefined, role: inviteRole },
+      ),
     onSuccess: (inv) => {
+      if (inv.reusable) {
+        void qc.invalidateQueries({ queryKey: ["invites", slug] });
+        setMaxUses("");
+        setOnLabels(false);
+        void copyInviteLink(inv, true);
+        toast.success("Join link made and copied. Print its QR from the list to put it on the wall.");
+        return;
+      }
       const sentTo = inviteEmail.trim();
       void qc.invalidateQueries({ queryKey: ["invites", slug] });
       setInviteEmail("");
@@ -298,12 +323,25 @@ export function MembersModal({ open, onClose, slug, inline, chromeless, focus }:
                             {inv.invited_email}
                           </span>
                         )}
+                        {inv.reusable && (
+                          <span className="text-content dark:text-mortar-200" data-testid="join-link-count">
+                            join link · {inv.use_count ?? 0}
+                            {inv.max_uses ? ` of ${inv.max_uses}` : ""} joined
+                            {inv.offer_on_labels ? " · labels offer it" : ""}
+                          </span>
+                        )}
                         {expired && (
                           <span className="text-[10px] font-mono uppercase tracking-widest text-ember-500">
                             expired
                           </span>
                         )}
                       </div>
+                      {inv.reusable && (inv.joined?.length ?? 0) > 0 && (
+                        <div className="text-[11px] text-muted dark:text-slate-400 mt-0.5 truncate" data-testid="join-link-joined">
+                          {inv.joined!.slice(0, 4).map((j) => j.name).join(", ")}
+                          {inv.joined!.length > 4 ? ` and ${inv.joined!.length - 4} more` : ""}
+                        </div>
+                      )}
                       <div className="text-[10px] font-mono text-faint dark:text-slate-500 mt-0.5">
                         token: …{inv.token.slice(-8)}{" "}
                         {inv.expires_at && (
@@ -313,6 +351,19 @@ export function MembersModal({ open, onClose, slug, inline, chromeless, focus }:
                         )}
                       </div>
                     </div>
+                    {inv.reusable && (
+                      <button
+                        onClick={async () => {
+                          const ok = await printJoinSheet({ url: `${window.location.origin}/invite/${inv.token}`, workspace: workspaceName });
+                          if (!ok) toast.error("Your browser blocked the print window. Allow pop-ups for this site and press Print QR again.");
+                        }}
+                        className="text-faint hover:text-accent transition inline-flex items-center gap-1 min-h-8"
+                        title="Print the wall QR"
+                        data-testid="join-link-print"
+                      >
+                        <Printer size={12} /> <span className="text-[11px]">Print QR</span>
+                      </button>
+                    )}
                     <button
                       onClick={() => copyInviteLink(inv)}
                       className="text-faint hover:text-accent transition"
@@ -369,7 +420,42 @@ export function MembersModal({ open, onClose, slug, inline, chromeless, focus }:
               </div>
             )}
 
+            {inviteKind === "workspace" && (
+              <label className="flex items-start gap-2 text-xs text-content dark:text-mortar-200 cursor-pointer">
+                <input type="checkbox" checked={joinLink} onChange={(e) => setJoinLink(e.target.checked)} className="mt-0.5" data-testid="join-link-toggle" />
+                <span>
+                  <span className="font-medium">A join link for a wall QR.</span> Anyone who scans it can join as a{" "}
+                  {inviteRole}, as many people as you like. You see everyone who joins, and can remove them or revoke the
+                  link.
+                </span>
+              </label>
+            )}
+            {inviteKind === "workspace" && joinLink && (
+              <label className="flex items-start gap-2 text-xs text-content dark:text-mortar-200 cursor-pointer pl-5">
+                <input type="checkbox" checked={onLabels} onChange={(e) => setOnLabels(e.target.checked)} className="mt-0.5" data-testid="join-link-on-labels" />
+                <span>
+                  <span className="font-medium">Item labels offer it too.</span> Someone who scans a label here
+                  without an account is asked to join before they take one. Leave off if labels leave the room with
+                  the things they are on.
+                </span>
+              </label>
+            )}
             <div className="flex flex-col sm:flex-row sm:items-end gap-2">
+              {inviteKind === "workspace" && joinLink ? (
+              <label className="flex-1 block min-w-0">
+                <span className="block text-[10px] font-mono uppercase tracking-widest text-faint dark:text-slate-500 mb-1">
+                  Stop after (optional)
+                </span>
+                <input
+                  type="number"
+                  min={1}
+                  value={maxUses}
+                  onChange={(e) => setMaxUses(e.target.value)}
+                  placeholder="no limit"
+                  className="input"
+                />
+              </label>
+              ) : (
               <label className="flex-1 block min-w-0">
                 <span className="block text-[10px] font-mono uppercase tracking-widest text-faint dark:text-slate-500 mb-1">
                   Email {inviteKind === "platform" ? "(optional)" : "hint (optional)"}
@@ -383,6 +469,7 @@ export function MembersModal({ open, onClose, slug, inline, chromeless, focus }:
                   className="input"
                 />
               </label>
+              )}
               {inviteKind === "workspace" && (
                 <label className="block">
                   <span className="block text-[10px] font-mono uppercase tracking-widest text-faint dark:text-slate-500 mb-1">
@@ -406,7 +493,7 @@ export function MembersModal({ open, onClose, slug, inline, chromeless, focus }:
                 disabled={createInvite.isPending || createSignupInvite.isPending}
                 className="px-3 py-1.5 rounded-md text-sm font-medium bg-slate-700 hover:bg-slate-600 text-mortar-50 transition disabled:opacity-50 flex items-center gap-1"
               >
-                <Plus size={13} /> {inviteKind === "platform" ? "Invite to Cobblr" : "Mint invite"}
+                <Plus size={13} /> {inviteKind === "platform" ? "Invite to Cobblr" : joinLink ? "Make join link" : "Mint invite"}
               </button>
             </div>
 

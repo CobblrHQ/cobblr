@@ -2,12 +2,12 @@
 // One component, two surfaces (the author, 2026-06-10: operator tooling doesn't
 // belong buried in workspace config):
 //
-//   variant="personal"  — /configuration/tokens (workspace land). Mints
-//     FULL-ACCESS tokens (same as a browser session) for CLI / AI / agent
-//     use. NO scope checkboxes: the deny-by-default scopes are all
-//     platform-operator surfaces (/super-admin/*) — noise for a workspace
-//     owner, and a footgun (a scoped token mints fine but 403s for anyone
-//     who isn't a platform admin).
+//   variant="personal"  — /configuration/tokens (workspace land). Mints tokens
+//     for CLI / AI / agent use, held to ONE workspace (or all) and an access
+//     level (look / change / full; api/src/auth/token-access.ts). A new one
+//     starts on the workspace in front of you with "Look and make changes",
+//     never full (lib/token-grant.ts). NO capability-scope checkboxes: those
+//     are all platform-operator surfaces (/super-admin/*).
 //
 //   variant="operator"  — the operator console (/admin/tokens). Mints
 //     RESTRICTED, deny-by-default tokens (≥1 scope required) for daemons +
@@ -21,6 +21,9 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Copy, KeyRound, Plus, Trash2, RefreshCw } from "lucide-react";
 import { ApiError, api, type ApiTokenListItem } from "../lib/api";
 import { Modal, useToast, useConfirm } from "@cobblr/platform-web";
+import { TOKEN_ACCESS, TOKEN_ACCESS_LABEL, TOKEN_ACCESS_MEANS, type TokenAccess } from "@cobblr/platform-contract/token-access";
+import { useAuth } from "../auth/AuthContext";
+import { grantLabel, initialGrant, isLegacyFullToken } from "../lib/token-grant";
 
 /** A token being replaced: what to prefill, and what to offer revoking after. */
 interface RotateTarget {
@@ -29,9 +32,18 @@ interface RotateTarget {
   scopes: string[];
   /** Already past its expiry — the cutover panel must not claim it "still works". */
   expired: boolean;
+  access?: TokenAccess | null;
+  org_id?: string | null;
 }
 
-export function TokenManager({ variant }: { variant: "personal" | "operator" }) {
+export function TokenManager({
+  variant,
+  activeOrgId = null,
+}: {
+  variant: "personal" | "operator";
+  /** The workspace a new personal token starts on (the one the page is in). */
+  activeOrgId?: string | null;
+}) {
   const qc = useQueryClient();
   const toast = useToast();
   const confirm = useConfirm();
@@ -109,11 +121,10 @@ export function TokenManager({ variant }: { variant: "personal" | "operator" }) 
           </>
         ) : (
           <>
-            These tokens authenticate as your user account against every cobblr
-            endpoint that accepts a Bearer token. Same scope as a browser
-            session, but they don't expire unless you set an expiry. Treat them
-            like passwords - they grant full access to every workspace you
-            belong to.
+            Each token acts as you, held to what you gave it when you made it:
+            one workspace or all of them, and whether it can only look, make
+            changes, or do everything you can. They don't expire unless you set
+            an expiry. Treat them like passwords.
           </>
         )}
       </p>
@@ -158,11 +169,32 @@ export function TokenManager({ variant }: { variant: "personal" | "operator" }) 
                     scoped: {t.scopes.join(", ")}
                   </span>
                 ) : (
-                  <span className="text-[10px] font-mono uppercase tracking-widest text-faint dark:text-slate-500">
-                    full access
+                  <span
+                    className={
+                      "text-[10px] font-mono uppercase tracking-widest " +
+                      (isLegacyFullToken(t) ? "text-ember-500" : "text-faint dark:text-slate-500")
+                    }
+                  >
+                    {grantLabel(t)}
                   </span>
                 )}
               </div>
+              {variant === "personal" && isLegacyFullToken(t) && !t.revoked_at && (
+                <div className="text-xs text-muted dark:text-slate-400 mt-1">
+                  This token can do anything you can, in every workspace.{" "}
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setRotating({ id: t.id, name: t.name, scopes: [], expired: !!t.expires_at && new Date(t.expires_at) < new Date() });
+                      setMintOpen(true);
+                    }}
+                    className="text-accent hover:underline"
+                  >
+                    Narrow it
+                  </button>
+                  : make a replacement for one workspace, then revoke this one.
+                </div>
+              )}
               <div className="text-[11px] font-mono text-faint dark:text-slate-500 mt-0.5">
                 {t.token_prefix}… · created {new Date(t.created_at).toLocaleDateString()}
                 {t.expires_at && ` · expires ${new Date(t.expires_at).toLocaleDateString()}`}
@@ -189,6 +221,8 @@ export function TokenManager({ variant }: { variant: "personal" | "operator" }) 
                     name: t.name,
                     scopes: t.scopes ?? [],
                     expired: !!t.expires_at && new Date(t.expires_at) < new Date(),
+                    access: t.access ?? null,
+                    org_id: t.org_id ?? null,
                   });
                   setMintOpen(true);
                 }}
@@ -204,6 +238,7 @@ export function TokenManager({ variant }: { variant: "personal" | "operator" }) 
 
       <MintModal
         variant={variant}
+        activeOrgId={activeOrgId}
         open={mintOpen}
         rotating={rotating}
         onClose={() => {
@@ -248,12 +283,14 @@ export function TokenManager({ variant }: { variant: "personal" | "operator" }) 
 
 function MintModal({
   variant,
+  activeOrgId,
   open,
   rotating,
   onClose,
   onMinted,
 }: {
   variant: "personal" | "operator";
+  activeOrgId: string | null;
   open: boolean;
   rotating?: RotateTarget | null;
   onClose: () => void;
@@ -262,6 +299,9 @@ function MintModal({
   const [name, setName] = useState("");
   const [expiresInDays, setExpiresInDays] = useState<"" | "30" | "90" | "365" | "never">("never");
   const [scopes, setScopes] = useState<Set<string>>(new Set());
+  const { orgs } = useAuth();
+  const [workspace, setWorkspace] = useState<string | null>(null);
+  const [access, setAccess] = useState<TokenAccess>("change");
   // Prefill from the token being replaced when the dialog opens. Keyed on
   // open+id so re-opening for a DIFFERENT token refills, while typing inside an
   // open dialog is never clobbered.
@@ -270,7 +310,13 @@ function MintModal({
     setName(rotating?.name ?? "");
     setScopes(new Set(rotating?.scopes ?? []));
     setExpiresInDays("never");
+    const g = initialGrant(activeOrgId, rotating);
+    setWorkspace(g.workspace);
+    setAccess(g.access);
   }, [open, rotating?.id]);
+  // A personal token that keeps capability scopes (rotating a daemon's) stays
+  // a scoped token; everything else gets a workspace and an access level.
+  const personalGrant = variant === "personal" && !(rotating && rotating.scopes.length > 0);
   const toast = useToast();
 
   const scopeChoices = useQuery({
@@ -296,6 +342,7 @@ function MintModal({
         // replacement with the same name. Widening is the one thing a rotation
         // must never do.
         scopes: scopes.size > 0 && (variant === "operator" || rotating) ? [...scopes] : undefined,
+        ...(personalGrant ? { access, ...(workspace ? { workspace } : {}) } : {}),
       });
     },
     onSuccess: (r) => {
@@ -421,12 +468,60 @@ function MintModal({
               token instead? Mint it from Configuration → API tokens in a workspace.
             </p>
           </div>
-        ) : (
-          <p className="text-xs text-muted dark:text-slate-400">
-            <strong>Full access</strong>  - same as your browser session (every workspace you
-            belong to). Treat it like a password.
-          </p>
-        )}
+        ) : personalGrant ? (
+          <>
+            <label className="block">
+              <span className="block text-[10px] font-mono uppercase tracking-widest text-faint dark:text-slate-500 mb-1">
+                Workspace
+              </span>
+              <select
+                value={workspace ?? ""}
+                onChange={(e) => setWorkspace(e.target.value || null)}
+                className="input"
+              >
+                {orgs.map((o) => (
+                  <option key={o.id} value={o.id}>
+                    {o.name}
+                  </option>
+                ))}
+                <option value="">All my workspaces</option>
+              </select>
+            </label>
+            <fieldset className="space-y-1.5">
+              <legend className="block text-[10px] font-mono uppercase tracking-widest text-faint dark:text-slate-500 mb-1">
+                Access
+              </legend>
+              {TOKEN_ACCESS.map((a) => (
+                <label
+                  key={a}
+                  className={
+                    "flex items-start gap-2 rounded-md border p-2 cursor-pointer text-sm " +
+                    (access === a
+                      ? "border-cobble-300 dark:border-cobble-700 bg-cobble-50/50 dark:bg-cobble-900/20"
+                      : "border-line dark:border-slate-700")
+                  }
+                >
+                  <input
+                    type="radio"
+                    name="token-access"
+                    checked={access === a}
+                    onChange={() => setAccess(a)}
+                    className="accent-cobble-500 mt-0.5 shrink-0"
+                  />
+                  <span className="min-w-0">
+                    <span className="font-medium text-content dark:text-mortar-100">{TOKEN_ACCESS_LABEL[a]}</span>
+                    <span className="block text-xs text-muted dark:text-slate-400">{TOKEN_ACCESS_MEANS[a]}</span>
+                  </span>
+                </label>
+              ))}
+            </fieldset>
+            {access === "full" && !workspace && (
+              <p className="text-xs text-ember-500">
+                This token will be able to do anything you can, in every workspace. Treat it like a password.
+              </p>
+            )}
+          </>
+        ) : null}
 
         <p className="text-xs text-muted dark:text-slate-400">
           You'll see the token value <strong>exactly once</strong> after minting. Copy it before

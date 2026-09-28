@@ -53,6 +53,7 @@ export function MaintenancePage() {
       toast.success("Deleted");
       invalidate();
     },
+    onError: (e: unknown) => toast.error(`Couldn't delete that: ${e instanceof ApiError ? e.message : String(e)}`),
   });
 
   const items = list.data?.items ?? [];

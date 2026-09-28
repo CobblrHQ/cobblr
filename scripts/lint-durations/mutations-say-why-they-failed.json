@@ -1,0 +1,10 @@
+{
+  "lint": "lint:mutations-say-why-they-failed",
+  "run": "tsx scripts/lint-mutations-say-why-they-failed.ts",
+  "rows": [
+    "generic-web-component"
+  ],
+  "ms": 1200,
+  "recorded": "2026-09-28",
+  "source": "scaffolded by hand at twice a local run (a shared box); replaced from its first CI measurement"
+}

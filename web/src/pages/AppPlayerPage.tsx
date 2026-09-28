@@ -11,6 +11,8 @@
 // unknown/not-yet-supported block renders a small placeholder rather
 // than breaking the page.
 
+import { useViewData } from "../lib/useViewData";
+import { ViewMore } from "../components/ViewMore";
 import { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { Link, useParams } from "react-router-dom";
@@ -18,11 +20,13 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { ArrowLeft, Plus, ScanLine, LogOut, LayoutDashboard, LayoutGrid, ChevronDown } from "lucide-react";
 import ReactMarkdown from "react-markdown";
 import { useAuth } from "../auth/AuthContext";
-import { useRunAction, EntityActionsBar, EntityThumb, usePageTitle, useToast, OverlayLayer, BackdropLayer } from "@cobblr/platform-web";
+import { useRunAction, AskBeforeRun, type Asking, EntityActionsBar, EntityThumb, usePageTitle, useToast, OverlayLayer, BackdropLayer } from "@cobblr/platform-web";
 import { NewPartDialog, InventoryProvider } from "@cobblr/inventory/ui";
 import { api, getToken, type AppBlock, type AppTheme } from "../lib/api";
 import { frameDocUrl } from "../lib/frame-doc";
 import { createCapabilityForKind } from "@cobblr/platform-contract/create-capability";
+import { askBeforePress, pressAnswersToArgs } from "@cobblr/platform-contract/action-args";
+import { statValue } from "@cobblr/platform-contract/stat-value";
 import { AskForItButton } from "../components/AskForItButton";
 // Per-surface theme → CSS variables. Shared with the member portal so the
 // launcher can wear the same brand. See web/src/lib/appTheme.ts.
@@ -299,6 +303,7 @@ function BlockRenderer({
           viewId={block.view_id}
           agg={block.agg}
           field={block.field}
+          times={block.times}
           label={block.label}
           theme={theme}
         />
@@ -322,6 +327,7 @@ function BlockRenderer({
     case "action":
       return (
         <ActionBlock
+          slug={slug}
           actionId={block.action_id}
           label={block.label}
           kind={block.kind}
@@ -353,26 +359,22 @@ function ViewBlock({
   title?: string;
   theme?: AppTheme | null;
 }) {
-  const data = useQuery({
-    queryKey: ["app-view-data", slug, viewId],
-    queryFn: () => api.viewData(slug, viewId, { limit: 100 }),
-    enabled: !!viewId,
-    // A block knows its view, not the view's kind; any action re-reads it
-    // (platform-web run-action).
-    meta: { kinds: "*" },
-  });
+  // A block knows its view, not the view's kind (null): any action re-reads
+  // it. Every record, and the rest offered when the view is huge: a hard 100
+  // cut the list off with nothing to say so.
+  const view = useViewData(slug, viewId, null, { enabled: !!viewId });
   return (
     <div className="space-y-2">
       {title && (
         <h2 className="text-sm font-medium text-content dark:text-mortar-200" style={textStyle(theme)}>{title}</h2>
       )}
-      {data.isLoading && <div className="text-xs text-faint italic">Loading…</div>}
-      {data.data && data.data.items.length === 0 && (
+      {view.isLoading && <div className="text-xs text-faint italic">Loading…</div>}
+      {!view.isLoading && view.items.length === 0 && (
         <div className="text-xs text-faint italic py-4">No items.</div>
       )}
-      {data.data && data.data.items.length > 0 && (
+      {view.items.length > 0 && (
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
-          {data.data.items.map((item) => (
+          {view.items.map((item) => (
             <Link
               key={`${item.kind}:${item.id}`}
               to={`/portal/${slug}/app/${appSlug}/r/${encodeURIComponent(item.kind)}/${encodeURIComponent(item.id)}`}
@@ -394,6 +396,7 @@ function ViewBlock({
           ))}
         </div>
       )}
+      <ViewMore data={view} />
     </div>
   );
 }
@@ -403,6 +406,7 @@ function StatBlock({
   viewId,
   agg,
   field,
+  times,
   label,
   theme,
 }: {
@@ -410,35 +414,33 @@ function StatBlock({
   viewId: string;
   agg: "count" | "sum";
   field?: string;
+  times?: string;
   label?: string;
   theme?: AppTheme | null;
 }) {
-  const data = useQuery({
-    queryKey: ["app-stat-data", slug, viewId, agg, field],
-    // The views-data endpoint caps limit at 500; asking for more 400s and
-    // the stat never resolves (shows "…"). 500 is the practical ceiling.
-    queryFn: () => api.viewData(slug, viewId, { limit: 500 }),
-    enabled: !!viewId,
-    meta: { kinds: "*" },
-  });
-  const items = data.data?.items ?? [];
+  // Every record: a count is the view's total, never the length of a page
+  // (a 500-row page made a count stop at 500), and a sum adds every one.
+  const data = useViewData(slug, viewId, null, { enabled: !!viewId });
+  const items = data.items;
   let value: number | null = null;
-  if (data.data) {
-    if (agg === "count") value = items.length;
-    else if (agg === "sum" && field)
-      value = items.reduce((acc, it) => {
-        const v = (it.fields as Record<string, unknown> | undefined)?.[field];
-        const n = typeof v === "number" ? v : Number(v);
-        return acc + (Number.isFinite(n) ? n : 0);
-      }, 0);
+  // Past the server's walk a count may not be known and a sum covers only
+  // what arrived: shown with a "+", a floor, never passed off as the figure.
+  let floor = !data.complete;
+  if (!data.isLoading) {
+    if (agg === "count") {
+      value = data.total ?? items.length;
+      floor = data.total === null;
+    } else {
+      value = statValue(items as Parameters<typeof statValue>[0], { agg, field, times });
+    }
   }
   return (
     <div className="rounded-xl border border-line dark:border-slate-700 bg-surface dark:bg-slate-900 p-4 inline-flex flex-col min-w-[8rem]" style={cardStyle(theme)}>
       <span className="text-2xl font-bold text-content dark:text-mortar-100 tabular-nums" style={accentStyle(theme)}>
-        {value === null ? "…" : value.toLocaleString()}
+        {value === null ? "…" : `${value.toLocaleString()}${floor ? "+" : ""}`}
       </span>
       <span className="text-[10px] font-mono uppercase tracking-widest text-faint mt-0.5" style={mutedStyle(theme)}>
-        {label ?? (agg === "count" ? "count" : `sum ${field ?? ""}`)}
+        {label ?? (agg === "count" ? "count" : `sum ${field ?? ""}${times ? ` × ${times}` : ""}`)}
       </span>
     </div>
   );
@@ -505,12 +507,14 @@ function FormBlock({
  *  on the record view's EntityActionsBar. Hidden unless the member
  *  holds the capability; the server enforces it on invoke too. */
 function ActionBlock({
+  slug,
   actionId,
   label,
   kind,
   caps,
   theme,
 }: {
+  slug: string;
   actionId: string;
   label?: string;
   kind?: string;
@@ -519,30 +523,57 @@ function ActionBlock({
 }) {
   const toast = useToast();
   const [busy, setBusy] = useState(false);
+  const [asking, setAsking] = useState<Asking | null>(null);
   // Through the one door (platform-web run-action), so the blocks on this
   // page re-read when the action is done.
+  // PRESS-ARGS: the press below asks askBeforePress's questions itself before it runs.
   const runAction = useRunAction();
+  // The action's arguments, so one it requires is asked for before it runs
+  // rather than refused by the door (#3865).
+  const { data: listed } = useQuery({
+    queryKey: ["platform-actions", slug, kind ?? ""],
+    queryFn: () => api.listActions(slug, kind!),
+    enabled: !!kind,
+    staleTime: 60_000,
+  });
   if (!canDo(caps, actionId)) return null;
+  const go = async (args?: Record<string, unknown>) => {
+    setBusy(true);
+    try {
+      await runAction({ actionId, entityKind: kind ?? "", entityId: "", ...(args && Object.keys(args).length ? { args } : {}) });
+      toast.success(`${label ?? actionId} ran.`);
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Action failed.");
+    } finally {
+      setBusy(false);
+    }
+  };
   return (
+    <>
+    <AskBeforeRun asking={asking} />
     <button
       type="button"
       disabled={busy}
-      onClick={async () => {
-        setBusy(true);
-        try {
-          await runAction({ actionId, entityKind: kind ?? "", entityId: "" });
-          toast.success(`${label ?? actionId} ran.`);
-        } catch (e) {
-          toast.error(e instanceof Error ? e.message : "Action failed.");
-        } finally {
-          setBusy(false);
-        }
+      onClick={() => {
+        const schema = listed?.items.find((a) => a.id === actionId)?.args_schema ?? null;
+        const ask = askBeforePress(schema, {});
+        if (ask.length === 0) return void go();
+        setAsking({
+          label: label ?? actionId,
+          ask,
+          submit: (answers) => {
+            setAsking(null);
+            void go(pressAnswersToArgs(ask, answers));
+          },
+          cancel: () => setAsking(null),
+        });
       }}
       className="inline-flex items-center gap-1.5 rounded-md border border-line dark:border-slate-700 text-content dark:text-mortar-100 hover:bg-subtle dark:hover:bg-slate-800 text-sm font-medium px-3 py-1.5 transition disabled:opacity-50"
       style={theme ? { borderColor: "var(--app-border)", color: "var(--app-text)", borderRadius: "var(--app-radius)" } : undefined}
     >
       {label ?? actionId}
     </button>
+    </>
   );
 }
 

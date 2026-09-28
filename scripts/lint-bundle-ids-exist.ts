@@ -34,7 +34,7 @@
 // references, and nothing else among 66 bundle-id literals.
 //
 //   npx tsx scripts/lint-bundle-ids-exist.ts   (pnpm run lint:bundle-ids-exist)
-import { execFileSync } from "node:child_process";
+import { repoFiles } from "./lib/repo-files.js";
 import { readFileSync, readdirSync } from "node:fs";
 import { join } from "node:path";
 
@@ -88,14 +88,7 @@ export function check(file: string, src: string, ids: Set<string>): Violation[] 
 }
 
 function candidates(): string[] {
-  const out = execFileSync("git", ["ls-files", "-z", "--", "*.ts", "*.tsx", "*.mjs", "*.js"], {
-    encoding: "utf8",
-    maxBuffer: 64 * 1024 * 1024,
-  });
-  return out
-    .split("\0")
-    .filter(Boolean)
-    .filter((f) => f !== RENAME_RECORD && !f.startsWith("bundles/") && !/\.test\.|(^|\/)tests?\/|__tests__/.test(f));
+  return repoFiles(["*.ts", "*.tsx", "*.mjs", "*.js"]).filter((f) => f !== RENAME_RECORD && !f.startsWith("bundles/") && !/\.test\.|(^|\/)tests?\/|__tests__/.test(f));
 }
 
 if (process.argv[1]?.endsWith("lint-bundle-ids-exist.ts")) {

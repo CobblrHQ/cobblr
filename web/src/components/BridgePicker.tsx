@@ -4,6 +4,8 @@
 // so the experience is identical everywhere — not reinvented per module.
 //
 // value: the chosen bridge id, or null = the workspace's DEFAULT (no-id) bridge.
+// null is a CHOICE, not "nothing picked": read it through bridgeChosen
+// (lib/bridge-choice.ts) so a form never greys out on the default (#3904).
 // You can also pick "Other id…" to type a bridge that isn't connected yet (e.g.
 // you're configuring before starting it).
 

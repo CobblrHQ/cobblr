@@ -10,6 +10,8 @@ import { useActiveOrg } from "../auth/ActiveOrgContext";
 import { usePageTitle } from "@cobblr/platform-web";
 import { QueryError } from "../components/QueryError";
 import { FEED_SCROLL_PAGE } from "../lib/feed";
+import { ActorVia } from "../components/ActorVia";
+import { openSheetImport } from "../lib/sheet-import";
 
 type AuthMethod = "session" | "api_token" | "system";
 
@@ -102,22 +104,22 @@ function ActivityRow({ entry }: { entry: ActivityEntry }) {
           {entry.entity_type}
           {entry.entity_id ? `:${entry.entity_id.slice(0, 8)}` : ""}
         </span>
+        {entry.entity_type === "import_run" && entry.entity_id && (
+          <button type="button" onClick={() => openSheetImport({ runId: entry.entity_id })} className="text-[11px] text-accent hover:underline">
+            Open this import
+          </button>
+        )}
         <span className="flex-1" />
         <span className="font-mono text-[10px] text-faint">
           {new Date(entry.occurred_at).toLocaleString()}
         </span>
       </div>
       <div className="flex items-baseline gap-2 mt-1 text-[10px] text-muted dark:text-slate-400">
-        {entry.actor && (
-          <span className="flex items-center gap-1">
-            <User size={9} /> {entry.actor.display_name ?? entry.actor.email ?? "?"}
-          </span>
-        )}
-        {entry.token && (
-          <span className="flex items-center gap-1 font-mono">
-            <KeyRound size={9} /> {entry.token.name}
-            {entry.token.prefix && ` (${entry.token.prefix}…)`}
-          </span>
+        <span className="flex items-center gap-1">
+          <User size={9} /> <ActorVia entry={entry} />
+        </span>
+        {entry.token?.prefix && (
+          <span className="font-mono">({entry.token.prefix}…)</span>
         )}
         {entry.module_name && (
           <span className="font-mono">· module: {entry.module_name}</span>

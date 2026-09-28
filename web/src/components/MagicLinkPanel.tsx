@@ -1,12 +1,14 @@
 import { useState } from "react";
 import { api, ApiError, setToken } from "../lib/api";
+import { landingPath } from "../lib/landing-path";
 
 /** Passwordless: ask for a magic link emailed to the address typed
  *  above. In dev mode (no SMTP) the server returns the link in the
  *  response and this panel surfaces it as a clickable "sign in
  *  now" button. Production would deliver via email and this panel
  *  just shows the "check your inbox" confirmation. */
-export function MagicLinkPanel({ email }: { email: string }) {
+/** `next`: the page the link lands on (the item they scanned), when there is one. */
+export function MagicLinkPanel({ email, next }: { email: string; next?: string | null }) {
   const [busy, setBusy] = useState(false);
   const [devLink, setDevLink] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -23,7 +25,7 @@ export function MagicLinkPanel({ email }: { email: string }) {
     setDevLink(null);
     setSent(false);
     try {
-      const res = await api.magicRequest({ email: cleanEmail });
+      const res = await api.magicRequest({ email: cleanEmail, ...(next ? { next } : {}) });
       setSent(true);
       if (res.dev_token) {
         setDevLink(res.dev_token);
@@ -42,7 +44,7 @@ export function MagicLinkPanel({ email }: { email: string }) {
       const res = await api.magicConsume({ token: devLink });
       setToken(res.token);
       // Hard-redirect to reload the AuthContext with the new session.
-      window.location.href = "/";
+      window.location.href = landingPath(res.next) ?? "/";
     } catch (err) {
       setError(err instanceof ApiError ? err.message : "Couldn't consume token.");
     } finally {

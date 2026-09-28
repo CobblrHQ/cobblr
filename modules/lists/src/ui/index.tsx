@@ -152,6 +152,7 @@ function ListDetailModal({ listId, api, orgSlug, onClose }: { listId: string; ap
   const toggle = useMutation({
     mutationFn: ({ id, checked, quantity }: { id: string; checked: boolean; quantity?: number }) => api.toggleItem(id, checked, quantity),
     onSuccess: invalidate,
+    onError: (e) => toast.error(e instanceof ListsApiError ? e.message : String(e)),
   });
   // The amount a line will restock when checked, per line, corrected here
   // before the check. Starts from the line's own quantity ("×3") when it has
@@ -162,7 +163,11 @@ function ListDetailModal({ listId, api, orgSlug, onClose }: { listId: string; ap
     if (wired == null) return null;
     return amounts[it.id] ?? lineQuantity(it.qty) ?? wired;
   };
-  const remove = useMutation({ mutationFn: (id: string) => api.removeItem(id), onSuccess: invalidate });
+  const remove = useMutation({
+    mutationFn: (id: string) => api.removeItem(id),
+    onSuccess: invalidate,
+    onError: (e) => toast.error(e instanceof ListsApiError ? e.message : String(e)),
+  });
   const claim = useMutation({
     mutationFn: ({ id, claimed }: { id: string; claimed: boolean }) => api.claimItem(id, claimed),
     onSuccess: invalidate,
@@ -171,6 +176,7 @@ function ListDetailModal({ listId, api, orgSlug, onClose }: { listId: string; ap
   const clearDone = useMutation({
     mutationFn: () => api.clearDone(listId),
     onSuccess: (r) => { toast.success(`Cleared ${r.cleared} done`); invalidate(); },
+    onError: (e) => toast.error(e instanceof ListsApiError ? e.message : String(e)),
   });
 
   const items = detail.data?.items ?? [];

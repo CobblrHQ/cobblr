@@ -15,6 +15,7 @@ import { useState } from "react";
 import { describeDelivery, isOurFault, type ChannelOutcome, type DeliveryChannel } from "@cobblr/platform-contract/delivery-outcome";
 import { Modal } from "./Modal";
 import { useImageSrc } from "./useImageSrc";
+import { EntityPhoto } from "./EntityPhoto";
 import { isForeign, type FeedbackSource, type FeedbackSourceItem, type FeedbackUpdate } from "./feedback-source";
 
 export const FEEDBACK_STATUSES = [
@@ -73,16 +74,13 @@ function FeedbackShot({ url, name }: { url: string | null; name?: string }) {
         type="button"
         onClick={() => setZoom(true)}
         title={name || "screenshot"}
-        className="w-16 h-16 rounded-md overflow-hidden border border-line dark:border-slate-700 bg-subtle dark:bg-slate-800"
+        className="relative w-16 h-16 rounded-md overflow-hidden border border-line dark:border-slate-700 bg-subtle dark:bg-slate-800"
       >
-        {src ? (
-          <img src={src} alt={name || "screenshot"} className="w-full h-full object-cover" />
-        ) : (
-          <div className="w-full h-full flex items-center justify-center text-[10px] text-faint">…</div>
-        )}
+        <EntityPhoto src={src} alt={name || "screenshot"} fill placeholder="…" />
       </button>
       <Modal open={zoom} onClose={() => setZoom(false)} title={name || "Screenshot"} size="lg">
         {src ? (
+          // photo-frame: the full-size screenshot in its zoom dialog, shown at its own shape
           <img src={src} alt={name || "screenshot"} className="max-h-[70vh] w-auto mx-auto rounded" />
         ) : (
           <div className="text-xs text-faint p-8 text-center">loading…</div>

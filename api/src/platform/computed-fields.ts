@@ -18,6 +18,7 @@
 // actually references its namespace — zero cost otherwise, and the
 // computed-fields layer never imports any specific module.
 
+import { clearCustomFieldNamesCache } from "./custom-field-values.js";
 import { meta } from "../db/meta.js";
 import { render } from "./templates.js";
 import type { ResolvedEntity } from "@cobblr/platform-contract";
@@ -60,6 +61,9 @@ const cache = new Map<string, { at: number; defs: ComputedDef[] }>();
 
 export function clearComputedDefsCache(): void {
   cache.clear();
+  // Every place a field def changes calls this; the lifted custom-field
+  // names are read from the same defs.
+  clearCustomFieldNamesCache();
 }
 
 const REF_PATTERN = /\{\{\s*([a-z0-9_.]+)/gi;

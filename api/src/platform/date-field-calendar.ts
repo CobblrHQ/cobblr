@@ -23,7 +23,7 @@
 // for the caller to say so, and it hides nothing else.
 
 import { sql, type Kysely } from "kysely";
-import { dateFieldDirection, dateEventTitle, fieldDay, type CalendarEvent, type DateFieldCalendarSpec } from "@cobblr/platform-contract";
+import { dateFieldDirection, directionOfRole, dateEventTitle, fieldDay, type CalendarEvent, type DateFieldCalendarSpec } from "@cobblr/platform-contract";
 import { meta } from "../db/meta.js";
 import { getTenantDb } from "../db/tenant.js";
 import * as calendar from "./calendar-registry.js";
@@ -179,7 +179,7 @@ export function registerDateFieldSource(spec: Spec): void {
       // module's table by metadata key (instance-agnostic), so a date field on
       // a Wardrobe / Warranties / Medications / Outfits instance lands on the
       // calendar just like one on the base kind.
-      let defs: { name: string; display_label: string }[];
+      let defs: { name: string; display_label: string; field_role: string | null }[];
       try {
         const instances = await meta
           .selectFrom("workspace_module_instances")
@@ -191,7 +191,7 @@ export function registerDateFieldSource(spec: Spec): void {
         const kinds = [spec.kind, ...instances.map((i) => `${i.instance_name}:item`)];
         const rawDefs = await meta
           .selectFrom("module_field_defs")
-          .select(["name", "display_label"])
+          .select(["name", "display_label", "field_role"])
           .where("org_id", "=", orgId)
           .where("entity_kind", "in", kinds)
           .where("type", "=", "date")
@@ -232,7 +232,7 @@ export function registerDateFieldSource(spec: Spec): void {
               // and a record that has passed is not late. Without this, doing
               // the shopping put five groceries in OVERDUE and pushed anything
               // genuinely late out of sight.
-              direction: dateFieldDirection(d.display_label),
+              direction: dateFieldDirection(d.display_label, directionOfRole(d.field_role)),
               category: "date",
               entityModule: spec.entityModule,
               entityType: spec.entityType,

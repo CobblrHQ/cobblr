@@ -15,6 +15,19 @@
 // <PasswordInput> (what="API key" / "token" for a key). A genuine exception
 // says `// raw-password-ok: <reason>` on the line.
 //
+// AND THE OTHER HALF (#3903): a key is not a login. Chrome read a connection
+// form's address field above a type="password" token as username + password
+// and filled the owner's email and saved password into them. So:
+//   - <PasswordInput> is only the account's own password, and says so with
+//     autoComplete="current-password" or "new-password". A key, a token, a
+//     webhook secret or a device's password is <SecretInput secret>, which is
+//     never type="password" and opts out of every password manager.
+//   - <SecretInput> never carries a login autocomplete (password, username,
+//     email) and never a type.
+//   - In a file that renders a <SecretInput>, a raw <input> for a server's
+//     address (a prop naming url / address / host) is <AddressInput>
+//     (type="url"), never a text field a browser takes for a username.
+//
 // THE BOUNDARY. A data-driven field whose type arrives as a value
 // (type={f.type}) cannot be read here; the notification channels form had one
 // and was fixed by hand to render PasswordInput for f.type === "password".
@@ -53,10 +66,47 @@ function* walk(dir: string): Generator<string> {
 /** A type attribute that is, or can be, the string "password". */
 const RAW = /\btype=(?:"password"|\{[^}]*["'`]password["'`][^}]*\})/;
 
+/** Every JSX element of this tag, with its props text and 1-based line. */
+function elements(src: string, tag: string): Array<{ props: string; line: number }> {
+  const out: Array<{ props: string; line: number }> = [];
+  const re = new RegExp(`<${tag}\\b`, "g");
+  for (let m = re.exec(src); m; m = re.exec(src)) {
+    const end = src.indexOf("/>", m.index);
+    if (end === -1) continue;
+    out.push({ props: src.slice(m.index, end), line: src.slice(0, m.index).split("\n").length });
+  }
+  return out;
+}
+
+const ACCOUNT_PASSWORD = /autoComplete=(?:"(?:current|new)-password"|\{[^}]*(?:current|new)-password[^}]*\})/;
+const LOGIN_HINT = /autoComplete=(?:"[^"]*(?:password|username|email)[^"]*"|\{[^}]*(?:password|username|email)[^}]*\})/;
+const ADDRESS_PROP = /\b(?:url|address|host|baseUrl|base_url)\b/i;
+
 /** The check. Return every violation in one file; an empty array is a pass. */
 function check(file: string, src: string): Violation[] {
   const out: Violation[] = [];
   const lines = src.split("\n");
+  const optedOut = (line: number) => /raw-password-ok: \S/.test(`${lines[line - 2] ?? ""}\n${lines[line - 1] ?? ""}`);
+  for (const el of elements(src, "PasswordInput")) {
+    if (optedOut(el.line) || ACCOUNT_PASSWORD.test(el.props)) continue;
+    out.push({ file, line: el.line, what: 'a PasswordInput that is not the account\'s own password (no autoComplete="current-password"/"new-password"): a key, token or device password is <SecretInput secret>, which no browser mistakes for a login' });
+  }
+  const secrets = elements(src, "SecretInput");
+  for (const el of secrets) {
+    if (optedOut(el.line)) continue;
+    if (LOGIN_HINT.test(el.props) || /\btype=/.test(el.props)) {
+      out.push({ file, line: el.line, what: "a SecretInput with a login autocomplete or a type: it is never a password to a browser; drop the attribute" });
+    }
+  }
+  if (secrets.length) {
+    for (const el of elements(src, "input")) {
+      if (optedOut(el.line)) continue;
+      if (/\btype="(?:url|checkbox|radio|file|number|hidden|date)"/.test(el.props)) continue;
+      if (ADDRESS_PROP.test(el.props)) {
+        out.push({ file, line: el.line, what: "a server address as a plain text field beside a secret: a browser takes it for a username. Use <AddressInput placeholder=\"https://…\">" });
+      }
+    }
+  }
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i] ?? "";
     if (/raw-password-ok: \S/.test(line)) continue;

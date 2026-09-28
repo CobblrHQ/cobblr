@@ -15,7 +15,7 @@
 import type { Kysely } from "kysely";
 import { platform } from "@cobblr/platform-contract";
 import { ocrImageText } from "./ocr.js";
-import { labelFactsOf } from "./label-facts.js";
+import { labelFactsOf, yearMadeOf } from "./label-facts.js";
 import { applyLabelFacts } from "./label-quantity.js";
 
 interface FrameDB {
@@ -28,6 +28,14 @@ export function applyLabelLot(db: Parameters<typeof applyLabelFacts>[0], itemId:
   const clean = typeof lot === "string" ? lot.trim() : "";
   if (!clean || !/\d/.test(clean) || clean.length > 24) return Promise.resolve(null);
   return applyLabelFacts(db, itemId, "", { lot: clean });
+}
+
+/** Write the year a unit was made to a pending row, as read from its label,
+ *  the person's own year left alone. Only the year, like applyLabelLot. */
+export function applyLabelYearMade(db: Parameters<typeof applyLabelFacts>[0], itemId: string, year: unknown) {
+  const clean = yearMadeOf(year);
+  if (!clean) return Promise.resolve(null);
+  return applyLabelFacts(db, itemId, "", { year_made: clean });
 }
 
 /** Read the lot off a barcode scan's frame. A no-op without a frame, without

@@ -24,9 +24,8 @@
 // swatch-eligible colour field holding a hex, the swatch WINS over image_path.
 // Callers that pass neither keep the photo-first behaviour. See swatch.ts.
 
-import { useEffect, useState } from "react";
-import { useImageSrc } from "./useImageSrc";
-import { pickThumb, type SwatchFieldDef } from "./swatch";
+import { EntityPhoto } from "./EntityPhoto";
+import type { SwatchFieldDef } from "./swatch";
 
 interface Props {
   src?: string | null;
@@ -54,66 +53,18 @@ interface Props {
 }
 
 export function EntityThumb({ src, alt, size, className, color, values, fieldDefs }: Props) {
-  // Decided before any fetch: a preferred swatch short-circuits the photo, so
-  // don't even resolve the (auth-fetched) image when the swatch wins.
-  const choice = pickThumb({ hasImage: !!src, values, defs: fieldDefs, color });
-  const wantSwatch = choice.kind === "swatch";
-  const resolved = useImageSrc(wantSwatch ? null : src);
-  // A broken/404 image_path must degrade to the initial-letter chip, not the
-  // browser's broken-image icon. (useImageSrc only nulls out the bearer-fetch
-  // path on failure; a direct <img src> needs onError.)
-  const [failed, setFailed] = useState(false);
-  useEffect(() => setFailed(false), [resolved]);
-  const s = { width: size, height: size } as const;
-  const base = "rounded shrink-0 object-cover";
-
-  // Swatch wins over the photo (colour-identity item, e.g. yarn colourway).
-  if (wantSwatch) {
-    return (
-      <div
-        style={{ ...s, backgroundColor: choice.hex }}
-        title={alt}
-        aria-label={alt}
-        className={`${base} ring-1 ring-black/10 dark:ring-white/15` + (className ? ` ${className}` : "")}
-      />
-    );
-  }
-
-  if (!resolved || failed) {
-    // Color swatch fallback (e.g. yarn with no photo): show the colour itself.
-    const hex = choice.kind === "fallback" ? choice.hex : null;
-    if (hex) {
-      return (
-        <div
-          style={{ ...s, backgroundColor: hex }}
-          title={alt}
-          aria-label={alt}
-          className={`${base} ring-1 ring-black/10 dark:ring-white/15` + (className ? ` ${className}` : "")}
-        />
-      );
-    }
-    const initial = alt.trim().slice(0, 1).toUpperCase() || "?";
-    return (
-      <div
-        style={s}
-        className={
-          `${base} bg-subtle dark:bg-slate-800 text-faint dark:text-slate-500 flex items-center justify-center font-mono ` +
-          (size >= 64 ? "text-lg" : size >= 40 ? "text-sm" : "text-[10px]") +
-          (className ? ` ${className}` : "")
-        }
-      >
-        {initial}
-      </div>
-    );
-  }
+  // The frame decides everything a thumbnail is: the fixed square, the swatch
+  // that wins over a photo, the initial when there is none, the broken-image
+  // fallback. A thumbnail is one size of it.
   return (
-    <img
-      src={resolved}
+    <EntityPhoto
+      src={src}
       alt={alt}
-      style={s}
-      className={base + (className ? ` ${className}` : "")}
-      loading="lazy"
-      onError={() => setFailed(true)}
+      size={size}
+      color={color}
+      values={values}
+      fieldDefs={fieldDefs}
+      className={"rounded" + (className ? ` ${className}` : "")}
     />
   );
 }

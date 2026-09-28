@@ -15,6 +15,7 @@
 // Each entry is the raw manifest we'd send to /bundles/install.
 // Adding a bundle: add a FeaturedBundle entry here, then run the sync.
 
+import { NOTION_NAMES } from "@cobblr/platform-contract";
 import type { PlatformBundleManifest, PlatformBundleFeature } from "./api";
 import { OUTFIT_PLANNER_HTML } from "./outfit-planner-app";
 import { CATALOGING_BENCH_HTML } from "./bench-app";
@@ -428,6 +429,476 @@ export const FEATURED_BUNDLES: FeaturedBundle[] = [
     } as unknown as PlatformBundleManifest,
   },
   {
+    glyph: "🍷",
+    blurb:
+      "Your bottles as their own table. The vintage read off the label, what is ready to open tonight, and what the cellar is worth.",
+    next_steps: [{ label: "Add your first bottle", module: "inventory", path: "/instances/wine/items", hint: "Scan the barcode and the vintage is read off the label" }],
+    manifest: {
+      "id": "cobblr.flagship.wine",
+      "version": "0.1.0",
+      "released_at": "2026-09-28",
+      "name": "Wine",
+      "author": "Cobblr",
+      "description": "Your bottles as their own table: producer, vintage, region and drink window, what is ready to open tonight, and what the cellar is worth.",
+      "changelog": "First release. Wine gets its own table with the fields a cellar needs: producer, wine, vintage, grapes, region, style, size, where you bought it, and a drink window. Scanning a bottle reads the vintage off its label. Ready to drink and Past peak answer for today. Open a bottle takes one off and keeps your tasting note, dated; Buy again puts it on the shopping list, and checking it off adds a bottle back.",
+      "requires": [
+        {
+          "module": "inventory"
+        },
+        {
+          "module": "lists"
+        },
+        {
+          "module": "core-apps"
+        }
+      ],
+      "wires": [],
+      "field_defs": [],
+      "saved_views": [],
+      "features": [
+        {
+          "key": "cellar-places",
+          "name": "Set up your cellar",
+          "question": "Shall we set up a Cellar with two racks and a Wine fridge you can file bottles into?",
+          "description": "Adds a Cellar with Rack A and Rack B inside it, and a Wine fridge, so you can label each and scan bottles straight in. If you already have them these are reused, and nothing already in them is moved. Decline and everything else works the same.",
+          "default": true,
+          "provides_locations": [
+            {
+              "name": "Cellar",
+              "kind": "area",
+              "children": [
+                {
+                  "name": "Rack A",
+                  "kind": "container"
+                },
+                {
+                  "name": "Rack B",
+                  "kind": "container"
+                }
+              ]
+            },
+            {
+              "name": "Wine fridge",
+              "kind": "container",
+              "children": []
+            }
+          ]
+        }
+      ],
+      "provides_instances": [
+        {
+          "module": "inventory",
+          "instance_name": "wine",
+          "faces": {
+            "stock": true
+          },
+          "nav_group": {
+            "key": "kitchen",
+            "label": "Kitchen"
+          },
+          "display_name": "Wine",
+          "item_noun": "bottle",
+          "noun": {
+            "of": "item",
+            "singular": "bottle",
+            "plural": "bottles"
+          },
+          "glyph": "🍷",
+          "qty_unit": "bottle",
+          "scan_keywords": [
+            "wine",
+            "red wine",
+            "white wine",
+            "rosé",
+            "rose wine",
+            "sparkling wine",
+            "champagne",
+            "prosecco",
+            "cava",
+            "cabernet",
+            "cabernet sauvignon",
+            "merlot",
+            "pinot noir",
+            "pinot grigio",
+            "chardonnay",
+            "sauvignon blanc",
+            "riesling",
+            "syrah",
+            "shiraz",
+            "malbec",
+            "tempranillo",
+            "zinfandel",
+            "rioja",
+            "chianti",
+            "bordeaux",
+            "burgundy",
+            "port wine",
+            "sherry",
+            "vintage"
+          ],
+          "field_defs": [
+            {
+              "entity_kind": "wine:item",
+              "name": "cuvee",
+              "display_label": "Wine",
+              "type": "text",
+              "position": 1,
+              "help": "The wine's own name on the label (the cuvée), beside the producer: \"Reserva\", \"Les Clos\"."
+            },
+            {
+              "entity_kind": "wine:item",
+              "name": "vintage",
+              "display_label": "Vintage",
+              "type": "number",
+              "position": 2,
+              "field_role": "year-made",
+              "help": "The year on the label. Read off the {{noun}} when you scan it, and never shared as a fact about the barcode: one barcode covers every vintage."
+            },
+            {
+              "entity_kind": "wine:item",
+              "name": "grapes",
+              "display_label": "Grape(s)",
+              "type": "text",
+              "position": 3
+            },
+            {
+              "entity_kind": "wine:item",
+              "name": "region",
+              "display_label": "Region",
+              "type": "text",
+              "position": 4,
+              "help": "Region or appellation: Rioja, Napa Valley, Sauternes."
+            },
+            {
+              "entity_kind": "wine:item",
+              "name": "country",
+              "display_label": "Country",
+              "type": "text",
+              "position": 5
+            },
+            {
+              "entity_kind": "wine:item",
+              "name": "style",
+              "display_label": "Style",
+              "type": "text",
+              "position": 6,
+              "choices": [
+                "Red",
+                "White",
+                "Rosé",
+                "Sparkling",
+                "Dessert",
+                "Fortified"
+              ]
+            },
+            {
+              "entity_kind": "wine:item",
+              "name": "bottle_size",
+              "display_label": "{{Noun}} size",
+              "type": "text",
+              "position": 7,
+              "choices": [
+                "187 ml",
+                "375 ml",
+                "500 ml",
+                "750 ml",
+                "1.5 l (magnum)",
+                "3 l"
+              ]
+            },
+            {
+              "entity_kind": "wine:item",
+              "name": "abv",
+              "display_label": "ABV",
+              "type": "number",
+              "position": 8,
+              "unit": "%",
+              "help": "Alcohol by volume, off the label: 13.5"
+            },
+            {
+              "entity_kind": "wine:item",
+              "name": "bought_from",
+              "display_label": "Bought from",
+              "type": "text",
+              "position": 9,
+              "field_role": "seller"
+            },
+            {
+              "entity_kind": "wine:item",
+              "name": "drink_from",
+              "display_label": "Drink from",
+              "type": "date",
+              "position": 10,
+              "field_role": "ready-from",
+              "help": "When it is ready. Ready to drink lists it from this day."
+            },
+            {
+              "entity_kind": "wine:item",
+              "name": "drink_by",
+              "display_label": "Drink by",
+              "type": "date",
+              "position": 11,
+              "field_role": "ready-until",
+              "help": "When it is at its best until. Past it, it shows in Past peak; nothing is thrown out."
+            },
+            {
+              "entity_kind": "wine:item",
+              "name": "rating",
+              "display_label": "Rating",
+              "type": "number",
+              "position": 12,
+              "help": "Your score out of 100."
+            },
+            {
+              "entity_kind": "wine:item",
+              "name": "tasting_notes",
+              "display_label": "Tasting notes",
+              "type": "text",
+              "position": 13,
+              "help": "What you think of it overall. A note for one {{noun}} goes on Open a {{noun}} instead, dated in its history."
+            },
+            {
+              "entity_kind": "wine:item",
+              "name": "pairings",
+              "display_label": "Goes with",
+              "type": "text",
+              "position": 14
+            }
+          ],
+          "field_overrides": [
+            {
+              "entity_kind": "wine:item",
+              "name": "manufacturer",
+              "display_label": "Producer"
+            },
+            {
+              "entity_kind": "wine:item",
+              "name": "cost",
+              "display_label": "Price paid"
+            },
+            {
+              "entity_kind": "wine:item",
+              "name": "min_qty",
+              "display_label": "Buy more when down to"
+            },
+            {
+              "entity_kind": "wine:item",
+              "name": "warranty",
+              "hidden": true
+            },
+            {
+              "entity_kind": "wine:item",
+              "name": "serial_number",
+              "hidden": true
+            },
+            {
+              "entity_kind": "wine:item",
+              "name": "model_number",
+              "hidden": true
+            },
+            {
+              "entity_kind": "wine:item",
+              "name": "maintenance",
+              "hidden": true
+            },
+            {
+              "entity_kind": "wine:item",
+              "name": "supplier_url",
+              "hidden": true
+            },
+            {
+              "entity_kind": "wine:item",
+              "name": "category",
+              "hidden": true
+            }
+          ],
+          "saved_views": [
+            {
+              "entity_kind": "wine:item",
+              "name": "Cellar",
+              "view_type": "gallery",
+              "pinned": true,
+              "config": {
+                "sort": [
+                  "region"
+                ],
+                "visible_fields": [
+                  "title",
+                  "manufacturer",
+                  "vintage",
+                  "qty",
+                  "drink_by"
+                ]
+              }
+            },
+            {
+              "entity_kind": "wine:item",
+              "name": "Ready to drink",
+              "view_type": "table",
+              "pinned": true,
+              "config": {
+                "where": [
+                  {
+                    "col": "drink_from",
+                    "op": "<=",
+                    "value": "today"
+                  },
+                  {
+                    "col": "drink_by",
+                    "op": ">=",
+                    "value": "today"
+                  }
+                ],
+                "sort": [
+                  "drink_by"
+                ],
+                "visible_fields": [
+                  "title",
+                  "manufacturer",
+                  "vintage",
+                  "qty",
+                  "drink_by",
+                  "location"
+                ]
+              }
+            },
+            {
+              "entity_kind": "wine:item",
+              "name": "Past peak",
+              "view_type": "table",
+              "config": {
+                "where": [
+                  {
+                    "col": "drink_by",
+                    "op": "<",
+                    "value": "today"
+                  }
+                ],
+                "sort": [
+                  "drink_by"
+                ],
+                "visible_fields": [
+                  "title",
+                  "manufacturer",
+                  "vintage",
+                  "qty",
+                  "drink_by",
+                  "location"
+                ]
+              }
+            },
+            {
+              "entity_kind": "wine:item",
+              "name": "By region",
+              "view_type": "table",
+              "config": {
+                "group_by": "region",
+                "visible_fields": [
+                  "title",
+                  "manufacturer",
+                  "vintage",
+                  "style",
+                  "qty"
+                ]
+              }
+            }
+          ],
+          "wires": [
+            {
+              "source_kind": "wine:item",
+              "action_id": "inventory:use-one",
+              "trigger_type": "user-invoked",
+              "label": "Open a bottle",
+              "ask": [
+                {
+                  "arg": "note",
+                  "label": "Tasting note",
+                  "placeholder": "How it tasted, what it was for"
+                }
+              ]
+            },
+            {
+              "source_kind": "wine:item",
+              "action_id": "lists:add-item",
+              "trigger_type": "user-invoked",
+              "label": "Buy again",
+              "args": {
+                "listTitle": "Shopping list"
+              }
+            },
+            {
+              "source_kind": "wine:item",
+              "action_id": "inventory:adjust-stock",
+              "trigger_type": "event",
+              "trigger_event": "lists.item.checked",
+              "args": {
+                "delta": 1,
+                "restock": true,
+                "reason": "Bought, checked off the shopping list"
+              }
+            },
+            {
+              "source_kind": "wine:item",
+              "action_id": "lists:add-item",
+              "trigger_type": "event",
+              "trigger_event": "inventory.stock.low",
+              "args": {
+                "listTitle": "Shopping list"
+              }
+            }
+          ]
+        }
+      ],
+      "provides_apps": [
+        {
+          "slug": "cellar",
+          "name": "Cellar",
+          "icon": "🍷",
+          "pages": [
+            {
+              "slug": "tonight",
+              "title": "Tonight",
+              "blocks": [
+                {
+                  "type": "stat",
+                  "view_name": "Cellar",
+                  "view_kind": "wine:item",
+                  "agg": "sum",
+                  "field": "qty",
+                  "label": "Bottles"
+                },
+                {
+                  "type": "stat",
+                  "view_name": "Cellar",
+                  "view_kind": "wine:item",
+                  "agg": "sum",
+                  "field": "cost",
+                  "times": "qty",
+                  "label": "Cellar value"
+                },
+                {
+                  "type": "view",
+                  "view_name": "Ready to drink",
+                  "view_kind": "wine:item",
+                  "title": "Ready to drink"
+                },
+                {
+                  "type": "markdown",
+                  "body": "### Past its best\n\nStill good to open, just past the window you set. Nothing here is thrown out."
+                },
+                {
+                  "type": "view",
+                  "view_name": "Past peak",
+                  "view_kind": "wine:item"
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    } as unknown as PlatformBundleManifest,
+  },
+  {
     glyph: "🍵",
     blurb:
       "Your tea cupboard as its own table. Which box is open, which are still sealed, and how often you actually re-buy each one.",
@@ -717,7 +1188,7 @@ export const FEATURED_BUNDLES: FeaturedBundle[] = [
       "Track the fridge/pantry with expiry + storage, and auto-build a shopping list when something runs low or is about to expire. Check an item off → it restocks.",
     manifest: {
       id: "cobblr.flagship.groceries",
-      version: "0.12.0",
+      version: "0.13.0",
       // What its items are actually CALLED. A bundle's suggestion has to be
       // corroborated by the capture's own text before it is trusted, and a
       // category whose members never share its name can never corroborate:
@@ -877,7 +1348,6 @@ export const FEATURED_BUNDLES: FeaturedBundle[] = [
         "beverages",
         "drinks",
         "beer",
-        "wine",
         "cider",
         "pizza",
         "ice cream",
@@ -906,9 +1376,9 @@ export const FEATURED_BUNDLES: FeaturedBundle[] = [
         "cashews",
         "peanuts",
       ],
-      released_at: "2026-09-20",
+      released_at: "2026-09-28",
       changelog:
-        "Call them what you call them: items, groceries or pantry items. Pick the word when you install, or change it later in the table's settings, and every label says it. Earlier: A bag of sunflower, pumpkin, chia, flax or sesame seeds, a trail mix, mixed nuts, almonds, cashews or peanuts scanned from a receipt or a barcode files here: the bundle now declares them by name, so a snack no longer lands in Plants because its name ends in seeds. A seasoning, a herb or a marinade scanned from the food catalog files here: the bundle now declares those words, so a garlic seasoning blend no longer lands in a craft table because its name ends in Blend. The Groceries fields now live on the Groceries table only. An early install also put a copy of them on plain Inventory, which made every inventory table look perishable; food that was still filed in plain Inventory moves into Groceries on the next start, each move noted in the activity log, and the copy is removed. The installed Groceries table now routes with every word the bundle declares, so a scanned drink or snack lands here first instead of in plain Inventory. Groceries opens on What's on hand, the pantry board, rather than the table, and remembers the view you pick. Checking an item off the shopping list dates the fresh stock: bought today, good until today plus its shelf life, instead of inheriting the last lot's dates. The saved views that promise an order (Re-buy soonest, How often you re-buy, Use it or lose it) now deliver it on the table itself, soonest first. Checking an item off the shopping list now adds exactly what you bought, once: the restock and purchase wires were declared twice and both fired. The shopping row says what checking it off will do. Scanning a grocery now suggests this bundle.",
+        "Where a grocery is kept is its Location now, the same place its shelf label lists: the separate Storage field is gone, a scan that reads Pantry files the item into your Pantry, and the Storage you had already set moves over on this update. Earlier: Wine has its own collection now, so a scanned bottle files there when both are installed; Groceries no longer claims the word wine. Earlier: Call them what you call them: items, groceries or pantry items. Pick the word when you install, or change it later in the table's settings, and every label says it.",
       name: "Groceries",
       description:
         "Turn inventory + lists into a kitchen system: track food with expiry + storage fields, an auto grocery list on low-stock/expiry, restock on check-off.",
@@ -975,7 +1445,7 @@ export const FEATURED_BUNDLES: FeaturedBundle[] = [
           entity_kind: "inventory:part",
           name: "Use it or lose it",
           view_type: "table",
-          config: { sort: ["expires_on"], visible_fields: ["title", "expires_on", "storage", "qty"] },
+          config: { sort: ["expires_on"], visible_fields: ["title", "expires_on", "location", "qty"] },
         },
       ],
       // Groceries is its own TABLE, not a set of extra columns on Inventory.
@@ -1112,21 +1582,7 @@ export const FEATURED_BUNDLES: FeaturedBundle[] = [
                                       "display_label": "Opened",
                                       "type": "date",
                                       "position": 2
-                              },
-                              {
-                                      "entity_kind": "groceries:item",
-                                      "name": "storage",
-                                      "display_label": "Storage",
-                                      "type": "text",
-                                      "position": 3,
-                                      "choices": [
-                                              "Fridge",
-                                              "Freezer",
-                                              "Pantry",
-                                              "Counter",
-                                              "Spice rack"
-                                      ]
-                              },
+                              }, 
                               {
                                       "entity_kind": "groceries:item",
                                       "name": "food_category",
@@ -1187,7 +1643,7 @@ export const FEATURED_BUNDLES: FeaturedBundle[] = [
                                               "visible_fields": [
                                                       "title",
                                                       "expires_on",
-                                                      "storage",
+                                                      "location",
                                                       "qty"
                                               ]
                                       }
@@ -1301,6 +1757,13 @@ export const FEATURED_BUNDLES: FeaturedBundle[] = [
             },
           ],
         },
+      ],
+      // Storage was a text field beside Location, so a grocery had two answers
+      // to "where is it" and the one a shelf label reads stayed empty. On
+      // upgrade each item's Storage moves into a real Location (the Pantry the
+      // bundle made is reused by name), then the field is dropped.
+      migrations: [
+        { to_version: "0.13.0", action: "inventory:field-to-location", args: { field: "storage", instance: "groceries" } },
       ],
     },
   },
@@ -1922,6 +2385,58 @@ export const FEATURED_BUNDLES: FeaturedBundle[] = [
   // — nothing hardcoded" reads better when even these very domain-
   // specific things are bundles a builder turns on.
   //
+  // Mods on your printers, and the parts each uses: a collection plus two
+  // declared links, nothing mod-specific in code (#3875). A mod is "installed
+  // on" a printer (any machine) and "uses part" a part (any inventory part);
+  // both show on the printer and the part as "has installed" / "used by".
+  {
+    glyph: "🔧",
+    blurb:
+      "The mods on your printers and the parts each one uses. Link a mod to the printer it is on and to its parts, and both show it.",
+    manifest: {
+      id: "cobblr.community.printer-mods",
+      version: "0.1.0",
+      name: "Printer mods",
+      description:
+        "A Printer mods table: each upgrade or change you make to a printer, linked to the printer it is installed on and to the parts it uses. The printer lists what it has installed and each part what uses it.",
+      author: "Cobblr community",
+      released_at: "2026-09-28",
+      changelog: "First release: a Printer mods table; each mod links to the printer it is installed on and the parts it uses, and both show the link.",
+      requires: [{ module: "records" }],
+      provides_instances: [
+        {
+          module: "records",
+          instance_name: "printer-mods",
+          display_name: "Printer mods",
+          item_noun: "mod",
+          glyph: "🔧",
+          hint: "upgrades and changes to your printers, and the parts they use",
+          links: [
+            { kind: "installed-on", label: "installed on", inverse: "has installed", to: ["machines:machine"] },
+            { kind: "uses-part", label: "uses part", inverse: "used by", to: ["inventory:part"] },
+          ],
+          field_defs: [
+            {
+              entity_kind: "records:record",
+              name: "mod_status",
+              display_label: "Status",
+              type: "text",
+              position: 1,
+              choices: ["Planned", "Ordered", "Installed", "Removed"],
+            },
+            {
+              entity_kind: "records:record",
+              name: "mod_source",
+              display_label: "Source",
+              type: "url",
+              position: 2,
+              help: "Where the design or instructions are: a model page, a forum thread.",
+            },
+          ],
+        },
+      ],
+    },
+  },
   // Machine specialisations are `provides_instances` of the multi-instance
   // `machines` module — a named top-level collection (3D Printers) whose items
   // are still `machines:machine` rows, so digifab / fleet / maintenance keep
@@ -2214,14 +2729,14 @@ export const FEATURED_BUNDLES: FeaturedBundle[] = [
     ],
     manifest: {
       id: "cobblr.flagship.yarn",
-      version: "0.8.3",
+      version: "0.9.0",
       name: "Yarn",
       description:
-        "Yarn as its own inventory instance: counted in balls, skeins or hanks, yarn-only fields, grouped by weight. Optional Hooks + Patterns tables.",
+        "Yarn as its own inventory instance: counted in balls, skeins or hanks, yarn-only fields, grouped by weight. Optional Hooks, Supplies and Patterns tables.",
       author: "Cobblr",
       released_at: "2026-07-15",
       changelog:
-        "A pattern now knows what it needs: its yarns and hooks are read from the PDF, matched against your stash, and what is missing goes on your shopping list in one tap. Finishing a pattern takes each yarn off its own balls. Earlier: The scanner fills Dye lot from the lot printed on a label, and a dye lot is never shared as a fact about the yarn. Earlier: Call your yarn what you call it: ball, skein or hank. Pick the word when you add Yarn, or change it in the Yarn table's settings, and every label, your yarn's counts and Cobb all say it. Earlier: Designs are now Patterns: a pattern keeps its PDF, photos and notes, its designer, where it came from and how hard it is, and the yarn it needs. Import patterns takes a pile of PDFs or a zipped folder: each PDF becomes a pattern with its file, a zip's folders fill in the category, and a PDF you already have is never added twice. Your Designs table is renamed on this update, and everything in it stays. Earlier: Yarn now counts in balls, the word everyone knows: the unit, Length / ball, Full ball, Price / ball and the Consumption panel (Track each ball separately, Open a ball). Yarn you already have moves over to balls on this update; field names and your values are unchanged. Earlier: per-ball tracking (Track each ball separately, Open a ball) and the stock counts from the first item.",
+        "Notions is now Supplies: the table for stitch markers, yarn needles, safety eyes, stuffing and buttons says what goes in it under its name, and you can still call it Notions (pick the word in its Settings); searching for notions finds it, and a pattern's notions are still checked against it. Your Notions table is renamed on this update, and everything in it stays. Earlier: a Notions table for stitch markers, yarn needles, safety eyes and stuffing; a pattern's notions are checked against it. Earlier: Import from Ravelry on the Yarn table brings your Ravelry stash in, and your projects into Patterns: connect once, then press it again any time to update. Earlier: A pattern now knows what it needs: its yarns and hooks are read from the PDF, matched against your stash, and what is missing goes on your shopping list in one tap. Finishing a pattern takes each yarn off its own balls. Earlier: The scanner fills Dye lot from the lot printed on a label, and a dye lot is never shared as a fact about the yarn. Earlier: Call your yarn what you call it: ball, skein or hank. Pick the word when you add Yarn, or change it in the Yarn table's settings, and every label, your yarn's counts and Cobb all say it. Earlier: Designs are now Patterns: a pattern keeps its PDF, photos and notes, its designer, where it came from and how hard it is, and the yarn it needs. Import patterns takes a pile of PDFs or a zipped folder: each PDF becomes a pattern with its file, a zip's folders fill in the category, and a PDF you already have is never added twice. Your Designs table is renamed on this update, and everything in it stays.",
       requires: [{ module: "inventory" }],
       // The always-on base: a "Yarn" instance of inventory.
       provides_instances: [
@@ -2229,6 +2744,10 @@ export const FEATURED_BUNDLES: FeaturedBundle[] = [
           module: "inventory",
           instance_name: "yarn",
           faces: { stock: true },
+          // One button brings a Ravelry stash in (and its projects, into
+          // Patterns when that table is on), through the Ravelry sync
+          // connection, reachable in the Cobblr for Yarn app too.
+          connector_import: { connector: "ravelry", label: "Import from Ravelry", sections: { stash: "yarn", projects: "designs" } },
           display_name: "Yarn",
           glyph: "🧶",
           item_noun: "yarn",
@@ -2357,6 +2876,50 @@ export const FEATURED_BUNDLES: FeaturedBundle[] = [
             ],
             saved_views: [
               { entity_kind: "inventory:part", name: "By material", view_type: "table", pinned: true, config: { group_by: "hook_material", visible_fields: ["title", "hook_gauge", "hook_material", "qty"] } },
+            ],
+          },
+        ],
+      },
+      {
+        key: "notions",
+        name: "Supplies",
+        question: "Keep track of your supplies (stitch markers, safety eyes, stuffing)?",
+        description: "A 'Supplies' table (or 'Notions', if that is your word): stitch markers, yarn needles, safety eyes, stuffing, buttons. A pattern's notions are checked against it, and what is missing goes on your shopping list in one tap.",
+        default: false,
+        next_steps: [
+          { label: "Open your Supplies", module: "inventory", path: "/instances/notions", hint: "Markers, needles, eyes, stuffing: what each pattern asks for beside its yarn." },
+        ],
+        provides_instances: [
+          {
+            module: "inventory",
+            instance_name: "notions",
+            // Supplies, or Notions for whoever calls them that: the word is
+            // picked from the offer, and the other one still finds the table
+            // (tableOtherNames). The instance keeps its name, so an install
+            // from before the rename is the same table, relabelled.
+            display_name: "{{Nouns}}",
+            glyph: "📍",
+            item_noun: "supply",
+            hint: "markers, needles, safety eyes, stuffing, buttons",
+            noun: { of: "item", singular: "supply", plural: "supplies", alternatives: [{ singular: "notion", plural: "notions" }] },
+            qty_unit: "each",
+            faces: { stock: true },
+            field_defs: [
+              // The same names a pattern's materials list is read into
+              // (NOTION_NAMES), so "2 St markers" finds your stitch markers.
+              { entity_kind: "inventory:part", name: "notion_type", display_label: "Type", type: "text", position: 1, choices: [...NOTION_NAMES, "Other"], help: "What it is. What a pattern asks for is matched to your {{nouns}} by this." },
+              { entity_kind: "inventory:part", name: "notion_size", display_label: "Size", type: "text", position: 2, help: "For safety eyes and buttons: the size in mm (e.g. 8 mm)." },
+            ],
+            field_overrides: [
+              { entity_kind: "inventory:part", name: "category", hidden: true },
+              { entity_kind: "inventory:part", name: "warranty", hidden: true },
+              { entity_kind: "inventory:part", name: "supplier_url", hidden: true },
+              { entity_kind: "inventory:part", name: "serial_number", hidden: true },
+              { entity_kind: "inventory:part", name: "model_number", hidden: true },
+              { entity_kind: "inventory:part", name: "maintenance", hidden: true },
+            ],
+            saved_views: [
+              { entity_kind: "inventory:part", name: "By type", view_type: "table", pinned: true, config: { group_by: "notion_type", visible_fields: ["title", "notion_type", "notion_size", "qty"] } },
             ],
           },
         ],

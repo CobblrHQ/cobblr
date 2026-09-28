@@ -22,8 +22,11 @@
 // in is still their machine's business, so it is gated the same way; a public
 // URL is not gated at all.
 
-/** Loopback, RFC1918, link-local, CGNAT and .local - the addresses that belong
- *  to the person sitting there rather than to the internet. */
+import { addressReach } from "@cobblr/platform-contract/address-reach";
+
+/** Loopback, RFC1918, link-local, CGNAT, .local and bare machine names - the
+ *  addresses that belong to the person sitting there rather than to the
+ *  internet (`addressReach`, from the contract). */
 export function isLocalAddress(raw: string | URL): boolean {
   let url: URL;
   try {
@@ -45,16 +48,9 @@ export function isLocalAddress(raw: string | URL): boolean {
   } catch {
     /* no window (SSR/tests): fall through to the host rules */
   }
-  const host = url.hostname.toLowerCase();
-  if (host === "localhost" || host.endsWith(".localhost") || host.endsWith(".local")) return true;
-  if (host === "::1" || host === "[::1]") return true;
-  if (/^127\./.test(host)) return true;
-  if (/^10\./.test(host)) return true;
-  if (/^192\.168\./.test(host)) return true;
-  if (/^172\.(1[6-9]|2\d|3[01])\./.test(host)) return true;
-  if (/^169\.254\./.test(host)) return true;
-  if (/^100\.(6[4-9]|[7-9]\d|1[01]\d|12[0-7])\./.test(host)) return true; // CGNAT / tailnet
-  return false;
+  // The one rule for "on somebody's own network", shared with every address
+  // field and the hosted egress guard, so the three can never disagree.
+  return addressReach(url.href).kind === "home";
 }
 
 const KEY = "cobblr.localAccessAllowed";

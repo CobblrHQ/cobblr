@@ -36,14 +36,47 @@ export class AiRefusalError extends Error {
   readonly door: "personal" | "workspace" | undefined;
   /** On a provider_error: seconds the provider asked for before a retry. */
   readonly retryAfterSec: number | undefined;
-  constructor(code: AiRefusalCode, message: string, detail?: { reason?: string | null; door?: "personal" | "workspace"; retryAfterSec?: number } | null) {
+  /** On a provider_error: the provider that failed, by id and by the name a
+   *  person reads ("Google AI Studio"), and the model it was asked for. */
+  readonly providerId: string | undefined;
+  readonly providerLabel: string | undefined;
+  readonly model: string | undefined;
+  /** Every provider asked before this one gave up, oldest first, when the
+   *  router fell back across providers (#3819). */
+  readonly attempts: ReadonlyArray<AiAttempt> | undefined;
+  constructor(code: AiRefusalCode, message: string, detail?: AiRefusalDetail | null) {
     super(message);
     this.name = "AiRefusalError";
     this.code = code;
     this.reason = detail?.reason ?? undefined;
     this.door = detail?.door;
     this.retryAfterSec = detail?.retryAfterSec;
+    this.providerId = detail?.providerId;
+    this.providerLabel = detail?.providerLabel;
+    this.model = detail?.model;
+    this.attempts = detail?.attempts;
   }
+}
+
+/** One provider the router asked for a call, and why it did not answer. */
+export interface AiAttempt {
+  provider_id: string;
+  /** What a person reads for it: the connection's own name ("Gemini for
+   *  scans"), else the provider's ("Google AI Studio"). */
+  label: string;
+  model: string;
+  /** The provider's reason (provider-reason.ts). */
+  reason: string;
+}
+
+export interface AiRefusalDetail {
+  reason?: string | null;
+  door?: "personal" | "workspace";
+  retryAfterSec?: number;
+  providerId?: string;
+  providerLabel?: string;
+  model?: string;
+  attempts?: ReadonlyArray<AiAttempt>;
 }
 
 /** The router's refusal: an Error a caller can read the code off, and on a
@@ -51,7 +84,7 @@ export class AiRefusalError extends Error {
 export function aiRefusal(
   code: AiRefusalCode,
   message: string,
-  detail?: { reason?: string | null; door?: "personal" | "workspace"; retryAfterSec?: number } | null,
+  detail?: AiRefusalDetail | null,
 ): AiRefusalError {
   return new AiRefusalError(code, message, detail);
 }

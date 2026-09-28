@@ -7,6 +7,7 @@ import { bundleTableWords } from "@cobblr/platform-contract/bundle-words";
 import { trackProductEvent } from "../platform/product-events.js";
 import { parseWireFilter } from "../platform/wire-filter.js";
 import { z } from "zod";
+import { BindingAsk, BindingLabel } from "@cobblr/platform-contract/binding-ask";
 import { chosenNoun, nounOptions, type NounChoiceDecl } from "@cobblr/platform-contract/kind-label";
 import { fillInstanceNoun, storedNounChoices, withNounsFilled } from "../platform/noun-choice.js";
 import { applyBundleLocations, previewBundleLocations } from "../platform/apply-bundle-locations.js";
@@ -115,6 +116,10 @@ const WireEntry = z
     template: z.string().optional(),
     filter: z.record(z.unknown()).optional(),
     args: z.record(z.unknown()).optional(),
+    /** A user-invoked wire's own button label and what it asks before it
+     *  runs (binding-ask.ts): the collection's shortcut on its records. */
+    label: BindingLabel.optional(),
+    ask: BindingAsk.optional(),
     target: z
       .union([
         z.literal("self"),
@@ -124,6 +129,9 @@ const WireEntry = z
       .optional(),
   })
   .superRefine((data, ctx) => {
+    if ((data.label || data.ask?.length) && data.trigger_type !== "user-invoked") {
+      ctx.addIssue({ code: z.ZodIssueCode.custom, message: "label and ask are for a button (trigger_type 'user-invoked'); a wire that fires on its own has nobody to ask", path: ["label"] });
+    }
     if (data.trigger_type === "event" && !data.trigger_event) {
       ctx.addIssue({ code: z.ZodIssueCode.custom, message: "trigger_event is required when trigger_type is 'event'", path: ["trigger_event"] });
     }
@@ -235,6 +243,10 @@ const InstanceEntry = z.object({
   glyph: z.string().optional(),
   item_noun: z.string().optional(),
   qty_unit: z.string().optional(),
+  /** One line under the table's title saying what goes in it ("markers,
+   *  needles, safety eyes, stuffing, buttons"): for a name that does not say
+   *  it on its own. */
+  hint: z.string().min(1).max(160).optional(),
   /** The words the person may pick for what this table holds or counts
    *  (#3650). Labels, help and view names say {{noun}} / {{nouns}}, and the
    *  install fills them with the choice (platform/noun-choice.ts). `of: unit`
@@ -252,6 +264,16 @@ const InstanceEntry = z.object({
    *  through core-files' intake and land in `folder`; a zip's top folder fills
    *  `folder_field` when it names one of its choices; `ask` is asked once for
    *  the batch. See platform/instance-file-intake.ts. */
+  /** An "Import from <service>" button on this table, through a sync
+   *  connector (ConnectorImportDecl): the connector's id and, per section it
+   *  offers, the table its rows land in. */
+  connector_import: z
+    .object({
+      connector: z.string().min(1),
+      label: z.string().min(1).optional(),
+      sections: z.record(z.string().min(1)),
+    })
+    .optional(),
   file_intake: z
     .object({
       accept: z.array(z.string().min(1)).min(1),
@@ -303,6 +325,22 @@ const InstanceEntry = z.object({
    *  serial-number box or a service log. Keys left out are derived from
    *  signal; a boolean here wins either way (docs/architecture/faces.md). */
   faces: z.record(FaceSchema, z.boolean()).optional(),
+  /** The links a record in this table makes, in words (#3875): a mod is
+   *  "installed on" a printer and "uses part" a part. `kind` is what the link
+   *  stores, `label` reads from this record ("installed on Ender 3"), `inverse`
+   *  from the other end ("has installed"), and `to` names what it can point at:
+   *  module kinds (`machines:machine`) or table names (`3d-printers`). The
+   *  Link dialog offers them first and lists the targets without a search. */
+  links: z
+    .array(
+      z.object({
+        kind: z.string().min(1).max(80).regex(/^[a-z0-9][a-z0-9-]*$/),
+        label: z.string().min(1).max(60),
+        inverse: z.string().min(1).max(60),
+        to: z.array(z.string().min(1).max(80)).min(1),
+      }),
+    )
+    .optional(),
   field_defs: z.array(FieldDefEntry).default([]),
   field_overrides: z.array(FieldOverrideEntry).default([]),
   saved_views: z.array(SavedViewEntry).default([]),
@@ -1667,7 +1705,7 @@ export async function applyValidatedBundle(
     // (2026-09-12). The instance's words come first so a table-specific term
     // wins any first-match read.
     const tableWords = bundleTableWords(inst.scan_keywords, m.scan_keywords);
-    const instConfig: Record<string, unknown> = { item_noun: inst.item_noun ?? null, qty_unit: inst.qty_unit ?? null, parent: inst.parent ?? null, nav_group: inst.nav_group ?? null, scan_keywords: tableWords.length ? tableWords : null, faces: inst.faces ?? null, file_intake: inst.file_intake ?? null, noun: inst.noun ?? null, noun_choice: (inst as { noun_choice?: unknown }).noun_choice ?? null };
+    const instConfig: Record<string, unknown> = { item_noun: inst.item_noun ?? null, qty_unit: inst.qty_unit ?? null, parent: inst.parent ?? null, nav_group: inst.nav_group ?? null, scan_keywords: tableWords.length ? tableWords : null, faces: inst.faces ?? null, file_intake: inst.file_intake ?? null, connector_import: (inst as { connector_import?: unknown }).connector_import ?? null, noun: inst.noun ?? null, hint: inst.hint ?? null, links: inst.links ?? null, noun_choice: (inst as { noun_choice?: unknown }).noun_choice ?? null };
     // Creation-time stock signal: a bundle that declares a MEASURED unit (a
     // qty_unit that isn't blank or "each" — filament in kg, yarn in skeins)
     // carries stock character before any data exists, so latch it to stock at
@@ -1781,6 +1819,8 @@ export async function applyValidatedBundle(
           template: w.template ?? null,
           filter: w.filter ? sql`${JSON.stringify(w.filter)}::jsonb` : null,
           args: w.args ? sql`${JSON.stringify(w.args)}::jsonb` : null,
+          label: w.label ?? null,
+          ask: w.ask?.length ? sql`${JSON.stringify(w.ask)}::jsonb` : null,
           bundle_id: bundle.id,
           target: w.target
             ? sql`${JSON.stringify(w.target)}::jsonb`
@@ -1870,6 +1910,8 @@ export async function applyValidatedBundle(
             template: w.template ?? null,
             filter: w.filter ? sql`${JSON.stringify(w.filter)}::jsonb` : null,
             args: w.args ? sql`${JSON.stringify(w.args)}::jsonb` : null,
+            label: w.label ?? null,
+            ask: w.ask?.length ? sql`${JSON.stringify(w.ask)}::jsonb` : null,
             bundle_id: bundle.id,
             target: w.target ? sql`${JSON.stringify(w.target)}::jsonb` : sql`'"self"'::jsonb`,
           })
@@ -2194,8 +2236,16 @@ export async function applyValidatedBundle(
   const instanceWires = m.provides_instances.reduce((n, inst) => n + inst.wires.length, 0);
   const totalFieldDefs = m.field_defs.length + instanceFieldDefs;
   const totalWires = m.wires.length + instanceWires;
+  // Credit the installer the caller named. The row used to read the request
+  // context only, so an install run outside a request (an automatic bundle
+  // update, an approval applied later) had no actor and read "someone
+  // installed Yarn" on the dashboard (#3833). A system install (the automatic
+  // update) is the platform's own work: no user, and the feed says "Cobblr".
   await activity.log({
     orgId: orgId,
+    userId: sess.auth_method === "system" ? null : sess.id,
+    authMethod: sess.auth_method,
+    apiTokenId: sess.api_token_id ?? null,
     action: "bundle_installed",
     ref: { module: null, entityType: "bundle", entityId: inserted.id },
     diff: {

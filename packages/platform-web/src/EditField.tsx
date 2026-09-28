@@ -52,15 +52,22 @@ export interface EditFieldProps {
 
 /** The text an EditField shows for a value: "" for none, and a number
  *  without the zeros Postgres pads it with. */
-export function editFieldText(value: string | number | null | undefined, numeric?: boolean): string {
+export function editFieldText(value: string | number | null | undefined, numeric?: boolean, type?: string): string {
   if (value == null) return "";
+  // A date column arrives as a timestamp ("2026-09-20T00:00:00.000Z") and a
+  // date input shows only "YYYY-MM-DD": handed the whole string it shows an
+  // empty box, which reads as a date nobody set (an order's Ordered at did).
+  if (type === "date" && typeof value === "string") {
+    const day = value.match(/^\d{4}-\d{2}-\d{2}/)?.[0];
+    if (day) return day;
+  }
   if (numeric && Number.isFinite(Number(value))) return String(parseFloat(Number(value).toFixed(3)));
   return String(value);
 }
 
 export function EditField({ label, value, onCommit, numeric, multiline, type, placeholder, className }: EditFieldProps) {
   const Cmp = multiline ? "textarea" : "input";
-  const initial = editFieldText(value, numeric);
+  const initial = editFieldText(value, numeric, type);
   const f = useFieldDraft(initial);
   // Escape leaves without writing; the blur it causes must not write the draft.
   const leaving = useRef(false);

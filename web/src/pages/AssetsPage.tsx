@@ -17,11 +17,11 @@ import { useActiveOrg } from "../auth/ActiveOrgContext";
 import { useFieldPresentation } from "../lib/useFieldPresentation";
 import { CustomFieldsPanel,
   EditField, EntityActionsBar, FaceSection, FieldPack, RecordFaces,
-  FacesOn, editFieldItem, fieldNeed,
+  FacesOn, faceShows, editFieldItem, fieldNeed,
   useAskCobbAboutSelection,
   Modal,
   useToast,
-  useConfirm, usePageTitle, usePageWidth } from "@cobblr/platform-web";
+  useConfirm, usePageTitle, usePageWidth, TILE_GRID, InboxWaitingStrip } from "@cobblr/platform-web";
 import {
   BulkActionBar,
   MoveToInstanceModal,
@@ -32,10 +32,11 @@ import {
 } from "@cobblr/platform-web";
 import { EntityAttachments } from "../components/EntityAttachments";
 import { LocationTreePicker } from "../components/LocationTreePicker";
-import { ContentsPanel } from "../components/ContentsPanel";
+import { ContentsPanel, useHoldsContents } from "../components/ContentsPanel";
 import { countOf, itemNounFor, pluralise } from "@cobblr/platform-contract";
 import { resolveDetailPath } from "@cobblr/platform-contract/instance-detail";
 import { PresentationGate, useFaces } from "@cobblr/platform-web";
+import { TableTitle } from "@cobblr/platform-web";
 
 const ENTITY_KIND = "assets:asset";
 
@@ -43,7 +44,8 @@ export function AssetsPage({
   instance,
   displayName,
   itemNoun,
-}: { instance?: string; displayName?: string; itemNoun?: string } = {}) {
+  hint,
+}: { instance?: string; displayName?: string; itemNoun?: string; hint?: string | null } = {}) {
   // When `instance` is set we render ONE named collection of assets (e.g.
   // "Vehicles"), reached at the clean /<instance> URL — the SAME rich page as
   // /assets (thumbnails, views, detail/edit), just scoped to the instance's
@@ -247,9 +249,7 @@ export function AssetsPage({
   return (
     <div className="space-y-4">
       <div className="flex flex-wrap items-baseline gap-x-3 gap-y-2 border-b border-line dark:border-slate-700 pb-3">
-        <h1 className="font-display text-2xl font-extrabold text-content dark:text-mortar-100 page-title">
-          {displayName ?? "assets"}
-        </h1>
+        <TableTitle title={displayName ?? "assets"} hint={hint} />
         {lensModule && (
           <Link
             to="/assets"
@@ -349,6 +349,9 @@ export function AssetsPage({
           onOpen={openAsset}
         />
       )}
+      {/* What is waiting in the scan inbox to come here, under the filed
+          results: a thing just scanned is in no table until it is filed. */}
+      <InboxWaitingStrip destination={instance ?? "assets"} q={query} />
 
       <AssetDetailModal
         assetId={selectedId}
@@ -474,7 +477,7 @@ function AssetViewChip({
 
 function AssetsTiles({ rows, onOpen }: { rows: Asset[]; onOpen: (id: string) => void }) {
   return (
-    <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-3">
+    <div className={TILE_GRID}>
       {rows.map((a) => (
         <button key={a.id} type="button" onClick={() => onOpen(a.id)} className="text-left">
           <EntityTile
@@ -677,6 +680,7 @@ export function AssetDetailModal({
   const kind = instance ? `${instance}:item` : ENTITY_KIND;
   const [moveOpen, setMoveOpen] = useState(false);
   const fp = useFieldPresentation(kind);
+  const holdsContents = useHoldsContents(activeSlug, { kind: ENTITY_KIND, id: assetId ?? "" });
   // The collection's faces decide sections and verbs; the body waits for them.
   const shape = useFaces(kind);
   const asset = useQuery({
@@ -702,6 +706,7 @@ export function AssetDetailModal({
       void qc.invalidateQueries({ queryKey: ["asset", activeSlug, instance ?? null, assetId] });
       void qc.invalidateQueries({ queryKey: ["assets", activeSlug] });
     },
+    onError: (e: unknown) => toast.error(`Couldn't save that change: ${e instanceof ApiError ? e.message : String(e)}`),
   });
   const remove = useMutation({
     mutationFn: () => api.deleteAsset(activeSlug, assetId!, instance),
@@ -787,10 +792,10 @@ export function AssetDetailModal({
                   : editFieldItem("serial_number", { label: fp.label("serial_number", "Serial number"), value: a.serial_number ?? "", onCommit: (v) => update.mutate({ serial_number: v || null }) })
                 : null,
               !fp.hidden("purchased_at") ? editFieldItem("purchased_at", { label: fp.label("purchased_at", "Purchased at"), value: a.purchased_at ?? "", type: "date", onCommit: (v) => update.mutate({ purchased_at: v || null }) }) : null,
-              // Service face: warranty + last service. Off hides them; the asset stays unique.
-              maintainedOn && !fp.hidden("warranty_until") ? editFieldItem("warranty_until", { label: fp.label("warranty_until", "Warranty until"), value: a.warranty_until ?? "", type: "date", onCommit: (v) => update.mutate({ warranty_until: v || null }) }) : null,
-              maintainedOn && !fp.hidden("last_service_at") ? editFieldItem("last_service_at", { label: fp.label("last_service_at", "Last service"), value: a.last_service_at ?? "", type: "date", onCommit: (v) => update.mutate({ last_service_at: v || null }) }) : null,
-              stockOn && !fp.hidden("quantity") ? editFieldItem("quantity", { label: fp.label("quantity", "Quantity"), value: String(a.quantity), numeric: true, onCommit: (v) => update.mutate({ quantity: Number(v) || 0 }) }) : null,
+              // Service face: warranty + last service. Off folds them while empty; a date already set stays.
+              !fp.hidden("warranty_until") && faceShows(maintainedOn, a.warranty_until) ? editFieldItem("warranty_until", { label: fp.label("warranty_until", "Warranty until"), value: a.warranty_until ?? "", type: "date", onCommit: (v) => update.mutate({ warranty_until: v || null }) }) : null,
+              !fp.hidden("last_service_at") && faceShows(maintainedOn, a.last_service_at) ? editFieldItem("last_service_at", { label: fp.label("last_service_at", "Last service"), value: a.last_service_at ?? "", type: "date", onCommit: (v) => update.mutate({ last_service_at: v || null }) }) : null,
+              !fp.hidden("quantity") && faceShows(stockOn, a.quantity, 1) ? editFieldItem("quantity", { label: fp.label("quantity", "Quantity"), value: String(a.quantity), numeric: true, onCommit: (v) => update.mutate({ quantity: Number(v) || 0 }) }) : null,
               {
                 need: fieldNeed("location", { control: "picker", label: "Location" }),
                 node: <LocationTreePicker label="Location" value={a.location_id} onChange={(id) => update.mutate({ location_id: id })} size="sm" />,
@@ -809,10 +814,10 @@ export function AssetDetailModal({
           />
           {/* What's inside this asset — e.g. the components in a server/computer.
               Same generic placement panel a machine or a drawer uses. */}
-          <FaceSection face="container" kind={kind}>
+          <FaceSection face="container" kind={kind} holds={holdsContents}>
             <ContentsPanel slug={activeSlug} container={{ kind: ENTITY_KIND, id: a.id }} title="Contents" />
           </FaceSection>
-          <EntityAttachments kind={ENTITY_KIND} entityId={a.id} />
+          <EntityAttachments kind={ENTITY_KIND} entityId={a.id} collection={instance ? `${instance}:item` : undefined} />
           <EditField label="Notes" value={a.notes ?? ""} multiline onCommit={(v) => update.mutate({ notes: v || null })} />
             </div>
           </div>

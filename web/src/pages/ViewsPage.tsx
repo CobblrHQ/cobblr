@@ -5,11 +5,11 @@
 // v0.1 renders the 'list' view_type. Future kanban/calendar/table
 // renderers swap in here as they ship.
 
-import { useState, useMemo, useEffect, type ReactNode } from "react";
+import { useState, useMemo, useEffect, type MouseEvent, type ReactNode } from "react";
 import { useKindLabels } from "../lib/useKindLabels";
 import { dayHere, daysUntilField, expiryPhrase, expiryState } from "@cobblr/platform-contract";
 import { tallyCadence, CADENCE_PRESETS } from "../lib/cadence";
-import { Link, useSearchParams } from "react-router-dom";
+import { Link, useNavigate, useSearchParams } from "react-router-dom";
 import { useDetailRoute, useListRoute } from "../lib/useDetailRoute";
 import { ViewEmptyState } from "../components/ViewEmptyState";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
@@ -18,11 +18,14 @@ import { WEEKDAYS, MONTHS, isoLocal, buildMonthGrid, shiftMonth } from "../lib/m
 import { useMutation } from "@tanstack/react-query";
 import { ApiError, api, type SavedView } from "../lib/api";
 import { useActiveOrg } from "../auth/ActiveOrgContext";
-import { Modal, useToast, useConfirm, usePageTitle, BulkActionBar, useFlowHost, useImageSrc, useRunAction, LOCATION_GROUP_KEY } from "@cobblr/platform-web";
+import { Modal, useToast, useConfirm, usePageTitle, BulkActionBar, useFlowHost, EntityPhoto, useRunAction, LOCATION_GROUP_KEY, TILE_GRID, TILE_TITLE, distinctSubtitle } from "@cobblr/platform-web";
 import { groupRows, fieldVal } from "../lib/view-group-key";
 import { useAreaResolver } from "../lib/useAreaResolver";
+import { useViewData, type ViewData } from "../lib/useViewData";
+import { ViewMore } from "../components/ViewMore";
 import {
   useKindFields,
+  humanize,
   FieldSelect,
   SortBuilder,
   FilterBuilder,
@@ -223,17 +226,11 @@ function ViewDataModal({
   slug: string;
   onClose: () => void;
 }) {
-  const data = useQuery({
-    // The view's kind rides in the key, so an action on one of its records
-    // refreshes it (platform-web run-action).
-    queryKey: ["view-data", slug, view.id, view.entity_kind],
-    queryFn: () => api.viewData(slug, view.id),
-  });
-  const items = data.data?.items ?? [];
+  const data = useViewData(slug, view.id, view.entity_kind);
 
   return (
     <Modal open onClose={onClose} title={view.name} size="lg">
-      <SavedViewBody view={view} items={items} isLoading={data.isLoading} collectionEmpty={data.data?.collection_empty} />
+      <SavedViewBody view={view} data={data} />
     </Modal>
   );
 }
@@ -244,15 +241,15 @@ function ViewDataModal({
  *  whether zero rows means an empty collection or a filter that hid it all. */
 export function SavedViewBody({
   view,
-  items,
-  isLoading,
-  collectionEmpty,
+  data,
 }: {
   view: SavedView;
-  items: ViewRow[];
-  isLoading: boolean;
-  collectionEmpty?: boolean;
+  /** The server's whole answer, never a bare array: a view that counted the
+   *  rows it had loaded read "50 3D printers" with 56 on file, so the count
+   *  here can only be the collection's `total`. */
+  data: ViewData;
 }) {
+  const { items, isLoading, collectionEmpty, unapplied, total } = data;
   const cfg = (view.config ?? {}) as ViewConfig;
   // Count reads in the collection's own noun ("5 books"), not DB-speak "5
   // rows" and not the kind's literal suffix ("5 items" about books).
@@ -287,8 +284,18 @@ export function SavedViewBody({
         <span className="px-1.5 py-0.5 rounded bg-cobble-50 dark:bg-cobble-900/30 text-accent dark:text-cobble-300 text-[10px]">
           {labels.viewType(view.view_type)}
         </span>
-        <span>{items.length} {items.length === 1 ? noun : plural}</span>
+        <span data-testid="view-count">
+          {total === null ? `${items.length}+` : total} {(total ?? items.length) === 1 ? noun : plural}
+        </span>
       </div>
+      {/* A filter the collection could not run used to vanish, so the rows
+          below read as the filtered set when they were everything. */}
+      {unapplied && unapplied.length > 0 && (
+        <p data-testid="view-unapplied" className="rounded border border-amber-300 dark:border-amber-800 bg-amber-50 dark:bg-amber-950/30 px-2 py-1 text-xs text-amber-900 dark:text-amber-200">
+          {unapplied.length === 1 ? "One filter" : `${unapplied.length} filters`} in this view could not run, so these are not narrowed by{" "}
+          {unapplied.map((p) => `${p.col} ${p.op} ${p.ref_col ?? String(p.value ?? "")}`).join(", ")}.
+        </p>
+      )}
       {isLoading && <div className="text-sm text-muted">Loading…</div>}
       {/* Before the renderer switch, so no renderer can ship without it. */}
       {items.length === 0 && !isLoading && (
@@ -305,6 +312,8 @@ export function SavedViewBody({
       )}
       {items.length > 0 && view.view_type === "table" && (
         <TableRenderer
+          slug={activeSlug}
+          kind={view.entity_kind}
           items={items}
           columns={cfg.visible_fields}
           groupBy={cfg.group_by}
@@ -352,6 +361,9 @@ export function SavedViewBody({
       {items.length > 0 && view.view_type !== "kanban" && view.view_type !== "table" && view.view_type !== "trend" && view.view_type !== "calendar" && view.view_type !== "gantt" && view.view_type !== "gallery" && view.view_type !== "heatmap" && view.view_type !== "vending" && (
         <ListRenderer items={items} />
       )}
+      {/* Past the server's walk (thousands of records) the rest is paged in
+          here, visibly: a view never passes a page off as the whole. */}
+      <ViewMore data={data} />
     </div>
   );
 }
@@ -496,7 +508,7 @@ function CalendarRenderer({ items, cfg }: { items: ViewRow[]; cfg: ViewConfig })
                 <div className={"text-[11px] font-mono mb-0.5 px-1 " + (key === todayKey ? "inline-flex items-center justify-center w-5 h-5 rounded-full bg-accent text-white" : inMonth ? "text-content dark:text-mortar-200" : "text-faint dark:text-slate-600")}>{day.getDate()}</div>
                 <div className="space-y-0.5">
                   {dayRows.slice(0, 4).map((r) => (
-                    <RecordLink key={`${r.kind}:${r.id}`} row={r} className="block truncate rounded px-1 py-0.5 text-[10px] leading-tight bg-cobble-100 text-accent dark:bg-cobble-900/40 dark:text-cobble-200 hover:underline">{cellTitle(r)}</RecordLink>
+                    <RecordLink key={`${r.kind}:${r.id}`} row={r} card className="block truncate rounded px-1 py-0.5 text-[10px] leading-tight bg-cobble-100 text-accent dark:bg-cobble-900/40 dark:text-cobble-200 hover:underline">{cellTitle(r)}</RecordLink>
                   ))}
                   {dayRows.length > 4 && <div className="text-[9px] text-faint dark:text-slate-500 px-1">+{dayRows.length - 4} more</div>}
                 </div>
@@ -583,8 +595,9 @@ function GanttRenderer({ items, cfg }: { items: ViewRow[]; cfg: ViewConfig }) {
       </div>
       <div className="border border-line dark:border-slate-700 rounded overflow-hidden">
         {bars.map((b, i) => (
-          <div
+          <RecordCard
             key={`${b.r.kind}:${b.r.id}`}
+            row={b.r}
             className={"flex items-stretch " + (i % 2 ? "bg-subtle/40 dark:bg-slate-900/40" : "")}
           >
             <div
@@ -615,7 +628,7 @@ function GanttRenderer({ items, cfg }: { items: ViewRow[]; cfg: ViewConfig }) {
                 title={`${fmt(b.start)}${b.milestone ? " (milestone)" : ` – ${fmt(b.end)}`}`}
               />
             </div>
-          </div>
+          </RecordCard>
         ))}
       </div>
       <div className="flex flex-wrap gap-3 text-[10px] font-mono text-faint dark:text-slate-500 px-1">
@@ -634,15 +647,71 @@ function GanttRenderer({ items, cfg }: { items: ViewRow[]; cfg: ViewConfig }) {
  *  nothing, so a book was only reachable from the Table tab (#3583), and the
  *  table, calendar and gantt had the same gap
  *  (every-row-a-view-draws-opens-its-record.test.tsx). */
-function RecordLink({ row, className, children }: { row: ViewRow; className?: string; children: ReactNode }) {
+function RecordLink({
+  row,
+  className,
+  children,
+  card,
+  "data-testid": testId,
+}: {
+  row: ViewRow;
+  className?: string;
+  children: ReactNode;
+  /** The link IS the whole card (a cover tile, a calendar entry). */
+  card?: boolean;
+  "data-testid"?: string;
+}) {
   const { activeSlug } = useActiveOrg();
   const routeFor = useDetailRoute(activeSlug);
   const href = routeFor(row.kind, row.id, (row as { detailUrl?: string | null }).detailUrl);
-  if (!href) return <span className={className}>{children}</span>;
+  const cardMark = card ? { "data-record-card": "" } : {};
+  if (!href) return <span data-testid={testId} className={className} {...cardMark}>{children}</span>;
   return (
-    <Link to={href} className={className}>
+    <Link to={href} data-testid={testId} className={className} {...cardMark}>
       {children}
     </Link>
+  );
+}
+
+/** A card a renderer draws for one record (a slot on the vending wall, a
+ *  board card, a list or table row, a gantt row) opens that record from
+ *  anywhere on it, the way a phone is held: on the wall only the photo and the
+ *  name were links, so a tap on the count or the empty middle of the card did
+ *  nothing (#3868). The card's own controls (the steppers, a checkbox, a link
+ *  inside it) keep their tap. The title link stays the door for the keyboard;
+ *  the card itself is not a second tab stop. */
+function RecordCard({
+  row,
+  as = "div",
+  className,
+  children,
+  "data-testid": testId,
+}: {
+  row: ViewRow;
+  as?: "div" | "li" | "tr";
+  className?: string;
+  children: ReactNode;
+  "data-testid"?: string;
+}) {
+  const { activeSlug } = useActiveOrg();
+  const routeFor = useDetailRoute(activeSlug);
+  const navigate = useNavigate();
+  const href = routeFor(row.kind, row.id, (row as { detailUrl?: string | null }).detailUrl);
+  const Tag = as;
+  return (
+    <Tag
+      data-record-card=""
+      data-testid={testId}
+      className={(className ?? "") + (href ? " cursor-pointer" : "")}
+      onClick={(e: MouseEvent<HTMLElement>) => {
+        if (!href || e.defaultPrevented) return;
+        const own = (e.target as HTMLElement).closest("a, button, input, select, textarea, label, [role='button']");
+        if (own && e.currentTarget.contains(own)) return;
+        navigate(href);
+      }}
+    >
+      {children}
+    </Tag>
   );
 }
 
@@ -683,6 +752,7 @@ function VendingRenderer({ items, cfg }: { items: ViewRow[]; cfg: ViewConfig }) 
   // refreshes every query showing the record's kind, wherever this grid is
   // embedded. This used to invalidate the two keys it knew, and the page it
   // lives on read through a third (#2969).
+  // PRESS-ARGS: use-one and restock-one require nothing; the tap adds its timezone.
   const runAction = useRunAction();
 
   /** One tap. `dir` is -1 for "used one", +1 for "another arrived". */
@@ -772,7 +842,7 @@ function VendingRenderer({ items, cfg }: { items: ViewRow[]; cfg: ViewConfig }) 
           </button>
         )}
       </div>
-    <div className="grid grid-cols-2 gap-3 md:grid-cols-3 lg:grid-cols-4 2xl:grid-cols-5">
+    <div className={TILE_GRID}>
       {items.map((row) => {
         const f = row.fields ?? {};
         const qty = num(pick(f, qtyField));
@@ -873,12 +943,12 @@ function VendingTile({
   busy: boolean;
   onTap: (dir: -1 | 1) => void;
 }) {
-  const src = useImageSrc(image);
   const title = row.title ?? "";
   const stepper =
     "flex-1 rounded-md border border-line dark:border-slate-600 bg-panel dark:bg-slate-900 py-2.5 text-lg font-bold text-content dark:text-slate-100 disabled:opacity-40 active:scale-95 transition";
   return (
-    <div
+    <RecordCard
+      row={row}
       data-testid="vending-tile"
       className={
         "relative flex flex-col overflow-hidden rounded-lg border transition " +
@@ -887,28 +957,27 @@ function VendingTile({
           : "border-line dark:border-slate-700 bg-subtle dark:bg-slate-800 hover:border-cobble-400")
       }
     >
-      <RecordLink row={row} className={"relative block aspect-[4/3] bg-panel dark:bg-slate-900 " + (out ? "opacity-60" : "")}>
-        {src ? (
-          <img src={src} alt={title} className="h-full w-full object-cover" loading="lazy" />
-        ) : (
-          <span className="flex h-full w-full items-center justify-center font-display text-3xl font-bold text-faint dark:text-slate-600">
-            {title.slice(0, 1).toUpperCase()}
-          </span>
-        )}
-        <span className={`absolute right-2 top-2 h-3 w-3 rounded-full ring-2 ring-white/80 dark:ring-slate-900/80 ${dot}`} aria-hidden />
-        {qty !== null && !out && (
-          <span className="absolute bottom-2 right-2 rounded-full border border-line dark:border-slate-600 bg-panel dark:bg-slate-900 px-2 py-0.5 text-sm font-bold shadow-sm text-content dark:text-slate-100">
-            ×{qty}
-          </span>
-        )}
-        {out && (
-          <span className="absolute bottom-2 left-2 rounded bg-red-500/90 px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-wider text-white">
-            Sold out
-          </span>
-        )}
+      {/* Every slot is the same 4:3 box whatever its photo: the frame sizes it
+          before the picture arrives, so a tall bag cannot stretch its row. */}
+      <RecordLink row={row} className={"relative block " + (out ? "opacity-60" : "")}>
+        <EntityPhoto src={image} alt={title} aspect="4/3" className="bg-panel dark:bg-slate-900">
+          <span className={`absolute right-2 top-2 h-3 w-3 rounded-full ring-2 ring-white/80 dark:ring-slate-900/80 ${dot}`} aria-hidden />
+          {qty !== null && !out && (
+            <span className="absolute bottom-2 right-2 rounded-full border border-line dark:border-slate-600 bg-panel dark:bg-slate-900 px-2 py-0.5 text-sm font-bold shadow-sm text-content dark:text-slate-100">
+              ×{qty}
+            </span>
+          )}
+          {out && (
+            <span className="absolute bottom-2 left-2 rounded bg-red-500/90 px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-wider text-white">
+              Sold out
+            </span>
+          )}
+        </EntityPhoto>
       </RecordLink>
       <div className="flex flex-1 flex-col p-3">
-        <EntityTitleLink row={row} className="block text-base font-semibold leading-snug" />
+        {/* Two lines kept for every title, so the meta under it sits at the
+            same height in every slot along the row. */}
+        <EntityTitleLink row={row} className="min-h-[2.75rem] text-base font-semibold leading-snug line-clamp-2" />
         <div className="mt-0.5 text-xs text-muted dark:text-slate-400">{meta}</div>
         <div
           data-testid="vending-steppers"
@@ -934,7 +1003,7 @@ function VendingTile({
           </button>
         </div>
       </div>
-    </div>
+    </RecordCard>
   );
 }
 
@@ -942,14 +1011,14 @@ function ListRenderer({ items }: { items: ViewRow[] }) {
   return (
     <ul className="divide-y divide-line dark:divide-slate-800 border border-line dark:border-slate-700 rounded">
       {items.map((row) => (
-        <li key={`${row.kind}:${row.id}`} className="px-3 py-2 text-sm">
+        <RecordCard as="li" key={`${row.kind}:${row.id}`} row={row} className="px-3 py-2 text-sm">
           <div className="flex items-baseline gap-3">
             <EntityTitleLink row={row} className="font-medium" />
             {row.subtitle && (
               <span className="text-xs text-muted">{row.subtitle}</span>
             )}
           </div>
-        </li>
+        </RecordCard>
       ))}
     </ul>
   );
@@ -981,8 +1050,10 @@ function KanbanRenderer({
           </div>
           <ul className="p-2 space-y-1.5">
             {rows.map((r) => (
-              <li
+              <RecordCard
+                as="li"
                 key={`${r.kind}:${r.id}`}
+                row={r}
                 className="px-2 py-1.5 text-xs rounded bg-surface dark:bg-slate-800 border border-line dark:border-slate-700"
               >
                 <div className="font-medium truncate">
@@ -993,7 +1064,7 @@ function KanbanRenderer({
                     {r.subtitle}
                   </div>
                 )}
-              </li>
+              </RecordCard>
             ))}
           </ul>
         </div>
@@ -1002,12 +1073,16 @@ function KanbanRenderer({
   );
 }
 
-function TableRenderer({
+export function TableRenderer({
+  slug,
+  kind,
   items,
   columns,
   groupBy,
   selection,
 }: {
+  slug: string;
+  kind: string;
   items: ViewRow[];
   columns?: string[];
   groupBy?: string;
@@ -1017,6 +1092,11 @@ function TableRenderer({
   // Default to title + subtitle when no visible_fields declared.
   // When declared, render each as a column read from row.fields.
   const cols = columns && columns.length > 0 ? columns : ["title", "subtitle"];
+  // Each column under the collection's own word for it (useKindFields reads
+  // the field defs and the collection's relabels), never the storage key:
+  // "drink_by" and "manufacturer" headed Wine's Ready to drink.
+  const fields = useKindFields(slug, kind);
+  const headerOf = (c: string) => (c === "title" ? "Name" : c === "subtitle" ? "" : fields.find((f) => f.name === c)?.label ?? humanize(c));
   // The cell that opens the record: its title, or the first column when a
   // view shows no title.
   const linkCol = cols.includes("title") ? "title" : cols[0];
@@ -1033,7 +1113,7 @@ function TableRenderer({
   }
 
   const Row = (r: ViewRow) => (
-    <tr key={`${r.kind}:${r.id}`} className="border-b border-line dark:border-slate-800 last:border-b-0">
+    <RecordCard as="tr" key={`${r.kind}:${r.id}`} row={r} className="border-b border-line dark:border-slate-800 last:border-b-0 hover:bg-subtle/40 dark:hover:bg-slate-800/40">
       {selection && (
         <td className="px-2 py-1.5 align-top w-8">
           <input
@@ -1053,7 +1133,7 @@ function TableRenderer({
           )}
         </td>
       ))}
-    </tr>
+    </RecordCard>
   );
 
   return (
@@ -1067,7 +1147,7 @@ function TableRenderer({
                 key={c}
                 className="px-3 py-1.5 text-left font-mono text-[10px] uppercase text-muted tracking-wider"
               >
-                {c}
+                {headerOf(c)}
               </th>
             ))}
           </tr>
@@ -1113,36 +1193,26 @@ function formatCell(col: string, row: ViewRow): string {
 // for the image and cfg.caption_field for an optional caption under the title.
 // Rows without an image show a title-initial tile. This is the signature view
 // for a catalog (films, books, recipes). See one-record-substrate.md.
-// One gallery tile. Its own component because useImageSrc is a hook and the
-// grid maps over rows.
+// One gallery tile.
 //
 // image_path is free-form: an external catalog URL, or a relative core-files
-// path under /api/v1/orgs/:slug/modules/core-files/files/:id/raw. The internal
-// form needs the Bearer JWT, which <img src> cannot carry, so it 401s and the
-// tile shows a broken image. That is exactly what happened here: every cover in
-// a bookshelf gallery came back 401 while the LIST view beside it was fine,
-// because the list goes through EntityThumb and this did not. useImageSrc is
-// the one door for both (external passes through, internal is fetched with the
-// token and handed back as a blob: URL).
+// path that needs the Bearer JWT, which <img src> cannot carry. Every cover in
+// a bookshelf gallery once came back 401 while the LIST view beside it was
+// fine, because the list resolved its photo and this tile did not. EntityPhoto
+// is the one door for both: it resolves the path and gives the cover its 2:3
+// box before the picture arrives.
 function GalleryTile({ row, src, title, caption }: { row: ViewRow; src: string | null; title: string; caption: string }) {
-  const resolved = useImageSrc(src);
   return (
     <RecordLink
       row={row}
+      card
+      data-testid="gallery-tile"
       className="block rounded-lg border border-line dark:border-slate-700 bg-surface dark:bg-slate-900 overflow-hidden hover:border-accent transition"
     >
-      <div className="aspect-[2/3] bg-subtle dark:bg-slate-800 flex items-center justify-center overflow-hidden">
-        {resolved ? (
-          <img src={resolved} alt={title} className="w-full h-full object-cover" loading="lazy" />
-        ) : (
-          <span className="font-display text-2xl font-bold text-faint dark:text-slate-600">
-            {title.slice(0, 1).toUpperCase()}
-          </span>
-        )}
-      </div>
+      <EntityPhoto src={src} alt={title} aspect="2/3" />
       <div className="p-2">
-        <div className="truncate text-sm font-medium text-content dark:text-mortar-100">{title}</div>
-        {caption && <div className="truncate text-xs text-muted dark:text-slate-400">{caption}</div>}
+        <div data-tile-title title={title} className={`${TILE_TITLE} text-sm`}>{title}</div>
+        {distinctSubtitle(title, caption) && <div className="truncate text-xs text-muted dark:text-slate-400">{caption}</div>}
       </div>
     </RecordLink>
   );
@@ -1152,7 +1222,7 @@ function GalleryRenderer({ items, cfg }: { items: ViewRow[]; cfg: ViewConfig }) 
   const imageField = (cfg.image_field as string) || "image_path";
   const captionField = cfg.caption_field as string | undefined;
   return (
-    <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-3">
+    <div className={TILE_GRID}>
       {items.map((row) => {
         const raw = fieldVal(row.fields, imageField);
         const src = typeof raw === "string" && raw.trim() ? raw : null;

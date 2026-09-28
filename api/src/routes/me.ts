@@ -12,6 +12,7 @@ import { meta } from "../db/meta.js";
 import { deliveryTick } from "../platform/delivery-sweeper.js";
 import { requireAuth } from "../auth/middleware.js";
 import { mintTokenString } from "../auth/api-tokens.js";
+import { TOKEN_ACCESS } from "../auth/token-access.js";
 import { listScopeChoices, sanitizeScopes } from "../auth/scopes.js";
 import { hashPassword, verifyPassword } from "../auth/password.js";
 import { signSession } from "../auth/jwt.js";
@@ -1255,6 +1256,13 @@ const TokenCreate = z.object({
   source: z.string().max(60).optional(),
   /** Provenance payload — the wizard's answers ({ kind, action, org }). */
   meta: z.record(z.unknown()).optional(),
+  /** The one workspace this token may reach (id or slug). Omit for every
+   *  workspace you belong to. */
+  workspace: z.string().min(1).max(120).optional(),
+  /** look | change | full (token-access.ts). Omitted: `change` when the
+   *  token names a workspace, and the legacy full access when it names none,
+   *  so a script that minted tokens before this keeps getting what it got. */
+  access: z.enum(TOKEN_ACCESS).optional(),
 });
 
 // The capability scopes a token can be minted with (secret-free; for the
@@ -1269,12 +1277,16 @@ meRouter.get("/me/api-tokens", requireAuth, async (req, res, next) => {
   try {
     const rows = await meta
       .selectFrom("api_tokens")
+      .leftJoin("orgs as o", "o.id", "api_tokens.org_id")
       .select([
-        "id", "name", "token_prefix", "expires_at",
-        "last_used_at", "revoked_at", "created_at", "scopes", "source", "meta",
+        "api_tokens.id as id", "api_tokens.name as name", "api_tokens.token_prefix as token_prefix",
+        "api_tokens.expires_at as expires_at", "api_tokens.last_used_at as last_used_at",
+        "api_tokens.revoked_at as revoked_at", "api_tokens.created_at as created_at",
+        "api_tokens.scopes as scopes", "api_tokens.source as source", "api_tokens.meta as meta",
+        "api_tokens.access as access", "api_tokens.org_id as org_id", "o.name as org_name", "o.slug as org_slug",
       ])
-      .where("user_id", "=", req.session!.id)
-      .orderBy("created_at", "desc")
+      .where("api_tokens.user_id", "=", req.session!.id)
+      .orderBy("api_tokens.created_at", "desc")
       .execute();
     res.json({ items: rows });
   } catch (err) {
@@ -1310,6 +1322,31 @@ meRouter.post("/me/api-tokens", requireAuth, async (req, res, next) => {
     //
     // The realistic way in is not a typo. It is a deploy lag: the scope exists
     // in `main`, the instance runs an older build, and the mint "succeeds".
+    // A token held to a workspace names one its owner belongs to, read fresh:
+    // naming a workspace you left must not mint a key to it.
+    let orgId: string | null = null;
+    if (parsed.data.workspace) {
+      const w = parsed.data.workspace;
+      const membership = await meta
+        .selectFrom("org_memberships as m")
+        .innerJoin("orgs as o", "o.id", "m.org_id")
+        .select("o.id")
+        .where("m.user_id", "=", req.session!.id)
+        .where((eb) => (/^[0-9a-f-]{36}$/i.test(w) ? eb("o.id", "=", w) : eb("o.slug", "=", w)))
+        .executeTakeFirst();
+      if (!membership) {
+        res.status(400).json({ error: { code: "unknown_workspace", message: "You are not a member of that workspace. No token was created." } });
+        return;
+      }
+      orgId = membership.id;
+    }
+    // Capability scopes and an access level are two different kinds of token;
+    // one that claimed both would be read by whichever check ran first.
+    if ((parsed.data.scopes?.length ?? 0) > 0 && (parsed.data.access || orgId)) {
+      res.status(400).json({ error: { code: "scopes_and_access", message: "A token has capability scopes or a workspace and access level, not both." } });
+      return;
+    }
+    const access = parsed.data.access ?? (orgId ? "change" : null);
     const requested = parsed.data.scopes ?? [];
     const unknown = requested.filter((r) => !cleanScopes.includes(r));
     if (unknown.length > 0) {
@@ -1338,8 +1375,10 @@ meRouter.post("/me/api-tokens", requireAuth, async (req, res, next) => {
         source: parsed.data.source?.trim() || null,
         // jsonb: pg parses the JSON string on insert (same idiom as blueprint).
         meta: parsed.data.meta ? JSON.stringify(parsed.data.meta) : null,
+        org_id: orgId,
+        access,
       })
-      .returning(["id", "name", "token_prefix", "expires_at", "created_at", "scopes", "source", "meta"])
+      .returning(["id", "name", "token_prefix", "expires_at", "created_at", "scopes", "source", "meta", "org_id", "access"])
       .executeTakeFirstOrThrow();
     // Plaintext goes back exactly once. The DB only ever has the hash.
     res.status(201).json({ ...inserted, token: plaintext });

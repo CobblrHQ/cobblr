@@ -10,7 +10,7 @@ export {
 } from "./context";
 export { EntityActionsBar } from "./EntityActionsBar";
 export { RecordHeaderChips } from "./RecordHeaderChips";
-export { RecordFaces, FaceSection, FacesOn, useFaces, useFaceOn } from "./faces";
+export { RecordFaces, FaceSection, FacesOn, faceShows, useFaces, useFaceOn } from "./faces";
 export { useInvokeEntityAction } from "./use-invoke-action";
 export { useLater, type Later } from "./use-later";
 export { useFieldDraft, type FieldDraft } from "./use-field-draft";
@@ -18,9 +18,11 @@ export { useFieldPresentation, PresentationGate, type FieldPresentation } from "
 export { runAction, useRunAction, refreshAfterAction, queryShowsKinds, affectedKindsOf, type ActionBody, type ActionRun, type ActionAffected, type KindMeta } from "./run-action";
 export { changeWorkspaceShape, useChangeWorkspaceShape, afterWorkspaceShapeChange, queryFollowsWorkspaceShape, type ShapeMeta, type ChangeShapeOptions } from "./workspace-shape";
 export { ActionOutcome } from "./ActionOutcome";
+export { AskBeforeRun, type Asking } from "./AskBeforeRun";
 export { summariseParts, summaryLine, type TileSummary } from "./tileSummary";
 export { EntityChip } from "./EntityChip";
 export { EntityThumb } from "./EntityThumb";
+export { EntityPhoto, type EntityPhotoProps, type PhotoAspect } from "./EntityPhoto";
 export {
   wantsSwatch,
   colorSwatch,
@@ -43,13 +45,15 @@ export {
   type FlatLocation,
   type AreaContainerGroup,
 } from "./locationTree";
-export { EntityTile } from "./EntityTile";
+export { EntityTile, TILE_GRID, TILE_TITLE, distinctSubtitle } from "./EntityTile";
 export { ViewModeToggle, useViewMode, type ViewMode } from "./ViewModeToggle";
 export { useImageSrc } from "./useImageSrc";
 export { openAuthedFile, type OpenAuthedFileOptions } from "./openAuthedFile";
 export { FileIntake, FileIntakePanels, useFileIntake, describeLine, type IntakeLine, type FileIntakeOptions } from "./FileIntake";
 export { TableFileIntake, intakeSummary, type TableFileIntakeResult, type AskField } from "./TableFileIntake";
-export { PasswordInput, SecretInput, type PasswordInputProps } from "./PasswordInput";
+export { TableConnectorImport, importSummary, type SectionOutcome } from "./TableConnectorImport";
+export { MutationError, errorSentence } from "./MutationError";
+export { PasswordInput, SecretInput, AddressInput, NOT_A_LOGIN, type PasswordInputProps } from "./PasswordInput";
 export { NounChoiceButtons, nounChoiceHeading } from "./NounChoice";
 export { BulkActionBar } from "./BulkActionBar";
 export { CustomFieldsPanel, RelationSelect } from "./CustomFieldsPanel";
@@ -135,26 +139,30 @@ export {
   unregisterDetailPanel,
   hasDetailPanel,
   UNIVERSAL,
+  KERNEL_PANELS,
   type EntityDetailPanelCtx,
   type ContributedPanelSpec,
   type DetailPanelComponent,
 } from "./panels";
 export { Modal } from "./Modal";
 export { lockPageScroll, useLockPageScroll } from "./scrollLock";
-export { ContentsPanel } from "./ContentsPanel";
+export { ContentsPanel, useHoldsContents } from "./ContentsPanel";
 export { ToastProvider, useToast } from "./ToastContext";
 export { ConfirmProvider, useConfirm } from "./ConfirmContext";
 export { UnitInput } from "./UnitInput";
+export { InboxWaitingStrip } from "./InboxWaitingStrip";
 export { useUnits, type UseUnits } from "./useUnits";
 export { formatQuantity, formatUnit, resolveUnit, convertQuantity, unitLens } from "./units";
 export type {
   FieldRendererId,
   FieldType,
   PlatformAction,
+  PlatformDormantAction,
   PlatformActionBinding,
   PlatformFieldDef,
   PlatformResolvedEntity,
   PlatformWebApi,
+  PlatformWaitingScan,
   PlatformUnitDef,
   PlatformUnitInput,
   PlatformUnitVocabulary,
@@ -246,7 +254,7 @@ export { withPngDpi, readPngDpi, isPng, crc32, dpiToPixelsPerMetre } from "./png
 export { YIELDING_CLASS, useYieldToContent, pressableBeneath, samplePoints } from "./yield-to-content";
 export { FloatingChrome, type FloatingChromeProps, type FloatingAnchor } from "./FloatingChrome";
 export { registerBottomChrome, registerCornerChrome, stackBottomChrome, bottomClearance, layoutDockNow, BOTTOM_CHROME_HEIGHT_VAR, BOTTOM_CLEARANCE_VAR } from "./bottom-dock";
-export { OverlayLayer, PopoverLayer, BackdropLayer, OVERLAY_LAYER_CLASS, POPOVER_LAYER_CLASS, BACKDROP_LAYER_CLASS, type LayerProps } from "./fixed-layers";
+export { OverlayLayer, PopoverLayer, BackdropLayer, clampToViewport, POPOVER_GUTTER, OVERLAY_LAYER_CLASS, POPOVER_LAYER_CLASS, BACKDROP_LAYER_CLASS, type LayerProps, type PopoverLayerProps } from "./fixed-layers";
 export { LiveSurfaceProvider, useOverLiveSurface } from "./live-surface";
 export { describeUnreadableBody } from "./unreadableBody";
 
@@ -255,3 +263,4 @@ export {
   localFetch, isLocalAddress, localAccessAllowed, allowLocalAccess, revokeLocalAccess, LocalAccessDenied,
 } from "./local-network.js";
 export { viewCardFields, CARD_FIELDS_ON_CARD, type ViewCardFields } from "./view-card-fields";
+export { TableTitle } from "./TableTitle";

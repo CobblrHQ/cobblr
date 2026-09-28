@@ -5,13 +5,15 @@
 // tenant routing (milestone 3). Here we just establish "who is this
 // person and are they still active."
 
+import { isMcpProxyCall } from "./mcp-proxy.js";
 import type { NextFunction, Request, Response } from "express";
 import { meta } from "../db/meta.js";
 import { verifySession } from "./jwt.js";
 import { errors as joseErrors } from "jose";
 import { resolveApiToken } from "./api-tokens.js";
+import { tokenAccessAllows, type TokenAccess } from "./token-access.js";
 import { tokenScopeAllows } from "./scopes.js";
-import { runWithActor } from "../lib/request-context.js";
+import { runWithActor, runVia, type Via } from "../lib/request-context.js";
 import { env } from "../env.js";
 
 // Parse SUPERADMIN_EMAILS once at module load. Comma-separated list
@@ -50,6 +52,10 @@ export interface SessionUser {
    *  full-access token). When non-null, requireAuth has already clamped the
    *  request to these scopes' allowlist (`tokenScopeAllows`). */
   token_scopes: string[] | null;
+  /** A personal token's access level (token-access.ts); null = full, or not a token. */
+  token_access?: TokenAccess | null;
+  /** The one workspace a personal token is held to; null = every workspace. */
+  token_org_id?: string | null;
   /** True while the account carries a temp/admin-set password. Re-read from
    *  the DB on every request, so completing the reset (POST /me/password or
    *  /auth/password/reset) clears it immediately. `withTenant` refuses
@@ -153,6 +159,8 @@ const MCP_READ_PATHS: Array<string | RegExp> = [
   "/attention",
   "/activity",
   "/notifications",
+  // list_notifications reports the true unread total, not the page's
+  "/notifications/unread-count",
   "/calendar/events",
   // how the workspace is set up
   "/instances",
@@ -161,8 +169,9 @@ const MCP_READ_PATHS: Array<string | RegExp> = [
   "/modules/core-apps/apps",
   "/modules/core-templates/templates",
   "/modules/core-units/units",
-  // the capture queue + its put-away plan
-  /^\/modules\/core-scan\/inbox(\/stats)?$/,
+  // the capture queue, one item in full (get_scan_item: the id segment only,
+  // never an item's own sub-routes), and its put-away plan
+  /^\/modules\/core-scan\/inbox(\/stats|\/[A-Za-z0-9-]+)?$/,
   "/modules/core-scan/organize/plan/latest",
   // service history, cross-kind search, label codes
   "/modules/core-maintenance/entries",
@@ -274,6 +283,7 @@ export async function requireAuth(
     let mcpReadSlug: string | null = null;
     let mcpWriteSlug: string | null = null;
     let tokenScopes: string[] | null = null;
+    let tokenGrant: { access: TokenAccess | null; orgId: string | null; orgSlug: string | null } | null = null;
     let tokenIssuedAt: number | null = null; // JWT iat (seconds), session/app only
     if (token.startsWith("cbt_")) {
       const resolved = await resolveApiToken(token);
@@ -282,6 +292,17 @@ export async function requireAuth(
         authMethod = "api_token";
         apiTokenId = resolved.tokenId;
         tokenScopes = resolved.scopes;
+        // A connector's access token is for the MCP endpoint (its audience).
+        // That endpoint reaches REST through this api with its proxy secret
+        // (mcp-proxy.ts); from anywhere else the token is refused, so a token
+        // copied out of a connector is not a general API key.
+        if (resolved.audience && !isMcpProxyCall(req.headers)) {
+          res.status(401).json({ error: { code: "wrong_audience", message: "This token is for the MCP endpoint only." } });
+          return;
+        }
+        if (resolved.access || resolved.orgId) {
+          tokenGrant = { access: resolved.access, orgId: resolved.orgId, orgSlug: resolved.orgSlug };
+        }
       }
     } else {
       const claims = await verifySession(token);
@@ -379,6 +400,17 @@ export async function requireAuth(
       });
       return;
     }
+    // A personal token held to one workspace and an access level (token-access.ts).
+    // A token whose workspace was deleted has an org id and no slug: it reaches nothing.
+    if (tokenGrant) {
+      const verdict = tokenGrant.orgId && !tokenGrant.orgSlug
+        ? ({ ok: false, code: "token_workspace_gone", message: "This token's workspace no longer exists." } as const)
+        : tokenAccessAllows({ access: tokenGrant.access, orgSlug: tokenGrant.orgSlug }, req.method, req.originalUrl);
+      if (!verdict.ok) {
+        res.status(403).json({ error: { code: verdict.code, message: verdict.message } });
+        return;
+      }
+    }
     req.session = {
       id: user.id,
       email: user.email,
@@ -388,6 +420,8 @@ export async function requireAuth(
       is_platform_admin: isPlatformAdmin(user.email),
       app_scope: appScope,
       token_scopes: tokenScopes,
+      token_access: tokenGrant?.access ?? null,
+      token_org_id: tokenGrant?.orgId ?? null,
       must_reset_password: user.must_reset_password,
       // How a titled work's title reads for this person: served rows are
       // composed with it (core-scan's withTitle), so every surface shows the
@@ -397,9 +431,20 @@ export async function requireAuth(
     // Wrap the rest of the request chain in actor context so any
     // deeply-nested activity.log() call automatically picks up
     // user id + auth method + token id.
+    // HOW this request acts, for the activity row (#3833): the in-app
+    // assistant (a grant with an mcp-read / mcp-write audience) or an
+    // assistant over MCP (the MCP server says so on every call it makes with
+    // the member's API token). A token call without the header stays "via
+    // <token>", which the token's own name already describes.
+    const via: Via | null =
+      mcpWriteSlug || mcpReadSlug
+        ? { kind: "assistant" }
+        : authMethod === "api_token" && String(req.headers["x-cobblr-client"] ?? "").toLowerCase() === "mcp"
+          ? { kind: "mcp" }
+          : null;
     runWithActor(
       { userId: user.id, authMethod, apiTokenId, titlePref: user.title_pref ?? null },
-      () => next(),
+      () => (via ? runVia(via, () => next()) : next()),
     );
   } catch (err) {
     // A token that does not verify is 401. A lookup that could not run is

@@ -35,7 +35,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { useLocation, useNavigate, useSearchParams } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { AlertTriangle, ArrowLeftRight, ArrowRight, Camera, Check, Flashlight, ImagePlus, Loader2, MapPin, Package, Plus, ScanLine, SkipForward, Undo2, X, Zap } from "lucide-react";
+import { AlertTriangle, ArrowLeftRight, ArrowRight, Camera, Check, Flashlight, Hash, ImagePlus, Loader2, MapPin, Package, Plus, ScanLine, SkipForward, Undo2, X, Zap } from "lucide-react";
 import { useLater, LiveSurfaceProvider, Modal, usePageTitle, useOverlayOpenFlag, useLockPageScroll } from "@cobblr/platform-web";
 import { classifyScanPayload, scannerIgnores, typedVerdict } from "../lib/scanPayload";
 import { doorPlan, frameFromImage, type DoorPlan } from "../lib/imageDoor";
@@ -59,6 +59,7 @@ import {
   createBarcodeReader,
   setTorch,
 } from "../lib/barcodeScanner";
+import { applyLight, readLightPrefs, writeLightPrefs } from "../lib/cameraLight";
 import { armScanAudio, scanBeep } from "../lib/scanFeedback";
 import {
   sampleVideoLuma,
@@ -67,7 +68,7 @@ import {
   torchAutoSample,
 } from "../lib/torchAuto";
 import { frameClockInitial, noteFrame, noteResume, shouldReacquire } from "../lib/videoLiveness";
-import { zoomInitial, zoomPlan, zoomRange } from "../lib/scanZoom";
+import { zoomInitial, zoomManual, zoomPlan, zoomRange } from "../lib/scanZoom";
 import { ScanResultModal } from "./ScanResultModal";
 import { ScanCaptureDrawer } from "./ScanCaptureDrawer";
 import { InstallOfferAfterScan } from "../components/InstallWalk";
@@ -237,13 +238,15 @@ export function ScanCameraPage() {
   const frameBlobRef = useRef<Promise<Blob | null> | null>(null);
   const [hasTorch, setHasTorch] = useState(false);
   const [torchOn, setTorchOn] = useState(false);
-  // Auto-flash: "you're trying to scan and it's dark, so let me help." The
-  // top-left button is the MODE switch (auto on/off, default on); the small
-  // button by the shutter is the manual override. All the strobe-avoidance
-  // lives in the pure torchAuto machine; this page only applies its intents
-  // and turns the torch off on lifecycle events (sheet up, close).
-  const [autoTorch, setAutoTorch] = useState(true);
-  const autoTorchRef = useRef(true);
+  // Auto light: "you're trying to scan and it's dark, so let me help." The
+  // top-left button is the MODE switch, OFF until the person turns it on and
+  // remembered on this device (cameraLight.ts, #3933: it used to start ON on
+  // every open, so the light kept coming on by itself). The small button by
+  // the shutter is the manual flashlight. All the strobe-avoidance lives in
+  // the pure torchAuto machine; this page only applies its intents, through
+  // applyLight, and turns the torch off on lifecycle events (sheet up, close).
+  const [autoTorch, setAutoTorch] = useState(() => readLightPrefs().autoLight);
+  const autoTorchRef = useRef(readLightPrefs().autoLight);
   const torchAutoRef = useRef(torchAutoInitial());
   /** Who lit the torch. Lifecycle offs only touch "auto"; a manual torch
    *  stays lit until the user (or the stream dying) says otherwise. */
@@ -271,6 +274,9 @@ export function ScanCameraPage() {
   // an experiment you set by hand must not be steered from underneath.
   const zoomRef = useRef(zoomInitial());
   const zoomRangeRef = useRef<{ min: number; max: number } | null>(null);
+  /** What the zoom chip shows: the camera's range (null = this browser cannot
+   *  zoom the camera) and the level the lens is at now. */
+  const [zoomUi, setZoomUi] = useState<{ range: { min: number; max: number } | null; level: number }>({ range: null, level: 1 });
   const autoZoomOffRef = useRef(false);
 
   // Scan area — stamped as `scan_area` (free text, the location's name) on
@@ -464,6 +470,11 @@ export function ScanCameraPage() {
       return !v;
     });
   }, []);
+  // Count mode (a stocktake at a shelf): a scan of something you already have
+  // opens its count in Set total, so the number you type is the number on
+  // the shelf, filed as a correction. Everywhere else a scan starts in Change
+  // by, what is in your hands (#3884). Remembered like Move and Sort.
+  const [countMode, setCountMode] = useState(() => localStorage.getItem("cobblr-scan-count-mode") === "1");
   // In-session MOVE HISTORY ("↶ Undo last N"): every auto/manual move
   // pushes here; each undo pops the most recent and re-files the entity where
   // it was — repeated taps walk back through the whole run. Only moves with a
@@ -689,6 +700,12 @@ export function ScanCameraPage() {
   const [sortCount, setSortCount] = useState(0);
   const sortSessionRef = useRef<string | null>(null);
   const sortRerouteTimer = useRef<number | null>(null);
+  const toggleCountMode = useCallback(() => {
+    setCountMode((v) => {
+      localStorage.setItem("cobblr-scan-count-mode", v ? "0" : "1");
+      return !v;
+    });
+  }, []);
   const toggleSortMode = useCallback(() => {
     setSortMode((v) => {
       localStorage.setItem("cobblr-scan-sort-mode", v ? "0" : "1");
@@ -1337,9 +1354,18 @@ export function ScanCameraPage() {
       const track = stream.getVideoTracks()[0] ?? null;
       hasTorchRef.current = cameraHasTorch(track);
       setHasTorch(hasTorchRef.current);
+      // The person left the flashlight on last time: that is asking.
+      if (hasTorchRef.current && readLightPrefs().torch) {
+        void applyLight(track, "remembered", true).then((ok) => {
+          if (!ok) return;
+          torchOwnerRef.current = "manual";
+          setTorchOn(true);
+        });
+      }
       zoomRangeRef.current = zoomRange(track);
       autoZoomOffRef.current = numericOverride("zoom", 0, 10) > 0;
       zoomRef.current = zoomInitial();
+      setZoomUi({ range: zoomRangeRef.current, level: 1 });
     }
 
     async function start() {
@@ -1562,7 +1588,10 @@ export function ScanCameraPage() {
     const track = streamRef.current?.getVideoTracks()[0] ?? null;
     void track
       ?.applyConstraints({ advanced: [{ zoom: clamped }] } as unknown as MediaTrackConstraints)
-      .then(() => recordZoom(clamped))
+      .then(() => {
+        recordZoom(clamped);
+        setZoomUi((z) => ({ ...z, level: clamped }));
+      })
       .catch(() => {
         // Refused → stop trying, and SAY so in ?diag=1 rather than silently
         // pretending the lens moved (the swallow class that has bitten this
@@ -1570,6 +1599,24 @@ export function ScanCameraPage() {
         autoZoomOffRef.current = true;
         recordZoom(null);
       });
+  }, []);
+
+  /** The zoom chip: the person picks a zoom, the lens goes there, and nothing
+   *  automatic moves it again this session (#3933: auto-zoom fought a person
+   *  bringing the phone closer, with no way back out). */
+  const pickZoom = useCallback((level: number) => {
+    const range = zoomRangeRef.current;
+    if (!range) return;
+    const clamped = Math.min(range.max, Math.max(range.min, level));
+    zoomRef.current = zoomManual(zoomRef.current, clamped);
+    const track = streamRef.current?.getVideoTracks()[0] ?? null;
+    void track
+      ?.applyConstraints({ advanced: [{ zoom: clamped }] } as unknown as MediaTrackConstraints)
+      .then(() => {
+        recordZoom(clamped);
+        setZoomUi((z) => ({ ...z, level: clamped }));
+      })
+      .catch(() => recordZoom(null));
   }, []);
 
   /** The watchdog. Called from both decode loops every tick; only judges while
@@ -1624,7 +1671,7 @@ export function ScanCameraPage() {
     torchAutoRef.current = state;
     if (!turn) return;
     const track = streamRef.current?.getVideoTracks()[0] ?? null;
-    void setTorch(track, turn === "on").then((ok) => {
+    void applyLight(track, "auto", turn === "on").then((ok) => {
       if (!ok) {
         // Never swallow the failure silently — and stop retrying every tick.
         recordTorchEvent("apply-failed");
@@ -1644,6 +1691,7 @@ export function ScanCameraPage() {
     setAutoTorch((prev) => {
       const next = !prev;
       autoTorchRef.current = next;
+      writeLightPrefs({ autoLight: next });
       autoSuppressedRef.current = false;
       torchAutoRef.current = torchAutoInitial();
       if (!next && torchOwnerRef.current === "auto") {
@@ -1661,8 +1709,10 @@ export function ScanCameraPage() {
   const toggleTorch = useCallback(async () => {
     const track = streamRef.current?.getVideoTracks()[0] ?? null;
     const next = !torchOn;
-    const ok = await setTorch(track, next);
+    const ok = await applyLight(track, "manual", next);
     if (!ok) return;
+    // Remembered on this device: left on, it comes back on at the next open.
+    writeLightPrefs({ torch: next });
     recordTorchEvent(next ? "manual-on" : "manual-off");
     if (next) {
       torchOwnerRef.current = "manual";
@@ -2222,11 +2272,12 @@ export function ScanCameraPage() {
           <button
             type="button"
             onClick={toggleAutoTorch}
-            aria-label="Automatic flash"
+            aria-label="Auto light"
+            aria-pressed={autoTorch}
             title={
               autoTorch
-                ? "Auto flash is ON - the light comes on by itself when the scene is dark. Tap to turn auto off."
-                : "Auto flash is OFF. Tap to let the light come on by itself when it's dark."
+                ? "Auto light is ON - the light may come on when a code in view won't read in the dark. Tap to turn it off."
+                : "Auto light is OFF - the light only comes on when you press the flashlight. Tap to let it help in the dark."
             }
             className={`relative rounded-full p-2.5 shrink-0 ${
               torchOn && autoTorch
@@ -2297,7 +2348,10 @@ export function ScanCameraPage() {
             in, tap Done. The streaming put-away session, on the camera. */}
         <button
           type="button"
-          onClick={toggleSortMode}
+          onClick={() => {
+            if (!sortMode && countMode) toggleCountMode();
+            toggleSortMode();
+          }}
           aria-pressed={sortMode}
           title="Sort mode: every scan gets a destination bin directive - put it there, tap Done, next"
           className={`inline-flex items-center gap-1 rounded-full px-2.5 py-1.5 text-xs shrink-0 ${
@@ -2305,6 +2359,23 @@ export function ScanCameraPage() {
           }`}
         >
           <Zap size={13} /> Sort
+        </button>
+        {/* Count mode — a stocktake: a scan of something you have opens in
+            Set total. Sort sends every scan to a bin instead of the sheet, so
+            the two never run together. */}
+        <button
+          type="button"
+          onClick={() => {
+            if (!countMode && sortMode) toggleSortMode();
+            toggleCountMode();
+          }}
+          aria-pressed={countMode}
+          title="Count mode: every scan of something you have asks for the total on the shelf"
+          className={`inline-flex items-center gap-1 rounded-full px-2.5 py-1.5 text-xs shrink-0 ${
+            countMode ? "bg-amber-500 text-white" : "bg-black/50 text-white/70 hover:bg-black/70"
+          }`}
+        >
+          <Hash size={13} /> Count
         </button>
         <button
           type="button"
@@ -2566,6 +2637,7 @@ export function ScanCameraPage() {
               rearm();
             }}
             moveMode={moveMode}
+            countMode={countMode}
             onAttached={(r, m, mode) => {
               if (mode === "move") {
                 setMoveStack((s) => [
@@ -2616,6 +2688,7 @@ export function ScanCameraPage() {
               }
             }}
             moveMode={moveMode}
+            countMode={countMode}
             onAttached={(r, m, mode) => {
               if (mode === "move") {
                 setMoveStack((s) => [
@@ -2719,6 +2792,13 @@ export function ScanCameraPage() {
             </button>
           </div>
         )}
+        {/* Over the viewfinder, centred above the shutter, where a phone's own
+            camera keeps its zoom: the bottom bar has no room at 390px. */}
+        {running && !(sheetOpen || !!reviewItem || (phase === "result" && !!pendingBarcode)) && (
+          <div className="flex justify-center">
+            <ZoomChip range={zoomUi.range} level={zoomUi.level} onPick={pickZoom} />
+          </div>
+        )}
         {!(sheetOpen || !!reviewItem || (phase === "result" && !!pendingBarcode)) && (
           <ManualScanField
             onLookup={(code) => {
@@ -2745,6 +2825,7 @@ export function ScanCameraPage() {
               type="button"
               onClick={() => void toggleTorch()}
               aria-label="Flashlight"
+              aria-pressed={torchOn}
               title="Flashlight"
               className={`rounded-full p-2 shrink-0 ${
                 torchOn ? "bg-amber-400 text-slate-900" : "bg-black/55 text-white hover:bg-black/70"
@@ -2926,5 +3007,42 @@ export function ScanCameraPage() {
     </div>
     </LiveSurfaceProvider>,
     document.body,
+  );
+}
+
+
+/** 1× / 2× beside the shutter. On a camera that reports no zoom (iOS Safari
+ *  does not let a page zoom the camera) it says so rather than offer buttons
+ *  that would do nothing. */
+function ZoomChip({ range, level, onPick }: { range: { min: number; max: number } | null; level: number; onPick: (z: number) => void }) {
+  if (!range) {
+    return (
+      <span
+        className="rounded-full bg-black/40 px-2.5 py-1.5 text-[11px] font-medium text-white/60"
+        title="This browser doesn't let Cobblr zoom the camera. Move the phone closer or further away instead."
+        aria-label="Zoom isn't available in this browser"
+        data-testid="zoom-unavailable"
+      >
+        1×
+      </span>
+    );
+  }
+  const stops = [1, 2].filter((z) => z >= range.min && z <= range.max);
+  return (
+    <span className="inline-flex rounded-full bg-black/55 p-0.5" role="group" aria-label="Zoom" data-testid="zoom-chip">
+      {stops.map((z) => (
+        <button
+          key={z}
+          type="button"
+          onClick={() => onPick(z)}
+          aria-pressed={Math.abs(level - z) < 0.25}
+          className={`min-w-[40px] rounded-full px-2 py-1.5 text-xs font-semibold ${
+            Math.abs(level - z) < 0.25 ? "bg-white dark:bg-white text-slate-900 dark:text-slate-900" : "text-white"
+          }`}
+        >
+          {z}×
+        </button>
+      ))}
+    </span>
   );
 }

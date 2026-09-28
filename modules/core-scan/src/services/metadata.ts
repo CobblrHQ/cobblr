@@ -65,6 +65,13 @@ export const IDENTIFY_OWNED_KEYS = [
   // and remedy read), and what the receipt-shape check made of the image.
   // Both are this pass's findings about THIS read; a new read replaces them.
   "identify_failure",
+  // Which AI answered when the first one asked did not (#3819): about this
+  // read, so a new read replaces it.
+  "ai_answered_by",
+  // A read queued for when the AI answers again, and the name a hint gave
+  // while it was away (hint-without-ai.ts): a read that lands settles both.
+  "ai_rerun_queued",
+  "renamed_from_hint",
   "receipt_shape",
   "receipt_decided_by",
   // NOT "purchases_order_id" / "receipt_group_id" on an item a person attached

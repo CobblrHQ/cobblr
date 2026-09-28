@@ -10,7 +10,7 @@ import { useEffect, useState } from "react";
 import { leadYours, rowPictures, scanFileUrl, yourPictures } from "../lib/rowPictures";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Camera, Check, CheckCircle, Loader2, MapPin, Plus, Printer, ScanLine, Trash2 } from "lucide-react";
-import { useImageSrc, useToast } from "@cobblr/platform-web";
+import { useToast, EntityPhoto } from "@cobblr/platform-web";
 import { ApiError, api, type ScanInboxItem, type TrackedMatch } from "../lib/api";
 import { useActiveOrg } from "../auth/ActiveOrgContext";
 import { useScanQuantity } from "../lib/scanQuantity";
@@ -20,12 +20,19 @@ import { TrackedMatchBanner } from "../components/TrackedMatchBanner";
 import { EntityActionChip } from "../components/EntityActionChip";
 import { useAiStatus } from "./ScanPage";
 import { AiOffMissHint } from "./ScanInboxCard";
-import { Link } from "react-router-dom";
-import { needsScanReview, scanReviewReason } from "@cobblr/platform-contract/scan-triage";
+import { Link, useNavigate } from "react-router-dom";
+import { filedIntoOf, needsScanReview, scanReviewReason, scanRowState, scanTrackedMatch } from "@cobblr/platform-contract/scan-triage";
 import { NO_MATCH_ASK_FOR_PHOTO, STORE_CODE_TITLE } from "@cobblr/platform-contract/scan-copy";
 import { itemEnriching } from "./scan-status";
 import { ScanNameItInline } from "../components/ScanNameItInline";
 import { scanInboxKeys } from "../lib/scan-inbox-keys";
+import { useScanViewer } from "./scanViewer";
+import { oneTapDestination, quickFileRow, stillRouting } from "./scanQuickFile";
+import { claimFirstFiling } from "../lib/filedRows";
+import { pointAtInNav } from "../lib/navPointer";
+import { announceJustFiled } from "../lib/justFiled";
+import { installToastLine } from "../lib/installSummary";
+import { useDetailRoute, useListRoute } from "../lib/useDetailRoute";
 
 export interface CameraScanTarget {
   into: string | null;
@@ -47,6 +54,7 @@ export function ScanResultModal({
   onAddPhoto,
   onEarly,
   moveMode,
+  countMode,
   onAttached,
 }: {
   barcode: string;
@@ -89,11 +97,14 @@ export function ScanResultModal({
   /** Move mode: a single exact "already tracked" barcode match
    *  auto-moves that entity to the active bin — no triage stop. */
   moveMode?: boolean;
+  /** Count mode (a stocktake): a scan of something you have opens its count
+   *  in Set total, the number you see being the number on the shelf. */
+  countMode?: boolean;
   /** Fired after an attach (manual or auto-move) so the camera can offer undo. */
   onAttached?: (
     r: { itemId: string; prevLocationId: string | null; entityTitle: string },
     match: TrackedMatch,
-    mode: "add-qty" | "replace" | "link-barcode" | "move" | "merge-fields",
+    mode: "add-qty" | "replace" | "link-barcode" | "move" | "merge-fields" | "count",
   ) => void;
 }) {
   const { activeSlug } = useActiveOrg();
@@ -144,8 +155,13 @@ export function ScanResultModal({
   const photoMismatch = !!modalMeta.photo_mismatch;
   // Keep the live poll going while the cross-check is unresolved, so the
   // "checking…" state flips to confirmed/corrected in-place (same 180s bound).
+  // And while the row has its name but not yet where it goes: the router
+  // answers a moment after the lookup, and the one-tap "Add to Yarn" below is
+  // made of that answer. Stopping at the name left the sheet saying "Saved to
+  // the inbox" over a row the inbox, a second later, offered to file (#3789).
+  const routingPending = !!item && stillRouting(item);
   const stillEnriching =
-    !!item && (!enrichedFully || photoCheckPending) && withinEnrichWindow;
+    !!item && (!enrichedFully || photoCheckPending || routingPending) && withinEnrichWindow;
   // What the sheet SAYS comes from the row's own state, never from a timer:
   // in flight only while the row genuinely has a lookup or identify running
   // (the same rule the inbox's spinner reads), flagged with the same reason
@@ -278,6 +294,50 @@ export function ScanResultModal({
     onError: (e) => toast.error(e instanceof ApiError ? e.message : String(e)),
   });
 
+  // ONE TAP FROM SCAN TO FILED (#3789). Opened from the plain camera there
+  // is no table picked, but the row already knows where it belongs: the same
+  // answer the inbox shows a moment later (scanRowState). So the sheet offers
+  // it here, "Add to Yarn", installing the table on the way when needed, and
+  // then opens that table, saying so once with the record a tap away
+  // (JustFiledNotice). The
+  // inbox is still where anything unsure goes.
+  const navigate = useNavigate();
+  const menuQ = useQuery({
+    queryKey: ["scan-menu", activeSlug],
+    queryFn: () => api.scanMenu(activeSlug),
+    enabled: !!activeSlug,
+    staleTime: 60_000,
+  });
+  const viewer = useScanViewer(menuQ.data?.items ?? null);
+  const rowState = item ? scanRowState(item, viewer) : null;
+  const oneTap =
+    !scanTarget.into && item && item.suggested_name && rowState && (rowState.eligibility === "ready" || rowState.eligibility === "needs-install")
+      ? oneTapDestination(item, rowState.destination)
+      : null;
+  const recordRoute = useDetailRoute(activeSlug);
+  const listRoute = useListRoute(activeSlug);
+  const fileHere = useMutation({
+    mutationFn: () => quickFileRow(activeSlug, item!, oneTap!),
+    onSuccess: ({ installed, filed }) => {
+      const into = filedIntoOf(filed.item.suggested_metadata);
+      const label = into?.label ?? oneTap!.label;
+      const first = claimFirstFiling(activeSlug);
+      if (first) pointAtInNav(activeSlug, label);
+      // The table it went to, where the visitor can see it among the rest,
+      // with the record itself one tap away on the notice.
+      const record = into?.kind ? recordRoute(into.kind, filed.created.id) : null;
+      const to = (into?.kind ? listRoute(into.kind) : null) ?? record;
+      onClose("handled");
+      if (to) {
+        announceJustFiled({ label, firstEver: first, installed: installed ? installToastLine(installed) : null, record: to === record ? null : record, path: to });
+        navigate(to);
+      } else {
+        toast.success(`Filed in ${label}.`);
+      }
+    },
+    onError: (e) => toast.error(e instanceof ApiError ? e.message : String(e)),
+  });
+
   const discard = useMutation({
     mutationFn: () => api.discardScanItem(activeSlug, item!.id),
     onSuccess: () => {
@@ -338,7 +398,7 @@ export function ScanResultModal({
   );
   const catalogImg = lead.src;
   const areaLabel = item?.scan_area ?? scanArea ?? null;
-  const busy = commit.isPending || discard.isPending || intoBin.isPending;
+  const busy = commit.isPending || discard.isPending || intoBin.isPending || fileHere.isPending;
 
   return (
     // Deliberately NO onClose: no grip-dismiss, no swipe-down, no ✕. A barcode
@@ -349,20 +409,15 @@ export function ScanResultModal({
     <CaptureSheetShell title="Scanned">
       <div className="space-y-4">
         <div className="flex items-center gap-3">
-          <div className="w-24 h-24 shrink-0 rounded-md overflow-hidden border border-line dark:border-slate-700 bg-subtle dark:bg-slate-800 flex items-center justify-center">
-            {catalogImg ? (
-              <img
-                src={catalogImg}
-                alt=""
-                onError={() => setBrokenSrcs((prev) => new Set(prev).add(catalogImg))}
-                className="w-full h-full object-cover"
-              />
-            ) : (
-              <ScanLine
-                size={24}
-                className={stillEnriching ? "text-faint animate-pulse" : "text-faint"}
-              />
-            )}
+          <div className="w-24 h-24 shrink-0 rounded-md overflow-hidden border border-line dark:border-slate-700">
+            <EntityPhoto
+              key={catalogImg ?? "none"}
+              src={catalogImg}
+              alt=""
+              size={96}
+              onBroken={() => catalogImg && setBrokenSrcs((prev) => new Set(prev).add(catalogImg))}
+              placeholder={<ScanLine size={24} className={stillEnriching ? "text-faint animate-pulse" : "text-faint"} />}
+            />
           </div>
           <div className="min-w-0 flex-1">
             {pending && !item ? (
@@ -523,10 +578,15 @@ export function ScanResultModal({
 
         {/* Quantity — the LOCKED stepper (shared with the drawer), not a
             circles-and-input variant of its own. */}
-        <div className="flex items-center justify-between">
-          <span className="text-[10px] font-mono uppercase tracking-widest text-muted">quantity</span>
-          <QtyStepper value={qty} onBump={bumpQty} big />
-        </div>
+        {/* A scan of something the workspace already counts says how many
+            in the match's own count (Change by / Set total) below; a second
+            stepper here would ask the same question twice (#3884). */}
+        {!(item && scanTrackedMatch(item)?.counted) && (
+          <div className="flex items-center justify-between">
+            <span className="text-[10px] font-mono uppercase tracking-widest text-muted">quantity</span>
+            <QtyStepper value={qty} onBump={bumpQty} big />
+          </div>
+        )}
 
         {/* "Already tracked" — act on the EXISTING entity
             instead of duplicating; in Move mode a single exact barcode match
@@ -537,6 +597,7 @@ export function ScanResultModal({
             locationId={scanAreaId ?? null}
             locationName={scanArea ?? null}
             autoMove={moveMode}
+            countMode={countMode ? "set" : "change"}
             onAttached={(r, m, mode) => {
               onAttached?.(
                 { itemId: item.id, prevLocationId: r.prev_location_id, entityTitle: r.entity_title },
@@ -569,6 +630,21 @@ export function ScanResultModal({
           >
             <CheckCircle size={15} /> Add to {scanTarget.label ?? scanTarget.into}
           </button>
+        ) : oneTap ? (
+          <div className="space-y-1">
+            <button
+              type="button"
+              data-testid="sheet-add-to"
+              disabled={busy}
+              onClick={() => fileHere.mutate()}
+              className="w-full h-11 inline-flex items-center justify-center gap-2 rounded-lg bg-cobble-600 hover:bg-cobble-700 text-white text-[14px] font-semibold px-3 disabled:opacity-50"
+            >
+              {fileHere.isPending ? <Loader2 size={15} className="animate-spin" /> : <CheckCircle size={15} />} Add to {oneTap.label}
+            </button>
+            {rowState?.eligibility === "needs-install" && (
+              <div className="text-center text-[11px] text-muted dark:text-slate-400">Sets up the {oneTap.label} table on the way.</div>
+            )}
+          </div>
         ) : (
           !looking &&
           item && (
@@ -632,13 +708,19 @@ export function ScanResultModal({
             </button>
           )}
         </div>
+        {/* With a one-tap destination above, keeping the scan for later is
+            the second choice, and says so: it goes to the inbox. */}
         <button
           type="button"
           disabled={busy}
           onClick={saveAndNext}
-          className="w-full h-11 inline-flex items-center justify-center gap-1.5 rounded-lg bg-cobble-600 hover:bg-cobble-700 text-white text-[13px] font-semibold disabled:opacity-50"
+          className={
+            oneTap
+              ? "w-full h-11 inline-flex items-center justify-center gap-1.5 rounded-lg border border-line dark:border-slate-600 text-content dark:text-mortar-100 text-[13px] font-medium disabled:opacity-50"
+              : "w-full h-11 inline-flex items-center justify-center gap-1.5 rounded-lg bg-cobble-600 hover:bg-cobble-700 text-white text-[13px] font-semibold disabled:opacity-50"
+          }
         >
-          <Check size={15} /> Save &amp; next
+          <Check size={15} /> {oneTap ? "Keep for later" : <>Save &amp; next</>}
         </button>
       </div>
     </CaptureSheetShell>
@@ -665,7 +747,6 @@ function StripTile({
   onTap?: () => void;
   busy?: boolean;
 }) {
-  const resolved = useImageSrc(src.startsWith("/api/") ? src : null) ?? (src.startsWith("/api/") ? null : src);
   return (
     <button
       type="button"
@@ -683,7 +764,7 @@ function StripTile({
         (onTap ? " cursor-pointer" : "")
       }
     >
-      {resolved ? <img src={resolved} alt="" className="w-full h-full object-cover" /> : <Camera size={14} className="text-faint" />}
+      <EntityPhoto src={src} alt="" fill placeholder={<Camera size={14} className="text-faint" />} />
       {checking && !active && (
         // Inset, never protruding: the tile clips its overflow.
         <span className="absolute inset-x-0 bottom-0 bg-black/65 text-[8px] leading-[11px] text-amber-200 text-center">

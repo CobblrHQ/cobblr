@@ -8,7 +8,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Plus, X } from "lucide-react";
 import { useInventory } from "./context";
 import { InventoryApiError, type InvFieldDef } from "./api";
-import { NounChoiceButtons, changeWorkspaceShape, nounChoiceHeading, usePageTitle } from "@cobblr/platform-web";
+import { NounChoiceButtons, changeWorkspaceShape, nounChoiceHeading, usePageTitle, MutationError } from "@cobblr/platform-web";
 
 export function SettingsPage() {
   usePageTitle("Inventory settings");
@@ -75,6 +75,7 @@ function NounCard() {
       >
         {save.isPending ? "Saving…" : "Save"}
       </button>
+      <MutationError mutation={save} className="block mt-2" />
     </div>
   );
 }
@@ -153,6 +154,7 @@ function StockTrackingCard() {
         <option value="stock">Always track stock</option>
         <option value="catalog">Catalog only (no stock)</option>
       </select>
+      <MutationError mutation={save} className="block mt-2" />
     </div>
   );
 }

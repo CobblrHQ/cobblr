@@ -1,4 +1,4 @@
-import { platform, parseSort, textSearchWhere, type EntityListQuery, type ResolvedEntity } from "@cobblr/platform-contract";
+import { columnSet, platform, parseSort, textSearchWhere, type EntityListQuery, type ResolvedEntity } from "@cobblr/platform-contract";
 import { sql, type Kysely } from "kysely";
 import type { AssetsDB } from "../db.js";
 
@@ -7,7 +7,7 @@ let registered = false;
 // Native columns the list resolver will order by; anything else is dropped by
 // parseSort rather than reaching SQL. Union of the NATIVE/COMPARABLE filter
 // whitelists below plus name.
-const SORTABLE = new Set([
+const SORTABLE = columnSet<AssetsDB["assets_assets"]>()([
   "name",
   "state",
   "type",
@@ -72,7 +72,7 @@ export function registerAssetsResolvers(): void {
     if (instance) q = q.where("instance", "=", instance as never);
     if (query.q?.trim()) q = q.where((eb) => textSearchWhere(eb, query.q, { text: ["name", "short_name", "manufacturer", "model", "serial_number", "type", "notes", "state"], json: ["metadata"] })!);
     if (query.filter) {
-      const NATIVE = new Set(["state", "location_id", "type", "manufacturer"]);
+      const NATIVE = columnSet<AssetsDB["assets_assets"]>()(["state", "location_id", "type", "manufacturer"]);
       for (const [key, val] of Object.entries(query.filter)) {
         if (val === undefined || val === null) continue;
         if (key === "_tag") {
@@ -103,7 +103,7 @@ export function registerAssetsResolvers(): void {
     // D10: comparison predicates. Whitelist of comparable columns so
     // unknown / bogus cols fall through silently.
     if (query.where) {
-      const COMPARABLE = new Set([
+      const COMPARABLE = columnSet<AssetsDB["assets_assets"]>()([
         "purchased_at",
         "warranty_until",
         "last_service_at",

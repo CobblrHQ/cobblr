@@ -10,19 +10,9 @@ import { Printer } from "lucide-react";
 import { useToast } from "@cobblr/platform-web";
 import { useActiveOrg } from "../auth/ActiveOrgContext";
 import { ApiError, api, type DigifabConnection, type DigifabDevice } from "../lib/api";
+import { useHosted } from "../lib/useHosted";
+import { HomeNetworkHint } from "./HomeNetworkHint";
 
-/** A private/LAN address a cloud-hosted Cobblr can't reach directly (needs the
- *  edge bridge). Bare hostnames + .local + RFC-1918 ranges + loopback. */
-function looksLikeLan(raw: string): boolean {
-  let host = raw.trim();
-  if (!host) return false;
-  try { host = new URL(/^https?:\/\//i.test(raw) ? raw : `http://${raw}`).hostname; } catch { /* fall through */ }
-  if (host === "localhost" || host.endsWith(".local")) return true;
-  const m = host.match(/^(\d+)\.(\d+)\.\d+\.\d+$/);
-  if (!m) return !host.includes("."); // bare hostname → mDNS/LAN; a dotted public DNS name → not
-  const a = Number(m[1]), b = Number(m[2]);
-  return a === 10 || a === 127 || (a === 192 && b === 168) || (a === 172 && b >= 16 && b <= 31);
-}
 
 export function DirectManagerConnect({
   driverId,
@@ -50,8 +40,7 @@ export function DirectManagerConnect({
   // Whether THIS Cobblr is hosted (the managed service) vs self-hosted — a hosted
   // instance generally can't reach a LAN device, a self-hosted one (same network)
   // can. Drives whether we warn about a LAN address at all.
-  const authCfg = useQuery({ queryKey: ["auth-config"], queryFn: () => api.authConfig(), staleTime: 5 * 60_000 });
-  const hosted = !!authCfg.data?.hosted;
+  const hosted = useHosted();
   const entry = catalog.data?.drivers.find((d) => d.id === driverId);
   const auth = (entry?.manifest as { auth?: { from: "apiKey" | "username" | "password" } } | undefined)?.auth;
   const [url, setUrl] = useState("");
@@ -119,11 +108,7 @@ export function DirectManagerConnect({
           <input value={cred} onChange={(e) => setCred(e.target.value)} placeholder="optional for some firmwares" className={field} />
         </label>
       )}
-      {hosted && looksLikeLan(url) && (
-        <p className="text-[11px] text-amber-600 dark:text-amber-400">
-          That's a LAN address, and this is a <strong>hosted</strong> Cobblr - it can't reach a device on your network directly. Run the <strong>Cobblr edge bridge</strong> on your network and connect through that instead.
-        </p>
-      )}
+      <HomeNetworkHint address={url} hosted={hosted} />
       <p className="text-[11px] text-faint">Stored encrypted. Cobblr sends files + start/status to this address; it never streams motion.</p>
       <div className="flex justify-end gap-2 pt-1">
         <button type="button" onClick={onCancel} className="px-3 py-1.5 text-sm rounded text-content hover:bg-subtle dark:hover:bg-slate-800">Cancel</button>

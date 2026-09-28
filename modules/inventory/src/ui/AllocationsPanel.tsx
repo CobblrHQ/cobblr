@@ -2,6 +2,7 @@
 // inline consume + release controls on the reserved ones, and a
 // "new reservation" form at the bottom.
 
+import { MutationError } from "@cobblr/platform-web";
 import { useEffect, useState, type FormEvent } from "react";
 import { collectionLabelFor } from "@cobblr/platform-contract/kind-label";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
@@ -74,6 +75,7 @@ export function AllocationsPanel({ partId }: { partId: string }) {
           ))}
         </ul>
       )}
+      <MutationError mutation={setStatus} className="block mb-2" />
       <ReserveForm partId={partId} />
     </div>
   );

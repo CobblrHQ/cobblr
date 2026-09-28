@@ -11,10 +11,12 @@
 // confirm in the triage queue).
 
 import { looksOfRow, picturesThatAgree, statedColoursOf } from "./picture-agrees.js";
+import { applyHintWithoutAi } from "./hint-without-ai.js";
+import { isStockPreviewUrl } from "./stock-preview.js";
 import { rechoosePictureForColour, withholdContradictedPicture } from "./withhold-picture.js";
 import { applyLabelFacts } from "./label-quantity.js";
-import { applyLabelLot } from "./scan-frame-label.js";
-import { labelFactsOf } from "./label-facts.js";
+import { applyLabelLot, applyLabelYearMade } from "./scan-frame-label.js";
+import { labelFactsOf, yearMadeOf } from "./label-facts.js";
 import { labelWordsOf, matchLabelWords } from "./label-words.js";
 import type { Kysely } from "kysely";
 import { seenCountOf, seenDistinctOf } from "./seen-count.js";
@@ -24,7 +26,7 @@ import { asPackaging, packagingFromProse, type Packaging } from "@cobblr/platfor
 import { platform } from "@cobblr/platform-contract";
 import { tidyTruncatedName } from "./item-name.js";
 import type { CoreScanDB } from "../db.js";
-import { reportBarcodeCorrection, reportBarcodeReject, unitLotsOf } from "./barcode-corrections.js";
+import { reportBarcodeCorrection, reportBarcodeReject, unitLotsOf, withoutLots } from "./barcode-corrections.js";
 import { identityMeta, mergeMeta, CATALOG_PICTURE_NOT_PERSONS } from "./metadata.js";
 import {
   earnsMatchesYourPhoto,
@@ -48,7 +50,7 @@ import { noReceiptShape, scoreReceiptShape, type ReceiptShape } from "./receipt-
 import { classifyAiFailure } from "@cobblr/platform-contract/ai-refusal";
 import { providerReasonOf } from "@cobblr/platform-contract/provider-reason";
 import { identifyFailureWords, type IdentifyFailure } from "@cobblr/platform-contract/scan-fallback";
-import { hostedIdentifyWhy, hostedIdentifyEnabled, toPhotoIdentity, receiptAsIdentity } from "./hosted-identify.js";
+import { hostedIdentifyWhy, toPhotoIdentity, receiptAsIdentity } from "./hosted-identify.js";
 
 /** Re-fetch the catalog image to match a (corrected) name. The card prefers the
  *  downloaded `catalog_image_file_id` over `catalog_image_url`, so a rename left
@@ -237,7 +239,10 @@ export async function refreshCatalogImageByName(
   // no fallback to the next result (reported 2026-07-24). downloadCatalogImage handles
   // SSRF-guard + retries + size limits and stamps catalog_image_file_id. Dynamic
   // import because enrich.ts imports THIS module — a static import would cycle.
-  const candidates = chosen ? [chosen] : ranked.slice(0, 4);
+  // A remembered pick can predate the stock-preview rule (#3804); it is
+  // refused here like any other, so the raw-address fallback below cannot
+  // put an agency's watermark on the row either.
+  const candidates = (chosen ? [chosen] : ranked.slice(0, 4)).filter((u) => !isStockPreviewUrl(u));
   if (!candidates.length) {
     // Say so on the row. An empty tile used to be indistinguishable from
     // "still looking". The card reads this to offer a retry instead of nothing.
@@ -361,6 +366,10 @@ export interface PhotoIdentity {
    *  serial_number field on commit. OCR'd, so read-only-if-legible + never
    *  guessed (the prompt forbids completing a partial one). */
   serial_number: string | null;
+  /** The year this unit was made as printed (a wine's vintage), four digits,
+   *  or null. Per unit: a row fact filed by role, never sent as a product
+   *  fact (barcode-corrections.ts unitLotsOf). */
+  year_made?: string | null;
   /** Factual prose on what's physically in frame (packaging state, "sealed
    *  10-pack, label says QTY 10"). The matchmaker's corroboration — it OUTRANKS
    *  listing-derived counts and is what catches the unit-barcode-on-a-multipack
@@ -469,8 +478,17 @@ export interface IdentifyImageOpts {
  *  could not be read, or a model that saw no single item), so the note under
  *  the photo can say the one true thing instead of listing every possibility. */
 export type IdentifyOutcome =
-  | { identity: PhotoIdentity; failure?: undefined }
-  | { identity: null; failure: IdentifyFailure };
+  | { identity: PhotoIdentity; failure?: undefined; answeredBy?: AnsweredBy }
+  | { identity: null; failure: IdentifyFailure; answeredBy?: undefined };
+
+/** Which AI answered, when it was not the first one asked: the card says
+ *  "Answered by X; Y was busy" (#3819). */
+export interface AnsweredBy {
+  /** The connection's own name (the router's provider_label). */
+  label: string;
+  model?: string;
+  after: Array<{ label: string; model?: string; reason: string }>;
+}
 
 /** The identity alone, for callers that only want a name (the barcode
  *  path's last resort, the eval harness). */
@@ -496,7 +514,9 @@ export async function identifyPhoto({
   // keyed self-host). Null falls through to the tenant path unchanged, so the
   // hosted service being down is never worse than never having had it.
   let hostedDegraded: IdentifyFailure["hosted"];
-  if (hostedIdentifyEnabled()) {
+  // hostedIdentifyWhy asks hostedIdentifyReach first, the question
+  // /ai-status asks too: no second, looser "is it on" check here.
+  {
     const why = await hostedIdentifyWhy({ orgId, imageB64, visitorIp, userId });
     const hosted = why.answer;
     if (why.degraded && why.degraded !== "off") hostedDegraded = why.degraded;
@@ -511,6 +531,7 @@ export async function identifyPhoto({
   }
   let parsed: Record<string, unknown> | null = null;
   let raw = "";
+  let answeredBy: AnsweredBy | undefined;
   try {
     const r = await platform().ai.invoke({
       orgId,
@@ -535,6 +556,7 @@ export async function identifyPhoto({
       bypass_cache: bypassCache,
     });
     raw = r.text;
+    if (r.answered_after?.length) answeredBy = { label: r.provider_label ?? r.provider_id, model: r.model, after: r.answered_after.map((a) => ({ label: a.label, model: a.model, reason: a.reason })) };
   } catch (err) {
     // The router's refusal or the provider's failure, as the code it carries
     // (ai-refusal.ts, provider-reason.ts): the note under the photo reads
@@ -543,8 +565,10 @@ export async function identifyPhoto({
     const ai = classifyAiFailure(err, { hadUser: !!userId });
     const ai_reason = providerReasonOf(err) ?? undefined;
     const reason = (err as Error)?.message ?? String(err);
-    console.error(`[core-scan] identify failed (${ai}${ai_reason ? `/${ai_reason}` : ""}):`, reason);
-    return { identity: null, failure: { code: "ai_unavailable", ai, ...(ai_reason ? { ai_reason } : {}), ...(hostedDegraded ? { hosted: hostedDegraded } : {}), reason } };
+    const ai_provider = (err as { providerLabel?: string } | null)?.providerLabel;
+    const model = (err as { model?: string } | null)?.model;
+    console.error(`[core-scan] identify failed (${ai}${ai_reason ? `/${ai_reason}` : ""}${model ? `, model ${model}` : ""}):`, reason);
+    return { identity: null, failure: { code: "ai_unavailable", ai, ...(ai_reason ? { ai_reason } : {}), ...(ai_provider ? { ai_provider } : {}), ...(hostedDegraded ? { hosted: hostedDegraded } : {}), reason } };
   }
   try {
     const m = raw.match(/\{[\s\S]*\}/);
@@ -555,7 +579,7 @@ export async function identifyPhoto({
   }
   const identity = parseIdentityReply(parsed);
   if (!identity) return { identity: null, failure: { code: "no_item", reason: "no name in the reply" } };
-  return { identity };
+  return { identity, ...(answeredBy ? { answeredBy } : {}) };
 }
 
 /**
@@ -635,6 +659,7 @@ export function parseIdentityReply(parsed: Record<string, unknown> | null): Phot
       const s = (str(p.serial_number) || str(p.serial) || str(p.service_tag) || str(p.serialNumber)).slice(0, 80);
       return s && !/^(n\/?a|none|unknown)$/i.test(s) ? s : null;
     })(),
+    year_made: yearMadeOf(p.year_made ?? p.vintage),
     // The same read also tells us what's in frame and how many DIFFERENT things
     // there are. An older reply cached before the prompt asked for these simply
     // has neither: observations "" and distinct 1 — i.e. exactly the pre-change
@@ -691,6 +716,9 @@ export function identityOverlay(
   // A serial/service tag read off the label → carried to the destination table's
   // native serial_number field on commit (see inbox.ts commit).
   if (identity.serial_number) set.serial_number = identity.serial_number;
+  // The year printed on this unit (a vintage) → the destination's year-made
+  // field on commit (lot-field.ts), like the lot a label read leaves.
+  if (identity.year_made) set.year_made = identity.year_made;
   if (opts.captureBarcode) set.barcode_source = "ai-photo";
   const pack = parsePackSize(identity.name);
   if (pack) set.pack_size = pack;
@@ -904,7 +932,7 @@ export function isNameEcho(correctName: string, rejectedName: string): boolean {
 
 /** The question the scan-photo cross-check asks of the picture: does it show
  *  the product the barcode named, and what is printed on it (the maker, the
- *  brand, the title, and this unit's lot). One vision call answers all of it.
+ *  brand, the title, and this unit's lot and year made). One vision call answers all of it.
  *  Exported so its recorded answers (tests/fixtures/label-lots) are pinned to
  *  this exact wording. */
 export function crossCheckPhotoPrompt(resolvedName: string): string {
@@ -923,11 +951,13 @@ export function crossCheckPhotoPrompt(resolvedName: string): string {
     "printed (a book's cover author, a record's artist), the brand as printed, " +
     "the title as printed, and the lot or batch code as printed (a dye lot, a lot " +
     "number, a batch: the code that changes from one production run to the next, " +
-    "never the barcode digits, a colour number or an article number). " +
+    "never the barcode digits, a colour number or an article number), and the year " +
+    "this unit was made as printed (a wine's vintage, a coin's year: four digits, " +
+    'never a best-before date, a copyright year or a "since" or "established" year). ' +
     "Never complete or translate them; null when not shown. " +
     'Reply with JSON only: {"match":"yes"|"no"|"unsure","reason":"<one short sentence>",' +
     '"correct_name":"<the real product name, optional>","correct_brand":"<brand, optional>",' +
-    '"printed":{"creator":<string|null>,"brand":<string|null>,"title":<string|null>,"lot":<string|null>}}.'
+    '"printed":{"creator":<string|null>,"brand":<string|null>,"title":<string|null>,"lot":<string|null>,"year_made":<string|null>}}.'
   );
 }
 
@@ -1022,7 +1052,7 @@ export async function crossCheckScanPhoto(
     correct_brand?: string;
     /** What the photo shows AS PRINTED, kept apart from the verdict: the
      *  evidence a route's guess is checked against (scan-evidence.ts). */
-    printed?: { creator?: string | null; brand?: string | null; title?: string | null; lot?: string | null } | null;
+    printed?: { creator?: string | null; brand?: string | null; title?: string | null; lot?: string | null; year_made?: string | number | null } | null;
   };
   const parseVerdict = (r: { text: string }): Verdict => {
     const raw = r.text;
@@ -1109,6 +1139,15 @@ export async function crossCheckScanPhoto(
         console.error("[core-scan] keeping the photo's lot threw:", (e as Error).message),
       );
     }
+    // The year this unit was made (a vintage), the same way: one barcode
+    // covers every vintage, so it is the unit's, never the product's.
+    const year = basis === "image" ? verdict?.printed?.year_made : labelFactsOf(observation).year_made;
+    if (yearMadeOf(year)) {
+      const yearDb = (await platform().tenants.getDb(orgId)) as unknown as Parameters<typeof applyLabelYearMade>[0];
+      await applyLabelYearMade(yearDb, itemId, year).catch((e) =>
+        console.error("[core-scan] keeping the photo's year threw:", (e as Error).message),
+      );
+    }
   }
   const matchVerdict = String(verdict?.match ?? "").toLowerCase();
   if (matchVerdict !== "no") {
@@ -1136,7 +1175,7 @@ export async function crossCheckScanPhoto(
     .where("id", "=", itemId)
     .executeTakeFirst();
   const prevName = (existing?.suggested_name as string | null) ?? resolvedName;
-  const unitLots = unitLotsOf(existing?.suggested_metadata, verdict?.printed?.lot);
+  const unitLots = unitLotsOf(existing?.suggested_metadata, verdict?.printed?.lot, yearMadeOf(verdict?.printed?.year_made));
 
   // A "correct name" that merely echoes the name we're REJECTING is not a
   // correction (a self-contradictory vision reply) — don't rename to the exact
@@ -1219,7 +1258,9 @@ export async function crossCheckScanPhoto(
       void evictBarcodeCaches(orgId, existing.barcode_text)
         .then(() =>
           rememberLocalIdentity(orgId, existing.barcode_text!, {
-            title: correctName,
+            // Without this unit's lot or vintage: the next bottle of the same
+            // code is another year.
+            title: withoutLots(correctName, unitLots) || correctName,
             brand: correctBrand || null,
           }),
         )
@@ -1426,7 +1467,7 @@ async function readPhotoItem(ctx: PhotoEnrichContext): Promise<EnrichOutcome> {
   }
 
   const knownCats = await knownCategories(ctx.db);
-  const { identity, failure } = await identifyPhoto({
+  const { identity, failure, answeredBy } = await identifyPhoto({
     orgId: ctx.orgId,
     imageB64,
     mediaType: file.mimeType,
@@ -1460,11 +1501,16 @@ async function readPhotoItem(ctx: PhotoEnrichContext): Promise<EnrichOutcome> {
         ai_suggested_at: new Date(),
         updated_at: new Date(),
         suggested_metadata: sql`coalesce(suggested_metadata, '{}'::jsonb) || ${JSON.stringify({
-          identify_failure: { code: failure.code, ...(failure.ai ? { ai: failure.ai } : {}), ...(failure.ai_reason ? { ai_reason: failure.ai_reason } : {}), ...(failure.hosted ? { hosted: failure.hosted } : {}) },
+          identify_failure: { code: failure.code, ...(failure.ai ? { ai: failure.ai } : {}), ...(failure.ai_reason ? { ai_reason: failure.ai_reason } : {}), ...(failure.ai_provider ? { ai_provider: failure.ai_provider } : {}), ...(failure.hosted ? { hosted: failure.hosted } : {}) },
         })}::jsonb` as never,
       })
       .where("id", "=", ctx.itemId)
       .execute();
+    // The AI was away for a reason that passes: the person's hint still names
+    // the item, and a real read is queued for when it answers (#3819).
+    await applyHintWithoutAi(ctx.db, { orgId: ctx.orgId, itemId: ctx.itemId, failure, hint: ctx.hint, hints: ctx.hints, userId: ctx.userId }).catch((err) =>
+      console.error(`[core-scan] applying the hint without the AI for ${ctx.itemId} failed:`, (err as Error).message),
+    );
     return "not-identified";
   }
 
@@ -1520,6 +1566,8 @@ async function readPhotoItem(ctx: PhotoEnrichContext): Promise<EnrichOutcome> {
   });
   if (labelWords.length >= 3) Object.assign(overlay.set, { label_words: labelWords });
   if (known) Object.assign(overlay.set, { label_known: known.confidence, ...(known.confidence === "single" ? { low_trust: true } : {}) });
+  // The card says which AI answered when it was not the first one asked.
+  if (answeredBy) Object.assign(overlay.set, { ai_answered_by: answeredBy });
   await ctx.db
     .updateTable("core_scan_inbox_items")
     .set({

@@ -6,7 +6,7 @@ import { useEffect, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Archive, ArrowRightLeft, Copy, Library, Minus, Plus, ShieldCheck, Trash2 } from "lucide-react";
 import { consumptionGauge, type ConsumptionGauge as ConsumptionGaugeT } from "@cobblr/platform-contract/consumption-gauge";
-import { PresentationGate, AssortmentCard, ContentsPanel, ContributedDetailPanels, CustomFieldsPanel, EntityActionsBar, EntityThumb, FaceSection, FieldPack, LabeledField, Modal, RecordFaces, RecordHeaderChips, editFieldItem, fieldNeed, useFaces, MoveToInstanceModal, UnitInput, useConfirm, usePageTitle, useToast, useUnits } from "@cobblr/platform-web";
+import { PresentationGate, MutationError, AssortmentCard, ContentsPanel, ContributedDetailPanels, CustomFieldsPanel, EntityActionsBar, EntityThumb, FaceSection, faceShows, useHoldsContents, FieldPack, LabeledField, Modal, RecordFaces, RecordHeaderChips, editFieldItem, fieldNeed, useFaces, MoveToInstanceModal, UnitInput, useConfirm, usePageTitle, useToast, useUnits } from "@cobblr/platform-web";
 import { useInventory } from "./context";
 import { QtyStepper } from "./QtyStepper";
 import { isAssorted } from "./assorted";
@@ -15,6 +15,7 @@ import { ParentPicker } from "./ParentPicker";
 import { useMatchedCatalogEntry } from "./useMatchedCatalogEntry";
 import { AllocationsPanel, EntityPicker, type PickedEntity } from "./AllocationsPanel";
 import { UnitsPanel } from "./UnitsPanel";
+import { HoldingsPanel } from "./HoldingsPanel";
 import { PartGallery } from "./PartGallery";
 import { MaintenancePanel } from "./MaintenancePanel";
 import { useFieldPresentation } from "./useFieldPresentation";
@@ -156,6 +157,24 @@ const FACE_OF: Record<string, FaceName> = {
   maintenance: "maintained",
 };
 
+/** What a face-gated field or section holds on a record, and its value when
+ *  the record does not use it. A face folds only the second: a part whose
+ *  collection does not wear the serialized face still shows the serial number
+ *  it was imported with. A section with no single value (allocations,
+ *  maintenance, consumable) has no entry and folds with its face. */
+const FACE_HELD: Record<string, { field: string; fallback: unknown }> = {
+  qty: { field: "qty", fallback: 0 },
+  unit: { field: "unit", fallback: "each" },
+  min_qty: { field: "min_qty", fallback: null },
+  cost: { field: "cost", fallback: null },
+  supplier_url: { field: "supplier_url", fallback: null },
+  manufacturer: { field: "manufacturer", fallback: null },
+  serial_number: { field: "serial_number", fallback: null },
+  model_number: { field: "model_number", fallback: null },
+  assigned_to: { field: "assigned_to", fallback: null },
+  warranty: { field: "warranty_until", fallback: null },
+};
+
 export function PartDetailPage({ id, onClose }: { id: string; onClose: () => void }) {
   const { api, orgSlug, getToken, entityKind, instance, itemNoun, parent, countWords } = useInventory();
   const fp = useFieldPresentation(entityKind);
@@ -174,7 +193,11 @@ export function PartDetailPage({ id, onClose }: { id: string; onClose: () => voi
     const f = FACE_OF[name];
     return !f || faces.on.has(f);
   };
-  const hide = (name: string): boolean => fp.hidden(name) || disclosure.hides(name) || !faceOn(name);
+  const hide = (name: string): boolean => {
+    const held = FACE_HELD[name];
+    const value = held ? (part.data as Record<string, unknown> | undefined)?.[held.field] : undefined;
+    return fp.hidden(name) || disclosure.hides(name) || !faceShows(faceOn(name), value, held?.fallback ?? null);
+  };
 
   const part = useQuery({
     queryKey: ["inventory-part", id],
@@ -183,6 +206,7 @@ export function PartDetailPage({ id, onClose }: { id: string; onClose: () => voi
     // An action on a record of this kind re-reads the page (platform-web run-action).
     meta: { kinds: [entityKind] },
   });
+  const holdsContents = useHoldsContents(orgSlug, getToken, { kind: "inventory:part", id: id ?? "" });
 
   const cats = useQuery({ queryKey: ["inventory-categories"], queryFn: () => api.listCategories() });
   const locs = useQuery({ queryKey: ["inventory-locations"], queryFn: () => api.listLocations() });
@@ -378,6 +402,8 @@ export function PartDetailPage({ id, onClose }: { id: string; onClose: () => voi
         onAdopt={() => adoptUnits.mutate()}
         onDismiss={() => dismissReconcile.mutate()}
       />
+      <MutationError mutation={adoptUnits} className="block" />
+      <MutationError mutation={dismissReconcile} className="block" />
 
       {/* An assortment leads with what it actually is: a photo of a jumble and
           an estimate. Rendering it as a stock row makes a bin of fifty things
@@ -638,6 +664,8 @@ export function PartDetailPage({ id, onClose }: { id: string; onClose: () => voi
             editFieldItem("notes", { label: "Notes", value: p.notes ?? "", multiline: true, onCommit: (v) => update.mutate({ notes: v || null }) }),
           ]}
         />
+        {/* A field edit the workspace refused says why, under the fields. */}
+        <MutationError mutation={update} className="block mt-2">Not saved:</MutationError>
       </div>
 
       {/* Parent / "type" link — the unit's type lives in another instance
@@ -756,8 +784,12 @@ export function PartDetailPage({ id, onClose }: { id: string; onClose: () => voi
 
       {!hide("allocations") && <AllocationsPanel partId={p.id} />}
 
+      {/* Where it is kept: this record's place, any other places the same
+          thing is kept (one card, a row per place), and "somewhere else too". */}
+      {!hide("location") && !hide("qty") && <HoldingsPanel partId={p.id} unit={units.suffix(p.unit) || undefined} />}
+
       <div id="units">
-        <FaceSection face="serialized" kind={entityKind}>
+        <FaceSection face="serialized" kind={entityKind} holds={(p.units_count ?? 0) > 0}>
           <UnitsPanel partId={p.id} />
         </FaceSection>
       </div>
@@ -767,7 +799,7 @@ export function PartDetailPage({ id, onClose }: { id: string; onClose: () => voi
           "box of mugs" tracked as one item can be itemized later: open it and add
           the individual mugs inside. Same generic panel the machines/assets pages
           use; the placement primitive gates what can actually go in. */}
-      <FaceSection face="container" kind={entityKind}>
+      <FaceSection face="container" kind={entityKind} holds={holdsContents}>
       <ContentsPanel
         slug={orgSlug}
         getToken={getToken}
@@ -782,7 +814,7 @@ export function PartDetailPage({ id, onClose }: { id: string; onClose: () => voi
           This page names no contributor and imports nothing from one. */}
       <ContributedDetailPanels
         target="inventory:part"
-        ctx={{ slug: orgSlug, entityId: p.id, entityTitle: p.name }}
+        ctx={{ slug: orgSlug, entityId: p.id, entityTitle: p.name, hints: { collection: instance ? entityKind : undefined } }}
       />
 
       {/* Stays in reach on a phone: this row used to be five screens down. */}
@@ -1200,12 +1232,14 @@ function FlatConsumptionPanel({
             {rows.map((r) => {
               const d = Number(r.delta);
               return (
-                <li key={r.id} className="py-1.5 flex items-center gap-2 text-[13px]">
-                  <span className={"font-medium tabular-nums " + (d < 0 ? "text-ember-600 dark:text-ember-500" : "text-moss-600 dark:text-moss-400")}>
+                <li key={r.id} className="py-1.5 flex items-start gap-2 text-[13px]">
+                  <span className={"font-medium tabular-nums shrink-0 " + (d < 0 ? "text-ember-600 dark:text-ember-500" : "text-moss-600 dark:text-moss-400")}>
                     {d < 0 ? "" : "+"}
                     {units.format(d, unit, countWords)}
                   </span>
-                  <span className="text-muted dark:text-slate-400 truncate flex-1">{r.reason ?? r.source_kind ?? "adjustment"}</span>
+                  {/* Wraps: a line can carry a note typed for that use (a tasting note),
+                      and a note cut to one line is a note nobody can read. */}
+                  <span className="text-muted dark:text-slate-400 flex-1 min-w-0 break-words">{r.reason ?? r.source_kind ?? "adjustment"}</span>
                   <span className="text-[11px] text-faint shrink-0">{new Date(r.at).toLocaleDateString()}</span>
                 </li>
               );

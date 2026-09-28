@@ -2,6 +2,7 @@
 // pages + the raw orgSlug + getToken so cross-module calls (e.g.
 // building a LabelsApi client) can share the same auth context.
 
+import type { ConnectorImportDecl } from "@cobblr/platform-contract";
 import {
   createContext, useContext, useMemo,
   type ReactNode,
@@ -36,6 +37,8 @@ interface InventoryCtx {
    *  (e.g. a Spool → its Filament type), the create/edit forms show a parent
    *  picker and write an `instance-of` pairing. Seeded by the bundle. */
   parent?: ParentConfig;
+  /** The table's "Import from <service>" button, when its bundle declares one. */
+  connectorImport?: ConnectorImportDecl;
   /** Route base for this UI — `/instances/<instance>` when scoped, else
    *  "/inventory". Row links + detail-close + create-navigate use it so the
    *  detail modal opens within the instance (and shows its fields). */
@@ -62,6 +65,7 @@ export function InventoryProvider({
   qtyUnit,
   countWords,
   parent,
+  connectorImport,
   children,
 }: {
   orgSlug: string;
@@ -72,6 +76,7 @@ export function InventoryProvider({
   qtyUnit?: string;
   countWords?: readonly CountWords[];
   parent?: ParentConfig;
+  connectorImport?: ConnectorImportDecl;
   children: ReactNode;
 }) {
   const api = useMemo(
@@ -87,7 +92,7 @@ export function InventoryProvider({
   const nounPlural = itemNounPlural ?? pluralise(noun);
   return (
     <Ctx.Provider
-      value={{ orgSlug, getToken, api, instance, entityKind, itemNoun: noun, itemNounPlural: nounPlural, qtyUnit, countWords: countWords ?? [], parent, basePath }}
+      value={{ orgSlug, getToken, api, instance, entityKind, itemNoun: noun, itemNounPlural: nounPlural, qtyUnit, countWords: countWords ?? [], parent, connectorImport, basePath }}
     >
       {children}
     </Ctx.Provider>

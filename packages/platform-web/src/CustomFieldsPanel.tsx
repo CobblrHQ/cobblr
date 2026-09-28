@@ -23,6 +23,9 @@ import { canCarryNote, noteKey, noteOf } from "./field-note";
 import { MarkdownEditor } from "./MarkdownEditor";
 import { relativeTime } from "./relativeTime";
 import { useUnits } from "./useUnits";
+import { Link as RouterLink } from "react-router-dom";
+import { FIELD_PROVENANCE_KEY, fieldProvenanceOf, type FieldProvenance } from "@cobblr/platform-contract/acquisition-source";
+import { openRecordPath } from "@cobblr/platform-contract/instance-detail";
 
 interface Props {
   entityKind: string;
@@ -133,6 +136,17 @@ export function CustomFieldsPanel({
   // paragraph wrapped to five lines beside another one. Now a date gets a
   // column it fits, a help paragraph takes the row, and two short selects
   // still share one.
+  // Who filled each field. A field an order (or other record) filled says so
+  // and opens it; a person's edit to such a field makes it theirs, so the
+  // evidence never writes over it again (one way, #3856).
+  const stamps = fieldProvenanceOf(values);
+  const commitField = (name: string, v: unknown) => {
+    onCommit(name, v);
+    const was = stamps[name];
+    if (was && was.by !== "person") {
+      onCommit(FIELD_PROVENANCE_KEY, { ...stamps, [name]: { by: "person", from: "edit", at: new Date().toISOString() } });
+    }
+  };
   const grid = (fs: PlatformFieldDef[]) => (
     <FieldPack
       items={fs.map((f) => {
@@ -151,7 +165,8 @@ export function CustomFieldsPanel({
               value={value}
               fallbackValue={fallbackValues?.[f.name]}
               fallbackLabel={fallbackLabel}
-              onCommit={(v) => onCommit(f.name, v)}
+              onCommit={(v) => commitField(f.name, v)}
+              evidence={stamps[f.name]}
               note={noteOf(values, f.name)}
               onCommitNote={(v) => onCommit(noteKey(f.name), v)}
             />
@@ -197,6 +212,7 @@ function FieldRow({
   fallbackValue,
   fallbackLabel,
   onCommit,
+  evidence,
   note,
   onCommitNote,
 }: {
@@ -205,6 +221,8 @@ function FieldRow({
   fallbackValue?: unknown;
   fallbackLabel?: string;
   onCommit: (v: unknown) => void;
+  /** Who filled it; a stamp that names a record opens it ("from order"). */
+  evidence?: FieldProvenance;
   note?: string | null;
   onCommitNote?: (v: unknown) => void;
 }) {
@@ -252,13 +270,26 @@ function FieldRow({
         onCommit={onCommit}
       />
     );
+  // Where the value came from, when a record said it: "from order" opens the
+  // order, so what a thing cost is answered from the thing (#3856).
+  const source =
+    evidence?.by === "evidence" && evidence.ref ? (
+      <RouterLink
+        to={openRecordPath(evidence.ref.kind, evidence.ref.id)}
+        className="text-[11px] text-muted dark:text-slate-400 hover:text-accent underline decoration-dotted"
+        data-testid="field-evidence"
+      >
+        from {evidence.from ?? "a record"}
+      </RouterLink>
+    ) : null;
   // The bundle-authored plain-language hint, rendered under any field type so
   // jargon fields (colorway, dye lot…) explain themselves.
-  if (!def.help) return inner;
+  if (!def.help && !source) return inner;
   return (
     <div className="space-y-1">
       {inner}
-      <HelpText text={def.help} />
+      {source}
+      {def.help && <HelpText text={def.help} />}
     </div>
   );
 }

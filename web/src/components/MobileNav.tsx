@@ -13,6 +13,7 @@
 // the ModuleNav popover uses.
 
 import { useEffect, useState } from "react";
+import { useNavPointer } from "../lib/navPointer";
 import { createPortal } from "react-dom";
 import { dismissOnEmptySpace } from "../lib/dismiss-on-empty";
 import { NavLink, useNavigate } from "react-router-dom";
@@ -58,6 +59,10 @@ export function MobileNav() {
   const { theme, toggle } = useTheme();
   const navigate = useNavigate();
   const [open, setOpen] = useState(false);
+  // A table the person just got, pointed at once (navPointer.ts): a dot on the
+  // closed menu button, then "New" beside it in the open menu.
+  const pointer = useNavPointer(activeSlug);
+  const [pointed, setPointed] = useState<string | null>(null);
 
   // Unread notifications, cross-workspace — shares the header bell's query key
   // so the two stay in sync. The desktop bell polls this every 15s but is
@@ -124,7 +129,13 @@ export function MobileNav() {
     <>
       <button
         type="button"
-        onClick={() => setOpen((o) => !o)}
+        onClick={() => {
+          if (!open && pointer.label) {
+            setPointed(pointer.label);
+            pointer.seen();
+          }
+          setOpen((o) => !o);
+        }}
         aria-label={open ? "Close menu" : "Open menu"}
         aria-expanded={open}
         data-tour="menu"
@@ -134,7 +145,10 @@ export function MobileNav() {
         {/* Attention signal, visible without opening the menu. Unread
             notifications (red) take precedence over the bundle-updates dot —
             they're more time-sensitive, and there's only room for one dot. */}
-        {!open &&
+        {!open && pointer.label && unreadCount === 0 && (
+          <span data-testid="nav-pointer-dot" className="absolute top-0.5 right-0.5 h-2.5 w-2.5 rounded-full bg-cobble-600 ring-2 ring-surface dark:ring-slate-900 animate-pulse" />
+        )}
+        {!open && !(pointer.label && unreadCount === 0) &&
           (unreadCount > 0 ? (
             <span className="absolute top-0.5 right-0.5 h-2 w-2 rounded-full bg-ember-500 ring-2 ring-surface dark:ring-slate-900" />
           ) : (
@@ -267,6 +281,7 @@ export function MobileNav() {
                         >
                           <ChildDot />
                           <span className="truncate">{mem.displayName}</span>
+                          {pointed === mem.displayName && <NewInNav />}
                         </button>
                       ))}
                     </div>
@@ -294,6 +309,7 @@ export function MobileNav() {
                         onClick={() => setOpen(false)}
                       >
                         <span className="truncate">{m.displayName}</span>
+                        {pointed === m.displayName && <NewInNav />}
                         {/* The one badge a destination row carries. It fits the
                             fixed row height, and ml-auto keeps it off the label
                             so a long name still truncates before the number. */}
@@ -334,6 +350,11 @@ export function MobileNav() {
                   </div>
                 );
               })}
+              {!appMode && (
+                <NavLink to="/apps" data-testid="nav-all-apps" className={linkClass} onClick={() => setOpen(false)}>
+                  All apps
+                </NavLink>
+              )}
 
               </div>
 
@@ -459,5 +480,14 @@ export function MobileNav() {
           document.body,
         )}
     </>
+  );
+}
+
+/** "New": the table the person just got, beside its entry, once. */
+function NewInNav() {
+  return (
+    <span data-testid="nav-new" className="shrink-0 rounded-full bg-cobble-600 px-1.5 py-0.5 text-[10px] font-medium leading-none text-white">
+      New
+    </span>
   );
 }

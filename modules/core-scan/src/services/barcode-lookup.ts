@@ -17,6 +17,7 @@
 // retail/craft coverage but can return junk or wrong listings) > Open Products
 // Facts (food/household-leaning, almost no craft coverage).
 
+import { gtinChecksumOk, isbn10ChecksumOk } from "@cobblr/platform-contract/identifier-check";
 import { STORE_CODE_NOTE } from "@cobblr/platform-contract/scan-copy";
 import { preferredFactsName, primaryBrand } from "./catalog-normalize.js";
 import { isBookSource, replayMiss, writeCatalogCassette } from "./catalog-replay.js";
@@ -585,26 +586,7 @@ export async function tryBidb(upc: string): Promise<ProviderResult> {
  * and cover image. The provider was never going to say "that's a VIN": it only
  * knows how to return its best match. So the shape gate has to be ours.
  */
-/** GTIN mod-10 check-digit test. From the rightmost digit excluding the check,
- *  weights alternate 3,1,3,1…; valid when the computed check matches. */
-export function gtinChecksumOk(digits: string): boolean {
-  const check = Number(digits[digits.length - 1]);
-  const body = digits.slice(0, -1);
-  let sum = 0;
-  for (let i = 0; i < body.length; i++) {
-    const d = Number(body[body.length - 1 - i]);
-    sum += i % 2 === 0 ? d * 3 : d;
-  }
-  return (10 - (sum % 10)) % 10 === check;
-}
-
-/** ISBN-10 mod-11 check (final char may be X = 10). */
-export function isbn10ChecksumOk(code: string): boolean {
-  let sum = 0;
-  for (let i = 0; i < 9; i++) sum += (10 - i) * Number(code[i]);
-  const last = code[9] === "X" ? 10 : Number(code[9]);
-  return (sum + last) % 11 === 0;
-}
+export { gtinChecksumOk, isbn10ChecksumOk };
 
 /** GS1 restricted-circulation numbers: EAN-13 prefixes 02, 04 and 20 to 29
  *  (a 12-digit UPC-A leading 2 or 4 is the same code with its leading 0

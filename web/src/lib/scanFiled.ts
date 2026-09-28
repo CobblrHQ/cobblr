@@ -19,6 +19,7 @@
 import { useEffect } from "react";
 import { useQueryClient, type QueryClient } from "@tanstack/react-query";
 import { scanInboxKeys } from "./scan-inbox-keys";
+import type { ScanInboxItem } from "./api";
 
 /** Every query a filing (or undoing one) changes. The inbox's own lists and
  *  counts are one key family (scan-inbox-keys.ts), refreshed by its root; the
@@ -37,9 +38,32 @@ export const SCAN_FILED_QUERIES = [
 const EVENT = "cobblr:scan-filed";
 const bus = new EventTarget();
 
-/** A filing succeeded in this workspace. */
-export function announceScanFiled(slug: string): void {
-  bus.dispatchEvent(new CustomEvent<string>(EVENT, { detail: slug }));
+/** What one filing changed: the rows it filed (as the server returned them,
+ *  with the record each one made), and the rows an undo sent back. Carried on
+ *  the same announcement so the filed-row display (filedRows.ts) hangs off the
+ *  one chokepoint too: every door that files shows where the item went. */
+export interface ScanFiledChange {
+  filed?: Array<{ item: ScanInboxItem; createdId: string | null }>;
+  unfiled?: string[];
+}
+interface ScanFiledDetail {
+  slug: string;
+  change: ScanFiledChange;
+}
+
+/** A filing (or an undo of one) succeeded in this workspace. */
+export function announceScanFiled(slug: string, change: ScanFiledChange = {}): void {
+  bus.dispatchEvent(new CustomEvent<ScanFiledDetail>(EVENT, { detail: { slug, change } }));
+}
+
+/** Listen to every filing in one workspace. Returns the unsubscribe. */
+export function onScanFiled(slug: string, listener: (change: ScanFiledChange) => void): () => void {
+  const on = (e: Event) => {
+    const d = (e as CustomEvent<ScanFiledDetail>).detail;
+    if (d?.slug === slug) listener(d.change);
+  };
+  bus.addEventListener(EVENT, on);
+  return () => bus.removeEventListener(EVENT, on);
 }
 
 /** Invalidate every query a filing changes, for one workspace. */
@@ -55,7 +79,7 @@ export function useRefreshOnScanFiled(): void {
   const qc = useQueryClient();
   useEffect(() => {
     const on = (e: Event) => {
-      const slug = (e as CustomEvent<string>).detail;
+      const slug = (e as CustomEvent<ScanFiledDetail>).detail?.slug;
       if (slug) void refreshAfterFiling(qc, slug);
     };
     bus.addEventListener(EVENT, on);

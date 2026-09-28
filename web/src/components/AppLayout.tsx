@@ -8,8 +8,9 @@
 // specialisations (3D Printers, Laser Cutters, etc.) into a hover
 // popover under the parent rather than as broken top-level links.
 
+import { JustFiledNotice } from "./JustFiledNotice";
 import { Fragment, useEffect, useRef, useState, type ReactNode } from "react";
-import { Moon, PanelLeft, PanelTop, Pin, PinOff, Sliders, Sun, UserRound } from "lucide-react";
+import { Moon, PanelLeft, PanelTop, Pin, PinOff, Sliders, Sun } from "lucide-react";
 import { Link, NavLink, Outlet, useLocation } from "react-router-dom";
 import { Search } from "lucide-react";
 import { useQuery, useQueryClient, useMutation } from "@tanstack/react-query";
@@ -36,6 +37,7 @@ import { FeedbackWidget } from "./FeedbackWidget";
 import { GlobalScanWedge } from "./GlobalScanWedge";
 import { SearchBar } from "./SearchBar";
 import { CommandPalette, OPEN_PALETTE_EVENT } from "./CommandPalette";
+import { SheetImportHost } from "./SheetImportSheet";
 import { NewVersionNudge } from "./NewVersionNudge";
 import { QuickAccess } from "./QuickAccess";
 import { ErrorBoundary } from "./ErrorBoundary";
@@ -204,7 +206,7 @@ export function AppLayout({ activeSlug }: { activeSlug: string }) {
   // Seen-state comes from the ACCOUNT, so a second device, a different origin
   // and a new workspace all agree. `undefined` while /me loads means "do not
   // decide yet" rather than "never" — see useTour.
-  const markTourSeen = useMutation({
+  const markTourSeen = useMutation({ // MUTATION-ERROR: fired by closing the tour, not a press; the tour simply shows again next time
     mutationFn: () => api.setTourSeen(true),
     onSuccess: () => void qc.invalidateQueries({ queryKey: ["me"] }),
   });
@@ -425,9 +427,9 @@ export function AppLayout({ activeSlug }: { activeSlug: string }) {
         <EmailVerifyBanner variant="sidebar" />
       </>
     ),
-    // Module quick-actions, one full row each, Scan above Build: the camera is
-    // the action a person reaches for many times a day, so it is the first row
-    // under the nav rather than half of a shared one.
+    // Module quick-actions, capture first. Scan and Build share one row, Scan
+    // on the left (the camera is reached for many times a day, so it is the
+    // first thing under the nav); any other action takes a row of its own.
     actions: (
       <div data-tour="actions" className="flex flex-col gap-0.5">
         <HeaderActions asRows />
@@ -470,16 +472,9 @@ export function AppLayout({ activeSlug }: { activeSlug: string }) {
         Configuration
       </NavLink>
     ) : null,
-    // Your account is a row of its own; the accordion under it keeps only the
-    // menu (feedback, what's new, sign out).
-    account: (
-      <NavLink to="/me" className={footRowCls}>
-        <UserRound size={16} className="shrink-0" />
-        Your account
-      </NavLink>
-    ),
-    // Expands UPWARD in place: an accordion, not a popover.
-    "account-menu": <UserMenu themed={!!skin} inline />,
+    // The person, on one row: the name opens Your account, the chevron beside
+    // it opens the menu (a flyout to the right of the row).
+    account: <UserMenu themed={!!skin} inline />,
   };
   const sidebarFoot = fullSide ? (
     <div ref={footRef} className="shrink-0 border-t-2 border-line dark:border-slate-700 px-1.5 py-1.5 flex flex-col">
@@ -775,6 +770,8 @@ export function AppLayout({ activeSlug }: { activeSlug: string }) {
               keeps the nav/chrome, and keying on pathname resets it when
               you navigate away. Also catches lazy-chunk load errors that
               the Suspense fallback doesn't. */}
+          {/* What a one-tap filing just did, on the record it opened, once. */}
+          <JustFiledNotice />
           <ErrorBoundary key={location.pathname} scope="page">
             <Outlet />
           </ErrorBoundary>
@@ -790,6 +787,8 @@ export function AppLayout({ activeSlug }: { activeSlug: string }) {
       {activeSlug ? <QuickAccess activeSlug={activeSlug} /> : null}
       {/* ⌘K — do or find anything (redesign B4). */}
       <CommandPalette />
+      {/* Bring your spreadsheet: one sheet, opened from any door (openSheetImport). */}
+      {activeSlug ? <SheetImportHost /> : null}
       {/* Stale-tab nudge: deploys are frequent; open tabs must find out. */}
       <NewVersionNudge />
       {/* Feature 3 folds into the Live box now: the drive prompt + indicator are

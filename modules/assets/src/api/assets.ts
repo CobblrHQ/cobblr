@@ -4,7 +4,7 @@ import { sql } from "kysely";
 import { platform } from "@cobblr/platform-contract";
 import { instanceOf, sessionUser, tenantContext, tenantDb } from "../db.js";
 import { asyncHandler, badBody, requireRole } from "./util.js";
-import { routeUnknownToMetadata, coerceMetadata, withMetadataMerged } from "@cobblr/platform-contract/entity-metadata";
+import { routeUnknownToMetadata, refuseUnknownFields, coerceMetadata, withMetadataMerged } from "@cobblr/platform-contract/entity-metadata";
 
 export const assetsRouter = Router({ mergeParams: true });
 
@@ -94,6 +94,7 @@ assetsRouter.get(
 assetsRouter.post(
   "/",
   asyncHandler(async (req, res) => {
+    await refuseUnknownFields(req, req.body, ASSET_NATIVE_KEYS, "assets:asset");
     const routed = routeUnknownToMetadata(req.body, ASSET_NATIVE_KEYS);
     const parsed = AssetCreate.safeParse(routed);
     if (!parsed.success) return badBody(res, parsed.error);
@@ -148,6 +149,7 @@ assetsRouter.patch(
       res.status(400).json({ error: { code: "missing_id", message: "id required" } });
       return;
     }
+    await refuseUnknownFields(req, req.body, ASSET_NATIVE_KEYS, "assets:asset");
     const routed = routeUnknownToMetadata(req.body, ASSET_NATIVE_KEYS);
     const parsed = AssetUpdate.safeParse(routed);
     if (!parsed.success) return badBody(res, parsed.error);

@@ -35,12 +35,13 @@ import {
   usePublishChatContext,
   makeAreaResolver,
   LOCATION_GROUP_KEY,
-  type EditableCellDef, useAskCobbAboutSelection, useUnits } from "@cobblr/platform-web";
+  type EditableCellDef, useAskCobbAboutSelection, useUnits, TILE_GRID, InboxWaitingStrip } from "@cobblr/platform-web";
 import { useInventory } from "./context";
 import { QtyStepper } from "./QtyStepper";
+import { HoldingRows, RollupLine } from "./HoldingRows";
 import { openUnitsLabel } from "./consumption/perUnit";
 import { assortedQty, isAssorted } from "./assorted";
-import { noteOf, useCreateDoor, viewCardFields } from "@cobblr/platform-web";
+import { noteOf, TableConnectorImport, useCreateDoor, viewCardFields } from "@cobblr/platform-web";
 import { useFieldPresentation } from "./useFieldPresentation";
 import { CARD_NATIVE_FIELDS } from "./card-native-fields";
 import { useDisclosure } from "./useDisclosure";
@@ -76,7 +77,7 @@ export function PartsListPage() {
   // real product title either lost its tail to an ellipsis or pushed the last
   // column off the edge, while a wide monitor kept 900px of margin either side.
   usePageWidth("wide");
-  const { api, orgSlug, getToken, entityKind, itemNoun, itemNounPlural, basePath, instance } = useInventory();
+  const { api, orgSlug, getToken, entityKind, itemNoun, itemNounPlural, basePath, instance, connectorImport } = useInventory();
   const { appMode } = usePlatformWeb();
   const qc = useQueryClient();
   // /inventory/parts/:id keeps this list mounted and opens the detail
@@ -96,9 +97,13 @@ export function PartsListPage() {
   // `?new=1` (a view's empty state, a card) opens the form on arrival.
   const closeCreateDoor = useCreateDoor(useCallback(() => setAdding(true), []));
   const [importing, setImporting] = useState(false);
+  const [connectorOpen, setConnectorOpen] = useState(false);
   const [spoolmanOpen, setSpoolmanOpen] = useState(false);
   const [exporting, setExporting] = useState(false);
   const [viewMode, setViewMode] = useViewMode("parts", "list");
+  // One card per thing with its places nested, or one line per place (the
+  // spreadsheet view). Remembered per collection.
+  const [byPlace, setByPlace] = useByPlace(entityKind);
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [bulkMoveOpen, setBulkMoveOpen] = useState(false);
   const toast = useToast();
@@ -200,7 +205,7 @@ export function PartsListPage() {
     queryKey: [
       "inventory-parts",
       entityKind,
-      { search, categoryId, locationId, state, lowOnly, archivedFilter, warrantyFilter, insuredOnly, lifecycle, view: activeView?.id ?? null },
+      { search, categoryId, locationId, state, lowOnly, archivedFilter, warrantyFilter, insuredOnly, lifecycle, byPlace, view: activeView?.id ?? null },
     ],
     initialPageParam: undefined as string | undefined,
     queryFn: ({ pageParam }) =>
@@ -215,6 +220,7 @@ export function PartsListPage() {
         warranty_expires_within_days: warrantyWithin,
         insured_only: insuredOnly || undefined,
         lifecycle: lifecycle || undefined,
+        rows: byPlace ? "flat" : undefined,
         cursor: pageParam,
         ...viewQ,
       }),
@@ -247,7 +253,9 @@ export function PartsListPage() {
   // disagree about what a spec means.
   const computedNames = new Set(allCustomCols.filter((d) => d.type === "computed").map((d) => d.name));
   const clientSort = (viewQ.sort ?? []).filter((s) => computedNames.has(s.replace(/^-/, "")));
-  const fetched = parts.data?.pages.flatMap((p) => p.items) ?? [];
+  // A card kept in several places shows wherever one of its places matched, so
+  // two pages can both carry it: keep the first.
+  const fetched = dedupeById(parts.data?.pages.flatMap((p) => p.items) ?? []);
   const partItems = clientSort.length === 0
     ? fetched
     : [...fetched].sort((a, b) => {
@@ -299,7 +307,7 @@ export function PartsListPage() {
   // rather than a count he has to go and re-find.
   const askCobb = useAskCobbAboutSelection(selected, partItems, "inventory:part", "part");
   // Tell Ask Cobb what's on this screen — `low_stock` is the module's own flag.
-  const lowStock = partItems.filter((p) => p.low_stock).length;
+  const lowStock = partItems.filter((p) => (p.rollup ? p.rollup.low : p.low_stock)).length;
   usePublishChatContext({
     kind: entityKind,
     label: itemNounPlural ? itemNounPlural.replace(/^\w/, (ch) => ch.toUpperCase()) : "Inventory",
@@ -557,6 +565,7 @@ export function PartsListPage() {
         </>
         )}
         <div className="ml-auto" />
+        {(byPlace || partItems.some((p) => p.holdings)) && <ByPlaceToggle byPlace={byPlace} onChange={setByPlace} />}
         <ViewModeToggle mode={viewMode} onChange={setViewMode} />
         {/* On a skinned table (an app's Yarn, a pantry) the data tools sit
             behind one button: five bordered buttons stacked above the first
@@ -592,6 +601,15 @@ export function PartsListPage() {
             >
               <FileUp size={14} /> Import CSV
             </button>
+            {connectorImport && (
+              <button
+                onClick={() => setConnectorOpen(true)}
+                data-testid="connector-import-open"
+                className="rounded-md border border-line dark:border-slate-700 text-content dark:text-mortar-200 hover:bg-subtle dark:hover:bg-slate-800/70 text-sm font-medium px-3 py-2 transition flex items-center gap-1.5"
+              >
+                <Download size={14} /> {connectorImport.label ?? "Import"}
+              </button>
+            )}
             {/* Spoolman syncs 3D-printing FILAMENT spool weights — irrelevant on a
                 food pantry / medications / generic inventory, where it was just
                 clutter. Gate it to the filament spools instance. */}
@@ -622,6 +640,15 @@ export function PartsListPage() {
         >
           <FileUp size={14} /> Import CSV
         </button>
+        {connectorImport && (
+          <button
+            onClick={() => setConnectorOpen(true)}
+            data-testid="connector-import-open"
+            className="rounded-md border border-line dark:border-slate-700 text-content dark:text-mortar-200 hover:bg-subtle dark:hover:bg-slate-800/70 text-sm font-medium px-3 py-2 transition flex items-center gap-1.5"
+          >
+            <Download size={14} /> {connectorImport.label ?? "Import"}
+          </button>
+        )}
         {/* Spoolman syncs 3D-printing FILAMENT spool weights — irrelevant on a
             food pantry / medications / generic inventory, where it was just
             clutter. Gate it to the filament spools instance. */}
@@ -675,6 +702,14 @@ export function PartsListPage() {
         </div>
       )}
 
+      {/* A view filter the collection could not run used to vanish, and the
+          unfiltered rows read as the filtered set. */}
+      {(parts.data?.pages[0]?.unapplied?.length ?? 0) > 0 && (
+        <p data-testid="view-unapplied" className="rounded border border-amber-300 dark:border-amber-800 bg-amber-50 dark:bg-amber-950/30 px-2 py-1 text-xs text-amber-900 dark:text-amber-200">
+          {parts.data!.pages[0]!.unapplied!.length === 1 ? "One filter" : `${parts.data!.pages[0]!.unapplied!.length} filters`} in this view could not run, so these are not narrowed by{" "}
+          {parts.data!.pages[0]!.unapplied!.map((p) => `${p.col} ${p.op} ${p.ref_col ?? String(p.value ?? "")}`).join(", ")}.
+        </p>
+      )}
       {parts.isLoading && <div className="text-sm text-faint dark:text-slate-500">loading…</div>}
       {parts.error && (
         <div className="text-sm text-ember-500">{(parts.error as Error).message}</div>
@@ -797,6 +832,9 @@ export function PartsListPage() {
           </button>
         </div>
       )}
+      {/* What is waiting in the scan inbox to come here, under the filed
+          results: a thing just scanned is in no table until it is filed. */}
+      <InboxWaitingStrip destination={instance ?? "inventory"} q={search} />
 
       {adding && (
         <NewPartDialog
@@ -805,6 +843,16 @@ export function PartsListPage() {
             closeCreateDoor();
             if (created) void parts.refetch();
           }}
+        />
+      )}
+      {connectorImport && (
+        <TableConnectorImport
+          orgSlug={orgSlug}
+          getToken={getToken}
+          decl={connectorImport}
+          open={connectorOpen}
+          onClose={() => setConnectorOpen(false)}
+          onDone={() => void qc.invalidateQueries({ queryKey: ["inventory-parts"] })}
         />
       )}
       {importing && (
@@ -971,7 +1019,7 @@ const nativeDef = (
 type NativePartCol = "name" | "category_id" | "location_id" | "min_qty" | "supplier_url";
 
 /** One infinite-query page of the parts list, as cached. */
-type PartsPage = { items: PartListItem[]; next_cursor?: string | null };
+type PartsPage = { items: PartListItem[]; next_cursor?: string | null; unapplied?: Array<{ col: string; op: string; value?: unknown; ref_col?: string }> };
 type PartsCache = { pages: PartsPage[]; pageParams: unknown[] };
 
 /** Commit a single cell edit on a part. A native column patches its own column;
@@ -1101,6 +1149,9 @@ function PartsTable({
   const showLocation = !hide("location");
   const showMin = !hide("min_qty");
   const showQty = !hide("qty");
+  // Every column the header draws, so a card's places can span the row.
+  const tableCols =
+    4 + (showCategory ? 1 : 0) + (showLocation ? 1 : 0) + customCols.length + (showQty ? 2 : 0) + (showMin ? 1 : 0) + (anySupplier ? 1 : 0);
   // What the selected view is FOR, on a phone too: its declared fields in its
   // own order, the first few on the card and the rest one tap away. The card's
   // own line already carries the name, qty, category and location.
@@ -1144,8 +1195,8 @@ function PartsTable({
         </thead>
         <tbody>
           {items.map((p) => (
+            <Fragment key={p.id}>
             <tr
-              key={p.id}
               onClick={() => navigate(`${basePath}/parts/${p.id}`)}
               className="group/row border-t border-line dark:border-slate-700 hover:bg-subtle dark:hover:bg-slate-800/70 transition cursor-pointer"
             >
@@ -1227,13 +1278,19 @@ function PartsTable({
               )}
               {showLocation && (
                 <td className="px-3 py-2 text-muted dark:text-slate-400">
-                  <EditableCell
-                    def={nativeDef("location_id", fp.label("location", "Location"), "text")}
-                    value={p.location_id}
-                    options={locOptions}
-                    fallbackLabel={p.location_name}
-                    onCommit={(v) => setCol(p, "location_id", v)}
-                  />
+                  {/* Kept in several places: the places are the rows below,
+                      and one location here would be only the first of them. */}
+                  {p.rollup ? (
+                    <span className="font-mono text-[11px]">{p.rollup.places} places</span>
+                  ) : (
+                    <EditableCell
+                      def={nativeDef("location_id", fp.label("location", "Location"), "text")}
+                      value={p.location_id}
+                      options={locOptions}
+                      fallbackLabel={p.location_name}
+                      onCommit={(v) => setCol(p, "location_id", v)}
+                    />
+                  )}
                 </td>
               )}
               {customCols.map((c) => (
@@ -1259,6 +1316,10 @@ function PartsTable({
                       <span className="text-accent" title="Estimated, not counted">
                         {assortedQty(p)}
                       </span>
+                    ) : p.rollup ? (
+                      // Everything held, across its places; each place's own
+                      // stepper is on its row below.
+                      <span className="font-semibold" title="Across every place">{fmt(p.rollup.qty)}</span>
                     ) : (
                       <QtyStepper partId={p.id} qty={Number(p.qty)} size="sm" />
                     )}
@@ -1284,7 +1345,7 @@ function PartsTable({
                 >
                   {/* Available derives from a count. An estimate has none, and
                       printing 0 here would contradict the ~50 beside it. */}
-                  {isAssorted(p) ? (
+                  {isAssorted(p) || p.rollup ? (
                     <span className="text-faint dark:text-slate-500">—</span>
                   ) : (
                     fmt(availableOnHand(p))
@@ -1293,12 +1354,17 @@ function PartsTable({
               )}
               {showMin && (
                 <td className="px-3 py-2 text-right font-mono text-faint dark:text-slate-500">
-                  <EditableCell
-                    def={nativeDef("min_qty", fp.label("min_qty", "Min"), "number")}
-                    value={p.min_qty}
-                    align="right"
-                    onCommit={(v) => setCol(p, "min_qty", v)}
-                  />
+                  {/* Each place keeps its own minimum, on its row. */}
+                  {p.rollup ? (
+                    <span className="text-[11px]">per place</span>
+                  ) : (
+                    <EditableCell
+                      def={nativeDef("min_qty", fp.label("min_qty", "Min"), "number")}
+                      value={p.min_qty}
+                      align="right"
+                      onCommit={(v) => setCol(p, "min_qty", v)}
+                    />
+                  )}
                 </td>
               )}
               {anySupplier && (
@@ -1329,7 +1395,7 @@ function PartsTable({
               )}
               <td className="px-3 py-2">
                 <div className="flex flex-wrap gap-1 items-center justify-end">
-                  {p.low_stock && (
+                  {(p.rollup ? p.rollup.low : p.low_stock) && (
                     <span className="inline-flex items-center gap-1 text-[10px] text-ember-500 border border-ember-200 dark:border-ember-800 rounded px-1.5 py-0.5">
                       <AlertTriangle size={10} /> low
                     </span>
@@ -1358,6 +1424,16 @@ function PartsTable({
                 </div>
               </td>
             </tr>
+            {p.holdings && p.rollup && (
+              <tr className="border-t-0" data-testid="holdings-subrow">
+                <td />
+                <td colSpan={tableCols - 1} className="px-3 pb-2 pt-0">
+                  <RollupLine rollup={p.rollup} unit={units.suffix(p.unit) || undefined} />
+                  <HoldingRows rows={p.holdings} basePath={basePath} />
+                </td>
+              </tr>
+            )}
+            </Fragment>
           ))}
         </tbody>
       </table>
@@ -1412,8 +1488,16 @@ function PartsTable({
                 {/* Same edits as the desktop table — a phone is where "just
                     change the number" matters most, so the card isn't a
                     read-only summary you have to open the record to act on. */}
+                {/* Kept in several places: the top line and a row per place,
+                    each with its own stepper and minimum. */}
+                {p.holdings && p.rollup && (
+                  <div className="mt-1" onClick={(e) => e.stopPropagation()}>
+                    <RollupLine rollup={p.rollup} unit={units.suffix(p.unit) || undefined} />
+                    <HoldingRows rows={p.holdings} basePath={basePath} />
+                  </div>
+                )}
                 <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px] font-mono text-muted dark:text-slate-400">
-                  {showQty && (
+                  {showQty && !p.rollup && (
                     <span className="inline-flex items-center gap-1">
                       {isAssorted(p) ? (
                         <span className="text-accent" title="Estimated, not counted">
@@ -1428,12 +1512,12 @@ function PartsTable({
                       {openUnitsLabel(p.open_units, fmt) ? ` + ${openUnitsLabel(p.open_units, fmt)}` : ""}
                     </span>
                   )}
-                  {showQty && !isAssorted(p) && (
+                  {showQty && !isAssorted(p) && !p.rollup && (
                     <span title="Derived from what is on hand (open units included) minus what's allocated">
                       avail {fmt(availableOnHand(p))}
                     </span>
                   )}
-                  {showMin && (
+                  {showMin && !p.rollup && (
                     <span className="inline-flex items-center gap-1">
                       min
                       <span className="w-14">
@@ -1456,7 +1540,7 @@ function PartsTable({
                       />
                     </span>
                   )}
-                  {showLocation && (
+                  {showLocation && !p.rollup && (
                     <span className="inline-flex items-center gap-1 min-w-[5rem]">
                       @
                       <EditableCell
@@ -1483,7 +1567,7 @@ function PartsTable({
                   </div>
                 )}
                 <div className="mt-1 flex flex-wrap gap-1">
-                  {p.low_stock && (
+                  {!p.rollup && p.low_stock && (
                     <span className="inline-flex items-center gap-1 text-[10px] text-ember-500 border border-ember-200 dark:border-ember-800 rounded px-1.5 py-0.5">
                       <AlertTriangle size={10} /> low
                     </span>
@@ -1595,7 +1679,7 @@ function PartsTileGrid({ items, basePath }: { items: PartListItem[]; basePath: s
   const disclosure = useDisclosure();
   const units = useUnits();
   return (
-    <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-3">
+    <div className={TILE_GRID}>
       {items.map((p) => (
         <Link key={p.id} to={`${basePath}/parts/${p.id}`} className="block">
           <EntityTile
@@ -1607,6 +1691,12 @@ function PartsTileGrid({ items, basePath }: { items: PartListItem[]; basePath: s
             badge={
               !disclosure.stock ? undefined : isAssorted(p) ? (
                 [assortedQty(p), units.suffix(p.unit)].filter(Boolean).join(" ")
+              ) : p.rollup ? (
+                // Kept in several places: everything held, and where it is short.
+                <span className={p.rollup.low ? "text-ember-600 dark:text-ember-500" : undefined}>
+                  {[fmt(p.rollup.qty), units.suffix(p.unit)].filter(Boolean).join(" ")} · {p.rollup.places} places
+                  {p.rollup.low ? ` · low in ${p.rollup.low_count}` : ""}
+                </span>
               ) : p.low_stock ? (
                 // On hand against the minimum, an open unit counted: the tile
                 // read "0 / 1" over a skein with 160 m left (#2848).
@@ -1618,7 +1708,7 @@ function PartsTileGrid({ items, basePath }: { items: PartListItem[]; basePath: s
                 [fmt(p.qty), units.suffix(p.unit), openUnitsLabel(p.open_units, fmt) ? `+ ${openUnitsLabel(p.open_units, fmt)}` : ""].filter(Boolean).join(" ")
               )
             }
-            attention={!disclosure.stock ? false : p.low_stock}
+            attention={!disclosure.stock ? false : p.rollup ? p.rollup.low : p.low_stock}
           />
         </Link>
       ))}
@@ -1776,5 +1866,54 @@ function SpoolmanModal({
         )}
       </div>
     </Modal>
+  );
+}
+
+function dedupeById<T extends { id: string }>(items: T[]): T[] {
+  const seen = new Set<string>();
+  return items.filter((it) => (seen.has(it.id) ? false : (seen.add(it.id), true)));
+}
+
+const BY_PLACE_KEY = "cobblr.inventory.by-place.";
+
+/** Whether this collection lists a line per place rather than a card per
+ *  thing. A per-browser convenience; a storage that throws reads as "by item". */
+function useByPlace(kind: string): [boolean, (v: boolean) => void] {
+  const [on, setOn] = useState<boolean>(() => {
+    try {
+      return window.localStorage.getItem(BY_PLACE_KEY + kind) === "1";
+    } catch {
+      return false;
+    }
+  });
+  const set = useCallback(
+    (v: boolean) => {
+      setOn(v);
+      try {
+        window.localStorage.setItem(BY_PLACE_KEY + kind, v ? "1" : "0");
+      } catch {
+        /* the choice lasts this visit */
+      }
+    },
+    [kind],
+  );
+  return [on, set];
+}
+
+/** "By item" (a card per thing, its places nested) or "By place" (a line per
+ *  place). Shown once something is kept in more than one place. */
+function ByPlaceToggle({ byPlace, onChange }: { byPlace: boolean; onChange: (v: boolean) => void }) {
+  const btn = (active: boolean) =>
+    "px-2 py-1 text-[11px] transition " +
+    (active ? "bg-cobble-600 text-white" : "text-muted dark:text-slate-400 hover:bg-subtle dark:hover:bg-slate-800");
+  return (
+    <div className="inline-flex items-center rounded border border-line dark:border-slate-700 overflow-hidden shrink-0" role="group" aria-label="Group by">
+      <button type="button" aria-pressed={!byPlace} onClick={() => onChange(false)} className={btn(!byPlace)}>
+        By item
+      </button>
+      <button type="button" aria-pressed={byPlace} onClick={() => onChange(true)} className={btn(byPlace)}>
+        By place
+      </button>
+    </div>
   );
 }

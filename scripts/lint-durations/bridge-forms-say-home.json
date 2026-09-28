@@ -1,0 +1,10 @@
+{
+  "lint": "lint:bridge-forms-say-home",
+  "run": "tsx scripts/lint-bridge-forms-say-home.ts",
+  "rows": [
+    "generic-web-component"
+  ],
+  "ms": 3024,
+  "recorded": "2026-09-28",
+  "source": "scaffolded by new-lint.sh at twice a local run (a shared box); replaced from its first CI measurement"
+}

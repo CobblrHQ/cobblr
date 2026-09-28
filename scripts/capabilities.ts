@@ -73,6 +73,24 @@ export interface VocabularyCapability extends Base {
 export const CAPABILITIES: Capability[] = [
   {
     kind: "owns",
+    id: "network:is-this-a-home-address",
+    what: "deciding whether an address is on the person's own network (and so needs a bridge from a hosted Cobblr): addressReach / needsBridge in packages/platform-contract/src/address-reach.ts",
+    why:
+      "two address forms each carried a copy of the rule and the rest had none, so Part-DB, Homebox and a sync connection said nothing " +
+      "about 192.168.1.50 until the import failed; the copies also missed the tailnet range the hosted egress guard blocks (#3904)",
+    owner: "packages/platform-contract/src/address-reach.ts",
+    scope: ["web/src/**/*.tsx", "web/src/**/*.ts", "packages/platform-web/src/**/*.tsx", "packages/platform-web/src/**/*.ts", "modules/*/src/ui/**/*.tsx", "modules/*/src/ui/**/*.ts"],
+    // The shapes a rule takes in code, never an example address in a
+    // placeholder: a comparison with 168, an escaped 192\.168 in a regex, a
+    // .local suffix test, or a named copy.
+    detect: /===\s*168\b|192\\\.168|\.endsWith\(\s*["']\.local["']\s*\)|function\s+looksLike(?:Lan|Local)/,
+    use: "addressReach(raw) or needsBridge(raw, { hosted }) from @cobblr/platform-contract/address-reach, and <HomeNetworkHint> in a form",
+    except: {
+      "packages/platform-web/src/local-network.test.ts": "the browser gate's own test names the addresses it must refuse",
+    },
+  },
+  {
+    kind: "owns",
     id: "overlay:holds-the-page-still",
     what: "stopping the page scrolling behind an overlay: lockPageScroll / useLockPageScroll in packages/platform-web/src/scrollLock.ts",
     why:
@@ -150,6 +168,37 @@ export const CAPABILITIES: Capability[] = [
       "web/src/lib/community-links.ts": "the reader itself, which CommunityLinks calls",
       "web/src/lib/community-links.test.ts": "the reader's own test",
     },
+  },
+  {
+    kind: "owns",
+    id: "tiles:the-wall-grid",
+    what:
+      "the grid a wall of photo tiles sits in (galleries, card walls, the vending wall): TILE_GRID in " +
+      "packages/platform-web/src/EntityTile.tsx, two across on a phone and ~180px slots above that",
+    why:
+      "each wall picked its own columns, so a desktop vending wall ran five tiles at ~370px while the machines wall ran " +
+      "five fixed columns, and a fix to one never reached the others",
+    owner: "packages/platform-web/src/EntityTile.tsx",
+    scope: ["web/src/**/*.tsx", "modules/*/src/ui/**/*.tsx"],
+    // A tile wall choosing its own columns.
+    detect: /lg:grid-cols-5|repeat\(auto-fill,\s*minmax\(/,
+    also: /<EntityTile\b|<VendingTile\b|<GalleryTile\b/,
+    use: "<div className={TILE_GRID}> from @cobblr/platform-web",
+  },
+  {
+    kind: "owns",
+    id: "views:a-views-records",
+    what:
+      "reading a saved view's records in the web app: useViewData in web/src/lib/useViewData.ts, which holds every record " +
+      "(the server walks every page), carries the server's total and offers the rest past its cap",
+    why:
+      "each surface fetched a view its own way and counted what arrived: a board read \"50 3D printers\" of 56 and dropped a " +
+      "column, a dashboard card counted a 500-row sample, an app's count stopped at 500 and its list at 100",
+    owner: "web/src/lib/useViewData.ts",
+    scope: ["web/src/**/*.{ts,tsx}"],
+    // A surface fetching a view's data for itself.
+    detect: /\bapi\.viewData\(/,
+    use: "const data = useViewData(slug, viewId, kind) from web/src/lib/useViewData.ts; show data.total, place <ViewMore data={data} />",
   },
   {
     kind: "owns",
@@ -1360,5 +1409,26 @@ export const CAPABILITIES: Capability[] = [
     except: {
       "modules/core-scan/src/services/file-through-confirm.test.ts": "a fixture: the stamp as the matcher writes it, to test a door that reads it",
     },
+  },
+  {
+    id: "activity:actor-and-via",
+    kind: "owns",
+    what: "Who made an activity row and how (the person, Automation or Cobblr, and the token / MCP / assistant / automation chip).",
+    why: "The dashboard feed rendered the actor itself and showed no token, while the Activity page named it; the owner had been told the feed shows both, and rows with no user read \"someone\" (#3833).",
+    owner: "web/src/lib/activity-words.ts",
+    scope: ["web/src/pages/Dashboard.tsx", "web/src/pages/ActivityPage.tsx"],
+    detect: /\.token\??\.name\b|actor\??\.display_name\s*\?\?|"someone"/,
+    use: "Render the actor cell with <ActorVia> / <GroupActorVia> (web/src/components/ActorVia.tsx), whose words are actorWords / viaWords in activity-words.ts.",
+  },
+  {
+    id: "camera:torch-on",
+    kind: "owns",
+    what: "Turning the camera light ON: the one rule for who may (the flashlight button always; the automatic assist only when the person switched Auto light on; a remembered flashlight), with the per-device choices.",
+    why: "Auto light started ON on every camera open and forgot being turned off, so the light kept coming on for someone who did not want it, after a booth fix that only narrowed when it fired (#3933).",
+    owner: "web/src/lib/cameraLight.ts",
+    scope: ["web/src/pages/ScanCameraPage.tsx", "web/src/components/CameraCaptureSheet.tsx"],
+    // Any setTorch whose "on" argument is not a literal false.
+    detect: /\bsetTorch\((?![^,()]*,\s*false\s*\))/,
+    use: "Turn the light on through applyLight(track, source, on) in web/src/lib/cameraLight.ts; setTorch(track, false) to put it out stays allowed anywhere.",
   },
 ];

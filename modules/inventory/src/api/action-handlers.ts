@@ -10,7 +10,7 @@
 //  module, bricklink-connector — it drives create-items + update-item.)
 
 import { sql, type Kysely } from "kysely";
-import { platform, quantityWithUnit, requireActionEntity, type ActionInvokeContext } from "@cobblr/platform-contract";
+import { columnSet, platform, quantityWithUnit, requireActionEntity, type ActionInvokeContext } from "@cobblr/platform-contract";
 import type { ActionUndoStep } from "@cobblr/platform-contract/action-undo";
 import { statedQuantity } from "@cobblr/platform-contract/stated-quantity";
 import type { InventoryDB } from "../db.js";
@@ -36,6 +36,7 @@ import { arrivedToday, freshLotStamps, shelfLifeDaysOf, startsFreshLot } from ".
 import { isLowStock, modelIsLow, modelOfUnit, onHandCount, openUnitsFor } from "../on-hand.js";
 import { BELOW_ZERO, NOTHING_ON_HAND, floorDelta } from "../stock-floor.js";
 import { dayIn } from "@cobblr/platform-contract/day";
+import { stillGoodPatch } from "../still-good.js";
 
 /** The day it is for the person doing this: the zone their client sent, else
  *  what the platform knows of them (accounts.dayFor: the zone they told us,
@@ -71,6 +72,13 @@ export function isPerishable(metadata: unknown): boolean {
   return false;
 }
 
+/** A note given with a use, cleaned to one line the statement can show. */
+export function useNoteOf(v: unknown): string | null {
+  if (typeof v !== "string") return null;
+  const t = v.replace(/\s+/g, " ").trim();
+  return t ? t.slice(0, 280) : null;
+}
+
 async function announce(orgId: string, userId: string | null | undefined, applied: Record<string, unknown>, obs: StockObservation[]): Promise<void> {
   if (applied.ok !== true || applied.skipped) return;
   for (const o of obs) {
@@ -91,6 +99,9 @@ interface AdjustStockPayload {
   // fired by digifab.print.completed passes sourceKind:"digifab:job" + the job id.
   sourceKind?: string;
   sourceId?: string;
+  /** The delta sets the count to what is actually there (a recount): the
+   *  ledger line is a correction, never consumption or a purchase. */
+  correction?: boolean;
 }
 
 /** The core stock-delta path, shared by adjust-stock (wire/HTTP) and the
@@ -101,7 +112,7 @@ interface AdjustStockPayload {
  *  opt-out. A non-zero `delta` is assumed (callers guard). */
 export async function applyStockDelta(
   orgId: string,
-  p: { partId: string; delta: number; reason: string; sourceKind?: string | null; sourceId?: string | null },
+  p: { partId: string; delta: number; reason: string; sourceKind?: string | null; sourceId?: string | null; correction?: boolean },
 ): Promise<Record<string, unknown>> {
   const { partId, delta, reason } = p;
   const db = (await platform().tenants.getDb(orgId)) as Kysely<InventoryDB>;
@@ -148,6 +159,7 @@ export async function applyStockDelta(
       reason: reason ?? null,
       sourceKind: p.sourceKind ?? null,
       sourceId: p.sourceId ?? null,
+      kind: p.correction ? "correction" : null,
     });
   } catch (e) {
     console.error("[inventory.applyStockDelta] ledger write failed:", (e as Error).message);
@@ -461,7 +473,13 @@ export function registerInventoryActionHandlers(): void {
             if (!startsFreshLot({ delta, qtyBefore, restock })) return batches;
             return addBatch(batches, { received_on: today, expires_on: expiryFor(today, shelfLifeDays) ?? "", qty: delta });
           },
-          { ...(typeof args.timezone === "string" ? { timezone: args.timezone } : {}), userId: ctx.userId },
+          {
+            ...(typeof args.timezone === "string" ? { timezone: args.timezone } : {}),
+            userId: ctx.userId,
+            sourceKind: args.sourceKind ?? ev.sourceKind ?? null,
+            sourceId: args.sourceId ?? ev.sourceId ?? null,
+            ...(args.correction === true ? { correction: true } : {}),
+          },
         );
       }
       return applyStockDelta(ctx.orgId, {
@@ -470,6 +488,7 @@ export function registerInventoryActionHandlers(): void {
         reason,
         sourceKind: args.sourceKind ?? ev.sourceKind,
         sourceId: args.sourceId ?? ev.sourceId,
+        ...(args.correction === true ? { correction: true } : {}),
       });
     }),
   );
@@ -495,7 +514,7 @@ async function withBatches(
   reason: string,
   delta: number,
   mutate: (batches: Batch[], ctx: { today: string; shelfLifeDays: number | null; qtyBefore: number }) => Batch[],
-  opts: { timezone?: string; userId?: string | null } = {},
+  opts: { timezone?: string; userId?: string | null; sourceKind?: string | null; sourceId?: string | null; correction?: boolean } = {},
 ): Promise<Record<string, unknown>> {
   const db = (await platform().tenants.getDb(orgId)) as Kysely<InventoryDB>;
   const row = await db
@@ -581,7 +600,14 @@ async function withBatches(
   const applied =
     verdict.applied === 0
       ? { ok: true, skipped: true, reason: "no quantity change" }
-      : await applyStockDelta(orgId, { partId, delta: verdict.applied, reason });
+      : await applyStockDelta(orgId, {
+          partId,
+          delta: verdict.applied,
+          reason,
+          sourceKind: opts.sourceKind ?? null,
+          sourceId: opts.sourceId ?? null,
+          ...(opts.correction ? { correction: true } : {}),
+        });
 
   return { ...applied, batches: next, expires_on: visible.expires_on, qty: qtyAfter };
 }
@@ -599,13 +625,17 @@ async function withBatches(
       const partId = ctx.entity?.id ?? (ctx.args as { partId?: string } | null)?.partId;
       if (!partId) return { ok: false, error: "missing_part" };
       const tz = (ctx.args as { timezone?: string } | null)?.timezone;
+      // A note said about this one (a bottle's tasting note, asked by the
+      // collection's own button) is kept on the statement line of the use,
+      // dated with it, rather than overwriting a field the next use replaces.
+      const note = useNoteOf((ctx.args as { note?: unknown } | null)?.note);
       // Always the OLDEST lot. It is the one the warning named, so taking from
       // anywhere else would leave the warning standing after the user did what it
       // asked - and once that lot empties the deadline moves on by itself.
       const applied = await withBatches(
         ctx.orgId,
         partId,
-        "used one",
+        note ? `used one: ${note}` : "used one",
         -1,
         (batches) => consumeOldest(batches, 1).batches,
         { ...(tz ? { timezone: tz } : {}), userId: ctx.userId },
@@ -849,6 +879,38 @@ async function withBatches(
       const applied = await endOldestLot(ctx.orgId, partId, "spoiled", args.timezone, "threw it out", ctx.userId);
       await announce(ctx.orgId, ctx.userId, applied, [observation(partId, "discard", -1)]);
       return applied;
+    }),
+  );
+
+  // Still good: checked, fine, ask again in a few days (still-good.ts).
+  platform().actions.registerHandler("inventory.still-good", (ctx) =>
+    withPartUndo(ctx, async () => {
+      const args = (ctx.args as { partId?: string; timezone?: string; days?: unknown } | null) ?? {};
+      const partId = ctx.entity?.id ?? args.partId;
+      if (!partId) return { ok: false, error: "missing_part" };
+      const n = Number(args.days ?? 3);
+      const days = Number.isFinite(n) && n >= 1 && n <= 60 ? Math.round(n) : 3;
+      const db = (await platform().tenants.getDb(ctx.orgId)) as Kysely<InventoryDB>;
+      const row = await db.selectFrom("inventory_parts").select(["qty", "metadata"]).where("id", "=", partId).executeTakeFirst();
+      if (!row) return { ok: false, error: "part_not_found" };
+      const md = ((row.metadata as Record<string, unknown> | null) ?? {}) as Record<string, unknown>;
+      const today = await personToday(ctx.userId, args.timezone);
+      // The collection's own expiry field, by role: the date its reminders read.
+      let expiryField: string | null = null;
+      try {
+        const kind = await platform().entities.resolvedKindForEntity(ctx.orgId, "inventory:part", partId);
+        expiryField = (await platform().entities.roledFieldsFor(ctx.orgId, kind)).find((f) => f.field_role === "expiry")?.name ?? null;
+      } catch {
+        expiryField = null;
+      }
+      const patch = stillGoodPatch(md, Number(row.qty), today, days, expiryField);
+      if (!patch) return { ok: false, error: "This has no date to move." };
+      await db
+        .updateTable("inventory_parts")
+        .set({ metadata: sql`coalesce(metadata, '{}'::jsonb) || ${JSON.stringify(patch)}::jsonb`, updated_at: new Date() })
+        .where("id", "=", partId)
+        .execute();
+      return { ok: true, partId, expires_on: patch.expires_on, message: `Good until ${String(patch.expires_on)}` };
     }),
   );
 
@@ -1220,7 +1282,7 @@ async function withBatches(
     }
 
     const db = (await platform().tenants.getDb(ctx.orgId)) as Kysely<InventoryDB>;
-    const NATIVE = new Set(["name", "manufacturer", "qty", "unit"]);
+    const NATIVE = columnSet<InventoryDB["inventory_parts"]>()(["name", "manufacturer", "qty", "unit"]);
     const fieldVal = (row: Record<string, unknown>, f: string): string => {
       const v = NATIVE.has(f) ? row[f] : (row.metadata as Record<string, unknown> | null)?.[f];
       return v == null ? "" : String(v).trim().toLowerCase();
@@ -1508,6 +1570,7 @@ async function withBatches(
   platform().actions.registerUndo("inventory.mark-finished", partUndoStep);
   platform().actions.registerUndo("inventory.mark-spoiled", partUndoStep);
   platform().actions.registerUndo("inventory.use-up", partUndoStep);
+  platform().actions.registerUndo("inventory.still-good", partUndoStep);
   platform().actions.registerUndo("inventory.replaced", partUndoStep);
   platform().actions.registerUndo("inventory.set-stock", partUndoStep);
   platform().actions.registerUndo("inventory.set-status", partUndoStep);

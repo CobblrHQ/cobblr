@@ -8,6 +8,7 @@
 // verification, shown on the row and in the toast, re-checked from a button.
 //
 // Buildless subpath: no runtime import of a sibling.
+import type { ProviderReason } from "./provider-reason.js";
 
 export type VerificationState =
   /** The probe reached the provider and the key was accepted. */
@@ -22,25 +23,35 @@ export type VerificationState =
 export interface ConnectionVerification {
   state: VerificationState;
   /** The provider's reason (provider-reason.ts) when the probe did not pass. */
-  reason?: "invalid_key" | "quota" | "model_unavailable" | "unreachable" | "unknown";
+  reason?: ProviderReason;
   /** The sentence a person reads for it. */
   message?: string;
   /** The model the probe confirmed, when the provider named one. */
   model?: string;
   /** When the probe ran, ISO. */
   at: string;
+  /** Whether the connection read a known picture during the probe, for a
+   *  provider whose backend may ignore an image (a bridge to an agent). A
+   *  connection can answer chat and still not see photos, which is what
+   *  decides whether it can stand in for scanning. Absent: not tried. */
+  photos?: "read" | "not-read";
+  /** What it said about the picture, when it did not name it. */
+  photos_said?: string;
 }
 
 /** The verification a probe's verdict becomes. A quota or an unreachable
  *  provider says nothing about the key, so those are "unverifiable", not
  *  "invalid"; a rejected key or a missing model is "invalid". */
 export function verificationOf(
-  probe: { ok: boolean; reason?: ConnectionVerification["reason"]; error?: string; detail?: string; models?: string[]; note?: string },
+  probe: { ok: boolean; reason?: ConnectionVerification["reason"]; error?: string; detail?: string; models?: string[]; note?: string; photos?: { read: boolean; said?: string } },
   model?: string | null,
   now: Date = new Date(),
 ): ConnectionVerification {
   const at = now.toISOString();
-  if (probe.ok) return { state: "verified", at, ...(model ? { model } : probe.models?.[0] ? { model: probe.models[0] } : {}), ...(probe.note ? { message: probe.note } : {}) };
+  const photos = probe.photos
+    ? { photos: probe.photos.read ? ("read" as const) : ("not-read" as const), ...(!probe.photos.read && probe.photos.said ? { photos_said: probe.photos.said.slice(0, 200) } : {}) }
+    : {};
+  if (probe.ok) return { state: "verified", at, ...(model ? { model } : probe.models?.[0] ? { model: probe.models[0] } : {}), ...(probe.note ? { message: probe.note } : {}), ...photos };
   const reason = probe.reason ?? "unknown";
   const state: VerificationState = reason === "invalid_key" || reason === "model_unavailable" ? "invalid" : "unverifiable";
   return { state, reason, at, ...(probe.error ? { message: probe.error } : {}) };

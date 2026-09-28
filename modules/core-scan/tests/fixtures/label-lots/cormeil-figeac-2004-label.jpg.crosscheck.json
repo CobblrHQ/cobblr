@@ -1,0 +1,20 @@
+{
+  "fixture": "cormeil-figeac-2004-label.jpg",
+  "image_sha256": "af8814aa2304ce60f6b923fe0cb015121e170e72d677314f6749cc9eea2b09b8",
+  "capability": "classify-image",
+  "prompt": "A scanned barcode resolved this item to: \"Château Cormeil-Figeac Saint-Emilion Grand Cru\". Look at the photo and decide whether the product visible in it plausibly matches that name/identity — consider the product type, packaging, and any readable label text, and allow for a generic or differently-angled shot. Only answer \"no\" when the photo clearly shows a DIFFERENT kind of product. When (and ONLY when) it's a clear mismatch AND the photo's label makes the real product unambiguous, also return what the item actually IS — a concise retail product name, plus brand if visible. Omit them if you can't read it confidently. Separately, in \"printed\", report what is PRINTED on the item or its cover, verbatim and only when clearly legible: the author, artist or maker as printed (a book's cover author, a record's artist), the brand as printed, the title as printed, and the lot or batch code as printed (a dye lot, a lot number, a batch: the code that changes from one production run to the next, never the barcode digits, a colour number or an article number), and the year this unit was made as printed (a wine's vintage, a coin's year: four digits, never a best-before date, a copyright year or a \"since\" or \"established\" year). Never complete or translate them; null when not shown. Reply with JSON only: {\"match\":\"yes\"|\"no\"|\"unsure\",\"reason\":\"<one short sentence>\",\"correct_name\":\"<the real product name, optional>\",\"correct_brand\":\"<brand, optional>\",\"printed\":{\"creator\":<string|null>,\"brand\":<string|null>,\"title\":<string|null>,\"lot\":<string|null>,\"year_made\":<string|null>}}.",
+  "crosscheck": {
+    "result": {
+      "role": "assistant",
+      "content": "```json\n{\"match\":\"yes\",\"reason\":\"Label clearly reads Château Cormeil-Figeac Saint-Emilion Grand Cru, matching the barcode result.\",\"printed\":{\"creator\":null,\"brand\":\"Château Cormeil-Figeac\",\"title\":\"Château Cormeil-Figeac Saint-Emilion Grand Cru\",\"lot\":null,\"year_made\":\"2004\"}}\n```"
+    },
+    "provider_id": "openai-compat",
+    "model": "default",
+    "cached": false,
+    "input_tokens": 57360,
+    "output_tokens": 233,
+    "cost_cents": 0,
+    "duration_ms": 6503,
+    "text": "```json\n{\"match\":\"yes\",\"reason\":\"Label clearly reads Château Cormeil-Figeac Saint-Emilion Grand Cru, matching the barcode result.\",\"printed\":{\"creator\":null,\"brand\":\"Château Cormeil-Figeac\",\"title\":\"Château Cormeil-Figeac Saint-Emilion Grand Cru\",\"lot\":null,\"year_made\":\"2004\"}}\n```"
+  }
+}

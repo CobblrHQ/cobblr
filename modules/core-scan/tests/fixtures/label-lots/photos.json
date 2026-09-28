@@ -1,5 +1,5 @@
 {
-  "note": "Real photos of yarn labels, for the scan photo's lot read (#3792). Each one's cross-check answer is recorded once beside it (<file>.crosscheck.json) by scripts/record-label-lot-cassettes.ts and replayed in CI.",
+  "note": "Real photos of labels, for what the scan photo reads off one unit: its lot (#3792) and the year it was made (#3802). Each one's cross-check answer is recorded once beside it (<file>.crosscheck.json) by scripts/record-label-lot-cassettes.ts and replayed in CI.",
   "photos": [
     {
       "file": "spinnerin-dressy.jpg",
@@ -11,20 +11,26 @@
       "author": "ShimmerGreen",
       "license": "CC BY-SA 2.0",
       "license_url": "https://creativecommons.org/licenses/by-sa/2.0/",
-      "fetched": "2026-09-27"
+      "fetched": "2026-09-27",
+      "printed_year": null
     },
     {
       "file": "dye-lot-label.jpg",
       "resolved_name": "Acrylic Yarn",
       "printed_lot": null,
-      "printed_numbers": ["118026", "11108", "241011"],
+      "printed_numbers": [
+        "118026",
+        "11108",
+        "241011"
+      ],
       "why": "A real trilingual label: DYE LOT / TEINTURE / LOTE DEL TINTE with its numbers on other lines. Which number is the lot is not certain from the picture, so the assertion is only that a lot read here is one of the printed numbers and never the colour number 11108.",
       "source": "https://commons.wikimedia.org/wiki/File:Dye_lot.jpg",
       "title": "File:Dye lot.jpg",
       "author": "Durova",
       "license": "CC BY-SA 4.0",
       "license_url": "https://creativecommons.org/licenses/by-sa/4.0/",
-      "fetched": "2026-09-27"
+      "fetched": "2026-09-27",
+      "printed_year": null
     },
     {
       "file": "same-dye-lot-skeins.jpg",
@@ -36,7 +42,60 @@
       "author": "Durova",
       "license": "CC BY-SA 4.0",
       "license_url": "https://creativecommons.org/licenses/by-sa/4.0/",
-      "fetched": "2026-09-27"
+      "fetched": "2026-09-27",
+      "printed_year": null
+    },
+    {
+      "file": "filhot-2008-label.jpg",
+      "resolved_name": "Château Filhot Sauternes",
+      "printed_lot": null,
+      "printed_year": "2008",
+      "why": "A Sauternes label that prints three years: Fondé en 1709, Grand Cru Classé en 1855, and the vintage 2008. Only the vintage is the year this bottle was made.",
+      "source": "https://commons.wikimedia.org/wiki/File:Chateau_filhot_2008_bottle_label.jpg",
+      "title": "File:Chateau filhot 2008 bottle label.jpg",
+      "author": "Gabriel de Vaucelles",
+      "license": "CC BY-SA 3.0",
+      "license_url": "https://creativecommons.org/licenses/by-sa/3.0",
+      "fetched": "2026-09-28"
+    },
+    {
+      "file": "faustino-1998-bottle.jpg",
+      "resolved_name": "Faustino I Gran Reserva Rioja",
+      "printed_lot": null,
+      "printed_year": "1998",
+      "why": "A whole bottle: the vintage 1998 on the neck label beside a handwritten bottle count and a bottle number, the front label with no year at all.",
+      "source": "https://commons.wikimedia.org/wiki/File:1998_Gran_Riserva_Faustino_I_Rioja_(5946943296).jpg",
+      "title": "File:1998 Gran Riserva Faustino I Rioja (5946943296).jpg",
+      "author": "Michal Osmenda from Brussels, Belgium",
+      "license": "CC BY-SA 2.0",
+      "license_url": "https://creativecommons.org/licenses/by-sa/2.0",
+      "fetched": "2026-09-28"
+    },
+    {
+      "file": "cormeil-figeac-2004-label.jpg",
+      "resolved_name": "Château Cormeil-Figeac Saint-Emilion Grand Cru",
+      "printed_lot": null,
+      "printed_year": "2004",
+      "why": "A label photographed at an angle on the bottle, the vintage 2004 above a postcode (33330).",
+      "source": "https://commons.wikimedia.org/wiki/File:Chateau_Cormeil-Figeac_Bordeaux_wine.JPG",
+      "title": "File:Chateau Cormeil-Figeac Bordeaux wine.JPG",
+      "author": "Philippe Alès",
+      "license": "CC BY-SA 4.0",
+      "license_url": "https://creativecommons.org/licenses/by-sa/4.0",
+      "fetched": "2026-09-28"
+    },
+    {
+      "file": "beronia-2014-bottle.jpg",
+      "resolved_name": "Beronia Rioja",
+      "printed_lot": null,
+      "printed_year": "2014",
+      "why": "A packshot: the vintage 2014 on the lower label, and 2001 moulded into the glass at the foot of the bottle, which is the mould's year and not the wine's.",
+      "source": "https://commons.wikimedia.org/wiki/File:Beronia_Rioja.jpg",
+      "title": "File:Beronia Rioja.jpg",
+      "author": "Nigab Pressbilder",
+      "license": "CC BY 2.0",
+      "license_url": "https://creativecommons.org/licenses/by/2.0",
+      "fetched": "2026-09-28"
     }
   ]
 }

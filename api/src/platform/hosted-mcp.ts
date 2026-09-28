@@ -22,8 +22,12 @@
 
 import { platform } from "@cobblr/platform-contract";
 import { actionRunsUnconfirmed } from "@cobblr/platform-contract/action-consent";
-import { WORKSPACE_TOOLS, jsonSchemaOf, mcpToolName, toolFromMcpName, type WorkspaceApi } from "@cobblr/workspace-tools";
+import { WORKSPACE_TOOLS, jsonSchemaOf, mcpToolName, toolFromMcpName, workspaceLinks, type WorkspaceApi } from "@cobblr/workspace-tools";
+import { publicBaseUrl } from "@cobblr/platform-contract/public-url";
 import { signMcpWriteGrant, verifySession } from "../auth/jwt.js";
+import { resolveApiToken } from "../auth/api-tokens.js";
+import { MCP_PATH, originOf, protectedResourceMetadataUrl } from "../auth/oauth.js";
+import { mcpProxyHeaders } from "../auth/mcp-proxy.js";
 import { meta } from "../db/meta.js";
 
 const SELF_BASE = `http://127.0.0.1:${process.env.API_PORT || "4000"}/api/v1`;
@@ -82,7 +86,7 @@ export const HOSTED_MCP_TOOLS = [
 async function rest(token: string, method: string, path: string, body?: unknown): Promise<unknown> {
   const res = await fetch(`${SELF_BASE}${path}`, {
     method,
-    headers: { authorization: `Bearer ${token}`, ...(body !== undefined ? { "content-type": "application/json" } : {}) },
+    headers: { authorization: `Bearer ${token}`, ...mcpProxyHeaders(), ...(body !== undefined ? { "content-type": "application/json" } : {}) },
     body: body !== undefined ? JSON.stringify(body) : undefined,
   });
   const text = await res.text();
@@ -121,6 +125,14 @@ async function actionSafety(
   return row ? { id: row.id, label: row.label, undoable: row.undoable === true } : null;
 }
 
+/** A held token names its workspace; a call aimed at another is refused in
+ *  words the model can repeat, rather than a bare 403 from the route. */
+function heldSlug(slug: string, args: Json): string {
+  const asked = typeof args.workspace === "string" ? args.workspace.trim() : "";
+  if (asked && asked !== slug) throw new Error(`This connection is for the ${slug} workspace only.`);
+  return slug;
+}
+
 function slugOf(args: Json, defaultSlug: string | null): string {
   const s = (typeof args.workspace === "string" ? args.workspace.trim() : "") || defaultSlug || "";
   if (!s) throw new Error("No workspace. Pass `workspace` (the org slug), set ?workspace= on the endpoint, or call cobblr_list_workspaces.");
@@ -131,12 +143,17 @@ function slugOf(args: Json, defaultSlug: string | null): string {
  *  executes against. Auth and permissions stay entirely the api's: this proxies
  *  to its OWN REST surface with the user's token and adds nothing. */
 function workspaceApiFor(token: string, slug: string): WorkspaceApi {
+  // The caller is outside this box, so only the public address is a link it
+  // can open; with none configured, tools say "file ids only".
+  const origin = publicBaseUrl();
   return {
+    link: workspaceLinks({ apiBase: origin ? `${origin}/api/v1` : null, appOrigin: origin || null }, slug),
     async request(method, path, body) {
       const res = await fetch(`${SELF_BASE}/orgs/${slug}${path}`, {
         method,
         headers: {
           authorization: `Bearer ${token}`,
+          ...mcpProxyHeaders(),
           ...(body !== undefined ? { "content-type": "application/json" } : {}),
         },
         body: body !== undefined ? JSON.stringify(body) : undefined,
@@ -172,10 +189,19 @@ function workspaceApiFor(token: string, slug: string): WorkspaceApi {
 // chat has nowhere to ask.
 type Caller =
   | { kind: "full" }
-  | { kind: "grant"; slug: string; userId: string };
+  | { kind: "grant"; slug: string; userId: string }
+  /** A personal token held to a workspace and/or an access level. REST
+   *  enforces both (token-access.ts); this side pins the workspace and lists
+   *  only the tools the access level can run, so the model is never offered a
+   *  write it will be refused. */
+  | { kind: "held"; slug: string | null; lookOnly: boolean };
 
 async function callerOf(token: string): Promise<Caller> {
-  if (token.startsWith("cbt_")) return { kind: "full" };
+  if (token.startsWith("cbt_")) {
+    const t = await resolveApiToken(token).catch(() => null);
+    if (t && (t.access || t.orgId)) return { kind: "held", slug: t.orgSlug, lookOnly: t.access === "look" };
+    return { kind: "full" };
+  }
   try {
     const claims = await verifySession(token);
     const aud = typeof claims.aud === "string" ? claims.aud : "";
@@ -253,6 +279,9 @@ export function toolsForWriteMode(mode: WriteMode): typeof HOSTED_MCP_TOOLS {
 
 async function toolsFor(caller: Caller, token: string): Promise<typeof HOSTED_MCP_TOOLS> {
   if (caller.kind === "full") return HOSTED_MCP_TOOLS;
+  if (caller.kind === "held") {
+    return caller.lookOnly ? HOSTED_MCP_TOOLS.filter((t) => toolFromMcpName(t.name)?.mode !== "write") : HOSTED_MCP_TOOLS;
+  }
   return toolsForWriteMode(await writeModeFor(token, caller.slug));
 }
 
@@ -296,7 +325,15 @@ async function callTool(name: string, args: Json, token: string, defaultSlug: st
   // A grant is pinned to ONE workspace server-side; honour that here too, so a
   // `workspace` argument can never aim the call — or the write grant minted for
   // it — at a different workspace than the one the user is chatting in.
-  const slug = caller.kind === "grant" ? caller.slug : slugOf(args, defaultSlug);
+  if (caller.kind === "held" && caller.lookOnly && tool.mode === "write") {
+    throw new Error("This connection's token can look but not change anything. Make changes in Cobblr, or connect with a token that can make changes.");
+  }
+  const slug =
+    caller.kind === "grant"
+      ? caller.slug
+      : caller.kind === "held" && caller.slug
+        ? heldSlug(caller.slug, args)
+        : slugOf(args, defaultSlug);
 
   // A relay grant reads with the token it was given; a consented record write
   // runs on a 60-second write grant minted here, for this call only, and never
@@ -408,12 +445,34 @@ export function registerHostedMcp(): void {
         return { status: 405, body: { jsonrpc: "2.0", error: { code: -32000, message: "Use POST /api/v1/hooks/mcp." }, id: null } };
       }
       const token = bearer(req.headers);
+      // Where a connector learns how to sign in (RFC 9728): every 401 names
+      // the protected-resource metadata, so claude.ai can start OAuth from
+      // nothing but this URL.
+      const origin = originOf({ headers: req.headers as Record<string, string | string[] | undefined> });
+      const challenge = (extra = "") =>
+        `Bearer resource_metadata="${protectedResourceMetadataUrl(origin)}"${extra}`;
       if (!token) {
         return {
           status: 401,
-          headers: { "www-authenticate": "Bearer" },
-          body: { jsonrpc: "2.0", error: { code: -32001, message: "Missing bearer token. Send Authorization: Bearer <cbt_…> (mint one in Cobblr → Configuration → API tokens)." }, id: null },
+          headers: { "www-authenticate": challenge() },
+          body: { jsonrpc: "2.0", error: { code: -32001, message: "Missing bearer token. Connect with OAuth, or send Authorization: Bearer <cbt_…> (Configuration → Connect an AI assistant)." }, id: null },
         };
+      }
+      if (token.startsWith("cbt_")) {
+        // An expired, revoked or foreign token is an HTTP 401, not a tool
+        // error: that is what tells a connector to refresh or sign in again.
+        const t = await resolveApiToken(token).catch(() => null);
+        // A token in this deployment's own database, issued for its MCP
+        // endpoint. Comparing the full URL re-derived the origin with a
+        // guessed scheme and refused the connector's own token on a server
+        // reached over plain http.
+        if (!t || (t.audience && !t.audience.endsWith(MCP_PATH))) {
+          return {
+            status: 401,
+            headers: { "www-authenticate": challenge(', error="invalid_token"') },
+            body: { jsonrpc: "2.0", error: { code: -32001, message: "This token is not valid here. Sign in again." }, id: null },
+          };
+        }
       }
       const defaultSlug = typeof req.query.workspace === "string" ? req.query.workspace : null;
       const payload = req.body as Json | Json[];

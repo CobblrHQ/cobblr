@@ -193,11 +193,18 @@ export async function claimOrderLine(args: {
   orderId: string;
   itemId: string;
   partId: string | null;
+  /** The kind of what was filed, when it is not a part: a line can stand for
+   *  any record (a machine, an asset), and naming it as a part was wrong. */
+  subjectKind?: string | null;
 }): Promise<boolean> {
   try {
     const res = await fetch(
       `${args.baseUrl}/api/v1/orgs/${args.slug}/modules/purchases/orders/${args.orderId}/items/${args.itemId}`,
-      { method: "PATCH", headers: args.headers, body: JSON.stringify({ part_id: args.partId }) },
+      {
+        method: "PATCH",
+        headers: args.headers,
+        body: JSON.stringify(args.partId && args.subjectKind ? { subject_kind: args.subjectKind, subject_id: args.partId } : { part_id: args.partId }),
+      },
     );
     if (!res.ok) console.warn(`[core-scan] receipt order line ${args.partId ? "claim" : "release"} skipped (${res.status})`);
     return res.ok;

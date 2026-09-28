@@ -25,7 +25,7 @@ import { join } from "node:path";
 const ROOTS = ["web/src", "modules"];
 
 /** Side-cars that ALSO arrive as a universal panel, and so can double up. */
-const DOUBLED = ["tags", "discussion"] as const;
+const DOUBLED = ["tags", "discussion", "pairings"] as const;
 
 function walk(dir: string, out: string[] = []): string[] {
   for (const name of readdirSync(dir)) {

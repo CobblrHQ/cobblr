@@ -405,6 +405,29 @@ export const CONFIG_DESTINATIONS: ConfigDestination[] = [
   },
   {
     section: "connections",
+    icon: Cable,
+    label: "Connect an AI assistant",
+    description:
+      "Connect your own Claude (Claude Code, Claude Desktop) or another MCP client to this workspace: the server URL, a one-click token, and a snippet to paste.",
+    to: "/configuration/connect-assistant",
+    keywords: [
+      "mcp",
+      "model context protocol",
+      "claude",
+      "claude code",
+      "claude desktop",
+      "claude.ai",
+      "chatgpt",
+      "cursor",
+      "ai assistant",
+      "agent",
+      "connector",
+      "integration",
+      "api token",
+    ],
+  },
+  {
+    section: "connections",
     icon: Bot,
     label: "Assistant",
     description:
@@ -504,7 +527,7 @@ export const CONFIG_DESTINATIONS: ConfigDestination[] = [
     section: "connections",
     icon: KeyRound,
     label: "API tokens",
-    description: "Long-lived `cbt_*` tokens for CLI / AI / automation. Mint, list, revoke.",
+    description: "Long-lived `cbt_*` tokens for CLI / AI / automation, each held to one workspace or all, and to look only, look and make changes, or full access. Mint, list, revoke.",
     to: "/configuration/tokens",
     keywords: ["cli", "bearer", "automation", "keys"],
   },

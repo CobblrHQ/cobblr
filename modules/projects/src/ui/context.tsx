@@ -18,6 +18,7 @@ interface Ctx {
   displayName?: string;
   itemNoun?: string;
   fileIntake?: FileIntakeDecl;
+  hint?: string | null;
 }
 
 const Ctx = createContext<Ctx | null>(null);
@@ -29,6 +30,7 @@ export function ProjectsProvider({
   displayName,
   itemNoun,
   fileIntake,
+  hint,
   children,
 }: {
   orgSlug: string;
@@ -37,6 +39,7 @@ export function ProjectsProvider({
   displayName?: string;
   itemNoun?: string;
   fileIntake?: FileIntakeDecl;
+  hint?: string | null;
   children: ReactNode;
 }) {
   const api = useMemo(
@@ -45,7 +48,7 @@ export function ProjectsProvider({
   );
   const entityKind = instance ? `${instance}:item` : "projects:project";
   return (
-    <Ctx.Provider value={{ orgSlug, getToken, api, instance, entityKind, displayName, itemNoun, fileIntake }}>
+    <Ctx.Provider value={{ orgSlug, getToken, api, instance, entityKind, displayName, itemNoun, fileIntake, hint }}>
       {children}
     </Ctx.Provider>
   );

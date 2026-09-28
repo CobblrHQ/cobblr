@@ -14,6 +14,7 @@ import { meta } from "../db/meta.js";
 import { getTenantDb } from "../db/tenant.js";
 import * as events from "../platform/events.js";
 import { detailPathForEntity, resolveKind } from "../platform/entities.js";
+import { labelJoinLink } from "../platform/join-invite.js";
 
 export const qrScanRouter = Router({ mergeParams: true });
 
@@ -32,6 +33,10 @@ interface ResolveResult {
    *  workspace-relative path with placeholders substituted. Web uses
    *  it to redirect on navigate-mode scans. */
   detail_path?: string;
+  /** The workspace's join link, when its admin let item labels offer it: a
+   *  signed-out scan of the closet's cable can say "Join <club> to take
+   *  one" instead of a sign-in page that person has no account for. */
+  join?: { token: string; org_name: string };
 }
 
 /** Resolve a QR token slug → its target (org, entity, mode, detail_path), or a
@@ -124,7 +129,8 @@ qrScanRouter.get("/:token(.*)", async (req, res, next) => {
       ua: ((req.headers["user-agent"] as string | undefined) ?? "").slice(0, 200),
     });
 
-    res.json(result);
+    const join = result.mode === "navigate" ? await labelJoinLink(result.org_id!) : null;
+    res.json(join ? { ...result, join } : result);
   } catch (err) {
     next(err);
   }

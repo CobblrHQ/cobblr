@@ -7,11 +7,13 @@
 // file's raw bytes — print farm uploading gcode, vision reading a
 // scan photo — without importing core-files or its disk layout.
 
-import { randomUUID } from "node:crypto";
-import type { Kysely } from "kysely";
+import { readableFilename } from "./filename.js";
+import { sameBytes } from "./intake.js";
+import { createHash, randomUUID } from "node:crypto";
+import { sql, type Kysely } from "kysely";
 import { platform, type ResolvedEntity } from "@cobblr/platform-contract";
 import type { CoreFilesDB, FileVariants } from "../db.js";
-import { readVariantBytes, storeUpload } from "./storage.js";
+import { readVariantBytes, removeStoredFile, storeUpload } from "./storage.js";
 
 let registered = false;
 
@@ -39,7 +41,8 @@ export function registerFileResolvers(): void {
   // found by scrolling (#3753). Newest first; `q` matches the name.
   platform().entities.registerListResolver("core-files:file", async (orgId, query) => {
     const db = (await platform().tenants.getDb(orgId)) as Kysely<CoreFilesDB>;
-    let q = db.selectFrom("core_files_files").selectAll().where("deleted_at", "is", null);
+    // A copy that repeats another file's bytes is that file: listed once.
+    let q = db.selectFrom("core_files_files").selectAll().where("deleted_at", "is", null).where("same_as", "is", null);
     const text = (query.q ?? "").trim();
     if (text) q = q.where("filename", "ilike", `%${text.replace(/[\\%_]/g, (c) => `\\${c}`)}%`);
     const rows = await q
@@ -75,27 +78,47 @@ export function registerFileResolvers(): void {
   // session): generate an id, store bytes + variants, insert the DB row, meter.
   // Used by the graduation import to COPY a photo into the new workspace.
   platform().files.registerWriter(async (orgId, bytes, opts) => {
-    const fileId = randomUUID();
-    const stored = await storeUpload(orgId, fileId, Buffer.from(bytes), opts.mimeType || "application/octet-stream");
     const db = (await platform().tenants.getDb(orgId)) as Kysely<CoreFilesDB>;
-    await db
-      .insertInto("core_files_files")
-      .values({
-        id: fileId,
-        org_id: orgId,
-        owner_user_id: null,
-        filename: opts.filename || "untitled",
-        mime_type: stored.mime_type,
-        size_bytes: String(stored.size_bytes),
-        sha256: stored.sha256,
-        variants: stored.variants,
-        kind: stored.kind,
-        width: stored.width,
-        height: stored.height,
-      })
-      .execute();
-    platform().metering.record({ orgId, kind: "files.bytes_stored", quantity: stored.size_bytes, meta: { fileId, kind: stored.kind } });
-    return { fileId, mimeType: stored.mime_type, sizeBytes: stored.size_bytes, kind: stored.kind };
+    const buffer = Buffer.from(bytes);
+    const sha = createHash("sha256").update(buffer).digest("hex");
+    // The same bytes already in this workspace are that file, not a second
+    // copy: a picture fetched twice (a catalog download that ran twice) was
+    // stored twice and listed twice (#3859). The upload route asks the same
+    // question (sameBytes). Two writes of one picture at once (a backfill
+    // downloads rows in parallel) would both find nothing and both store, so
+    // the question and the insert hold one lock per content hash.
+    return db.transaction().execute(async (tx) => {
+      await sql`select pg_advisory_xact_lock(hashtext(${"core-files:" + sha}))`.execute(tx);
+      const same = await sameBytes(tx, buffer);
+      if (same) {
+        return { fileId: same.id, mimeType: same.mime_type, sizeBytes: Number(same.size_bytes), kind: same.kind, existed: true };
+      }
+      const fileId = randomUUID();
+      const stored = await storeUpload(orgId, fileId, buffer, opts.mimeType || "application/octet-stream");
+      try {
+        await tx
+          .insertInto("core_files_files")
+          .values({
+            id: fileId,
+            org_id: orgId,
+            owner_user_id: null,
+            filename: readableFilename(opts.filename),
+            mime_type: stored.mime_type,
+            size_bytes: String(stored.size_bytes),
+            sha256: stored.sha256,
+            variants: stored.variants,
+            kind: stored.kind,
+            width: stored.width,
+            height: stored.height,
+          })
+          .execute();
+      } catch (err) {
+        await removeStoredFile(orgId, fileId).catch(() => {});
+        throw err;
+      }
+      platform().metering.record({ orgId, kind: "files.bytes_stored", quantity: stored.size_bytes, meta: { fileId, kind: stored.kind } });
+      return { fileId, mimeType: stored.mime_type, sizeBytes: stored.size_bytes, kind: stored.kind };
+    });
   });
 
   // The ATTACH seam - POST /attachments without a request. A module reacting
@@ -233,7 +256,9 @@ function toResolvedFile(
   return {
     kind: "core-files:file",
     id: row.id,
-    title: row.filename,
+    // A name stored before readableFilename (a query string like "?i=…jpg")
+    // still reads as the file everywhere the record is shown (#3833).
+    title: readableFilename(row.filename, row.filename),
     subtitle: row.mime_type,
     image_path: row.kind === "image" ? imagePath : undefined,
     detailUrl: `/files/${row.id}`,

@@ -88,7 +88,11 @@ export function writeRegions(src: string): Array<{ start: number; text: string }
       }
     }
   };
-  for (const m of src.matchAll(/\.(?:values|set)\s*\(/g)) take(m.index! + m[0].length - 1, "(", ")");
+  for (const m of src.matchAll(/\.values\s*\(/g)) take(m.index! + m[0].length - 1, "(", ")");
+  // Kysely's `.set(` takes the row (an object literal, or a callback building
+  // one). A `Map#set(key, value)` is not a write, and reading it as one flagged
+  // a response object that merely had a `choices` key.
+  for (const m of src.matchAll(/\.set\s*\((?=\s*(?:\{|\(?\s*\w*\s*\)?\s*=>))/g)) take(m.index! + m[0].length - 1, "(", ")");
   // `const values = {` / `const row = {` — an object built to be written.
   for (const m of src.matchAll(/\b(?:const|let)\s+\w*[Vv]alues?\w*\s*(?::[^=]+)?=\s*\{/g)) {
     take(m.index! + m[0].length - 1, "{", "}");

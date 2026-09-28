@@ -12,7 +12,7 @@ import { lazy, Suspense , useEffect, useState } from "react";
 import { ScanFiledRefresh } from "./lib/scanFiled";
 import { BrowserRouter, Navigate, Route, Routes, useLocation, useParams } from "react-router-dom";
 import { CobbHead } from "./components/Cobb";
-import { PlatformWebProvider, type FlowRegistry } from "@cobblr/platform-web";
+import { KERNEL_PANELS, PlatformWebProvider, type FlowRegistry } from "@cobblr/platform-web";
 import { OrganizeFlow } from "./flows/OrganizeFlow";
 import { Boxes, FolderKanban } from "lucide-react";
 import { InstanceHubGate } from "./components/InstanceHubGate";
@@ -37,6 +37,7 @@ import { ActiveOrgProvider, useActiveOrg, pickDefaultOrg, urlHandleFor } from ".
 import { shellForRole } from "@cobblr/platform-contract/org-roles";
 import { deepPathAfterWorkspace } from "./lib/deep-path";
 import { AuthPage, MagicConsumePage, IdentityCallbackPage } from "./pages/AuthPage";
+import { nextFromQuery } from "./lib/landing-path";
 import { PairPage } from "./pages/PairPage";
 import { SandboxLanding } from "./pages/SandboxLanding";
 import { SandboxEnded } from "./pages/SandboxEnded";
@@ -105,9 +106,12 @@ const MaintenancePage = lazy(() => import("./pages/MaintenancePage").then((m) =>
 const UnitsPage = lazy(() => import("./pages/UnitsPage").then((m) => ({ default: m.UnitsPage })));
 const BackupPage = lazy(() => import("./pages/BackupPage").then((m) => ({ default: m.BackupPage })));
 const CalendarPage = lazy(() => import("./pages/CalendarPage").then((m) => ({ default: m.CalendarPage })));
+const AllAppsPage = lazy(() => import("./pages/AllAppsPage").then((m) => ({ default: m.AllAppsPage })));
 const QrPage = lazy(() => import("./pages/QrPage").then((m) => ({ default: m.QrPage })));
 const HealthPage = lazy(() => import("./pages/HealthPage").then((m) => ({ default: m.HealthPage })));
 const OpenApiPage = lazy(() => import("./pages/OpenApiPage").then((m) => ({ default: m.OpenApiPage })));
+const ConnectAssistantPage = lazy(() => import("./pages/ConnectAssistantPage").then((m) => ({ default: m.ConnectAssistantPage })));
+const OAuthConsentPage = lazy(() => import("./pages/OAuthConsentPage").then((m) => ({ default: m.OAuthConsentPage })));
 const ApiRecipesPage = lazy(() => import("./pages/ApiRecipesPage").then((m) => ({ default: m.ApiRecipesPage })));
 const QueuePage = lazy(() => import("./pages/QueuePage").then((m) => ({ default: m.QueuePage })));
 const LinksPage = lazy(() => import("./pages/LinksPage").then((m) => ({ default: m.LinksPage })));
@@ -153,14 +157,17 @@ import { PortalLayout } from "./components/PortalLayout";
 import { ToastProvider, ConfirmProvider } from "@cobblr/platform-web";
 import { BootScrim } from "./components/BootScrim";
 import { api, getToken } from "./lib/api";
+import { raiseBlockedAction } from "./lib/blocked-action";
 import { useNavMode, useNavTopBar } from "./lib/nav-mode";
 import { isFullSidebar } from "./lib/nav-layout";
 import { useIsDesktopWidth } from "./lib/useIsDesktopWidth";
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { fileWaitingScan, waitingScans } from "./lib/waitingScans";
 import { InstancePage } from "./pages/InstancePage";
 import { inManagedAppSurface } from "./lib/managed-apps";
 import { WorkspaceShapeRefresh } from "./lib/useWorkspaceShapeRefresh";
 import { hydrateNavPref } from "./lib/nav-mode";
+
 
 // First-party flow registry: id → overlay the shell can open from anywhere
 // (an action's `ui` directive, a view bulk-action, a nav entry). See
@@ -309,6 +316,10 @@ function PublicRoutes() {
   return (
     <Routes>
       <Route path="/invite/:token" element={<InviteAcceptPage />} />
+      {/* /oauth/authorize — an AI assistant's connector (claude.ai, the phone
+          apps) sends a person here to approve it; signed out, it asks them to
+          sign in and comes back. */}
+      <Route path="/oauth/authorize" element={<OAuthRoute />} />
       {/* /join/:token — redeem a single-use signup invite into a NEW
           account + workspace, even when public signup is disabled. */}
       <Route path="/join/:token" element={<JoinPage />} />
@@ -372,16 +383,59 @@ function CarryRoute() {
   return <CarryPage grant={grant} />;
 }
 
+// /oauth/authorize: an AI connector's consent screen, usually reached signed
+// out. Sign-in happens right here, so the request the connector sent is still
+// in the address bar afterwards; a trip through the account service comes
+// back to "/", which takeOAuthReturn sends back here once.
+function OAuthRoute() {
+  const { user } = useAuth();
+  if (!user) {
+    try {
+      sessionStorage.setItem("cobblr.oauthReturn", `/oauth/authorize${window.location.search}`);
+    } catch {
+      /* storage blocked: password sign-in still returns in place */
+    }
+    return <AuthPage />;
+  }
+  return <OAuthConsentPage />;
+}
+
 // A bare URL (no /w/:slug): once authed, redirect into the user's default
 // workspace, preserving any deep path so old bookmarks keep working.
+/** The consent screen a sign-in interrupted, once, and only that screen. */
+function takeOAuthReturn(): string | null {
+  try {
+    const v = sessionStorage.getItem("cobblr.oauthReturn");
+    if (!v) return null;
+    sessionStorage.removeItem("cobblr.oauthReturn");
+    return v.startsWith("/oauth/authorize?") ? v : null;
+  } catch {
+    return null;
+  }
+}
+
 function LandingRedirect() {
   const { user, orgs } = useAuth();
   if (!user) return <AuthPage />;
   if (user.must_reset_password) return <ForcePasswordResetPage />;
+  // Signed in on the way to approving an AI connector: back to that screen.
+  const oauthReturn = takeOAuthReturn();
+  if (oauthReturn) {
+    window.location.replace(oauthReturn);
+    return <BootScrim />;
+  }
   // A trial waiting to be brought in, from before a sign-up or a trip through
   // the account service: back to the page that brings it.
   if (pendingCarry()) {
     window.location.replace("/carry");
+    return <BootScrim />;
+  }
+  // Signed in from a page that asked to come back ("/?next=/invite/…": an
+  // invite's "Sign in to join", a machine share's "Log in"): back there,
+  // not to the default workspace, or the invite is lost on the way.
+  const back = nextFromQuery(window.location.search);
+  if (back) {
+    window.location.replace(back);
     return <BootScrim />;
   }
   const org = pickDefaultOrg(orgs);
@@ -462,6 +516,7 @@ function ActiveOrgScopedRoutes() {
   // because the shell used to send members to the portal too, contradicting
   // the role's own words (#3122). See docs/modules/member-portal-and-permissions.md.
   const role = activeOrg?.role;
+  const qc = useQueryClient();
   // basename-relative (react-router strips the /w/:slug base) — NOT
   // window.location.pathname, which still carries the base.
   const onPortal = location.pathname.startsWith("/portal/");
@@ -525,6 +580,13 @@ function ActiveOrgScopedRoutes() {
       cobbIcon={CobbHead}
       api={{
         listActions: (slug, kind) => api.listActions(slug, kind),
+        // A record's door to a module that is off (#3883): turning it on is an
+        // owner's or admin's act; everyone else asks, through the one sheet.
+        enableModule: (slug, name) => api.enableModule(slug, name),
+        askForModule: async (slug, name, label) => {
+          const { blocked } = await api.describeBlockedAction(slug, [{ kind: "module", key: name }], `Using ${label}`);
+          raiseBlockedAction({ blocked, refused: null, subject: `Turn on ${label}` });
+        },
         listFaces: (slug, kind) => api.listFaces(slug, kind),
         listNativeFieldOverrides: (slug, kind) => api.listNativeFieldOverrides(slug, kind),
         upsertOverride: (slug, body) => api.upsertOverride(slug, body),
@@ -551,13 +613,17 @@ function ActiveOrgScopedRoutes() {
         listContributedPanels: (slug) =>
           api
             .orgModules(slug)
-            .then((r) => r.items.filter((m) => m.enabled).flatMap((m) => m.panels ?? [])),
+            .then((r) => [...KERNEL_PANELS, ...r.items.filter((m) => m.enabled).flatMap((m) => m.panels ?? [])]),
         appendFieldDefChoice: (slug, id, value) =>
           api.appendFieldDefChoice(slug, id, value),
         listUnits: (slug) => api.listUnits(slug),
         addUnit: (slug, unit) => api.addUnit(slug, unit),
         deleteUnit: (slug, code) => api.deleteUnit(slug, code).then(() => undefined),
         setUnitDisplayMode: (slug, mode) => api.setUnitDisplayMode(slug, mode),
+        // A collection's search shows what is waiting in the scan inbox to
+        // come to it, judged and filed the way the inbox card does.
+        waitingScans: (slug, q, destination) => waitingScans(qc, role ?? null, slug, q, destination),
+        fileWaitingScan: (slug, id) => fileWaitingScan(qc, role ?? null, slug, id),
       }}
     >
       <Suspense fallback={<RouteFallback />}>
@@ -741,6 +807,7 @@ function ActiveOrgScopedRoutes() {
             <Route path="/configuration/presentation" element={<PresentationPage />} />
             <Route path="/configuration/integrations" element={<IntegrationsPage />} />
             <Route path="/configuration/ai" element={<AiPage />} />
+            <Route path="/configuration/connect-assistant" element={<ConnectAssistantPage />} />
             <Route path="/configuration/assistant" element={<AssistantSettingsPage />} />
             <Route path="/configuration/x/:panelId" element={<HostedPanelPage />} />
             <Route path="/configuration/catalogs" element={<CatalogsPage />} />
@@ -802,6 +869,7 @@ function ActiveOrgScopedRoutes() {
               deep-link, or the nav entry falls through to the home redirect. */}
           <Route path="/digifab" element={<DigifabPage />} />
           <Route path="/calendar" element={<CalendarPage />} />
+          <Route path="/apps" element={<AllAppsPage />} />
           {/* Nav alias — the synthetic "Locations" top routes here (useNavModules). */}
           <Route path="/locations" element={<LocationsPage />} />
           <Route path="/locations/:id" element={<LocationDetailPage />} />

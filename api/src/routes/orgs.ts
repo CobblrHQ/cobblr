@@ -59,6 +59,8 @@ orgsRouter.get("/", requireAuth, async (req, res, next) => {
       .innerJoin("orgs as o", "o.id", "m.org_id")
       .select((eb) => ["o.id", "o.name", "o.slug", "o.app_mode", "o.focused", "o.trial_expires_at", "m.role", eb.selectFrom("org_memberships as om").innerJoin("users as ou", "ou.id", "om.user_id").select("ou.display_name").whereRef("om.org_id", "=", "o.id").where("om.role", "=", "owner").limit(1).as("owner_name")])
       .where("m.user_id", "=", req.session!.id)
+      // A token held to one workspace sees that one: the others are not its business.
+      .$if(!!req.session!.token_org_id, (qb) => qb.where("o.id", "=", req.session!.token_org_id!))
       .orderBy("o.created_at")
       .execute();
     res.json({ items: orgs });
@@ -737,6 +739,10 @@ orgsRouter.get("/:slug/activity", requireAuth, withTenant, async (req, res, next
       : undefined;
     const apiTokenId = typeof req.query.api_token_id === "string" ? req.query.api_token_id : undefined;
     const entityType = typeof req.query.entity_type === "string" ? req.query.entity_type : undefined;
+    // Older than this entry: the log is newest-first by id, so the last id of
+    // a page is where the next one starts, and new entries arriving meanwhile
+    // cannot shift it.
+    const before = Number(req.query.before);
     const items = await activity.list({
       orgId: req.tenant!.org.id,
       limit,
@@ -744,6 +750,7 @@ orgsRouter.get("/:slug/activity", requireAuth, withTenant, async (req, res, next
       authMethods,
       apiTokenId,
       entityType,
+      ...(Number.isSafeInteger(before) && before > 0 ? { cursorBeforeId: before } : {}),
     });
 
     // Enrich with token names + user display names so the UI can
@@ -834,11 +841,19 @@ orgsRouter.get("/:slug/notifications", requireAuth, withTenant, async (req, res,
   try {
     const limit = Math.min(Number(req.query.limit) || 25, 100);
     const unreadOnly = req.query.unread === "1";
+    const before = typeof req.query.before === "string" ? req.query.before : undefined;
     const items = await notifications.listForUser(req.session!.id, req.tenant!.org.id, {
       limit,
       unreadOnly,
+      ...(before ? { before } : {}),
     });
-    res.json({ items });
+    // Where the next page starts: the last row's time and id, so a
+    // notification arriving meanwhile cannot shift it.
+    const last = items[items.length - 1];
+    res.json({
+      items,
+      next_before: items.length === limit && last ? `${new Date(last.created_at).toISOString()}|${last.id}` : null,
+    });
   } catch (err) {
     next(err);
   }

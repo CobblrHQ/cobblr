@@ -163,6 +163,7 @@ export function ReceiptSourceViewer({
           <div className="text-white/50 text-sm">Loading…</div>
         )}
         {rendered.kind === "image" && (
+          // photo-frame: the original receipt, read in full at its own shape in a viewer
           <img
             src={rendered.url}
             alt="Original receipt"

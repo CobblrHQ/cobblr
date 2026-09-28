@@ -119,7 +119,9 @@ export function InstancePage({ instanceName }: { instanceName?: string } = {}) {
     qty_unit?: string;
     parent?: { instance: string; label?: string; relationship_kind?: string };
     file_intake?: import("@cobblr/platform-contract").FileIntakeDecl | null;
+    connector_import?: import("@cobblr/platform-contract").ConnectorImportDecl | null;
     noun?: NounChoiceDecl | null;
+    hint?: string | null;
   };
   // Every word the table offers for what it counts in, with its declared
   // plural, so "3 hanks" agrees on every row whichever word each record has.
@@ -143,6 +145,8 @@ export function InstancePage({ instanceName }: { instanceName?: string } = {}) {
         qtyUnit={cfg.qty_unit}
         countWords={countWords}
         parent={cfg.parent}
+        connectorImport={cfg.connector_import ?? undefined}
+        hint={cfg.hint}
       />
     );
   }
@@ -157,6 +161,7 @@ export function InstancePage({ instanceName }: { instanceName?: string } = {}) {
         displayName={displayName}
         itemNoun={cfg.item_noun}
         fileIntake={cfg.file_intake ?? undefined}
+        hint={cfg.hint}
       />
     );
   }
@@ -170,6 +175,7 @@ export function InstancePage({ instanceName }: { instanceName?: string } = {}) {
         instance={inst.instance_name}
         displayName={displayName}
         itemNoun={cfg.item_noun}
+        hint={cfg.hint}
       />
     );
   }
@@ -181,6 +187,7 @@ export function InstancePage({ instanceName }: { instanceName?: string } = {}) {
         instance={inst.instance_name}
         displayName={displayName}
         itemNoun={cfg.item_noun}
+        hint={cfg.hint}
       />
     );
   }
@@ -193,6 +200,7 @@ export function InstancePage({ instanceName }: { instanceName?: string } = {}) {
         instance={inst.instance_name}
         displayName={displayName}
         itemNoun={cfg.item_noun}
+        hint={cfg.hint}
       />
     );
   }

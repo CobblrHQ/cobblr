@@ -21,6 +21,9 @@ const SearchQuery = z.object({
   // per_kind * #kinds. Client paginates by re-querying with a higher
   // per_kind when "Show more" is clicked on a specific kind.
   per_kind: z.coerce.number().int().min(1).max(50).default(10),
+  // Skip this many of EACH kind: the next page of a search is the next
+  // per_kind rows of every kind that had more.
+  offset: z.coerce.number().int().min(0).max(5000).default(0),
   // Restrict to entities carrying this tag (case-insensitive). The
   // value is passed straight through as filter._tag to every list
   // resolver that opts into the D7 tag predicate. Resolvers that
@@ -45,7 +48,7 @@ router.get("/search", (req, res, next) => {
       return;
     }
     const orgId = (req as unknown as TenantReq).tenant.org.id;
-    const { q, per_kind, tag } = parsed.data;
+    const { q, per_kind, tag, offset } = parsed.data;
     if (!q && !tag) {
       res.status(400).json({
         error: { code: "empty_query", message: "Supply at least one of ?q or ?tag" },
@@ -71,9 +74,11 @@ router.get("/search", (req, res, next) => {
       : allKinds.map((k) => k.id);
 
     // Fan out, in parallel. Each kind's list resolver is independent
-    // — one slow kind doesn't block fast ones. A resolver that
-    // throws gets swallowed by entities.list() (returns empty).
-    const perKind = await Promise.all(
+    // — one slow kind doesn't block fast ones. A resolver that throws comes
+    // back `failed`, and is NAMED in `kinds_failed` rather than counted as
+    // "no matches": a search that could not ask two kinds looked exactly like
+    // one that asked and found nothing, for three weeks (#3824).
+    const perKindResults = await Promise.all(
       candidateIds.map(async (kind) => {
         // Search finds what was retired too: "where is my old drill" is a
         // question about something archived, and a search that cannot find
@@ -82,12 +87,15 @@ router.get("/search", (req, res, next) => {
         const result = await platform().entities.list(orgId, kind, {
           q,
           limit: per_kind,
+          offset,
           filter: tag ? { _tag: tag } : undefined,
           include_retired: true,
         });
-        return result.items.map((item) => ({ ...item, kind }));
+        return { items: result.items.map((item) => ({ ...item, kind })), failed: result.failed === true };
       }),
     );
+    const kindsFailed = candidateIds.filter((_, i) => perKindResults[i]!.failed);
+    const perKind = perKindResults.map((r) => r.items);
 
     // Interleave so callers don't see "all parts first, then all
     // tasks" — they see a fair mix. Round-robin across kinds.
@@ -111,7 +119,11 @@ router.get("/search", (req, res, next) => {
     res.json({
       q,
       kinds_searched: candidateIds.filter((_, i) => perKind[i]!.length > 0),
+      kinds_failed: kindsFailed,
       items: ranked,
+      // A kind that filled its share may have more: ask again with
+      // offset + per_kind.
+      has_more: perKind.some((list) => list.length === per_kind),
     });
   })().catch(next);
 });

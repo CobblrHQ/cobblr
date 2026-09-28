@@ -231,7 +231,8 @@ filesRouter.get(
     const [cursorAt, cursorId] = cursor.split("|");
     const cursorDate = cursorAt ? new Date(cursorAt) : null;
     const filtered = <O,>(qb: SelectQueryBuilder<CoreFilesDB, "core_files_files", O>) => {
-      let out = qb.where("deleted_at", "is", null);
+      // A copy that repeats another file's bytes is listed as that file (#3859).
+      let out = qb.where("deleted_at", "is", null).where("same_as", "is", null);
       if (kind) out = out.where("kind", "=", kind as FileKind);
       if (folder === "top") out = out.where("folder_id", "is", null);
       else if (folder && /^[0-9a-f-]{36}$/i.test(folder)) out = out.where("folder_id", "=", folder);

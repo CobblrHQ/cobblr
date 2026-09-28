@@ -8,6 +8,15 @@
 // uses (PATCH field-defs {choices}), and selects it on this row. The server
 // holds the bar (a member may grow a list, a guest may not), and a viewer
 // the server would refuse sees no entry.
+//
+// `createByName` is the second home for this door: a table that keeps its own
+// categories (inventory's tree) has no field def to append to — the category
+// "travels by name" and the confirm creates it on file (#3223). So in that
+// mode the New… box does not write a field def; it just selects the typed name
+// on this row, and the confirm files the item under it. A scan came back
+// "Hair Color" for a filament spool and the person had a free-text box but no
+// visible way to coin the right category (reported 2026-09-28) - same door,
+// same affordance table fields already had.
 import { useState } from "react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { api } from "../lib/api";
@@ -34,6 +43,7 @@ export function ScanChoiceSelect({
   dataField,
   id,
   onAdded,
+  createByName,
 }: {
   slug: string;
   /** The table the field belongs to ("inventory:part"), for the lookup of its definition. */
@@ -51,6 +61,10 @@ export function ScanChoiceSelect({
   id?: string;
   /** The definition changed: refresh whatever lists the choices. */
   onAdded?: () => void;
+  /** The category travels by name (no field def to append to): the New… box
+   *  just selects the typed name on this row, and the confirm creates it on
+   *  file. No `listFieldDefs` / `appendFieldDefChoice` write. */
+  createByName?: boolean;
 }) {
   const qc = useQueryClient();
   const [draft, setDraft] = useState<string | null>(null);
@@ -78,8 +92,13 @@ export function ScanChoiceSelect({
     const commit = () => {
       const v = draft.trim();
       if (!v) return setDraft(null);
-      if (choices.includes(v)) {
+      if (choices.includes(v) || createByName) {
+        // By name: the confirm files under this value and coins the category
+        // if it is new, so there is no field-def write to make here — just
+        // select it on this row. (Same short-circuit an already-listed value
+        // takes: nothing to append, just choose it.)
         setDraft(null);
+        setError(null);
         onChange(v);
         return;
       }
@@ -112,7 +131,7 @@ export function ScanChoiceSelect({
           className={className}
         />
         <div className="mt-0.5 text-[11px] text-faint">
-          {error ? <span className="text-ember-600 dark:text-ember-400">{error}</span> : add.isPending ? "Adding…" : "Enter adds it to this field for everyone. Esc backs out."}
+          {error ? <span className="text-ember-600 dark:text-ember-400">{error}</span> : add.isPending ? "Adding…" : createByName ? `Enter files this under the new ${word}. Esc backs out.` : "Enter adds it to this field for everyone. Esc backs out."}
         </div>
       </div>
     );

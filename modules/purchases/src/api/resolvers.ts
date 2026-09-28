@@ -2,7 +2,7 @@
 // the platform's EntityActionsBar look up an order or order_item by
 // (kind, id) without touching the purchases tables directly.
 
-import { platform, parseSort, type EntityListQuery, type ResolvedEntity, textSearchWhere } from "@cobblr/platform-contract";
+import { columnSet, platform, parseSort, type EntityListQuery, type ResolvedEntity, textSearchWhere } from "@cobblr/platform-contract";
 import { sql, type Kysely } from "kysely";
 import type { PurchasesDB } from "../db.js";
 
@@ -10,7 +10,7 @@ let registered = false;
 
 // Native columns each list resolver will order by. Unknown fields drop out via
 // parseSort rather than reaching SQL.
-const ORDER_SORTABLE = new Set([
+const ORDER_SORTABLE = columnSet<PurchasesDB["purchases_orders"]>()([
   "status",
   "vendor",
   "order_number",
@@ -22,7 +22,7 @@ const ORDER_SORTABLE = new Set([
   "created_at",
   "updated_at",
 ]);
-const VENDOR_SORTABLE = new Set(["name", "created_at", "updated_at"]);
+const VENDOR_SORTABLE = columnSet<PurchasesDB["purchases_vendors"]>()(["name", "created_at", "updated_at"]);
 // Line items live across a join, so a sortable name maps to a QUALIFIED column
 // — an unqualified `created_at` would be ambiguous SQL against both tables.
 const ITEM_SORT_COL: Record<string, string> = {
@@ -35,6 +35,7 @@ const ITEM_SORT_COL: Record<string, string> = {
   ordered_at: "o.ordered_at",
   vendor: "o.vendor",
 };
+// COLUMN-SET-EXEMPT: sort aliases; the columns they reach are ITEM_SORT_COL's values
 const ITEM_SORTABLE = new Set(Object.keys(ITEM_SORT_COL));
 
 export function registerPurchasesResolvers(): void {
@@ -169,9 +170,9 @@ export function registerPurchasesResolvers(): void {
     const offset = query.offset ?? 0;
     let q = db.selectFrom("purchases_orders").selectAll();
     if (instance) q = q.where("instance", "=", instance as never);
-    if (query.q?.trim()) q = q.where((eb) => textSearchWhere(eb, query.q, { text: ["vendor", "order_number", "description", "notes", "tracking_number"], json: ["metadata"] })!);
+    if (query.q?.trim()) q = q.where((eb) => textSearchWhere(eb, query.q, { text: ["vendor", "order_number", "notes", "tracking_number"], json: ["metadata"] })!);
     if (query.filter) {
-      const NATIVE = new Set(["status", "vendor"]);
+      const NATIVE = columnSet<PurchasesDB["purchases_orders"]>()(["status", "vendor"]);
       for (const [key, val] of Object.entries(query.filter)) {
         if (val === undefined || val === null) continue;
         if (key === "_tag") {
@@ -202,7 +203,7 @@ export function registerPurchasesResolvers(): void {
     // saved view ask "orders overdue" (`expected_arrival <= now`),
     // "expensive orders" (`total_cost >= 100`), etc.
     if (query.where) {
-      const COMPARABLE = new Set([
+      const COMPARABLE = columnSet<PurchasesDB["purchases_orders"]>()([
         "ordered_at",
         "expected_arrival",
         "arrived_at",

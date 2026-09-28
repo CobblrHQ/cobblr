@@ -1,25 +1,39 @@
-// core-import — migrate an inventory from another system into Cobblr. A
-// schemaless CAPABILITY (no tables, no nav noun, auto-on): it owns no data of
-// its own, it just parses a foreign export and fans the records out to the
-// modules that DO own them — locations, inventory, tags — through their public
-// APIs (never a cross-module import). One source adapter per system; Homebox is
+// core-import — bring records into Cobblr from a spreadsheet or another
+// system. A CAPABILITY (no nav noun, auto-on): it owns no records of its own;
+// it parses a foreign export and fans the records out to the modules that DO
+// own them (locations, inventory, tags) through their public APIs and the
+// platform's writers (never a cross-module import). One source adapter per system; Homebox is
 // the first (`services/homebox.ts`), Snipe-IT etc. slot in beside it.
 //
-// No `schema` block: like core-search, this is entirely a router.
+// Its only tables are the import runs and their steps (what each import did,
+// so it can be undone); the records themselves live with the modules that own
+// them.
 
 import { defineModule } from "@cobblr/platform-contract";
 
 export default defineModule({
   name: "core-import",
-  version: "0.1.0",
+  version: "0.4.0",
   displayName: "Import",
   description:
-    "Migrate an inventory in from another system (Homebox today): items, the location hierarchy, and labels, mapped onto Cobblr's own modules.",
+    "Bring your records in from a spreadsheet or another system (Homebox today): items, the location hierarchy, and labels, mapped onto Cobblr's own modules.",
   icon: "download",
   band: "stock",
   autoEnable: true, // ambient capability — on for every workspace
 
+  schema: {
+    tablePrefix: "core_import_",
+    migrationsDir: "./migrations",
+  },
+
   api: () => import("./api/index.js"),
+
+  lifecycle: {
+    onBoot: async () => {
+      const { registerSheetImportWorker } = await import("./services/sheet-import.js");
+      registerSheetImportWorker();
+    },
+  },
 
   intents: [
     { name: "import", description: "Bring records in from another inventory system" },

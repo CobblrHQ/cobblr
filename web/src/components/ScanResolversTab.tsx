@@ -4,7 +4,7 @@
 // operators add their own here. Backed by /super-admin/scan-url-resolvers.
 import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Modal, JsonField, useToast, useConfirm } from "@cobblr/platform-web";
+import { Modal, JsonField, useToast, useConfirm, MutationError } from "@cobblr/platform-web";
 import { FlaskConical, Plus, Trash2, Pencil } from "lucide-react";
 import { api, type ScanUrlResolverRow, type ScanUrlResolution } from "../lib/api";
 
@@ -166,6 +166,7 @@ function TestBox() {
           Test
         </button>
       </div>
+      <MutationError mutation={run} className="block mt-2">The test did not run:</MutationError>
       {result && (
         <div className="mt-2 text-sm">
           {result.matched && result.resolution ? (

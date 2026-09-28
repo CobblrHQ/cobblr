@@ -11,6 +11,7 @@ import { usePageTitle } from "@cobblr/platform-web";
 import { api } from "../lib/api";
 import { useActiveOrg } from "../auth/ActiveOrgContext";
 import { SavedViewBody } from "./ViewsPage";
+import { useViewData } from "../lib/useViewData";
 
 /** A saved view as a page. Also hosted WHOLE by the instance page as a tab
  *  (`viewId` + `embedded`): the instance owns the heading then, and this
@@ -25,14 +26,10 @@ export function SavedViewPage({ viewId: viewIdProp, embedded = false }: { viewId
     enabled: !!activeSlug,
   });
   const view = (views.data?.items ?? []).find((v) => v.id === viewId) ?? null;
-  const data = useQuery({
-    // The view's kind rides in the key, so an action on one of its records
-    // refreshes this page wherever it is embedded (platform-web run-action):
-    // Groceries → What's on hand kept ×1 after Use until a reload (#2969).
-    queryKey: ["view-data", activeSlug, viewId, view?.entity_kind ?? ""],
-    queryFn: () => api.viewData(activeSlug, viewId!),
-    enabled: !!activeSlug && !!view,
-  });
+  // The view's kind rides in the key, so an action on one of its records
+  // refreshes this page wherever it is embedded (platform-web run-action):
+  // Groceries → What's on hand kept ×1 after Use until a reload (#2969).
+  const data = useViewData(activeSlug, viewId, view?.entity_kind ?? "", { enabled: !!view });
   usePageTitle(view?.name ?? "View");
 
   if (views.isLoading) {
@@ -49,7 +46,7 @@ export function SavedViewPage({ viewId: viewIdProp, embedded = false }: { viewId
     );
   }
   if (embedded) {
-    return <SavedViewBody view={view} items={data.data?.items ?? []} isLoading={data.isLoading} collectionEmpty={data.data?.collection_empty} />;
+    return <SavedViewBody view={view} data={data} />;
   }
   return (
     <div className="space-y-4">
@@ -64,7 +61,7 @@ export function SavedViewPage({ viewId: viewIdProp, embedded = false }: { viewId
           {view.name}
         </h1>
       </div>
-      <SavedViewBody view={view} items={data.data?.items ?? []} isLoading={data.isLoading} collectionEmpty={data.data?.collection_empty} />
+      <SavedViewBody view={view} data={data} />
     </div>
   );
 }

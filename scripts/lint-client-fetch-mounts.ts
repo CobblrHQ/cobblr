@@ -98,9 +98,12 @@ const serverSrc = read(SERVER);
 // Direct routes on v1 itself (e.g. v1.get("/healthz", …)) are leaf routes.
 for (const sub of routerLeafPaths(serverSrc, "v1")) leafRoutes.push(toSegs(sub));
 
-// Map router identifier → source file, from `import { xRouter } from "./routes/y.js"`.
+// Map router identifier → source file, from any relative import in server.ts
+// (`import { xRouter } from "./routes/y.js"`, or "./auth/oauth.js"). It read
+// ./routes/ only, so a router living elsewhere had no leaf routes here and a
+// correct client path to it was reported as mounted nowhere.
 const routerFile = new Map<string, string>();
-for (const m of serverSrc.matchAll(/import\s*\{([^}]+)\}\s*from\s*"(\.\/routes\/[^"]+)"/g)) {
+for (const m of serverSrc.matchAll(/import\s*\{([^}]+)\}\s*from\s*"(\.\/[^"]+)"/g)) {
   const names = m[1]!.split(",").map((s) => s.trim().split(/\s+as\s+/).pop()!.trim());
   const file = "api/src/" + m[2]!.replace(/^\.\//, "").replace(/\.js$/, ".ts");
   for (const n of names) if (n) routerFile.set(n, file);

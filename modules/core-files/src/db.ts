@@ -35,6 +35,9 @@ export interface FilesTable {
   created_at: Generated<Date>;
   /** The folder the file lives in; null is the top level. */
   folder_id: Generated<string | null>;
+  /** The file this one repeats byte for byte; null for an original. A copy
+   *  resolves by its id and is left out of every list (#3859). */
+  same_as: Generated<string | null>;
 }
 
 export interface FoldersTable {

@@ -60,6 +60,14 @@ export type DetailPanelComponent = ComponentType<{ ctx: EntityDetailPanelCtx }>;
 /** A panel that belongs on EVERY entity detail view, whatever the kind. */
 export const UNIVERSAL = "*";
 
+/** Detail panels the kernel itself contributes. Links are pairings, which
+ *  belong to no module, so no manifest can declare them; the host adds these
+ *  to what the enabled modules declare. lint:panel-registry reads this list
+ *  beside the manifests. */
+export const KERNEL_PANELS: ContributedPanelSpec[] = [
+  { id: "platform:links", surface: "entity-detail-panel", target: UNIVERSAL, title: "Links" },
+];
+
 const REGISTRY = new Map<string, DetailPanelComponent>();
 const listeners = new Set<() => void>();
 let snapshot: string[] = [];

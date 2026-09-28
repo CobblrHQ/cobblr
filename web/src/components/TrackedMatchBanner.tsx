@@ -4,10 +4,15 @@
 //   TrackedMatchLine    the inbox card's condensed line (card closed)
 //   TrackedMatchBanner  the full banner (card open, phone result modal)
 //
-// Both name the record, say how many and where, offer the three re-buy
-// answers (RepurchaseControls) and the two nudges (TrackedMatchNudges). The
-// banner adds what the line has no room for: the merge-in preview, Move here,
-// Link barcode, Open. The line adds "Compare & merge", which opens the card.
+// Both name the record once (its picture, how many, where), carry the ONE
+// count control (ScanCountBlock: Change by / Set total) and the nudges
+// (TrackedMatchNudges). The banner adds what the line has no room for: the
+// merge-in preview, Move here, Link barcode, Open. The line adds "Compare &
+// merge", which opens the card.
+//
+// It used to say "you already have this, add to it" four ways on one card: the
+// line, three re-buy buttons, the card's own "+1 more" and a destination
+// picker naming the same record (#3884). One line, one control.
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { catalogChosen } from "../lib/scanPhoto";
 import { useEffect, useRef, useState } from "react";
@@ -16,7 +21,10 @@ import { CheckCircle2, HelpCircle, ExternalLink, MapPin, X } from "lucide-react"
 import { useToast } from "@cobblr/platform-web";
 import { api, ApiError, type ScanInboxItem, type TrackedMatch } from "../lib/api";
 import { useActiveOrg } from "../auth/ActiveOrgContext";
-import { RepurchaseAnswers, useBestTrackedMatch } from "./RepurchaseControls";
+import { useBestTrackedMatch } from "./RepurchaseControls";
+import { ScanCountBlock } from "./ScanCountBlock";
+import type { ScanCountMode } from "@cobblr/platform-contract/scan-count";
+import { EntityThumb } from "@cobblr/platform-web";
 import { useHandheld } from "../lib/useHandheld";
 import { TrackedMatchNudges } from "./TrackedMatchNudges";
 import { scanDeclinesRecord, scanRowState, scanTrackedMatch } from "@cobblr/platform-contract/scan-triage";
@@ -54,14 +62,21 @@ export function TrackedMatchLine({
   item,
   fallbackTitle,
   quantity,
+  stamped,
   onCompare,
 }: {
   item: ScanInboxItem;
   fallbackTitle: string;
   quantity: number;
+  /** The match as the row was stamped with it. The card decides from this
+   *  that the count files the scan, so the count must show even while the
+   *  live lookup is loading or came back empty: otherwise the card offers
+   *  nothing to press. */
+  stamped?: TrackedMatch | null;
   onCompare: () => void;
 }) {
   const { match, where } = useBestTrackedMatch(item.id);
+  const counted = match && match.qty != null ? match : (stamped ?? null);
   // Whether this match is affirmed or a proposal is the row's resolved
   // state (scanRowState): a match on a record the workspace COUNTS is a
   // re-purchase, "+1 more" on the button, so the line affirms it; a match
@@ -73,9 +88,11 @@ export function TrackedMatchLine({
   const exact = by === "barcode" || by === "identifier";
   const possible = !scanRowState(item).merge;
   return (
-    <div className="mt-1.5 space-y-1 text-xs" onClick={(e) => e.stopPropagation()} data-match={possible ? "possible" : "exact"}>
+    <div className="mt-1.5 space-y-1.5 text-xs" onClick={(e) => e.stopPropagation()} data-match={possible ? "possible" : "exact"}>
       <div className="flex min-w-0 items-start gap-1.5">
-        {possible ? (
+        {match?.image_path ? (
+          <EntityThumb src={match.image_path} alt={match.title} size={28} className="shrink-0" />
+        ) : possible ? (
           <HelpCircle size={13} className="shrink-0 mt-0.5 text-amber-600 dark:text-amber-400" />
         ) : (
           <CheckCircle2 size={13} className="shrink-0 mt-0.5 text-emerald-600 dark:text-emerald-400" />
@@ -99,6 +116,7 @@ export function TrackedMatchLine({
         </div>
       </div>
       {match && !possible && <TrackedMatchNudges item={item} match={match} />}
+      {counted && !possible && <ScanCountBlock itemId={item.id} match={counted} where={where} scanned={quantity} />}
       <div className="flex flex-wrap items-center gap-1.5">
         {possible ? (
           <button
@@ -110,17 +128,14 @@ export function TrackedMatchLine({
             Compare
           </button>
         ) : (
-          <>
-            {match && <RepurchaseAnswers itemId={item.id} match={match} quantity={quantity} />}
-            <button
-              type="button"
-              onClick={onCompare}
-              title="Open the card: see what this scan would fill in, or file it as something new"
-              className="inline-flex items-center rounded-full px-2 py-1 text-[11px] text-muted hover:text-content underline decoration-dotted underline-offset-2"
-            >
-              Compare &amp; merge
-            </button>
-          </>
+          <button
+            type="button"
+            onClick={onCompare}
+            title="Open the card: see what this scan would fill in, or file it as something new"
+            className="inline-flex items-center rounded-full px-2 py-1 text-[11px] text-muted hover:text-content underline decoration-dotted underline-offset-2"
+          >
+            Compare &amp; merge, or a different one
+          </button>
         )}
       </div>
     </div>
@@ -132,6 +147,8 @@ export function TrackedMatchBanner({
   locationId,
   locationName,
   autoMove,
+  countMode = "change",
+  stamped,
   onAttached,
 }: {
   item: ScanInboxItem;
@@ -141,11 +158,18 @@ export function TrackedMatchBanner({
   /** Move mode: when the scan finds exactly ONE exact barcode match
    *  and a bin is active, auto-fire the move — no triage stop. */
   autoMove?: boolean;
+  /** The camera's Count mode opens the count in Set total (a stocktake);
+   *  everywhere else a scan starts in Change by. */
+  countMode?: ScanCountMode;
+  /** The match the row was stamped with, used while the live lookup has
+   *  nothing: the card hides its own "+1 more" when the count files the scan,
+   *  so the count must be here whatever the lookup answered. */
+  stamped?: TrackedMatch | null;
   /** Called after a successful attach (the inbox item is now resolved). */
   onAttached?: (
     result: { entity_title: string; new_qty: number | null; prev_location_id: string | null },
     match: TrackedMatch,
-    mode: "add-qty" | "replace" | "link-barcode" | "move" | "merge-fields",
+    mode: "add-qty" | "replace" | "link-barcode" | "move" | "merge-fields" | "count",
   ) => void;
 }) {
   const { activeSlug } = useActiveOrg();
@@ -166,7 +190,10 @@ export function TrackedMatchBanner({
   const all = [...(matches.data?.barcode_matches ?? []), ...(matches.data?.name_matches ?? [])].filter(
     (m) => !scanDeclinesRecord(item, { kind: m.kind, id: m.id, instance: m.instance }),
   );
-  const best = all[0] ?? null;
+  // Several records could be this one: the person picks which, here, rather
+  // than a second panel telling them to "open it to pick" (#3884).
+  const [picked, setPicked] = useState(0);
+  const best = all[picked] ?? all[0] ?? stamped ?? null;
   const { where } = useBestTrackedMatch(item.id, best);
 
   // "Not the same" is kept on the row, so the pill, +1 more and File all
@@ -287,6 +314,33 @@ export function TrackedMatchBanner({
           <X size={15} />
         </button>
       </div>
+      {all.length > 1 && (
+        <div data-testid="match-pick" className="space-y-1">
+          <div className="text-xs text-content dark:text-mortar-100">
+            This could be any of {all.length} things you have. Which is it?
+          </div>
+          <div role="radiogroup" aria-label="Which one this is" className="flex flex-wrap gap-1.5">
+            {all.map((m, i) => (
+              <button
+                key={`${m.kind}:${m.id}`}
+                type="button"
+                role="radio"
+                aria-checked={m === best}
+                onClick={() => setPicked(i)}
+                className={`inline-flex max-w-full items-center gap-1 rounded-full border px-2.5 py-1 text-xs ${
+                  m === best
+                    ? "border-emerald-600 bg-emerald-600 text-white"
+                    : "border-emerald-300 dark:border-emerald-700 text-emerald-800 dark:text-emerald-200 hover:bg-emerald-100/60 dark:hover:bg-emerald-900/30"
+                }`}
+              >
+                <span className="truncate">{m.title}</span>
+                {m.subtitle && <span className="shrink-0 opacity-75">· {m.subtitle}</span>}
+                {m.qty != null && <span className="shrink-0 opacity-75">×{m.qty}</span>}
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
       {canMerge && (
         // Folded: the question, the record and the answers are what a person
         // reads; which fields a fill would write is one tap away (the owner,
@@ -319,6 +373,16 @@ export function TrackedMatchBanner({
         </details>
       )}
       <TrackedMatchNudges item={item} match={best} />
+      {best.qty != null && (
+        <ScanCountBlock
+          itemId={item.id}
+          match={best}
+          where={where}
+          initialMode={countMode}
+          scanned={Math.max(1, item.quantity || 1)}
+          onDone={(r, m) => onAttached?.(r, m, "count")}
+        />
+      )}
       <div className="flex flex-wrap gap-1.5">
         {canMerge && (
           <button
@@ -331,17 +395,6 @@ export function TrackedMatchBanner({
             <CheckCircle2 size={12} /> Yes, fill it in from this scan
           </button>
         )}
-        {/* Not suppressed by a mergeable scan. Buying MORE of something and
-            filling in what a scan learned are different answers to different
-            questions, and a barcode re-scan of a tracked item usually offers
-            both. */}
-        <RepurchaseAnswers
-          itemId={item.id}
-          match={best}
-          quantity={Math.max(1, item.quantity || 1)}
-          onDone={(r, m, mode) => onAttached?.(r, m, mode)}
-          layout={handheld ? "stack" : "pills"}
-        />
         {locationId && best.location_id !== locationId && (
           <button type="button" disabled={busy} onClick={() => attach.mutate({ m: best, mode: "move" })} className={pill}>
             <MapPin size={12} /> Move here
@@ -372,9 +425,7 @@ export function TrackedMatchBanner({
             Open <ExternalLink size={11} />
           </button>
         )}
-        {all.length > 1 && (
-          <span className="text-[11px] text-faint self-center">+{all.length - 1} more match{all.length > 2 ? "es" : ""}</span>
-        )}
+
       </div>
     </div>
   );

@@ -10,7 +10,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Plus, Trash2, Printer as PrinterIcon, Wifi, Send, Pencil, Star, Bluetooth, Activity } from "lucide-react";
 import { ApiError, api, type Printer, type PrinterInput } from "../lib/api";
 import { useActiveOrg } from "../auth/ActiveOrgContext";
-import { Modal, useToast, useConfirm, usePageTitle, printLabelOverBluetooth, connectPrinter, closePrinter, isWebBluetoothAvailable, NO_WEB_BLUETOOTH, readSerialPrinterStatus, ConnectPrinterModal, setPrinterStatus, clearPrinterStatus, type SerialPrinterIdentity, type BluetoothPrinterSettings, isLocalBridgePrinter, testLocalBridge, printerDisplayName, describeReportedMedia, usePrinterStatus, PrinterReadout, allowLocalAccess, PasswordInput } from "@cobblr/platform-web";
+import { Modal, useToast, useConfirm, usePageTitle, printLabelOverBluetooth, connectPrinter, closePrinter, isWebBluetoothAvailable, NO_WEB_BLUETOOTH, readSerialPrinterStatus, ConnectPrinterModal, setPrinterStatus, clearPrinterStatus, type SerialPrinterIdentity, type BluetoothPrinterSettings, isLocalBridgePrinter, testLocalBridge, printerDisplayName, describeReportedMedia, usePrinterStatus, PrinterReadout, allowLocalAccess, SecretInput, AddressInput } from "@cobblr/platform-web";
 import { mmToDots, dotsToMm, mmToInch, thermalFootprint, matchProfile, type FeedType } from "@cobblr/thermal-print";
 
 import { EdgeConnectField, type EdgeConnectValue } from "../components/EdgeConnectField";
@@ -889,11 +889,11 @@ function PrinterModal({
             <div className="grid grid-cols-2 gap-2">
               <label className="block">
                 <div className="text-xs text-muted mb-1">Bridge address (optional)</div>
-                <input className={field + " font-mono"} value={brLocalUrl} onChange={(e) => { setBrLocalUrl(e.target.value); setBrFound(null); }} placeholder="http://127.0.0.1:8077 or http://<host>:8077" />
+                <AddressInput className={field + " font-mono"} value={brLocalUrl} onChange={(e) => { setBrLocalUrl(e.target.value); setBrFound(null); }} placeholder="http://127.0.0.1:8077 or http://<host>:8077" />
               </label>
               <label className="block">
                 <div className="text-xs text-muted mb-1">Bridge token (optional)</div>
-                <PasswordInput what="token" className={field} value={brToken} onChange={(e) => setBrToken(e.target.value)} autoComplete="off" />
+                <SecretInput secret what="token" className={field} value={brToken} onChange={(e) => setBrToken(e.target.value)} />
               </label>
             </div>
             {brLocalUrl.trim() !== "" && (
@@ -917,11 +917,11 @@ function PrinterModal({
         <div className="grid grid-cols-2 gap-2">
           <label className="block">
             <div className="text-xs text-muted mb-1">Username (optional)</div>
-            <input className={field} value={username} onChange={(e) => setUsername(e.target.value)} autoComplete="off" />
+            <SecretInput what="username" className={field} value={username} onChange={(e) => setUsername(e.target.value)} />
           </label>
           <label className="block">
             <div className="text-xs text-muted mb-1">Password (optional)</div>
-            <PasswordInput className={field} value={password} onChange={(e) => setPassword(e.target.value)} autoComplete="new-password" placeholder={printer?.has_credentials ? "•••• (unchanged)" : ""} />
+            <SecretInput secret what="password" className={field} value={password} onChange={(e) => setPassword(e.target.value)} placeholder={printer?.has_credentials ? "•••• (unchanged)" : ""} />
           </label>
         </div>
         <div className="grid grid-cols-2 gap-2">

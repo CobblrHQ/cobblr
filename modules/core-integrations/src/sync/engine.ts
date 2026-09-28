@@ -6,6 +6,8 @@
 
 import {
   platform,
+  type EntityWriter,
+  DuplicateRecordError,
   type SyncConnector,
   type SyncEntityType,
   type SyncRecord,
@@ -50,6 +52,24 @@ export interface ReconcileResult {
   /** Tags the source carried that could not be attached. Counted, never
    *  swallowed, so the numbers above are not a lie about what came across. */
   tagsFailed: number;
+  /** Values this run could not map and so left alone, one sentence each
+   *  ("Dremel 3D20: couldn't map My Shop locations 66 (location_id)"). A
+   *  run with any is a warning, never a silent ok (#3900). Only records the run
+   *  WROTE are listed; one whose source and mapping state are unchanged was
+   *  said the first time. */
+  unmapped: string[];
+  /** Records the target refused, one sentence each, in the target's words.
+   *  The rest of the run carries on; a run with any is a warning. */
+  failed: string[];
+}
+
+/** What a finished run writes on its sync's state row. */
+export function runStatusOf(result: ReconcileResult): { last_status: "ok" | "warning"; last_error: string | null } {
+  const said = [...result.failed, ...result.unmapped];
+  if (!said.length) return { last_status: "ok", last_error: null };
+  const head = said.slice(0, 3).join("; ");
+  const more = said.length > 3 ? ` (and ${said.length - 3} more)` : "";
+  return { last_status: "warning", last_error: `${head}${more}` };
 }
 
 /** Normalised key for the import name-merge. Case-insensitive and
@@ -134,13 +154,72 @@ function hashRecord(
 /** Resolve a record's cross-section references to mirrored Cobblr ids (null if
  *  the referenced entity hasn't been imported yet). Same id-map as resolveParent,
  *  but pointed at any section — e.g. a printer's location_id → a location. */
+/** Whether a Cobblr record is already the mirror of a DIFFERENT source record
+ *  on this sync. */
+async function mirroredByAnother(
+  db: Kysely<CoreIntegrationsDB>,
+  ref: SyncConnectionRef,
+  type: SyncEntityType,
+  cobblrId: string,
+  externalId: string,
+): Promise<boolean> {
+  const row = await db
+    .selectFrom("core_integrations_synced_records")
+    .select("external_id")
+    .where("connector_row_id", "=", ref.connectorRowId)
+    .where("entity_type", "=", type.key)
+    .where("cobblr_entity_id", "=", cobblrId)
+    .where("external_id", "!=", externalId)
+    .where("deleted_at", "is", null)
+    .executeTakeFirst();
+  return !!row;
+}
+
+/** The values a sync write is about to replace, for its history line: every
+ *  plain field the write changes, as it was. A sync's history used to carry
+ *  only the record's name, so a location it overwrote could not be put back
+ *  from the log (#3900). Best-effort: a kind without `read` records nothing. */
+async function replacedValues(
+  writer: EntityWriter,
+  orgId: string,
+  id: string,
+  fields: Record<string, unknown>,
+): Promise<{ was?: Record<string, unknown> }> {
+  if (!writer.read) return {};
+  const now = await writer.read(orgId, id).catch(() => null);
+  if (!now) return {};
+  const was: Record<string, unknown> = {};
+  for (const [k, v] of Object.entries(fields)) {
+    if (k === "metadata" || k === "instance" || !(k in now)) continue;
+    const before = now[k];
+    if (before !== null && typeof before === "object") continue;
+    if ((before ?? null) !== (v ?? null)) was[k] = before ?? null;
+  }
+  return Object.keys(was).length ? { was } : {};
+}
+
+/** A source value the sync could not turn into a Cobblr record: a reference
+ *  (a machine's location) or a parent pointing at a source id no sync has
+ *  mapped yet. */
+export interface Unmapped {
+  field: string;
+  section: string;
+  externalId: string;
+}
+
+/** Cross-section references resolved through the id-map. Only a MAPPED value
+ *  is returned: an id with no Cobblr counterpart yet says nothing about the
+ *  record, and writing it as null erased a location the owner had set every
+ *  20 minutes (#3900). It is reported instead, and the caller leaves the
+ *  field as it is. */
 async function resolveReferences(
   db: Kysely<CoreIntegrationsDB>,
   ref: SyncConnectionRef,
   record: SyncRecord,
-): Promise<Record<string, string | null>> {
-  const out: Record<string, string | null> = {};
-  if (!record.references) return out;
+): Promise<{ values: Record<string, string | null>; unmapped: Unmapped[] }> {
+  const values: Record<string, string | null> = {};
+  const unmapped: Unmapped[] = [];
+  if (!record.references) return { values, unmapped };
   for (const [field, r] of Object.entries(record.references)) {
     const row = await db
       .selectFrom("core_integrations_synced_records")
@@ -150,9 +229,23 @@ async function resolveReferences(
       .where("external_id", "=", r.externalId)
       .where("deleted_at", "is", null)
       .executeTakeFirst();
-    out[field] = row?.cobblr_entity_id ?? null;
+    if (row) values[field] = row.cobblr_entity_id;
+    else unmapped.push({ field, section: r.section, externalId: r.externalId });
   }
-  return out;
+  return { values, unmapped };
+}
+
+/** Where the unmapped values are, folded into the stored hash: an unchanged
+ *  source whose reference later maps must still be written, and one that stays
+ *  unmapped must not be rewritten (and re-logged) every run. */
+function unmappedMark(unmapped: readonly Unmapped[]): string {
+  return unmapped.length ? `:unmapped:${unmapped.map((u) => `${u.field}=${u.section}/${u.externalId}`).sort().join(",")}` : "";
+}
+
+/** "couldn't map My Shop locations 66 (location_id)", the words a run and
+ *  a record's history carry. */
+export function unmappedWords(unmapped: readonly Unmapped[], source: string): string[] {
+  return unmapped.map((u) => `couldn't map ${source} ${u.section} ${u.externalId} (${u.field}), so it was left as it was`);
 }
 
 const orgSlugCache = new Map<string, string>();
@@ -238,7 +331,7 @@ async function upsertOne(
    *  ADOPTED into that existing entity instead of creating a duplicate. Consumed
    *  on use so two source rows can't both claim the same target. */
   linkByName?: Map<string, { id: string; name: string }>,
-): Promise<{ action: "created" | "updated" | "linked" | "noop"; tagsFailed: number }> {
+): Promise<{ action: "created" | "updated" | "linked" | "noop"; tagsFailed: number; unmapped: Unmapped[] }> {
   const writer = await platform().entities.getWriter(ref.orgId, type.targetKind);
   if (!writer) throw new Error(`sync: no entity writer registered for ${type.targetKind}`);
 
@@ -246,7 +339,16 @@ async function upsertOne(
   // Instance precedence: per-record instanceBy routing → the user's per-connection
   // target choice → the manifest's static default.
   const instance = record.instance ?? ref.targetInstances?.[type.key] ?? type.targetInstance ?? null;
-  const hash = hashRecord(type.targetKind, parentCobblrId, record.fields, record.references, instance, record.images, record.tags);
+  // References first, so the hash knows what could not be mapped yet.
+  const refs = await resolveReferences(db, ref, record);
+  const unmapped = [...refs.unmapped];
+  // A parent the source names but no sync has mapped is the same case: the
+  // record keeps the parent it has rather than being moved to the top.
+  const parentUnmapped = !!record.parentExternalId && parentCobblrId === null;
+  if (parentUnmapped) unmapped.push({ field: "parent_id", section: type.key, externalId: String(record.parentExternalId) });
+  const keptNote = unmapped.length ? { kept: unmappedWords(unmapped, type.sourceLabel || ref.connectorId) } : {};
+  const hash =
+    hashRecord(type.targetKind, parentCobblrId, record.fields, record.references, instance, record.images, record.tags) + unmappedMark(unmapped);
 
   const existing = await db
     .selectFrom("core_integrations_synced_records")
@@ -258,14 +360,14 @@ async function upsertOne(
 
   // Unchanged source → no-op BEFORE any image fetch: pulling an image is a
   // network round-trip through the bridge, only worth it when actually writing.
-  if (existing && !existing.deleted_at && existing.source_hash === hash) return { action: "noop", tagsFailed: 0 };
+  if (existing && !existing.deleted_at && existing.source_hash === hash) return { action: "noop", tagsFailed: 0, unmapped: [] };
 
   // We're writing — resolve references + pull any images now (once per change).
   const { fields: imageFields, missing: missingImages } = await resolveImages(ref, type, record);
   const fields = {
     ...record.fields,
-    parent_id: parentCobblrId,
-    ...(await resolveReferences(db, ref, record)),
+    ...(parentUnmapped ? {} : { parent_id: parentCobblrId }),
+    ...refs.values,
     ...(instance ? { instance } : {}),
     ...imageFields,
   };
@@ -275,13 +377,32 @@ async function upsertOne(
   const storedHash = missingImages > 0 ? `${hash}:img-retry` : hash;
 
   if (existing && !existing.deleted_at) {
+    const was = await replacedValues(writer, ref.orgId, existing.cobblr_entity_id, fields);
     await writer.update(ref.orgId, existing.cobblr_entity_id, fields);
+    await logSyncWrite(ref, type, "updated", existing.cobblr_entity_id, { name: record.fields.name ?? null, ...was, ...keptNote });
     await db
       .updateTable("core_integrations_synced_records")
       .set({ source_hash: storedHash, target_kind: type.targetKind, updated_at: new Date() })
       .where("id", "=", existing.id)
       .execute();
-    return { action: "updated", tagsFailed: await attachTags(ref.orgId, type.targetKind, existing.cobblr_entity_id, record.tags) };
+    return { action: "updated", tagsFailed: await attachTags(ref.orgId, type.targetKind, existing.cobblr_entity_id, record.tags), unmapped };
+  }
+
+  // A record that ALREADY carries this source's id (made by hand, or by an
+  // assistant, before the sync reached it) is adopted, never duplicated. The
+  // id-map only knows what the sync itself made, so without this a machine
+  // created with metadata.source_id 61 got a second copy on the next run (#3836).
+  // Checked before the name match: the key is exact, a name is a guess.
+  if (!existing) {
+    const found = await adoptableByKey(db, ref, type, writer, record.externalId);
+    if (found) {
+      if (linkByName) for (const [k, v] of linkByName) if (v.id === found) linkByName.delete(k);
+      const wasFound = await replacedValues(writer, ref.orgId, found, fields);
+      await writer.update(ref.orgId, found, fields);
+      await mapTo(db, ref, type, record.externalId, found, storedHash);
+      await logSyncWrite(ref, type, "updated", found, { name: record.fields.name ?? null, adopted: true, ...wasFound, ...keptNote });
+      return { action: "linked", tagsFailed: await attachTags(ref.orgId, type.targetKind, found, record.tags), unmapped };
+    }
   }
 
   // Import merge: an unmapped record whose name matches an existing entity →
@@ -314,12 +435,27 @@ async function upsertOne(
           }),
         )
         .execute();
-      return { action: "linked", tagsFailed: await attachTags(ref.orgId, type.targetKind, matched.id, record.tags) };
+      return { action: "linked", tagsFailed: await attachTags(ref.orgId, type.targetKind, matched.id, record.tags), unmapped };
     }
   }
 
   // New record, or a previously tombstoned one resurfacing → fresh mirror.
-  const cobblrId = await writer.create(ref.orgId, fields);
+  let cobblrId: string;
+  try {
+    cobblrId = await writer.create(ref.orgId, fields);
+  } catch (err) {
+    // The target refused a second record of this name in this place: the one
+    // already there IS this record (a room made by hand before the source
+    // had it). Link to it, unless another source record already mirrors it,
+    // in which case the refusal stands and the run says so.
+    const there = err instanceof DuplicateRecordError ? err.existingId : null;
+    if (!there || (await mirroredByAnother(db, ref, type, there, record.externalId))) throw err;
+    const wasThere = await replacedValues(writer, ref.orgId, there, fields);
+    await writer.update(ref.orgId, there, fields);
+    await mapTo(db, ref, type, record.externalId, there, storedHash);
+    await logSyncWrite(ref, type, "updated", there, { name: record.fields.name ?? null, adopted: true, ...wasThere, ...keptNote });
+    return { action: "linked", tagsFailed: await attachTags(ref.orgId, type.targetKind, there, record.tags), unmapped };
+  }
   if (existing) {
     await db
       .updateTable("core_integrations_synced_records")
@@ -333,26 +469,16 @@ async function upsertOne(
       .where("id", "=", existing.id)
       .execute();
   } else {
-    // The id-map write is an UPSERT, because the row this record looked for a
-    // moment ago can exist by the time we write it.
+    // The id-map write is FIRST WRITER WINS, because the row this record looked
+    // for a moment ago can exist by the time we write it.
     //
-    // A reconcile for one (connection, entity type) can run in more than one
-    // place: the poll worker scans every couple of minutes for due syncs while
-    // the import and live routes can be called at any time. The lookup above is
-    // a fresh SELECT, so a reconcile that starts mid-flight finds nothing,
-    // creates its own mirror, and its INSERT then hits
-    // `unique (connector_row_id, entity_type, external_id)` — the request 502s
-    // with a raw duplicate-key error and the import half-lands.
-    //
-    // Seen in CI on 2026-09-01: a pooled test org carried an enabled sync from
-    // an earlier run, the worker reconciled the same connection during the
-    // test's import, and two partdb tests failed on the constraint.
-    //
-    // runReconcile now takes a lock so the overlap is rare rather than routine,
-    // but the lock cannot make the write safe on its own (it is advisory, and a
-    // holder can die), so the write is idempotent too: last writer wins on the
-    // same external id, which is the same outcome a second pass would produce.
-    await db
+    // A reconcile for one (connection, entity type) holds a lock, but the live
+    // webhook upserts one record outside it, so a push and a poll can both miss
+    // the mapping, both create, and both write the id-map. Last-writer-wins used
+    // to repoint the mapping and leave the first copy behind as a duplicate
+    // nothing mirrored any more (the CI race of 2026-09-01 was the same shape).
+    // Now the loser withdraws the copy it just made and writes into the winner's.
+    const inserted = await db
       .insertInto("core_integrations_synced_records")
       .values({
         connector_row_id: ref.connectorRowId,
@@ -362,18 +488,112 @@ async function upsertOne(
         cobblr_entity_id: cobblrId,
         source_hash: storedHash,
       })
-      .onConflict((oc) =>
-        oc.columns(["connector_row_id", "entity_type", "external_id"]).doUpdateSet({
-          cobblr_entity_id: cobblrId,
-          source_hash: storedHash,
-          target_kind: type.targetKind,
-          deleted_at: null,
-          updated_at: new Date(),
-        }),
-      )
-      .execute();
+      .onConflict((oc) => oc.columns(["connector_row_id", "entity_type", "external_id"]).doNothing())
+      .returning("id")
+      .executeTakeFirst();
+    if (!inserted) {
+      const winner = await db
+        .selectFrom("core_integrations_synced_records")
+        .select(["cobblr_entity_id", "deleted_at"])
+        .where("connector_row_id", "=", ref.connectorRowId)
+        .where("entity_type", "=", type.key)
+        .where("external_id", "=", record.externalId)
+        .executeTakeFirst();
+      if (winner && !winner.deleted_at && winner.cobblr_entity_id !== cobblrId) {
+        await writer.delete(ref.orgId, cobblrId);
+        await writer.update(ref.orgId, winner.cobblr_entity_id, fields);
+        await logSyncWrite(ref, type, "updated", winner.cobblr_entity_id, { name: record.fields.name ?? null, ...keptNote });
+        return { action: "updated", tagsFailed: await attachTags(ref.orgId, type.targetKind, winner.cobblr_entity_id, record.tags), unmapped };
+      }
+      await mapTo(db, ref, type, record.externalId, cobblrId, storedHash);
+    }
   }
-  return { action: "created", tagsFailed: await attachTags(ref.orgId, type.targetKind, cobblrId, record.tags) };
+  await logSyncWrite(ref, type, "created", cobblrId, { name: record.fields.name ?? null, ...keptNote });
+  return { action: "created", tagsFailed: await attachTags(ref.orgId, type.targetKind, cobblrId, record.tags), unmapped };
+}
+
+/** The existing record that already carries this source record's key, when
+ *  the source declares one and the target kind can look it up. Oldest first,
+ *  and never one the id-map already mirrors from a DIFFERENT source record. */
+async function adoptableByKey(
+  db: Kysely<CoreIntegrationsDB>,
+  ref: SyncConnectionRef,
+  type: SyncEntityType,
+  writer: EntityWriter | null | undefined,
+  externalId: string,
+): Promise<string | null> {
+  if (!type.keyField || !writer?.findByKey) return null;
+  const found = await writer.findByKey(ref.orgId, type.keyField, externalId);
+  if (!found) return null;
+  const taken = await db
+    .selectFrom("core_integrations_synced_records")
+    .select("external_id")
+    .where("connector_row_id", "=", ref.connectorRowId)
+    .where("entity_type", "=", type.key)
+    .where("cobblr_entity_id", "=", found)
+    .where("external_id", "!=", externalId)
+    .where("deleted_at", "is", null)
+    .executeTakeFirst();
+  return taken ? null : found;
+}
+
+/** Point this source record's id-map row at `cobblrId` (insert, or revive and
+ *  repoint a tombstoned one). An upsert for the same reason as the create path:
+ *  two reconciles can overlap. */
+async function mapTo(
+  db: Kysely<CoreIntegrationsDB>,
+  ref: SyncConnectionRef,
+  type: SyncEntityType,
+  externalId: string,
+  cobblrId: string,
+  storedHash: string,
+): Promise<void> {
+  await db
+    .insertInto("core_integrations_synced_records")
+    .values({
+      connector_row_id: ref.connectorRowId,
+      entity_type: type.key,
+      target_kind: type.targetKind,
+      external_id: externalId,
+      cobblr_entity_id: cobblrId,
+      source_hash: storedHash,
+    })
+    .onConflict((oc) =>
+      oc.columns(["connector_row_id", "entity_type", "external_id"]).doUpdateSet({
+        cobblr_entity_id: cobblrId,
+        source_hash: storedHash,
+        target_kind: type.targetKind,
+        deleted_at: null,
+        updated_at: new Date(),
+      }),
+    )
+    .execute();
+}
+
+/** An activity row for what the sync did to a record, attributed to the sync
+ *  itself. Records a sync created used to appear with nothing in the history
+ *  saying where they came from (#3836). Never fails the sync: the write already
+ *  happened, and a missing history line is not a reason to undo it. */
+async function logSyncWrite(
+  ref: SyncConnectionRef,
+  type: SyncEntityType,
+  action: "created" | "updated",
+  id: string,
+  diff: Record<string, unknown>,
+): Promise<void> {
+  const [module, entityType] = type.targetKind.split(":");
+  try {
+    await platform().activity.log({
+      orgId: ref.orgId,
+      userId: null,
+      action,
+      ref: { module: module ?? null, entityType: entityType ?? type.targetKind, entityId: id },
+      diff,
+      via: { kind: "automation", label: `${type.sourceLabel || ref.connectorId} sync` },
+    });
+  } catch (err) {
+    console.warn(`[sync] activity for ${type.targetKind}/${id} not written:`, (err as Error).message);
+  }
 }
 
 /** Attach the record's tags to the mirrored entity. A failure is COUNTED, never
@@ -500,9 +720,22 @@ async function reconcileOnce(
   let updated = 0;
   let linked = 0;
   let tagsFailed = 0;
+  const unmapped: string[] = [];
+  const failed: string[] = [];
+  const source = type.sourceLabel || ref.connectorId;
   for (const r of ordered) {
-    const res = await upsertOne(db, ref, type, r, linkByName);
+    // One record the target refuses must not fail the section: a single
+    // duplicate name stopped every location syncing, run after run, and left
+    // everything that pointed at them unmapped (#3900). It is said on the run.
+    let res: Awaited<ReturnType<typeof upsertOne>>;
+    try {
+      res = await upsertOne(db, ref, type, r, linkByName);
+    } catch (err) {
+      failed.push(`${String(r.fields.name ?? r.externalId)}: ${(err as Error).message}`);
+      continue;
+    }
     tagsFailed += res.tagsFailed;
+    for (const w of unmappedWords(res.unmapped, source)) unmapped.push(`${String(r.fields.name ?? r.externalId)}: ${w}`);
     if (res.action === "created") created++;
     else if (res.action === "updated") updated++;
     else if (res.action === "linked") linked++;
@@ -522,7 +755,7 @@ async function reconcileOnce(
       tombstoned++;
     }
   }
-  return { created, updated, linked, tombstoned, total: records.length, tagsFailed };
+  return { created, updated, linked, tombstoned, total: records.length, tagsFailed, unmapped, failed };
 }
 
 /** Dry run: what runReconcile WOULD do, computed without a single write — the
@@ -567,7 +800,7 @@ export async function planReconcile(
     const hash = hashRecord(type.targetKind, parentCobblrId, r.fields, r.references, r.instance ?? ref.targetInstances?.[type.key] ?? type.targetInstance, r.images, r.tags);
     // Show the resolved cross-section references in the preview (e.g. location_id
     // → the mirrored Cobblr id, or null if that section isn't imported yet).
-    const fields = { ...r.fields, ...(await resolveReferences(db, ref, r)) };
+    const fields = { ...r.fields, ...(await resolveReferences(db, ref, r)).values };
     const m = byExternal.get(r.externalId);
     if (m && !m.deleted_at) {
       if (m.source_hash === hash) {
@@ -578,6 +811,13 @@ export async function planReconcile(
         counts.update++;
         items.push({ externalId: r.externalId, name, action: "update", cobblrId: m.cobblr_entity_id, fields, match: await readMatch(m.cobblr_entity_id, name) });
       }
+      continue;
+    }
+    const byKey = await adoptableByKey(db, ref, type, writer, r.externalId);
+    if (byKey) {
+      for (const [k, v] of linkByName) if (v.id === byKey) linkByName.delete(k);
+      counts.link++;
+      items.push({ externalId: r.externalId, name, action: "link", cobblrId: byKey, fields, match: await readMatch(byKey, name) });
       continue;
     }
     const key = matchKey(name);

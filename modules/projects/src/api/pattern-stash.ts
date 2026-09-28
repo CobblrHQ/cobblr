@@ -8,7 +8,7 @@
 // bundle's. Retired records and opened units are left out by the resolver.
 
 import { platform } from "@cobblr/platform-contract";
-import { millimetres, type StashTool, type StashYarn } from "./pattern-match.js";
+import { millimetres, type StashNotion, type StashTool, type StashYarn } from "./pattern-match.js";
 
 const PAGE = 200;
 /** Enough for a big stash; past it the page says the match looked at the first. */
@@ -23,6 +23,7 @@ const str = (v: unknown): string | null => (typeof v === "string" && v.trim() ? 
 export interface Stash {
   yarns: StashYarn[];
   tools: StashTool[];
+  notions: StashNotion[];
   /** More records than STASH_READ_CAP: the match did not see them all. */
   partial: boolean;
 }
@@ -37,6 +38,7 @@ export async function readStash(orgId: string): Promise<Stash> {
   const kinds = [...new Set([...stockKinds.map((k) => k.id), ...instances.map((i) => `${i.instance_name}:item`)])];
   const yarns: StashYarn[] = [];
   const tools: StashTool[] = [];
+  const notions: StashNotion[] = [];
   let seen = 0;
   let partial = false;
   for (const kind of kinds) {
@@ -50,6 +52,11 @@ export async function readStash(orgId: string): Promise<Stash> {
         seen++;
         const f = e.fields ?? {};
         const md = ((f.metadata ?? {}) as Record<string, unknown>) || {};
+        const notion = str(md.notion_type);
+        if (notion) {
+          notions.push({ id: e.id, name: e.title, notion, size_mm: millimetres(str(md.notion_size)), qty: num(f.available_qty) ?? num(f.qty) ?? 0 });
+          continue;
+        }
         const gauge = str(md.hook_gauge);
         if (gauge) {
           tools.push({ id: e.id, name: e.title, size_mm: millimetres(gauge), qty: num(f.available_qty) ?? num(f.qty) ?? 0 });
@@ -76,5 +83,5 @@ export async function readStash(orgId: string): Promise<Stash> {
       if (page.items.length < PAGE) break;
     }
   }
-  return { yarns, tools, partial };
+  return { yarns, tools, notions, partial };
 }

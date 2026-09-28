@@ -117,6 +117,8 @@ export interface ScanItemScreenProps {
     onOpenForm: () => void;
     /** The row's resolved action when it is a merge (see ScanItemSheetFooter). */
     primary?: { label: string; title?: string; busy: boolean; onClick: () => void } | null;
+    /** The record's count on the screen files this row (see ScanItemSheetFooter). */
+    filedOnScreen?: boolean;
     onDiscard: () => void;
     discardPending: boolean;
     setActionSlot: (el: HTMLDivElement | null) => void;
@@ -488,6 +490,7 @@ export function ScanItemScreen(p: ScanItemScreenProps) {
         addLabel={p.footer.addLabel}
         onOpenForm={p.footer.onOpenForm}
         primary={p.footer.primary ?? null}
+        filedOnScreen={p.footer.filedOnScreen ?? false}
         onCancel={p.nav.onClose}
         onDiscard={p.footer.onDiscard}
         discardPending={p.footer.discardPending}

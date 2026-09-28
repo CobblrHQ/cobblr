@@ -50,6 +50,10 @@ export function WireComposer({
   const [sourceKind, setSourceKind] = useState(ed?.source_kind ?? "");
   const [actionId, setActionId] = useState(ed?.action_id ?? "");
   const [template, setTemplate] = useState(ed?.template ?? "");
+  // A button's own label, and the one thing it asks before it runs.
+  const [buttonLabel, setButtonLabel] = useState(ed?.label ?? "");
+  const [askArg, setAskArg] = useState(ed?.ask?.[0]?.arg ?? "");
+  const [askLabel, setAskLabel] = useState(ed?.ask?.[0]?.label ?? "");
   const [target, setTarget] = useState<WireTarget>(ed?.target && ed.target !== "self" ? ed.target : "self");
   const [showTarget, setShowTarget] = useState(!!(ed?.target && ed.target !== "self"));
   // B7 — conditions: {all:[{path,op,value}]} evaluated per firing against the
@@ -132,6 +136,12 @@ export function WireComposer({
         filter: builtFilter(),
         args: filledArgs() ?? null,
         target: target === "self" ? "self" : target,
+        // Only a button has a label or a question; null clears them.
+        label: triggerType === "user-invoked" && buttonLabel.trim() ? buttonLabel.trim() : null,
+        ask:
+          triggerType === "user-invoked" && askArg.trim() && askLabel.trim()
+            ? [{ arg: askArg.trim(), label: askLabel.trim(), ...(ed?.ask?.[0]?.kind ? { kind: ed.ask[0].kind } : {}) }]
+            : null,
       } as Partial<PlatformBinding>;
       return ed ? api.updateBinding(slug, ed.id, payload) : api.createBinding(slug, payload);
     },
@@ -262,6 +272,33 @@ export function WireComposer({
                   />
                 </label>
               ))}
+            </div>
+          </div>
+        )}
+        {triggerType === "user-invoked" && (
+          <div className="space-y-2" data-testid="wire-button-options">
+            <label className="block">
+              <span className={L}>
+                Button label <span className="normal-case tracking-normal">(optional, else the action's)</span>
+              </span>
+              <input value={buttonLabel} onChange={(e) => setButtonLabel(e.target.value)} maxLength={40} placeholder={action?.label ?? "e.g. Open one"} className="input text-sm" />
+            </label>
+            <div>
+              <span className={L}>
+                Ask before running <span className="normal-case tracking-normal">(optional)</span>
+              </span>
+              <div className="flex gap-2">
+                <select value={askArg} onChange={(e) => setAskArg(e.target.value)} className="input text-sm w-40">
+                  <option value="">nothing</option>
+                  {Object.entries(action?.args_schema ?? {}).map(([name, spec]) => (
+                    <option key={name} value={name}>{spec.label}</option>
+                  ))}
+                  {askArg && !(action?.args_schema && askArg in action.args_schema) && <option value={askArg}>{askArg}</option>}
+                </select>
+                {askArg && (
+                  <input value={askLabel} onChange={(e) => setAskLabel(e.target.value)} maxLength={80} placeholder="the question, e.g. Tasting note" className="input text-sm flex-1" />
+                )}
+              </div>
             </div>
           </div>
         )}

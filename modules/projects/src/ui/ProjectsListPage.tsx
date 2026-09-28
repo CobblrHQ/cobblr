@@ -17,6 +17,7 @@ import {
 import { useProjects } from "./context";
 import type { Project } from "./api";
 import { pluralise } from "@cobblr/platform-contract";
+import { TableTitle } from "@cobblr/platform-web";
 
 type SavedViewLite = {
   id: string;
@@ -35,7 +36,7 @@ const STATUS_LABEL: Record<string, string> = {
 const STATUS_ORDER = ["planning", "active", "blocked", "done", "abandoned"];
 
 export function ProjectsListPage() {
-  const { api, orgSlug, getToken, displayName, itemNoun, instance, entityKind, fileIntake } = useProjects();
+  const { api, orgSlug, getToken, displayName, itemNoun, instance, entityKind, fileIntake, hint } = useProjects();
   // An instance's rows must stay INSIDE the instance — the bare /projects
   // detail route filters to the default instance and 404s on instance rows
   // ("Project not found" on every Designs/Outfits click).
@@ -186,7 +187,7 @@ export function ProjectsListPage() {
   return (
     <div className="space-y-5">
       <div className="flex items-baseline gap-3 border-b border-line dark:border-slate-700 pb-3">
-        <h1 className="font-display text-2xl font-extrabold text-content dark:text-mortar-100 page-title">{heading}</h1>
+        <TableTitle title={heading} hint={hint} />
         <span className="text-[10px] font-mono text-faint dark:text-slate-500">
           {query ? `${filtered.length} of ${items.length}` : `${items.length} total`}
         </span>

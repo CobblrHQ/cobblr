@@ -4,7 +4,7 @@
 // "inventory:part", id) and the platform routes here.
 
 import { sql, type Kysely } from "kysely";
-import { platform, type EntityListQuery, type ResolvedEntity, textSearchWhere } from "@cobblr/platform-contract";
+import { platform, type EntityListQuery, type FilterPredicate, type ResolvedEntity, textSearchWhere } from "@cobblr/platform-contract";
 import { type InventoryDB } from "../db.js";
 import { applyPartFilters, applyPartSort } from "./part-query.js";
 import { resolveDetailPath } from "@cobblr/platform-contract/instance-detail";
@@ -61,7 +61,8 @@ export function registerInventoryResolvers(): void {
       query.include_retired === true || query.filter?.archived !== undefined || (query.where ?? []).some((p) => p.col === "archived");
     if (!namesArchived) q = q.where("archived", "=", false);
     if (query.q?.trim()) q = q.where((eb) => textSearchWhere(eb, query.q, { text: ["name", "description", "manufacturer", "notes", "state", "unit"], json: ["metadata"] })!);
-    q = applyPartFilters(q, query);
+    const unapplied: FilterPredicate[] = [];
+    q = applyPartFilters(q, query, { unapplied });
     const sortedQ = applyPartSort(q, query.sort);
     const rows = await sortedQ.limit(limit).offset(offset).execute();
     const [names, places, left, held] = await Promise.all([categoryNames(db, rows), locationNames(orgId, rows), remainingFor(orgId, db, rows), reservedFor(db, rows)]);
@@ -69,6 +70,7 @@ export function registerInventoryResolvers(): void {
       items: rows.map((r) =>
         withReserved(toResolvedPart(r, names.get(r.category_id ?? "") ?? null, places.get(r.location_id ?? "") ?? null, left.get(r.id) ?? null), r, held),
       ),
+      ...(unapplied.length ? { unapplied } : {}),
     };
   };
   // SCOPED TO THE DEFAULT INSTANCE, deliberately. This used to pass no

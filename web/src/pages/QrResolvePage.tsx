@@ -13,13 +13,17 @@
 //
 // Auth comes for free: the redirect target is /w/<org>/<detail>,
 // and the workspace shell shows the login page (preserving the URL)
-// when the visitor has no session. Dead tokens get the no-disclosure
+// when the visitor has no session. When the workspace's admin let its
+// labels offer a join link, a signed-out scan asks "Join <club> to take
+// one" first (#3801): the person holding the club's cable has no account
+// to sign in with, and the wall QR they would need is across the room. Dead tokens get the no-disclosure
 // "no longer active" card per the module spec — we never echo what
 // the token used to point at.
 
 import { useEffect, useState } from "react";
 import { QrCode, ScanLine } from "lucide-react";
 import { usePageTitle } from "@cobblr/platform-web";
+import { getToken } from "../lib/api";
 
 interface ResolveResult {
   ok: boolean;
@@ -28,6 +32,7 @@ interface ResolveResult {
   entity_kind?: string;
   mode?: "navigate" | "action";
   detail_path?: string;
+  join?: { token: string; org_name: string };
 }
 
 export function QrResolvePage() {
@@ -37,7 +42,7 @@ export function QrResolvePage() {
   // mount-agnostic across the two basenames (/qr/… and /w/<slug>/qr/…).
   const token = window.location.pathname.split("/qr/")[1] ?? "";
 
-  const [state, setState] = useState<"loading" | "dead" | "action" | "error">("loading");
+  const [state, setState] = useState<"loading" | "dead" | "action" | "join" | "error">("loading");
   const [result, setResult] = useState<ResolveResult | null>(null);
 
   useEffect(() => {
@@ -57,6 +62,10 @@ export function QrResolvePage() {
           return;
         }
         setResult(body);
+        if (body.mode === "navigate" && body.detail_path && body.join && !getToken()) {
+          setState("join");
+          return;
+        }
         if (body.mode === "navigate" && body.detail_path) {
           // The whole point: a scanned label lands on the thing it's
           // stuck to. replace() keeps the token URL out of history so
@@ -89,6 +98,31 @@ export function QrResolvePage() {
       <>
         <ScanLine size={28} className="mx-auto text-accent animate-pulse" />
         <div className="text-sm text-muted dark:text-slate-400">Resolving QR label…</div>
+      </>,
+    );
+  }
+
+  if (state === "join" && result?.join) {
+    const item = `/w/${result.org_slug}${result.detail_path ?? ""}`;
+    return card(
+      <>
+        <QrCode size={28} className="mx-auto text-accent" />
+        <div className="text-sm font-medium text-content dark:text-mortar-100">
+          Join {result.join.org_name} to take one
+        </div>
+        <p className="text-xs text-muted dark:text-slate-400">
+          You do this once. After that, scanning a label opens the thing and you press -1.
+        </p>
+        <a
+          href={`/invite/${encodeURIComponent(result.join.token)}?next=${encodeURIComponent(item)}`}
+          className="inline-flex w-full items-center justify-center rounded-md bg-cobble-600 hover:bg-cobble-700 text-white text-sm font-medium px-4 py-2"
+          data-testid="label-join"
+        >
+          Join {result.join.org_name}
+        </a>
+        <a href={item} className="block text-xs text-accent hover:underline" data-testid="label-sign-in">
+          I already have an account: sign in
+        </a>
       </>,
     );
   }

@@ -17,7 +17,7 @@
 // Run: npx tsx scripts/lint-public-readme-links.ts
 
 import { readFileSync, existsSync, globSync } from "node:fs";
-import { execFileSync } from "node:child_process";
+import { repoFiles } from "./lib/repo-files.js";
 import { resolve, dirname, relative, posix } from "node:path";
 import { shippedPaths } from "./publish/path-gate.mjs";
 
@@ -38,7 +38,7 @@ if (!existsSync(overlayDir)) {
   process.exit(1);
 }
 
-const tracked = execFileSync("git", ["ls-files"], { encoding: "utf8" }).split("\n").filter(Boolean);
+const tracked = repoFiles();
 const shipped = new Set(shippedPaths(tracked, manifest));
 if (shipped.size === 0) {
   console.error("public-readme-links lint: manifest matched no tracked files — the check would pass vacuously.");

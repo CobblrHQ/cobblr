@@ -18,7 +18,8 @@
 // and the `## docs` section are scanned for a word naming a control a person
 // presses (CONTROL_WORDS below; the vocabulary lives here and nowhere else).
 // If one is found, the same diff must touch a path where a control can ship:
-// web/src/**, modules/<name>/src/ui/**, or a bundle manifest (bundles/*.json,
+// web/src/**, modules/<name>/src/ui/**, packages/platform-web/src/** (the
+// shared UI every record page renders), or a bundle manifest (bundles/*.json,
 // since a bundle can add a surface). If it does not, the entry fails, naming
 // the word it found and the paths it looked for. A feature whose control
 // already existed (copy on an existing button, a wire behind it, a relay)

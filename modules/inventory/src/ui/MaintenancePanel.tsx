@@ -10,7 +10,7 @@ import { dayHere } from "@cobblr/platform-contract/day";
 import { useState, type FormEvent } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Calendar, CheckCircle, History, Plus, Trash2 } from "lucide-react";
-import { Modal, useConfirm, useToast } from "@cobblr/platform-web";
+import { Modal, useConfirm, useToast, MutationError } from "@cobblr/platform-web";
 import { useInventory } from "./context";
 
 interface MaintenanceEntry {
@@ -145,6 +145,8 @@ export function MaintenancePanel({ entityModule, entityType, entityId }: Props) 
         </div>
       )}
 
+      <MutationError mutation={complete} className="block" />
+      <MutationError mutation={remove} className="block" />
       {history.length > 0 && (
         <div>
           <div className="text-[10px] font-mono uppercase tracking-widest text-muted mb-1.5 flex items-center gap-1">

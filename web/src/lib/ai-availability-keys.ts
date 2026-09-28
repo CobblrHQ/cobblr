@@ -28,6 +28,8 @@ export const aiAvailabilityKeys = {
   shares: (slug: string) => ["ai", "shares", slug] as const,
   /** The person's own connections, and where each is routed. */
   connections: () => ["ai", "connections"] as const,
+  /** Who answers a job here, in order (GET /ai-chain). */
+  chain: (slug: string, capability: string) => ["ai", "chain", slug, capability] as const,
 };
 
 /** A write that can change whether AI works somewhere: a personal

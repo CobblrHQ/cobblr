@@ -28,7 +28,7 @@ import { templateDataOf } from "@cobblr/platform-contract/entity-metadata";
 import { log as logActivity } from "./activity.js";
 import { parseWireFilter, passesWireFilter } from "./wire-filter.js";
 import { FiringLedger, firingKey } from "./wire-firing-key.js";
-import { currentActor } from "../lib/request-context.js";
+import { runVia, currentActor } from "../lib/request-context.js";
 
 // Cycle guard. A wire's action may emit() further events — that's how
 // multi-step wires compose — but nothing stops a user-authored cycle
@@ -290,7 +290,11 @@ async function fireBindings(
         if (!ledger.claim({ action_id: b.action_id, target_kind: targetBaseKind, target_id: t.id, args: renderedArgs, template: rendered })) {
           continue;
         }
-        const result = await invoke(b.action_id, {
+        // Everything the action writes is marked as this automation's work, so
+        // a record it creates reads "via automation <label>" rather than as a
+        // hand edit, or as "someone" when a background event fired it (#3833).
+        const viaLabel = await actionLabelOf(b.action_id).catch(() => null);
+        const result = await runVia({ kind: "automation", label: viaLabel }, () => invoke(b.action_id, {
           orgId,
           userId: actor.user_id,
           entity: { kind: t.kind, id: t.id, fields: entityFields },
@@ -303,7 +307,7 @@ async function fireBindings(
           },
           rendered,
           args: renderedArgs,
-        });
+        }));
         // Log a successful firing so the /wires "recent firings" panel
         // can show what's running, not just what's failing. The user
         // can filter by action=wire_fired on /activity. The row carries
@@ -324,7 +328,7 @@ async function fireBindings(
             diff: {
               event: eventName,
               action: b.action_id,
-              action_label: await actionLabelOf(b.action_id).catch(() => null),
+              action_label: viaLabel,
               ...(said ? { said } : {}),
               ...(!acted ? { declined: true, ...(typeof r.error === "string" ? { reason: r.error.slice(0, 200) } : {}) } : {}),
               source_kind: b.source_kind,

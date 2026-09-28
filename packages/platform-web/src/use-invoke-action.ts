@@ -26,6 +26,9 @@ import { printDirectiveOf, runPrintDirective } from "./print-directive";
 import { printNextStep, refusalKind, verdictOf } from "./action-outcome-compose";
 import { runAction } from "./run-action";
 import { useLater } from "./use-later";
+import type { BindingAskEntry } from "@cobblr/platform-contract/binding-ask";
+import { askBeforePress, pressAnswersToArgs, type ActionArgSpec } from "@cobblr/platform-contract/action-args";
+import type { Asking } from "./AskBeforeRun";
 
 export interface InvokeTarget {
   entityKind: string;
@@ -34,8 +37,19 @@ export interface InvokeTarget {
 
 export interface RunArgs {
   actionId: string;
-  /** Present when the user's own binding is what is being run. */
-  bindingId?: string;
+  /** The action's arguments, as listed with it (`args_schema`). Not optional:
+   *  a surface that runs an action must say what it takes, so a required one
+   *  the press does not carry is asked for first instead of meeting the
+   *  door's refusal. LOG SERVICE fired bare everywhere for ten days (#3865). */
+  argsSchema: Record<string, ActionArgSpec> | null | undefined;
+  /** What the sheet's run button says, for a plain action. */
+  label?: string;
+  /** Present when a binding is what is being run: its id, and what it asks
+   *  before it runs. The binding itself, not just its id, so no surface can
+   *  run one without its question (AskBeforeRun). */
+  binding?: { binding_id: string; label?: string; ask?: readonly BindingAskEntry[] | null; args?: unknown };
+  /** The arguments this press adds (the answers to the binding's ask). */
+  args?: Record<string, unknown>;
   /** A route-style action navigates instead of invoking. */
   invokeRoute?: string | null;
   invokeHandler?: string | null;
@@ -63,7 +77,8 @@ export function useInvokeEntityAction({ entityKind, entityId }: InvokeTarget) {
         actionId: args.actionId,
         entityKind,
         entityId,
-        ...(args.bindingId ? { bindingId: args.bindingId } : {}),
+        ...(args.binding ? { bindingId: args.binding.binding_id } : {}),
+        ...(args.args && Object.keys(args.args).length ? { args: args.args } : {}),
       }),
     onSuccess: (data) => {
       setFailure(null);
@@ -139,9 +154,29 @@ export function useInvokeEntityAction({ entityKind, entityId }: InvokeTarget) {
     },
   });
 
-  /** Invoke, or navigate when the action is a route rather than a handler. */
+  // A binding that asks something first: held here until answered.
+  const [asking, setAsking] = useState<Asking | null>(null);
+
+  /** Invoke, or navigate when the action is a route rather than a handler.
+   *  A press that must ask something first (a binding's questions, or an
+   *  argument the action requires that the button does not carry) asks it
+   *  in AskBeforeRun, and runs only once it is answered. */
   function run(args: RunArgs): void {
-    if (args.invokeHandler || args.bindingId) {
+    const invokes = !!(args.invokeHandler || args.binding);
+    const ask = invokes && !args.args ? askBeforePress(args.argsSchema, args.binding?.args ?? null, args.binding?.ask ?? []) : [];
+    if (ask.length > 0) {
+      setAsking({
+        label: args.binding?.label ?? args.label ?? "Run",
+        ask,
+        submit: (answers) => {
+          setAsking(null);
+          invoke.mutate({ ...args, args: pressAnswersToArgs(ask, answers) });
+        },
+        cancel: () => setAsking(null),
+      });
+      return;
+    }
+    if (args.invokeHandler || args.binding) {
       invoke.mutate(args);
       return;
     }
@@ -154,5 +189,5 @@ export function useInvokeEntityAction({ entityKind, entityId }: InvokeTarget) {
     }
   }
 
-  return { run, flash, note, failure, dismissFailure: () => setFailure(null), pending: invoke.isPending };
+  return { run, flash, note, failure, asking, dismissFailure: () => setFailure(null), pending: invoke.isPending };
 }

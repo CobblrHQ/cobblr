@@ -43,6 +43,7 @@ import { findDecoder } from "./identifier-registry.js";
 import { registerBuiltinDecoders } from "./vin-decode.js";
 import { readDecodeCache, writeDecodeCache, decodeCacheKey } from "./decode-cache.js";
 import type { CoreScanDB } from "../db.js";
+import { isStockPreviewUrl } from "./stock-preview.js";
 
 // Register the built-in identifier decoders (VIN) once, at module load
 // (idempotent). enrichBarcodeItem dispatches a scanned code whose SHAPE a
@@ -354,6 +355,14 @@ export async function assertSafeOutboundUrl(raw: string): Promise<void> {
  * IP (undici Agent), so the DNS-rebind window between check and connect is closed
  * too, matching the kernel guardedFetch.
  */
+/** An image fetch that reached a stock agency's preview (#3804). */
+export class StockPreviewRefused extends Error {
+  constructor(url: string) {
+    super(`a stock agency's preview is never used as a picture: ${url}`);
+    this.name = "StockPreviewRefused";
+  }
+}
+
 export async function guardedImageFetch(
   url: string,
   init: { headers?: Record<string, string>; signal?: AbortSignal },
@@ -374,7 +383,11 @@ export async function guardedImageFetch(
     maxRedirects: 5,
     ...(init.headers ? { headers: init.headers } : {}),
     ...(init.signal ? { signal: init.signal } : {}),
-    validate: (u) => resolveSafeOutboundPin(u),
+    // A redirect can land a harmless-looking address on an agency's preview.
+    validate: (u) => {
+      if (isStockPreviewUrl(String(u))) throw new StockPreviewRefused(String(u));
+      return resolveSafeOutboundPin(u);
+    },
   });
   return recordImage(url, response as unknown as Response);
 }
@@ -1588,7 +1601,14 @@ export function isPlaceholderImageUrl(url: string | null | undefined): boolean {
  *  `catalog_image_url` so a placeholder never enters the row in the first
  *  place. */
 export function catalogImageUrlOrNull(url: string | null | undefined): string | null {
-  return url && !isPlaceholderImageUrl(url) ? url : null;
+  return url && !isUnusablePictureUrl(url) ? url : null;
+}
+
+/** Never a picture: a "no image" placeholder, or a stock agency's watermarked
+ *  preview (stock-preview.ts, #3804). Every door a picture address comes in
+ *  by asks here, and the fetch itself asks again on every redirect hop. */
+export function isUnusablePictureUrl(url: string | null | undefined): boolean {
+  return isPlaceholderImageUrl(url) || isStockPreviewUrl(url);
 }
 
 /** The catalog picture address a writer may put on the row: never a stock
@@ -1630,8 +1650,9 @@ export async function downloadCatalogImage(
     mustShow?: boolean;
   } = {},
 ): Promise<boolean> {
-  // A stock "no image" graphic is not a photo. Refuse before spending a fetch.
-  if (isPlaceholderImageUrl(imageUrl)) return false;
+  // A stock "no image" graphic is not a photo, and an agency's preview is a
+  // watermark. Refuse before spending a fetch.
+  if (isUnusablePictureUrl(imageUrl)) return false;
   try {
     await assertSafeOutboundUrl(imageUrl);
   } catch {
@@ -1724,7 +1745,10 @@ export async function downloadCatalogImage(
           // what keeps a search engine's block in place (2026-09-06).
           // What the trim did rides on the row (catalog_image_trim), so a
           // picture that arrives untrimmed can be read, not reproduced (#3002).
-          suggested_metadata: sql`(coalesce(suggested_metadata, '{}'::jsonb) - 'catalog_image_status' - 'catalog_colour') || ${JSON.stringify({ catalog_image_trim: trim.verdict, ...(colour ? { catalog_colour: { ...colour, file_id: written.fileId } } : {}) })}::jsonb`,
+          // Where it came from rides too (catalog_image_from): a stored file
+          // keeps no address, and a picture whose source is later refused
+          // must be findable (#3804).
+          suggested_metadata: sql`(coalesce(suggested_metadata, '{}'::jsonb) - 'catalog_image_status' - 'catalog_colour') || ${JSON.stringify({ catalog_image_trim: trim.verdict, catalog_image_from: imageUrl, ...(colour ? { catalog_colour: { ...colour, file_id: written.fileId } } : {}) })}::jsonb`,
           updated_at: new Date(),
         })
         .where("id", "=", ctx.itemId)
@@ -1734,6 +1758,7 @@ export async function downloadCatalogImage(
         .execute();
       return true;
     } catch (err) {
+      if (err instanceof StockPreviewRefused) return false;
       console.error(
         `[core-scan] catalog image download attempt ${attempt + 1} failed:`,
         (err as Error).message,

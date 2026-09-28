@@ -24,7 +24,7 @@ import { normaliseCategory } from "@cobblr/platform-contract/category-reconcile"
 import { chooseAxisBacking, dedupeByKey } from "@cobblr/platform-contract/category-axis";
 import { meta } from "../db/meta.js";
 import { resolveFieldDefsForKind } from "./field-defs.js";
-import { getEntityWriterFor } from "./entities.js";
+import { getEntityWriterFor, listAll as listAllEntities } from "./entities.js";
 import { listEntries } from "../modules/registry.js";
 
 /** How long an answer is reused. One menu assembly asks per kind per row, and
@@ -156,5 +156,56 @@ export async function keepAxisValue(args: {
   } catch (err) {
     console.error("[category-axis] keep failed, value dropped:", (err as Error).message);
     return null;
+  }
+}
+
+/** The seam's `withdraw`: the inverse of `commit`, for an undo. A value goes
+ *  only when no record of the kind files under it, checked in the store the
+ *  records use: the category column on a native axis, the field's own key on
+ *  a choice-backed one. Whatever a person filed under it since keeps it. */
+export async function withdrawAxisValue(args: {
+  orgId: string;
+  kind: string;
+  value: string;
+  instance?: string | null;
+}): Promise<"withdrawn" | "in-use" | "absent" | "unsupported"> {
+  try {
+    const key = normaliseCategory(args.value.trim());
+    if (!key) return "absent";
+    forgetAxis(args.orgId, args.kind, args.instance);
+    const axis = await axisFor(args);
+    if (!axis) return "unsupported";
+    if (axis.slot.kind === "native") {
+      const writer = await getEntityWriterFor(args.orgId, axis.slot.entityKind);
+      if (!writer) return "unsupported";
+      const rows = (await writer.listForMatch?.(args.orgId)) ?? [];
+      const found = rows.filter((r) => normaliseCategory(r.name) === key);
+      if (!found.length) return "absent";
+      for (const row of found) {
+        const using = await listAllEntities(args.orgId, args.kind, { filter: { [axis.slot.column]: row.id }, include_retired: true }, undefined, { cap: 1 });
+        if (using.items.length) return "in-use";
+        // A category with categories under it is somebody's tree, not a leftover.
+        if (rows.some((r) => r.parentId === row.id)) return "in-use";
+      }
+      for (const row of found) await writer.delete(args.orgId, row.id);
+      forgetAxis(args.orgId, args.kind, args.instance);
+      return "withdrawn";
+    }
+    const holds = axis.values.filter((v) => normaliseCategory(v) === key);
+    if (!holds.length) return "absent";
+    for (const v of holds) {
+      const using = await listAllEntities(args.orgId, args.kind, { filter: { [axis.slot.name]: v }, include_retired: true }, undefined, { cap: 1 });
+      if (using.items.length) return "in-use";
+    }
+    await meta
+      .updateTable("module_field_defs")
+      .set({ choices: JSON.stringify(axis.values.filter((v) => normaliseCategory(v) !== key)) })
+      .where("id", "=", axis.slot.defId)
+      .execute();
+    forgetAxis(args.orgId, args.kind, args.instance);
+    return "withdrawn";
+  } catch (err) {
+    console.error("[category-axis] withdraw failed, value kept:", (err as Error).message);
+    return "in-use";
   }
 }

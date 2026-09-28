@@ -102,6 +102,8 @@ async function visitWorkspace(orgId: string, raw: unknown, now: Date): Promise<{
         ])
         .where("at", ">", cutoff)
         .where(sql<boolean>`delta::numeric < 0`)
+        // A recount is the record being wrong, not something used (0011).
+        .where(sql<boolean>`kind is distinct from 'correction'`)
         .groupBy("part_id")
         .execute();
       if (aggs.length === 0) return;

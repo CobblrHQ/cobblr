@@ -18,7 +18,7 @@
 import { useQuery } from "@tanstack/react-query";
 import { useParams, useSearchParams } from "react-router-dom";
 import { CobblestoneMark } from "../CobblestoneMark";
-import { EntityTile, EntityThumb, usePageTitle } from "@cobblr/platform-web";
+import { EntityTile, EntityThumb, usePageTitle, TILE_GRID } from "@cobblr/platform-web";
 import {
   PublicAppPlayer,
   type PublicAppPayload,
@@ -261,7 +261,7 @@ function TileGrid({ items }: { items: SurfaceItem[] }) {
     );
   }
   return (
-    <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-4">
+    <div className={TILE_GRID}>
       {items.map((i) => (
         <EntityTile
           key={`${i.kind}:${i.id}`}

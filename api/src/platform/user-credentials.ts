@@ -121,7 +121,12 @@ async function setExplicitRoutes(
     .selectAll()
     .where("credential_id", "=", credentialId)
     .execute();
-  const prevByOrg = new Map(existing.map((e) => [e.org_id, e]));
+  // A connection has one general row per workspace (its route) and a row per
+  // job it is ordered for there. The route is rebuilt from `routes`; the
+  // per-job orders are kept for every workspace it still reaches, or saving
+  // a connection's routing would silently undo them.
+  const prevByOrg = new Map(existing.filter((e) => e.capability == null).map((e) => [e.org_id, e]));
+  const perJob = existing.filter((e) => e.capability != null);
   await meta.deleteFrom("user_credential_orgs").where("credential_id", "=", credentialId).execute();
   if (routes.length === 0) return;
 
@@ -165,7 +170,18 @@ async function setExplicitRoutes(
     liveElsewhere,
     now,
   });
-  await meta.insertInto("user_credential_orgs").values(values).execute();
+  await meta
+    .insertInto("user_credential_orgs")
+    .values(values.map((v) => ({ ...v, rank: prevByOrg.get(v.org_id)?.rank ?? null })))
+    .execute();
+  const routeOf = new Map(values.map((v) => [v.org_id, v]));
+  const kept = perJob.flatMap((j) => {
+    const r = routeOf.get(j.org_id);
+    return r
+      ? [{ credential_id: credentialId, org_id: j.org_id, capability: j.capability, rank: j.rank, mode: r.mode, approved_at: r.approved_at ?? null, approved_by: r.approved_by ?? null, active: r.active ?? false }]
+      : [];
+  });
+  if (kept.length) await meta.insertInto("user_credential_orgs").values(kept).execute();
 }
 
 export async function addUserCredential(
@@ -290,6 +306,9 @@ export async function listUserCredentials(
       "in",
       rows.map((r) => r.id),
     )
+    // The route rows. A per-job order row for the same workspace is not a
+    // second route.
+    .where("capability", "is", null)
     .execute();
   const routesByCred = new Map<string, CredentialRoute[]>();
   const statusByCred = new Map<string, Record<string, "pending" | "approved" | "active">>();
@@ -742,6 +761,9 @@ export async function resolvePersonalProvider(
   capability?: string,
   /** The workspace's per-job choice, when it named one of these connections. */
   preferCredentialId?: string | null,
+  /** Connections already asked for this call and failed: the router's
+   *  fallback asks for the next one (#3819). */
+  exclude?: ReadonlySet<string>,
 ): Promise<ResolvedPersonalProvider | null> {
   // FAIL-SAFE: this layer is opt-in + default-off, so if its tables are missing
   // (e.g. a meta DB without migration 053) or any query throws, it must NEVER
@@ -749,7 +771,7 @@ export async function resolvePersonalProvider(
   // workspace provider. (Regression guard: a thrown query here surfaced as a
   // generic ai_error instead of the clean no_ai_provider the degrade path wants.)
   try {
-    return await resolvePersonalProviderUnsafe(orgId, callerUserId, supportsCapability, kind, capability, preferCredentialId);
+    return await resolvePersonalProviderUnsafe(orgId, callerUserId, supportsCapability, kind, capability, preferCredentialId, exclude);
   } catch {
     return null;
   }
@@ -762,6 +784,7 @@ async function resolvePersonalProviderUnsafe(
   kind: string,
   capability?: string,
   preferCredentialId?: string | null,
+  exclude?: ReadonlySet<string>,
 ): Promise<ResolvedPersonalProvider | null> {
   const members = await meta
     .selectFrom("org_memberships")
@@ -857,11 +880,11 @@ async function resolvePersonalProviderUnsafe(
     const r = routeByCred.get(c.id);
     return c.route_scope === "explicit" ? r?.approved_at != null : true;
   };
-  const eligible = candidates.filter((c) => inScope(c) && supportsCapability(c.provider_id));
+  const eligible = candidates.filter((c) => inScope(c) && supportsCapability(c.provider_id) && !exclude?.has(c.id));
   const pick = pickCredential({
     candidates: eligible,
     callerUserId,
-    preferCredentialId,
+    preferCredentialId: preferCredentialId && !exclude?.has(preferCredentialId) ? preferCredentialId : null,
     routeOf: (id: string) => {
       const c = byId.get(id);
       // A Share the owner activated is that workspace's first choice; an
@@ -869,7 +892,13 @@ async function resolvePersonalProviderUnsafe(
       const activated = routeByCred.get(id)?.active === true;
       return {
         rank: rankOf(id) ?? (activated ? 1 : null),
-        shared: c ? isApproved(c) : false,
+        // An explicit Share serves the workspace only while it is in use.
+        // Approved and idle is what the page calls "standing by", and "Stop
+        // using shared connections" is exactly clearing this flag: counting
+        // an approved Share as serving regardless kept somebody's account
+        // paying for a workspace that had stopped (#3842). A dynamic-scope
+        // route has no per-workspace row, so it has no flag to clear.
+        shared: c ? isApproved(c) && (c.route_scope !== "explicit" || activated) : false,
       };
     },
   });

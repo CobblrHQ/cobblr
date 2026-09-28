@@ -42,6 +42,9 @@ const Block = z.discriminatedUnion("type", [
     view_id: z.string().min(1),
     agg: z.enum(["count", "sum"]),
     field: z.string().optional(),
+    /** Multiply each row's `field` by this field before summing (price x
+     *  count), so a total counts units, not records. */
+    times: z.string().optional(),
     label: z.string().max(160).optional(),
   }),
   z.object({ type: z.literal("markdown"), body: z.string().max(20_000) }),

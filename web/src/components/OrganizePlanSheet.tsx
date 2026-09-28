@@ -24,7 +24,7 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { CheckCircle2, ChevronDown, FolderPlus, MapPin, Pencil, RotateCcw, Sparkles, Wand2, X } from "lucide-react";
-import { Modal, useImageSrc, useToast } from "@cobblr/platform-web";
+import { Modal, useImageSrc, useToast, EntityPhoto } from "@cobblr/platform-web";
 import { leadPhoto } from "../lib/scanPhoto";
 import {
   api,
@@ -80,10 +80,7 @@ function ItemThumb({
       yours: yoursId ? file(yoursId) : null,
     }).src,
   );
-  if (!src) {
-    return <div className="h-8 w-8 shrink-0 rounded bg-subtle dark:bg-slate-800" />;
-  }
-  return <img src={src} alt="" className="h-8 w-8 shrink-0 rounded object-cover" />;
+  return <EntityPhoto src={src} alt="" size={32} className="rounded" placeholder={null} />;
 }
 
 function DestinationChip({

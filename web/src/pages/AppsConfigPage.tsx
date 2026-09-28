@@ -426,6 +426,15 @@ function BlockEditor({
           {block.agg === "sum" && (
             <input value={block.field ?? ""} onChange={(e) => onChange({ ...block, field: e.target.value })} placeholder="field" className={inputCls + " w-28"} />
           )}
+          {block.agg === "sum" && (
+            <input
+              value={block.times ?? ""}
+              onChange={(e) => onChange({ ...block, times: e.target.value || undefined })}
+              placeholder="× field (e.g. qty)"
+              title="Multiply each row by this field before adding up, so a total counts every unit: price × qty"
+              className={inputCls + " w-32"}
+            />
+          )}
         </div>
       )}
       {block.type === "form" && (

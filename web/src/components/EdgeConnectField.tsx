@@ -8,8 +8,8 @@
 // EdgeBridgeInstall.tsx: the wire is kernel infrastructure; what USES it is a
 // separate, data-driven concern.
 //
-// Reuses the shared pieces rather than reinventing them: DirectManagerConnect's
-// LAN-on-hosted warning (inlined here as the same copy), EdgeBridgeInstall (mint
+// Reuses the shared pieces rather than reinventing them: the home-network hint
+// every address field shows (HomeNetworkHint, the contract's rule), EdgeBridgeInstall (mint
 // a token + show the run command + watch for the bridge to dial in), and
 // BridgePicker (choose among connected bridges).
 
@@ -17,6 +17,8 @@ import { useQuery } from "@tanstack/react-query";
 import { api } from "../lib/api";
 import { EdgeBridgeInstall } from "./EdgeBridgeInstall";
 import { BridgePicker } from "./BridgePicker";
+import { HomeNetworkHint } from "./HomeNetworkHint";
+import { needsBridge } from "@cobblr/platform-contract/address-reach";
 
 export interface EdgeConnectValue {
   mode: "direct" | "edge";
@@ -26,24 +28,6 @@ export interface EdgeConnectValue {
   bridge: string | null;
 }
 
-/** A private/LAN address a cloud-hosted Cobblr can't reach directly (needs the
- *  edge bridge). Bare hostnames + .local + RFC-1918 ranges + loopback. Same test
- *  DirectManagerConnect uses. */
-function looksLikeLan(raw: string): boolean {
-  let host = raw.trim();
-  if (!host) return false;
-  try {
-    host = new URL(/^https?:\/\//i.test(raw) ? raw : `http://${raw}`).hostname;
-  } catch {
-    /* fall through */
-  }
-  if (host === "localhost" || host.endsWith(".local")) return true;
-  const m = host.match(/^(\d+)\.(\d+)\.\d+\.\d+$/);
-  if (!m) return !host.includes("."); // bare hostname → mDNS/LAN; a dotted public DNS name → not
-  const a = Number(m[1]),
-    b = Number(m[2]);
-  return a === 10 || a === 127 || (a === 192 && b === 168) || (a === 172 && b >= 16 && b <= 31);
-}
 
 const field = "w-full px-2 py-1.5 text-sm border border-line dark:border-slate-600 rounded bg-surface dark:bg-slate-900";
 const lbl = "block text-[10px] font-mono uppercase tracking-widest text-faint dark:text-slate-500 mb-1";
@@ -123,11 +107,13 @@ export function EdgeConnectField({
             onChange={(e) => setDirect(e.target.value)}
             placeholder={urlPlaceholder}
           />
-          {looksLikeLan(value.base_url) ? (
-            <p className="text-[11px] text-amber-600 dark:text-amber-400 mt-1">
-              That's a LAN address, and this is a <strong>hosted</strong> Cobblr, which can't reach a device on your
-              network directly. Switch to <strong>Via edge bridge</strong> and route through the bridge instead.
-            </p>
+          {needsBridge(value.base_url, { hosted }) ? (
+            <div className="mt-1 space-y-1">
+              <HomeNetworkHint address={value.base_url} hosted={hosted} />
+              <button type="button" onClick={() => setEdge(value.bridge)} className="text-[11px] underline text-accent">
+                Send it through my bridge instead
+              </button>
+            </div>
           ) : (
             <div className="text-[11px] text-faint mt-1">
               A publicly reachable manager URL. For a printer on your own network, use <strong>Via edge bridge</strong>.

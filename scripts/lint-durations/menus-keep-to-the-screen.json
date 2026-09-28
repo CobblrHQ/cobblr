@@ -1,0 +1,10 @@
+{
+  "lint": "lint:menus-keep-to-the-screen",
+  "run": "tsx scripts/lint-menus-keep-to-the-screen.ts",
+  "rows": [
+    "generic-web-component"
+  ],
+  "ms": 5604,
+  "recorded": "2026-09-28",
+  "source": "scaffolded by new-lint.sh at twice a local run (a shared box); replaced from its first CI measurement"
+}

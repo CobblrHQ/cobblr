@@ -119,6 +119,26 @@ export const GENERATED_SURFACE: Capability[] = [
     "module": "core-catalogs"
   },
   {
+    "feature": "Connect an AI assistant",
+    "does": "Connect your own Claude (Claude Code, Claude Desktop) or another MCP client to this workspace: the server URL, a one-click token, and a snippet to paste.",
+    "where": "/configuration/connect-assistant",
+    "also": [
+      "mcp",
+      "model context protocol",
+      "claude",
+      "claude code",
+      "claude desktop",
+      "claude.ai",
+      "chatgpt",
+      "cursor",
+      "ai assistant",
+      "agent",
+      "connector",
+      "integration",
+      "api token"
+    ]
+  },
+  {
     "feature": "Devices",
     "does": "Everything physical this workspace reaches: your on-site bridges, machine managers that run print jobs, and document printers.",
     "where": "/configuration/devices",
@@ -345,7 +365,7 @@ export const GENERATED_SURFACE: Capability[] = [
   },
   {
     "feature": "API tokens",
-    "does": "Long-lived `cbt_*` tokens for CLI / AI / automation. Mint, list, revoke.",
+    "does": "Long-lived `cbt_*` tokens for CLI / AI / automation, each held to one workspace or all, and to look only, look and make changes, or full access. Mint, list, revoke.",
     "where": "/configuration/tokens",
     "also": [
       "cli",

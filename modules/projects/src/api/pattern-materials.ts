@@ -25,6 +25,8 @@
 // Pure: text in, requirements out. The AI fallback and the storage live in
 // pattern-needs.ts.
 
+import { NOTION_NAMES, type NotionName } from "@cobblr/platform-contract";
+
 export type ToolKind = "hook" | "needle";
 
 export interface YarnNeed {
@@ -57,9 +59,19 @@ export interface ToolNeed {
   size_label: string | null;
 }
 
+/** Everything else a pattern lists that is bought and used up or kept:
+ *  stitch markers, a yarn needle, safety eyes, stuffing, buttons. */
+export interface NotionNeed {
+  /** The notion's name in the Notions table's words ("Safety eyes"). */
+  name: string;
+  quantity: number | null;
+  size_mm: number | null;
+}
+
 export interface PatternMaterials {
   yarns: YarnNeed[];
   tools: ToolNeed[];
+  notions: NotionNeed[];
 }
 
 const M_PER_YD = 0.9144;
@@ -106,7 +118,10 @@ export function materialsBlocks(text: string): string[] {
     const out: string[] = brandHeader ? [line] : [];
     for (let j = i + 1; j < lines.length && j <= i + 24; j++) {
       const l = lines[j]!;
-      if (STOP.test(l) || /^--\s*\d+\s+of\s+\d+/.test(l)) break;
+      // "OR SIZE TO OBTAIN" wraps onto a line that reads just "GAUGE": that is
+      // the end of a needle's line, not the Gauge heading.
+      const wrapped = /\b(obtain|to|check)\s*$/i.test(lines[j - 1] ?? "");
+      if ((STOP.test(l) && !wrapped) || /^--\s*\d+\s+of\s+\d+/.test(l)) break;
       if (HEADING.test(l) && j > i + 1 && !/^\s*(hooks?|ho\s?o\s?k|needles?)/i.test(l)) break;
       out.push(l);
     }
@@ -427,6 +442,56 @@ function toolsIn(block: string): ToolNeed[] {
   return out;
 }
 
+/** The words a pattern uses for each notion (NOTION_NAMES). "Cable needle"
+ *  and "yarn needle" are notions; a knitting needle is a tool (toolsIn), so
+ *  the needle words here are the specific ones. */
+const NOTION_WORDS: Record<NotionName, RegExp> = {
+  "Stitch markers": /\b(?:st(?:itch)?\.?\s+markers?|locking markers?|markers?)\b/i,
+  "Stitch holders": /\b(?:st(?:itch)?\.?\s+holders?)\b/i,
+  "Yarn needle": /\b(?:yarn|tapestry|darning|sewing)\s+needles?\b/i,
+  "Cable needle": /\bcable\s+needles?\b/i,
+  "Safety eyes": /\bsafety\s+eyes\b/i,
+  Stuffing: /\b(?:fiberfill|fibrefill|stuffing|polyfill)\b/i,
+  Buttons: /\bbuttons?\b/i,
+  "Row counter": /\brow\s+counters?\b/i,
+};
+export const NOTIONS: { name: NotionName; re: RegExp }[] = NOTION_NAMES.map((name) => ({ name, re: NOTION_WORDS[name] }));
+
+const NUMBER_WORDS: Record<string, number> = { one: 1, two: 2, three: 3, four: 4, five: 5, six: 6, seven: 7, eight: 8, nine: 9, ten: 10, twelve: 12 };
+
+/** Notions in one materials block: each LINE (or bullet) of the list, never
+ *  the instructions, since a block ends at the first heading after it. */
+function notionsIn(block: string): NotionNeed[] {
+  const out: NotionNeed[] = [];
+  // Items are lines, or bullets glued onto one line; wrapped lines are joined
+  // back when a line does not start an item.
+  const items: string[] = [];
+  for (const raw of block.split("\n")) {
+    const line = raw.replace(/^[•\-*·]\s*/, "").trim();
+    if (!line) continue;
+    const starts = /^[•\-*·]/.test(raw.trim()) || /^(\d+|one|two|three|four|five|six|a|an)\b/i.test(line) || /^[A-Z]/.test(line);
+    if (starts || items.length === 0) items.push(line);
+    else items[items.length - 1] += " " + line;
+  }
+  for (const item of items) {
+    // In the pattern's own order within the line ("Yarn needle, scissors,
+    // stitch marker").
+    const hits = NOTIONS.map((n) => ({ n, hit: item.match(n.re) }))
+      .filter((h): h is { n: (typeof NOTIONS)[number]; hit: RegExpMatchArray } => !!h.hit)
+      .sort((a, b) => (a.hit.index ?? 0) - (b.hit.index ?? 0));
+    for (const { n, hit } of hits) {
+      // "safety eyes or buttons": the second is an alternative, not a need.
+      if (/\bor\s+$/i.test(item.slice(0, hit.index ?? 0))) continue;
+      if (out.some((o) => o.name === n.name)) continue;
+      const lead = item.match(/^(\d+|one|two|three|four|five|six|seven|eight|nine|ten|twelve)\b/i);
+      const quantity = lead ? (NUMBER_WORDS[lead[1]!.toLowerCase()] ?? Number(lead[1])) : null;
+      const mm = item.match(/(\d+(?:\.\d+)?)\s*mm\b/i);
+      out.push({ name: n.name, quantity: Number.isFinite(quantity) ? quantity : null, size_mm: mm && /eyes|buttons?/i.test(item) ? Number(mm[1]) : null });
+    }
+  }
+  return out;
+}
+
 /** The yarns and tools a pattern's text states. Empty when it states none in
  *  a shape this knows; the caller then asks the AI. */
 export function readPatternMaterials(text: string): PatternMaterials {
@@ -434,7 +499,9 @@ export function readPatternMaterials(text: string): PatternMaterials {
   const weight = patternWeight(text);
   const yarns: YarnNeed[] = [];
   const tools: ToolNeed[] = [];
+  const notions: NotionNeed[] = [];
   for (const b of blocks) {
+    for (const n of notionsIn(b)) if (!notions.some((x) => x.name === n.name)) notions.push(n);
     for (const y of yarnsIn(b, text)) {
       const dup = yarns.some((x) => x.color === y.color && x.color_code === y.color_code && x.weight === y.weight && x.label === y.label && x.product === y.product);
       if (!dup) yarns.push(y);
@@ -442,5 +509,5 @@ export function readPatternMaterials(text: string): PatternMaterials {
     for (const t of toolsIn(b)) if (!tools.some((x) => x.kind === t.kind && x.size_mm === t.size_mm)) tools.push(t);
   }
   if (weight) for (const y of yarns) if (!y.weight) y.weight = weight;
-  return { yarns, tools };
+  return { yarns, tools, notions };
 }

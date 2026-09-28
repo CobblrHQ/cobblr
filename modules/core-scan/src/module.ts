@@ -16,7 +16,7 @@ import { defineModule } from "@cobblr/platform-contract";
 
 export default defineModule({
   name: "core-scan",
-  version: "0.47.71",
+  version: "0.47.74",
   displayName: "Scan",
   description:
     "Scan a barcode or take a photo of a thing; end up with a draft inventory row, pre-filled with the resolved name + brand + catalog photo. One tap to commit.",
@@ -51,6 +51,20 @@ export default defineModule({
       // WHEN in heal-picture-colour.ts for when this call goes.
       const { registerPictureColourHeal } = await import("./heal-picture-colour.js");
       registerPictureColourHeal();
+      // A read the AI could not do for a passing reason (busy, a limit) is
+      // asked again when it answers (hint-without-ai.ts).
+      const { registerAiRerunSweep } = await import("./services/hint-without-ai.js");
+      registerAiRerunSweep();
+      // Boot-time heal: a stock agency's watermarked preview is set aside and
+      // the next picture looked for - see the DONE WHEN in
+      // heal-stock-pictures.ts for when this call goes.
+      const { registerStockPictureHeal } = await import("./heal-stock-pictures.js");
+      registerStockPictureHeal();
+      // Boot-time heal: every pending photo row gets its picture's hash, so a
+      // pair of the same picture is offered as one - see the DONE WHEN in
+      // heal-picture-hashes.ts for when this call goes.
+      const { registerPictureHashHeal } = await import("./heal-picture-hashes.js");
+      registerPictureHashHeal();
     },
   },
 

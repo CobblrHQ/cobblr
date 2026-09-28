@@ -1,4 +1,4 @@
-import { platform, parseSort, type EntityListQuery, type ResolvedEntity } from "@cobblr/platform-contract";
+import { columnSet, platform, parseSort, type EntityListQuery, type ResolvedEntity } from "@cobblr/platform-contract";
 import { sql, type Kysely } from "kysely";
 import type { RecordsDB } from "../db.js";
 
@@ -6,7 +6,7 @@ let registered = false;
 
 // Native columns the list resolver will order by; anything else is dropped by
 // parseSort rather than reaching SQL.
-const SORTABLE = new Set(["name", "location_id", "created_at", "updated_at"]);
+const SORTABLE = columnSet<RecordsDB["records_records"]>()(["name", "location_id", "created_at", "updated_at"]);
 
 export function registerRecordsResolvers(): void {
   if (registered) return;
@@ -34,7 +34,7 @@ export function registerRecordsResolvers(): void {
       q = q.where((eb) => eb(eb.fn("lower", ["name"]), "like", needle));
     }
     if (query.filter) {
-      const NATIVE = new Set(["location_id"]);
+      const NATIVE = columnSet<RecordsDB["records_records"]>()(["location_id"]);
       for (const [key, val] of Object.entries(query.filter)) {
         if (val === undefined || val === null) continue;
         if (key === "_tag") {
@@ -65,7 +65,7 @@ export function registerRecordsResolvers(): void {
     // Comparison predicates. Whitelist of comparable columns so unknown /
     // bogus cols fall through silently.
     if (query.where) {
-      const COMPARABLE = new Set(["created_at", "updated_at"]);
+      const COMPARABLE = columnSet<RecordsDB["records_records"]>()(["created_at", "updated_at"]);
       for (const p of query.where) {
         if (!COMPARABLE.has(p.col)) continue;
         if (!["<", "<=", ">", ">=", "=", "!="].includes(p.op)) continue;

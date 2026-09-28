@@ -7,6 +7,7 @@
 
 import { createHash, randomBytes } from "node:crypto";
 import { meta } from "../db/meta.js";
+import { isTokenAccess, type TokenAccess } from "./token-access.js";
 
 const PREFIX = "cbt_";
 const RANDOM_BYTES = 36; // 36 bytes → 48 base64url chars
@@ -32,13 +33,27 @@ export function hashToken(token: string): string {
  *  not found, revoked, or expired. Updates last_used_at on hit. */
 export async function resolveApiToken(
   plaintext: string,
-): Promise<{ userId: string; tokenId: string; scopes: string[] | null } | null> {
+): Promise<{
+  userId: string;
+  tokenId: string;
+  scopes: string[] | null;
+  /** 'look' | 'change' | 'full', or null for a token minted before access levels (full). */
+  access: TokenAccess | null;
+  /** The one workspace the token may reach (its slug read fresh, so a renamed
+   *  workspace keeps its tokens), or null for every workspace. */
+  orgId: string | null;
+  orgSlug: string | null;
+  /** The MCP resource an OAuth connector's access token was issued for (its
+   *  audience); null for a personal token. */
+  audience: string | null;
+} | null> {
   if (!plaintext.startsWith(PREFIX)) return null;
   const hash = hashToken(plaintext);
   const row = await meta
-    .selectFrom("api_tokens")
-    .select(["id", "user_id", "expires_at", "revoked_at", "scopes"])
-    .where("token_hash", "=", hash)
+    .selectFrom("api_tokens as t")
+    .leftJoin("orgs as o", "o.id", "t.org_id")
+    .select(["t.id as id", "t.user_id as user_id", "t.expires_at as expires_at", "t.revoked_at as revoked_at", "t.scopes as scopes", "t.access as access", "t.org_id as org_id", "o.slug as org_slug", "t.source as source", "t.meta as meta"])
+    .where("t.token_hash", "=", hash)
     .executeTakeFirst();
   if (!row) return null;
   if (row.revoked_at) return null;
@@ -54,5 +69,16 @@ export async function resolveApiToken(
 
   const scopes =
     Array.isArray(row.scopes) && row.scopes.length > 0 ? (row.scopes as string[]) : null;
-  return { userId: row.user_id, tokenId: row.id, scopes };
+  return {
+    userId: row.user_id,
+    tokenId: row.id,
+    scopes,
+    access: isTokenAccess(row.access) ? row.access : null,
+    orgId: row.org_id ?? null,
+    orgSlug: row.org_slug ?? null,
+    audience:
+      row.source === "oauth" && row.meta && typeof row.meta === "object" && typeof (row.meta as { resource?: unknown }).resource === "string"
+        ? (row.meta as { resource: string }).resource
+        : null,
+  };
 }

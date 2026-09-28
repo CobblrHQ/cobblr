@@ -101,6 +101,28 @@ export function assortedSummary(
   return `· roughly ${total} in ${n === 1 ? "an assortment" : `${n} assortments`}`;
 }
 
+function contentsQuery(slug: string, getToken: GetToken, container: { kind: string; id: string }) {
+  return {
+    queryKey: ["placement-contents", slug, container.kind, container.id],
+    queryFn: () =>
+      papi<{ items: PlatformResolvedEntity[] }>(
+        slug,
+        getToken,
+        "GET",
+        `/modules/core-placement/contents?container_kind=${encodeURIComponent(container.kind)}&container_id=${encodeURIComponent(container.id)}`,
+      ),
+    enabled: !!slug && !!container.id,
+    staleTime: 30_000,
+  };
+}
+
+/** Does anything sit inside this record? The same read ContentsPanel makes
+ *  (one request between them), for a container face that is off: a folded
+ *  face never hides what a record already holds. */
+export function useHoldsContents(slug: string, getToken: GetToken, container: { kind: string; id: string }): boolean {
+  return (useQuery(contentsQuery(slug, getToken, container)).data?.items.length ?? 0) > 0;
+}
+
 export function ContentsPanel({
   slug,
   getToken,
@@ -118,20 +140,10 @@ export function ContentsPanel({
 }) {
   const toast = useToast();
   const qc = useQueryClient();
-  const key = ["placement-contents", slug, container.kind, container.id];
+  const q = contentsQuery(slug, getToken, container);
+  const key = q.queryKey;
 
-  const contents = useQuery({
-    queryKey: key,
-    queryFn: () =>
-      papi<{ items: PlatformResolvedEntity[] }>(
-        slug,
-        getToken,
-        "GET",
-        `/modules/core-placement/contents?container_kind=${encodeURIComponent(container.kind)}&container_id=${encodeURIComponent(container.id)}`,
-      ),
-    enabled: !!slug && !!container.id,
-    staleTime: 30_000,
-  });
+  const contents = useQuery(q);
   const items = contents.data?.items ?? [];
 
   const [adding, setAdding] = useState(false);

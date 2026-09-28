@@ -80,3 +80,30 @@ export function stripPlaceFields<T>(
   }
   return { fields: kept, stripped };
 }
+
+/**
+ * The one Location a stripped place names, or null.
+ *
+ * A place taken out of a field ("storage: Pantry") is the scan's answer to
+ * "where is it", and recording it without filing the item there left the
+ * item with no location: Pantry's label read "What's here (0)" beside an
+ * item whose card said Pantry. Filing reads it here. Null when the places
+ * name nothing, disagree, or name a place the workspace has twice (two
+ * Pantries, one per kitchen): a guess between two real places is worse than
+ * asking.
+ */
+export function locationForPlaces(
+  places: Record<string, unknown>,
+  locations: ReadonlyArray<{ id: string; name: string; short_name?: string | null }>,
+): string | null {
+  let found: string | null = null;
+  for (const v of Object.values(places)) {
+    const want = typeof v === "string" ? norm(v) : "";
+    if (!want) continue;
+    const hits = locations.filter((l) => norm(l.name) === want || (l.short_name ? norm(l.short_name) === want : false));
+    if (hits.length !== 1) return null;
+    if (found && found !== hits[0]!.id) return null;
+    found = hits[0]!.id;
+  }
+  return found;
+}

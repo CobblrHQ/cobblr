@@ -5,7 +5,7 @@ import { z } from "zod";
 import { platform } from "@cobblr/platform-contract";
 import { instanceOf, sessionUser, tenantContext, tenantDb } from "../db.js";
 import { asyncHandler, badBody, requireRole } from "./util.js";
-import { routeUnknownToMetadata, withMetadataMerged } from "@cobblr/platform-contract/entity-metadata";
+import { routeUnknownToMetadata, refuseUnknownFields, withMetadataMerged } from "@cobblr/platform-contract/entity-metadata";
 import {
   latestPatternFileId,
   patternPhotoThumb,
@@ -85,6 +85,7 @@ projectsRouter.get(
 projectsRouter.post(
   "/",
   asyncHandler(async (req, res) => {
+    await refuseUnknownFields(req, req.body, PROJECT_NATIVE_KEYS, "projects:project");
     const routed = routeUnknownToMetadata(req.body, PROJECT_NATIVE_KEYS);
     const parsed = ProjectCreate.safeParse(routed);
     if (!parsed.success) return badBody(res, parsed.error);
@@ -128,6 +129,7 @@ projectsRouter.post(
 projectsRouter.patch(
   "/:id",
   asyncHandler(async (req, res) => {
+    await refuseUnknownFields(req, req.body, PROJECT_NATIVE_KEYS, "projects:project");
     const routed = routeUnknownToMetadata(req.body, PROJECT_NATIVE_KEYS);
     const parsed = ProjectUpdate.safeParse(routed);
     if (!parsed.success) return badBody(res, parsed.error);
@@ -347,7 +349,7 @@ projectsRouter.post(
 );
 
 const NeedFields = z.object({
-  kind: z.enum(["yarn", "hook", "needle"]),
+  kind: z.enum(["yarn", "hook", "needle", "notion"]),
   label: z.string().max(80).nullable().optional(),
   brand: z.string().max(120).nullable().optional(),
   product: z.string().max(120).nullable().optional(),

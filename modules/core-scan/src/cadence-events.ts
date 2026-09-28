@@ -6,6 +6,8 @@
 // buying more of the thing you keep throwing away. That inversion is the whole
 // reason consume and discard are different event types.
 
+import type { ScanCountReason } from "@cobblr/platform-contract/scan-count";
+
 export type CadenceContext = "normal" | "faster" | "bulk" | "one_off";
 export type CadenceResolution = "over_buy" | "consumed" | "discarded";
 
@@ -27,6 +29,10 @@ export interface BuildOpts {
   added: number;
   /** What was on the shelf BEFORE the bump, per the entity itself. */
   priorQty: number;
+  /** `count`: the move set the count to what is there (a recount). */
+  correction?: boolean;
+  /** `count`: the chip the person tapped, if any. */
+  reason?: ScanCountReason | null;
 }
 
 /**
@@ -39,6 +45,24 @@ export interface BuildOpts {
  * barcode being linked.
  */
 export function buildCadenceEvents(opts: BuildOpts): CadenceEventBody[] {
+  // `count` (the scan card's stepper): a recount teaches nothing, the record
+  // was simply wrong. A take is something used, or wasted when the chip says
+  // so. An add is a purchase, the chip saying what became of what was there.
+  if (opts.mode === "count") {
+    if (opts.correction || !opts.added) return [];
+    if (opts.added < 0) {
+      const wasted = opts.reason === "went_bad" || opts.reason === "tossed";
+      return [{ entity_kind: opts.kind, entity_id: opts.entityId, source: "scan", event_type: wasted ? "discard" : "consume", qty_delta: opts.added }];
+    }
+    const resolution: CadenceResolution | undefined =
+      opts.reason === "replaced" ? "consumed" : opts.reason === "still_had" ? "over_buy" : undefined;
+    return buildCadenceEvents({
+      ...opts,
+      mode: "add-qty",
+      reason: null,
+      cadence: { ...opts.cadence, ...(resolution ? { resolution } : {}) },
+    });
+  }
   const replace = opts.mode === "replace";
   if (opts.mode !== "add-qty" && !replace) return [];
   if (!(opts.added > 0)) return [];

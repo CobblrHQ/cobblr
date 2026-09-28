@@ -22,7 +22,7 @@
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { NavLink } from "react-router-dom";
-import { ChevronDown, PanelLeft, Settings2, Sliders } from "lucide-react";
+import { ChevronDown, LayoutGrid, PanelLeft, Settings2, Sliders } from "lucide-react";
 import { useActiveOrg } from "../auth/ActiveOrgContext";
 import { ModulePickerModal } from "./ModulePickerModal";
 import { useHoverAwareOpen } from "./hover-aware-open";
@@ -426,6 +426,17 @@ function MoreMenu({
                 nags nobody who never opens this menu, and it is the one place
                 someone standing in the pain is already looking. */}
             <li className="mt-1 border-t border-line dark:border-slate-700 pt-1">
+              <NavLink
+                to="/apps"
+                data-testid="nav-all-apps"
+                onClick={() => setOpen(false)}
+                className="w-full flex items-center gap-2 px-3 py-2 text-sm text-muted dark:text-slate-400 hover:text-accent hover:bg-subtle dark:hover:bg-slate-800 transition"
+              >
+                <LayoutGrid size={14} className="shrink-0" />
+                All apps
+              </NavLink>
+            </li>
+            <li>
               <button
                 type="button"
                 onClick={() => {

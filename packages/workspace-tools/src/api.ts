@@ -14,6 +14,27 @@ export interface WorkspaceApiResponse {
 
 export interface WorkspaceApi {
   request(method: "GET" | "POST" | "PATCH" | "DELETE", path: string, body?: unknown): Promise<WorkspaceApiResponse>;
+  /** An address a person can open: an org-relative API path (a picture's
+   *  file) or an app page, on this workspace. Absent, or null, when the
+   *  transport does not know an address the reader could use; a tool then
+   *  says so rather than handing out a path that goes nowhere. */
+  link?(to: { api: string } | { app: string }): string | null;
+}
+
+/** The one way a transport builds `link`. `apiBase` is the REST root a
+ *  person's browser can reach (`https://cobblr.example.com/api/v1`, or
+ *  `/api/v1` for a reader already on that origin, the in-app chat), and
+ *  `appOrigin` the web app's (`https://cobblr.example.com`, or ""). Either
+ *  one null means that kind of link is not known, and `link` says null. */
+export function workspaceLinks(
+  bases: { apiBase: string | null; appOrigin: string | null },
+  slug: string,
+): (to: { api: string } | { app: string }) => string | null {
+  const org = encodeURIComponent(slug);
+  const api = bases.apiBase === null ? null : bases.apiBase.replace(/\/+$/, "");
+  const app = bases.appOrigin === null ? null : bases.appOrigin.replace(/\/+$/, "");
+  return (to) =>
+    "api" in to ? (api === null ? null : `${api}/orgs/${org}${to.api}`) : app === null ? null : `${app}/w/${org}${to.app}`;
 }
 
 /** Uniform tool outcome — small, model-friendly, never a thrown string soup. */

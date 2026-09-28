@@ -6,7 +6,7 @@ import { useLayoutEffect, useRef, useState, type ComponentProps, type FormEvent 
 import { Link, useParams } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { ArrowLeft, Check, Plus, Trash2 } from "lucide-react";
-import { ContributedDetailPanels, EntityActionsBar, CustomFieldsPanel, PresentationGate, useFieldDraft, usePageTitle, useUnits } from "@cobblr/platform-web";
+import { ContributedDetailPanels, EntityActionsBar, CustomFieldsPanel, MutationError, PresentationGate, useFieldDraft, usePageTitle, useUnits } from "@cobblr/platform-web";
 import { useProjects } from "./context";
 import { DesignFiles } from "./DesignFiles";
 import { PatternNeedsPanel, patternNeedsKey } from "./PatternNeeds";
@@ -390,6 +390,7 @@ function NewTaskInline({ projectId }: { projectId: string }) {
   }
 
   return (
+    <>
     <form onSubmit={submit} className="flex gap-2">
       <input
         value={title}
@@ -414,6 +415,8 @@ function NewTaskInline({ projectId }: { projectId: string }) {
         <Plus size={12} /> Add
       </button>
     </form>
+    <MutationError mutation={create} className="block mt-1" />
+    </>
   );
 }
 
@@ -433,7 +436,7 @@ function TaskRow({ task }: { task: Task }) {
   const blocked = (task.blocked_deps ?? 0) > 0;
 
   return (
-    <li className="flex items-center gap-2 py-1.5 group">
+    <li className="flex flex-wrap items-center gap-2 py-1.5 group">
       <button
         onClick={() => setStatus.mutate(done ? "todo" : "done")}
         className={
@@ -471,6 +474,8 @@ function TaskRow({ task }: { task: Task }) {
       >
         <Trash2 size={13} />
       </button>
+      <MutationError mutation={setStatus} className="basis-full" />
+      <MutationError mutation={remove} className="basis-full" />
     </li>
   );
 }
@@ -576,6 +581,7 @@ function MaterialsPanel({
           ))}
         </ul>
       )}
+      <MutationError mutation={setAllocStatus} className="block mb-2" />
       {open && (
         <form
           onSubmit={(e) => {
@@ -609,6 +615,7 @@ function MaterialsPanel({
           </button>
         </form>
       )}
+      <MutationError mutation={reserve} className="block mt-2" />
     </div>
   );
 }

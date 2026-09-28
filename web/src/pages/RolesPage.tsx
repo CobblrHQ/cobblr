@@ -56,6 +56,7 @@ export function RolesPage({ embedded = false }: { embedded?: boolean } = {}) {
     onSuccess: () => {
       void qc.invalidateQueries({ queryKey: ["permissions-matrix", activeSlug] });
     },
+    onError: (e: unknown) => toast.error(`Couldn't change that role: ${e instanceof ApiError ? e.message : String(e)}`),
   });
 
   const roles = rolesQ.data?.items ?? [];

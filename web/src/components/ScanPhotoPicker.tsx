@@ -28,6 +28,7 @@ import { resolveSessionBatch } from "../lib/scanSession";
 import { classifyFiles } from "../pages/omniIntake";
 import { UploadKindSheet } from "./UploadKindSheet";
 import { scanInboxKeys } from "../lib/scan-inbox-keys";
+import { addPending, dropPending, expirePending, pulseRow, updatePending } from "../lib/pendingPictures";
 
 /** What the picker takes: a picture, or a receipt as a PDF or a CSV. One
  *  string, so no door can accept less than another. */
@@ -71,8 +72,9 @@ export interface ScanIntakeOptions {
 }
 
 export interface ScanIntake {
-  /** Hand it what a person picked, dropped or pasted; it routes by type. */
-  takeFiles: (files: File[]) => void;
+  /** Hand it what a person picked, dropped or pasted; it routes by type.
+   *  `door` says which, so the acknowledgement names what they did. */
+  takeFiles: (files: File[], door?: "paste" | "drop" | "pick") => void;
   uploadPhotos: (files: File[]) => Promise<void>;
   uploadReceipt: (file: File) => Promise<void>;
   /** A stored receipt file through the parser, with the duplicate offer. */
@@ -106,6 +108,9 @@ export function useScanIntake(slug: string, opts: ScanIntakeOptions): ScanIntake
     if (multi) setUploadProgress({ done: 0, total: files.length });
     let ok = 0;
     let sessionBatch: string | null = null;
+    // On screen before the upload is, with its stage (#3852): a picture that
+    // shows nothing for a few seconds gets pasted again.
+    const keys = addPending(slug, files);
     try {
       // One session for the whole selection, resolved ONCE up front, so N
       // photos never scatter into N sessions or race to mint N batches.
@@ -122,18 +127,39 @@ export function useScanIntake(slug: string, opts: ScanIntakeOptions): ScanIntake
               Date.now(),
               "inbox",
             )));
-      for (const file of files) {
+      for (const [i, file] of files.entries()) {
+        const key = keys[i]!;
         try {
           const rec = await api.uploadFile(slug, file);
-          await api.scanBarcode(slug, {
+          updatePending(slug, key, { stage: "reading" });
+          const scanned = await api.scanBarcode(slug, {
             source_kind: "photo",
             image_file_id: rec.id,
             scan_batch_id: sessionBatch ?? undefined,
           });
+          if (scanned.duplicate_of_recent) {
+            // The same picture was added a moment ago: one item, not two.
+            dropPending(slug, key);
+            pulseRow(scanned.id);
+            toast.action("Already added just now.", {
+              actionLabel: "Add another copy",
+              duration: 10000,
+              onAction: () => {
+                void api
+                  .scanBarcode(slug, { source_kind: "photo", image_file_id: rec.id, scan_batch_id: sessionBatch ?? undefined, allow_duplicate: true })
+                  .then(() => invalidate())
+                  .catch((e) => toast.error(e instanceof ApiError ? e.message : String(e)));
+              },
+            });
+            continue;
+          }
+          updatePending(slug, key, { rowId: scanned.id });
+          expirePending(slug, key, 30_000);
           ok++;
           // Reveal each as it lands, so a long selection fills in progressively.
           invalidate();
         } catch (e) {
+          updatePending(slug, key, { stage: "failed" });
           toast.error(`${file.name}: ${e instanceof ApiError ? e.message : String(e)}`);
         }
         if (multi) setUploadProgress({ done: ok, total: files.length });
@@ -199,7 +225,7 @@ export function useScanIntake(slug: string, opts: ScanIntakeOptions): ScanIntake
     }
   }
 
-  const takeFiles = (files: File[]) => {
+  const takeFiles = (files: File[], door: "paste" | "drop" | "pick" = "pick") => {
     const intent = classifyFiles(files);
     if (!intent) return;
     // Name + size + mtime identifies a file well enough for a window this
@@ -208,6 +234,11 @@ export function useScanIntake(slug: string, opts: ScanIntakeOptions): ScanIntake
     const now = Date.now();
     if (key === lastTakeRef.current.key && now - lastTakeRef.current.at < 1000) return;
     lastTakeRef.current = { key, at: now };
+    if (intent.kind === "photos" && door !== "pick") {
+      // Said the moment it lands, before anything has uploaded.
+      const n = intent.files.length;
+      toast.info(`${door === "paste" ? "Pasted" : "Dropped"} ${n} picture${n === 1 ? "" : "s"}: adding ${n === 1 ? "it" : "them"} to the inbox.`);
+    }
     if (intent.kind === "photos") setAskKindFor(intent.files);
     else void uploadReceipt(intent.file);
   };

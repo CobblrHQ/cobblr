@@ -46,6 +46,8 @@ export interface PurchasesOrderItemsTable {
   id: Generated<string>;
   order_id: string;
   part_id: string | null;
+  subject_kind: string | null;
+  subject_id: string | null;
   description: string | null;
   qty: ColumnType<string, number, number>;
   unit_cost: ColumnType<string | null, number | null | undefined, number | null | undefined>;

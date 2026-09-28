@@ -11,6 +11,7 @@ import { Modal } from "@cobblr/platform-web";
 import { HomeboxImportModal } from "./HomeboxImportModal";
 import { HomeboxLiveImportModal } from "./HomeboxLiveImportModal";
 import { PartdbLiveImportModal } from "./PartdbLiveImportModal";
+import { openSheetImport } from "../lib/sheet-import";
 import { SettingsSection } from "./SettingsSection";
 
 type Method = { id: string; label: string; desc: string; icon: LucideIcon };
@@ -19,6 +20,12 @@ type Source = { id: string; name: string; blurb: string; methods: Method[] };
 // One entry per app you can migrate FROM. A source declares its own methods;
 // a single-method source skips the chooser and opens straight through.
 const SOURCES: Source[] = [
+  {
+    id: "spreadsheet",
+    name: "A spreadsheet",
+    blurb: "Excel, LibreOffice, CSV or a Google Sheets link. See where everything goes first; undo it whole.",
+    methods: [{ id: "file", label: "Bring your spreadsheet", desc: "", icon: FileUp }],
+  },
   {
     id: "homebox",
     name: "Homebox",
@@ -65,6 +72,7 @@ export function MigrateInSection() {
     if (sourceId === "homebox" && methodId === "live") setHomeboxLive(true);
     else if (sourceId === "homebox" && methodId === "csv") setHomeboxCsv(true);
     else if (sourceId === "partdb" && methodId === "live") setPartdbLive(true);
+    else if (sourceId === "spreadsheet") openSheetImport();
   }
 
   function openSource(s: Source) {

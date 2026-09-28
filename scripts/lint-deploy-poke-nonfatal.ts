@@ -3,7 +3,7 @@
 // Why this is a real trap: the deploy jobs are `continue-on-error: true`, which
 // spares the workflow RUN but (in our Forgejo runner) does NOT keep the job's
 // per-commit STATUS context green. So a step that exits 1 still reds
-// `Docker Build / deploy-trigger` (or `CI / deploy-when-ready`), which reds the
+// `Docker Build / deploy-trigger` (or, from its step, main's `CI / test`), which reds the
 // whole commit, even though the images already built and pushed and
 // Watchtower's poll delivers them anyway. That exact false-red happened
 // 2026-07-21: a momentary tailnet blip made the Watchtower poke return HTTP 000,
@@ -11,8 +11,8 @@
 // sha two minutes later via the poll.
 //
 // The deploy is one script, scripts/deploy-when-ready.mjs, called from both
-// halves (docker-build.yml's deploy-trigger after the push, ci.yml's
-// deploy-when-ready after main's test; whichever finishes second deploys). So
+// halves (docker-build.yml's deploy-trigger after the push, and the last
+// step of ci.yml's test job on main; whichever finishes second deploys). So
 // the rule is held on the script:
 //   - its `trigger()` (the cloud-overlay dispatch and the Watchtower poke) never
 //     calls process.exit and never throws;

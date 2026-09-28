@@ -7,7 +7,7 @@
 // at signup is on inventory.stock.changed).
 
 import { sql, type Kysely } from "kysely";
-import { platform, type EntityListQuery, type ResolvedEntity, textSearchWhere } from "@cobblr/platform-contract";
+import { columnSet, platform, type EntityListQuery, type ResolvedEntity, textSearchWhere } from "@cobblr/platform-contract";
 import type { ProjectsDB } from "../db.js";
 import { resolveDetailPath } from "@cobblr/platform-contract/instance-detail";
 
@@ -55,9 +55,9 @@ export function registerProjectsHandlers(): void {
     const offset = query.offset ?? 0;
     let q = db.selectFrom("projects_projects").selectAll();
     if (instance) q = q.where("instance", "=", instance as never);
-    if (query.q?.trim()) q = q.where((eb) => textSearchWhere(eb, query.q, { text: ["name", "title", "description", "status"], json: ["metadata"] })!);
+    if (query.q?.trim()) q = q.where((eb) => textSearchWhere(eb, query.q, { text: ["name", "description", "status"], json: ["metadata"] })!);
     if (query.filter) {
-      const NATIVE = new Set(["status", "priority"]);
+      const NATIVE = columnSet<ProjectsDB["projects_projects"]>()(["status", "priority"]);
       for (const [key, val] of Object.entries(query.filter)) {
         if (val === undefined || val === null) continue;
         if (key === "_tag") {
@@ -124,7 +124,7 @@ export function registerProjectsHandlers(): void {
     let q = db.selectFrom("projects_tasks").selectAll();
     if (query.q?.trim()) q = q.where((eb) => textSearchWhere(eb, query.q, { text: ["title", "description", "status"], json: ["metadata"] })!);
     if (query.filter) {
-      const NATIVE = new Set(["status", "project_id", "priority", "energy"]);
+      const NATIVE = columnSet<ProjectsDB["projects_tasks"]>()(["status", "project_id", "priority", "energy"]);
       for (const [key, val] of Object.entries(query.filter)) {
         if (val === undefined || val === null) continue;
         if (key === "_tag") {
@@ -149,7 +149,7 @@ export function registerProjectsHandlers(): void {
     // D10: comparison predicates on task date/state columns. Most
     // useful for "tasks due before now" overdue / today's-todo views.
     if (query.where) {
-      const COMPARABLE = new Set(["due_date", "completed_at", "created_at", "updated_at"]);
+      const COMPARABLE = columnSet<ProjectsDB["projects_tasks"]>()(["due_date", "completed_at", "created_at", "updated_at"]);
       for (const p of query.where) {
         if (!COMPARABLE.has(p.col)) continue;
         if (!["<", "<=", ">", ">=", "=", "!="].includes(p.op)) continue;

@@ -10,7 +10,7 @@
 import { useState } from "react";
 import { createPortal } from "react-dom";
 import { useQuery } from "@tanstack/react-query";
-import { Markdown, QrCode, useImageSrc, FloatingChrome, OverlayLayer } from "@cobblr/platform-web";
+import { Markdown, QrCode, FloatingChrome, OverlayLayer, EntityPhoto } from "@cobblr/platform-web";
 import { Zap, X, Pin, BookOpen } from "lucide-react";
 import { getToken } from "../lib/api";
 import { useNavModules } from "./useNavModules";
@@ -25,9 +25,8 @@ interface PinnedEntry {
 }
 
 function QaImage({ path }: { path: string | null }) {
-  const src = useImageSrc(path);
-  if (!src) return null;
-  return <img src={src} alt="" className="mt-2 max-h-56 w-full rounded border border-line dark:border-slate-700 object-contain bg-white" />;
+  if (!path) return null;
+  return <EntityPhoto src={path} alt="" aspect="4/3" fit="contain" className="mt-2 rounded border border-line dark:border-slate-700 !bg-white" />;
 }
 
 async function fetchPinned(slug: string): Promise<PinnedEntry[]> {

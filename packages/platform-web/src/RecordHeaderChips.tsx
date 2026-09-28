@@ -19,7 +19,7 @@
 import { useQuery } from "@tanstack/react-query";
 import { Printer } from "lucide-react";
 import { usePlatformWeb } from "./context";
-import { useInvokeEntityAction } from "./use-invoke-action";
+import { useInvokeEntityAction, type RunArgs } from "./use-invoke-action";
 import { ActionOutcome } from "./ActionOutcome";
 import { AskCobbAbout } from "./AskCobbAbout";
 
@@ -63,8 +63,9 @@ export function RecordHeaderChips({
             description: bound?.description ?? print?.description ?? null,
             invoke_route: bound ? null : print!.invoke_route,
             invoke_handler: bound ? null : print!.invoke_handler,
+            args_schema: bound ? bound.args_schema : print!.args_schema,
           }}
-          bindingId={bound?.binding_id}
+          binding={bound}
         />
       )}
       <AskCobbAbout kind={kind} id={id} label={label} />
@@ -76,14 +77,14 @@ function PrintChip({
   kind,
   id,
   action,
-  bindingId,
+  binding,
 }: {
   kind: string;
   id: string;
-  action: { id: string; label: string; description: string | null; invoke_route: string | null; invoke_handler: string | null };
-  bindingId?: string;
+  action: { id: string; label: string; description: string | null; invoke_route: string | null; invoke_handler: string | null; args_schema: RunArgs["argsSchema"] };
+  binding?: RunArgs["binding"];
 }) {
-  const { run, flash, failure, dismissFailure, note, pending } = useInvokeEntityAction({ entityKind: kind, entityId: id });
+  const { run, flash, failure, asking, dismissFailure, note, pending } = useInvokeEntityAction({ entityKind: kind, entityId: id });
   return (
     <>
     <button
@@ -94,9 +95,9 @@ function PrintChip({
         e.stopPropagation();
         e.preventDefault();
         run(
-          bindingId
-            ? { actionId: action.id, bindingId }
-            : { actionId: action.id, invokeRoute: action.invoke_route, invokeHandler: action.invoke_handler },
+          binding
+            ? { actionId: action.id, argsSchema: action.args_schema, binding }
+            : { actionId: action.id, label: action.label, argsSchema: action.args_schema, invokeRoute: action.invoke_route, invokeHandler: action.invoke_handler },
         );
       }}
       className={
@@ -111,7 +112,7 @@ function PrintChip({
       <Printer size={10} />
       {flash === "ok" ? "queued" : flash === "err" ? "err" : pending ? "…" : action.label}
     </button>
-    <ActionOutcome note={note} failure={failure} onDismiss={dismissFailure} />
+    <ActionOutcome note={note} failure={failure} onDismiss={dismissFailure} asking={asking} />
     </>
   );
 }

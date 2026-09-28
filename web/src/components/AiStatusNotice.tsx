@@ -60,6 +60,20 @@ export function aiStatusLine(
   const reach = aiReach(status);
   if (!status || reach.chat) return null;
   if (needs === "identify" && reach.identify) return null;
+  if (needs === "identify" && status.identify_reason === "hosted_scope" && status.reason !== "operator_disabled") {
+    // The deployment reads photos for free, just not for this workspace.
+    // "AI isn't connected" would send an admin to set up what is already
+    // there; what works is a connection of the person's own.
+    return {
+      text: (
+        <>
+          <strong>Free photo identify here covers other workspaces, not this one.</strong> Barcodes,
+          ISBNs and typed items still work. Connect your own AI to read photos here.{" "}
+        </>
+      ),
+      cta: { to: "/me/connections", label: "Connect your own \u2192" },
+    };
+  }
   switch (status.reason) {
     case "operator_disabled":
       if (reach.identify) {

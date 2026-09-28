@@ -124,6 +124,7 @@ export function FormBuilderPage({ embedded = false }: { embedded?: boolean } = {
       void qc.invalidateQueries({ queryKey: ["form-builder-sections", slug, kind] });
       void qc.invalidateQueries({ queryKey: ["form-builder-defs", slug, kind] });
     },
+    onError: (e: unknown) => toast.error(`Couldn't delete that section: ${e instanceof ApiError ? e.message : String(e)}`),
   });
 
   const save = useMutation({

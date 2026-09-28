@@ -8,7 +8,11 @@
     "lib": ["ES2022"],
     "noEmit": false,
     "declaration": true,
-    "sourceMap": true
+    "sourceMap": true,
+    // Node loads this package's .ts directly (type stripping), which cannot
+    // run parameter properties, enums or namespaces: one crashed the api at
+    // boot before it ever reached a test. The compiler refuses them here.
+    "erasableSyntaxOnly": true
   },
   "include": ["src/**/*"]
 }

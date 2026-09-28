@@ -119,6 +119,9 @@ export async function moveQuantity(
     userId: string | null;
     reason: string;
     restock?: boolean;
+    /** The move sets the count to what is actually there (a recount), so the
+     *  ledger files it as a correction, never as use or a purchase. */
+    correction?: boolean;
     source: { kind: string; id: string };
     door: QuantityDoor;
     current: number;
@@ -144,6 +147,7 @@ export async function moveQuantity(
         delta,
         reason: opts.reason,
         ...(opts.restock ? { restock: true } : {}),
+        ...(opts.correction ? { correction: true } : {}),
         sourceKind: opts.source.kind,
         sourceId: opts.source.id,
       },

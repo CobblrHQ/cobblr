@@ -24,6 +24,7 @@ import { clearMemberFieldCaches } from "../platform/member-fields.js";
 import { clearFieldLabelDefsCache } from "../platform/field-labels.js";
 import { moduleHasScanFallback, reconcileScanCategoryFor } from "../platform/reconcile-scan-category.js";
 import { recordClaim } from "../platform/bundle-claims.js";
+import { releaseEmptyDefaultInstance } from "../platform/instances.js";
 
 /** Maintainer-curated foundational set. A module manifest can declare
  *  `band: "foundational"`, but the kernel only TREATS it as foundational
@@ -388,6 +389,9 @@ export async function disableModuleForOrg(orgId: string, moduleName: string): Pr
     .where("org_id", "=", orgId)
     .where("module_name", "=", moduleName)
     .execute();
+  // On then off leaves the workspace as it was: the empty default collection
+  // enable made goes too (a re-enable makes it again).
+  await releaseEmptyDefaultInstance(orgId, moduleName);
   clearEnabledModulesCache(orgId);
   await bumpWorkspaceShape(orgId);
   try {

@@ -22,16 +22,61 @@ export interface ActivityWordsEntry {
   diff: unknown | null;
   entity_title?: string | null;
   entity_kind?: string | null;
-  actor: { display_name: string | null } | null;
+  actor: { display_name: string | null; email?: string | null } | null;
+  /** How the actor signed in, the token it used, and HOW the write was made
+   *  (#3833). Optional so an older payload still types. */
+  auth_method?: "session" | "api_token" | "system";
+  token?: { name: string } | null;
+  via_kind?: string | null;
+  via_label?: string | null;
 }
 
 export const AUTOMATION_ACTIONS: ReadonlySet<string> = new Set(["wire_fired", "wire_failed"]);
 
 const str = (v: unknown): string | null => (typeof v === "string" && v.trim() ? v.trim() : null);
 
-/** Who to credit a row to: the real user, else "Automation" for a wire. */
+/** Who to credit a row to, and never "someone" (#3833): the person; else an
+ *  automation (a wire's own row, or a write an automation made with nobody
+ *  behind it); else the platform itself ("Cobblr": an automatic bundle
+ *  update, a boot-time repair). A member whose account is gone is still a
+ *  member: "A former member", not a blank. */
 export function actorWords(e: ActivityWordsEntry): string {
-  return e.actor?.display_name ?? (AUTOMATION_ACTIONS.has(e.action) ? "Automation" : "someone");
+  if (e.actor) return e.actor.display_name ?? e.actor.email ?? "A former member";
+  if (AUTOMATION_ACTIONS.has(e.action) || e.via_kind === "automation") return "Automation";
+  return "Cobblr";
+}
+
+/** HOW the row's actor acted, as the chip beside the name, or null for a
+ *  plain hand edit. One rule for the dashboard feed and the Activity page:
+ *  the dashboard used to show no token at all, so an assistant's edits over
+ *  MCP read exactly like the owner's own while the Activity page named the
+ *  token (#3833). */
+export function viaWords(e: ActivityWordsEntry): string | null {
+  const token = e.token?.name ?? null;
+  const label = str(e.via_label);
+  switch (e.via_kind) {
+    case "mcp":
+      return token ? `via MCP · ${token}` : "via MCP";
+    case "assistant":
+      return "via Cobb";
+    case "automation":
+      // With nobody behind it, the actor already reads "Automation": the chip
+      // names which one.
+      if (!e.actor) return label ? `“${label}”` : null;
+      return label ? `via automation “${label}”` : "via automation";
+  }
+  if (e.auth_method === "api_token") return token ? `via ${token}` : "via API";
+  return null;
+}
+
+/** The chip for a GROUP of rows ("updated 8 3D printers"): the shared via
+ *  when every row has the same one, "mixed" when they differ, null when none
+ *  of them has one. */
+export function groupViaWords(entries: readonly ActivityWordsEntry[]): string | null {
+  const vias = entries.map(viaWords);
+  if (vias.every((v) => v === null)) return null;
+  const first = vias[0] ?? null;
+  return vias.every((v) => v === first) ? first : "mixed";
 }
 
 /** The row for a wire that fired or failed: `{ said }` in words, or
@@ -99,6 +144,10 @@ export function activityVerb(a: string): string {
     wire_failed: "automation failed",
     // A trial brought in from the demo box; the row's title is the trial's name.
     carry_replayed: "brought in their trial:",
+    // A spreadsheet import is one row for the whole run; its title is the file.
+    sheet_imported: "imported",
+    sheet_import_undone: "undid the import of",
+    sheet_import_partly_undone: "partly undid the import of",
   };
   if (map[a]) return map[a];
   // 'task_created' → 'created task' (the entity_type is already

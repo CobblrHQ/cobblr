@@ -3,13 +3,16 @@
 // (a self-hosted inventory app to start), holds an encrypted credential + a base URL, exposes a
 // live webhook URL, and lets you toggle + reconcile each entity type.
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { RefreshCw } from "lucide-react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Modal, JsonField, useToast, useConfirm, SecretInput } from "@cobblr/platform-web";
+import { Modal, JsonField, useToast, useConfirm, SecretInput, AddressInput } from "@cobblr/platform-web";
 import { api, ApiError, type SyncConnectorDef, type SyncConnection, type SyncSourceDef, type ImportPlanItem, type ModuleInstance } from "../lib/api";
 import { useActiveOrg } from "../auth/ActiveOrgContext";
 import { BridgePicker } from "../components/BridgePicker";
+import { HomeNetworkHint } from "../components/HomeNetworkHint";
+import { useHosted } from "../lib/useHosted";
+import { needsBridge } from "@cobblr/platform-contract/address-reach";
 import { SettingsSection } from "../components/SettingsSection";
 
 type PlanAction = "create" | "update" | "link" | "unchanged" | "delete";
@@ -746,6 +749,7 @@ function ArchivedConnectionRow({ conn, onChange }: { conn: SyncConnection; onCha
   const del = useMutation({
     mutationFn: () => api.deleteSyncConnection(activeSlug, conn.id),
     onSuccess: () => { toast.success("Connection removed"); onChange(); },
+    onError: (e: unknown) => toast.error(`Couldn't delete that connection: ${e instanceof ApiError ? e.message : String(e)}`),
   });
   return (
     <li className="flex items-center gap-2 rounded border border-line/50 dark:border-slate-700/50 bg-surface/50 dark:bg-slate-800/30 px-2.5 py-1.5">
@@ -817,6 +821,7 @@ function SyncConnectionCard({ conn, onChange, nested }: { conn: SyncConnection; 
       toast.success("Connection removed");
       onChange();
     },
+    onError: (e: unknown) => toast.error(`Couldn't delete that connection: ${e instanceof ApiError ? e.message : String(e)}`),
   });
   const archive = useMutation({
     mutationFn: () => api.archiveSyncConnection(activeSlug, conn.id),
@@ -928,10 +933,16 @@ function SyncConnectionCard({ conn, onChange, nested }: { conn: SyncConnection; 
               </label>
               <div className="flex-1" />
               {state?.last_run_at && (
-                <span className={`text-[10px] ${state.last_status === "error" ? "text-ember-500" : "text-faint"}`}>
+                <span
+                  title={state.last_error ?? undefined}
+                  className={`text-[10px] ${state.last_status === "error" || state.last_status === "warning" ? "text-ember-500" : "text-faint"}`}
+                >
                   {state.last_status === "error"
                     ? `error: ${state.last_error ?? "?"}`
-                    : `${state.last_synced_count ?? 0} synced`}
+                    : state.last_status === "warning"
+                      ? // Synced, but some values could not be mapped and were left as they were.
+                        `${state.last_synced_count ?? 0} synced; ${state.last_error ?? "some values could not be mapped"}`
+                      : `${state.last_synced_count ?? 0} synced`}
                 </span>
               )}
               <button
@@ -1037,6 +1048,14 @@ function AddSyncConnectionModal({
   const [credsValid, setCredsValid] = useState(true);
   const [transport, setTransport] = useState<"direct" | "edge">("direct");
   const [bridge, setBridge] = useState<string | null>(null);
+  // A home address picks the bridge by itself (#3904); a choice the person
+  // made with the two buttons stands.
+  const hosted = useHosted();
+  const [transportChosen, setTransportChosen] = useState(false);
+  const homeAddress = needsBridge(baseUrl, { hosted });
+  useEffect(() => {
+    if (!transportChosen) setTransport(homeAddress ? "edge" : "direct");
+  }, [homeAddress, transportChosen]);
   // entity-type key → chosen instance slug (where that section's rows land).
   const [targetInstances, setTargetInstances] = useState<Record<string, string>>({});
 
@@ -1107,12 +1126,16 @@ function AddSyncConnectionModal({
         {def && Object.entries(def.config).map(([key, cfg]) => (
           <label key={key} className="block">
             <span className="block text-[10px] font-mono uppercase tracking-widest text-faint mb-1">{cfg.label}</span>
-            <input
-              value={key === "base_url" ? baseUrl : ""}
-              onChange={(e) => key === "base_url" && setBaseUrl(e.target.value)}
-              className="input font-mono"
-              placeholder={cfg.placeholder}
-            />
+            {key === "base_url" ? (
+              <AddressInput value={baseUrl} onChange={(e) => setBaseUrl(e.target.value)} className="input font-mono" placeholder={cfg.placeholder ?? "https://…"} />
+            ) : (
+              <input value="" readOnly className="input font-mono" placeholder={cfg.placeholder} />
+            )}
+            {key === "base_url" && (
+              <span className="block mt-1">
+                <HomeNetworkHint address={baseUrl} hosted={hosted} throughBridge={transport === "edge"} />
+              </span>
+            )}
           </label>
         ))}
         {/* Where each section's rows land — pick your own instance (table). Only
@@ -1157,7 +1180,10 @@ function AddSyncConnectionModal({
               <button
                 key={t}
                 type="button"
-                onClick={() => setTransport(t)}
+                onClick={() => {
+                  setTransportChosen(true);
+                  setTransport(t);
+                }}
                 className={
                   "text-xs px-2.5 py-1.5 rounded border transition " +
                   (transport === t

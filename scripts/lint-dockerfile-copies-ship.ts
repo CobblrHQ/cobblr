@@ -30,7 +30,7 @@
 // PROVE IT RED: on the tree at a0ff9dd53 it names deploy/seeds.
 //
 //   npx tsx scripts/lint-dockerfile-copies-ship.ts   (pnpm run lint dockerfile-copies-ship)
-import { execFileSync } from "node:child_process";
+import { repoFiles } from "./lib/repo-files.js";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 // path-gate.mjs is plain JS, so its return is untyped here; the cast is the
@@ -51,9 +51,10 @@ interface Violation {
   src: string;
 }
 
-/** The repo's tracked paths, which is what the exporter itself walks. */
+/** The repo's paths as the exporter will walk them once this tree is
+ *  committed: tracked, plus new files not yet added. */
 function tracked(): string[] {
-  return execFileSync("git", ["-C", ROOT, "ls-files"], { encoding: "utf8" }).split("\n").filter(Boolean);
+  return repoFiles([], ROOT);
 }
 
 

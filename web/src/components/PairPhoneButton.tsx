@@ -22,6 +22,8 @@ import { useActiveOrg } from "../auth/ActiveOrgContext";
 import { isTouchPrimary } from "../lib/useIsTouch";
 import { Ean13 } from "./Ean13";
 import { DEMO_BARCODE } from "../lib/demo-barcode";
+import { sampleArrivedWords, useFollowSample } from "../lib/useSampleScanArrival";
+import { useNavigate } from "react-router-dom";
 
 export function PairPhoneButton({
   className,
@@ -95,6 +97,13 @@ function PairPhoneModal({ onClose }: { onClose: () => void }) {
   } | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [phase, setPhase] = useState<Phase>("loading");
+  // Once paired, this screen follows the phone: its scan of the sample
+  // arrives, the modal says so, and the item's inbox card opens.
+  const navigate = useNavigate();
+  const arrived = useFollowSample(activeSlug, phase === "claimed", (path) => {
+    onClose();
+    navigate(path);
+  });
   const [secondsLeft, setSecondsLeft] = useState(0);
   const [addrIdx, setAddrIdx] = useState(0);
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
@@ -227,7 +236,13 @@ function PairPhoneModal({ onClose }: { onClose: () => void }) {
           </>
         )}
 
-        {phase === "claimed" && (
+        {phase === "claimed" && arrived && (
+          <div className="py-6 text-center space-y-2" data-testid="sample-arrived">
+            <div className="text-sm font-medium text-content dark:text-mortar-100">{sampleArrivedWords(arrived)}</div>
+            <div className="text-xs text-muted dark:text-slate-400">Opening it…</div>
+          </div>
+        )}
+        {phase === "claimed" && !arrived && (
           <div className="py-4 text-center space-y-3" data-testid="pair-paired">
             <div className="text-sm font-medium text-content dark:text-mortar-100">Phone paired. Now point it at this:</div>
             <div className="mx-auto rounded-md border border-line dark:border-slate-700 bg-white p-3 w-fit">

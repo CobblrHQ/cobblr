@@ -26,8 +26,8 @@ export const RAVELRY_MANIFEST = SyncSourceManifest.parse({
   version: "1.0.0",
   baseUrl: "https://api.ravelry.com",
   credentials: {
-    access_key: { label: "Access key (username)", secret: false },
-    personal_key: { label: "Personal key (password)", secret: true },
+    access_key: { label: "Username (the access key on ravelry.com/pro/developer)", secret: false },
+    personal_key: { label: "Personal key (Create app → Personal on that page)", secret: true },
   },
   auth: { kind: "basic", userFrom: "access_key", passFrom: "personal_key" },
   // Resolve the account's username first — the list endpoints are per-person.

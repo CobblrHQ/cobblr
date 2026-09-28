@@ -21,6 +21,7 @@ import { hashPassword } from "../auth/password.js";
 import { buildAuthResponse } from "./auth.js";
 import { canActOnRole } from "../auth/capability.js";
 import { ORG_ROLES, INVITABLE_ORG_ROLES } from "@cobblr/platform-contract/org-roles";
+import { REFUSAL, claimJoinUse, inviteStatus, joinThroughInvite } from "../platform/join-invite.js";
 
 export const membersRouter = Router({ mergeParams: true });
 // /accept-invite/:token doesn't have a tenant slug in the path so it
@@ -300,12 +301,24 @@ async function deliverInvite(opts: {
   }
 }
 
-const InviteCreate = z.object({
-  email: z.string().email().max(255).optional(),
-  role: z.enum(INVITABLE_ORG_ROLES).default("member"),
-  /** ISO timestamp; defaults to 14 days from now. */
-  expires_at: z.string().datetime().optional(),
-});
+const InviteCreate = z
+  .object({
+    email: z.string().email().max(255).optional(),
+    role: z.enum(INVITABLE_ORG_ROLES).default("member"),
+    /** ISO timestamp; defaults to 14 days from now (a year for a join link). */
+    expires_at: z.string().datetime().optional(),
+    /** A join link (#3801): anyone holding it may join, many times over,
+     *  counted rather than consumed. For a QR on a wall. */
+    reusable: z.boolean().optional(),
+    /** Stop after this many people have joined through it. */
+    max_uses: z.number().int().min(1).max(10_000).optional(),
+    /** Item labels offer this join link to someone who scans one signed
+     *  out ("Join <workspace> to take one"). Off unless asked for. */
+    offer_on_labels: z.boolean().optional(),
+  })
+  .refine((v) => !(v.reusable && v.email), { message: "A join link is for anyone who has it, so it names no email." })
+  .refine((v) => v.max_uses === undefined || v.reusable, { message: "Only a join link can be used more than once." })
+  .refine((v) => !v.offer_on_labels || v.reusable, { message: "Only a join link can be offered from item labels." });
 
 membersRouter.post("/invites", requireAuth, withTenant, async (req, res, next) => {
   try {
@@ -331,7 +344,7 @@ membersRouter.post("/invites", requireAuth, withTenant, async (req, res, next) =
     }
     const expiresAt = parsed.data.expires_at
       ? new Date(parsed.data.expires_at)
-      : new Date(Date.now() + 14 * 24 * 3600_000);
+      : new Date(Date.now() + (parsed.data.reusable ? 365 : 14) * 24 * 3600_000);
     const token = newInviteToken();
     const inserted = await meta
       .insertInto("workspace_invites")
@@ -342,6 +355,9 @@ membersRouter.post("/invites", requireAuth, withTenant, async (req, res, next) =
         invited_email: parsed.data.email ?? null,
         role: parsed.data.role,
         expires_at: expiresAt,
+        reusable: parsed.data.reusable ?? false,
+        max_uses: parsed.data.max_uses ?? null,
+        offer_on_labels: parsed.data.offer_on_labels ?? false,
       })
       .returningAll()
       .executeTakeFirstOrThrow();
@@ -350,7 +366,7 @@ membersRouter.post("/invites", requireAuth, withTenant, async (req, res, next) =
       userId: req.session!.id,
       action: "invite_created",
       ref: { module: null, entityType: "invite", entityId: inserted.id },
-      diff: { role: parsed.data.role, email: parsed.data.email ?? null },
+      diff: { role: parsed.data.role, email: parsed.data.email ?? null, reusable: parsed.data.reusable ?? false, max_uses: parsed.data.max_uses ?? null, offer_on_labels: parsed.data.offer_on_labels ?? false },
     });
     // Notify/email the invitee (fire-and-forget — don't block or fail the mint).
     if (parsed.data.email) {
@@ -392,7 +408,25 @@ membersRouter.get("/invites", requireAuth, withTenant, async (req, res, next) =>
       q = q.where("consumed_at", "is", null).where("revoked_at", "is", null);
     }
     const items = await q.execute();
-    res.json({ items });
+    // Who joined through each join link, newest first: the admin sees every
+    // person a wall QR let in, and can remove any of them.
+    const reusableIds = items.filter((i) => i.reusable).map((i) => i.id);
+    const uses = reusableIds.length
+      ? await meta
+          .selectFrom("workspace_invite_uses as u")
+          .innerJoin("users as p", "p.id", "u.user_id")
+          .select(["u.invite_id", "u.user_id", "u.used_at", "p.display_name", "p.email"])
+          .where("u.invite_id", "in", reusableIds)
+          .orderBy("u.used_at", "desc")
+          .execute()
+      : [];
+    res.json({
+      items: items.map((i) =>
+        i.reusable
+          ? { ...i, joined: uses.filter((u) => u.invite_id === i.id).map((u) => ({ user_id: u.user_id, name: u.display_name || u.email, used_at: u.used_at })) }
+          : i,
+      ),
+    });
   } catch (err) {
     next(err);
   }
@@ -452,6 +486,9 @@ invitesRootRouter.get("/invites/:token", async (req, res, next) => {
         "i.expires_at",
         "i.consumed_at",
         "i.revoked_at",
+        "i.reusable",
+        "i.max_uses",
+        "i.use_count",
         "o.name as org_name",
         "o.slug as org_slug",
         "u.display_name as invited_by_name",
@@ -462,15 +499,7 @@ invitesRootRouter.get("/invites/:token", async (req, res, next) => {
       res.status(404).json({ error: { code: "not_found", message: "Invite not found." } });
       return;
     }
-    const expired = invite.expires_at && new Date(invite.expires_at) < new Date();
-    const status = invite.revoked_at
-      ? "revoked"
-      : invite.consumed_at
-      ? "consumed"
-      : expired
-      ? "expired"
-      : "open";
-    res.json({ ...invite, status });
+    res.json({ ...invite, status: inviteStatus(invite) });
   } catch (err) {
     next(err);
   }
@@ -495,73 +524,19 @@ invitesRootRouter.post("/invites/:token/accept", requireAuth, async (req, res, n
       res.status(404).json({ error: { code: "not_found", message: "Invite not found." } });
       return;
     }
-    if (invite.revoked_at) {
-      res.status(410).json({ error: { code: "revoked", message: "Invite was revoked." } });
+    const joined = await joinThroughInvite(invite, req.session!.id);
+    if (!joined.ok) {
+      res.status(410).json({ error: { code: joined.code, message: joined.message } });
       return;
     }
-    if (invite.consumed_at) {
-      res.status(410).json({ error: { code: "consumed", message: "Invite already used." } });
-      return;
-    }
-    if (invite.expires_at && new Date(invite.expires_at) < new Date()) {
-      res.status(410).json({ error: { code: "expired", message: "Invite expired." } });
-      return;
-    }
-
-    const existing = await meta
-      .selectFrom("org_memberships")
-      .select("role")
-      .where("user_id", "=", req.session!.id)
-      .where("org_id", "=", invite.org_id)
-      .executeTakeFirst();
-
-    if (!existing) {
-      await meta
-        .insertInto("org_memberships")
-        .values({
-          user_id: req.session!.id,
-          org_id: invite.org_id,
-          role: invite.role,
-        })
-        .execute();
-    }
-    // Clearing declined_at matters: a browser run produced one invite marked
-    // BOTH accepted and declined, which is not a state that should be
-    // describable. Somebody may decline and change their mind (or mis-tap), and
-    // accepting is the later, stronger answer - so it wins and erases the
-    // earlier no rather than sitting beside it.
-    await meta
-      .updateTable("workspace_invites")
-      .set({
-        consumed_at: new Date(),
-        consumed_by_user: req.session!.id,
-        declined_at: null,
-        declined_by_user: null,
-      })
-      .where("id", "=", invite.id)
-      .execute();
-
-    // Activity log inside the workspace, attributed to the joiner.
-    try {
-      await activity.log({
-        orgId: invite.org_id,
-        userId: req.session!.id,
-        action: existing ? "invite_redeemed_noop" : "member_joined",
-        ref: { module: null, entityType: "membership", entityId: req.session!.id },
-        diff: { via_invite: invite.id, role: invite.role },
-      });
-    } catch (err) {
-      console.error("[invites] activity log failed:", err);
-    }
-
     const org = await meta
       .selectFrom("orgs")
       .select(["id", "name", "slug"])
       .where("id", "=", invite.org_id)
       .executeTakeFirstOrThrow();
     res.status(201).json({
-      org: { ...org, role: existing?.role ?? invite.role },
-      already_member: !!existing,
+      org: { ...org, role: joined.role },
+      already_member: joined.alreadyMember,
     });
   } catch (err) {
     next(err);
@@ -595,6 +570,12 @@ invitesRootRouter.post("/invites/:token/decline", requireAuth, async (req, res, 
       .executeTakeFirst();
     if (!invite) {
       res.status(404).json({ error: { code: "not_found", message: "Invite not found." } });
+      return;
+    }
+    // A join link belongs to everybody who has it: one person's "no" is theirs
+    // alone and must not close it for the rest of the club.
+    if (invite.reusable) {
+      res.status(200).json({ declined: true, already_answered: false });
       return;
     }
     // Already answered, one way or the other. Idempotent rather than an error:
@@ -666,10 +647,9 @@ invitesRootRouter.post("/invites/:token/accept-signup", async (req, res, next) =
       res.status(404).json({ error: { code: "not_found", message: "Invite not found." } });
       return;
     }
-    if (invite.revoked_at) { res.status(410).json({ error: { code: "revoked", message: "Invite was revoked." } }); return; }
-    if (invite.consumed_at) { res.status(410).json({ error: { code: "consumed", message: "Invite already used." } }); return; }
-    if (invite.expires_at && new Date(invite.expires_at) < new Date()) {
-      res.status(410).json({ error: { code: "expired", message: "Invite expired." } });
+    const status = inviteStatus(invite);
+    if (status !== "open") {
+      res.status(410).json({ error: { code: status, message: REFUSAL[status] } });
       return;
     }
     if (invite.invited_email && invite.invited_email.toLowerCase().trim() !== email) {
@@ -684,19 +664,27 @@ invitesRootRouter.post("/invites/:token/accept-signup", async (req, res, next) =
       return;
     }
 
-    // Atomically claim the invite (single-use, race-safe) before creating
-    // the account, so two redemptions can't both succeed.
-    const claimed = await meta
-      .updateTable("workspace_invites")
-      .set({ consumed_at: new Date() })
-      .where("id", "=", invite.id)
-      .where("consumed_at", "is", null)
-      .where("revoked_at", "is", null)
-      .returning("id")
-      .executeTakeFirst();
-    if (!claimed) {
-      res.status(410).json({ error: { code: "consumed", message: "This invite was just used." } });
-      return;
+    // Atomically claim the invite before creating the account, so two
+    // redemptions cannot both succeed: a single-use invite is consumed, a join
+    // link counts one use within its cap.
+    if (invite.reusable) {
+      if (!(await claimJoinUse(invite.id))) {
+        res.status(410).json({ error: { code: "full", message: REFUSAL.full } });
+        return;
+      }
+    } else {
+      const claimed = await meta
+        .updateTable("workspace_invites")
+        .set({ consumed_at: new Date() })
+        .where("id", "=", invite.id)
+        .where("consumed_at", "is", null)
+        .where("revoked_at", "is", null)
+        .returning("id")
+        .executeTakeFirst();
+      if (!claimed) {
+        res.status(410).json({ error: { code: "consumed", message: "This invite was just used." } });
+        return;
+      }
     }
 
     // Create the user (no own-org provisioning) + the membership.
@@ -706,11 +694,15 @@ invitesRootRouter.post("/invites/:token/accept-signup", async (req, res, next) =
       .insertInto("org_memberships")
       .values({ user_id: userId, org_id: invite.org_id, role: invite.role })
       .execute();
-    await meta
-      .updateTable("workspace_invites")
-      .set({ consumed_by_user: userId })
-      .where("id", "=", invite.id)
-      .execute();
+    if (invite.reusable) {
+      await meta.insertInto("workspace_invite_uses").values({ invite_id: invite.id, user_id: userId, new_account: true }).execute();
+    } else {
+      await meta
+        .updateTable("workspace_invites")
+        .set({ consumed_by_user: userId })
+        .where("id", "=", invite.id)
+        .execute();
+    }
 
     try {
       await activity.log({

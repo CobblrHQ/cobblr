@@ -10,7 +10,7 @@ import { useKindLabels } from "../lib/useKindLabels";
 import { useMutation } from "@tanstack/react-query";
 import { useNavigate } from "react-router-dom";
 import { ExternalLink, Minus, PackagePlus, Plus } from "lucide-react";
-import { Modal, useImageSrc, useToast } from "@cobblr/platform-web";
+import { Modal, useImageSrc, useToast, EntityPhoto } from "@cobblr/platform-web";
 import { api, ApiError, type TrackedMatch } from "../lib/api";
 import { useActiveOrg } from "../auth/ActiveOrgContext";
 
@@ -104,12 +104,8 @@ export function BinAdjustModal({
   const body = (
       <div className="space-y-4">
         <div className="flex items-center gap-3">
-          <div className="w-20 h-20 shrink-0 rounded-md overflow-hidden border border-line dark:border-slate-700 bg-subtle dark:bg-slate-800 flex items-center justify-center">
-            {img ? (
-              <img src={img} alt="" className="w-full h-full object-cover" />
-            ) : (
-              <PackagePlus size={22} className="text-faint" />
-            )}
+          <div className="w-20 h-20 shrink-0 rounded-md overflow-hidden border border-line dark:border-slate-700">
+            <EntityPhoto src={img} alt="" size={80} placeholder={<PackagePlus size={22} className="text-faint" />} />
           </div>
           <div className="min-w-0 flex-1">
             <div className="font-medium text-content dark:text-mortar-100 leading-snug">{item.title}</div>

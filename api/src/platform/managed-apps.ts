@@ -46,13 +46,13 @@ export const MANAGED_APPS: Record<string, ManagedApp> = {
     // a Hooks table, auto-restock shopping list, and a Designs/patterns table.
     // All four are `default:false` on the bundle — a locked consumer can't turn
     // them on later, so the managed app ships them ON.
-    enabledFeatures: ["scan", "hooks", "shopping-list", "designs"],
+    enabledFeatures: ["scan", "hooks", "notions", "shopping-list", "designs"],
     // Only the instance tops need explicit ordering (Yarn the headline, then the
     // secondary trackers). Everything WITHOUT a nav_order sorts after these,
     // alphabetically — and lists < purchases < scan already gives the intended
     // tail (Lists, Purchases, Scan). Naming only instances also keeps this kernel
     // file from hardcoding module names (the isolation lint).
-    navOrder: ["yarn", "hooks", "designs"],
+    navOrder: ["yarn", "hooks", "notions", "designs"],
   },
   home: {
     id: "home",

@@ -65,6 +65,7 @@ export function ReceiptPeek({
           aria-label="Receipt preview"
           className="pointer-events-none absolute left-0 top-full z-30 mt-1 rounded-md border border-line dark:border-slate-700 bg-surface dark:bg-slate-900 p-1 shadow-lg"
         >
+          {/* photo-frame: a receipt document previewed at its own shape, not an item photo */}
           <img src={src} alt="" className="block max-h-56 w-auto max-w-[14rem] rounded" />
         </span>
       )}

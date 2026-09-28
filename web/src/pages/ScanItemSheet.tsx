@@ -77,6 +77,7 @@ export function ScanItemSheetFooter({
   addLabel,
   onOpenForm,
   primary,
+  filedOnScreen = false,
   onCancel,
   onDiscard,
   discardPending,
@@ -94,6 +95,11 @@ export function ScanItemSheetFooter({
    *  screen never offers a create where the row says merge (#3076). The
    *  form's Confirm then renders inside the form, as filing it as new. */
   primary?: { label: string; title?: string; busy: boolean; onClick: () => void } | null;
+  /** The screen's own content files this row: a match on a record the
+   *  workspace counts is filed by that record's count, on the screen (#3884).
+   *  The footer then offers no commit of its own, and the form's Confirm stays
+   *  inside the form, as filing it as a new one. */
+  filedOnScreen?: boolean;
   /** Leave the screen without changes (the header's "All items"). */
   onCancel: () => void;
   onDiscard: () => void;
@@ -136,7 +142,7 @@ export function ScanItemSheetFooter({
           >
             Cancel
           </button>
-          {primary ? (
+          {filedOnScreen ? null : primary ? (
             <button
               type="button"
               onClick={primary.onClick}

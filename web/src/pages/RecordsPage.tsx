@@ -29,14 +29,14 @@ import {
   usePageTitle,
   usePageWidth,
   useToast,
-  useViewMode,
-} from "@cobblr/platform-web";
+  useViewMode, TILE_GRID, InboxWaitingStrip } from "@cobblr/platform-web";
 import { EntityAttachments } from "../components/EntityAttachments";
 import { EntityImageEdit } from "../components/EntityImageEdit";
 import { ImageSearchPicker } from "../components/ImageSearchPicker";
 import { LocationTreePicker } from "../components/LocationTreePicker";
 import { resolveDetailPath } from "@cobblr/platform-contract/instance-detail";
 import { PresentationGate, useFaces } from "@cobblr/platform-web";
+import { TableTitle } from "@cobblr/platform-web";
 
 const ENTITY_KIND = "records:record";
 
@@ -44,7 +44,8 @@ export function RecordsPage({
   instance,
   displayName,
   itemNoun,
-}: { instance?: string; displayName?: string; itemNoun?: string } = {}) {
+  hint,
+}: { instance?: string; displayName?: string; itemNoun?: string; hint?: string | null } = {}) {
   const later = useLater();
   // When `instance` is set we render ONE named collection of records (e.g.
   // "Bookshelf"), reached at the clean /<instance> URL — the SAME page as
@@ -168,9 +169,7 @@ export function RecordsPage({
   return (
     <div className="space-y-4">
       <div className="flex flex-wrap items-baseline gap-x-3 gap-y-2 border-b border-line dark:border-slate-700 pb-3">
-        <h1 className="font-display text-2xl font-extrabold text-content dark:text-mortar-100 page-title">
-          {displayName ?? "records"}
-        </h1>
+        <TableTitle title={displayName ?? "records"} hint={hint} />
         <span className="text-[10px] font-mono text-faint dark:text-slate-500">
           {filtered.length} of {allRows.length}
         </span>
@@ -221,6 +220,9 @@ export function RecordsPage({
       ) : (
         <RecordsTable rows={filtered} customCols={customCols} onOpen={openRecord} />
       )}
+      {/* What is waiting in the scan inbox to come here, under the filed
+          results: a thing just scanned is in no table until it is filed. */}
+      <InboxWaitingStrip destination={instance ?? "records"} q={query} />
 
       <RecordDetailModal recordId={selectedId} onClose={closeDetail} instance={instance} noun={noun} />
       <NewRecordModal
@@ -238,7 +240,7 @@ export function RecordsPage({
 
 function RecordsTiles({ rows, onOpen }: { rows: RecordItem[]; onOpen: (id: string) => void }) {
   return (
-    <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-3">
+    <div className={TILE_GRID}>
       {rows.map((r) => (
         <button key={r.id} type="button" onClick={() => onOpen(r.id)} className="text-left">
           <EntityTile src={r.image_path} title={r.name} subtitle={null} />
@@ -333,6 +335,7 @@ export function RecordDetailModal({
       void qc.invalidateQueries({ queryKey: ["record", activeSlug, instance ?? null, recordId] });
       void qc.invalidateQueries({ queryKey: ["records", activeSlug] });
     },
+    onError: (e: unknown) => toast.error(`Couldn't save that change: ${e instanceof ApiError ? e.message : String(e)}`),
   });
   const remove = useMutation({
     mutationFn: () => api.deleteRecord(activeSlug, recordId!, instance),
@@ -478,7 +481,7 @@ export function RecordDetailModal({
                   update.mutate({ metadata: { [name]: value } })
                 }
               />
-              <EntityAttachments kind={ENTITY_KIND} entityId={r.id} />
+              <EntityAttachments kind={ENTITY_KIND} entityId={r.id} collection={instance ? `${instance}:item` : undefined} />
               <FieldPack className="text-xs" items={[editFieldItem("notes", { label: fp.label("notes", "Notes"), value: r.notes ?? "", multiline: true, onCommit: (v) => update.mutate({ notes: v || null }) })]} />
             </div>
           </div>

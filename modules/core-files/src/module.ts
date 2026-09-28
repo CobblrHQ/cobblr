@@ -19,7 +19,7 @@ import { defineModule } from "@cobblr/platform-contract";
 
 export default defineModule({
   name: "core-files",
-  version: "0.3.0",
+  version: "0.4.0",
   displayName: "Files",
   description:
     "File uploads, image variants (thumb + medium), and polymorphic attachments. The platform answer to 'where does this photo live?' so every module doesn't reinvent storage.",
@@ -111,4 +111,13 @@ export default defineModule({
   },
 
   subscribes: [],
+
+  lifecycle: {
+    onBoot: async () => {
+      // One-shot heal: server-written copies of a file fold into the file
+      // they repeat (see heal-same-bytes.ts for the retirement condition).
+      const { registerSameBytesHeal } = await import("./heal-same-bytes.js");
+      registerSameBytesHeal();
+    },
+  },
 });

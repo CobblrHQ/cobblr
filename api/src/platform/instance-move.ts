@@ -135,6 +135,9 @@ export const SATELLITE_TABLES: SatelliteRef[] = [
   },
   { table: "core_devices_links", db: "tenant", kindCol: "entity_kind", idCol: "entity_id" },
   { table: "core_ai_chat_writes", db: "tenant", kindCol: "entity_kind", idCol: "entity_id" },
+  // A spreadsheet import's steps follow the record too: its undo finds each
+  // record by kind, and a record moved since reads as changed, so it is held.
+  { table: "core_import_run_steps", db: "tenant", kindCol: "entity_kind", idCol: "entity_id" },
   { table: "core_ai_calls", db: "tenant", kindCol: "source_kind", idCol: "source_id" },
   // A committed scan still points at what it became.
   { table: "core_scan_inbox_items", db: "tenant", kindCol: "target_kind", idCol: "target_entity_id", moduleCol: "target_module" },

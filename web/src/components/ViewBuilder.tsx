@@ -11,6 +11,7 @@
 import { useMemo } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { api } from "../lib/api";
+import { useFieldPresentation } from "@cobblr/platform-web";
 
 /** A field the user can build a view on. Unifies native (entity-kind) and
  *  custom (field-def) fields plus the always-present system sort columns. */
@@ -44,6 +45,10 @@ export function useKindFields(slug: string, entityKind: string): KindField[] {
     queryFn: () => api.listFieldDefs(slug, entityKind),
     enabled: !!slug && !!entityKind,
   });
+  // What the collection calls its native fields: Wine's `manufacturer` is
+  // Producer, Groceries' `cost` is Paid. A column or a sort named by the
+  // generic word is the collection shown as somebody else's.
+  const presentation = useFieldPresentation(entityKind);
 
   return useMemo(() => {
     const out: KindField[] = [];
@@ -56,7 +61,7 @@ export function useKindFields(slug: string, entityKind: string): KindField[] {
     // Native declared fields for the kind.
     const kind = (kinds.data?.items ?? []).find((k) => k.id === entityKind);
     for (const f of kind?.fields ?? []) {
-      push({ name: f.name, label: humanize(f.name), type: f.type });
+      push({ name: f.name, label: presentation.label(f.name, humanize(f.name)), type: f.type });
     }
     // Custom / bundle field-defs (carry display_label + choices).
     for (const f of customs.data?.items ?? []) {
@@ -74,10 +79,10 @@ export function useKindFields(slug: string, entityKind: string): KindField[] {
       push({ name, label: humanize(name), type: "date", system: true });
     }
     return out;
-  }, [kinds.data, customs.data, entityKind]);
+  }, [kinds.data, customs.data, entityKind, presentation]);
 }
 
-function humanize(name: string): string {
+export function humanize(name: string): string {
   return name.replace(/_/g, " ").replace(/\b\w/g, (c) => c.toUpperCase());
 }
 

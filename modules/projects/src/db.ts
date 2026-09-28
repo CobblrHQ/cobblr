@@ -81,7 +81,7 @@ export interface ProjectsPatternPhotoCandidatesTable {
   thumb: Buffer;
 }
 
-export type PatternNeedKind = "yarn" | "hook" | "needle";
+export type PatternNeedKind = "yarn" | "hook" | "needle" | "notion";
 export type PatternNeedSource = "pattern" | "ai" | "hand";
 
 export interface ProjectsPatternNeedsTable {

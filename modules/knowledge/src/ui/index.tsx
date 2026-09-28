@@ -16,6 +16,7 @@ import {
   useToast,
   useConfirm,
   usePageTitle,
+  EntityPhoto,
 } from "@cobblr/platform-web";
 import { BookOpen, Plus, Pin, PinOff, Trash2, Search, ImagePlus, X } from "lucide-react";
 import { KnowledgeApi, type Entry, type EntryInput, KnowledgeApiError } from "./api.js";
@@ -191,13 +192,13 @@ function Chip({ active, onClick, children }: { active: boolean; onClick: () => v
 }
 
 function EntryThumb({ path }: { path: string | null }) {
-  const src = useImageSrc(path);
-  if (!src) return null;
+  if (!path) return null;
   return (
-    <img
-      src={src}
+    <EntityPhoto
+      src={path}
       alt=""
-      className="mt-0.5 h-9 w-9 shrink-0 rounded object-cover border border-line dark:border-slate-700"
+      size={36}
+      className="mt-0.5 rounded border border-line dark:border-slate-700"
     />
   );
 }
@@ -298,6 +299,7 @@ function EntryEditor({
           <span className="text-[10px] font-mono uppercase tracking-widest text-faint">Image</span>
           {imageSrc ? (
             <div className="mt-1 relative inline-block">
+              {/* photo-frame: a stored config-barcode screenshot, scanned from the screen, so it keeps its own shape */}
               <img
                 src={imageSrc}
                 alt="entry"

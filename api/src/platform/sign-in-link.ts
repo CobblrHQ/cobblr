@@ -34,6 +34,12 @@ export interface SignInLinkRequest {
   intro?: string;
   requestIp?: string | null;
   requestUa?: string | null;
+  /** Where the consume sends them: kept here, never in the emailed URL. */
+  nextPath?: string | null;
+  /** A workspace invite the link redeems as it signs in. */
+  inviteToken?: string | null;
+  /** The name a new account made by the link goes by. */
+  displayName?: string | null;
 }
 
 export interface SignInLinkResult {
@@ -56,6 +62,9 @@ export async function issueSignInLink(req: SignInLinkRequest): Promise<SignInLin
       token_hash: hash,
       request_ip: (req.requestIp ?? null) as string | null,
       request_ua: (req.requestUa ?? null) as string | null,
+      next_path: req.nextPath ?? null,
+      invite_token: req.inviteToken ?? null,
+      display_name: req.displayName ?? null,
     })
     .execute();
 

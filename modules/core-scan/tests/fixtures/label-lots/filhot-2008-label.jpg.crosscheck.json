@@ -1,0 +1,20 @@
+{
+  "fixture": "filhot-2008-label.jpg",
+  "image_sha256": "0da6f3444d8d117586c261e8692bc5f5d75a3ebc1bd64006462e9028d93ae56a",
+  "capability": "classify-image",
+  "prompt": "A scanned barcode resolved this item to: \"Château Filhot Sauternes\". Look at the photo and decide whether the product visible in it plausibly matches that name/identity — consider the product type, packaging, and any readable label text, and allow for a generic or differently-angled shot. Only answer \"no\" when the photo clearly shows a DIFFERENT kind of product. When (and ONLY when) it's a clear mismatch AND the photo's label makes the real product unambiguous, also return what the item actually IS — a concise retail product name, plus brand if visible. Omit them if you can't read it confidently. Separately, in \"printed\", report what is PRINTED on the item or its cover, verbatim and only when clearly legible: the author, artist or maker as printed (a book's cover author, a record's artist), the brand as printed, the title as printed, and the lot or batch code as printed (a dye lot, a lot number, a batch: the code that changes from one production run to the next, never the barcode digits, a colour number or an article number), and the year this unit was made as printed (a wine's vintage, a coin's year: four digits, never a best-before date, a copyright year or a \"since\" or \"established\" year). Never complete or translate them; null when not shown. Reply with JSON only: {\"match\":\"yes\"|\"no\"|\"unsure\",\"reason\":\"<one short sentence>\",\"correct_name\":\"<the real product name, optional>\",\"correct_brand\":\"<brand, optional>\",\"printed\":{\"creator\":<string|null>,\"brand\":<string|null>,\"title\":<string|null>,\"lot\":<string|null>,\"year_made\":<string|null>}}.",
+  "crosscheck": {
+    "result": {
+      "role": "assistant",
+      "content": "```json\n{\"match\":\"yes\",\"reason\":\"Label clearly reads Château Filhot Sauternes, Grand Cru Classé Bordeaux wine.\",\"printed\":{\"creator\":null,\"brand\":\"Château Filhot\",\"title\":\"Château Filhot\",\"lot\":null,\"year_made\":\"2008\"}}\n```"
+    },
+    "provider_id": "openai-compat",
+    "model": "default",
+    "cached": false,
+    "input_tokens": 56935,
+    "output_tokens": 203,
+    "cost_cents": 0,
+    "duration_ms": 4293,
+    "text": "```json\n{\"match\":\"yes\",\"reason\":\"Label clearly reads Château Filhot Sauternes, Grand Cru Classé Bordeaux wine.\",\"printed\":{\"creator\":null,\"brand\":\"Château Filhot\",\"title\":\"Château Filhot\",\"lot\":null,\"year_made\":\"2008\"}}\n```"
+  }
+}

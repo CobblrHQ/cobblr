@@ -20,6 +20,8 @@
 import { Fragment, useCallback, useEffect, useMemo, useState } from "react";
 import { activityKind } from "../lib/activityKind";
 import { AUTOMATION_ACTIONS, activityVerb, actorWords, automationWords, hiddenFromDashboard, updatedFieldsWords } from "../lib/activity-words";
+import { openSheetImport } from "../lib/sheet-import";
+import { ActorVia, GroupActorVia } from "../components/ActorVia";
 import { useKindLabels } from "../lib/useKindLabels";
 import { useMutation, useQueries, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link, useNavigate } from "react-router-dom";
@@ -33,13 +35,16 @@ import { choosePinnedViews, navNamesWithViewCards } from "../lib/dashboard-pinne
 import { useBundleUpdates, type BundleUpdate } from "../lib/useBundleUpdates";
 import { classifyBundleUpdate, tierAutoApplies, updateMayTeardownCatalogs } from "../lib/bundleUpdateTier";
 import { useDetailRoute } from "../lib/useDetailRoute";
+import { composeAttention } from "../lib/attention-cards";
+import { DatedCard } from "../components/DatedCard";
 import { groupRows, NO_GROUP, type GroupableRow } from "../lib/view-group-key";
+import { useViewData } from "../lib/useViewData";
 import { useAreaResolver } from "../lib/useAreaResolver";
 import { useSetupCards, dismissSetup } from "../lib/setupCards";
 import { bucketEvents, dayKey, relativeDay, upNextWindow } from "../lib/up-next";
 import { EntityThumb, changeWorkspaceShape,
-  usePageTitle, useToast, useImageSrc,
-  useDashboardWidgets, TileCollapseContext, type DashboardWidgetSpec, relativeTime, LOCATION_GROUP_KEY } from "@cobblr/platform-web";
+  usePageTitle, useToast,
+  useDashboardWidgets, TileCollapseContext, type DashboardWidgetSpec, relativeTime, LOCATION_GROUP_KEY, EntityPhoto } from "@cobblr/platform-web";
 // Side-effect: registers the host's built-in "at a glance" widgets (machines /
 // assets / purchases) through the public registerDashboardWidget seam. The
 // TileGrid renders whatever's registered for an enabled module — no per-module
@@ -51,7 +56,7 @@ import { useAuth } from "../auth/AuthContext";
 import { WhatToDoPanel } from "../components/WhatToDoPanel";
 import { BundleDetailModal } from "../components/BundleDetailModal";
 import { PendingAiShareCallout } from "../components/PendingAiShareCallout";
-import { useNavModules, INSTANCE_PREFIX } from "../components/useNavModules";
+import { useNavModules, topDoor } from "../components/useNavModules";
 import { HeatmapRenderer } from "./ViewsPage";
 import { liveNextStepLabel } from "../lib/featured-bundles";
 import { FEED_SCROLL } from "../lib/feed";
@@ -77,24 +82,19 @@ import { scanInboxKeys } from "../lib/scan-inbox-keys";
  *  stay consistent. Mobile-first — on a phone the nav is otherwise hidden
  *  behind the hamburger, which users don't discover. Renders nothing until the
  *  nav is known. */
-function QuickLinks({ slug }: { slug: string }) {
+export function QuickLinks({ slug }: { slug: string }) {
   const nav = useNavModules(slug);
   const dests = nav.tops
     .filter(
       (m) =>
         !(m as { hidden?: boolean }).hidden &&
-        !m.name.startsWith("__heading__") &&
-        !m.name.startsWith("__group__") &&
         // Entries folded into "more ▾" (by default: lists/projects/purchases)
         // don't take Jump-to tiles either — the 8 slots go to the workhorses.
         !nav.overflowNames.has(m.name),
     )
-    .slice(0, 8)
-    .map((m) => ({
-      key: m.name,
-      label: m.displayName,
-      to: m.name.startsWith(INSTANCE_PREFIX) ? `/${m.name.slice(INSTANCE_PREFIX.length)}` : `/${m.name}`,
-    }));
+    .map((m) => ({ key: m.name, label: m.displayName, to: topDoor(m.name, nav.instanceGroups, false) }))
+    .filter((d): d is { key: string; label: string; to: string } => d.to !== null)
+    .slice(0, 8);
   if (dests.length === 0) return null;
   // The scan inbox's picker, beside the scan shortcut: photos taken earlier
   // reach the inbox in two taps from here (#3042). A door, not a page, and
@@ -466,9 +466,15 @@ function AttentionFeed({ slug }: { slug: string }) {
     <section className="space-y-1.5">
       <div className="text-[10px] font-mono uppercase tracking-widest text-faint dark:text-slate-500">// needs you</div>
       <ul className="space-y-1.5">
-        {items.map((it, i) => (
-          <AttentionRow key={`${it.kind}-${it.route}-${i}`} slug={slug} item={it} tone={tone[it.kind] ?? tone.upcoming ?? ""} glyph={glyph[it.kind] ?? "•"} />
-        ))}
+        {/* A collection's overdue, today and coming-up rows as ONE card
+            (attention-cards.ts); every other row as it was. */}
+        {composeAttention(items).map((c, i) =>
+          c.type === "dated" ? (
+            <DatedCard key={`dated-${c.collection.key}`} slug={slug} card={c} />
+          ) : (
+            <AttentionRow key={`${c.item.kind}-${c.item.route}-${i}`} slug={slug} item={c.item} tone={tone[c.item.kind] ?? tone.upcoming ?? ""} glyph={glyph[c.item.kind] ?? "•"} />
+          ),
+        )}
       </ul>
     </section>
   );
@@ -1725,16 +1731,9 @@ function PinnedViews({ slug, editing = false }: { slug: string; editing?: boolea
 // so the auth-gated /raw file URL is bearer-fetched into a blob (a plain <img>
 // would 401). Falls back to a title initial.
 function PosterCell({ path, title }: { path: string | null; title: string }) {
-  const src = useImageSrc(path);
   return (
     <div className="shrink-0 w-28" title={title}>
-      <div className="aspect-[2/3] rounded-md overflow-hidden bg-subtle dark:bg-slate-800 flex items-center justify-center ring-1 ring-line dark:ring-slate-700">
-        {src ? (
-          <img src={src} alt="" className="w-full h-full object-cover" />
-        ) : (
-          <span className="text-sm font-bold text-faint dark:text-slate-600">{title.slice(0, 1).toUpperCase()}</span>
-        )}
-      </div>
+      <EntityPhoto src={path} alt={title} aspect="2/3" className="rounded-md ring-1 ring-line dark:ring-slate-700" />
     </div>
   );
 }
@@ -1793,16 +1792,13 @@ function PinnedView({
   const isHeatmap = view.view_type === "heatmap";
   const groupBy = typeof view.config?.group_by === "string" ? (view.config.group_by as string) : null;
   const isGrouped = !!groupBy && !isGallery && !isHeatmap;
-  const data = useQuery({
-    // Grouped previews fetch enough rows to count the groups (workshop-scale;
-    // capped so a huge view stays cheap). Non-grouped keep the light default.
-    queryKey: ["dash-view-data", slug, view.id, isGrouped ? "grouped" : "preview"],
-    // paginate-ok: bounded dashboard preview, a 500-row group-count sample for the distribution bars, not a full list.
-    queryFn: () => api.viewData(slug, view.id, isGrouped ? { limit: 500 } : undefined),
-    staleTime: 30_000,
-  });
+  // The whole view, the same answer the full view page gets: the card's count
+  // and its group bars are about every record. A 500-row sample made the bars
+  // and the full view of the same view disagree, and an unlimited ask got one
+  // page of 50.
+  const data = useViewData(slug, view.id, view.entity_kind);
   const routeFor = useDetailRoute(slug);
-  const allItems = data.data?.items ?? [];
+  const allItems = data.items;
   const items = allItems.slice(0, 5);
   const imgField = (view.config?.image_field as string) || "image_path";
   // Group counts, highest first. Group STRICTLY by the view's group_by field —
@@ -1831,7 +1827,7 @@ function PinnedView({
     enabled: !!slug,
     staleTime: 30_000,
   });
-  const entityKind = data.data?.view?.entity_kind ?? "";
+  const entityKind = data.view?.entity_kind ?? view.entity_kind;
   const kindHead = entityKind.split(":")[0] ?? "";
   const instance = (instancesQ.data?.items ?? []).find((i) => i.instance_name === kindHead);
   // The instance's display name ("Vehicles"); a plain module kind has no instance
@@ -1847,7 +1843,7 @@ function PinnedView({
     itemNoun: typeof configNoun === "string" ? configNoun : null,
     entityKind,
   });
-  const countLabel = countOf(allItems.length, itemNoun);
+  const countLabel = data.total !== null ? countOf(data.total, itemNoun) : `${allItems.length}+ ${pluralise(itemNoun)}`;
   const emptyNoun = pluralise(itemNoun);
   const galleryImg = (r: (typeof allItems)[number]): string | null => {
     // Mirror the modal's fieldVal: custom + native fields live under `fields`
@@ -2080,7 +2076,7 @@ interface ActivityGroup {
 function groupActivity(items: ActivityEntry[]): ActivityGroup[] {
   const out: ActivityGroup[] = [];
   for (const e of items) {
-    const sig = `${e.actor?.display_name ?? ""}|${e.action}|${e.entity_type ?? ""}`;
+    const sig = `${actorWords(e)}|${e.action}|${e.entity_type ?? ""}`;
     const last = out[out.length - 1];
     if (last && last.signature === sig) {
       last.items.push(e);
@@ -2100,7 +2096,7 @@ function ActivityRow({ entry: e, labels }: { entry: ActivityEntry; labels: KindL
   return (
     <li className="px-3 py-2 flex items-baseline gap-1.5 text-sm">
       <span className="text-muted dark:text-slate-400 shrink-0">
-        {actorLabel(e)}
+        <ActorVia entry={e} />
       </span>
       {!auto && (
         <span className="text-content dark:text-mortar-200 shrink-0">
@@ -2110,6 +2106,11 @@ function ActivityRow({ entry: e, labels }: { entry: ActivityEntry; labels: KindL
       <span className="text-content dark:text-mortar-100 truncate min-w-0">
         {auto ? (auto.hidden ? null : auto.said) : activityTitle(e, labels)}
       </span>
+      {e.entity_type === "import_run" && e.entity_id && (
+        <button type="button" onClick={() => openSheetImport({ runId: e.entity_id })} className="shrink-0 text-xs text-accent hover:underline">
+          Open
+        </button>
+      )}
       <span className="flex-1" />
       <span className="font-mono text-[10px] text-faint shrink-0">
         {relativeTime(e.occurred_at)}
@@ -2133,7 +2134,6 @@ function ActivityGroupRow({ group, labels }: { group: ActivityGroup; labels: Kin
   const last = group.items[group.items.length - 1]!;
   const auto = AUTOMATION_ACTIONS.has(first.action) ? automationWords(first) : null;
   const action = auto ? "" : activityVerb(first.action);
-  const actor = actorLabel(first);
   // The summary must not LIE: "created K1 Max ×2" for two different machines
   // read as two copies of K1 Max. Distinct identities → summarize by entity kind
   // ("2 machines"); identical → keep the identity (a true ×N of one thing).
@@ -2165,7 +2165,7 @@ function ActivityGroupRow({ group, labels }: { group: ActivityGroup; labels: Kin
   const rowContent = (
     <div className="flex items-baseline gap-1.5 text-sm w-full min-w-0">
       <span className="text-muted dark:text-slate-400 shrink-0">
-        {actor}
+        <GroupActorVia entries={group.items} />
       </span>
       {action && (
         <span className="text-content dark:text-mortar-200 shrink-0">
@@ -2230,12 +2230,6 @@ function pickString(
   return null;
 }
 
-
-/** Who to credit a row to: the real user, else "Automation" for system actions,
- *  else a neutral "someone". */
-function actorLabel(e: ActivityEntry): string {
-  return actorWords(e);
-}
 
 
 /** The "what" cell. A wire's row is the action's own sentence for what it did

@@ -6,16 +6,22 @@ import { Fragment, useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { useNavigate } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
-import { Camera, CornerDownLeft, Moon, Plus, ScanLine, Search, Sliders, Sun, Wand2 } from "lucide-react";
+import { Camera, ChevronDown, ChevronRight, CornerDownLeft, FileSpreadsheet, FileText, LayoutGrid, Moon, Plus, ScanLine, Search, Sliders, Sun, Table2, Wand2 } from "lucide-react";
 import { api } from "../lib/api";
+import { scanInboxKeys } from "../lib/scan-inbox-keys";
 import { useActiveOrg } from "../auth/ActiveOrgContext";
 import { useTheme } from "../theme/ThemeContext";
 import { useThemeToggle } from "../theme/useThemeToggle";
 import { fuzzyMatch } from "../lib/fuzzy";
+import { useAppCatalog, useModuleDoor } from "../lib/appCatalog";
+import { appsMatching } from "@cobblr/platform-contract/app-catalog";
 import { searchFeatures } from "../lib/feature-index";
 import { useHostedPanels } from "../lib/useHostedPanels";
-import { mergePaletteRows, PALETTE_RANK, type PaletteRow, type PaletteRowKind } from "../lib/paletteRows";
+import { isFileHit, mergePaletteRows, paletteSectionHeader, PALETTE_RANK, tablesMatching, type PaletteRow, type PaletteTable } from "../lib/paletteRows";
+import { tableOtherNames, type NounChoiceDecl } from "@cobblr/platform-contract/kind-label";
 import { useLater, OverlayLayer } from "@cobblr/platform-web";
+import { SearchIncomplete } from "./SearchIncomplete";
+import { openSheetImport } from "../lib/sheet-import";
 
 /** Anything (the mobile bar, the palette) can ask for the quick-add sheet. */
 export const OPEN_ADD_SHEET_EVENT = "cobblr:open-add-sheet";
@@ -38,18 +44,10 @@ const ACTIONS: ActionRow[] = [
   { id: "scan", label: "Scan something", hint: "camera → barcode/photo", icon: Camera, run: (n) => n("/scan/camera") },
   { id: "add", label: "Add a thing", hint: "type it, we file it", icon: Plus, run: () => window.dispatchEvent(new CustomEvent(OPEN_ADD_SHEET_EVENT)) },
   { id: "inbox", label: "Open the scan inbox", hint: "review + file captures", icon: ScanLine, run: (n) => n("/scan") },
+  { id: "import-sheet", label: "Bring your spreadsheet", hint: "Excel, CSV or a Google Sheets link", keywords: "import excel xlsx csv google sheets spreadsheet list migrate", icon: FileSpreadsheet, run: () => openSheetImport() },
   { id: "build", label: "Describe what you have", hint: "AI builds the setup", icon: Wand2, run: (n) => n("/build?mode=workspace") },
   { id: "customize", label: "Customize workspace", hint: "modules · fields · setups", icon: Sliders, run: (n) => n("/configuration") },
 ];
-
-/** Header shown above each kind-group. `action` has none — commands lead the
- *  list without a label, as they did before the merge. */
-const SECTION_HEADER: Record<PaletteRowKind, string | null> = {
-  exact: "best match",
-  action: null,
-  feature: "features & settings",
-  entity: "your things",
-};
 
 export function CommandPalette() {
   const later = useLater();
@@ -95,6 +93,17 @@ export function CommandPalette() {
     enabled: open && !!activeSlug && debounced.length >= 2,
     staleTime: 15_000,
   });
+  // What was scanned and not yet filed: in no table, so the table search
+  // above cannot find it. Each labelled with where it is headed.
+  const waiting = useQuery({
+    queryKey: scanInboxKeys.search(activeSlug, debounced),
+    queryFn: () => api.listScanInbox(activeSlug, { q: debounced, limit: 8 }),
+    enabled: open && !!activeSlug && debounced.length >= 2,
+    staleTime: 15_000,
+  });
+  // Files wait behind one "Files (N)" row until asked for.
+  const [filesOpen, setFilesOpen] = useState(false);
+  useEffect(() => setFilesOpen(false), [debounced]);
 
   // Preference actions live here (not in the static ACTIONS) because they flip
   // app state instead of navigating — and they need the live theme. Shown in
@@ -124,6 +133,25 @@ export function CommandPalette() {
     [q, allActions],
   );
   const featureHits = useMemo(() => searchFeatures(q, 6), [q]);
+  const { apps } = useAppCatalog(open);
+  const appHits = useMemo(() => appsMatching(q, apps, 4), [q, apps]);
+  const door = useModuleDoor();
+  // The person's own tables, by name or by any other word the table offers,
+  // so someone who calls them notions finds Supplies. Same reads (and cache)
+  // as the navigation.
+  const instancesQ = useQuery({ queryKey: ["instances", activeSlug], queryFn: () => api.listInstances(activeSlug!), enabled: open && !!activeSlug, staleTime: 30_000 });
+  const overridesQ = useQuery({ queryKey: ["entity-kind-overrides", activeSlug], queryFn: () => api.listOverrides(activeSlug!), enabled: open && !!activeSlug, staleTime: 30_000 });
+  const tableHits = useMemo(() => {
+    const tables: PaletteTable[] = (instancesQ.data?.items ?? [])
+      .filter((i) => !i.is_default)
+      .map((i) => {
+        const o = (overridesQ.data?.items ?? []).find((x) => x.target_kind === "instance" && x.target_id === `${i.module_name}:${i.instance_name}`);
+        const label = o?.display_label ?? i.display_name;
+        const noun = ((o?.config ?? {}) as { noun?: NounChoiceDecl | null }).noun;
+        return { label, route: `/${i.instance_name}`, otherNames: tableOtherNames(label, noun) };
+      });
+    return tablesMatching(q, tables);
+  }, [q, instancesQ.data, overridesQ.data]);
   // Hosted panels (billing + managed connectors) are RUNTIME data from the
   // overlay, so they can't join the static feature index — merged here instead.
   // Label-only matching: the overlay sends no description; open core renders
@@ -180,33 +208,85 @@ export function CommandPalette() {
       icon: a.icon,
       run: () => { a.run(navigate); close(); },
     }));
+    const tableRows: PaletteRow[] = tableHits.map((t) => ({
+      key: `table-${t.route}`,
+      kind: "table",
+      label: t.label,
+      hint: t.hint,
+      icon: Table2,
+      run: () => { navigate(t.route); close(); },
+    }));
+    // Every module, on, hidden from the sidebar, or off: one search away
+    // whatever its state (#3883). A hidden one also offers its row back; an
+    // off one offers to turn it on, or to ask an admin to.
+    const appRows: PaletteRow[] = appHits.flatMap((a): PaletteRow[] => {
+      const base = { kind: "app" as const, icon: LayoutGrid, dedupeKey: `route:${a.route}` };
+      if (a.state === "off") {
+        return [
+          door.canTurnOn
+            ? { ...base, key: `app-on-${a.name}`, label: `Turn on ${a.label}`, hint: "off in this workspace", run: () => { door.turnOn(a); close(); } }
+            : { ...base, key: `app-ask-${a.name}`, label: `Ask an admin to turn on ${a.label}`, hint: "off in this workspace", run: () => { door.ask(a); close(); } },
+        ];
+      }
+      const open: PaletteRow = { ...base, key: `app-${a.name}`, label: `Open ${a.label}`, hint: a.state === "hidden" ? "hidden from your sidebar" : "app", run: () => { door.open(a); close(); } };
+      if (a.state !== "hidden") return [open];
+      return [open, { kind: "app", icon: LayoutGrid, key: `app-show-${a.name}`, label: `Show ${a.label} in the sidebar`, hint: "this device", run: () => door.showInSidebar(a) }];
+    });
     const featureRows: PaletteRow[] = [...featureHits, ...panelHits].map((f) => ({
       key: `feature-${f.route}-${f.label}`,
       kind: "feature",
       label: f.label,
       hint: f.hint,
       icon: Sliders,
+      dedupeKey: `route:${f.route}`,
       run: () => { navigate(f.route); close(); },
     }));
-    const entityRows: PaletteRow[] = (debounced.length >= 2 ? hits.data?.items ?? [] : [])
-      .slice(0, 8)
-      .map((h) => ({
-        key: `entity-${h.kind}-${h.id}`,
-        kind: "entity",
-        label: h.title,
-        hint: h.subtitle ?? h.kind,
-        icon: Search,
-        dedupeKey: `${h.kind}:${h.id}`,
-        run: () => { navigate(h.detailUrl ?? `/search?q=${encodeURIComponent(q.trim())}`); close(); },
-      }));
+    const found = debounced.length >= 2 ? hits.data?.items ?? [] : [];
+    const hitRow = (h: (typeof found)[number], kind: "entity" | "file"): PaletteRow => ({
+      key: `${kind}-${h.kind}-${h.id}`,
+      kind,
+      label: h.title,
+      hint: kind === "file" ? undefined : h.subtitle ?? h.kind,
+      icon: kind === "file" ? FileText : Search,
+      dedupeKey: `${h.kind}:${h.id}`,
+      run: () => { navigate(h.detailUrl ?? `/search?q=${encodeURIComponent(q.trim())}`); close(); },
+    });
+    // Your things are the records you keep; a file named after one is not it.
+    const entityRows = found.filter((h) => !isFileHit(h)).slice(0, 8).map((h) => hitRow(h, "entity"));
+    const files = found.filter(isFileHit);
+    const fileRows: PaletteRow[] = files.length
+      ? [
+          {
+            key: "files-toggle",
+            kind: "files",
+            label: `Files (${files.length})`,
+            icon: filesOpen ? ChevronDown : ChevronRight,
+            // Opens the section in place; the palette stays open.
+            run: () => setFilesOpen((v) => !v),
+          },
+          ...(filesOpen ? files.map((h) => hitRow(h, "file")) : []),
+        ]
+      : [];
+    const inboxRows: PaletteRow[] = (debounced.length >= 2 ? waiting.data?.items ?? [] : []).map((it) => ({
+      key: `inbox-${it.id}`,
+      kind: "inbox",
+      label: it.suggested_name ?? it.barcode_text ?? "Unnamed scan",
+      hint: it.resolved_destination?.label ? `→ ${it.resolved_destination.label}` : "not routed yet",
+      icon: ScanLine,
+      run: () => { navigate(`/scan?item=${encodeURIComponent(it.id)}`); close(); },
+    }));
     return mergePaletteRows([
       { rank: PALETTE_RANK.exact, rows: exactRows },
-      { rank: PALETTE_RANK.action, rows: actionRows },
-      { rank: PALETTE_RANK.feature, rows: featureRows },
+      { rank: PALETTE_RANK.table, rows: tableRows },
       { rank: PALETTE_RANK.entity, rows: entityRows },
+      { rank: PALETTE_RANK.inbox, rows: inboxRows },
+      { rank: PALETTE_RANK.files, rows: fileRows },
+      { rank: PALETTE_RANK.app, rows: appRows },
+      { rank: PALETTE_RANK.feature, rows: featureRows },
+      { rank: PALETTE_RANK.action, rows: actionRows },
     ]);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [actions, featureHits, panelHits, exactHits.data, hits.data, debounced, q, navigate]);
+  }, [actions, tableHits, appHits, door, featureHits, panelHits, exactHits.data, hits.data, waiting.data, filesOpen, debounced, q, navigate]);
   const total = rows.length;
 
   function runSelected(i: number) {
@@ -236,13 +316,16 @@ export function CommandPalette() {
           />
           <kbd className="shrink-0 rounded border border-line dark:border-slate-700 px-1.5 py-0.5 text-[10px] font-mono text-faint">esc</kbd>
         </div>
+        {debounced.length >= 2 && (hits.data?.kinds_failed?.length ?? 0) > 0 && (
+          <div className="px-2 pt-1.5"><SearchIncomplete compact failed={hits.data?.kinds_failed} /></div>
+        )}
         <ul className="max-h-80 overflow-y-auto py-1">
           {rows.map((r, i) => {
             const Icon = r.icon;
-            // A section header when the kind-group changes — the list is
-            // rank-sorted, so kinds stay contiguous (an exact hit leads, then
-            // commands, features, your things). No index arithmetic.
-            const header = i === 0 || rows[i - 1]!.kind !== r.kind ? SECTION_HEADER[r.kind] : null;
+            // A section header where a section starts. The list is rank-sorted,
+            // so sections stay contiguous: your things, the scan inbox, files,
+            // pages & settings.
+            const header = paletteSectionHeader(r, rows[i - 1], q.trim().length > 0);
             return (
               <Fragment key={r.key}>
                 {header && (
@@ -257,7 +340,7 @@ export function CommandPalette() {
                     onClick={() => runSelected(i)}
                     className={"w-full flex items-center gap-2.5 px-3 py-2 text-sm text-left transition " + (sel === i ? "bg-subtle dark:bg-slate-800 text-content dark:text-mortar-100" : "text-content dark:text-mortar-200")}
                   >
-                    <Icon size={15} className={(r.kind === "entity" ? "text-faint" : "text-accent") + " shrink-0"} />
+                    <Icon size={15} className={(r.kind === "entity" || r.kind === "file" || r.kind === "inbox" ? "text-faint" : "text-accent") + " shrink-0"} />
                     <span className="flex-1 min-w-0 truncate">{r.label}</span>
                     {r.hint && <span className="text-[11px] text-faint dark:text-slate-500 shrink-0">{r.hint}</span>}
                     {sel === i && <CornerDownLeft size={13} className="text-faint shrink-0" />}

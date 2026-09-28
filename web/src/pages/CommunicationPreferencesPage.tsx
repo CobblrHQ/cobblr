@@ -71,10 +71,12 @@ export function CommunicationPreferencesPage() {
       deliverable
         ? toast.success("Test DM sent - check Discord.")
         : toast.error("Still can't DM you - adjust Discord privacy settings or join our server."),
+    onError: (e: unknown) => toast.error(`Couldn't send the test DM: ${e instanceof ApiError ? e.message : String(e)}`),
   });
   const disconnect = useMutation({
     mutationFn: () => api.meDiscordDisconnect(),
     onSuccess: () => { toast.success("Discord disconnected."); qc.invalidateQueries({ queryKey: ["discord-status"] }); qc.invalidateQueries({ queryKey: ["comm-prefs"] }); },
+    onError: (e: unknown) => toast.error(`Couldn't disconnect Discord: ${e instanceof ApiError ? e.message : String(e)}`),
   });
 
   function clearDiscordParam() {

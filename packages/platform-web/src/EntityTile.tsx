@@ -10,8 +10,29 @@
 // in a Link.
 
 import type { ReactNode } from "react";
-import { useImageSrc } from "./useImageSrc";
-import { pickThumb, type SwatchFieldDef } from "./swatch";
+import { EntityPhoto } from "./EntityPhoto";
+import type { SwatchFieldDef } from "./swatch";
+
+/** The grid every wall of tiles sits in: two across on a phone, and above that
+ *  as many ~180px columns as fit, so a desktop wall is a wall of slots rather
+ *  than five posters at 370px each. One string, so every gallery, card wall and
+ *  vending wall packs the same way. */
+export const TILE_GRID = "grid grid-cols-2 gap-3 sm:grid-cols-[repeat(auto-fill,minmax(180px,1fr))]";
+
+/** A tile's name: two lines before it is cut, two lines kept for every title
+ *  so the line under it sits at one height along a row, the whole name on
+ *  hover (pass `title`). One line cut a name that had the room below it
+ *  ("XYZprinting da Vi…", #3884). One string for every tile wall; the tile
+ *  e2e (photo-tiles-never-stretch.mjs) holds the behaviour on each. */
+export const TILE_TITLE = "font-medium leading-snug text-content dark:text-mortar-100 line-clamp-2 break-words min-h-[2lh]";
+
+/** The line under a name, or null when it only says the name again. A machine
+ *  whose model is its name ("DICE" / "DICE") read as a stutter on every tile. */
+export function distinctSubtitle(title: string, subtitle: string | null | undefined): string | null {
+  const norm = (t: string) => t.trim().replace(/\s+/g, " ").toLowerCase();
+  if (!subtitle || !subtitle.trim()) return null;
+  return norm(subtitle) === norm(title) ? null : subtitle;
+}
 
 interface Props {
   /** Image URL or null. Falls back to an initial-letter card. */
@@ -39,58 +60,33 @@ interface Props {
   /** Optional ember-tinted border when the row wants attention
    *  (low-stock, blocked, expired). */
   attention?: boolean;
+  /** A live status line (a printer's "● printing 46%"). It sits INSIDE the
+   *  card, on the card's bottom line, so every tile along a row puts it at the
+   *  same height; drawn beside the card it hung below the box. */
+  status?: ReactNode;
 }
 
-export function EntityTile({ src, title, subtitle, badge, color, values, fieldDefs, attention }: Props) {
+export function EntityTile({ src, title, subtitle: rawSubtitle, badge, color, values, fieldDefs, attention, status }: Props) {
+  const subtitle = distinctSubtitle(title, rawSubtitle);
   const borderCls = attention
     ? "border-ember-300 dark:border-ember-700"
     : "border-line dark:border-slate-700";
-  // A swatch-eligible colour field with a hex WINS over the photo (yarn's
-  // colourway is its identity, not a generic catalog shot). Decided before the
-  // fetch — skip loading the image when the swatch wins.
-  const choice = pickThumb({ hasImage: !!src, values, defs: fieldDefs, color });
-  const wantSwatch = choice.kind === "swatch";
-  // Internal /api/v1/files URLs need Bearer auth, so route them
-  // through useImageSrc which blob-loads them. External URLs and
-  // null both pass through unchanged.
-  const resolved = useImageSrc(wantSwatch ? null : src);
-  const swatchHexColor = wantSwatch ? choice.hex : color;
   return (
     <div
+      data-testid="entity-tile"
       className={`rounded-xl overflow-hidden border bg-surface dark:bg-slate-900 hover:border-accent dark:hover:border-cobble-600 transition flex flex-col h-full ${borderCls}`}
     >
-      <div className="aspect-square relative bg-subtle dark:bg-slate-800">
-        {resolved ? (
-          <img
-            src={resolved}
-            alt={title}
-            loading="lazy"
-            className="w-full h-full object-cover"
-          />
-        ) : swatchHexColor ? (
-          // A swatch colour — the colour IS the identity (yarn, filament,
-          // paint), either because there's no photo or because the colourway
-          // wins over a generic catalog shot. Fill the square; the initial sits
-          // subtly on top so two same-colour items stay distinguishable.
-          <div
-            className="w-full h-full flex items-center justify-center text-3xl font-mono text-black/25 dark:text-black/30"
-            style={{ backgroundColor: swatchHexColor }}
-          >
-            {title.trim().slice(0, 1).toUpperCase()}
-          </div>
-        ) : (
-          <div className="w-full h-full flex items-center justify-center text-3xl font-mono text-faint dark:text-slate-600">
-            {title.trim().slice(0, 1).toUpperCase() || "?"}
-          </div>
-        )}
+      {/* The square comes from the frame, before the picture: a tall photo
+          cannot make its tile taller than the one beside it. */}
+      <EntityPhoto src={src} alt={title} aspect="square" color={color} values={values} fieldDefs={fieldDefs}>
         {badge && (
           <span className="absolute bottom-1.5 right-1.5 px-1.5 py-0.5 rounded text-[10px] font-mono uppercase tracking-wider bg-surface/85 dark:bg-slate-900/85 backdrop-blur text-content dark:text-mortar-100">
             {badge}
           </span>
         )}
-      </div>
+      </EntityPhoto>
       <div className="p-3 flex-1 flex flex-col gap-0.5">
-        <div className="font-medium text-content dark:text-mortar-100 truncate">
+        <div data-tile-title title={title} className={TILE_TITLE}>
           {title}
         </div>
         {subtitle && (
@@ -98,6 +94,7 @@ export function EntityTile({ src, title, subtitle, badge, color, values, fieldDe
             {subtitle}
           </div>
         )}
+        {status && <div data-tile-status className="mt-auto pt-1 min-w-0 truncate">{status}</div>}
       </div>
     </div>
   );

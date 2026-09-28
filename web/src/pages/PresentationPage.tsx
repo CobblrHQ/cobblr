@@ -864,6 +864,7 @@ function FieldsEditorModal({ entityKind, title, onClose }: { entityKind: string;
   const reset = useMutation({
     mutationFn: (name: string) => api.deleteNativeFieldOverride(activeSlug, entityKind, name),
     onSuccess: invalidate,
+    onError: (e: unknown) => toast.error(`Couldn't reset that field: ${e instanceof ApiError ? e.message : String(e)}`),
   });
   // "Just the essentials": hide every NATIVE field that isn't part of the
   // universal base, in one click — so a kind that borrows a module's shape (a

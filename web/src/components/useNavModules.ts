@@ -62,6 +62,24 @@ export function navTargetFor(name: string, appMode: boolean): string {
   return `/${name}`;
 }
 
+/** Where a TOP entry opens, whatever kind of top it is, or null for one that
+ *  is only a label (a user heading). A nav group is not a page of its own
+ *  name: it opens its first member's page. A surface that built the link from
+ *  the name itself sent "Filament" to /__navgroup__filament, a route that does
+ *  not exist, so every door asks here. */
+export function topDoor(
+  name: string,
+  groups: ReadonlyMap<string, { members: ReadonlyArray<{ name: string }> }>,
+  appMode: boolean,
+): string | null {
+  if (name.startsWith(HEADING_PREFIX) || name.startsWith("__group__")) return null;
+  if (name.startsWith(NAVGROUP_PREFIX)) {
+    const first = groups.get(name)?.members[0];
+    return first ? navTargetFor(first.name, appMode) : null;
+  }
+  return navTargetFor(name, appMode);
+}
+
 export interface NavModules {
   /** Top-level modules the user sees — ordered + with per-device hidden
    *  entries removed. */

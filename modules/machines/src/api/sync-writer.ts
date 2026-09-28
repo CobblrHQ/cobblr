@@ -7,7 +7,7 @@
 // side stays pure declarative data. Fires the module's own events so views,
 // wires, and the instance counters stay consistent with the HTTP path.
 
-import { platform, restoreRow, snapshotRow } from "@cobblr/platform-contract";
+import { findRowIdByKey, mergeRowMetadata, platform, restoreRow, snapshotRow } from "@cobblr/platform-contract";
 import { sql, type Kysely } from "kysely";
 import type { MachinesDB } from "../db.js";
 
@@ -18,6 +18,10 @@ export function registerMachinesWriter(): void {
   registered = true;
 
   platform().entities.registerWriter("machines:machine", {
+    // A record that already carries the source's key is adopted by a sync, never
+    // duplicated (#3836).
+    findByKey: async (orgId, key, value) => findRowIdByKey(await platform().tenants.getDb(orgId), "machines_machines", key, value),
+    mergeMetadata: async (orgId, id, fields) => mergeRowMetadata(await platform().tenants.getDb(orgId), "machines_machines", id, fields),
     async create(orgId, fields) {
       const db = (await platform().tenants.getDb(orgId)) as Kysely<MachinesDB>;
       const inserted = await db
@@ -105,7 +109,7 @@ export function registerMachinesWriter(): void {
       const db = (await platform().tenants.getDb(orgId)) as Kysely<MachinesDB>;
       const row = await db
         .selectFrom("machines_machines")
-        .select(["name", "short_name", "family", "type", "manufacturer", "serial_number", "state", "image_path", "notes", "metadata"])
+        .select(["name", "short_name", "family", "type", "manufacturer", "serial_number", "state", "image_path", "notes", "location_id", "metadata"])
         .where("id", "=", id)
         .executeTakeFirst();
       if (!row) return null;
@@ -119,6 +123,7 @@ export function registerMachinesWriter(): void {
         state: row.state,
         image_path: row.image_path,
         notes: row.notes,
+        location_id: row.location_id,
         metadata: row.metadata,
       };
     },

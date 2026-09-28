@@ -11,6 +11,7 @@
 import { platform, requireActionEntity } from "@cobblr/platform-contract";
 import type { Kysely } from "kysely";
 import type { PurchasesDB } from "../db.js";
+import { claimLine } from "./line-subject.js";
 
 export function registerLineHandlers(): void {
   registerUndos();
@@ -22,8 +23,11 @@ export function registerLineHandlers(): void {
 
     const description = typeof args.description === "string" ? args.description.trim() : "";
     const partId = typeof args.part_id === "string" && args.part_id.trim() ? args.part_id.trim() : null;
-    if (!description && !partId) {
-      return { ok: false, error: "say what the line is for: a description, or part_id for a part you already track" };
+    const forKind = typeof args.for_kind === "string" && args.for_kind.trim() ? args.for_kind.trim() : null;
+    const forId = typeof args.for_id === "string" && args.for_id.trim() ? args.for_id.trim() : null;
+    const subject = forKind && forId ? { kind: forKind, id: forId } : partId ? { kind: "inventory:part", id: partId } : null;
+    if (!description && !subject) {
+      return { ok: false, error: "say what the line is for: a description, or what it bought (part_id, or for_kind + for_id)" };
     }
     const unitCost = typeof args.unit_cost === "number" ? args.unit_cost : null;
 
@@ -39,7 +43,7 @@ export function registerLineHandlers(): void {
       .insertInto("purchases_order_items")
       .values({
         order_id: order.id,
-        part_id: partId,
+        part_id: null,
         description: description || null,
         qty,
         unit_cost: unitCost,
@@ -47,6 +51,7 @@ export function registerLineHandlers(): void {
       } as never)
       .returning(["id", "qty", "description"])
       .executeTakeFirstOrThrow();
+    if (subject) await claimLine({ db, orgId: ctx.orgId, userId: ctx.userId ?? null, orderId: order.id, itemId: row.id, subject });
 
     await platform().activity.log({
       orgId: ctx.orgId,

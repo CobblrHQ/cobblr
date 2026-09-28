@@ -14,6 +14,7 @@
 // Migration failure crashes the boot intentionally — a half-migrated
 // cobblr_meta is more dangerous than an offline api.
 
+import { MEMBER_DEFAULT_CAPABILITIES, memberHoldsByDefault } from "./platform/capability-grants.js";
 import { fileURLToPath } from "node:url";
 import { withFieldLabels } from "./platform/field-labels.js";
 import { dirname, resolve } from "node:path";
@@ -230,6 +231,12 @@ async function boot() {
       registerResolver: entities.registerResolver,
       registerWriter: entities.registerEntityWriter,
       getWriter: async (orgId, kind) => (await entities.getEntityWriterFor(orgId, kind)) ?? null,
+      mergeMetadata: async (orgId, kind, id, fields) => {
+        const w = await entities.getEntityWriterFor(orgId, kind);
+        if (!w?.mergeMetadata) return false;
+        await w.mergeMetadata(orgId, id, fields);
+        return true;
+      },
       dependents: async (orgId, kind, id) => {
         const w = await entities.getEntityWriterFor(orgId, kind);
         return w?.dependents ? await w.dependents(orgId, id) : null;
@@ -287,6 +294,7 @@ async function boot() {
       lookup: entities.lookup,
       lookupMany: entities.lookupMany,
       list: entities.list,
+      listAll: entities.listAll,
       walkPairings: entities.walkPairings,
       walkPath: entities.walkPath,
       listKinds: entities.listKinds,
@@ -505,6 +513,7 @@ async function boot() {
       for: categoryAxis.axisFor,
       commit: categoryAxis.commitAxisValue,
       keep: categoryAxis.keepAxisValue,
+      withdraw: categoryAxis.withdrawAxisValue,
     },
     scan: {
       registerUrlResolver: scanResolvers.registerScanUrlResolver,
@@ -564,7 +573,18 @@ async function boot() {
           .where("c.action_id", "=", actionId)
           .limit(1)
           .executeTakeFirst();
-        return !!viaRole;
+        if (viaRole) return true;
+        // What a plain member holds without a grant (take and put back stock),
+        // unless a custom role governs them.
+        if (!MEMBER_DEFAULT_CAPABILITIES.includes(actionId)) return false;
+        const custom = await meta
+          .selectFrom("workspace_role_assignments")
+          .select("user_id")
+          .where("org_id", "=", orgId)
+          .where("user_id", "=", userId)
+          .limit(1)
+          .executeTakeFirst();
+        return memberHoldsByDefault(role, actionId, !!custom);
       },
       describeBlockedCapability: (args) => describeCapabilityBlock(args),
       describeBlock: (args) => describeBlock(args),
@@ -696,6 +716,7 @@ async function boot() {
         const findTag = () =>
           tdb.selectFrom("core_tags_tags").select("id").where(sql`lower(name)`, "=", name.toLowerCase()).executeTakeFirst();
         let tag = await findTag();
+        let tagCreated = false;
         if (!tag) {
           // Two concurrent attaches of the same NEW tag race the unique index on
           // lower(name); the loser re-reads instead of failing the import.
@@ -705,6 +726,7 @@ async function boot() {
             .onConflict((oc) => oc.expression(sql`lower(name)`).doNothing())
             .returning("id")
             .executeTakeFirst();
+          tagCreated = !!ins;
           tag = ins ?? (await findTag());
         }
         if (!tag) throw new Error(`tags: could not create tag "${name}"`);
@@ -723,7 +745,17 @@ async function boot() {
             source_id: target.id,
           });
         }
-        return { tagId: tag.id, created: !!row };
+        return { tagId: tag.id, created: !!row, tagCreated };
+      },
+      withdraw: async ({ orgId, tagName }) => {
+        const tdb = (await getTenantDb(orgId)) as unknown as Kysely<TagsDB>;
+        const tag = await tdb
+          .selectFrom("core_tags_tags").select("id").where(sql`lower(name)`, "=", tagName.trim().toLowerCase()).executeTakeFirst();
+        if (!tag) return "absent";
+        const carried = await tdb.selectFrom("core_tags_assignments").select("id").where("tag_id", "=", tag.id).limit(1).executeTakeFirst();
+        if (carried) return "in-use";
+        await tdb.deleteFrom("core_tags_tags").where("id", "=", tag.id).execute();
+        return "withdrawn";
       },
       detach: async ({ orgId, tagName, target }) => {
         const [source_module, source_type] = splitKind(target.kind);

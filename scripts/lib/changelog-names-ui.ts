@@ -11,6 +11,9 @@ const CONTROL_RE = new RegExp(`\\b(${CONTROL_WORDS.join("|")})s?\\b`, "i");
 const UI_PATHS: Array<{ label: string; test: (f: string) => boolean }> = [
   { label: "web/src/**", test: (f) => /^web\/src\//.test(f) },
   { label: "modules/*/src/ui/**", test: (f) => /^modules\/[^/]+\/src\/ui\//.test(f) },
+  // The shared UI package: a control every record page renders (a field's
+  // "from order" link, a panel) ships here, not in one app's pages.
+  { label: "packages/platform-web/src/**", test: (f) => /^packages\/platform-web\/src\/.+\.tsx?$/.test(f) && !/\.test\.tsx?$/.test(f) },
   { label: "a bundle manifest (bundles/*.json)", test: (f) => /^bundles\/[^/]+\.json$/.test(f) },
 ];
 

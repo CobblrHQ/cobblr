@@ -35,7 +35,7 @@
 // Run: npx tsx scripts/lint-vocab-enumeration.ts
 
 import { readFileSync } from "node:fs";
-import { execSync } from "node:child_process";
+import { repoFiles } from "./lib/repo-files.js";
 
 const CONTRACT = "packages/platform-contract/src/index.ts";
 
@@ -72,8 +72,7 @@ function valuesOf(constName: string): string[] {
   return [...m[1]!.matchAll(/"([^"]+)"/g)].map((x) => x[1]!);
 }
 
-const files = execSync("git ls-files api/src web/src modules packages", { encoding: "utf8" })
-  .split("\n")
+const files = repoFiles(["api/src", "web/src", "modules", "packages"])
   .filter((f) => /\.(ts|tsx)$/.test(f))
   // Tests SHOULD enumerate: carrying several members through one call is the
   // very thing that proves the code under test is generic.

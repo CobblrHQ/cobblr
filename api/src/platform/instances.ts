@@ -246,6 +246,35 @@ export async function instanceRowCount(orgId: string, instanceName: string): Pro
  *  the DELETE /instances/:name route AND bundle uninstall (refcount teardown).
  *  Best-effort on the tenant data (orphaned rows beat a half-deleted instance).
  *  No-op when the instance is missing or is the default. */
+/** The other half of enable's default-instance insert. Enable makes the
+ *  module's default collection (idempotently, so every enable re-makes it); a
+ *  disable left it behind, so turning a module on and off again did not give
+ *  back the workspace you had: the empty collection stayed in every listing
+ *  and every destination picker. This takes it away when it holds nothing.
+ *  Records are never touched: a collection that holds any, or whose count
+ *  cannot be read, stays exactly as it is. */
+export async function releaseEmptyDefaultInstance(orgId: string, moduleName: string): Promise<boolean> {
+  const inst = await meta
+    .selectFrom("workspace_module_instances")
+    .selectAll()
+    .where("org_id", "=", orgId)
+    .where("module_name", "=", moduleName)
+    .where("is_default", "=", true)
+    .executeTakeFirst();
+  if (!inst) return false;
+  const count = await countInstanceItems(orgId, moduleName, inst.instance_name);
+  if (count !== null && count > 0) return false;
+  // A module that keeps no count of items cannot say it holds nothing, but a
+  // collection nobody has renamed or reshaped is only scaffolding enable will
+  // make again; one a person has customised stays.
+  if (count === null && Object.keys(await getOverrideConfig(orgId, "instance", `${moduleName}:${inst.instance_name}`)).length > 0) return false;
+  await meta.deleteFrom("workspace_module_instances").where("id", "=", inst.id).execute();
+  await deleteOverride(orgId, "instance", `${moduleName}:${inst.instance_name}`);
+  await removeNavMember(orgId, "instance", inst.instance_name);
+  await bumpWorkspaceShape(orgId);
+  return true;
+}
+
 export async function tearDownInstance(orgId: string, instanceName: string): Promise<void> {
   const inst = await getInstance(orgId, instanceName);
   if (!inst || inst.is_default) return;

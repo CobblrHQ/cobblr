@@ -267,6 +267,25 @@ export async function listApplicable(
   return orderForRecord(shown, matchKind.split(":")[0] ?? "");
 }
 
+/** What a record WOULD offer if a module that is off here were on: the
+ *  actions of this workspace's off modules that apply to the kind, by the same
+ *  rule listApplicable judges the enabled ones with. A record shows each as a
+ *  door ("Print label, turn on Labels") instead of nothing at all: the owner
+ *  looked for label printing on a record while Labels was off, and nothing on
+ *  the page said it existed (#3883). Only buttons a person presses: never an
+ *  internal or wire-only action. */
+export async function listDormant(kind: string, orgId: string): Promise<Array<EntityActionRecord & { module_label: string }>> {
+  const on = await enabledActionOwners(orgId);
+  const registered = new Map(listEntries().map((e) => [e.manifest.name, e.manifest.displayName] as const));
+  const off = [...registered.keys()].filter((m) => !on.has(m));
+  if (off.length === 0) return [];
+  const offSet = new Set(off);
+  const all = await listApplicable(kind, orgId, { alsoOn: off });
+  return all
+    .filter((a) => offSet.has(a.module_name) && a.user_invokable !== false && !a.internal && !a.wire_only)
+    .map((a) => ({ ...a, module_label: registered.get(a.module_name) ?? a.module_name }));
+}
+
 /** Native fields plus one `{ role }` entry per workspace role, for the matcher. */
 export function withWorkspaceFieldRoles(
   native: { role?: string }[],
@@ -519,6 +538,7 @@ function rowToActionRecord(row: {
   internal?: boolean;
   wire_only?: boolean;
   record_optional?: boolean;
+  finishes?: string | null;
   args_schema?: unknown;
   version: string;
   position?: number;
@@ -540,6 +560,7 @@ function rowToActionRecord(row: {
     internal: row.internal ?? false,
     wire_only: row.wire_only ?? false,
     record_optional: row.record_optional ?? false,
+    finishes: row.finishes === "used" || row.finishes === "discarded" || row.finishes === "still-good" ? row.finishes : null,
     args_schema:
       (row.args_schema as EntityActionRecord["args_schema"]) ?? null,
     version: row.version,

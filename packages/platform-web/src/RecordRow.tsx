@@ -18,6 +18,7 @@
 // a selection or a drop can resolve against later, which is why they are data
 // attributes rather than props held in a context.
 
+import { askBeforePress, type ActionArgSpec } from "@cobblr/platform-contract/action-args";
 import { useState, type ReactNode } from "react";
 import { useLater } from "./use-later";
 import { useQuery } from "@tanstack/react-query";
@@ -88,7 +89,16 @@ export function RecordRow({ kind, id, label, className, children, affordances = 
  *  endpoint, so an api that predates it sends nothing at all, and during a
  *  rollout the two halves are briefly different ages — the safe reading of
  *  silence is "ask". */
-export function rowActionNeedsConfirm(binding: { undoable?: boolean }): boolean {
+export function rowActionNeedsConfirm(binding: {
+  undoable?: boolean;
+  ask?: readonly { arg: string; label: string; kind?: "text" | "number" }[] | null;
+  args?: unknown;
+  args_schema?: Record<string, ActionArgSpec> | null;
+}): boolean {
+  // A button that asks something first (its own question, or an argument its
+  // action requires) already stops for the person, with a Cancel; a "sure?"
+  // before the question would be two stops for one press.
+  if (askBeforePress(binding.args_schema, binding.args ?? null, binding.ask ?? []).length > 0) return false;
   return binding.undoable !== true;
 }
 
@@ -117,7 +127,7 @@ function RowBindings({ kind, id }: { kind: string; id: string }) {
 }
 
 function RowActionButton({ kind, id, binding }: { kind: string; id: string; binding: PlatformActionBinding }) {
-  const { run, flash, note, failure, dismissFailure, pending } = useInvokeEntityAction({ entityKind: kind, entityId: id });
+  const { run, flash, note, failure, asking, dismissFailure, pending } = useInvokeEntityAction({ entityKind: kind, entityId: id });
   const [armed, setArmed] = useState(false);
   const later = useLater();
   const needsConfirm = rowActionNeedsConfirm(binding);
@@ -139,7 +149,7 @@ function RowActionButton({ kind, id, binding }: { kind: string; id: string; bind
             return;
           }
           setArmed(false);
-          run({ actionId: binding.action_id, bindingId: binding.binding_id });
+          run({ actionId: binding.action_id, argsSchema: binding.args_schema, binding });
         }}
         disabled={pending}
         title={armed ? `${explain} - press again to confirm` : explain}
@@ -159,7 +169,7 @@ function RowActionButton({ kind, id, binding }: { kind: string; id: string; bind
       {/* Whatever the action reports afterwards, in its own words: a label that
           reached a walk-up printer says "Printed to <printer>" a beat after the
           queue accepted it. Generic — the row never guesses what happened. */}
-      <ActionOutcome note={note} failure={failure} onDismiss={dismissFailure} />
+      <ActionOutcome note={note} failure={failure} onDismiss={dismissFailure} asking={asking} />
     </>
   );
 }

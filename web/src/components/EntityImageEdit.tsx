@@ -1,15 +1,15 @@
 // An editable entity thumbnail: click to replace the photo (upload), optionally
-// re-fetch the auto image, or remove it. Wraps the read-only EntityThumb with a
+// re-fetch the auto image, or remove it. Wraps the read-only EntityPhoto frame with a
 // hover "Change" overlay + a hidden file input, so any detail modal can let the
 // user re-select an image instead of being stuck with whatever auto-loaded.
 //
-// Generic + web-side (imports EntityThumb from platform-web, never edits it).
+// Generic + web-side (imports EntityPhoto from platform-web, never edits it).
 // `onChange(imagePath|null)` is the single write seam — the caller PATCHes the
 // entity. `onAutoFetch` is optional (only entities with an auto-image flow, e.g.
 // machines, pass it).
 
 import { useRef, useState } from "react";
-import { EntityThumb, useImageSrc, useToast } from "@cobblr/platform-web";
+import { EntityPhoto, useToast } from "@cobblr/platform-web";
 import { api, ApiError } from "../lib/api";
 
 export function EntityImageEdit({
@@ -43,10 +43,6 @@ export function EntityImageEdit({
   const fileRef = useRef<HTMLInputElement>(null);
   const [uploading, setUploading] = useState(false);
   const toast = useToast();
-  // `contain` needs the raw resolved src (internal /api/v1 urls are bearer-
-  // fetched to a blob: by this hook) because it renders its own <img> instead
-  // of the square EntityThumb tile.
-  const containSrc = useImageSrc(fit === "contain" ? src : null);
 
   async function pick(file: File) {
     if (!file.type.startsWith("image/")) {
@@ -74,20 +70,11 @@ export function EntityImageEdit({
         disabled={busy}
         title="Change photo"
         className="relative group block rounded overflow-hidden disabled:cursor-wait"
-        // contain: fix only the WIDTH so the height follows the image's own
-        // ratio. A missing image still falls back to the square placeholder
-        // tile (the initial-letter chip needs a box to sit in).
-        style={fit === "contain" && containSrc ? { width: size } : { width: size, height: size }}
+        // One square box whatever the photo: `contain` shows the whole label
+        // inside it rather than letting the picture set the header's height.
+        style={{ width: size, height: size }}
       >
-        {fit === "contain" && containSrc ? (
-          <img
-            src={containSrc}
-            alt={alt}
-            className="w-full h-auto object-contain rounded ring-1 ring-line dark:ring-slate-700"
-          />
-        ) : (
-          <EntityThumb src={src} alt={alt} size={size} className="ring-1 ring-line dark:ring-slate-700" />
-        )}
+        <EntityPhoto src={src} alt={alt} size={size} fit={fit === "contain" ? "contain" : "cover"} eager className="rounded ring-1 ring-line dark:ring-slate-700" />
         {/* TOUCH-OK: a caption overlay on a tile that is itself the button:
             tapping the image opens the editor, so nothing is unreachable. */}
         <span className="absolute inset-0 flex items-center justify-center bg-black/45 text-white text-[10px] font-mono uppercase tracking-wide opacity-0 group-hover:opacity-100 transition-opacity">

@@ -16,6 +16,7 @@ import { api, type SearchHit } from "../lib/api";
 import { QueryError } from "../components/QueryError";
 import { useActiveOrg } from "../auth/ActiveOrgContext";
 import { useDetailRoute } from "../lib/useDetailRoute";
+import { SearchIncomplete } from "../components/SearchIncomplete";
 
 export function SearchPage() {
   usePageTitle("Search");
@@ -181,6 +182,7 @@ export function SearchPage() {
       {results.isError && (
         <QueryError what="search results" onRetry={() => results.refetch()} />
       )}
+      <SearchIncomplete failed={results.data?.kinds_failed} />
       {(q || tag) && !results.isLoading && !results.isError && grouped.length === 0 && (
         <div className="text-sm text-muted italic">
           No results{q ? ` for "${q}"` : ""}

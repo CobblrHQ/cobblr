@@ -83,7 +83,15 @@ async function main(): Promise<void> {
     }
   }
 
-  const declaredIds = new Set(declared.map((d) => d.id));
+  // The kernel's own panels (Links) are declared in platform-web, since no
+  // module owns them; text-matched for the same reason as the registry.
+  const kernelSrc = readFileSync("packages/platform-web/src/panels.tsx", "utf8");
+  const kernelBlock = kernelSrc.match(/export const KERNEL_PANELS[^=]*=\s*\[([\s\S]*?)\];/)?.[1] ?? "";
+  const kernelIds = [...kernelBlock.matchAll(/id:\s*["']([a-z][a-z0-9-]*:[a-z][a-z0-9-]*)["']/g)].map((m) => m[1]!);
+  for (const id of kernelIds) {
+    if (!panels.has(id)) failures.push(`platform-web KERNEL_PANELS declares "${id}" but nothing renders it.\n    Fix: registerDetailPanel("${id}", lazy(...)) in ${REGISTRY}`);
+  }
+  const declaredIds = new Set([...declared.map((d) => d.id), ...kernelIds]);
   for (const id of [...tabs, ...panels]) {
     if (!declaredIds.has(id)) {
       failures.push(

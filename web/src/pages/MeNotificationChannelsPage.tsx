@@ -14,13 +14,7 @@ import { AreaTabs, NOTIFICATION_TABS } from "../components/AreaTabs";
 import { DiscordUnsubscribedCallout } from "../components/DiscordUnsubscribedCallout";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Plus, Send, Trash2, Zap } from "lucide-react";
-import {
-  FieldPack,
-  LabeledField,
-  Modal,
-  fieldNeed,
-  useConfirm,
-  usePageTitle, useToast, PasswordInput } from "@cobblr/platform-web";
+import { FieldPack, LabeledField, Modal, fieldNeed, useConfirm, usePageTitle, useToast, SecretInput } from "@cobblr/platform-web";
 import { useAuth } from "../auth/AuthContext";
 import {
   ApiError,
@@ -607,9 +601,9 @@ function AddBindingModal({
                         <span>{config[f.key] === "true" ? "yes" : "no"}</span>
                       </label>
                     ) : f.type === "password" ? (
-                        <PasswordInput
+                        <SecretInput
+                          secret
                           what={/token/i.test(f.label) ? "token" : /key/i.test(f.label) ? "API key" : "password"}
-                          autoComplete="off"
                           value={config[f.key] ?? ""}
                           onChange={(e) => setConfig((p) => ({ ...p, [f.key]: e.target.value }))}
                           placeholder={f.placeholder}

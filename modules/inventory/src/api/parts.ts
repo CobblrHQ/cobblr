@@ -12,9 +12,9 @@ import { daysUntilField, platform, stockDisclosureFromConfig, type FilterPredica
 import { floorDelta } from "../stock-floor.js";
 import { applyPartFilters, applyPartSort } from "./part-query.js";
 import { suggestKindsFromPhoto } from "./suggest-kinds.js";
-import { instanceOf, instanceQtyUnit, sessionUser, tenantContext, tenantDb } from "../db.js";
+import { instanceOf, instanceQtyUnit, partKindOf, sessionUser, tenantContext, tenantDb } from "../db.js";
 import { asyncHandler, badBody, requireCapability, requireRole } from "./util.js";
-import { routeUnknownToMetadata, coerceMetadata } from "@cobblr/platform-contract/entity-metadata";
+import { routeUnknownToMetadata, refuseUnknownFields, coerceMetadata } from "@cobblr/platform-contract/entity-metadata";
 import { applyJsonbMerge } from "@cobblr/platform-contract/jsonb-merge";
 import { castFieldValues } from "@cobblr/platform-contract/field-values";
 import { disclosureHandler, fieldsShowStockSignal, latchInstanceStock } from "./disclosure.js";
@@ -22,6 +22,7 @@ import { computeReconcile } from "../reconcile.js";
 import { recordConsumption } from "./stock-ledger.js";
 import { isLowStock, modelIsLow, modelOfUnit, onHandCount, openUnitsFor, openUnitsSummary } from "../on-hand.js";
 import { consumptionUnitOf } from "../consumption-unit.js";
+import { attachHoldings, holdingsCtx, liftHoldingsToCards, releaseForDelete, spreadIdentity } from "./holdings.js";
 
 export const partsRouter = Router({ mergeParams: true });
 
@@ -33,14 +34,6 @@ export const partsRouter = Router({ mergeParams: true });
  *  See docs/design-decisions/serialized-rollup-and-stock-adjust.md. */
 const UNIT_OF = "unit-of";
 
-/** The entity kind a part is addressed as, which is what its pairings target:
- *  `<instance>:item` for a named instance, `inventory:part` for the default.
- *  Get this wrong and units_count is silently 0, so both routes derive it here
- *  rather than each spelling it out. Mirrors the UI's rule (ui/context.tsx). */
-function partKindOf(req: Request): string {
-  const instance = instanceOf(req);
-  return instance === "inventory" ? "inventory:part" : `${instance}:item`;
-}
 
 /** The unit the kind's per-unit consumption is measured in, from its own
  *  field defs; null when it declares none. One rule with the detail panel
@@ -201,6 +194,9 @@ const ListQuery = z.object({
    *  See the Lego bundle's `state` field for the full vocabulary.
    *  Workspaces that don't use the Lego bundle just don't pass this. */
   lifecycle: z.enum(["bulk", "kit", "parted-out"]).optional(),
+  /** "flat": one line per place, the spreadsheet view. Default: one card per
+   *  thing with its places nested (holdings-and-units.md). */
+  rows: z.enum(["nested", "flat"]).optional(),
   limit: z.coerce.number().int().min(1).max(200).default(100),
   // Opaque cursor — base64 of {name,id} of the last row on the
   // previous page. Absent = first page.
@@ -261,6 +257,51 @@ function decodeCursor(c: string): { name?: string; id?: string; offset?: number 
   return null;
 }
 
+const listSelect = (db: ReturnType<typeof tenantDb>) =>
+  db
+    .selectFrom("inventory_parts as p")
+    .leftJoin("inventory_categories as c", "c.id", "p.category_id")
+    .select((eb) => [
+      "p.id",
+      "p.name",
+      "p.description",
+      "p.qty",
+      "p.unit",
+      "p.cost",
+      "p.min_qty",
+      "p.manufacturer",
+      "p.supplier_url",
+      "p.image_path",
+      "p.notes",
+      "p.state",
+      "p.metadata",
+      // The assortment signal. A list is where "a full bin looks empty" does
+      // the most damage, so the row needs to know the 0 in `qty` is not the
+      // whole story. See docs/design-decisions/assorted-contents.md.
+      "p.approximate_qty",
+      "p.estimated_at",
+      "p.created_at",
+      "p.updated_at",
+      "p.category_id",
+      "c.name as category_name",
+      "p.location_id",
+      "p.asset_id",
+      "p.serial_number",
+      "p.model_number",
+      "p.warranty_expires",
+      "p.lifetime_warranty",
+      "p.warranty_details",
+      "p.insured",
+      "p.archived",
+      // Aggregated reserved quantity from active allocations.
+      eb
+        .selectFrom("inventory_allocations as a")
+        .select(sql<string>`coalesce(sum(a.qty), 0)`.as("v"))
+        .whereRef("a.part_id", "=", "p.id")
+        .where("a.status", "=", "reserved")
+        .as("assigned_qty"),
+    ]);
+
 partsRouter.get(
   "/",
   asyncHandler(async (req, res) => {
@@ -269,52 +310,14 @@ partsRouter.get(
     const filter = q.data;
     const db = tenantDb(req);
 
-    let query = db
-      .selectFrom("inventory_parts as p")
-      .leftJoin("inventory_categories as c", "c.id", "p.category_id")
-      .select((eb) => [
-        "p.id",
-        "p.name",
-        "p.description",
-        "p.qty",
-        "p.unit",
-        "p.cost",
-        "p.min_qty",
-        "p.manufacturer",
-        "p.supplier_url",
-        "p.image_path",
-        "p.notes",
-        "p.state",
-        "p.metadata",
-        // The assortment signal. A list is where "a full bin looks empty" does
-        // the most damage, so the row needs to know the 0 in `qty` is not the
-        // whole story. See docs/design-decisions/assorted-contents.md.
-        "p.approximate_qty",
-        "p.estimated_at",
-        "p.created_at",
-        "p.updated_at",
-        "p.category_id",
-        "c.name as category_name",
-        "p.location_id",
-        "p.asset_id",
-        "p.serial_number",
-        "p.model_number",
-        "p.warranty_expires",
-        "p.lifetime_warranty",
-        "p.warranty_details",
-        "p.insured",
-        "p.archived",
-        // Aggregated reserved quantity from active allocations.
-        eb
-          .selectFrom("inventory_allocations as a")
-          .select(sql<string>`coalesce(sum(a.qty), 0)`.as("v"))
-          .whereRef("a.part_id", "=", "p.id")
-          .where("a.status", "=", "reserved")
-          .as("assigned_qty"),
-      ])
-      ;
+    let query = listSelect(db);
     // A view's own query, first, so its predicates AND with the page's.
-    query = applyPartFilters(query, { filter: filter.filter, where: filter.where }, { table: "p" });
+    // The reader's day: what a view's "today" compares against (a "Ready to
+    // drink" window), and the warranty countdown below. Their client's day
+    // when it sent one, else what the platform knows of them.
+    const today = await platform().accounts.dayFor(sessionUser(req).id, { said: req.query.today });
+    const unapplied: FilterPredicate[] = [];
+    query = applyPartFilters(query, { filter: filter.filter, where: filter.where, today }, { table: "p", unapplied });
     // Ordering. A view's sort orders by whatever it names (a metadata date,
     // a native column) with id as the tiebreaker; without one the list keeps
     // its (name, id) keyset order, which the cursor below depends on.
@@ -425,10 +428,7 @@ partsRouter.get(
     // What is left in an open unit is measured in the kind's consumption
     // unit (metres off a skein), never the count's (consumption-unit.ts).
     const remainderUnit = openUnits.size ? await consumptionUnitFor(req) : null;
-    // The reader's day, for the warranty countdown below: their client's day
-    // when it says one, else what the platform knows of them.
-    const today = await platform().accounts.dayFor(sessionUser(req).id, { said: req.query.today });
-    const items = pageRows.map((r) => {
+    const toItem = (r: (typeof rows)[number], openUnits: Awaited<ReturnType<typeof openUnitsFor>>, remainderUnit: string | null) => {
       const qty = Number(r.qty);
       const assigned = Number(r.assigned_qty ?? 0);
       const minQty = r.min_qty != null ? Number(r.min_qty) : null;
@@ -458,10 +458,27 @@ partsRouter.get(
         warranty_days_until,
         location_name: null as string | null,
       };
-    });
-    const filtered = lowStockOnly
+    };
+    const items = pageRows.map((r) => toItem(r, openUnits, remainderUnit));
+    let filtered = lowStockOnly
       ? items.filter((p) => p.low_stock)
       : items;
+    const cursorRow = filtered[filtered.length - 1];
+
+    // One card per thing (docs/design-decisions/holdings-and-units.md): a
+    // place's row stands in for its card, so a search or a low filter that
+    // catches one ambulance finds the card, and the card carries its rows
+    // below. `rows=flat` (the spreadsheet view) and a one-location filter keep
+    // a line per place, which is what those views are for.
+    const nest = filter.rows !== "flat" && !filter.location_id;
+    if (nest) {
+      filtered = await liftHoldingsToCards(holdingsCtx(req), filtered, async (ids) => {
+        const cards = await listSelect(db).where("p.id", "in", ids).where("p.instance", "=", instanceOf(req)).execute();
+        const ou = await openUnitsFor(db, cards.map((c) => c.id));
+        const ru = ou.size ? await consumptionUnitFor(req) : null;
+        return cards.map((c) => toItem(c, ou, ru));
+      });
+    }
 
     // Cross-module read for the location name: go through the
     // resolver (no direct table read) per module-layers.md.
@@ -541,8 +558,9 @@ partsRouter.get(
     // be an N+1 on the hottest read in the module.
     const unitCounts = await unitCountsFor(req, ctx.org.id, filtered.map((p) => p.id));
     const withUnits = filtered.map((p) => ({ ...p, units_count: unitCounts.get(p.id)?.count ?? 0 }));
+    const withRows = nest ? await attachHoldings(holdingsCtx(req), withUnits) : withUnits;
 
-    const last = filtered[filtered.length - 1];
+    const last = cursorRow;
     const next_cursor = !hasMore || !last
       ? null
       : viewSorted
@@ -559,10 +577,10 @@ partsRouter.get(
       // Field defs are keyed by the kind the caller asked for: a non-default
       // instance carries its own defs under `<instance>:item`.
       instanceOf(req) === "inventory" ? "inventory:part" : `${instanceOf(req)}:item`,
-      withUnits,
+      withRows,
     );
 
-    res.json({ items: labelled, next_cursor });
+    res.json({ items: labelled, next_cursor, ...(unapplied.length ? { unapplied } : {}) });
   }),
 );
 
@@ -944,7 +962,7 @@ partsRouter.get(
     }
     const items = await db
       .selectFrom("inventory_consumption")
-      .select(["id", "delta", "reason", "source_kind", "source_id", "at"])
+      .select(["id", "delta", "reason", "source_kind", "source_id", "kind", "at"])
       .where("part_id", "=", id)
       .orderBy("at", "desc")
       .limit(200)
@@ -995,10 +1013,22 @@ partsRouter.post(
   }),
 );
 
+/** The names a part write may carry: its own columns, plus, on a collection
+ *  whose items lift to a parent type, the parent's key and copy fields. A
+ *  scanned spool brings its material and colour so its type can be found or
+ *  made (auto-lift below); the bundle declares them as that collection's lift
+ *  keys, so they are not undeclared names (#3855). */
+function partWriteNames(req: unknown): ReadonlySet<string> {
+  const parent = (req as { instanceConfig?: { parent?: { key_fields?: unknown; copy_fields?: unknown } } }).instanceConfig?.parent;
+  const extra = [parent?.key_fields, parent?.copy_fields].flatMap((v) => (Array.isArray(v) ? v.filter((x): x is string => typeof x === "string") : []));
+  return extra.length ? new Set([...NATIVE_PART_KEYS, ...extra]) : NATIVE_PART_KEYS;
+}
+
 partsRouter.post(
   "/",
   asyncHandler(async (req, res) => {
     if (!(await requireCapability(req, res, "inventory:create-part"))) return;
+    await refuseUnknownFields(req, req.body, partWriteNames(req), "inventory:part");
     const routed = routeUnknownToMetadata(req.body, NATIVE_PART_KEYS);
     const parsed = PartCreate.safeParse(routed);
     if (!parsed.success) return badBody(res, parsed.error);
@@ -1236,6 +1266,7 @@ partsRouter.patch(
   "/:id",
   asyncHandler(async (req, res) => {
     if (!(await requireCapability(req, res, "inventory:update-part"))) return;
+    await refuseUnknownFields(req, req.body, partWriteNames(req), "inventory:part");
     const routed = routeUnknownToMetadata(req.body, NATIVE_PART_KEYS);
     const parsed = PartUpdate.safeParse(routed);
     if (!parsed.success) return badBody(res, parsed.error);
@@ -1309,6 +1340,9 @@ partsRouter.patch(
       res.status(404).json({ error: { code: "not_found", message: "part not found" } });
       return;
     }
+    // One thing, one identity: a rename (or a new photo, category...) on any
+    // row of a card reaches the card and every place it is kept.
+    await spreadIdentity(holdingsCtx(req), updated.id, patch);
 
     await platform().activity.log({
       orgId: ctx.org.id,
@@ -1371,6 +1405,10 @@ partsRouter.delete(
     const ctx = tenantContext(req);
     const session = sessionUser(req);
 
+    // A card's holdings outlive it (stock in an ambulance is not deleted with
+    // the closet's record), and a deleted holding leaves no link behind.
+    await releaseForDelete(holdingsCtx(req), id);
+
     const deleted = await db
       .deleteFrom("inventory_parts")
       .where("id", "=", id)
@@ -1406,8 +1444,14 @@ partsRouter.post(
     // this route backs (inventory:adjust-stock) is wire-fired and deliberately
     // not a button, so it is not grantable; gating the ROUTE on it meant a
     // member could be refused here and nobody could say yes
-    // (lint:capability-gates-grantable). Changing a count is editing the part.
-    if (!(await requireCapability(req, res, "inventory:update-part"))) return;
+    // (lint:capability-gates-grantable). Changing a count is "Take and put
+    // back stock", which a plain member holds by default; "Edit parts" still
+    // covers it for anyone granted that instead.
+    const who = { orgId: tenantContext(req).org.id, userId: sessionUser(req).id, role: tenantContext(req).role };
+    const mayCount =
+      (await platform().auth.userHasCapability({ ...who, actionId: "inventory:count-stock" })) ||
+      (await platform().auth.userHasCapability({ ...who, actionId: "inventory:update-part" }));
+    if (!mayCount && !(await requireCapability(req, res, "inventory:count-stock"))) return;
     const parsed = StockAdjust.safeParse(req.body);
     if (!parsed.success) return badBody(res, parsed.error);
     const id = req.params.id;

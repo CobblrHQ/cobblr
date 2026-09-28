@@ -33,6 +33,8 @@ export interface CoreAiCapabilityDefaultsTable {
 export interface CoreAiCallsTable {
   id: Generated<string>;
   provider_id: string;
+  /** The connection's own name when the call was made (0014). */
+  provider_label: string | null;
   capability: string;
   model: string | null;
   /** Who initiated the call (null = system-initiated, e.g. a wire). */

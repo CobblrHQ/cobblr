@@ -13,7 +13,7 @@ import { defineModule } from "@cobblr/platform-contract";
 
 export default defineModule({
   name: "inventory",
-  version: "0.9.30",
+  version: "0.11.0",
   displayName: "Inventory",
   description:
     "Parts, locations, categories, stock tracking, polymorphic allocations. The generalised toolkit you'd otherwise Frankenstein from a spreadsheet.",
@@ -206,10 +206,13 @@ export default defineModule({
         label: "Use one",
         face: "stock",
         description:
-          "Knock a single unit off a part's on-hand qty: the zero-friction 'I took one out' tap, for ONE of several. Binary, no number entry (that's Adjust stock). Decrements through the same path as adjust-stock, so it writes the usage ledger and the low-stock automation still fires. Not for marking or tagging a thing as low (that is core-tags:tag-record), and not for the last one (that is Used up).",
+          "Knock a single unit off a part's on-hand qty: the zero-friction 'I took one out' tap, for ONE of several. Binary, no number entry (that's Adjust stock). Decrements through the same path as adjust-stock, so it writes the usage ledger and the low-stock automation still fires. Args: { note? } - a note about this one (how it tasted, what it was for), kept dated on the use's statement line. Not for marking or tagging a thing as low (that is core-tags:tag-record), and not for the last one (that is Used up).",
         appliesTo: { kinds: ["inventory:part"] },
         invokeHandler: "inventory.use-one",
         userInvokable: true,
+        argsSchema: {
+          note: { label: "A note about this one", type: "text" },
+        },
       },
       {
         id: "inventory:mark-opened",
@@ -234,6 +237,7 @@ export default defineModule({
         id: "inventory:use-up",
         examples: ["used it up", "that is all gone", "ate the last one"],
         undoable: true,
+        finishes: "used",
         label: "Used up",
         face: "stock",
         description:
@@ -250,6 +254,7 @@ export default defineModule({
         id: "inventory:mark-spoiled",
         examples: ["it went bad", "had to bin it", "this one spoiled before I got to it"],
         undoable: true,
+        finishes: "discarded",
         label: "Threw it out",
         face: "perishable",
         description:
@@ -261,6 +266,24 @@ export default defineModule({
         invokeHandler: "inventory.mark-spoiled",
         userInvokable: true,
         argsSchema: {
+          partId: { label: "Which item", type: "text" },
+          timezone: { label: "Timezone to date it in", type: "text" },
+        },
+      },
+      {
+        id: "inventory:still-good",
+        examples: ["it's still fine", "checked it, still good", "the milk is ok for a few more days"],
+        undoable: true,
+        finishes: "still-good",
+        label: "Still good",
+        face: "perishable",
+        description:
+          "Record that one past (or near) its date was checked and is still fine: its date moves to a few days from today (from its own date when that is later), so it stops asking until then. Only the oldest dated lot moves. Args: { days? (default 3), partId?, timezone? }.",
+        appliesTo: { hasFieldRole: "expiry" },
+        invokeHandler: "inventory.still-good",
+        userInvokable: true,
+        argsSchema: {
+          days: { label: "How many more days", type: "number" },
           partId: { label: "Which item", type: "text" },
           timezone: { label: "Timezone to date it in", type: "text" },
         },
@@ -350,6 +373,50 @@ export default defineModule({
           quantity: { label: "How many to split off", type: "number" },
         },
       },
+      // One thing kept in several places (docs/design-decisions/holdings-and-units.md).
+      // Each is a panel gesture on the record's detail; these are the same
+      // moves for the assistant and a wire.
+      {
+        id: "inventory:add-holding",
+        examples: ["we also keep saline in ambulance 3", "keep 10 of these in the van too"],
+        label: "Keep it somewhere else too",
+        face: "stock",
+        description:
+          "This item is also kept at another location: add a row for that place, with its own count and minimum, under the same item (one card, a row per place). Refused when it is already kept there. Args: { location_id (a core-locations:location id), qty?: number, min_qty?: number }.",
+        appliesTo: { traits: ["fungible"] },
+        invokeHandler: "inventory.add-holding",
+        userInvokable: false,
+        argsSchema: {
+          location_id: { label: "Where", type: "text", required: true },
+          qty: { label: "How many there", type: "number" },
+          min_qty: { label: "Minimum there", type: "number" },
+        },
+      },
+      {
+        id: "inventory:combine-holdings",
+        examples: ["the gauze in the closet and in ambulance 2 are the same thing", "combine these into one item"],
+        label: "Combine into one item",
+        face: "stock",
+        description:
+          "These other records are the same thing kept at other places: make each a row of this item, so it reads as one card with a row per place. Never done without being asked. Refused when two would sit at the same place. Args: { ids: list of the other records' ids }.",
+        appliesTo: { traits: ["fungible"] },
+        invokeHandler: "inventory.combine-holdings",
+        userInvokable: false,
+        argsSchema: {
+          ids: { label: "The same thing elsewhere", type: "list", required: true },
+        },
+      },
+      {
+        id: "inventory:split-holding",
+        examples: ["the stock in the van is its own thing", "split this place out"],
+        label: "Split into its own",
+        face: "stock",
+        description:
+          "This place's stock stops being a row of its item and becomes a record of its own, keeping its count, minimum and history. Run it on the place's record.",
+        appliesTo: { traits: ["fungible"] },
+        invokeHandler: "inventory.split-holding",
+        userInvokable: false,
+      },
       {
         id: "inventory:mark-finished",
         examples: ["ate the last one", "that's the end of the jar", "all gone"],
@@ -415,6 +482,7 @@ export default defineModule({
           restock: { label: "This is stock that arrived: date it today (optional)", type: "boolean" },
           timezone: { label: "Timezone to date arriving stock in (optional)", type: "text" },
           reason: { label: "Reason (optional)", type: "text" },
+          correction: { label: "This sets the count to what is actually there, a recount: filed as a correction, never as use or a purchase (optional)", type: "boolean" },
           sourceKind: { label: "Record kind this adjustment came from (optional)", type: "text" },
           sourceId: { label: "Record id this adjustment came from (optional)", type: "text" },
         },

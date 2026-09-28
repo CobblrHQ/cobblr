@@ -25,10 +25,10 @@
  */
 import { readFileSync } from "node:fs";
 import { execFileSync } from "node:child_process";
+import { repoFiles } from "./lib/repo-files.js";
 
 const ROOT = execFileSync("git", ["rev-parse", "--show-toplevel"], { encoding: "utf8" }).trim();
-const files = execFileSync("git", ["-C", ROOT, "ls-files", "scripts"], { encoding: "utf8" })
-  .split("\n")
+const files = repoFiles(["scripts"], ROOT)
   .filter((f) => /\.(ts|mts|mjs)$/.test(f));
 
 /** This file quotes the bad form to explain it; so does the helper it points at. */

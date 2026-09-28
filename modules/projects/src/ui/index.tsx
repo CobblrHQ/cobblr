@@ -27,11 +27,13 @@ interface ProjectsUIProps {
   /** The table's file intake, when its bundle declares one (Patterns: each
    *  PDF dropped on it becomes a pattern). */
   fileIntake?: FileIntakeDecl;
+  /** One line under the title saying what goes in the table. */
+  hint?: string | null;
 }
 
-export function ProjectsUI({ orgSlug, getToken, instance, displayName, itemNoun, fileIntake }: ProjectsUIProps) {
+export function ProjectsUI({ orgSlug, getToken, instance, displayName, itemNoun, fileIntake, hint }: ProjectsUIProps) {
   return (
-    <ProjectsProvider orgSlug={orgSlug} getToken={getToken} instance={instance} displayName={displayName} itemNoun={itemNoun} fileIntake={fileIntake}>
+    <ProjectsProvider orgSlug={orgSlug} getToken={getToken} instance={instance} displayName={displayName} itemNoun={itemNoun} fileIntake={fileIntake} hint={hint}>
       <Routes>
         <Route index element={<ProjectsListPage />} />
         {/* Bundle setup-cards / next-steps deep-link to

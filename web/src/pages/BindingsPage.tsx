@@ -42,6 +42,7 @@ export function BindingsPage() {
       toast.info(`Wire ${b.enabled ? "disabled" : "enabled"}.`);
       void qc.invalidateQueries({ queryKey: ["bindings", slug] });
     },
+    onError: (e: unknown) => toast.error(`Couldn't switch that wire: ${e instanceof Error ? e.message : String(e)}`),
   });
 
   return (

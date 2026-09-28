@@ -6,8 +6,10 @@
 // The host also reads `navItems` to render the module's nav entries
 // in the platform shell.
 
+import type { ConnectorImportDecl } from "@cobblr/platform-contract";
 import { Routes, Route, NavLink, useLocation } from "react-router-dom";
 import { Boxes } from "lucide-react";
+import { TableTitle } from "@cobblr/platform-web";
 // Side-effect: registers the inventory "at a glance" dashboard tile through
 // platform-web's registerDashboardWidget seam when this UI bundle loads.
 import "./DashboardWidget";
@@ -47,13 +49,17 @@ interface InventoryUIProps {
   /** When items belong to a parent "type" in another instance (Spool → Filament
    *  type), the forms show a parent picker + write an `instance-of` pairing. */
   parent?: ParentConfig;
+  /** The table's "Import from <service>" button, when its bundle declares one. */
+  connectorImport?: ConnectorImportDecl;
+  /** One line under the title saying what goes in the table. */
+  hint?: string | null;
 }
 
-export function InventoryUI({ orgSlug, getToken, instance, displayName, itemNoun, itemNounPlural, qtyUnit, countWords, parent }: InventoryUIProps) {
+export function InventoryUI({ orgSlug, getToken, instance, displayName, itemNoun, itemNounPlural, qtyUnit, countWords, parent, connectorImport, hint }: InventoryUIProps) {
   return (
-    <InventoryProvider orgSlug={orgSlug} getToken={getToken} instance={instance} itemNoun={itemNoun} itemNounPlural={itemNounPlural} qtyUnit={qtyUnit} countWords={countWords} parent={parent}>
+    <InventoryProvider orgSlug={orgSlug} getToken={getToken} instance={instance} itemNoun={itemNoun} itemNounPlural={itemNounPlural} qtyUnit={qtyUnit} countWords={countWords} parent={parent} connectorImport={connectorImport}>
       <div className="space-y-4">
-        <Header title={displayName ?? "inventory"} />
+        <Header title={displayName ?? "inventory"} hint={hint} />
         <Routes>
           {/* Both render the list; parts/:id additionally opens the
               detail MODAL (D4) — the list stays mounted underneath,
@@ -76,7 +82,7 @@ export function InventoryUI({ orgSlug, getToken, instance, displayName, itemNoun
   );
 }
 
-function Header({ title }: { title: string }) {
+function Header({ title, hint }: { title: string; hint?: string | null }) {
   // The list tab is named after WHAT IT HOLDS. The noun is already in context
   // (every instance declares it) and the tabs used to throw it away: a base
   // inventory hardcoded "Parts" and a skinned instance fell back to the generic
@@ -106,9 +112,7 @@ function Header({ title }: { title: string }) {
     pathname.replace(/\/(settings|items|parts)(\/.*)?$/, "");
   return (
     <div className="flex items-baseline gap-4 border-b border-line dark:border-slate-700 pb-3">
-      <h1 className="font-display text-2xl font-extrabold text-content dark:text-mortar-100 page-title">
-        {title}
-      </h1>
+      <TableTitle title={title} hint={hint} />
       {/* The default inventory page reads "// parts // settings". On a skinned
           instance (Yarn) "parts" is the wrong noun, but settings still has to be
           reachable — it's where you edit a list's dropdown options (otherwise

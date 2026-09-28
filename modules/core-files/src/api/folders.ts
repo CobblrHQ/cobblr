@@ -41,6 +41,7 @@ foldersRouter.get(
       .selectFrom("core_files_files")
       .select(["folder_id", db.fn.countAll<string>().as("n")])
       .where("deleted_at", "is", null)
+      .where("same_as", "is", null)
       .groupBy("folder_id")
       .execute();
     const byFolder = new Map(counts.map((c) => [c.folder_id ?? "", Number(c.n)]));

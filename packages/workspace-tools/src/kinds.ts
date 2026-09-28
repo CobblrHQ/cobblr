@@ -25,8 +25,8 @@ export interface KindRec {
    *  a field name, or "workspace". Absent = this kind is never deduplicated. */
   duplicate_scope?: string | null;
   /** This workspace's user-defined fields (module_field_defs). Values live in
-   *  the record's metadata blob; the writers fold unknown body keys there, so
-   *  these names are directly settable on create/update. */
+   *  the record's metadata blob, and these names are directly settable on
+   *  create/update. A name that is neither these nor `fields` is refused. */
   custom_fields?: Array<{
     name: string;
     label?: string;
@@ -35,6 +35,9 @@ export interface KindRec {
     choices?: string[];
     /** What the field means, as its form explains it. */
     help?: string;
+    /** Set when the field is workspace-wide (every physical thing, say)
+     *  rather than defined on this kind alone. */
+    scope?: string;
   }>;
 }
 
@@ -125,7 +128,7 @@ export function summarizeKind(k: KindRec): Record<string, unknown> {
       ...(f.choices?.length ? { choices: f.choices } : {}),
     })),
     // User-defined fields — settable like native ones (values land in the
-    // record's metadata; the API folds unknown keys there on write).
+    // record's metadata; a name the kind does not have is refused on write).
     ...(k.custom_fields?.length
       ? {
           custom_fields: k.custom_fields.map((f) => ({
@@ -134,6 +137,7 @@ export function summarizeKind(k: KindRec): Record<string, unknown> {
             type: f.type ?? "text",
             ...(f.required ? { required: true } : {}),
             ...(f.choices?.length ? { choices: f.choices } : {}),
+            ...(f.scope ? { scope: f.scope } : {}),
           })),
         }
       : {}),

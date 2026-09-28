@@ -329,12 +329,33 @@ async function fetchDetailObj(
   return obj != null && typeof obj === "object" ? obj : null;
 }
 
+/** Where the mapping stores the source's own id on the target record: the
+ *  first map entry (top level, or one key inside `metadata`) whose extract is
+ *  the type's idField. A source that maps `metadata.source_id: "$.id"`
+ *  with idField "$.id" has the key metadata.source_id; a record that already
+ *  carries that value is adopted by the sync instead of duplicated (#3836). */
+export function keyFieldOf(et: Pick<SyncEntityTypeManifest, "idField" | "map">): { field: string; metadata: boolean } | null {
+  const id = et.idField;
+  const isId = (spec: unknown): boolean =>
+    spec === id || (typeof spec === "object" && spec !== null && (spec as { from?: unknown }).from === id);
+  for (const [field, spec] of Object.entries(et.map ?? {})) {
+    if (isId(spec)) return { field, metadata: false };
+  }
+  const meta = (et.map ?? {})["metadata"] as { object?: Record<string, unknown> } | undefined;
+  for (const [field, spec] of Object.entries(meta?.object ?? {})) {
+    if (isId(spec)) return { field, metadata: true };
+  }
+  return null;
+}
+
 function buildEntityType(manifest: SyncSourceManifest, et: SyncEntityTypeManifest): SyncEntityType {
   return {
     key: et.key,
     label: et.label,
     targetKind: et.targetKind,
     targetInstance: et.targetInstance ?? null,
+    keyField: keyFieldOf(et),
+    sourceLabel: manifest.name,
     async fetchBinary(ctx, urlOrPath) {
       try {
         const base = baseFor(manifest, ctx);

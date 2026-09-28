@@ -167,6 +167,7 @@ function BuildDetailModal({ buildId, api, orgSlug, onClose }: { buildId: string;
   const removeComponent = useMutation({
     mutationFn: (cid: string) => api.removeComponent(buildId, cid),
     onSuccess: invalidate,
+    onError: (e) => toast.error(e instanceof BuildsApiError ? e.message : String(e)),
   });
   const doBuild = useMutation({
     mutationFn: (v: { n: number; serial?: string }) => api.build(buildId, v.n, v.serial),
@@ -192,6 +193,7 @@ function BuildDetailModal({ buildId, api, orgSlug, onClose }: { buildId: string;
   const removeOperation = useMutation({
     mutationFn: (opId: string) => api.removeOperation(buildId, opId),
     onSuccess: invalidate,
+    onError: (e) => toast.error(e instanceof BuildsApiError ? e.message : String(e)),
   });
   const logTime = useMutation({
     mutationFn: (v: { opId: string; kind: "labor" | "machine" | "setup"; minutes: number }) =>

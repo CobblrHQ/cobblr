@@ -51,6 +51,12 @@ registerDetailPanel(
   "core-discussion:conversation",
   lazy(() => import("../features/core-discussion/panel").then((m) => ({ default: m.DiscussionPanel }))),
 );
+// Links are the kernel's own (pairings), so platform-web declares this panel
+// (KERNEL_PANELS) rather than a module.
+registerDetailPanel(
+  "platform:links",
+  lazy(() => import("../features/links/panel").then((m) => ({ default: m.LinksPanel }))),
+);
 registerDetailPanel(
   "core-shipments:shipment",
   lazy(() => import("../features/core-shipments/shipment").then((m) => ({ default: m.ShipmentPanel }))),

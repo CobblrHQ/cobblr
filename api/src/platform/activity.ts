@@ -11,7 +11,7 @@
 import { sql } from "kysely";
 import { meta } from "../db/meta.js";
 import { env } from "../env.js";
-import { currentActor } from "../lib/request-context.js";
+import { currentActor, currentVia, type Via } from "../lib/request-context.js";
 import type { AuthMethod } from "../db/schema.js";
 
 export interface ActivityRef {
@@ -37,6 +37,9 @@ export interface LogParams {
   authMethod?: AuthMethod;
   /** Override the API token id. Default: pull from request context. */
   apiTokenId?: string | null;
+  /** How the write was made (MCP, assistant, automation). Default: the
+   *  current async chain's via (runVia), else none. Pass null to force none. */
+  via?: Via | null;
 }
 
 export async function log(p: LogParams): Promise<void> {
@@ -48,6 +51,7 @@ export async function log(p: LogParams): Promise<void> {
     p.authMethod ?? (actor ? actor.authMethod : "system");
   const apiTokenId =
     p.apiTokenId !== undefined ? p.apiTokenId : (actor?.apiTokenId ?? null);
+  const via = p.via !== undefined ? p.via : currentVia();
 
   await meta
     .insertInto("activity_log")
@@ -61,6 +65,8 @@ export async function log(p: LogParams): Promise<void> {
       diff: p.diff === undefined ? null : (p.diff as object),
       auth_method: authMethod,
       api_token_id: apiTokenId,
+      via_kind: via?.kind ?? null,
+      via_label: via?.label ?? null,
     })
     .execute();
 
@@ -113,6 +119,8 @@ export interface ActivityEntry {
   diff: unknown | null;
   auth_method: AuthMethod;
   api_token_id: string | null;
+  via_kind: string | null;
+  via_label: string | null;
   occurred_at: Date;
 }
 
@@ -130,6 +138,8 @@ export async function list(p: ListParams): Promise<ActivityEntry[]> {
       "diff",
       "auth_method",
       "api_token_id",
+      "via_kind",
+      "via_label",
       "occurred_at",
     ])
     .where("org_id", "=", p.orgId)

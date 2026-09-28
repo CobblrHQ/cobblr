@@ -13,10 +13,15 @@
 
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { Minus, Plus } from "lucide-react";
+import { MutationError } from "@cobblr/platform-web";
+import { rollupHoldings, type CardRollup } from "@cobblr/platform-contract/holdings";
 import { useInventory } from "./context";
+import type { HoldingRow } from "./api";
 
-/** The slice of a cached parts-list row a stock adjust touches. */
-type QtyRow = { id: string; qty: number | string; available_qty: number | string };
+/** The slice of a cached parts-list row a stock adjust touches. A card kept in
+ *  several places carries its places as `holdings`, and a place's stepper
+ *  moves that row and the card's top line. */
+type QtyRow = { id: string; qty: number | string; available_qty: number | string; holdings?: HoldingRow[]; rollup?: CardRollup };
 type QtyPage = { items: QtyRow[] };
 type QtyCache = { pages: QtyPage[]; pageParams: unknown[] };
 
@@ -47,10 +52,19 @@ export function QtyStepper({
           pages: data.pages.map((pg) => ({
             ...pg,
             items: pg.items.map((it) => {
-              if (it.id !== partId) return it;
+              let next = it;
+              if (it.holdings?.some((h) => h.id === partId)) {
+                // Low here is the row's own minimum; what is reserved there
+                // arrives with the next refetch, which the stale mark asks for.
+                const holdings = it.holdings.map((h) =>
+                  h.id === partId ? { ...h, qty: Number(resp.qty), low: h.min_qty != null && Number(resp.qty) <= h.min_qty } : h,
+                );
+                next = { ...next, holdings, rollup: rollupHoldings(holdings) };
+              }
+              if (it.id !== partId) return next;
               const delta = Number(resp.qty) - Number(it.qty);
               return {
-                ...it,
+                ...next,
                 qty: resp.qty,
                 available_qty: Number(it.available_qty) + delta,
               };
@@ -80,6 +94,9 @@ export function QtyStepper({
       ? "text-lg w-10"
       : "text-sm w-8";
   return (
+    // A refused change says why, under the buttons (MutationError): a member
+    // without the right to change counts used to press −1 and see nothing.
+    <span className="inline-flex flex-col items-start" onClick={(e) => e.stopPropagation()}>
     <span
       className="inline-flex items-center gap-1"
       title="Adjust stock"
@@ -107,6 +124,8 @@ export function QtyStepper({
       >
         <Plus size={size === "lg" ? 13 : 11} />
       </button>
+    </span>
+    <MutationError mutation={adjust} className={size === "lg" ? "mt-1 max-w-xs" : "mt-0.5 max-w-[14rem] text-[11px]"} />
     </span>
   );
 }

@@ -116,6 +116,7 @@ function ChannelsSection({ slug, channels }: { slug: string; channels: DigifabCh
   const del = useMutation({
     mutationFn: (id: string) => api.deleteDigifabChannel(slug, id),
     onSuccess: () => { toast.success("Channel removed"); inval(); },
+    onError: (e: unknown) => toast.error(`Couldn't delete that channel: ${e instanceof ApiError ? e.message : String(e)}`),
   });
   const test = useMutation({
     mutationFn: (id: string) => api.testDigifabChannel(slug, id),
@@ -211,7 +212,11 @@ function RuleEditor({
     onSuccess: onSaved,
     onError: (e) => toast.error(e instanceof ApiError ? e.message : "Couldn't save rule"),
   });
-  const del = useMutation({ mutationFn: () => api.deleteDigifabRule(slug, rule!.id), onSuccess: onDeleted });
+  const del = useMutation({
+    mutationFn: () => api.deleteDigifabRule(slug, rule!.id),
+    onSuccess: onDeleted,
+    onError: (e: unknown) => toast.error(`Couldn't delete that rule: ${e instanceof ApiError ? e.message : String(e)}`),
+  });
   // Fire a real update right now against the chosen printer's live telemetry.
   const testFire = useMutation({
     mutationFn: () => api.testFireDigifabRule(slug, {

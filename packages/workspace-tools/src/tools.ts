@@ -23,23 +23,33 @@ import {
   summarizeKind,
 } from "./kinds.js";
 import { explainRecords } from "./field-meanings.js";
+import { CURSOR_PARAM, decodeCursor, pageEnd, type Paging } from "./paging.js";
 
 export type ToolMode = "read" | "write";
 
-export interface WorkspaceTool {
+interface WorkspaceToolBase {
   /** Bare name — consumers prefix as needed (MCP: `cobblr_<name>`). */
   name: string;
   description: string;
-  mode: ToolMode;
   params: z.ZodRawShape;
   execute(api: WorkspaceApi, args: Record<string, unknown>): Promise<ToolResult>;
 }
+
+/** A read tool must say how a caller gets every row it can return (paging.ts):
+ *  required here so a new list tool cannot ship capped with no way past it. */
+export type WorkspaceTool =
+  | (WorkspaceToolBase & { mode: "read"; paging: Paging })
+  | (WorkspaceToolBase & { mode: "write"; paging?: never });
 
 /** Clamp big reads so a tool result stays prompt-sized. */
 const LIST_LIMIT_MAX = 50;
 /** count_records walks the whole kind in pages; the route caps a page at 200. */
 const COUNT_PAGE = 200;
 const COUNT_SCAN_MAX = 5000;
+/** search_records: rows of EACH kind per page (the search route's own default). */
+const SEARCH_PER_KIND = 10;
+/** list_scan_inbox with a text filter reads up to this many 200-row pages. */
+const SCAN_INBOX_TEXT_PAGES = 10;
 
 /** Case-insensitive "does any text on this record contain q" — title, every
  *  field, nested bags. What a person means by "the Bambu" or "my deltas". */
@@ -53,6 +63,42 @@ export function recordMatchesText(rec: unknown, q: string): boolean {
     text = String(rec);
   }
   return text.toLowerCase().includes(needle);
+}
+
+/** What list_records' `q` does, said once: the parameter's description and
+ *  the behaviour below come from here, so a model reading the description is
+ *  told what the results actually are. The server's own `q` matches beyond the
+ *  name for some kinds, so "name first, other fields only if no name match"
+ *  was not true; each result now says which field matched instead (#3814). */
+export const LIST_Q_MEANS = "Text filter over name and other text; each result's matched_on says which, name matches first";
+
+/** Which field of a record a text query matched: "name" when its name does,
+ *  else the first other text field that does, else null. */
+export function matchedOn(rec: unknown, q: string): string | null {
+  const needle = q.trim().toLowerCase();
+  if (!needle || !rec || typeof rec !== "object") return null;
+  const r = rec as Record<string, unknown>;
+  const fields = (r.fields && typeof r.fields === "object" ? r.fields : r) as Record<string, unknown>;
+  const has = (v: unknown) => typeof v === "string" && v.toLowerCase().includes(needle);
+  if (has(r.title) || has(fields.name) || has(r.name)) return "name";
+  const bags: Array<Record<string, unknown>> = [fields];
+  if (fields.metadata && typeof fields.metadata === "object") bags.push(fields.metadata as Record<string, unknown>);
+  for (const bag of bags) {
+    for (const [k, v] of Object.entries(bag)) {
+      if (k === "name" || k === "title" || k === "metadata") continue;
+      if (has(v)) return k;
+    }
+  }
+  return null;
+}
+
+/** A page's items labelled with what matched, name matches first. */
+function labelMatches<T>(items: T[], q: string): Array<T & { matched_on?: string }> {
+  const labelled = items.map((it) => {
+    const on = matchedOn(it, q);
+    return (on ? { ...it, matched_on: on } : it) as T & { matched_on?: string };
+  });
+  return [...labelled.filter((i) => i.matched_on === "name"), ...labelled.filter((i) => i.matched_on !== "name")];
 }
 
 /** A record's value for a key: top-level, or inside `fields` / `data`. */
@@ -93,18 +139,26 @@ async function walkKind(
 
 /** list_records' fallback when the kind's own search found nothing: the same
  *  page shape, matched over every text field, and labelled as such. */
-async function scanByText(api: WorkspaceApi, kind: string, q: string, limit: number, opts: { includeRetired?: boolean } = {}): Promise<unknown | null> {
+async function scanByText(
+  api: WorkspaceApi,
+  kind: string,
+  q: string,
+  limit: number,
+  opts: { includeRetired?: boolean } = {},
+  offset = 0,
+): Promise<{ body: Record<string, unknown>; next: number | null } | null> {
   const walked = await walkKind(api, kind, opts);
   if (!walked.ok) return null;
   const hits = walked.items.filter((r) => recordMatchesText(r, q));
-  const items = hits.slice(0, limit);
+  const items = hits.slice(offset, offset + limit);
+  const end = offset + items.length;
   const notes: string[] = [];
-  if (items.length < hits.length) notes.push(`PARTIAL: ${items.length} of ${hits.length} records. Do not count, rank, or say "none" from this page; use count_records for exact totals.`);
+  if (end < hits.length) notes.push(`PARTIAL: records ${offset + 1}-${end} of ${hits.length}. Do not count, rank, or say "none" from this page; call again with cursor = next_cursor for the rest, or use count_records for exact totals.`);
   if (!walked.complete) notes.push(`scanned the first ${walked.items.length} of ${walked.total} records only`);
-  return {
+  const body = {
     shown: items.length,
     total: hits.length,
-    partial: items.length < hits.length,
+    partial: end < hits.length,
     matched_by: `any text field (the kind's own search found no NAME containing "${q}")`,
     // Nothing here is not nothing anywhere. "how much do I have of the black
     // yarn" was searched in the Yarn list, found nothing, and answered "you
@@ -117,6 +171,7 @@ async function scanByText(api: WorkspaceApi, kind: string, q: string, limit: num
     ...(notes.length ? { note: notes.join(" ") } : {}),
     items,
   };
+  return { body, next: end < hits.length ? end : null };
 }
 
 /**
@@ -126,21 +181,25 @@ async function scanByText(api: WorkspaceApi, kind: string, q: string, limit: num
  * off. So the count leads: `shown` / `total` / `partial`, and the note comes
  * before the items, where a model reads it.
  */
-export function pageWithTruth(body: unknown, limit: number): unknown {
+export function pageWithTruth(body: unknown, limit: number, offset = 0): unknown {
   const b = (body ?? {}) as { items?: unknown[]; total?: number };
   if (!Array.isArray(b.items)) return body;
   const shown = b.items.length;
   const known = typeof b.total === "number";
   const total = known ? (b.total as number) : undefined;
-  const partial = known ? shown < (total as number) : shown === limit;
-  const extent = known ? `${shown} of ${total} records` : `the first ${shown} records, there may be more`;
+  // A later page is part of a list even when it is the last one.
+  const partial = offset > 0 || (known ? shown < (total as number) : shown === limit);
+  const range = `records ${offset + 1}-${offset + shown}`;
+  const extent = known
+    ? offset > 0 ? `${range} of ${total}` : `${shown} of ${total} records`
+    : offset > 0 ? `${range}, there may be more` : `the first ${shown} records, there may be more`;
   return {
     shown,
     ...(known ? { total } : {}),
     partial,
     ...(partial
       ? {
-          note: `PARTIAL: ${extent}. Do not count, rank, or say "none" from this page. Narrow with q, or use count_records for exact totals.`,
+          note: `PARTIAL: ${extent}. Do not count, rank, or say "none" from this page. Call again with cursor = next_cursor for the next page, or use count_records for exact totals.`,
         }
       : {}),
     ...b,
@@ -179,6 +238,8 @@ function nameFromDiff(diff: unknown): string | null {
 /** One activity-log entry, already enriched server-side with the actor's name
  *  and (where the diff doesn't carry one) the record's live title. */
 interface ActivityRow {
+  /** The log's own sequence (bigserial, so a string over JSON): where the next page starts. */
+  id?: string | number;
   action: string;
   entity_type: string;
   entity_id: string;
@@ -324,6 +385,128 @@ function summarizeScanItem(
   };
 }
 
+interface ScanItemRow extends ScanInboxRow {
+  status?: string | null;
+  suggested_sku?: string | null;
+  source_url?: string | null;
+  ai_confidence?: string | null;
+  ai_suggested_at?: string | null;
+  created_at?: string | null;
+  updated_at?: string | null;
+  resolved_at?: string | null;
+  image_file_id?: string | null;
+  catalog_image_file_id?: string | null;
+  catalog_image_url?: string | null;
+  group_image_file_id?: string | null;
+  suggested_location_id?: string | null;
+  suggested_location_note?: string | null;
+  target_container_kind?: string | null;
+  suggested_metadata?: Record<string, unknown> | null;
+  source_conflict?: unknown;
+  resolved_destination?: { module: string; instance: string | null; kind: string | null; label: string | null } | null;
+}
+
+/** Metadata the pipeline keeps for itself: how it got there, not what it
+ *  found. Everything else in `suggested_metadata` is a finding and is shown;
+ *  a key added tomorrow is shown until someone decides it is bookkeeping,
+ *  which is the safe way round for "every extracted field". */
+const SCAN_BOOKKEEPING = new Set([
+  "history",
+  "pre_rerun",
+  "field_provenance",
+  "extra_photos",
+  "matched_at",
+  "label_words",
+  "trim",
+  "trim_box",
+  "crop",
+  "crop_box",
+  "catalog_history",
+  "user_hint",
+]);
+
+/** One inbox item, whole, as the scan card knows it (#3854). The list stays
+ *  compact because 144 items at ~5 KB each would flood a context; the detail
+ *  is where review happens, so nothing a person could see on the card is
+ *  left out here. */
+export function scanItemDetail(it: ScanItemRow, api: Pick<WorkspaceApi, "link">): Record<string, unknown> {
+  const meta = (it.suggested_metadata ?? {}) as Record<string, unknown>;
+  const link = (to: { api: string } | { app: string }) => api.link?.(to) ?? null;
+  const fileLink = (fileId: string) => link({ api: `/modules/core-files/files/${encodeURIComponent(fileId)}/raw` });
+  const pictures: Array<Record<string, unknown>> = [];
+  const addFile = (role: string, fileId: unknown) => {
+    if (typeof fileId !== "string" || !fileId || pictures.some((p) => p.file_id === fileId)) return;
+    pictures.push({ role, file_id: fileId, link: fileLink(fileId) });
+  };
+  addFile("your photo", it.image_file_id);
+  for (const extra of Array.isArray(meta.extra_photos) ? meta.extra_photos : []) addFile("another photo", extra);
+  addFile("the group shot it was split from", it.group_image_file_id);
+  addFile("catalog picture", it.catalog_image_file_id);
+  if (!it.catalog_image_file_id && typeof it.catalog_image_url === "string" && it.catalog_image_url) {
+    pictures.push({ role: "catalog picture", link: it.catalog_image_url });
+  }
+  const findings: Record<string, unknown> = {};
+  for (const [k, v] of Object.entries(meta)) {
+    if (SCAN_BOOKKEEPING.has(k) || k.startsWith("_") || v === null || v === undefined || v === "") continue;
+    findings[k] = v;
+  }
+  const candidates = (Array.isArray(it.suggested_candidates) ? it.suggested_candidates : []) as Array<Record<string, unknown>>;
+  const history = Array.isArray(meta.history) ? [...(meta.history as unknown[])].reverse() : [];
+  const appLink = link({ app: `/scan?item=${encodeURIComponent(String(it.id ?? ""))}` });
+  return {
+    id: it.id,
+    status: it.status ?? "pending",
+    name: it.suggested_name ?? "(not identified yet)",
+    ...(it.suggested_manufacturer ? { brand: it.suggested_manufacturer } : {}),
+    ...(it.suggested_sku ? { sku: it.suggested_sku } : {}),
+    captured_as: it.source_kind ?? "scan",
+    ...(it.barcode_text ? { barcode: it.barcode_text } : {}),
+    ...(it.source_url ? { source_url: it.source_url } : {}),
+    ...(it.quantity && it.quantity !== 1 ? { quantity: it.quantity } : {}),
+    confidence: it.ai_confidence ?? null,
+    ...(it.ai_suggested_at ? { identified_at: it.ai_suggested_at } : {}),
+    needs_review: !!it.needs_review,
+    ...(it.review_reason ? { review_reason: it.review_reason } : {}),
+    ...(it.source_conflict ? { source_conflict: it.source_conflict } : {}),
+    ...(it.ai_notes ? { notes: it.ai_notes } : {}),
+    // Where it goes, in the order the card decides it: the destination it
+    // resolved, then the ranked candidates each with the fields it would
+    // file with.
+    destination: it.resolved_destination ?? null,
+    candidates: candidates.map((c) => ({
+      ...(c.kind ? { kind: c.kind } : {}),
+      ...(c.label ? { label: c.label } : {}),
+      ...(c.name ? { name: c.name } : {}),
+      ...(typeof c.confidence === "number" ? { confidence: c.confidence } : {}),
+      ...(c.category ? { category: c.category, ...(c.category_is_new ? { category_is_new: true } : {}) } : {}),
+      ...(typeof c.quantity === "number" ? { quantity: c.quantity } : {}),
+      ...(c.fields && typeof c.fields === "object" ? { fields: c.fields } : {}),
+      // Values the model completed from what it knows rather than read off
+      // the item: named, so a wrong guess stays visible.
+      ...(Array.isArray(c.inferred) && c.inferred.length ? { inferred_fields: c.inferred } : {}),
+      ...(c.place_fields && typeof c.place_fields === "object" ? { place_fields: c.place_fields } : {}),
+      ...(c.notes ? { notes: c.notes } : {}),
+      ...(c.ai_fallback ? { routed_without_ai: c.ai_fallback } : {}),
+    })),
+    ...(it.suggested_location_id || it.suggested_location_note
+      ? { suggested_location: { id: it.suggested_location_id ?? null, why: it.suggested_location_note ?? null } }
+      : {}),
+    has_destination: !!(it.target_location_id || it.target_container_id),
+    ...(it.target_location_id ? { going_to_location: it.target_location_id } : {}),
+    ...(it.target_container_id ? { going_into: { kind: it.target_container_kind ?? null, id: it.target_container_id } } : {}),
+    findings,
+    provenance: (meta.field_provenance as Record<string, unknown> | undefined) ?? {},
+    pictures,
+    ...(pictures.some((p) => p.link === null) ? { pictures_note: "no public address is configured here, so pictures are file ids only" } : {}),
+    history,
+    ...(it.scan_area ? { scanned_in: it.scan_area } : {}),
+    ...(it.created_at ? { captured_at: it.created_at } : {}),
+    ...(typeof it.waiting_days === "number" ? { waiting_days: it.waiting_days } : {}),
+    ...(it.resolved_at ? { resolved_at: it.resolved_at } : {}),
+    ...(appLink ? { open_in_app: appLink } : {}),
+  };
+}
+
 // ─────────────────────── escort destinations (tier 1.5) ───────────────────
 //
 // The surfaces the assistant may WALK THE USER TO but never operate: each is a
@@ -460,6 +643,7 @@ export const WORKSPACE_TOOLS: WorkspaceTool[] = [
       ).join("; ") +
       ".",
     mode: "read",
+    paging: { by: "one-call", why: "moves the screen; returns no rows" },
     params: {
       destination: z
         .string()
@@ -496,6 +680,7 @@ export const WORKSPACE_TOOLS: WorkspaceTool[] = [
     description:
       "List every kind of record this workspace holds (its modules + user-built apps), with each kind's fields and whether records of it can be created/updated/deleted. Call this before creating or querying records of an unfamiliar kind.",
     mode: "read",
+    paging: { by: "one-call", why: "every kind this workspace has; a workspace has tens, not thousands" },
     params: {},
     execute: async (api) => {
       const kinds = await fetchKinds(api);
@@ -512,27 +697,51 @@ export const WORKSPACE_TOOLS: WorkspaceTool[] = [
     description:
       "List records of ONE kind, optionally filtered by a text query. Use this to see what the user actually has (their stock, their projects, their entries) BEFORE answering questions about their data.",
     mode: "read",
+    paging: { by: "cursor" },
     params: {
       kind: z.string().describe("Entity kind id, e.g. inventory:part (see list_record_kinds)"),
-      q: z.string().optional().describe("Text filter: matches the record name first; if nothing matches by name, every text field is searched instead"),
+      q: z.string().optional().describe(LIST_Q_MEANS),
       limit: z.number().optional().describe(`Max results (default 20, max ${LIST_LIMIT_MAX})`),
       include_retired: z.boolean().optional().describe("Also list archived/retired records (off by default). Set it when asked about something old or retired: \"where is my old drill\""),
+      cursor: CURSOR_PARAM,
     },
     execute: async (api, args) => {
-      const kind = String(args.kind ?? "");
-      const limit = Math.min(Number(args.limit) || 20, LIST_LIMIT_MAX);
-      const q = typeof args.q === "string" && args.q.trim() ? `&q=${encodeURIComponent(args.q.trim())}` : "";
-      const retired = args.include_retired === true ? "&include_retired=1" : "";
-      const res = await api.request("GET", `/entities/${encodeURIComponent(kind)}?limit=${limit}${q}${retired}`);
-      if (res.status >= 400) return toolFail(apiErrorMessage(res, `couldn't list ${kind}`));
-      const page = pageWithTruth(res.body, limit) as { items?: unknown[] };
-      if (q && Array.isArray(page.items) && page.items.length === 0) {
-        // The kind's own search matched nothing by name. Before the model tells
-        // the user "you have none", look at every text field ourselves.
-        const scan = await scanByText(api, kind, String(args.q).trim(), limit, { includeRetired: args.include_retired === true });
-        if (scan) return toolOk(explainRecords(scan, await fetchKinds(api).catch(() => [])));
+      // The cursor carries the query it was made for, so the next page is the
+      // next page of THAT list even if a later call words its arguments
+      // differently. `o` is the position; `s` marks the any-field scan.
+      const cur = decodeCursor<{ k: string; o: number; q?: string; r?: boolean; s?: boolean }>("list_records", args.cursor);
+      if (!cur.ok) return toolFail(cur.error);
+      const st = cur.state;
+      const kind = st?.k ?? String(args.kind ?? "");
+      if (st && typeof args.kind === "string" && args.kind && args.kind !== st.k) {
+        return toolFail(`that cursor is for ${st.k}, not ${args.kind}. Leave cursor out to start ${args.kind} from the top.`);
       }
-      return toolOk(explainRecords(page, await fetchKinds(api).catch(() => [])));
+      const limit = Math.min(Number(args.limit) || 20, LIST_LIMIT_MAX);
+      const qText = st ? (st.q ?? "") : typeof args.q === "string" ? args.q.trim() : "";
+      const includeRetired = st ? st.r === true : args.include_retired === true;
+      const offset = st?.o ?? 0;
+      const state = (o: number, s?: boolean) => ({ k: kind, o, ...(qText ? { q: qText } : {}), ...(includeRetired ? { r: true } : {}), ...(s ? { s: true } : {}) });
+      const kinds = () => fetchKinds(api).catch(() => []);
+      if (!st?.s) {
+        const q = qText ? `&q=${encodeURIComponent(qText)}` : "";
+        const retired = includeRetired ? "&include_retired=1" : "";
+        const res = await api.request("GET", `/entities/${encodeURIComponent(kind)}?limit=${limit}&offset=${offset}${q}${retired}`);
+        if (res.status >= 400) return toolFail(apiErrorMessage(res, `couldn't list ${kind}`));
+        const page = pageWithTruth(res.body, limit, offset) as { items?: unknown[]; total?: number };
+        const shown = Array.isArray(page.items) ? page.items.length : 0;
+        if (!(qText && offset === 0 && shown === 0)) {
+          const end = offset + shown;
+          const more = typeof page.total === "number" ? end < page.total : shown === limit;
+          const shownPage = qText && Array.isArray(page.items) ? { ...page, items: labelMatches(page.items, qText) } : page;
+          return toolOk({ ...(explainRecords(shownPage, await kinds()) as Record<string, unknown>), ...pageEnd("list_records", more ? state(end) : null) });
+        }
+      }
+      // The kind's own search matched nothing by name. Before the model tells
+      // the user "you have none", look at every text field ourselves.
+      const scan = await scanByText(api, kind, qText, limit, { includeRetired }, st?.s ? offset : 0);
+      if (!scan) return toolOk({ ...(explainRecords({ shown: 0, total: 0, partial: false, items: [] }, await kinds()) as Record<string, unknown>), ...pageEnd("list_records", null) });
+      const scanned = Array.isArray(scan.body.items) ? { ...scan.body, items: labelMatches(scan.body.items as unknown[], qText) } : scan.body;
+      return toolOk({ ...(explainRecords(scanned, await kinds()) as Record<string, unknown>), ...pageEnd("list_records", scan.next === null ? null : state(scan.next, true)) });
     },
   },
   {
@@ -540,6 +749,7 @@ export const WORKSPACE_TOOLS: WorkspaceTool[] = [
     description:
       "Count records of ONE kind, optionally grouped by a field (e.g. group_by \"model\" or \"kinematics\"). Use this for \"how many\", \"which do I have the most of\", \"do I have any X\" — it counts EVERY record in code, so the answer is exact even when the list is too long to read. Group values are compared case-insensitively.",
     mode: "read",
+    paging: { by: "one-call", why: "counts in code over every record (walks the kind itself); returns numbers, not rows" },
     params: {
       kind: z.string().describe("Entity kind id, e.g. inventory:part (see list_record_kinds)"),
       group_by: z.string().optional().describe("Field key to group by (title, or any field key from the kind's fields)"),
@@ -587,6 +797,7 @@ export const WORKSPACE_TOOLS: WorkspaceTool[] = [
     name: "get_record",
     description: "Fetch one record by kind + id (fields are projected by the caller's read permissions).",
     mode: "read",
+    paging: { by: "one-call", why: "one record by its id, with all its fields" },
     params: {
       kind: z.string().describe("Entity kind id"),
       id: z.string().describe("Record id"),
@@ -605,20 +816,32 @@ export const WORKSPACE_TOOLS: WorkspaceTool[] = [
     description:
       "Search ACROSS every kind at once by text. Use when you don't know which kind holds the thing (\"citron\" might be a yarn, a part, or a note). For one known kind, prefer list_records with q.",
     mode: "read",
+    paging: { by: "cursor" },
     params: {
       q: z.string().describe("Search text"),
       kinds: z.string().optional().describe("Comma-separated kind ids to restrict to"),
+      cursor: CURSOR_PARAM,
     },
     execute: async (api, args) => {
-      const q = String(args.q ?? "").trim();
+      const cur = decodeCursor<{ q: string; k?: string; o: number }>("search_records", args.cursor);
+      if (!cur.ok) return toolFail(cur.error);
+      const q = cur.state?.q ?? String(args.q ?? "").trim();
       if (!q) return toolFail("q is required");
-      const kinds =
-        typeof args.kinds === "string" && args.kinds.trim()
-          ? `&kinds=${encodeURIComponent(args.kinds.trim())}`
-          : "";
-      const res = await api.request("GET", `/modules/core-search/search?q=${encodeURIComponent(q)}${kinds}`);
+      const kindList = cur.state ? (cur.state.k ?? "") : typeof args.kinds === "string" ? args.kinds.trim() : "";
+      const offset = cur.state?.o ?? 0;
+      const perKind = SEARCH_PER_KIND;
+      const kinds = kindList ? `&kinds=${encodeURIComponent(kindList)}` : "";
+      const res = await api.request(
+        "GET",
+        `/modules/core-search/search?q=${encodeURIComponent(q)}${kinds}&per_kind=${perKind}&offset=${offset}`,
+      );
       if (res.status >= 400) return toolFail(apiErrorMessage(res, "search failed"));
-      return toolOk(explainRecords(res.body, await fetchKinds(api).catch(() => [])));
+      const more = (res.body as { has_more?: unknown }).has_more === true;
+      const { has_more: _h, ...body } = res.body as Record<string, unknown>;
+      return toolOk({
+        ...(explainRecords(body, await fetchKinds(api).catch(() => [])) as Record<string, unknown>),
+        ...pageEnd("search_records", more ? { q, ...(kindList ? { k: kindList } : {}), o: offset + perKind } : null),
+      });
     },
   },
   {
@@ -626,6 +849,7 @@ export const WORKSPACE_TOOLS: WorkspaceTool[] = [
     description:
       "List the records LINKED to one record: which project a part belongs to, what is inside a location, bin or box (placed_in), what a build consumed. A location's contents include its sub-locations (a garage holds its bins; ask a bin to see inside it). Returns each link's relationship, direction, and the other record's kind + id + title. Kind + id alone lists every link.",
     mode: "read",
+    paging: { by: "one-call", why: "every link of ONE record, both directions, in one call" },
     params: {
       kind: z.string().describe("The record's entity kind id"),
       id: z.string().describe("The record's id"),
@@ -745,6 +969,7 @@ export const WORKSPACE_TOOLS: WorkspaceTool[] = [
     description:
       "Discover the operations (actions) this workspace can run. scope 'entity': runs on one record, matched_kinds says which kinds. scope 'workspace': a config/admin operation on the whole workspace, invoked WITHOUT a record. Each carries args_schema (pass as invoke_action's args) and undoable; on a connection with no confirmation prompt only undoable ones run, and the rest refuse and say so - tell the user rather than claiming you cannot act. Optionally filter to one kind; workspace actions always included. Run one with invoke_action.",
     mode: "read",
+    paging: { by: "one-call", why: "every action the workspace registers; the registry is small and whole" },
     params: {
       kind: z.string().optional().describe("Only entity actions applicable to this kind id (workspace actions still included)"),
     },
@@ -837,6 +1062,7 @@ export const WORKSPACE_TOOLS: WorkspaceTool[] = [
     description:
       "What needs the user RIGHT NOW: the same 'needs you' feed their dashboard shows — stock that has run low, dates that are overdue or coming up in the next 30 days, and captures still waiting to be filed. Derived from the workspace's own field semantics, so it covers every tracker they have, including ones they built themselves. Reach for this FIRST on any open-ended question about their situation (\"what should I do today?\", \"anything need me?\", \"am I behind on anything?\") — it is one call and it is what they are looking at.",
     mode: "read",
+    paging: { by: "one-call", why: "the dashboard needs-you feed: one row per kind of thing with its count and a few examples; the count is the whole answer" },
     params: {},
     execute: async (api) => {
       const res = await api.request("GET", "/attention");
@@ -862,8 +1088,10 @@ export const WORKSPACE_TOOLS: WorkspaceTool[] = [
   {
     name: "list_activity",
     description:
-      "The workspace's history — what actually happened, newest first: who created, updated or deleted what, and when. Use for any question about the PAST (\"what changed this week?\", \"who edited this part?\", \"did anything get deleted?\", \"what have I been doing?\"). Records answer what the user HAS; this answers what HAPPENED to it. Filter by entity_type to follow one kind of thing.",
+      "The workspace's history, newest first: who created, updated or deleted what, and when. Use for any question about the PAST (\"what changed this week?\", \"who edited this part?\"). Records answer what the user HAS; this answers what HAPPENED to it. entity_type follows one kind of thing.",
+
     mode: "read",
+    paging: { by: "cursor" },
     params: {
       limit: z.number().optional().describe("Max entries (default 25, max 100)"),
       actions: z
@@ -871,17 +1099,27 @@ export const WORKSPACE_TOOLS: WorkspaceTool[] = [
         .optional()
         .describe("Comma-separated action filter, e.g. delete,update (omit for everything)"),
       entity_type: z.string().optional().describe("Only entries about this entity type, e.g. part"),
+      cursor: CURSOR_PARAM,
     },
     execute: async (api, args) => {
-      const limit = Math.min(Number(args.limit) || 25, 100);
+      const cur = decodeCursor<{ b: string; a?: string; e?: string; l: number }>("list_activity", args.cursor);
+      if (!cur.ok) return toolFail(cur.error);
+      const st = cur.state;
+      const limit = st?.l ?? Math.min(Number(args.limit) || 25, 100);
+      const actions = st ? (st.a ?? "") : typeof args.actions === "string" ? args.actions.trim() : "";
+      const entityType = st ? (st.e ?? "") : typeof args.entity_type === "string" ? args.entity_type.trim() : "";
       const q = [`limit=${limit}`];
-      if (typeof args.actions === "string" && args.actions.trim())
-        q.push(`actions=${encodeURIComponent(args.actions.trim())}`);
-      if (typeof args.entity_type === "string" && args.entity_type.trim())
-        q.push(`entity_type=${encodeURIComponent(args.entity_type.trim())}`);
+      if (actions) q.push(`actions=${encodeURIComponent(actions)}`);
+      if (entityType) q.push(`entity_type=${encodeURIComponent(entityType)}`);
+      if (st) q.push(`before=${encodeURIComponent(st.b)}`);
       const res = await api.request("GET", `/activity?${q.join("&")}`);
       if (res.status >= 400) return toolFail(apiErrorMessage(res, "couldn't read the activity log"));
-      const items = ((res.body as { items?: ActivityRow[] }).items ?? []).map((a) => ({
+      const rows = (res.body as { items?: ActivityRow[] }).items ?? [];
+      const last = rows[rows.length - 1];
+      const next = rows.length === limit && last?.id != null
+        ? { b: String(last.id), ...(actions ? { a: actions } : {}), ...(entityType ? { e: entityType } : {}), l: limit }
+        : null;
+      const items = rows.map((a) => ({
         when: a.occurred_at,
         action: a.action,
         // The route resolves `title` from the live record ONLY when the diff
@@ -897,51 +1135,79 @@ export const WORKSPACE_TOOLS: WorkspaceTool[] = [
         by: a.actor?.display_name ?? a.actor?.email ?? (a.auth_method === "system" ? "the system" : null),
         ...(a.token?.name ? { via_token: a.token.name } : {}),
       }));
-      return toolOk({ items });
+      return toolOk({ items, ...pageEnd("list_activity", next) });
     },
   },
   {
     name: "list_notifications",
     description:
-      "The user's notifications in this workspace — what the system has been telling them (a job finished, stock ran out, something needs review), newest first. Use for \"what did I miss?\", \"anything new?\", \"what happened while I was away?\". Pass unread_only to see only what they have not read yet.",
+      "The user's notifications in this workspace — what the system has been telling them (a job finished, stock ran out, something needs review), newest first. Use for \"what did I miss?\", \"anything new?\", \"what happened while I was away?\".",
     mode: "read",
+    paging: { by: "cursor" },
     params: {
       unread_only: z.boolean().optional().describe("Only notifications they have not read"),
       limit: z.number().optional().describe("Max notifications (default 25, max 100)"),
+      cursor: CURSOR_PARAM,
     },
     execute: async (api, args) => {
-      const limit = Math.min(Number(args.limit) || 25, 100);
-      const unread = args.unread_only ? "&unread=1" : "";
-      const res = await api.request("GET", `/notifications?limit=${limit}${unread}`);
+      const cur = decodeCursor<{ b: string; u?: boolean; l: number }>("list_notifications", args.cursor);
+      if (!cur.ok) return toolFail(cur.error);
+      const st = cur.state;
+      const limit = st?.l ?? Math.min(Number(args.limit) || 25, 100);
+      const unreadOnly = st ? st.u === true : args.unread_only === true;
+      const unread = unreadOnly ? "&unread=1" : "";
+      const before = st ? `&before=${encodeURIComponent(st.b)}` : "";
+      const [res, count] = await Promise.all([
+        api.request("GET", `/notifications?limit=${limit}${unread}${before}`),
+        api.request("GET", "/notifications/unread-count"),
+      ]);
       if (res.status >= 400) return toolFail(apiErrorMessage(res, "couldn't read notifications"));
-      const items = ((res.body as { items?: NotificationRow[] }).items ?? []).map((n) => ({
+      const body = res.body as { items?: NotificationRow[]; next_before?: string | null };
+      const items = (body.items ?? []).map((n) => ({
         when: n.created_at,
         message: n.message,
         about: n.event_type,
         unread: !n.read_at,
         ...(n.link_url ? { link: n.link_url } : {}),
       }));
-      return toolOk({ items, unread_count: items.filter((i) => i.unread).length });
+      const next = typeof body.next_before === "string" && body.next_before ? { b: body.next_before, ...(unreadOnly ? { u: true } : {}), l: limit } : null;
+      // How many are unread in all, not on this page: "you have 3 unread" off
+      // the first page of a longer list is the wrong number.
+      const total = (count.body as { count?: unknown }).count;
+      return toolOk({
+        items,
+        unread_count: typeof total === "number" ? total : items.filter((i) => i.unread).length,
+        ...pageEnd("list_notifications", next),
+      });
     },
   },
   {
     name: "list_maintenance",
     description:
-      "Scheduled and completed maintenance across the workspace — services, inspections, filter changes, anything logged against a machine, vehicle, asset or tool. Use for \"what is due for service?\", \"when did I last change that?\", \"what maintenance is overdue?\". `due` narrows to work that is scheduled and not yet done; `history` to work already performed; `within_days` to what falls due inside a window.",
+      "Scheduled and completed maintenance across the workspace — services, inspections, filter changes, anything logged against a machine, vehicle, asset or tool. Use for \"what is due for service?\", \"when did I last change that?\", \"what is overdue?\".",
     mode: "read",
+    paging: { by: "cursor" },
     params: {
-      due: z.boolean().optional().describe("Only scheduled work not yet performed"),
-      history: z.boolean().optional().describe("Only work already performed"),
+      due: z.boolean().optional().describe("Only scheduled, not yet done"),
+      history: z.boolean().optional().describe("Only work already done"),
       within_days: z.number().optional().describe("With due: only what falls due inside this many days"),
       entity_id: z.string().optional().describe("Only maintenance for this record"),
       limit: z.number().optional().describe(`Max entries (default 25, max ${LIST_LIMIT_MAX})`),
+      cursor: CURSOR_PARAM,
     },
-    execute: async (api, args) => {
+    execute: async (api, rawArgs) => {
+      // The cursor carries the filters it was made for, so page two is page
+      // two of the same question.
+      const cur = decodeCursor<{ o: number; f: Record<string, unknown> }>("list_maintenance", rawArgs.cursor);
+      if (!cur.ok) return toolFail(cur.error);
+      const args: Record<string, unknown> = cur.state?.f ?? rawArgs;
+      const offset = cur.state?.o ?? 0;
       const limit = Math.min(Number(args.limit) || 25, LIST_LIMIT_MAX);
       // Filter at the source: the route already understands scheduled-vs-history
       // and a due window, so a page of 25 is 25 of the RIGHT rows rather than 25
       // of everything, sifted here.
-      const q: string[] = [`limit=${limit}`];
+      // One past the page, to know without a count whether there is another.
+      const q: string[] = [`limit=${limit + 1}`, `offset=${offset}`];
       if (args.due === true) q.push("kind=scheduled");
       else if (args.history === true) q.push("kind=history");
       const within = Number(args.within_days);
@@ -961,10 +1227,10 @@ export const WORKSPACE_TOOLS: WorkspaceTool[] = [
         ...(e.recurrence_rule ? { repeats: e.recurrence_rule } : {}),
         ...(e.notes ? { notes: e.notes } : {}),
       }));
+      const { cursor: _c, ...filters } = args;
       return toolOk({
         items: rows.slice(0, limit),
-        total: rows.length,
-        ...(rows.length > limit ? { note: `showing ${limit} of ${rows.length}` } : {}),
+        ...pageEnd("list_maintenance", rows.length > limit ? { o: offset + limit, f: filters } : null),
       });
     },
   },
@@ -973,6 +1239,7 @@ export const WORKSPACE_TOOLS: WorkspaceTool[] = [
     description:
       "What is coming up (or what was on) the workspace calendar in a date window — due dates, scheduled maintenance, recurring chores, project deadlines, anything the workspace puts on a date. Use for \"what's on this week?\", \"what's due before Friday?\", \"what did I have on last month?\". Dates are YYYY-MM-DD; the default window is the next 30 days.",
     mode: "read",
+    paging: { by: "one-call", why: "everything in one date window; to see more, ask for another window" },
     params: {
       from: z.string().optional().describe("Window start, YYYY-MM-DD (default: today)"),
       to: z.string().optional().describe("Window end, YYYY-MM-DD (default: 30 days out)"),
@@ -1004,57 +1271,108 @@ export const WORKSPACE_TOOLS: WorkspaceTool[] = [
   {
     name: "list_scan_inbox",
     description:
-      "List the actual ITEMS waiting in the scan inbox — captures (barcode scans, photos, notes, receipt lines) that have not been filed into a record yet. The scan inbox is NOT a record kind, so list_records cannot reach it: use THIS whenever the user asks what is in their inbox, what needs reviewing, what has been sitting there, or about a specific captured item. Each item says what it was identified as, how long it has waited, whether it still needs a human, and where it is headed. Filter with `facet`: needs_review (no clean name, low confidence, or a rate-limited lookup), waiting (sitting more than two days), unfiled (no destination yet), ready (has a destination and nothing left to ask).",
+      "The ITEMS waiting in the scan inbox: captures (barcodes, photos, notes, receipt lines) not yet filed. Not a record kind, so list_records cannot reach it. Each item says what it is, how long it waited, if it needs a human, and where it goes. facet: needs_review (no clean name, low confidence), waiting (over 2 days), unfiled (no destination), ready. One item in full: get_scan_item.",
+
     mode: "read",
+    paging: { by: "cursor" },
     params: {
       facet: z
         .enum(["all", "needs_review", "waiting", "unfiled", "ready"])
         .optional()
-        .describe("Which slice of the queue (default: everything pending)"),
+        .describe("Default: all pending"),
       q: z.string().optional().describe("Text filter over name, brand, barcode, notes and scan area"),
       limit: z.number().optional().describe(`Max items (default 20, max ${LIST_LIMIT_MAX})`),
+      cursor: CURSOR_PARAM,
     },
     execute: async (api, args) => {
-      const facet = typeof args.facet === "string" && args.facet ? args.facet : "all";
-      const limit = Math.min(Number(args.limit) || 20, LIST_LIMIT_MAX);
-      const q = typeof args.q === "string" ? args.q.trim().toLowerCase() : "";
-      // A text filter reads wider than the page it returns: the queue is ordered
-      // newest-first, not by relevance, so filtering only the first N rows would
-      // answer "you don't have one" about an item sitting further down.
-      const fetchLimit = q ? 200 : limit;
-      const res = await api.request(
-        "GET",
-        `/modules/core-scan/inbox?status=pending&triage=${encodeURIComponent(facet)}&limit=${fetchLimit}`,
-      );
-      if (res.status >= 400) return toolFail(apiErrorMessage(res, "couldn't read the scan inbox"));
-      const body = res.body as {
+      const cur = decodeCursor<{ f: string; l: number; c?: string; q?: string; o?: number }>("list_scan_inbox", args.cursor);
+      if (!cur.ok) return toolFail(cur.error);
+      const st = cur.state;
+      const facet = st?.f ?? (typeof args.facet === "string" && args.facet ? args.facet : "all");
+      const limit = st?.l ?? Math.min(Number(args.limit) || 20, LIST_LIMIT_MAX);
+      const q = st ? (st.q ?? "") : typeof args.q === "string" ? args.q.trim().toLowerCase() : "";
+      type InboxBody = {
         items?: ScanInboxRow[];
         batches?: Record<string, { label?: string | null }>;
         total?: number;
         partial?: string;
+        next_cursor?: string | null;
       };
-      const all = body.items ?? [];
-      const matched = q
-        ? all.filter((it) =>
-            [it.suggested_name, it.suggested_manufacturer, it.barcode_text, it.ai_notes, it.scan_area].some(
-              (v) => typeof v === "string" && v.toLowerCase().includes(q),
-            ),
-          )
-        : all;
-      const items = matched.slice(0, limit).map((it) => summarizeScanItem(it, body.batches ?? {}));
+      const fetchPage = (n: number, cursor?: string) =>
+        api.request(
+          "GET",
+          `/modules/core-scan/inbox?status=pending&triage=${encodeURIComponent(facet)}&limit=${n}${cursor ? `&cursor=${encodeURIComponent(cursor)}` : ""}`,
+        );
+      if (!q) {
+        // The queue pages itself; its cursor rides inside ours.
+        const res = await fetchPage(limit, st?.c);
+        if (res.status >= 400) return toolFail(apiErrorMessage(res, "couldn't read the scan inbox"));
+        const body = res.body as InboxBody;
+        const items = (body.items ?? []).map((it) => summarizeScanItem(it, body.batches ?? {}));
+        const next = typeof body.next_cursor === "string" && body.next_cursor ? { f: facet, l: limit, c: body.next_cursor } : null;
+        return toolOk({
+          items,
+          // The QUEUE's total, not the page's length — answering "you have 6" off a
+          // page of 6 out of 148 is the failure worth spending a field on.
+          ...(typeof body.total === "number" ? { total_in_facet: body.total } : {}),
+          ...(body.partial ? { partial: body.partial } : {}),
+          ...pageEnd("list_scan_inbox", next),
+        });
+      }
+      // A text filter reads the whole queue, not the first page of it: the
+      // queue is ordered newest-first, not by relevance, so filtering one page
+      // would answer "you don't have one" about an item further down.
+      const all: ScanInboxRow[] = [];
+      const batches: Record<string, { label?: string | null }> = {};
+      let total: number | undefined;
+      let cursor: string | undefined;
+      let scannedAll = false;
+      for (let round = 0; round < SCAN_INBOX_TEXT_PAGES; round++) {
+        const res = await fetchPage(200, cursor);
+        if (res.status >= 400) return toolFail(apiErrorMessage(res, "couldn't read the scan inbox"));
+        const body = res.body as InboxBody;
+        all.push(...(body.items ?? []));
+        Object.assign(batches, body.batches ?? {});
+        if (typeof body.total === "number") total = body.total;
+        cursor = typeof body.next_cursor === "string" && body.next_cursor ? body.next_cursor : undefined;
+        if (!cursor) {
+          scannedAll = true;
+          break;
+        }
+      }
+      const matched = all.filter((it) =>
+        [it.suggested_name, it.suggested_manufacturer, it.barcode_text, it.ai_notes, it.scan_area].some(
+          (v) => typeof v === "string" && v.toLowerCase().includes(q),
+        ),
+      );
+      const offset = st?.o ?? 0;
+      const page = matched.slice(offset, offset + limit);
+      const end = offset + page.length;
       return toolOk({
-        items,
-        // The QUEUE's total, not the page's length — answering "you have 6" off a
-        // page of 6 out of 148 is the failure worth spending a field on.
-        ...(typeof body.total === "number" ? { total_in_facet: body.total } : {}),
-        ...(q ? { matched: matched.length } : {}),
-        ...(matched.length > items.length
-          ? {
-              note: `showing ${items.length} of ${matched.length} — narrow with q or raise limit (max ${LIST_LIMIT_MAX})`,
-            }
-          : {}),
-        ...(body.partial ? { partial: body.partial } : {}),
+        items: page.map((it) => summarizeScanItem(it, batches)),
+        ...(typeof total === "number" ? { total_in_facet: total } : {}),
+        matched: matched.length,
+        ...(scannedAll ? {} : { note: `searched the newest ${all.length} captures only; narrow the facet to reach older ones` }),
+        ...pageEnd("list_scan_inbox", end < matched.length ? { f: facet, l: limit, q, o: end } : null),
       });
+    },
+  },
+  {
+    name: "get_scan_item",
+    description:
+      "All the scan found on ONE inbox item: each field and its source, confidence, why flagged, where it goes, pictures as links, history.",
+    mode: "read",
+    paging: { by: "one-call", why: "one item, whole; its history is capped at the last few steps" },
+    params: {
+      id: z.string().describe("An id from list_scan_inbox"),
+    },
+    execute: async (api, args) => {
+      const id = typeof args.id === "string" ? args.id.trim() : "";
+      if (!id) return toolFail("id is required: take one from list_scan_inbox");
+      const res = await api.request("GET", `/modules/core-scan/inbox/${encodeURIComponent(id)}`);
+      if (res.status === 404) return toolFail(`no scan inbox item ${id}: list_scan_inbox gives the ids that exist`);
+      if (res.status >= 400) return toolFail(apiErrorMessage(res, "couldn't read that scan item"));
+      return toolOk(scanItemDetail(res.body as ScanItemRow, api));
     },
   },
   {
@@ -1062,6 +1380,7 @@ export const WORKSPACE_TOOLS: WorkspaceTool[] = [
     description:
       "How this workspace is SET UP, as opposed to what it holds: its instances (the separate lists one module runs, e.g. 3D Printers and CNC both from Machines), its saved views, its automations (wires: when X happens, do Y), the apps the user built, their entity templates, and their unit vocabulary. Use for \"how is my workspace set up?\", \"what automations do I have?\", \"why did that happen by itself?\", \"what views/apps/templates do I have?\", or before proposing a change to any of them. `part` picks one area; omit it for a summary of every area at once.",
     mode: "read",
+    paging: { by: "one-call", why: "a description of the setup, one area or a summary of all" },
     params: {
       part: z
         .enum(["all", "instances", "views", "automations", "apps", "templates", "units"])
@@ -1178,6 +1497,7 @@ export const WORKSPACE_TOOLS: WorkspaceTool[] = [
     description:
       "The user's live put-away situation: how many scanned items still have no home, and the CURRENT organize plan (groups, destinations, evidence, unresolved items). Use this whenever the user talks about putting things away, organizing scanned items, bins, or 'the plan': it is always fresher than anything pasted into chat. To help further, create core-locations:location records for places they describe (with their confirmation); the plan routes to real locations by evidence.",
     mode: "read",
+    paging: { by: "one-call", why: "a summary of the standing plan (first 20 groups, 15 names each); the whole plan opens in the app" },
     params: {},
     execute: async (api) => {
       const [stats, latest] = await Promise.all([
@@ -1220,6 +1540,7 @@ export const WORKSPACE_TOOLS: WorkspaceTool[] = [
     description:
       "Recompute the user's put-away plan against the CURRENT workspace. Non-destructive: it only refreshes the proposal (nothing files, the user still accepts groups). Call this ONCE after you finish creating or renaming locations for them, the open plan updates automatically. Optionally pass a hint distilling what you learned in this conversation (e.g. 'the user is organizing camping gear; the hallway closet holds electronics').",
     mode: "read",
+    paging: { by: "one-call", why: "recomputes the plan; returns a status, not rows" },
     params: {
       hint: z
         .string()
@@ -1353,7 +1674,7 @@ export const WORKSPACE_TOOLS: WorkspaceTool[] = [
   {
     name: "invoke_action",
     description:
-      "Run a registered action (see list_actions). Two shapes: an ENTITY action runs on one record (pass entity_kind + entity_id (adjust stock, mark done, build one, print a label). A WORKSPACE action (scope 'workspace' in list_actions) is a config/admin operation that runs on the whole workspace) OMIT entity_kind/entity_id and pass its args (e.g. rename a label-code prefix). This is how config changes happen without a record.",
+      "Run a registered action (see list_actions). An ENTITY action runs on a record: pass entity_kind + entity_id (adjust stock, mark done, print a label). A WORKSPACE action (scope 'workspace') changes the workspace's setup: omit both and pass its args.",
     mode: "write",
     params: {
       action_id: z.string().describe("Action id, e.g. inventory:adjust-stock or labels:set-code"),
@@ -1403,6 +1724,7 @@ export const WORKSPACE_TOOLS: WorkspaceTool[] = [
     description:
       "List the workspace's label-code groups (one per kind + instance, e.g. 3D Printers under Machines). Each entry has its code prefix (the letters before the number, e.g. 'p' in p42), how many codes exist, whether it is frozen (a label was printed, so existing codes are fixed), whether its code shows inside the QR, and its group_key. Call this to find the group_key, then change it by invoking the labels:set-code action (invoke_action with no entity): pass group_key plus prefix and/or code_in_qr (the QR toggle is per group, so 3d printers can differ from cnc).",
     mode: "read",
+    paging: { by: "one-call", why: "one row per label-code group; a workspace has a handful" },
     params: {},
     execute: async (api) => {
       const res = await api.request("GET", "/modules/labels/codes/groups");

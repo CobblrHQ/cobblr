@@ -27,15 +27,10 @@
 //
 // Run: npx tsx scripts/lint-pg-readiness.ts
 
-import { execSync } from "node:child_process";
+import { repoFiles } from "./lib/repo-files.js";
 import { readFileSync } from "node:fs";
 
-const files = execSync(
-  "git ls-files '*.sh' '*.yml' '*.yaml' '*.ts' '*.mjs' '*.js' 'Dockerfile*' 'docker/*'",
-  { encoding: "utf8" },
-)
-  .split("\n")
-  .filter(Boolean);
+const files = repoFiles(["*.sh", "*.yml", "*.yaml", "*.ts", "*.mjs", "*.js", "Dockerfile*", "docker/*"]);
 
 const failures: string[] = [];
 let probes = 0;

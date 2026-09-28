@@ -33,6 +33,7 @@ import {
 import { mergeOptionPools, searchCommonsImages as librarySearch } from "./commons-images.js";
 import { webSearchEnabled } from "./barcode-lookup.js";
 import { replayingWeb } from "./web-replay.js";
+import { isStockPreviewResult } from "./stock-preview.js";
 
 export interface PictureOptionsAsk {
   /** The engine's phrase: name plus brand or shop plus any hints. */
@@ -100,13 +101,20 @@ export async function pictureOptions(ask: PictureOptionsAsk, sources: PictureSou
   const name = ask.name?.trim() || withoutWords(query, brand);
   const plainQuery = ask.plainQuery?.trim() || withoutWords(query, brand);
   let throttled = false;
+  // A stock agency's preview is watermarked by design and is never offered
+  // (stock-preview.ts, #3804). Dropped as it arrives, so the next result ranks
+  // up, and an answer that was nothing but previews reads as empty, which
+  // sends the plain phrase out as it would for no answer at all.
   const engine = (phrase: string) =>
-    sources.engine(phrase, 24).catch((err: unknown) => {
-      if (err instanceof DdgThrottledError) throttled = true;
-      else console.warn(`[core-scan] picture search failed for ${JSON.stringify(phrase)}: ${(err as Error).message}`);
-      return [] as DdgImageResult[];
-    });
-  const library = () => sources.library(name, 12).catch(() => [] as DdgImageResult[]);
+    sources
+      .engine(phrase, 24)
+      .then(withoutStockPreviews)
+      .catch((err: unknown) => {
+        if (err instanceof DdgThrottledError) throttled = true;
+        else console.warn(`[core-scan] picture search failed for ${JSON.stringify(phrase)}: ${(err as Error).message}`);
+        return [] as DdgImageResult[];
+      });
+  const library = () => sources.library(name, 12).then(withoutStockPreviews).catch(() => [] as DdgImageResult[]);
 
   let fromLibrary: DdgImageResult[] = [];
   let fromEngine: DdgImageResult[] = [];
@@ -131,4 +139,8 @@ export async function pictureOptions(ask: PictureOptionsAsk, sources: PictureSou
   );
   const from = fromEngine.length && fromLibrary.length ? "both" : fromEngine.length ? "engine" : fromLibrary.length ? "library" : "none";
   return { items, throttled, from };
+}
+
+function withoutStockPreviews(results: DdgImageResult[]): DdgImageResult[] {
+  return results.filter((r) => !isStockPreviewResult(r));
 }

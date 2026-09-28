@@ -32,6 +32,9 @@ export interface ConsumptionEntry {
   /** Provenance: what drew it down ("allocation", "digifab:job", …). */
   sourceKind?: string | null;
   sourceId?: string | null;
+  /** "correction": the count was set to what is actually there. Not use, not
+   *  a purchase, so the burn rate never reads it. */
+  kind?: "correction" | null;
 }
 
 /** Append one row to inventory_consumption. Throws on failure — the caller
@@ -46,6 +49,7 @@ export async function recordConsumption(exec: LedgerExec, e: ConsumptionEntry): 
       reason: e.reason ?? null,
       source_kind: e.sourceKind ?? null,
       source_id: e.sourceId ?? null,
+      kind: e.kind ?? null,
     })
     .execute();
 }

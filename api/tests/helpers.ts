@@ -83,6 +83,11 @@ async function tryCheckoutPoolOrg(): Promise<TestSession | null> {
  *  lint:test-budget-covers-signup refuses a smaller one. */
 export const FRESH_ORG_BUDGET_MS = 60_000;
 
+/** A workspace for one test. It is NOT the workspace a person gets at
+ *  signup: the pooled one and the fallback both arrive with EVERY module on.
+ *  A test about a module that is off turns it off itself
+ *  (`POST /modules/<name>/disable`); two such tests passed locally and failed
+ *  in CI by assuming a fresh workspace had one off (2026-09-28). */
 export async function signupFreshOrg(label: string): Promise<TestSession> {
   // Pool fast path — a checked-out org is already all-modules-provisioned.
   const pooled = await tryCheckoutPoolOrg();

@@ -9,6 +9,9 @@
 // → listen. That keeps module wiring out of the app constructor and
 // makes the boot sequence explicit.
 
+import { UnknownFieldError } from "@cobblr/platform-contract/entity-metadata";
+import { failingResolvers } from "./platform/resolver-failures.js";
+import { oauthRouter, wellKnownRouter } from "./auth/oauth.js";
 import { pendingMigrationSummary } from "./modules/enable.js";
 import { failingTenantSweeps } from "./platform/tenant-sweeps.js";
 import { healShimRuns } from "./platform/heal-shim-log.js";
@@ -117,13 +120,14 @@ export function createApp(): AppHandles {
       ? relayRespondJson(req, res, next)
       : next(),
   );
-  // A Homebox export (core-import) is a whole inventory's worth of CSV in one
-  // `{ csv }` body — routinely bigger than the 1mb default. Parse the two
-  // core-import POST paths higher BEFORE the global parser (same req._body-skip
-  // trick as the relay above); every other path stays at 1mb.
+  // A Homebox export or a spreadsheet (core-import) is a whole inventory's
+  // worth of rows in one body (a CSV, or a workbook as base64) — routinely
+  // bigger than the 1mb default. Parse those core-import POST paths higher
+  // BEFORE the global parser (same req._body-skip trick as the relay above);
+  // every other path stays at 1mb.
   const importJson = express.json({ limit: "24mb" });
   app.use((req, res, next) =>
-    req.method === "POST" && req.path.includes("/modules/core-import/homebox")
+    req.method === "POST" && /\/modules\/core-import\/(homebox|sheets)/.test(req.path)
       ? importJson(req, res, next)
       : next(),
   );
@@ -179,7 +183,14 @@ export function createApp(): AppHandles {
     next();
   });
 
+  // OAuth discovery for AI connectors lives at the site root (RFC 8414/9728
+  // fix the /.well-known paths); the web proxy forwards them here.
+  app.use(wellKnownRouter);
+
   const v1 = express.Router();
+  // The OAuth token and revocation endpoints take form bodies (RFC 6749).
+  v1.use("/oauth", express.urlencoded({ extended: false, limit: "16kb" }));
+  v1.use(oauthRouter);
 
   v1.get("/healthz", async (_req, res) => {
     // Two numbers a deploy tool reads before trusting this container (#2944):
@@ -230,6 +241,11 @@ export function createApp(): AppHandles {
         failed: f.failed,
         failures: f.failures,
       })),
+      // The kinds whose list resolver FAILED in the last hour (a search or a
+      // list that answered `failed`), with the last error. Empty is healthy.
+      // A failing resolver used to be one log line per request that nothing
+      // read, for three weeks (#3824).
+      resolvers_failing: failingResolvers(),
       // Every one-shot heal shim's last pass here: what it still found, how
       // many workspaces it could not read, and since when it has found
       // nothing (#3453). The deletion condition each shim states, readable
@@ -448,6 +464,12 @@ export function completeApp(app: Application): void {
         res.status(400).json({
           error: { code: "invalid_input", message: "Malformed identifier or value." },
         });
+        return;
+      }
+      // A write naming a field the kind does not have (entity-metadata.ts):
+      // the caller's mistake, said with the names they could have meant.
+      if (err instanceof UnknownFieldError) {
+        res.status(err.status).json(err.toJSON());
         return;
       }
       console.error("[cobblr-api] unhandled", err);

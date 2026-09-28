@@ -47,6 +47,9 @@ export interface FieldProvenance {
    *  "confirm". Words for a person reading the record, not a vocabulary code
    *  reads. */
   from?: string;
+  /** The record the evidence is, when it is one a person can open: the order
+   *  a field was filled from reads "from order" and opens it (#3856). */
+  ref?: { kind: string; id: string };
   at?: string;
   /** The value this one displaced, when a re-run replaced an inference with
    *  evidence: the contradiction stays on the record instead of vanishing. */

@@ -13,8 +13,8 @@
 //
 // See docs/modules/core-ai.md.
 
-import { aiRefusal } from "@cobblr/platform-contract/ai-refusal";
-import { providerReasonOf } from "@cobblr/platform-contract/provider-reason";
+import { aiRefusal, refusalCodeOf, type AiAttempt } from "@cobblr/platform-contract/ai-refusal";
+import { providerReasonOf, REASONS_ANOTHER_PROVIDER_MAY_ANSWER } from "@cobblr/platform-contract/provider-reason";
 import { createHash } from "node:crypto";
 import type {
   AiCapability,
@@ -23,11 +23,11 @@ import type {
   AiProviderDef,
   PlatformAi,
 } from "@cobblr/platform-contract";
-import { aiCapabilityChain } from "@cobblr/platform-contract";
+import { aiCapabilityChain, isFloatingModel } from "@cobblr/platform-contract";
 import { getTenantDb } from "../db/tenant.js";
 import { meta } from "../db/meta.js";
 import * as integrationsImpl from "./integrations.js";
-import { resolvePersonalProvider } from "./user-credentials.js";
+import { resolvePersonalProvider, type ResolvedPersonalProvider } from "./user-credentials.js";
 import { signMcpReadGrant } from "../auth/jwt.js";
 import { publicBaseUrl } from "./public-url.js";
 import { env } from "../env.js";
@@ -184,6 +184,9 @@ interface ProviderRow {
   credentials_enc: string;
   enabled: boolean;
   config: Record<string, unknown>;
+  /** The connection's own name ("Claude bridge (Sam)"): a workspace
+   *  provider's label, or a personal connection's. */
+  label?: string | null;
 }
 
 interface CapabilityDefaultRow {
@@ -257,6 +260,8 @@ async function resolveProviderAndModel(
   orgId: string,
   capability: AiCapability,
   override?: { provider_id?: string; model?: string },
+  /** Workspace providers already asked for this call (the fallback, #3819). */
+  exclude?: ReadonlySet<string>,
 ): Promise<{ row: ProviderRow; model: string }> {
   const tdb = (await getTenantDb(orgId)) as unknown as {
     selectFrom: (t: string) => {
@@ -265,6 +270,9 @@ async function resolveProviderAndModel(
           where: (col: string, op: string, val: unknown) => {
             executeTakeFirst: () => Promise<ProviderRow | undefined>;
             execute: () => Promise<ProviderRow[]>;
+          };
+          orderBy: (col: string, dir: "asc" | "desc") => {
+            orderBy: (col: string, dir: "asc" | "desc") => { execute: () => Promise<ProviderRow[]> };
           };
           executeTakeFirst: () => Promise<ProviderRow | undefined>;
           execute: () => Promise<ProviderRow[]>;
@@ -285,20 +293,27 @@ async function resolveProviderAndModel(
       .select(["capability", "provider_id", "model", "config"])
       .where("capability", "=", capability)
       .executeTakeFirst();
-    if (defaultRow) {
+    if (defaultRow && !exclude?.has(defaultRow.provider_id)) {
       providerId = defaultRow.provider_id;
       model = model ?? defaultRow.model;
     }
   }
   if (!providerId) {
-    // Fallback: first INSTALLED provider that supports this capability.
+    // Fallback: the INSTALLED providers that support this capability, the
+    // one added first asked first. With no order this was whichever row
+    // Postgres returned, so the same workspace could ask its providers in a
+    // different order from one call to the next, and no screen could say
+    // which (#3842).
     const rows = await tdb
       .selectFrom("core_ai_providers")
       .selectAll()
       .where("enabled", "=", true)
+      .orderBy("created_at", "asc")
+      .orderBy("id", "asc")
       .execute();
     outer: for (const served of aiCapabilityChain(capability)) {
       for (const candidate of rows) {
+        if (exclude?.has(candidate.provider_id)) continue;
         const def = providers.get(candidate.provider_id);
         if (def?.capabilities[served]) {
           providerId = candidate.provider_id;
@@ -324,6 +339,7 @@ async function resolveProviderAndModel(
         // agent), so auto-picking one turns a "no provider" case into a runtime
         // error from the unset provider instead of a clean no_ai_provider.
         if (def.autoSelectable === false) continue;
+        if (exclude?.has(id)) continue;
         if (def.capabilities[served] && Object.keys(def.describeCredentials()).length === 0) {
           providerId = id;
           model = model ?? def.capabilities[served]?.defaultModel ??
@@ -472,12 +488,122 @@ export async function checkAvailability(
   }
 }
 
+/** How many providers one call may ask, the first included. */
+const MAX_PROVIDERS_PER_CALL = 3;
+
+/** A provider this call asked, as the fallback tracks it: by the row that
+ *  served it, so a personal connection and a workspace provider of the same
+ *  kind are two different doors. */
+interface TriedProvider extends AiAttempt {
+  rowId: string;
+}
+
+/** What a person reads for the connection that served (or was asked for)
+ *  a call: its own name when it has one, the provider's otherwise. "Local AI
+ *  (via edge bridge)" names a kind of thing; "Claude bridge (Sam)" names the
+ *  one somebody set up, which is what they recognise. Every surface that
+ *  names an AI (the card's "Answered by", the fallback attempts, a refusal,
+ *  the order on the AI page, the AI log) reads it from here. */
+function nameOf(row: Pick<ProviderRow, "provider_id" | "label">): string {
+  return row.label?.trim() || labelOf(row.provider_id);
+}
+
+function labelOf(providerId: string): string {
+  return providers.get(providerId)?.label ?? providerId;
+}
+
+/** A provider-side failure another provider may well not have (busy, a
+ *  limit, a key, a retired model, no answer), on a call nobody pinned to one
+ *  provider. A refusal of the request itself is not a reason to shop around,
+ *  and neither is a call the person pinned (the chat's model pill, an
+ *  explicit provider). */
+export function mayAskAnotherProvider(err: unknown, req: { provider_id?: string; credential_id?: string; cache_only?: boolean }): boolean {
+  if (req.provider_id || req.credential_id || req.cache_only) return false;
+  if (refusalCodeOf(err) !== "provider_error") return false;
+  const reason = providerReasonOf(err);
+  return !!reason && (REASONS_ANOTHER_PROVIDER_MAY_ANSWER as readonly string[]).includes(reason);
+}
+
+/** The single entry point. It asks the provider this workspace chose for the
+ *  job; when that one fails for a provider-side reason, it asks the next one
+ *  the workspace lists for the job, in the workspace's order, up to three.
+ *  The answer says who answered and who was asked first (#3819). */
 export const invoke: PlatformAi["invoke"] = async (req) => {
-  const r = await invokeRaw(req);
-  return { ...r, text: aiAnswerText(r.result) };
+  const tried: TriedProvider[] = [];
+  let lastFailure: unknown = null;
+  for (;;) {
+    const current: { rowId?: string; providerId?: string; model?: string; label?: string } = {};
+    try {
+      const r = await invokeRaw(req, tried, current);
+      const answered_after = tried.length ? tried.map(({ rowId: _rowId, ...a }) => a) : undefined;
+      if (answered_after) {
+        console.warn(
+          `[ai] ${req.capability} answered by ${r.provider_id}/${r.model} after ${answered_after.map((a) => `${a.provider_id}/${a.model} (${a.reason})`).join(", ")}`,
+        );
+      }
+      return {
+        ...r,
+        text: aiAnswerText(r.result),
+        provider_label: current.label ?? labelOf(r.provider_id),
+        provider_kind_label: labelOf(r.provider_id),
+        ...(answered_after ? { answered_after } : {}),
+      };
+    } catch (err) {
+      // Nothing left to ask (every other provider was excluded, or the next
+      // one is not allowed): the last provider's own failure is the answer,
+      // not "no provider".
+      // `attempts` are the providers asked BEFORE the one whose failure this
+      // is, so the last one tried is not listed twice.
+      if (lastFailure && refusalCodeOf(err) !== "provider_error") throw withAttempts(lastFailure, tried.slice(0, -1));
+      if (!mayAskAnotherProvider(err, req) || !current.rowId || tried.length + 1 >= MAX_PROVIDERS_PER_CALL) {
+        throw withAttempts(err, tried);
+      }
+      tried.push({
+        rowId: current.rowId,
+        provider_id: current.providerId ?? "",
+        label: current.label ?? labelOf(current.providerId ?? ""),
+        model: current.model ?? "",
+        reason: providerReasonOf(err) ?? "unknown",
+      });
+      lastFailure = err;
+    }
+  }
 };
 
-const invokeRaw = async (req: Parameters<PlatformAi["invoke"]>[0]): Promise<Omit<Awaited<ReturnType<PlatformAi["invoke"]>>, "text">> => {
+/** The refusal with every provider asked before it on it. */
+function withAttempts(err: unknown, tried: TriedProvider[]): unknown {
+  if (!tried.length || refusalCodeOf(err) === null) return err;
+  const e = err as { code: Parameters<typeof aiRefusal>[0]; message: string; reason?: string; door?: "personal" | "workspace"; retryAfterSec?: number; providerId?: string; providerLabel?: string; model?: string };
+  return aiRefusal(e.code, e.message, {
+    reason: e.reason ?? null,
+    ...(e.door ? { door: e.door } : {}),
+    ...(e.retryAfterSec !== undefined ? { retryAfterSec: e.retryAfterSec } : {}),
+    ...(e.providerId ? { providerId: e.providerId } : {}),
+    ...(e.providerLabel ? { providerLabel: e.providerLabel } : {}),
+    ...(e.model ? { model: e.model } : {}),
+    attempts: tried.map(({ rowId: _rowId, ...a }) => a),
+  });
+}
+
+/** Pauses before asking a busy provider again inside one call. A provider
+ *  that says "high demand" usually clears within seconds; two more asks over
+ *  about ten seconds is the difference between a name and "try again". */
+let busyRetryDelaysMs: readonly number[] = [2_000, 6_000];
+/** Tests shorten the pauses; nothing else calls this. */
+export function setBusyRetryDelaysForTest(delays: readonly number[]): void {
+  busyRetryDelaysMs = delays;
+}
+
+/** The provider a call asks next, given the ones it has already asked: the
+ *  router's one decision, step by step. `invokeRaw` asks it once per attempt
+ *  and `aiChainFor` walks it to list the whole order, so the order a person
+ *  is shown is the order the router uses, by construction (#3842). */
+async function nextCandidate(
+  req: Pick<Parameters<PlatformAi["invoke"]>[0], "orgId" | "userId" | "capability" | "provider_id" | "model" | "credential_id">,
+  tried: readonly TriedProvider[],
+): Promise<{ row: ProviderRow; model: string; personalCredentials?: Record<string, unknown>; personal: ResolvedPersonalProvider | null }> {
+  const triedPersonal = new Set(tried.filter((t) => t.rowId.startsWith("personal:")).map((t) => t.rowId.slice("personal:".length)));
+  const triedWorkspace = new Set(tried.filter((t) => !t.rowId.startsWith("personal:")).map((t) => t.provider_id));
   // Instance kill-switch: when AI is disabled for the whole deployment,
   // refuse before touching any per-workspace config. Same error family as
   // "no provider configured" so every caller's existing degrade path
@@ -492,6 +618,7 @@ const invokeRaw = async (req: Parameters<PlatformAi["invoke"]>[0]): Promise<Omit
   // so this is byte-for-byte the old path until someone opts in. An explicit
   // provider override (e.g. the eval harness) always wins over a personal cred.
   let personalCredentials: Record<string, unknown> | undefined;
+  let personalServed: ResolvedPersonalProvider | null = null;
   let resolved: { row: ProviderRow; model: string } | null = null;
   // What did this workspace SAY should do this job? An explicit choice decides,
   // and only when there is none does a personal connection win by default.
@@ -504,7 +631,8 @@ const invokeRaw = async (req: Parameters<PlatformAi["invoke"]>[0]): Promise<Omit
   // outranks both: it is the most specific thing anyone has said about this
   // call, and it names a personal connection by id, so the workspace path is
   // not consulted at all.
-  const choseWorkspaceProvider = !req.credential_id && !!choice && !choice.credentialId && !!choice.providerId;
+  const choseWorkspaceProvider =
+    !req.credential_id && !!choice && !choice.credentialId && !!choice.providerId && !triedWorkspace.has(choice.providerId);
   if (!req.provider_id && !choseWorkspaceProvider) {
     const personal = await resolvePersonalProvider(
       req.orgId,
@@ -513,8 +641,10 @@ const invokeRaw = async (req: Parameters<PlatformAi["invoke"]>[0]): Promise<Omit
       "ai-provider",
       req.capability,
       req.credential_id ?? choice?.credentialId ?? null,
+      triedPersonal,
     );
     if (personal) {
+      personalServed = personal;
       const pdef = providers.get(personal.providerId);
       // The workspace's chosen model for this job applies to a personal
       // connection as much as to its own provider - that is what "configurable
@@ -539,6 +669,10 @@ const invokeRaw = async (req: Parameters<PlatformAi["invoke"]>[0]): Promise<Omit
             credentials_enc: "",
             enabled: true,
             config: {},
+            // A connection's name is its owner's: somebody else's Share is
+            // named by the kind of AI it is, as the Share offer keeps its
+            // label private (a card is read by every member).
+            label: req.userId && personal.ownerUserId === req.userId ? personal.label : null,
           },
           model: pmodel,
         };
@@ -560,10 +694,100 @@ const invokeRaw = async (req: Parameters<PlatformAi["invoke"]>[0]): Promise<Omit
   }
   const { row, model } =
     resolved ??
-    (await resolveProviderAndModel(req.orgId, req.capability, {
-      provider_id: req.provider_id,
-      model: req.model,
-    }));
+    (await resolveProviderAndModel(
+      req.orgId,
+      req.capability,
+      { provider_id: req.provider_id, model: req.model },
+      triedWorkspace,
+    ));
+  return { row, model, personalCredentials, personal: personalServed };
+}
+
+/** One provider in the order a call would ask them (#3842). */
+export interface AiChainStep {
+  /** 1 is asked first. */
+  position: number;
+  /** Within the providers one call may ask; a step past that cap is listed
+   *  so the order reads whole, but no single call reaches it. */
+  asked: boolean;
+  provider_id: string;
+  /** The connection's own name for a personal one, the provider's otherwise. */
+  label: string;
+  /** The model this step would send, as the provider resolves it. */
+  model: string;
+  /** A model id that moves under you ("...-latest"). */
+  floating: boolean;
+  /** yours: the caller's own connection. shared: somebody's connection this
+   *  workspace approved and uses. workspace: installed on the workspace.
+   *  managed: the deployment's own, no key needed. */
+  source: "yours" | "shared" | "workspace" | "managed";
+  credential_id?: string;
+  owner_user_id?: string;
+  provider_row_id?: string;
+}
+
+/** Every provider a call for `capability` would ask, in the order it asks
+ *  them. Walks `nextCandidate`, the function the router itself asks once per
+ *  attempt, excluding each step as the fallback does, so this list cannot
+ *  show an order the router does not use. `refusal` is why the walk stopped
+ *  at nothing at all (AI off, no provider). */
+export async function aiChainFor(
+  orgId: string,
+  userId: string | null,
+  capability: AiCapability,
+  opts: { limit?: number } = {},
+): Promise<{ steps: AiChainStep[]; refusal?: { code: string; message: string } }> {
+  const limit = opts.limit ?? MAX_PROVIDERS_PER_CALL + 3;
+  const tried: TriedProvider[] = [];
+  const steps: AiChainStep[] = [];
+  let refusal: { code: string; message: string } | undefined;
+  while (steps.length < limit) {
+    let next: Awaited<ReturnType<typeof nextCandidate>>;
+    try {
+      next = await nextCandidate({ orgId, userId: userId ?? undefined, capability }, tried);
+    } catch (err) {
+      if (!steps.length) refusal = { code: refusalCodeOf(err) ?? "no_provider", message: (err as Error).message };
+      break;
+    }
+    const { row, personal } = next;
+    const def = providers.get(row.provider_id);
+    let model = next.model;
+    try {
+      const credentials =
+        next.personalCredentials ?? (row.credentials_enc ? await integrationsImpl.decryptCredentials(orgId, row.credentials_enc) : {});
+      model = def?.resolveModel?.({ capability, model, credentials }).model ?? model;
+    } catch {
+      /* the router's own model stands */
+    }
+    const isPersonal = String(row.id).startsWith("personal:");
+    steps.push({
+      position: steps.length + 1,
+      asked: steps.length < MAX_PROVIDERS_PER_CALL,
+      provider_id: row.provider_id,
+      label: nameOf(row),
+      model,
+      floating: isFloatingModel(model),
+      source: isPersonal ? (personal && userId && personal.ownerUserId === userId ? "yours" : "shared") : String(row.id).startsWith("virtual:") ? "managed" : "workspace",
+      ...(isPersonal && personal ? { credential_id: personal.credentialId, owner_user_id: personal.ownerUserId } : {}),
+      ...(!isPersonal && !String(row.id).startsWith("virtual:") ? { provider_row_id: row.id } : {}),
+    });
+    tried.push({ rowId: row.id, provider_id: row.provider_id, label: nameOf(row), model, reason: "busy" });
+  }
+  return { steps, ...(refusal ? { refusal } : {}) };
+}
+
+const invokeRaw = async (
+  req: Parameters<PlatformAi["invoke"]>[0],
+  tried: readonly TriedProvider[] = [],
+  current: { rowId?: string; providerId?: string; model?: string; label?: string } = {},
+): Promise<Omit<Awaited<ReturnType<PlatformAi["invoke"]>>, "text">> => {
+  const next = await nextCandidate(req, tried);
+  const { row, model } = next;
+  const personalCredentials = next.personalCredentials;
+  current.rowId = row.id;
+  current.providerId = row.provider_id;
+  current.model = model;
+  current.label = nameOf(row);
 
   // Ask-Cobb-over-the-bridge (MCP tool relay). When the resolved chat provider
   // is a Claude-subscription bridge (the connection's `mcp_relay` flag — works
@@ -677,6 +901,7 @@ const invokeRaw = async (req: Parameters<PlatformAi["invoke"]>[0]): Promise<Omit
       const ms = 0;
       await writeAuditRow(req.orgId, {
         provider_id: row.provider_id,
+        provider_label: nameOf(row),
         capability: req.capability,
         model,
         cached: true,
@@ -727,6 +952,7 @@ const invokeRaw = async (req: Parameters<PlatformAi["invoke"]>[0]): Promise<Omit
         // reporting stays honest and per-user attribution survives.
         await writeAuditRow(req.orgId, {
           provider_id: row.provider_id,
+          provider_label: nameOf(row),
           capability: req.capability,
           model,
           cached: true,
@@ -762,17 +988,33 @@ const invokeRaw = async (req: Parameters<PlatformAi["invoke"]>[0]): Promise<Omit
     (row.credentials_enc
       ? await integrationsImpl.decryptCredentials(req.orgId, row.credentials_enc)
       : {});
-  const start = Date.now();
   let ok = false;
   let errMsg: string | null = null;
   let failure: unknown = null;
   let payload: Awaited<ReturnType<AiProviderDef["invoke"]>> = { result: null };
+  let duration_ms = 0;
+  // The model actually sent, not the router's placeholder: the log, the
+  // failure line and the refusal name it (#3819).
+  const resolved = def.resolveModel?.({ capability: req.capability, model, credentials }) ?? { model, chosen: true };
+  let sent = resolved.model;
+  // Siblings on the same key for a default nobody chose, tried once each when
+  // it stays busy, before the router moves to another provider.
+  const alternates = resolved.chosen ? [] : [...(def.busyAlternates?.(sent) ?? [])];
+  let onAlternate = false;
+  // A busy provider is asked again inside this one call before anything
+  // gives up (#3819): it answered, it is only turning calls away for now.
+  // Every ask is its own row in the AI log.
+  for (let attempt = 0; ; attempt++) {
+  const start = Date.now();
+  ok = false;
+  errMsg = null;
+  failure = null;
   try {
     payload = await def.invoke({
       orgId: req.orgId,
       rowId: row.id,
       capability: req.capability,
-      model,
+      model: sent,
       credentials,
       input: req.input,
       // Per-call knobs win over the workspace row: the calling surface knows
@@ -788,12 +1030,13 @@ const invokeRaw = async (req: Parameters<PlatformAi["invoke"]>[0]): Promise<Omit
     errMsg = (err as Error).message;
     failure = err;
   }
-  const duration_ms = Date.now() - start;
+  duration_ms = Date.now() - start;
 
   await writeAuditRow(req.orgId, {
     provider_id: row.provider_id,
+    provider_label: nameOf(row),
     capability: req.capability,
-    model,
+    model: sent,
     cached: false,
     ok,
     cost_cents: payload.cost_cents ?? null,
@@ -809,6 +1052,24 @@ const invokeRaw = async (req: Parameters<PlatformAi["invoke"]>[0]): Promise<Omit
     input_tokens: payload.input_tokens ?? null,
     output_tokens: payload.output_tokens ?? null,
   });
+  if (ok) break;
+  const failedReason = providerReasonOf(failure);
+  // Which provider, which model, and why: the line a person reading the log
+  // needs, and the model was the part it never said.
+  console.warn(`[core-ai] ${req.capability} ${row.provider_id}/${sent} failed (${failedReason ?? "unknown"}), attempt ${attempt + 1}: ${errMsg}`);
+  if (failedReason !== "busy") break;
+  const pause = onAlternate ? undefined : busyRetryDelaysMs[attempt];
+  if (pause === undefined) {
+    const next = alternates.shift();
+    if (!next) break;
+    console.warn(`[core-ai] ${req.capability} ${row.provider_id}/${sent} stayed busy; asking ${next} on the same key`);
+    sent = next;
+    onAlternate = true;
+    continue;
+  }
+  const asked = (failure as { retryAfterSec?: number } | null)?.retryAfterSec;
+  await new Promise((r) => setTimeout(r, asked && asked * 1000 <= 10_000 ? asked * 1000 : pause));
+  }
 
   if (!ok) {
     // The provider's reason and the credential's door ride the refusal, so a
@@ -818,6 +1079,9 @@ const invokeRaw = async (req: Parameters<PlatformAi["invoke"]>[0]): Promise<Omit
       reason: providerReasonOf(failure),
       door: String(row.id).startsWith("personal:") ? "personal" : "workspace",
       retryAfterSec: (failure as { retryAfterSec?: number } | null)?.retryAfterSec,
+      providerId: row.provider_id,
+      providerLabel: nameOf(row),
+      model: sent,
     });
   }
 
@@ -847,7 +1111,7 @@ const invokeRaw = async (req: Parameters<PlatformAi["invoke"]>[0]): Promise<Omit
   return {
     result: payload.result,
     provider_id: row.provider_id,
-    model,
+    model: sent,
     cached: false,
     input_tokens: payload.input_tokens,
     output_tokens: payload.output_tokens,
@@ -872,6 +1136,8 @@ async function writeAuditRow(
   orgId: string,
   row: {
     provider_id: string;
+    /** The connection's own name, so the log says which one (nameOf). */
+    provider_label: string;
     capability: string;
     model: string;
     cached: boolean;

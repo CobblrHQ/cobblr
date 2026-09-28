@@ -35,3 +35,25 @@ export function runWithActor<T>(actor: RequestActor, fn: () => T): T {
 export function currentActor(): RequestActor | null {
   return storage.getStore() ?? null;
 }
+
+// HOW a write is being made, beside who (#3833). A separate store from the
+// actor because an automation runs with the originating actor when there is
+// one and with none when a background event fired it, and in both cases the
+// activity row must say an automation did it. activity.log() reads this.
+export type ViaKind = "mcp" | "assistant" | "automation";
+export interface Via {
+  kind: ViaKind;
+  /** The automation's label, for kind 'automation'. */
+  label?: string | null;
+}
+const viaStorage = new AsyncLocalStorage<Via>();
+
+/** Run fn with every activity row written inside it marked `via`. */
+export function runVia<T>(via: Via, fn: () => T): T {
+  return viaStorage.run(via, fn);
+}
+
+/** The via of the current async chain, or null for a plain hand edit. */
+export function currentVia(): Via | null {
+  return viaStorage.getStore() ?? null;
+}

@@ -10,16 +10,19 @@
 // with no change in behaviour; the page renders one InboxCard per item and
 // owns the queue, the session chrome and the page-level menu.
 import { createPortal } from "react-dom";
+import { SamePictureOffer, ScanTwinsContext, TWIN_SENTENCE } from "./scanTwins";
+import { useAwaitingWords, type AwaitingWords } from "./awaitingLookup";
+import { answeredByLine } from "@cobblr/platform-contract/provider-reason";
 import { useAutoGrowTextarea } from "../lib/useAutoGrowTextarea";
 import { } from "../components/FileEverythingSheet";
 import { } from "../components/UploadKindSheet";
 import { } from "../components/SessionReadVerdict";
 
-import { Fragment, useEffect, useId, useMemo, useRef, useState, type ReactNode } from "react";
+import { Fragment, useContext, useEffect, useId, useMemo, useRef, useState, type ReactNode } from "react";
 import { Link } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Camera, CheckCircle, ChevronDown, Download, ExternalLink, Flag, Image as ImageIcon, ImagePlus, Library, Loader2, MapPin, MoreHorizontal, Pencil, RefreshCw, RotateCcw, ScanLine, Scissors, Sparkles, X, Database } from "lucide-react";
-import { Modal, useImageSrc, useOverlayOpenFlag, useToast, colorSwatch, wantsSwatch, valueFromInput, PopoverLayer, BackdropLayer, FieldPack, fieldNeed, fieldControl, fieldPackControlClass, type FieldType, relativeTime } from "@cobblr/platform-web";
+import { Modal, useLater, useImageSrc, EntityPhoto, useOverlayOpenFlag, useToast, colorSwatch, wantsSwatch, valueFromInput, PopoverLayer, BackdropLayer, FieldPack, fieldNeed, fieldControl, fieldPackControlClass, type FieldType, relativeTime } from "@cobblr/platform-web";
 import { } from "../components/ScanImportModal";
 import { } from "../components/ExportInboxModal";
 import { CameraCaptureSheet } from "../components/CameraCaptureSheet";
@@ -41,9 +44,10 @@ import { headingSaysItAll, namelessReason, namelessRemedy } from "../lib/identif
 import { namelessCard } from "../lib/namelessCard";
 import { fallbackChip, type IdentifyFailure } from "@cobblr/platform-contract/scan-fallback";
 import { TrackedMatchBanner, TrackedMatchLine } from "../components/TrackedMatchBanner";
+import { scanCountVerb, useScanCountSave } from "../components/ScanCountBlock";
+import { scanCountResult } from "@cobblr/platform-contract/scan-count";
 import { } from "../components/BinAdjustModal";
 import { HeaderMenu, MenuItem } from "../components/HeaderMenu";
-import { CardRestockOther, WithRestockChoices } from "../components/RepurchaseControls";
 import { } from "./DuplicateRecordsSheet";
 import { } from "../components/ReceiptAddressChip";
 import { catalogUndoHistory, catalogUndoLabel, catalogUndoTitle } from "./scanCatalogUndo";
@@ -81,7 +85,7 @@ import {
   type TrackedMatch,
 } from "../lib/api";
 import { } from "../lib/scanPayload";
-import { needsScanReview, scanLooksFineResolves, scanDoubt, scanDoubtWords, scanProvenanceNote, scanReceiptReadFailed, scanSplitUncut, scanReviewQuestions, scanReviewReason, scanRowState, scanTrackedMatch, scanDeclinesRecord } from "@cobblr/platform-contract/scan-triage";
+import { needsScanReview, scanRebuy, scanLooksFineResolves, scanDoubt, scanDoubtWords, scanProvenanceNote, scanReceiptReadFailed, scanSplitUncut, scanReviewQuestions, scanReviewReason, scanRowState, scanTrackedMatch, scanDeclinesRecord } from "@cobblr/platform-contract/scan-triage";
 import { SCAN_UNDO_ACTIONS, scanCombinedCount } from "@cobblr/platform-contract/scan-recovery";
 import { ScanReceiptUnread } from "../components/ScanReceiptUnread";
 import { scanAssertedFields } from "@cobblr/platform-contract/scan-evidence";
@@ -90,9 +94,8 @@ import { matchParentType, readField } from "../lib/parent-type-match";
 import { isRerunInFlight } from "./scan-status";
 import { baseKind } from "./scanFileAll";
 import { resolveInstanceForFiling } from "./scanInstall";
-import type { BundleInstallSummary } from "../lib/api";
+import { cleanCandidates, quickFileRow } from "./scanQuickFile";
 import { creatorOf, seriesOf } from "../components/ScanSeriesBanner";
-import { installToastLine } from "../lib/installSummary";
 import { looksLikeContainer, nextBinName } from "./scanContainer";
 import {
   declaredCategoryAxis,
@@ -104,6 +107,7 @@ import { } from "../lib/chat-context";
 import { } from "../lib/useBarcodeWedge";
 import { } from "../hooks/useBrowserDrive";
 import { useActiveOrg } from "../auth/ActiveOrgContext";
+import { WHO_ANSWERS_ANCHOR } from "../components/WhoAnswersSection";
 import { roleSatisfies } from "@cobblr/platform-contract/org-roles";
 import { raiseBlockedAction } from "../lib/blocked-action";
 import { useScanViewer } from "./scanViewer";
@@ -145,22 +149,6 @@ function isUnidentified(name: string | null | undefined): boolean {
  *  keeps. "name" = same brand + product words; "barcode" = an OCR-read barcode
  *  that's a near-match to one you scanned earlier. */
 
-/** Collapse candidates that read as the SAME chip to a human — i.e. share a
- *  display LABEL. This catches both the matchmaker proposing one table twice AND
- *  the confusing case of two DIFFERENT tables that happen to be named the same
- *  (e.g. an `assets::bookshelf` and an `inventory::…bookshelf`, both labelled
- *  "Bookshelf") — the user can't tell "Bookshelf · 3 fields" from "Bookshelf · 1
- *  field" apart, so we keep the richer-filled one and drop the duplicate label.
- *  (Falls back to module::instance when a candidate has no label.) */
-function dedupeCandidates(cands: ScanCandidate[]): ScanCandidate[] {
-  const byKey = new Map<string, ScanCandidate>();
-  for (const c of cands) {
-    const key = (c.label ?? "").trim().toLowerCase() || `${c.module}::${c.instance ?? ""}`;
-    const prev = byKey.get(key);
-    if (!prev || Object.keys(c.fields ?? {}).length > Object.keys(prev.fields ?? {}).length) byKey.set(key, c);
-  }
-  return [...byKey.values()];
-}
 
 /** A vendor/URL resolver (a Polar spool QR, …) stows its structured parse under
  *  `suggested_metadata.fields` — keys aligned to field-def names (size,
@@ -392,6 +380,10 @@ function MakeBinSheet({
 }
 
 
+/** The phone row's count save is a hook, so it runs on every row; a row with
+ *  no counted match hands it this and never calls it. */
+const NO_COUNTED_MATCH = { kind: "", id: "", instance: null, title: "", qty: 0 } as unknown as TrackedMatch;
+
 export function InboxCard({
   item,
   pageTarget,
@@ -401,6 +393,7 @@ export function InboxCard({
   selected,
   onToggleSelect,
   defaultExpanded,
+  openSignal,
   planContext,
   onCollapse,
   onArmBin,
@@ -420,6 +413,9 @@ export function InboxCard({
   onToggleSelect?: () => void;
   /** Open pre-expanded (the gallery view's focus modal). */
   defaultExpanded?: boolean;
+  /** Opens the card in place when it changes to a new non-zero value: a link
+   *  to this row from search or the dashboard (`/scan?item=`, #3909). */
+  openSignal?: number;
   /** Rendered INSIDE an organize plan's accordion: the card is an identity
    *  FIXER there (name, photo, AI hint/rerun), never a commit surface —
    *  confirming into a table mid-plan yanks the item out of the plan (the
@@ -539,6 +535,9 @@ export function InboxCard({
     setExpanded(true);
   }
 
+  useEffect(() => {
+    if (openSignal) setExpanded(true);
+  }, [openSignal]);
   // Gallery focus modal opens the card pre-expanded (one tap to triage);
   // plan accordions expand WITHOUT arming the (hidden) confirm form.
   useEffect(() => {
@@ -566,7 +565,7 @@ export function InboxCard({
   // "Cannot convert undefined or null to object" (#3392). The importer
   // normalises it now, and this is the guard for rows already stored: one
   // place, rather than a ?? {} at each read that the next one will forget.
-  const candidates = dedupeCandidates((item.suggested_candidates ?? []).map((c) => (c.fields ? c : { ...c, fields: {} })))
+  const candidates = cleanCandidates(item)
     .filter((c, i) => i === 0 || Object.keys(c.fields).length > 0)
     .slice(0, 3);
   const topCand = candidates[0] ?? null;
@@ -585,12 +584,12 @@ export function InboxCard({
   // place it was clipped by the card's own bounds - it opened below correctly
   // and simply could not be seen past the second option.
   const destBtnRef = useRef<HTMLButtonElement | null>(null);
-  const [destRect, setDestRect] = useState<{ top: number; left: number } | null>(null);
+  const [destRect, setDestRect] = useState<{ top: number; left: number; above: number } | null>(null);
   const openDest = () => {
     const r = destBtnRef.current?.getBoundingClientRect();
-    // Clamped to the viewport for the same reason as the tracking panel: a
-    // pill near the right edge put the menu mostly off-screen on a phone.
-    if (r) setDestRect({ top: r.bottom + 4, left: Math.max(8, Math.min(r.left, window.innerWidth - 288 - 8)) });
+    // PopoverLayer moves the menu back onto the screen from what it drew; a
+    // clamp here from an assumed width is what ran off a phone (#3930).
+    if (r) setDestRect({ top: r.bottom + 4, left: r.left, above: r.top });
     setDestOpen(true);
   };
   const closeDest = () => {
@@ -814,6 +813,8 @@ export function InboxCard({
   // Intelligence DB and improves the next scan of this UPC everywhere.
   const doubt = scanDoubt(item);
   const doubtWords = scanDoubtWords(item);
+  // The same picture waiting here twice (scanTwins.tsx, #3852).
+  const twinIds = useContext(ScanTwinsContext).get(item.id) ?? [];
   // The note as provenance: the doubt a lookup once baked into it is
   // stripped at render, so an older row reads like a new one.
   const provenanceNote = scanProvenanceNote(item.ai_notes);
@@ -943,6 +944,12 @@ export function InboxCard({
   // the same bar to File all, so the card and the bulk sweep agree.
   const tentativeRoute = rowState.sentence === KEYWORD_ROUTE_SENTENCE;
   const cardAiStatus = useAiStatus();
+  const later = useLater();
+  // A row still waiting on its lookup says why after a few seconds, on the
+  // desk line and the phone row alike (awaitingLookup.ts, #3852).
+  const awaiting = useAwaitingWords(item, item.status === "pending" && awaitingFresh, {
+    identifyAvailable: cardAiStatus ? aiReach(cardAiStatus).identify : undefined,
+  });
   /** Why this card has no name: nothing here can identify a photo (the setup
    *  sentence), a store's own code, the identify step's own coded reason
    *  (stamped by the server beside its note), or the AI did not answer
@@ -968,50 +975,16 @@ export function InboxCard({
   // Whether the pill offers Add or Review is ScanCardCommit's call, from the
   // contract's readiness rule; the mutation is only what Add runs.
   const quickConfirm = useMutation({
+    // The same one tap the scan sheet offers (scanQuickFile.ts): install the
+    // table on the way if needed, then file with the scan's values as-is.
     mutationFn: async () => {
-      if (!dest || !item.suggested_name) throw new Error("not ready to confirm");
-      // Install the bundle first (no item_ids = install-only) so its table
-      // exists, then file into it — the same install-then-add the form's Confirm
-      // runs, but with the scan's values as-is (open the card to edit them).
-      let installed: BundleInstallSummary | null = null;
-      const destInstance = await resolveInstanceForFiling(
-        activeSlug,
-        dest.bundle_external_id,
-        dest.instance,
-        (sum) => {
-          installed = sum;
-        },
-      );
-      const meta = (item.suggested_metadata as Record<string, unknown> | null) ?? {};
-      const serial = String((meta as { serial_number?: unknown }).serial_number ?? "");
-      const extras = {
-        ...(item.suggested_manufacturer ? { manufacturer: item.suggested_manufacturer } : {}),
-        ...(serial ? { serial_number: serial } : {}),
-        ...(dest.fields && Object.keys(dest.fields).length ? { metadata: dest.fields } : {}),
-      };
-      await api.confirmScanItem(activeSlug, item.id, {
-        target_module: dest.module,
-        target_kind: baseKind(dest.module),
-        instance: destInstance,
-        name: item.suggested_name,
-        quantity: item.quantity ?? dest.quantity ?? undefined,
-        location_id: item.target_location_id ?? undefined,
-        extras: Object.keys(extras).length ? extras : undefined,
-      });
-      return { installed: installed as BundleInstallSummary | null };
+      if (!dest) throw new Error("not ready to confirm");
+      return quickFileRow(activeSlug, item, dest);
     },
-    onSuccess: ({ installed }) => {
-      // ONE toast. The install summary and "added <thing>" are the same event,
-      // and two toasts for one tap is noise - which is what shipping the
-      // summary as its own toast produced (seen on staging, 2026-08-22).
-      const changed = installed ? installToastLine(installed) : null;
-      toast.success(
-        changed
-          ? `Added ${item.suggested_name}. ${changed}`
-          : topCand?.bundle_external_id
-            ? `Installed ${topCand.label}. Added ${item.suggested_name}.`
-            : `Added ${item.suggested_name}`,
-      );
+    onSuccess: () => {
+      // No toast: where it went is the filed row's to say, in the place the
+      // card was (lib/filedRows.ts). A toast over that row covered the very
+      // words it said, at a phone's width.
       void qc.invalidateQueries({ queryKey: scanInboxKeys.all(activeSlug) });
       if (topCand?.bundle_external_id) {
         void qc.invalidateQueries({ queryKey: ["scan-menu", activeSlug] });
@@ -1042,16 +1015,23 @@ export function InboxCard({
     },
     onError: (e) => toast.error(e instanceof ApiError ? e.message : String(e)),
   });
-  // The other restock answers beside +1 more, from the ONE list the
-  // detail's "Is this the same one?" renders (useRepurchaseChoices): the card
-  // carries Replaced and Old one went bad too (the owner, 2026-09-24: "I
-  // shouldn't have to open details to press one of the important buttons").
+  // A match on a record the workspace counts: the scan changes that count
+  // (ScanCountBlock), on the card's own line and in the open banner.
   const trackedRaw = (item.suggested_metadata as { tracked_match?: Partial<TrackedMatch> & { qty?: unknown } } | null)?.tracked_match ?? null;
   const restockMatch: TrackedMatch | null =
     rowState.action.kind === "merge" && rowState.merge && trackedRaw && typeof trackedRaw.qty === "number"
       ? ({ ...trackedRaw, kind: rowState.merge.kind, id: rowState.merge.id, instance: rowState.merge.instance, title: rowState.merge.title, qty: trackedRaw.qty, expired: !!trackedRaw.expired } as TrackedMatch)
       : null;
-  const restockQty = Math.max(1, Number(item.quantity) || 1);
+  // A record the workspace counts: the match line (closed) or the banner
+  // (open) carries the count (ScanCountBlock), and IT is how this scan is
+  // filed. The destination pill with its "+1 more" would say the same thing
+  // again (#3884).
+  const countFiles = !planContext && alreadyTracked && !!restockMatch;
+  // The phone row's compact count: the same change and the same save as the
+  // full control (useScanCountSave), in the room a list row has.
+  const [rowChange, setRowChange] = useState(() => Math.max(1, Number(item.quantity) || 1));
+  const rowCount = useScanCountSave(item.id, restockMatch ?? NO_COUNTED_MATCH);
+  const rowHave = Math.max(0, restockMatch?.qty ?? 0);
   const commitBusy = quickConfirm.isPending || quickMerge.isPending;
   const runCommit = () => (rowState.action.kind === "merge" ? quickMerge.mutate() : quickConfirm.mutate());
   // "Ask an admin": the blocked row's button. The server explains what is
@@ -1662,6 +1642,11 @@ export function InboxCard({
   // is marked looked-at in the same write, so it reads Add next; a person
   // answered, nothing was chosen for them (#3009, #3018).
   const questions = scanReviewQuestions(item);
+  // Held only because of its match (one of several things you have, or one
+  // unique thing that may be this one): the match banner asks that, with the
+  // matches to pick from. A second panel saying "Needs your review: this could
+  // be any of 2 things" under "Is this the same one?" asked it twice (#3884).
+  const matchAsks = !questions[0] && alreadyTracked && scanRebuy(item, { ...viewer }).kind === "hold";
   // The closed card's questions. A field-less "check the name" whose reason
   // is the keyword fallback is said by the fallback line below instead: that
   // line carries the consequence and the recovery (Retry with AI), and two
@@ -1868,9 +1853,11 @@ export function InboxCard({
           )}
     </>
   );
+  // Which AI answered, when it was not the first one asked (#3819).
+  const answeredBy = answeredByLine((item.suggested_metadata as { ai_answered_by?: Parameters<typeof answeredByLine>[0] } | null)?.ai_answered_by);
   const evidenceBox = (
     <>
-          {(item.ai_notes || item.ai_confidence || topCand || aiWorking) && (
+          {(item.ai_notes || item.ai_confidence || topCand || aiWorking || answeredBy) && (
             <div className="rounded-md border border-cobble-300 dark:border-cobble-700 bg-cobble-50/60 dark:bg-cobble-900/20 px-3 py-2">
               <button
                 type="button"
@@ -1901,6 +1888,15 @@ export function InboxCard({
                   className={`ml-auto text-faint transition-transform ${aiOpen ? "rotate-180" : ""}`}
                 />
               </button>
+              {!aiWorking && answeredBy && (
+                <p className="text-xs text-muted dark:text-slate-400 mt-1" data-testid="answered-by">
+                  {answeredBy}{" "}
+                  {/* The order that made it so, where it can be changed. */}
+                  <Link to={`/configuration/ai#${WHO_ANSWERS_ANCHOR}`} className="text-accent hover:underline">
+                    Who answers, in order
+                  </Link>
+                </p>
+              )}
               {aiOpen && (<>
               {/* A warning already reads in amber above; repeating it here in
                   muted body text says it twice and says it quieter. */}
@@ -2343,10 +2339,17 @@ export function InboxCard({
   // the item screen and the phone row (scanSplitUncut, #3614).
   const splitUncut = scanSplitUncut(item);
   const cropSplitPiece = () => (groupPicture ? setCropAgainOpen(true) : setCropOpen(true));
-  const phoneWarning = notesPlacement.amber ? notesPlacement.amberText : flaggedForReview && item.suggested_name ? reviewReason : null;
+  const phoneWarning = notesPlacement.amber ? notesPlacement.amberText : flaggedForReview && !matchAsks && item.suggested_name ? reviewReason : null;
   // The card asks its question instead of reading the sentence; the item
   // screen keeps the sentence, where the evidence is.
-  const phoneRowWarning = (questions.length > 0 && (item.suggested_name || questions[0]?.names) ? null : phoneWarning) ?? splitUncut?.sentence ?? null;
+  // The same picture twice comes first: it is the one line whose answer
+  // (keep one) makes the rest of the row's questions moot for the copy.
+  const phoneRowWarning =
+    (twinIds.length ? TWIN_SENTENCE : null) ??
+    (awaiting?.offerWaysOut ? awaiting.line : null) ??
+    (questions.length > 0 && (item.suggested_name || questions[0]?.names) ? null : phoneWarning) ??
+    splitUncut?.sentence ??
+    null;
   const phoneWorking = rerunning
     ? replayNoAi ? "Replaying the latest processing…" : "Re-running the lookup…"
     : serverMatching ? "AI is reading the details…"
@@ -2412,7 +2415,7 @@ export function InboxCard({
         // nagging), so it lives here and nowhere else on the phone; a row
         // with no flag has no block and no Looks fine (#3018).
         review={
-          rowState.eligibility === "needs-review"
+          rowState.eligibility === "needs-review" && !matchAsks
             ? (() => {
                 // Every reason the resolver holds a row back leads the screen
                 // with its sentence: a doubt's question when there is one, else
@@ -2457,7 +2460,13 @@ export function InboxCard({
         actions={actions}
         slots={{
           nameIt: cantIdentify ? <NameItInline slug={activeSlug} itemId={item.id} /> : undefined,
-          tracked: item.status === "pending" ? <TrackedMatchBanner item={item} locationId={item.target_location_id} /> : undefined,
+          tracked:
+            item.status === "pending" ? (
+              <>
+                <SamePictureOffer slug={activeSlug} itemId={item.id} />
+                <TrackedMatchBanner item={item} locationId={item.target_location_id} stamped={restockMatch} />
+              </>
+            ) : undefined,
           strip: !isUnidentified(item.suggested_name) ? <div onClick={(e) => e.stopPropagation()}>{photoStrip}</div> : undefined,
           form: confirmForm,
           evidence: evidenceBox,
@@ -2477,18 +2486,21 @@ export function InboxCard({
         }}
         footer={{
           formOpen,
-          addLabel: rowState.action.kind === "merge" || blockedAsk ? rowState.action.label : phoneAddLabel,
-          onOpenForm: rowState.action.kind === "merge" ? runCommit : blockedAsk ? () => askToFile.mutate() : () => openForm(dest ?? undefined),
+          // A record the workspace counts: the banner's count control files
+          // this scan, so the footer offers the other answer, a new record.
+          addLabel: restockMatch ? "File as a different one" : rowState.action.kind === "merge" || blockedAsk ? rowState.action.label : phoneAddLabel,
+          onOpenForm: restockMatch ? () => openForm(dest ?? undefined) : rowState.action.kind === "merge" ? runCommit : blockedAsk ? () => askToFile.mutate() : () => openForm(dest ?? undefined),
           // The screen's footer says what the row says (#3076): +1 more runs
           // the merge, and a blocked row's Ask raises the ask, never a form
           // whose Confirm would meet the refusal a second time.
           primary: receiptBlock
             ? { label: RECEIPT_READ_AGAIN, title: RECEIPT_UNREAD_SENTENCE, busy: receiptBlock.reading, onClick: receiptBlock.onReadAgain }
-            : rowState.action.kind === "merge"
+            : rowState.action.kind === "merge" && !restockMatch
               ? { label: rowState.action.label, title: rowState.action.title, busy: commitBusy, onClick: runCommit }
               : blockedAsk
                 ? { label: rowState.action.label, title: rowState.action.title, busy: askToFile.isPending, onClick: () => askToFile.mutate() }
                 : null,
+          filedOnScreen: !!restockMatch && !receiptBlock,
           onDiscard: () => discard.mutate(),
           discardPending: discard.isPending,
           setActionSlot,
@@ -2540,8 +2552,6 @@ export function InboxCard({
     }
     return (
       <>
-        <WithRestockChoices itemId={item.id} match={restockMatch} quantity={restockQty}>
-        {(restockOthers) => (
           <ScanPhoneRow
             item={item}
             receipt={receiptBlock}
@@ -2581,7 +2591,13 @@ export function InboxCard({
                       ? namelessFix && { ...namelessFix, connectHref: `/w/${activeSlug}/ai` }
                       : null
             }
-            quantity={receiptUnread ? null : { value: Math.max(1, item.quantity ?? 1), busy: qtyPatch.isPending, onChange: (n) => qtyPatch.mutate(Math.max(1, n)) }}
+            quantity={
+              receiptUnread
+                ? null
+                : restockMatch
+                  ? { value: rowChange, busy: rowCount.isPending, onChange: (n) => setRowChange(Math.max(-rowHave, n)), signed: { floor: -rowHave } }
+                  : { value: Math.max(1, item.quantity ?? 1), busy: qtyPatch.isPending, onChange: (n) => qtyPatch.mutate(Math.max(1, n)) }
+            }
             chips={chips}
             commit={
               !dest || item.status !== "pending"
@@ -2597,12 +2613,12 @@ export function InboxCard({
                             : rowState.action.kind === "blocked" && rowState.ask?.length
                               ? "ask"
                               : "review",
-                    label: rowState.action.label,
-                    destination: updating ? `${updating.title} in ${dest.label}` : dest.label,
+                    label: restockMatch ? scanCountVerb("change", rowChange, rowHave) : rowState.action.label,
+                    destination: restockMatch ? `${restockMatch.title}: ${rowHave} → ${scanCountResult("change", rowHave, rowChange)}` : updating ? `${updating.title} in ${dest.label}` : dest.label,
                     tentative: tentativeRoute && !updating,
                     reason: rowState.sentence ?? rowState.action.title,
                     busy: commitBusy || askToFile.isPending,
-                    onAdd: rowState.action.kind === "blocked" ? () => askToFile.mutate() : runCommit,
+                    onAdd: restockMatch ? () => rowCount.mutate({ mode: "change", value: rowChange }) : rowState.action.kind === "blocked" ? () => askToFile.mutate() : runCommit,
                     options: destOptions.map((c) => ({
                       key: entryKey(c.module, c.instance),
                       label: c.label,
@@ -2623,13 +2639,11 @@ export function InboxCard({
             }
             rerun={{ running: aiWorking, replaying: replayNoAi, failed: !aiWorking && (matchFailed || namelessFix?.recovery === "retry" || aiDowngraded), can: canRerunLookup(item), onRun: () => rerun.mutate(undefined) }}
             onCapture={() => setCaptureSheet("add")}
-            more={[...restockOthers.map((c) => ({ label: c.label, hint: c.title ?? "", onClick: c.run })), ...more]}
+            more={more}
             toolHints={item.tool_hints}
             selection={onToggleSelect ? { active: !!selectionActive, selected: !!selected, onToggle: onToggleSelect } : null}
             onOpen={() => onOpenSheet?.(dest)}
           />
-        )}
-        </WithRestockChoices>
         {overlays}
         {lightbox}
       </>
@@ -2668,23 +2682,22 @@ export function InboxCard({
             still shown whole and recognisable at that height, and a quiet
             row is no taller than its picture asks. */}
         <div className="relative w-24 sm:w-28 shrink-0 self-stretch min-h-[4.5rem] max-h-32 rounded-l-xl border-r border-line dark:border-slate-700 bg-subtle dark:bg-slate-800 flex items-center justify-center overflow-hidden">
-          {thumb ? (
-            <img
-              src={thumb}
-              alt={item.suggested_name ?? item.barcode_text ?? ""}
-              className="w-full h-full object-contain"
-              // NOT lazy: an EXTERNAL catalog URL (a user-picked web/dealer photo)
-              // with loading="lazy" stayed unloaded on the closed card — the
-              // intersection observer saw the card at 0-height on first render and
-              // never re-checked, so it looked broken until opening the accordion
-              // forced a reflow. Internal thumbs are blob URLs (load instantly),
-              // so only external ones showed the bug. Eager-load the small thumb.
-              // The expanded views aren't lazy either; this matches them.
-              onError={() => markBroken(catalogImg ? catalogUrl : yoursRawUrl)}
-            />
-          ) : (
-            <ScanLine size={26} className="text-faint dark:text-slate-600" />
-          )}
+          {/* EAGER, not lazy: an EXTERNAL catalog URL (a user-picked web/dealer
+              photo) with loading="lazy" stayed unloaded on the closed card. The
+              intersection observer saw the card at 0-height on first render and
+              never re-checked, so it looked broken until opening the accordion
+              forced a reflow. Internal thumbs are blob URLs (load instantly), so
+              only external ones showed the bug. */}
+          <EntityPhoto
+            src={thumb}
+            alt={item.suggested_name ?? item.barcode_text ?? ""}
+            fill
+            fit="contain"
+            eager
+            className="!bg-transparent"
+            placeholder={<ScanLine size={26} className="text-faint dark:text-slate-600" />}
+            onBroken={() => markBroken(catalogImg ? catalogUrl : yoursRawUrl)}
+          />
           {onToggleSelect && (
             <div
               className="absolute top-1 left-1 rounded bg-white/85 dark:bg-slate-900/75 p-0.5 shadow-sm"
@@ -2836,7 +2849,16 @@ export function InboxCard({
             ) : cantIdentify ? (
               <span className="text-muted">Couldn’t identify this {idNoun}  - name it:</span>
             ) : awaitingFresh ? (
-              <span className="text-faint italic">Awaiting lookup…</span>
+              <AwaitingLookupLine
+                words={awaiting ?? { line: "Awaiting lookup…", offerWaysOut: false }}
+                identifyAvailable={cardAiStatus ? aiReach(cardAiStatus).identify : undefined}
+                onTryAgain={() => rerun.mutate({})}
+                retrying={rerun.isPending}
+                onNameIt={() => {
+                  expandOnly();
+                  later.after("focus-name", 50, focusName);
+                }}
+              />
             ) : (
               // Settled (matchmaker ran / a tentative table) but still nameless.
               <span className="text-muted">Name this {idNoun}:</span>
@@ -3088,6 +3110,7 @@ export function InboxCard({
               ))}
             </div>
           )}
+          <SamePictureOffer slug={activeSlug} itemId={item.id} />
           {notesPlacement.amber && (expanded || cardQuestions.length === 0 || !item.suggested_name) && !(aiDowngraded && !expanded) && !(cantIdentify && headingSaysItAll(namelessWhy)) && (
             <div className={`text-[11px] mt-0.5 text-amber-600 dark:text-amber-400 ${expanded ? "" : "line-clamp-1"}`} data-testid="amber-note">
               {notesPlacement.amberText}
@@ -3096,7 +3119,7 @@ export function InboxCard({
           {/* A named row flagged with no note of its own (a low score) still
               says why it offers Review, in the same amber, where the note would
               be. A nameless row says so in the name field's place instead. */}
-          {flaggedForReview && !notesPlacement.amber && !!item.suggested_name && reviewReason && (expanded || cardQuestions.length === 0) && !(aiDowngraded && !expanded) && (
+          {flaggedForReview && !matchAsks && !notesPlacement.amber && !!item.suggested_name && reviewReason && (expanded || cardQuestions.length === 0) && !(aiDowngraded && !expanded) && (
             <div className={`text-[11px] mt-0.5 text-amber-600 dark:text-amber-400 ${expanded ? "" : "line-clamp-1"}`}>
               {reviewReason}
             </div>
@@ -3145,48 +3168,36 @@ export function InboxCard({
               exist: nobody expands a card to discover a question they didn't know
               they had. */}
           {multiItem && (
+            // One line, not a panel above the match (#3884): the question and
+            // its two answers. Which items were seen is on hover and in the
+            // split itself.
             <div
               onClick={(e) => e.stopPropagation()}
-              className="mt-1.5 rounded-md border border-cobble-500/50 bg-cobble-600/10 px-2.5 py-2"
+              data-testid="multi-item-line"
+              title={multiItem.individuals.map((ind) => `${ind.name}${ind.qty > 1 ? ` ×${ind.qty}` : ""}`).join(" · ")}
+              className="mt-1.5 flex flex-wrap items-center gap-x-2 gap-y-1 text-[11px] text-content dark:text-mortar-100"
             >
-              <div className="flex items-start gap-1.5 text-[11px] text-content dark:text-mortar-100">
-                <Sparkles size={12} className="shrink-0 mt-0.5 text-accent" />
-                <span>
-                  <strong>{multiItem.distinct} different items</strong> in this photo. Keep
-                  them together as one record, or split into individuals?
-                </span>
-              </div>
-              {multiItem.individuals.length > 0 && (
-                <ul className="mt-1 ml-5 space-y-0.5">
-                  {multiItem.individuals.map((ind, i) => (
-                    <li key={i} className="text-[11px] text-muted truncate">
-                      · {ind.name}
-                      {ind.qty > 1 && <span className="text-faint"> ×{ind.qty}</span>}
-                    </li>
-                  ))}
-                </ul>
-              )}
-              <div className="mt-1.5 flex flex-wrap items-center gap-1.5">
-                <button
-                  type="button"
-                  onClick={() => split.mutate()}
-                  disabled={split.isPending || keepGrouped.isPending}
-                  className="inline-flex items-center gap-1.5 rounded-md bg-cobble-600 px-2 py-1 text-[11px] font-medium text-white hover:bg-cobble-500 transition disabled:opacity-50"
-                >
-                  <Scissors size={11} className="shrink-0" />
-                  {split.isPending
-                    ? "Splitting…"
-                    : `Split into ${multiItem.distinct} items`}
-                </button>
-                <button
-                  type="button"
-                  onClick={() => keepGrouped.mutate()}
-                  disabled={split.isPending || keepGrouped.isPending}
-                  className="rounded-md border border-line dark:border-slate-600 px-2 py-1 text-[11px] text-muted hover:text-content dark:hover:text-mortar-100 transition disabled:opacity-50"
-                >
-                  Keep as one
-                </button>
-              </div>
+              <Sparkles size={12} className="shrink-0 text-accent" />
+              <span>
+                <strong>{multiItem.distinct} different items</strong> here?
+              </span>
+              <button
+                type="button"
+                onClick={() => split.mutate()}
+                disabled={split.isPending || keepGrouped.isPending}
+                className="inline-flex items-center gap-1 rounded-full bg-cobble-600 px-2 py-0.5 font-medium text-white hover:bg-cobble-500 transition disabled:opacity-50"
+              >
+                <Scissors size={11} className="shrink-0" />
+                {split.isPending ? "Splitting…" : `Split into ${multiItem.distinct} items`}
+              </button>
+              <button
+                type="button"
+                onClick={() => keepGrouped.mutate()}
+                disabled={split.isPending || keepGrouped.isPending}
+                className="rounded-full border border-line dark:border-slate-600 px-2 py-0.5 text-muted hover:text-content dark:hover:text-mortar-100 transition disabled:opacity-50"
+              >
+                Keep as one
+              </button>
             </div>
           )}
           {/* Whatever OTHER modules declared into a scan item, rendered
@@ -3273,6 +3284,7 @@ export function InboxCard({
               item={item}
               fallbackTitle={trackedMatch!.title!}
               quantity={Math.max(1, item.quantity || 1)}
+              stamped={restockMatch}
               onCompare={() => (dest ? openForm(dest) : setExpanded(true))}
             />
           )}
@@ -3302,7 +3314,7 @@ export function InboxCard({
                   three ways and the alternatives looked like different actions
                   rather than different answers to one question. Now: pick the
                   table, press Add. */}
-              {dest && (
+              {dest && !countFiles && (
                 // FIRST on the row, whatever else the item has. A series chip
                 // rendered ahead of it on the one card that had one, so the pill
                 // sat in a different place there than on every other card and
@@ -3322,7 +3334,7 @@ export function InboxCard({
                 // restock choice ran past the card at 320px. The radius is a
                 // length, not "full", so a two-line pill is a rounded block
                 // rather than a lozenge. e2e/scan-card-never-clips.mjs walks it.
-                <span className="relative inline-flex max-w-full order-first flex-wrap items-center gap-1 max-sm:w-full">
+                <span data-dest-pill="" className="relative inline-flex max-w-full order-first flex-wrap items-center gap-1 max-sm:w-full">
                 <span
                   className={
                     tentativeRoute
@@ -3338,7 +3350,13 @@ export function InboxCard({
                       region absorbs the slack, so the table's NAME gets the room
                       ("Home Invento…" at 61px of 91, second census 2026-08-30)
                       and Add sits flush right. */}
-                  <span className="relative inline-flex min-w-[5rem] max-w-full grow basis-[5rem] items-center">
+                  {/* Sized to its label (basis-auto), cut only when the row is
+                      really full: a fixed 5rem basis sized the pill to 5rem
+                      whatever the room, and the owner read "3D Printe… ▾" on
+                      a desk card with half the row empty (#3884). The 5rem
+                      stays as the floor. e2e/scan-card-never-clips.mjs holds
+                      it: a name cut with room beside it fails. */}
+                  <span className="relative inline-flex min-w-[5rem] max-w-full grow basis-auto items-center">
                     <button
                       type="button"
                       ref={destBtnRef}
@@ -3372,7 +3390,6 @@ export function InboxCard({
                     onReview={() => (rowState.action.kind === "blocked" && rowState.ask?.length ? askToFile.mutate() : openForm(dest))}
                   />
                 </span>
-                {restockMatch && <CardRestockOther itemId={item.id} match={restockMatch} quantity={restockQty} />}
                 {/* The route was answered against the workspace as it was. A table
                     that has appeared since is offered, never applied: a route you
                     can see and ignore costs a glance, one that moves under you
@@ -3397,6 +3414,7 @@ export function InboxCard({
                         <PopoverLayer
                           role="listbox"
                           style={{ top: destRect.top, left: destRect.left }}
+                          flipAbove={destRect.above}
                           onKeyDown={(e) => {
                             if (e.key === "Escape") {
                               e.stopPropagation();
@@ -3901,7 +3919,7 @@ export function InboxCard({
           {/* "Already tracked" — attach to the existing entity
               instead of creating a duplicate. Lazy: only queried on expand. */}
           {item.status === "pending" && (
-            <TrackedMatchBanner item={item} locationId={item.target_location_id} />
+            <TrackedMatchBanner item={item} locationId={item.target_location_id} stamped={restockMatch} />
           )}
           <div className="grid lg:grid-cols-2 gap-3 items-stretch">
           <div className="space-y-2 min-w-0 flex flex-col">
@@ -3935,7 +3953,7 @@ export function InboxCard({
                         broken rather than comparable (reported 2026-08-11).
                         e2e/scan-card-photo-height.mjs holds the row to a budget
                         with a deliberately mismatched pair. */}
-                    <img src={catalogImg} alt="catalog" className="w-full max-h-32 sm:max-h-48 object-contain" onError={() => markBroken(catalogUrl)} />
+                    <EntityPhoto src={catalogImg} alt="catalog" aspect="4/3" fit="contain" eager placeholder={null} className="max-h-32 sm:max-h-48 !bg-transparent" onBroken={() => markBroken(catalogUrl)} />
                   </button>
                   {/* A photo's controls live ON the photo (its caption), not in
                       a standing ambient row — see scan-inbox-ux-review.md F2. */}
@@ -3977,7 +3995,7 @@ export function InboxCard({
                     title="View full size"
                     className="block w-full rounded-md overflow-hidden border border-line dark:border-slate-700 bg-black flex items-center justify-center cursor-zoom-in"
                   >
-                    <img src={yoursImg} alt="your photo" className="w-full max-h-32 sm:max-h-48 object-contain" onError={() => markBroken(yoursRawUrl)} />
+                    <EntityPhoto src={yoursImg} alt="your photo" aspect="4/3" fit="contain" eager placeholder={null} className="max-h-32 sm:max-h-48 !bg-transparent" onBroken={() => markBroken(yoursRawUrl)} />
                   </button>
                   <figcaption className="text-[10px] font-mono uppercase tracking-widest text-muted dark:text-slate-400 mt-1 flex items-center gap-2">
                     <span>yours</span>
@@ -4154,7 +4172,6 @@ export function GalleryTile({
     ],
     yours: yours ? resolved.src(yours) : null,
   }).src;
-  const src = useImageSrc(raw);
   // The amber tile border marks the same thing the header's "to review" count
   // does, so it asks the shared predicate rather than re-deriving it. Its own
   // copy had already drifted: it kept flagging an item a human had marked "looks
@@ -4168,13 +4185,7 @@ export function GalleryTile({
         flagged ? "border-amber-400/70" : "border-line dark:border-slate-700"
       }`}
     >
-      {src ? (
-        <img src={src} alt="" className="w-full h-full object-cover" loading="lazy" />
-      ) : (
-        <div className="w-full h-full flex items-center justify-center">
-          <ScanLine size={22} className="text-faint" />
-        </div>
-      )}
+      <EntityPhoto src={raw} alt="" fill placeholder={<ScanLine size={22} className="text-faint" />} />
       <div className="absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/75 to-transparent px-2 pt-6 pb-1.5">
         <div className="text-[11px] leading-tight text-white line-clamp-2">
           {item.suggested_name ?? <span className="italic text-white/70">unidentified</span>}
@@ -5207,10 +5218,7 @@ function ConfirmForm({
       // A will-install destination is created FIRST (materialize with no item_ids
       // installs the bundle + its table, committing nothing), then we file THIS
       // item into it with the EDITED values — same commit path as any table.
-      let formInstalled: BundleInstallSummary | null = null;
-      const entryInstance = await resolveInstanceForFiling(activeSlug, willInstall, entry.instance, (sum) => {
-        formInstalled = sum;
-      });
+      const entryInstance = await resolveInstanceForFiling(activeSlug, willInstall, entry.instance);
       const confirmed = await api.confirmScanItem(activeSlug, item.id, {
         target_module: entry.module,
         target_kind: baseKind(entry.module),
@@ -5224,29 +5232,10 @@ function ConfirmForm({
           ? { save_eval_case: true, eval_note: evalNote.trim() || undefined }
           : {}),
       });
-      const sum: BundleInstallSummary | null = formInstalled;
-      return { ...confirmed, installedSummary: sum ? installToastLine(sum) : null };
+      return confirmed;
     },
-    onSuccess: (r) => {
-      // Link into the instance when committed into one, else the base module.
-      const dest = entry.instance
-        ? `/instances/${entry.instance}/parts/${r.created.id}`
-        : `/${r.item.target_module === "inventory" ? "inventory/parts" : r.item.target_module + "s"}/${r.created.id}`;
-      // NB: toasts render through ToastProvider, which sits ABOVE <BrowserRouter>
-      // in App.tsx — so a react-router <Link> here throws ("Cannot destructure
-      // 'basename'") and error-boundaries the whole app right after a successful
-      // commit. Use a plain <a> with the basename-absolute href instead.
-      toast.success(
-        <span>
-          {willInstall ? `Installed ${entry.label}. Added ` : "Created. Open "}
-          <a href={`/w/${activeSlug}${dest}`} className="underline">
-            {r.item.suggested_name ?? "the new entity"}
-          </a>
-          {/* What the install changed rides in the SAME toast, for the same
-              reason as the pill: one tap should not raise two of them. */}
-          {r.installedSummary ? ` ${r.installedSummary}` : ""}
-        </span> as never,
-      );
+    onSuccess: () => {
+      // No toast: where it went is the filed row's to say (lib/filedRows.ts).
       void qc.invalidateQueries({ queryKey: scanInboxKeys.all(activeSlug) });
       // A will-install commit just added a module/instance/table — refresh nav +
       // menus so everything reflects the new install.
@@ -5590,6 +5579,27 @@ function ConfirmForm({
                 onChange={(v) => custom.set(def.name, v)}
                 choiceDoor={choiceDoor}
               />
+            ) : f.key === "category_axis" && f.choices?.length ? (
+              // Inventory's category is its own tree, not a field def, so it has
+              // no ScanFieldInput/choiceDoor above - yet it is the ONE field a
+              // scan most often needs a NEW value for (a filament spool came
+              // back "Hair Color" with no visible way to coin "Filament";
+              // reported 2026-09-28). Same "New <category>…" door table selects
+              // get, in by-name mode: the confirm creates it on file.
+              <ScanChoiceSelect
+                id={`scan-${item.id}-${f.key}`}
+                slug={activeSlug}
+                entityKind={entry.kind ?? null}
+                fieldName="category"
+                label={f.label}
+                choices={f.choices}
+                value={f.value}
+                onChange={(v) => setChipValue("category_axis", v ?? "")}
+                canAdd
+                createByName
+                dataField={f.key}
+                className="min-h-10 w-full min-w-0 max-w-full appearance-none rounded-md border border-line dark:border-slate-600 bg-surface dark:bg-slate-800 px-2.5 text-sm text-content dark:text-mortar-100"
+              />
             ) : (
               <input
                 id={`scan-${item.id}-${f.key}`}
@@ -5605,7 +5615,7 @@ function ConfirmForm({
                 className="min-h-10 w-full min-w-0 max-w-full appearance-none rounded-md border border-line dark:border-slate-600 bg-surface dark:bg-slate-800 px-2.5 text-sm text-content dark:text-mortar-100"
               />
             )}
-            {!def && f.key !== "location" && f.choices?.length ? (
+            {!def && f.key !== "location" && f.key !== "category_axis" && f.choices?.length ? (
               <datalist id={`field-choices-${item.id}-${f.key}`}>
                 {f.choices.map((c) => <option key={c} value={c} />)}
               </datalist>
@@ -5624,6 +5634,27 @@ function ConfirmForm({
       available={chipAvailable}
       onChange={setChipValue}
       renderEditor={(f) => {
+        // Inventory's by-name category axis has no field def, but it gets the
+        // same hosted "New category…" door table selects do - the chip's own
+        // datalist could suggest but never announced you could coin one
+        // (reported 2026-09-28). By-name mode: the confirm creates it on file.
+        if (f.key === "category_axis" && f.choices?.length) {
+          return (
+            <ScanChoiceSelect
+              slug={activeSlug}
+              entityKind={entry.kind ?? null}
+              fieldName="category"
+              label={f.label}
+              choices={f.choices}
+              value={f.value}
+              onChange={(v) => setChipValue("category_axis", v ?? "")}
+              canAdd
+              createByName
+              dataField={f.key}
+              className={fieldPackControlClass + " px-2 py-1.5 text-sm border border-line dark:border-slate-600 rounded bg-surface dark:bg-slate-800"}
+            />
+          );
+        }
         const def = (entry.fields ?? []).find((x) => x.name === f.key);
         if (!def) return null;
         // A choice field is hosted too, so the chip's select carries "New <field>…" (#2982).
@@ -5909,5 +5940,57 @@ function ScanFieldInput({
       )}
       {help}
     </div>
+  );
+}
+
+/** "Awaiting lookup…", and after a few seconds why it is still waiting and
+ *  the two ways out (awaitingLookup.ts). Ticks itself; nothing else on the
+ *  card re-renders for it. */
+function AwaitingLookupLine({
+  words,
+  identifyAvailable,
+  onTryAgain,
+  onNameIt,
+  retrying,
+}: {
+  words: AwaitingWords;
+  identifyAvailable?: boolean;
+  onTryAgain: () => void;
+  onNameIt: () => void;
+  retrying: boolean;
+}) {
+  if (!words.offerWaysOut) return <span className="text-faint italic" data-testid="awaiting-lookup">{words.line}</span>;
+  return (
+    <span className="text-muted" data-testid="awaiting-lookup">
+      {words.line}{" "}
+      {identifyAvailable !== false && (
+        <>
+          <button
+            type="button"
+            className="underline hover:text-content"
+            disabled={retrying}
+            onClick={(e) => {
+              e.stopPropagation();
+              onTryAgain();
+            }}
+            data-testid="awaiting-try-again"
+          >
+            Try again
+          </button>{" "}
+          or{" "}
+        </>
+      )}
+      <button
+        type="button"
+        className="underline hover:text-content"
+        onClick={(e) => {
+          e.stopPropagation();
+          onNameIt();
+        }}
+        data-testid="awaiting-name-it"
+      >
+        {identifyAvailable !== false ? "name it yourself" : "Name it yourself"}
+      </button>
+    </span>
   );
 }

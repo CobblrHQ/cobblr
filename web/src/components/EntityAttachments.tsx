@@ -7,25 +7,26 @@
 // core_files_attachments; this is the matching UI primitive.
 
 import { useEffect, useRef, useState } from "react";
-import { useKindLabels } from "../lib/useKindLabels";
 import { openAuthedFile } from "../lib/authed-file";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { ArrowRight, Eye, ImageIcon, Link, Plus, Tag as TagIcon, Trash2, Upload, X } from "lucide-react";
-import { ApiError, api, type PairingItem, type TagRecord } from "../lib/api";
+import { Eye, ImageIcon, Plus, Tag as TagIcon, Trash2, Upload, X } from "lucide-react";
+import { ApiError, api, type TagRecord } from "../lib/api";
 import { useActiveOrg } from "../auth/ActiveOrgContext";
-import { Modal, useToast, useConfirm } from "@cobblr/platform-web";
-import { useImageSrc, FilePreview, canPreviewFile, useFilePreviewRegistry } from "@cobblr/platform-web";
+import { Modal, useToast, useConfirm, EntityPhoto } from "@cobblr/platform-web";
+import { FilePreview, canPreviewFile, useFilePreviewRegistry } from "@cobblr/platform-web";
 import { ImageLightbox } from "./ImageLightbox";
-import { Link as RouterLink } from "react-router-dom";
-import { useDetailRoute } from "../lib/useDetailRoute";
 import { DiscussionPreview } from "./DiscussionTab";
 import { clipboardImageFiles } from "./pastedImage";
+import { LinksSection } from "../features/links/LinksSection";
 
 interface Props {
   /** Entity kind id, e.g. "inventory:part". */
   kind: string;
   /** Tenant-DB UUID of the entity. */
   entityId: string;
+  /** The table the record is in (`3d-printers:item`), so the links it
+   *  declares are offered first. Defaults to `kind`. */
+  collection?: string;
   /** Compact mode: an EMPTY section collapses to a small "+ Tag / + File /
    *  + Link" add-pill (no header, no big dropzone) and only grows into the full
    *  section once it has content — so a detail modal opens without a wall of
@@ -40,7 +41,7 @@ interface Props {
   omit?: Array<"tags" | "discussion" | "files" | "pairings">;
 }
 
-export function EntityAttachments({ kind, entityId, compact = false, omit = [] }: Props) {
+export function EntityAttachments({ kind, entityId, collection, compact = false, omit = [] }: Props) {
   const [moduleName, sourceType] = kind.split(":");
   if (!moduleName || !sourceType) return null;
   const shows = (part: NonNullable<Props["omit"]>[number]) => !omit.includes(part);
@@ -70,7 +71,7 @@ export function EntityAttachments({ kind, entityId, compact = false, omit = [] }
           compact={compact}
         />
       )}
-      {shows("pairings") && <PairingsSection kind={kind} entityId={entityId} compact={compact} />}
+      {shows("pairings") && <LinksSection kind={kind} entityId={entityId} collection={collection} compact={compact} />}
     </div>
   );
 }
@@ -433,13 +434,17 @@ function FilesSection({
           },
         },
       );
-      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      if (!res.ok) {
+        const body = (await res.json().catch(() => null)) as { message?: string; error?: string } | null;
+        throw new Error(body?.message ?? body?.error ?? `HTTP ${res.status}`);
+      }
     },
     onSuccess: () => {
       void qc.invalidateQueries({
         queryKey: ["file-attachments", activeSlug, sourceType, sourceId],
       });
     },
+    onError: (e) => toast.error(`Couldn't remove that file: ${(e as Error).message}`),
   });
 
   async function uploadFiles(files: File[]) {
@@ -681,363 +686,6 @@ function FilesSection({
 // wire. UI-driven only; wires that subscribe to entity_pairings can
 // observe the link, but the link itself is just data.
 
-function PairingsSection({ kind, entityId, compact = false }: { kind: string; entityId: string; compact?: boolean }) {
-  const { activeSlug } = useActiveOrg();
-  const qc = useQueryClient();
-  const toast = useToast();
-  const confirm = useConfirm();
-  const [pickerOpen, setPickerOpen] = useState(false);
-
-  // List BOTH directions (this entity as source OR as target). Two
-  // queries — pairings router doesn't have a single "everything
-  // touching X" filter, so we union client-side.
-  const outbound = useQuery({
-    queryKey: ["pairings", activeSlug, kind, entityId, "out"],
-    queryFn: () =>
-      api.listPairings(activeSlug, { source_kind: kind, source_id: entityId }),
-    enabled: !!activeSlug,
-  });
-  const inbound = useQuery({
-    queryKey: ["pairings", activeSlug, kind, entityId, "in"],
-    queryFn: () =>
-      api.listPairings(activeSlug, { target_kind: kind, target_id: entityId }),
-    enabled: !!activeSlug,
-  });
-
-  const del = useMutation({
-    mutationFn: (id: string) => api.deletePairing(activeSlug, id),
-    onSuccess: () => {
-      void qc.invalidateQueries({ queryKey: ["pairings", activeSlug, kind, entityId, "out"] });
-      void qc.invalidateQueries({ queryKey: ["pairings", activeSlug, kind, entityId, "in"] });
-      toast.success("Link removed");
-    },
-    onError: (e) => toast.error((e as Error).message),
-  });
-
-  const outRows = outbound.data?.items ?? [];
-  const inRows = inbound.data?.items ?? [];
-  const all = [...outRows, ...inRows];
-
-  // Compact + no links → a small "+ Link" pill. Grows into the full list once
-  // something is linked.
-  if (compact && all.length === 0) {
-    return (
-      <>
-        <button onClick={() => setPickerOpen(true)} className={ADD_PILL}>
-          <Link size={10} /> Link
-        </button>
-        {pickerOpen && (
-          <PairingCreateModal
-            fromKind={kind}
-            fromId={entityId}
-            onClose={() => setPickerOpen(false)}
-            onCreated={() => {
-              void qc.invalidateQueries({ queryKey: ["pairings", activeSlug, kind, entityId, "out"] });
-              setPickerOpen(false);
-            }}
-          />
-        )}
-      </>
-    );
-  }
-
-  return (
-    <section className={compact ? "w-full" : undefined}>
-      <div className="flex items-center justify-between mb-2">
-        <h3 className="text-xs font-medium text-content dark:text-slate-300 flex items-center gap-1.5">
-          <Link size={12} /> Linked entities
-        </h3>
-        <button
-          onClick={() => setPickerOpen(true)}
-          className="text-xs text-accent hover:text-accent inline-flex items-center gap-1"
-        >
-          <Plus size={12} /> Link
-        </button>
-      </div>
-      {all.length === 0 ? (
-        <p className="text-xs text-faint italic">No links yet.</p>
-      ) : (
-        <ul className="space-y-1">
-          {outRows.map((p) => (
-            <PairingRow
-              key={p.id}
-              pairing={p}
-              direction="out"
-              onDelete={async () => {
-                const ok = await confirm({
-                  title: "Remove this link?",
-                  message: `${p.source_kind} → ${p.relationship_kind} → ${p.target_kind}`,
-                  confirmLabel: "Remove",
-                  destructive: true,
-                });
-                if (ok) del.mutate(p.id);
-              }}
-            />
-          ))}
-          {inRows.map((p) => (
-            <PairingRow
-              key={p.id}
-              pairing={p}
-              direction="in"
-              onDelete={async () => {
-                const ok = await confirm({
-                  title: "Remove this link?",
-                  message: `${p.source_kind} → ${p.relationship_kind} → ${p.target_kind}`,
-                  confirmLabel: "Remove",
-                  destructive: true,
-                });
-                if (ok) del.mutate(p.id);
-              }}
-            />
-          ))}
-        </ul>
-      )}
-      {pickerOpen && (
-        <PairingCreateModal
-          fromKind={kind}
-          fromId={entityId}
-          onClose={() => setPickerOpen(false)}
-          onCreated={() => {
-            void qc.invalidateQueries({ queryKey: ["pairings", activeSlug, kind, entityId, "out"] });
-            setPickerOpen(false);
-          }}
-        />
-      )}
-    </section>
-  );
-}
-
-/** The other end of a link, by name.
- *
- *  One cached query per (kind, id), so a record linked from ten rows is looked
- *  up once and a page of links costs a handful of small requests. The title is
- *  read at render time and never stored, so renaming the record renames it
- *  everywhere it is linked. */
-function LinkedEntityName({ kind, id }: { kind: string; id: string }) {
-  const { activeSlug } = useActiveOrg();
-  const detailRoute = useDetailRoute(activeSlug ?? "");
-  const labels = useKindLabels(activeSlug);
-  const q = useQuery({
-    queryKey: ["entity", activeSlug, kind, id],
-    queryFn: () => api.lookupEntity(activeSlug, kind, id),
-    enabled: !!activeSlug,
-    staleTime: 60_000,
-    retry: false,
-  });
-  const to = detailRoute(kind, id);
-  // A link can outlive what it points at. Saying so beats a spinner that never
-  // resolves, and beats showing a uuid as though it were an answer.
-  const label = q.isError ? "(deleted)" : (q.data?.title ?? "…");
-  const cls = "font-medium text-content dark:text-mortar-100 truncate";
-  return (
-    <>
-      {to && !q.isError ? (
-        <RouterLink to={to} className={cls + " hover:underline"} title={kind}>
-          {label}
-        </RouterLink>
-      ) : (
-        <span className={cls} title={kind}>{label}</span>
-      )}
-      {/* The kind still earns a place: "which of my things is this" is answered
-          by the name, "what sort of thing is it" by this. */}
-      <span className="text-[10px] text-faint truncate">{labels.collection(kind)}</span>
-    </>
-  );
-}
-
-function PairingRow({
-  pairing,
-  direction,
-  onDelete,
-}: {
-  pairing: PairingItem;
-  direction: "in" | "out";
-  onDelete: () => void;
-}) {
-  // For inbound rows, swap the visual so the *other* side reads
-  // first — keeps "this entity is linked to X" semantics regardless
-  // of which side stored it.
-  const left = direction === "out" ? pairing.target_kind : pairing.source_kind;
-  const leftId = direction === "out" ? pairing.target_id : pairing.source_id;
-  return (
-    <li className="flex items-center gap-2 px-2 py-1 text-xs border border-line dark:border-slate-700 rounded group">
-      <span className="font-mono text-[10px] text-faint">
-        {direction === "out" ? "→" : "←"}
-      </span>
-      <span className="px-1.5 py-0.5 rounded bg-subtle dark:bg-slate-800 font-mono text-[10px] text-muted">
-        {pairing.relationship_kind}
-      </span>
-      <ArrowRight size={10} className="text-faint" />
-      {/* The NAME of the other thing, not its kind and the first eight
-          characters of a uuid. This row read "inventory:part a3f5729e" for as
-          long as it has existed, which is the machine's version of the answer:
-          you cannot tell which part that is without opening it. Mentions made
-          it worse by writing links here automatically, so a feature that says
-          "these two are related" pointed at something unreadable. */}
-      <LinkedEntityName kind={left} id={leftId} />
-      <div className="flex-1" />
-      {pairing.notes && (
-        <span className="text-muted italic truncate max-w-[200px]" title={pairing.notes}>
-          {pairing.notes}
-        </span>
-      )}
-      <button
-        onClick={onDelete}
-        className="hover-reveal text-faint hover:text-ember-500 transition"
-        title="Remove link"
-      >
-        <X size={12} />
-      </button>
-    </li>
-  );
-}
-
-function PairingCreateModal({
-  fromKind,
-  fromId,
-  onClose,
-  onCreated,
-}: {
-  fromKind: string;
-  fromId: string;
-  onClose: () => void;
-  onCreated: () => void;
-}) {
-  const { activeSlug } = useActiveOrg();
-  const pickLabels = useKindLabels(activeSlug);
-  const toast = useToast();
-  const [query, setQuery] = useState("");
-  const [targetKind, setTargetKind] = useState("");
-  const [targetId, setTargetId] = useState("");
-  const [targetLabel, setTargetLabel] = useState("");
-  const [rel, setRel] = useState("related-to");
-  const [notes, setNotes] = useState("");
-
-  const search = useQuery({
-    queryKey: ["pairing-search", activeSlug, query],
-    queryFn: () => api.search(activeSlug, query),
-    enabled: !!activeSlug && query.trim().length >= 2,
-  });
-
-  const hits = (search.data?.items ?? []).filter(
-    (h) => !(h.kind === fromKind && h.id === fromId),
-  );
-
-  async function handleSubmit() {
-    if (!targetKind || !targetId) {
-      toast.error("Pick a target entity first.");
-      return;
-    }
-    try {
-      await api.createPairing(activeSlug, {
-        source_kind: fromKind,
-        source_id: fromId,
-        target_kind: targetKind,
-        target_id: targetId,
-        relationship_kind: rel.trim() || "related-to",
-        notes: notes.trim() || null,
-      });
-      toast.success("Linked");
-      onCreated();
-    } catch (err) {
-      toast.error(err instanceof ApiError ? err.message : String(err));
-    }
-  }
-
-  return (
-    <Modal open onClose={onClose} title="Link to another entity">
-      <div className="space-y-3">
-        <label className="block">
-          <div className="text-xs text-muted mb-1">Search target</div>
-          <input
-            type="text"
-            value={query}
-            onChange={(e) => setQuery(e.target.value)}
-            placeholder="part name, asset, project…"
-            autoFocus
-            className="w-full px-2 py-1 text-sm border border-line dark:border-slate-600 rounded bg-surface dark:bg-slate-900"
-          />
-        </label>
-        {hits.length > 0 && !targetId && (
-          <ul className="border border-line dark:border-slate-700 rounded max-h-48 overflow-y-auto divide-y divide-line dark:divide-slate-800">
-            {hits.slice(0, 10).map((h) => (
-              <li key={`${h.kind}:${h.id}`}>
-                <button
-                  type="button"
-                  onClick={() => {
-                    setTargetKind(h.kind);
-                    setTargetId(h.id);
-                    setTargetLabel(h.title);
-                  }}
-                  className="w-full px-3 py-2 text-left hover:bg-subtle dark:hover:bg-slate-800 flex items-center gap-2"
-                >
-                  <span className="text-[10px] text-faint">{pickLabels.collection(h.kind)}</span>
-                  <span className="text-sm truncate">{h.title}</span>
-                </button>
-              </li>
-            ))}
-          </ul>
-        )}
-        {targetId && (
-          <div className="flex items-center gap-2 px-3 py-2 text-sm border border-cobble-200 dark:border-cobble-700 bg-cobble-50 dark:bg-cobble-900/20 rounded">
-            <span className="font-mono text-[10px] text-muted">{targetKind}</span>
-            <span className="font-medium truncate">{targetLabel}</span>
-            <div className="flex-1" />
-            <button
-              type="button"
-              onClick={() => {
-                setTargetId("");
-                setTargetKind("");
-                setTargetLabel("");
-              }}
-              className="text-faint hover:text-content"
-            >
-              <X size={12} />
-            </button>
-          </div>
-        )}
-        <label className="block">
-          <div className="text-xs text-muted mb-1">Relationship</div>
-          <input
-            type="text"
-            value={rel}
-            onChange={(e) => setRel(e.target.value)}
-            placeholder="related-to"
-            className="w-full px-2 py-1 text-sm font-mono border border-line dark:border-slate-600 rounded bg-surface dark:bg-slate-900"
-          />
-        </label>
-        <label className="block">
-          <div className="text-xs text-muted mb-1">Notes (optional)</div>
-          <textarea
-            value={notes}
-            onChange={(e) => setNotes(e.target.value)}
-            rows={2}
-            className="w-full px-2 py-1 text-sm border border-line dark:border-slate-600 rounded bg-surface dark:bg-slate-900"
-          />
-        </label>
-        <div className="flex justify-end gap-2">
-          <button
-            type="button"
-            onClick={onClose}
-            className="px-3 py-1.5 text-sm rounded text-content hover:bg-subtle dark:hover:bg-slate-800"
-          >
-            Cancel
-          </button>
-          <button
-            type="button"
-            onClick={handleSubmit}
-            disabled={!targetId}
-            className="px-3 py-1.5 text-sm rounded bg-cobble-600 hover:bg-cobble-700 disabled:opacity-50 text-white"
-          >
-            Link
-          </button>
-        </div>
-      </div>
-    </Modal>
-  );
-}
-
-
 // Image attachment thumbnail with hover affordances:
 //   - Set as cover (camera/image icon)  → PATCH the entity image_path
 //   - Detach (trash icon)               → DELETE the attachment row
@@ -1062,28 +710,12 @@ function AttachmentThumb({
   onDetach: () => void;
 }) {
   const url = api.fileRawUrl(slug, fileId, "thumb");
-  const resolved = useImageSrc(url);
   void attachmentId;
   return (
     <div className="group relative aspect-square rounded overflow-hidden border border-line dark:border-slate-700 bg-subtle dark:bg-slate-800">
-      {resolved ? (
-        <img
-          src={resolved}
-          alt={filename}
-          onClick={onOpen}
-          className="w-full h-full object-cover cursor-zoom-in"
-          title="Click to enlarge"
-        />
-      ) : (
-        <button
-          type="button"
-          onClick={onOpen}
-          className="w-full h-full flex items-center justify-center text-[10px] text-faint cursor-zoom-in"
-          title="Click to enlarge"
-        >
-          …
-        </button>
-      )}
+      <button type="button" onClick={onOpen} className="absolute inset-0 cursor-zoom-in" title="Click to enlarge">
+        <EntityPhoto src={url} alt={filename} fill placeholder="…" />
+      </button>
       <div className="absolute top-1 right-1 flex gap-1 hover-reveal transition">
         <button
           onClick={onSetAsCover}

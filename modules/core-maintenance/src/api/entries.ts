@@ -57,6 +57,8 @@ const ListQuery = z.object({
   /** Cap scheduled-at to this many days from now (e.g. "due soon"). */
   due_within_days: z.coerce.number().int().positive().max(3650).optional(),
   limit: z.coerce.number().int().min(1).max(500).default(100),
+  /** Skip this many, for the next page. */
+  offset: z.coerce.number().int().min(0).max(100000).default(0),
 });
 
 entriesRouter.get(
@@ -88,7 +90,11 @@ entriesRouter.get(
         sql<string>`coalesce(scheduled_at, performed_at, created_at)`,
         filter.kind === "scheduled" ? "asc" : "desc",
       )
+      // A tiebreak, so two entries on the same date keep their order from one
+      // page to the next and neither is skipped or repeated.
+      .orderBy("id")
       .limit(filter.limit)
+      .offset(filter.offset)
       .execute();
     res.json({ items: rows });
   }),

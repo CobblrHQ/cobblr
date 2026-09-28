@@ -7,9 +7,8 @@
 // row without extras drew an empty labelled column on the desk, and a
 // split child, whose pictures are exactly the ones a person wants to
 // re-crop from, showed nothing.
-import { useState } from "react";
 import { ImageIcon, RotateCcw, Scissors, X } from "lucide-react";
-import { useImageSrc } from "@cobblr/platform-web";
+import { useImageSrc, EntityPhoto } from "@cobblr/platform-web";
 import { rowPictures, yourPictures, type RowPicture } from "../lib/rowPictures";
 import type { PictureRow } from "@cobblr/platform-contract/scan-pictures";
 
@@ -46,7 +45,6 @@ export function ScanYourPhotos({ slug, row, actions }: { slug: string; row: Pict
 
 function YourPhotoTile({ picture: p, src: raw, actions }: { picture: RowPicture; src: string | null; actions: YourPhotosActions }) {
   const src = useImageSrc(raw);
-  const [broken, setBroken] = useState(false);
   const fileId = p.fileId ?? "";
   const canPrimary = p.role === "extra" && !!actions.onMakePrimary;
   const title =
@@ -65,11 +63,11 @@ function YourPhotoTile({ picture: p, src: raw, actions }: { picture: RowPicture;
         onClick={() => (canPrimary ? actions.onMakePrimary?.(fileId) : actions.onView?.(p))}
         title={title}
         aria-current={p.current ? "true" : undefined}
-        className={`w-20 h-20 rounded-md overflow-hidden border border-line dark:border-slate-700 bg-black flex items-center justify-center disabled:opacity-50 ${p.current ? "outline outline-2 outline-offset-1 outline-accent" : ""}`}
+        className={`relative w-20 h-20 rounded-md overflow-hidden border border-line dark:border-slate-700 bg-black flex items-center justify-center disabled:opacity-50 ${p.current ? "outline outline-2 outline-offset-1 outline-accent" : ""}`}
       >
         {/* CONTAIN: this tile is how you decide WHICH of your photos should
             lead, so it has to show the whole shot rather than its middle. */}
-        {src && !broken ? <img src={src} alt="" className="w-full h-full object-contain" onError={() => setBroken(true)} /> : <ImageIcon size={16} className="text-faint" />}
+        <EntityPhoto src={src} alt="" fill fit="contain" className="!bg-black" placeholder={<ImageIcon size={16} className="text-faint" />} />
       </button>
       {p.role === "group" && (
         <span className="absolute top-1 left-1 rounded bg-black/60 text-white text-[10px] leading-none px-1 py-0.5 pointer-events-none">group</span>

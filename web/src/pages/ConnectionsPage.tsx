@@ -13,8 +13,10 @@ import { MailSourceRow, OAuthConnectPanel } from "../components/MailSourceCard";
 import { CredentialFields } from "../components/CredentialFields";
 import { ProviderSetupSteps } from "../components/ProviderSetupSteps";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { backupOffers } from "../lib/connection-backup";
 import { Pencil, Plug, Plus, Trash2, X } from "lucide-react";
 import { useToast, useConfirm, usePageTitle } from "@cobblr/platform-web";
+import { WorkspaceChainSummaries } from "../components/WorkspaceChainSummaries";
 import { TestConnectionButton, VerificationBadge } from "../components/ConnectionState";
 import { keyRefusedBy, refusalDialog, verificationToast } from "../lib/connection-state";
 import {
@@ -22,7 +24,7 @@ import {
   api,
   type AiProviderDef,
   CONNECTION_KIND_LABELS,
-  type ConnRouteMode,
+  type ConnRoute, type ConnRouteMode,
   type ConnRouteScope,
   type ConnectionVerification,
   type UserConnection,
@@ -50,6 +52,13 @@ export function ConnectionsPage({ startAdding = false }: { startAdding?: boolean
   const qc = useQueryClient();
   const toast = useToast();
   const conns = useQuery({ queryKey: aiAvailabilityKeys.connections(), queryFn: api.listConnections });
+  // Where each AI connection could stand behind another you already route.
+  const offers = backupOffers(conns.data?.items ?? [], (c) => c.label || providerLabel(c.provider_id));
+  const addBackup = useMutation({
+    mutationFn: ({ id, routes }: { id: string; routes: ConnRoute[] }) => api.updateConnection(id, { routes }),
+    onSuccess: () => void qc.invalidateQueries({ queryKey: aiAvailabilityKeys.connections() }),
+    onError: (e: unknown) => toast.error(`Couldn't add it as a backup: ${e instanceof Error ? e.message : "try again"}`),
+  });
   const catalogue = useQuery({ queryKey: ["conn-catalogue"], queryFn: api.connectionCatalogue });
   const me = useQuery({ queryKey: ["me"], queryFn: api.me });
   const [adding, setAdding] = useState(startAdding);
@@ -126,11 +135,23 @@ export function ConnectionsPage({ startAdding = false }: { startAdding?: boolean
                 <span>{c.label || providerLabel(c.provider_id)}</span>
                 <span className="text-[11px] font-mono text-faint">{c.provider_id}</span>
                 {c.kind === "ai-provider" && <VerificationBadge verification={c.verification} />}
+                {c.kind === "ai-provider" && c.verification?.photos && (
+                  // The test showed it a picture: whether it can stand in for
+                  // scanning is a different question from whether its key works.
+                  <span
+                    className={"text-[11px] " + (c.verification.photos === "read" ? "text-muted" : "text-amber-600 dark:text-amber-500")}
+                    title={c.verification.photos_said ? `It said: ${c.verification.photos_said}` : undefined}
+                  >
+                    {c.verification.photos === "read" ? "reads photos" : "doesn't read photos"}
+                  </span>
+                )}
               </div>
               <div className="text-[11px] text-muted mt-0.5">
                 {c.routes.length === 0 ? (
                   c.route_scope === "explicit" ? (
-                    "Not used in any workspace"
+                    <span className={c.kind === "ai-provider" ? "text-amber-600 dark:text-amber-500" : undefined}>
+                      Not used in any workspace{c.kind === "ai-provider" ? ", so it never answers there, not even as a backup" : ""}
+                    </span>
                   ) : (
                     `${MODE_LABEL[c.route_mode]} · ${SCOPE_LABEL[c.route_scope]}`
                   )
@@ -159,6 +180,21 @@ export function ConnectionsPage({ startAdding = false }: { startAdding?: boolean
                   </span>
                 )}
               </div>
+              {(offers.get(c.id) ?? []).map((o) => (
+                <div key={o.org_id} className="text-[11px] text-muted dark:text-slate-400 mt-1 flex flex-wrap items-center gap-x-2">
+                  <span>
+                    Back up {o.behind} in {orgName(o.org_id)}: when it is busy or out of quota, this one answers.
+                  </span>
+                  <button
+                    type="button"
+                    disabled={addBackup.isPending}
+                    onClick={() => addBackup.mutate({ id: c.id, routes: [...c.routes, { org_id: o.org_id, mode: o.mode }] })}
+                    className="text-accent hover:underline disabled:opacity-50"
+                  >
+                    Add to {orgName(o.org_id)}
+                  </button>
+                </div>
+              ))}
               {c.credential_keys.length > 0 && (
                 <div className="text-[11px] text-faint mt-0.5">
                   set: {c.credential_keys.join(", ")}
@@ -215,6 +251,12 @@ export function ConnectionsPage({ startAdding = false }: { startAdding?: boolean
           </div>
         ))}
       </div>
+
+      <WorkspaceChainSummaries
+        workspaces={orgs.filter((o) =>
+          (conns.data?.items ?? []).some((c) => c.kind === "ai-provider" && c.routes.some((r) => r.org_id === o.id)),
+        )}
+      />
 
       {adding ? (
         <ConnectionForm

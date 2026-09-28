@@ -456,3 +456,29 @@ testSupportRouter.post("/test-support/raw-placement", async (req, res, next) => 
     next(err);
   }
 });
+
+// Notifications written together: `count` rows for one member, `per_ms` of
+// them inside each millisecond at distinct microseconds, so a page boundary
+// lands inside a millisecond, the case a cursor carried over JSON must
+// survive. Test-only, mounted under the same flag. Body: { org_id, user_id,
+// count, per_ms }.
+testSupportRouter.post("/test-support/notifications", async (req, res, next) => {
+  try {
+    const b = (req.body ?? {}) as { org_id?: string; user_id?: string; count?: number; per_ms?: number };
+    const count = Math.min(Math.max(Number(b.count) || 0, 1), 1000);
+    const perMs = Math.min(Math.max(Number(b.per_ms) || 1, 1), 900);
+    if (!b.org_id || !b.user_id) {
+      res.status(400).json({ error: { code: "bad_body", message: "org_id and user_id required" } });
+      return;
+    }
+    await sql`insert into notifications (org_id, user_id, event_type, message, created_at)
+              select ${b.org_id}::uuid, ${b.user_id}::uuid, 'test.paging', ('paged ' || g),
+                     (timestamptz '2026-01-01 00:00:00+00'
+                       + ((g / ${perMs}) * interval '1 millisecond')
+                       + ((g % ${perMs}) * interval '1 microsecond'))
+              from generate_series(1, ${count}) as g`.execute(meta);
+    res.json({ ok: true, count });
+  } catch (err) {
+    next(err);
+  }
+});

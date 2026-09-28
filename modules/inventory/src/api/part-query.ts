@@ -10,7 +10,8 @@
 // Unbuilt chips filtered nothing (#2772, #2422). Two read paths, one rule,
 // one place, so they cannot disagree again.
 import { sql, type SelectQueryBuilder } from "kysely";
-import { parseSort, type EntityListQuery } from "@cobblr/platform-contract";
+import { columnSet, arrivedEverywhere, parseSort, type EntityListQuery, type FilterPredicate } from "@cobblr/platform-contract";
+import type { InventoryDB } from "../db.js";
 import { PART_CI_FILTER_COLS, PART_FILTER_COLS } from "../db.js";
 import { filterValues, isMulti } from "./filter-values.js";
 
@@ -24,20 +25,27 @@ type PartsQuery = SelectQueryBuilder<any, any, any>;
 export interface PartQueryOpts {
   /** The alias inventory_parts carries in this query (`p` on the list route). */
   table?: string;
+  /** Collects every `where` predicate this compile could not run, so the
+   *  caller can say so instead of showing an unfiltered list as if it were
+   *  the filtered one. */
+  unapplied?: FilterPredicate[];
 }
+
+const DAY = /^\d{4}-\d{2}-\d{2}$/;
 
 /** The native columns a query may order by. Anything else in a sort spec is
  *  taken to be one of the table's own fields and orders by its metadata
  *  value (below); nothing is ever interpolated as a column name. */
-const NATIVE_SORTABLE = new Set(["name", "qty", "min_qty", "cost", "created_at", "updated_at", "asset_id"]);
+const NATIVE_SORTABLE = columnSet<InventoryDB["inventory_parts"]>()(["name", "qty", "min_qty", "cost", "created_at", "updated_at", "asset_id"]);
 
 /** Apply `filter` (D7 tag, native equality, D8 metadata equality) and `where`
  *  (D10 comparisons). Degrades rather than throws: an unknown column or
- *  unsupported operator applies no predicate; an unusable filter value
- *  empties the set instead of widening it. */
+ *  unsupported operator applies no predicate AND is reported through
+ *  `opts.unapplied`; an unusable filter value empties the set instead of
+ *  widening it. */
 export function applyPartFilters<Q extends PartsQuery>(
   qIn: Q,
-  query: Pick<EntityListQuery, "filter" | "where">,
+  query: Pick<EntityListQuery, "filter" | "where" | "today">,
   opts: PartQueryOpts = {},
 ): Q {
   let q: PartsQuery = qIn;
@@ -101,15 +109,24 @@ export function applyPartFilters<Q extends PartsQuery>(
   }
   // D10: comparison predicates. Native numeric/date columns, OR a custom
   // numeric metadata field (a yarn instance's "remaining", a spool's qty) via
-  // a guarded cast. Unknown col / unsupported (col, op) silently skipped.
+  // a guarded cast, OR a custom date field against a day ("today" is the
+  // reader's). What cannot run is reported through opts.unapplied, never
+  // dropped in silence.
   if (query.where) {
-    const COMPARABLE = new Set(["qty", "min_qty", "cost", "created_at", "updated_at"]);
+    const COMPARABLE = columnSet<InventoryDB["inventory_parts"]>()(["qty", "min_qty", "cost", "created_at", "updated_at"]);
+    const skip = (p: FilterPredicate) => opts.unapplied?.push(p);
     for (const p of query.where) {
-      if (!["<", "<=", ">", ">=", "=", "!="].includes(p.op)) continue;
+      if (!["<", "<=", ">", ">=", "=", "!="].includes(p.op)) {
+        skip(p);
+        continue;
+      }
       const nativeCol = COMPARABLE.has(p.col);
       if (p.ref_col) {
         // Column-to-column comparisons stay native-only.
-        if (!nativeCol || !COMPARABLE.has(p.ref_col)) continue;
+        if (!nativeCol || !COMPARABLE.has(p.ref_col)) {
+          skip(p);
+          continue;
+        }
         q = q.where(sql<boolean>`${col(p.col)} ${sql.raw(p.op)} ${col(p.ref_col)}`);
       } else if (p.value !== undefined) {
         if (nativeCol) {
@@ -127,8 +144,21 @@ export function applyPartFilters<Q extends PartsQuery>(
           q = q.where(
             sql<boolean>`(${meta}->>${p.col}) ~ '^-?[0-9]+(\\.[0-9]+)?$' AND (${meta}->>${p.col})::numeric ${sql.raw(p.op)} ${num}`,
           );
+        } else if (p.value === "today" || p.value === "now" || (typeof p.value === "string" && DAY.test(p.value))) {
+          // A custom DATE field against a day: the reader's for "today" (the
+          // client's, else the person's), else the literal. Compared as a
+          // day, on the value's first ten characters, and only for rows
+          // whose value IS a day: a row with no date, or a word, is not in
+          // a window, never an error.
+          const day = p.value === "today" || p.value === "now" ? (query.today && DAY.test(query.today) ? query.today : arrivedEverywhere(new Date())) : p.value;
+          q = q.where(
+            sql<boolean>`(${meta}->>${p.col}) ~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}' AND left(${meta}->>${p.col}, 10) ${sql.raw(p.op)} ${day}`,
+          );
+        } else {
+          skip(p);
         }
-        // else: non-numeric value on a non-native col → skip.
+      } else {
+        skip(p);
       }
     }
   }

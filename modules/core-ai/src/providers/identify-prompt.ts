@@ -155,6 +155,7 @@ export const IDENTIFY_PROMPT =
   '"transliteration": {"title": <Latin letters>}|null}|null, ' +
   '"barcode": <the UPC/EAN digits if clearly legible, else null>, ' +
   '"serial_number": <the serial number / service tag read verbatim if clearly legible, else null>, ' +
+  '"year_made": <the year this item was made as printed on it (a wine\'s vintage, a coin\'s year), four digits, never a best-before, copyright or "since" year, else null>, ' +
   '"observations": <string>, "distinct_items": <integer>, ' +
   '"product_photo_box": {"x": <0..1>, "y": <0..1>, "w": <0..1>, "h": <0..1>}|null, ' +
   '"items": [{"name": <string>, "brand": <string|null>, "qty": <integer>}], ' +

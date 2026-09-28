@@ -2,20 +2,26 @@
 // call so the AuthProvider can update it without rewiring the client.
 // Everything goes through `request<T>` so error shape stays uniform.
 
+import type { ScanCountReason } from "@cobblr/platform-contract/scan-count";
+import type { AiChainAnswer } from "./ai-chain";
+import type { ProviderReason } from "@cobblr/platform-contract/provider-reason";
 import type { ProposalValue } from "./proposal-values";
 import { AI_AVAILABILITY_WRITE } from "./ai-availability-keys";
 import { markSandboxEnded } from "./sandbox-session";
 import { busySentence, parseRetryAfter } from "./request-wait";
-import { announceScanFiled } from "./scanFiled";
+import { announceScanFiled, type ScanFiledChange } from "./scanFiled";
 import { isMutating, raiseBlockedAction, refusedRequestFor } from "./blocked-action";
 import type { ApprovalRemedy, BlockedAction } from "@cobblr/platform-contract/blocked-action";
 import type { CommunityLinkId } from "@cobblr/platform-contract/community-links";
+import { dayHere } from "@cobblr/platform-contract/day";
+import type { TokenAccess } from "@cobblr/platform-contract/token-access";
 import type { AiFallback } from "@cobblr/platform-contract/scan-fallback";
 import type { ScanToolHints } from "@cobblr/platform-contract/scan-tools";
 import type { TitleFormat } from "@cobblr/platform-contract/display-identity";
 import type { SourceConflict } from "@cobblr/platform-contract/acquisition-source";
 import type { ReceiptReadFailure } from "@cobblr/platform-contract/scan-session";
 import { getImpersonationToken } from "./impersonation";
+import { bodyOf, type ImportRun, type SheetsBody, type SheetsPlan, type UndoReport } from "./sheet-import";
 import type { ResolveOutcome as RegistryResolveOutcome } from "@cobblr/platform-contract/resolvables";
 import type {
   LiveControlPublic,
@@ -876,9 +882,9 @@ export interface CarryResult {
 
 /** A call that files (or sends back) scans: on success every screen showing
  *  the inbox refreshes, whichever door made the call (lib/scanFiled.ts). */
-function filed<T>(slug: string, p: Promise<T>): Promise<T> {
+function filed<T>(slug: string, p: Promise<T>, change?: (r: T) => ScanFiledChange): Promise<T> {
   return p.then((r) => {
-    announceScanFiled(slug);
+    announceScanFiled(slug, change ? change(r) : {});
     return r;
   });
 }
@@ -924,6 +930,9 @@ export const api = {
     expires_at?: string;
     source?: string;
     meta?: Record<string, unknown>;
+    /** The one workspace it may reach (id or slug); omit for every workspace. */
+    workspace?: string;
+    access?: TokenAccess;
   }) =>
     request<{ id: string; name: string; token: string; token_prefix: string }>("POST", "/me/api-tokens", body),
   signup: (body: {
@@ -1064,7 +1073,9 @@ export const api = {
    *  them back through /auth/callback with the app and source. */
   identitySignup: (body: { display_name: string; email: string; password: string; captcha_token?: string; app?: string; source?: string; accept_terms?: boolean }) =>
     request<{ status: "check_your_email" }>("POST", "/auth/identity/signup", body),
-  magicRequest: (body: { email: string }) =>
+  /** `next` is the page to land on; `invite` a workspace invite the link
+   *  redeems as it signs in (how someone without a password joins). */
+  magicRequest: (body: { email: string; next?: string; invite?: string; display_name?: string }) =>
     request<{
       ok: boolean;
       expires_at: string;
@@ -1074,7 +1085,7 @@ export const api = {
       dev_link?: string;
     }>("POST", "/auth/magic/request", body),
   magicConsume: (body: { token: string }) =>
-    request<AuthResponse>("POST", "/auth/magic/consume", body),
+    request<AuthResponse & { next?: string | null }>("POST", "/auth/magic/consume", body),
   // Central identity: trade the one-time code from account.cobblr.xyz for a session
   // here. The code arrives in the URL; the identity token never does (the api redeems
   // it server to server). See docs/architecture/central-identity.md.
@@ -1418,7 +1429,7 @@ export const api = {
     ),
   createInvite: (
     slug: string,
-    body: { email?: string; role: OrgMembership["role"]; expires_at?: string },
+    body: { email?: string; role: OrgMembership["role"]; expires_at?: string; reusable?: boolean; max_uses?: number; offer_on_labels?: boolean },
   ) =>
     // `emailed` says whether a mail actually went out — false when the
     // instance has no mail sender, which is the default for a self-hosted one.
@@ -1466,7 +1477,7 @@ export const api = {
       "GET",
       "/me/api-token-scopes",
     ),
-  mintApiToken: (body: { name: string; expires_at?: string; scopes?: string[] }) =>
+  mintApiToken: (body: { name: string; expires_at?: string; scopes?: string[]; workspace?: string; access?: TokenAccess }) =>
     request<{
       id: string;
       name: string;
@@ -1476,6 +1487,32 @@ export const api = {
       scopes: string[] | null;
       token: string;
     }>("POST", "/me/api-tokens", body),
+  /** Whether this deployment lets an AI assistant's connector sign in (OAuth), and its MCP URL. */
+  oauthStatus: (slug: string) => request<{ available: boolean; mcp_url: string }>("GET", `/oauth/status?workspace=${encodeURIComponent(slug)}`),
+  /** The consent screen's facts about a connector's sign-in request (query string as sent). */
+  oauthAuthorizeCheck: (query: string) =>
+    request<{
+      client_name: string | null;
+      redirect_host: string;
+      wants_changes: boolean;
+      workspaces: Array<{ id: string; name: string; slug: string }>;
+    }>("GET", `/oauth/authorize/check?${query}`),
+  oauthApprove: (body: Record<string, string | undefined>) =>
+    request<{ redirect: string }>("POST", "/oauth/authorize", body),
+  myOAuthGrants: () =>
+    request<{
+      items: Array<{
+        id: string;
+        client_name: string | null;
+        redirect_host: string | null;
+        access: "look" | "change";
+        org_name: string;
+        org_slug: string;
+        created_at: string;
+        last_used_at: string | null;
+      }>;
+    }>("GET", "/me/oauth-grants"),
+  revokeOAuthGrant: (id: string) => request<void>("DELETE", `/me/oauth-grants/${id}`),
   revokeApiToken: (id: string) =>
     request<void>("DELETE", `/me/api-tokens/${id}`),
 
@@ -1607,7 +1644,7 @@ export const api = {
     ),
   // Pillar B — actions + invocation
   listActions: (slug: string, kind: string) =>
-    request<{ items: PlatformAction[]; bindings: PlatformActionBinding[] }>(
+    request<{ items: PlatformAction[]; bindings: PlatformActionBinding[]; dormant?: PlatformDormantAction[] }>(
       "GET",
       `/orgs/${slug}/actions?kind=${encodeURIComponent(kind)}`,
     ),
@@ -2230,10 +2267,14 @@ export const api = {
     ),
   deleteSavedView: (slug: string, id: string) =>
     request<void>("DELETE", `/orgs/${slug}/modules/core-views/views/${id}`),
-  viewData: (slug: string, id: string, params?: { q?: string; limit?: number }) => {
+  viewData: (slug: string, id: string, params?: { q?: string; limit?: number; offset?: number }) => {
     const qs = new URLSearchParams();
+    // This browser's day: a view's "today" (a "Ready to drink" window) is the
+    // reader's, and the server cannot tell it from a UTC clock.
+    qs.set("today", dayHere());
     if (params?.q) qs.set("q", params.q);
     if (params?.limit) qs.set("limit", String(params.limit));
+    if (params?.offset !== undefined) qs.set("offset", String(params.offset));
     const tail = qs.toString() ? `?${qs.toString()}` : "";
     return request<ViewDataResponse>(
       "GET",
@@ -2341,7 +2382,7 @@ export const api = {
     if (a.q) qs.set("q", a.q);
     if (a.kinds) qs.set("kinds", a.kinds);
     if (a.tag) qs.set("tag", a.tag);
-    return request<{ items: SearchHit[]; kinds_searched: string[] }>(
+    return request<{ items: SearchHit[]; kinds_searched: string[]; /** Kinds whose search FAILED (not "no matches"). */ kinds_failed?: string[] }>(
       "GET",
       `/orgs/${slug}/modules/core-search/search?${qs.toString()}`,
     );
@@ -2933,26 +2974,6 @@ export const api = {
   ) => request<WorkspaceLinkItem>("PATCH", `/me/links/${id}`, body),
 
   // ─── D4 entity pairings — polymorphic links without firing a wire ─
-  listPairings: (
-    slug: string,
-    filter: Partial<{
-      source_kind: string;
-      source_id: string;
-      target_kind: string;
-      target_id: string;
-      relationship_kind: string;
-    }> = {},
-  ) => {
-    const qs = new URLSearchParams();
-    for (const [k, v] of Object.entries(filter)) {
-      if (typeof v === "string" && v.length > 0) qs.set(k, v);
-    }
-    const tail = qs.toString();
-    return request<{ items: PairingItem[] }>(
-      "GET",
-      `/orgs/${slug}/pairings${tail ? `?${tail}` : ""}`,
-    );
-  },
   createPairing: (
     slug: string,
     body: {
@@ -2967,6 +2988,20 @@ export const api = {
   ) => request<PairingItem>("POST", `/orgs/${slug}/pairings`, body),
   deletePairing: (slug: string, id: string) =>
     request<void>("DELETE", `/orgs/${slug}/pairings/${id}`),
+  /** Every link touching one record, both ways round, whichever spelling of
+   *  its kind each was stored under (#3875). */
+  recordLinks: (slug: string, kind: string, id: string) =>
+    request<{ items: Array<PairingItem & { direction: "in" | "out" }> }>(
+      "GET",
+      `/orgs/${slug}/pairings?record_kind=${encodeURIComponent(kind)}&record_id=${encodeURIComponent(id)}`,
+    ),
+  /** The links this record can make, in words, and the words for every link
+   *  kind the workspace declares. */
+  linkKinds: (slug: string, kind: string) =>
+    request<{
+      offered: Array<{ kind: string; label: string; to: string[]; reverse: boolean }>;
+      words: Record<string, { label: string; inverse: string }>;
+    }>("GET", `/orgs/${slug}/pairings/link-kinds?record_kind=${encodeURIComponent(kind)}`),
 
   // Instances (workspace_module_instances) — multi-instance modules.
   // A workspace can install one module multiple times under different
@@ -3276,9 +3311,11 @@ export const api = {
       target_container_kind?: string;
       target_container_id?: string;
       enrich_ms?: number;
+      /** Add this picture again although it was just added (#3852). */
+      allow_duplicate?: boolean;
     },
   ) =>
-    request<ScanInboxItem>("POST", `/orgs/${slug}/modules/core-scan/scan`, body),
+    request<ScanInboxItem & { duplicate_of_recent?: boolean }>("POST", `/orgs/${slug}/modules/core-scan/scan`, body),
   // External QR resolver (the redirect table for foreign labels). The camera
   // reads the rules once to know whether to bother resolving; resolveExternal is
   // the synchronous "is this a known foreign QR? where does it go?" call on a
@@ -3344,9 +3381,17 @@ export const api = {
        *  unfiled, ready, photo_wanted) instead of paginating the whole thing.
        *  Answered in a single capped read — see platform-contract/scan-triage. */
       triage?: string;
+      /** Waiting rows whose name (as the card shows it), code or maker
+       *  contains this; each carries `resolved_destination`. */
+      q?: string;
+      /** With `q`: only rows headed for this table (an instance's name, or a
+       *  module's for its default table). */
+      destination?: string;
     } = {},
   ) => {
     const params = new URLSearchParams();
+    if (q.q) params.set("q", q.q);
+    if (q.destination) params.set("destination", q.destination);
     if (q.status) params.set("status", q.status);
     if (q.triage) params.set("triage", q.triage);
     if (q.batch_id) params.set("batch_id", q.batch_id);
@@ -3626,6 +3671,16 @@ export const api = {
    *  localize any item stuck on a catalog URL with no local file. */
   backfillScanCatalogPhotos: (slug: string) =>
     request<{ queued: number; localized: number }>("POST", `/orgs/${slug}/modules/core-scan/inbox/backfill-catalog-photos`),
+  /** Bring your spreadsheet: what each sheet would become, written nowhere. */
+  sheetsPlan: (slug: string, body: SheetsBody) =>
+    request<SheetsPlan>("POST", `/orgs/${slug}/modules/core-import/sheets/plan`, bodyOf(body)),
+  /** Carry the plan out, as one run that can be undone. */
+  sheetsImport: (slug: string, body: SheetsBody) =>
+    request<{ run_id: string; total: number }>("POST", `/orgs/${slug}/modules/core-import/sheets/import`, bodyOf(body)),
+  sheetsImports: (slug: string) => request<{ items: ImportRun[] }>("GET", `/orgs/${slug}/modules/core-import/sheets/imports`),
+  sheetsImportRun: (slug: string, id: string) => request<ImportRun>("GET", `/orgs/${slug}/modules/core-import/sheets/imports/${id}`),
+  sheetsImportUndo: (slug: string, id: string, force = false) =>
+    request<UndoReport>("POST", `/orgs/${slug}/modules/core-import/sheets/imports/${id}/undo`, force ? { force: true } : {}),
   /** Bulk import (inbox-export interop + generic CSV). `file` is the picked File;
    *  mapping only matters for plain CSVs. */
   scanImportPreview: async (slug: string, file: File, mapping?: Record<string, string>) => {
@@ -3782,6 +3837,7 @@ export const api = {
     filed(
       slug,
       request<{ item: ScanInboxItem; created: { id: string } }>("POST", `/orgs/${slug}/modules/core-scan/inbox/${id}/confirm`, body),
+      (r) => ({ filed: [{ item: r.item, createdId: r.created?.id ?? null }] }),
     ),
   /** Paired-scan: the scanned product IS the active bin itself — write the
    *  product identity onto that core-locations record instead of creating a
@@ -3830,6 +3886,7 @@ export const api = {
     filed(
       slug,
       request<{ item: ScanInboxItem; entity_deleted: boolean; note: string | null }>("POST", `/orgs/${slug}/modules/core-scan/inbox/${id}/unconfirm`),
+      (r) => ({ unfiled: [r.item?.id ?? id] }),
     ),
   restoreScanItem: (slug: string, id: string) =>
     request<ScanInboxItem>(
@@ -4028,8 +4085,13 @@ export const api = {
       /** `replace`: the one you had ran out and this is the new one. The
        *  count is set to what was scanned, the old one is recorded as
        *  consumed (or discarded via `resolution`), the new one as bought. */
-      mode: "add-qty" | "replace" | "link-barcode" | "move" | "merge-fields";
+      mode: "add-qty" | "replace" | "link-barcode" | "move" | "merge-fields" | "count";
       location_id?: string;
+      /** `count`: what is in your hands, signed; or the total as it really
+       *  is (a correction). Exactly one (scanCountBody). */
+      change?: number;
+      total?: number;
+      reason?: ScanCountReason;
       /** Only meaningful on add-qty / replace, the modes that are a purchase.
        *  `context` keeps a party-sized or stock-up buy from training the rate
        *  like a normal shop; `resolution` says what became of the stock you
@@ -4049,6 +4111,8 @@ export const api = {
       prev_location_id: string | null;
       merged_fields: string[];
       cadence_recorded?: string[];
+      /** `count`: the take left it at its minimum or empty. */
+      low?: boolean;
     }>("POST", `/orgs/${slug}/modules/core-scan/inbox/${id}/attach`, body),
   /** What the ledger knows about an item: the learned rate, what is probably
    *  left, and what a purchase right now would MEAN (`repurchase_means`), which
@@ -4252,7 +4316,7 @@ export const api = {
   /** The dashboard "what needs me" feed (attention.ts) — derived from field
    *  semantics: low stock, overdue/upcoming dates, pending captures. */
   getAttention: (slug: string, today?: string) =>
-    request<{ items: Array<{ kind: "low_stock" | "overdue" | "due_today" | "upcoming" | "pending_scans" | "photo_wanted" | "unreadable_date"; label: string; count: number; sample: string[]; route: string; entries?: Array<{ id: string; title: string; action?: Record<string, string> }> }> }>(
+    request<{ items: AttentionFeedItem[] }>(
       "GET",
       // The client's calendar day, so "overdue" and "due today" are read the
       // way the schedule beside the feed reads them, not by the server clock.
@@ -4260,6 +4324,9 @@ export const api = {
     ),
   getAiStatus: (slug: string) =>
     request<AiStatus>("GET", `/orgs/${slug}/ai-status`),
+  /** Who answers a job here, in the order the router asks (#3842). */
+  getAiChain: (slug: string, capability: string) =>
+    request<AiChainAnswer>("GET", `/orgs/${slug}/ai-chain?capability=${encodeURIComponent(capability)}`),
   getAiSettings: (slug: string) =>
     request<{ ai_disabled: boolean }>("GET", `/orgs/${slug}/ai-settings`),
   updateAiSettings: (slug: string, body: { ai_disabled: boolean }) =>
@@ -5201,6 +5268,10 @@ export interface AiStatus {
   identify_available?: boolean;
   /** Where identification would be served from, when it is available. */
   identify_source?: "hosted" | "personal" | "workspace" | "managed";
+  /** Why identification is NOT available, when the reason is worth its own
+   *  sentence. `hosted_scope`: this deployment's photo identify serves other
+   *  workspaces, not this one, and the person's own AI is the way in. */
+  identify_reason?: "hosted_scope";
   /** This deployment can read the text off an image with no model (the
    *  receipt-shape check before identify, the receipt door's line tier). */
   ocr_available?: boolean;
@@ -5344,13 +5415,10 @@ export interface BasicRuleRaw {
 
 /** What a saved connection knows about its own key: the verdict of the
  *  save's probe, or of the Test button (connection-verification.ts). */
-export interface ConnectionVerification {
-  state: "verified" | "invalid" | "unverifiable" | "unverified";
-  reason?: "invalid_key" | "quota" | "model_unavailable" | "unreachable" | "unknown";
-  message?: string;
-  model?: string;
-  at: string;
-}
+// The contract's own type, not a copy: a copy here missed the photo check
+// the server started storing, and nothing said so until a page read it.
+import type { ConnectionVerification } from "@cobblr/platform-contract/connection-verification";
+export type { ConnectionVerification };
 
 export interface AiProvider {
   id: string;
@@ -5844,7 +5912,7 @@ export interface ScanCandidate {
    *  answer, scan-fallback): the chip says the matching sentence. */
   ai_fallback?: AiFallback;
   /** On a provider error, the provider's own reason (the card says what to do). */
-  ai_fallback_reason?: "invalid_key" | "quota" | "model_unavailable" | "unreachable" | "unknown";
+  ai_fallback_reason?: ProviderReason;
 }
 
 /** One field on a scan-menu table (a trimmed field def). */
@@ -6558,7 +6626,7 @@ export type AppBlock =
   | { type: "record"; kind: string; id_from: string }
   | { type: "action"; action_id: string; label?: string; kind?: string }
   | { type: "form"; kind: string; mode: "create" | "edit"; fields?: string[] }
-  | { type: "stat"; view_id: string; agg: "count" | "sum"; field?: string; label?: string }
+  | { type: "stat"; view_id: string; agg: "count" | "sum"; field?: string; times?: string; label?: string }
   | { type: "markdown"; body: string }
   | { type: "scan" }
   | { type: "custom"; html: string; height?: number };
@@ -6617,9 +6685,19 @@ export interface ViewDataResponse {
     detailUrl?: string;
     fields: Record<string, unknown>;
   }>;
+  /** How many records the view holds: the collection's own count, never the
+   *  length of `items`. Null when the collection could not say (a very large
+   *  one that does not count, past the walk's cap). */
+  total: number | null;
+  /** False when `items` is not every record (past the cap, or a page asked
+   *  for with a limit): the surface says so and offers the rest. */
+  complete: boolean;
   /** With no rows: true when the collection itself has nothing (a first-item
    *  door belongs here), false when the view's filter excluded everything. */
   collection_empty?: boolean;
+  /** The view's own filters the collection could not run. Shown, so an
+   *  unfiltered list never passes for the filtered one. */
+  unapplied?: Array<{ col: string; op: string; value?: unknown; ref_col?: string }>;
 }
 
 export interface TagRecord {
@@ -6737,6 +6815,8 @@ export interface AiActivityItem {
   user_id: string | null;
   capability: string;
   provider_id: string;
+  /** The connection's own name when the call was made; null on older rows. */
+  provider_label?: string | null;
   model: string | null;
   input_summary: string | null;
   output_summary: string | null;
@@ -7413,6 +7493,11 @@ export interface ActivityEntry {
   occurred_at: string;
   actor: { id: string; display_name: string | null; email: string | null } | null;
   token: { id: string; name: string; prefix: string | null } | null;
+  /** HOW the write was made, beside who (#3833): "mcp", "assistant",
+   *  "automation", or null for a hand edit (and on older rows). */
+  via_kind?: string | null;
+  /** The automation's label, when via_kind is "automation". */
+  via_label?: string | null;
   /** The entity's display title resolved from its live record (server-side), so
    *  updates/creates show a name instead of the bare entity_type. Null when the
    *  record is gone (deleted) or the kind isn't resolvable. */
@@ -7468,6 +7553,14 @@ export interface WorkspaceInvite {
   consumed_by_user: string | null;
   revoked_at: string | null;
   created_at: string;
+  /** A join link: anyone with it may join, counted rather than consumed. */
+  reusable?: boolean;
+  max_uses?: number | null;
+  use_count?: number;
+  /** Item labels offer this join link to someone who scans one signed out. */
+  offer_on_labels?: boolean;
+  /** Who joined through a join link, newest first. */
+  joined?: Array<{ user_id: string; name: string; used_at: string }>;
 }
 
 export interface ApiTokenListItem {
@@ -7480,6 +7573,12 @@ export interface ApiTokenListItem {
   created_at: string;
   /** Capability scopes; null = unrestricted (full access). */
   scopes: string[] | null;
+  /** look | change | full; null = a token from before access levels (full). */
+  access?: TokenAccess | null;
+  /** The one workspace it may reach; null = every workspace. */
+  org_id?: string | null;
+  org_name?: string | null;
+  org_slug?: string | null;
 }
 
 export interface InvitePreview {
@@ -7492,7 +7591,8 @@ export interface InvitePreview {
   org_name: string;
   org_slug: string;
   invited_by_name: string;
-  status: "open" | "consumed" | "revoked" | "expired";
+  status: "open" | "consumed" | "revoked" | "expired" | "full";
+  reusable?: boolean;
 }
 
 // ──────────── platform types (consumed by shared web components) ───
@@ -7657,6 +7757,16 @@ export interface RegisteredActionDetail {
   overridden: boolean;
 }
 
+/** An action a record would have if a module that is off were on (#3883). */
+export interface PlatformDormantAction {
+  id: string;
+  label: string;
+  description: string | null;
+  icon: string | null;
+  module_name: string;
+  module_label: string;
+}
+
 export interface PlatformActionBinding {
   binding_id: string;
   action_id: string;
@@ -7665,6 +7775,34 @@ export interface PlatformActionBinding {
   icon: string | null;
   invoke_route: string | null;
   invoke_handler: string | null;
+}
+
+/** One row of the dashboard's "needs you" feed (api/src/routes/attention.ts). */
+export interface AttentionFeedItem {
+  kind: "low_stock" | "overdue" | "due_today" | "upcoming" | "pending_scans" | "photo_wanted" | "unreadable_date";
+  label: string;
+  count: number;
+  sample: string[];
+  route: string;
+  entries?: Array<{
+    id: string;
+    title: string;
+    action?: Record<string, string>;
+    record?: { kind: string; id: string; name: string };
+    when?: string;
+  }>;
+  /** The collection a dated row belongs to: its overdue, today and coming-up
+   *  rows share it, and the dashboard shows them as one card. */
+  collection?: {
+    key: string;
+    label: string;
+    route: string;
+    due: "goes-off" | "window" | "deadline";
+    /** The verbs that settle a due entry, as the collection's actions declare. */
+    finish?: Array<{ action_id: string; label: string; finishes: "used" | "discarded" | "still-good" }>;
+  };
+  /** Every record the row counts, for an action on all of them. */
+  all_ids?: string[];
 }
 
 export interface PlatformBinding {
@@ -7679,6 +7817,9 @@ export interface PlatformBinding {
   template: string | null;
   filter: unknown | null;
   args: unknown | null;
+  /** A button's own label and what it asks first (user-invoked only). */
+  label?: string | null;
+  ask?: Array<{ arg: string; label: string; kind?: "text" | "number"; placeholder?: string }> | null;
   /** "self" (run on the source) or { rel, dir?, kind? } (run on linked entities). */
   target: "self" | { rel: string; dir?: "out" | "in"; kind?: string } | null;
   enabled: boolean;
@@ -7957,10 +8098,16 @@ export interface PlatformBundleInstance {
   item_noun?: string;
   /** Default unit for new items (e.g. "skein"). */
   qty_unit?: string;
+  /** One line under the table's title saying what goes in it. */
+  hint?: string;
+  /** The links a record in this table makes, in words (#3875). */
+  links?: Array<{ kind: string; label: string; inverse: string; to: string[] }>;
   /** Words the person may pick for what the table holds or counts (#3650). */
   noun?: import("@cobblr/platform-contract/kind-label").NounChoiceDecl;
   /** Each file dropped on the table becomes a record (FileIntakeDecl). */
   file_intake?: import("@cobblr/platform-contract").FileIntakeDecl;
+  /** An "Import from <service>" button on the table (ConnectorImportDecl). */
+  connector_import?: import("@cobblr/platform-contract").ConnectorImportDecl;
   /** When items belong to a parent "type" in another instance (Spool →
    *  Filament type), the forms show a parent picker + write an `instance-of`
    *  pairing. `instance` is the parent instance name. */

@@ -28,7 +28,8 @@
 // Run: npx tsx scripts/lint-node-resolves.ts
 
 import { readFileSync, globSync } from "node:fs";
-import { execFileSync } from "node:child_process";
+import { execFile } from "node:child_process";
+import { availableParallelism } from "node:os";
 
 const RESOLUTION_ERRORS = [
   "ERR_MODULE_NOT_FOUND",
@@ -93,24 +94,20 @@ function entryPoints(name: string): string[] {
 
 const failures: Array<{ spec: string; code: string; msg: string }> = [];
 let checked = 0;
+// Every load is its OWN node process, so a package that throws, exits or hangs
+// at import time cannot affect the verdict on another. They run side by side:
+// one after another, the lint's cost grew with every subpath export a package
+// added, about a second each, until it alone was the slowest thing in the
+// typecheck job and failed main on its time budget (55 s against a quiet
+// 11.9 s, 138 entry points, 2026-09-28).
+type Job = { spec: string; cwd: string; label: string; sayThrow: boolean };
+const jobs: Job[] = [];
 
 for (const dep of deps) {
   for (const spec of entryPoints(dep)) {
     checked++;
-    try {
-      // cwd = api so workspace links resolve exactly as they do at boot.
-      execFileSync(process.execPath, ["--input-type=module", "-e", `await import(${JSON.stringify(spec)})`], {
-        cwd: "api",
-        stdio: ["ignore", "ignore", "pipe"],
-        timeout: 30_000,
-      });
-    } catch (e) {
-      const stderr = String((e as { stderr?: Buffer }).stderr ?? "");
-      const code = BOOT_LOAD_ERRORS.find((c) => stderr.includes(c));
-      const line = stderr.split("\n").find((l) => l.includes("Error")) ?? stderr.split("\n")[0] ?? "";
-      if (code) failures.push({ spec, code, msg: line.trim().slice(0, 160) });
-      else console.log(`  (${spec} resolved but threw at import time, not a resolution problem)`);
-    }
+    // cwd = api so workspace links resolve exactly as they do at boot.
+    jobs.push({ spec, cwd: "api", label: spec, sayThrow: true });
   }
 }
 
@@ -152,23 +149,43 @@ for (const [spec, owner] of moduleImports) {
   const pkgName = spec.split("/").slice(0, 2).join("/");
   if (!entryPoints(pkgName).includes(spec)) continue;
   checked++;
-  try {
-    // cwd = the MODULE, not api. A module declares its own dependencies and its
-    // built code sits under modules/<name>/, so that is where node resolves the
-    // specifier at boot. Running this from api/ passed locally on pnpm hoisting
-    // and failed in CI's stricter install, which is the wrong way round for a
-    // guard: it reported success on the machine where someone would act on it.
-    execFileSync(process.execPath, ["--input-type=module", "-e", `await import(${JSON.stringify(spec)})`], {
-      cwd: `modules/${owner}`,
-      stdio: ["ignore", "ignore", "pipe"],
-      timeout: 30_000,
-    });
-  } catch (e) {
-    const stderr = String((e as { stderr?: Buffer }).stderr ?? "");
-    const code = BOOT_LOAD_ERRORS.find((c) => stderr.includes(c));
-    const line = stderr.split("\n").find((l) => l.includes("Error")) ?? stderr.split("\n")[0] ?? "";
-    if (code) failures.push({ spec: `${spec}  (imported by modules/${owner})`, code, msg: line.trim().slice(0, 160) });
-  }
+  // cwd = the MODULE, not api. A module declares its own dependencies and its
+  // built code sits under modules/<name>/, so that is where node resolves the
+  // specifier at boot. Running this from api/ passed locally on pnpm hoisting
+  // and failed in CI's stricter install, which is the wrong way round for a
+  // guard: it reported success on the machine where someone would act on it.
+  jobs.push({ spec, cwd: `modules/${owner}`, label: `${spec}  (imported by modules/${owner})`, sayThrow: false });
+}
+
+function load(job: Job): Promise<void> {
+  return new Promise((resolve) => {
+    execFile(
+      process.execPath,
+      ["--input-type=module", "-e", `await import(${JSON.stringify(job.spec)})`],
+      { cwd: job.cwd, timeout: 30_000, maxBuffer: 16 * 1024 * 1024 },
+      (err, _stdout, stderrOut) => {
+        if (err) {
+          const stderr = String(stderrOut ?? "");
+          const code = BOOT_LOAD_ERRORS.find((c) => stderr.includes(c));
+          const line = stderr.split("\n").find((l) => l.includes("Error")) ?? stderr.split("\n")[0] ?? "";
+          if (code) failures.push({ spec: job.label, code, msg: line.trim().slice(0, 160) });
+          else if (job.sayThrow) console.log(`  (${job.spec} resolved but threw at import time, not a resolution problem)`);
+        }
+        resolve();
+      },
+    );
+  });
+}
+void (async () => {
+{
+  const width = Math.max(2, Math.min(8, Math.floor(availableParallelism() / 2)));
+  let next = 0;
+  await Promise.all(
+    Array.from({ length: width }, async () => {
+      while (next < jobs.length) await load(jobs[next++]!);
+    }),
+  );
+  failures.sort((x, y) => x.spec.localeCompare(y.spec));
 }
 
 // ── the same class, one step over: repo SCRIPTS ────────────────────────────
@@ -235,3 +252,4 @@ if (failures.length > 0) {
 }
 
 console.log(`node-resolves lint: ${checked} boot entry point(s) load under plain node ✓`);
+})();

@@ -590,7 +590,7 @@ export interface NotificationListItem {
 export async function listForUser(
   userId: string,
   orgId: string,
-  opts: { limit?: number; unreadOnly?: boolean } = {},
+  opts: { limit?: number; unreadOnly?: boolean; before?: string } = {},
 ): Promise<NotificationListItem[]> {
   const limit = Math.min(Math.max(opts.limit ?? 25, 1), 100);
   let q = meta
@@ -613,9 +613,20 @@ export async function listForUser(
     ])
     .where("user_id", "=", userId)
     .where("org_id", "=", orgId)
-    .orderBy("created_at", "desc")
+    // Ordered on the millisecond, the precision the page cursor can carry
+    // across JSON: comparing microsecond rows against a millisecond cursor
+    // skips the rows that fall between the two.
+    .orderBy(sql`date_trunc('milliseconds', created_at)`, "desc")
+    .orderBy("id", "desc")
     .limit(limit);
   if (opts.unreadOnly) q = q.where("read_at", "is", null);
+  // `<created_at ISO>|<id>`: strictly after the last row of the previous page
+  // in that order, the id breaking a tie between rows of the same millisecond.
+  const [at, id] = (opts.before ?? "").split("|");
+  const atDate = at ? new Date(at) : null;
+  if (atDate && !Number.isNaN(atDate.getTime()) && id && /^[0-9a-f-]{36}$/i.test(id)) {
+    q = q.where(sql<boolean>`(date_trunc('milliseconds', created_at), id) < (${atDate}, ${id}::uuid)`);
+  }
   return (await settleForDisplay(await q.execute())).map(({ org_id: _o, entity_type: _t, entity_id: _i, ...rest }) => rest);
 }
 

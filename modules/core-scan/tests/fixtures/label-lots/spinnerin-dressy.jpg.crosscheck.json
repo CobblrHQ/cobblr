@@ -2,19 +2,19 @@
   "fixture": "spinnerin-dressy.jpg",
   "image_sha256": "7134c56f969c170351454eb61b3f0dae4b2c2dac9fa1d9aaf35a53ad2dce36e9",
   "capability": "classify-image",
-  "prompt": "A scanned barcode resolved this item to: \"Spinnerin Dressy Wool Yarn\". Look at the photo and decide whether the product visible in it plausibly matches that name/identity — consider the product type, packaging, and any readable label text, and allow for a generic or differently-angled shot. Only answer \"no\" when the photo clearly shows a DIFFERENT kind of product. When (and ONLY when) it's a clear mismatch AND the photo's label makes the real product unambiguous, also return what the item actually IS — a concise retail product name, plus brand if visible. Omit them if you can't read it confidently. Separately, in \"printed\", report what is PRINTED on the item or its cover, verbatim and only when clearly legible: the author, artist or maker as printed (a book's cover author, a record's artist), the brand as printed, the title as printed, and the lot or batch code as printed (a dye lot, a lot number, a batch: the code that changes from one production run to the next, never the barcode digits, a colour number or an article number). Never complete or translate them; null when not shown. Reply with JSON only: {\"match\":\"yes\"|\"no\"|\"unsure\",\"reason\":\"<one short sentence>\",\"correct_name\":\"<the real product name, optional>\",\"correct_brand\":\"<brand, optional>\",\"printed\":{\"creator\":<string|null>,\"brand\":<string|null>,\"title\":<string|null>,\"lot\":<string|null>}}.",
+  "prompt": "A scanned barcode resolved this item to: \"Spinnerin Dressy Wool Yarn\". Look at the photo and decide whether the product visible in it plausibly matches that name/identity — consider the product type, packaging, and any readable label text, and allow for a generic or differently-angled shot. Only answer \"no\" when the photo clearly shows a DIFFERENT kind of product. When (and ONLY when) it's a clear mismatch AND the photo's label makes the real product unambiguous, also return what the item actually IS — a concise retail product name, plus brand if visible. Omit them if you can't read it confidently. Separately, in \"printed\", report what is PRINTED on the item or its cover, verbatim and only when clearly legible: the author, artist or maker as printed (a book's cover author, a record's artist), the brand as printed, the title as printed, and the lot or batch code as printed (a dye lot, a lot number, a batch: the code that changes from one production run to the next, never the barcode digits, a colour number or an article number), and the year this unit was made as printed (a wine's vintage, a coin's year: four digits, never a best-before date, a copyright year or a \"since\" or \"established\" year). Never complete or translate them; null when not shown. Reply with JSON only: {\"match\":\"yes\"|\"no\"|\"unsure\",\"reason\":\"<one short sentence>\",\"correct_name\":\"<the real product name, optional>\",\"correct_brand\":\"<brand, optional>\",\"printed\":{\"creator\":<string|null>,\"brand\":<string|null>,\"title\":<string|null>,\"lot\":<string|null>,\"year_made\":<string|null>}}.",
   "crosscheck": {
     "result": {
       "role": "assistant",
-      "content": "```json\n{\"match\":\"yes\",\"reason\":\"The image clearly shows Spinnerin Dressy Yarn packaging and green wool yarn skeins.\",\"printed\":{\"creator\":null,\"brand\":\"Spinnerin\",\"title\":\"Dressy\",\"lot\":\"5293\"}}\n```"
+      "content": "{\"match\":\"yes\",\"reason\":\"Label clearly reads SPINNERIN YARN, DRESSY, ALL VIRGIN WOOL, matching the resolved item.\",\"printed\":{\"creator\":null,\"brand\":\"SPINNERIN\",\"title\":\"DRESSY\",\"lot\":\"5293\",\"year_made\":null}}"
     },
-    "provider_id": "google-ai-studio",
+    "provider_id": "openai-compat",
     "model": "default",
     "cached": false,
-    "input_tokens": 1443,
-    "output_tokens": 53,
+    "input_tokens": 56939,
+    "output_tokens": 561,
     "cost_cents": 0,
-    "duration_ms": 1353,
-    "text": "```json\n{\"match\":\"yes\",\"reason\":\"The image clearly shows Spinnerin Dressy Yarn packaging and green wool yarn skeins.\",\"printed\":{\"creator\":null,\"brand\":\"Spinnerin\",\"title\":\"Dressy\",\"lot\":\"5293\"}}\n```"
+    "duration_ms": 8705,
+    "text": "{\"match\":\"yes\",\"reason\":\"Label clearly reads SPINNERIN YARN, DRESSY, ALL VIRGIN WOOL, matching the resolved item.\",\"printed\":{\"creator\":null,\"brand\":\"SPINNERIN\",\"title\":\"DRESSY\",\"lot\":\"5293\",\"year_made\":null}}"
   }
 }

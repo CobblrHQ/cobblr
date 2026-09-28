@@ -5,7 +5,7 @@
 // user hits constantly). Icon-only by design; the label is
 // the tooltip + aria-label.
 
-import { useEffect, useState } from "react";
+import { Fragment, useEffect, useState } from "react";
 import { NavLink } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
 import { api, isFocused } from "../lib/api";
@@ -36,6 +36,35 @@ export function orderHeaderActions<T extends { headerAction: { route: string } |
   if (!capabilitiesFirst) return [...actions];
   const isBuilder = (a: T) => !!a.headerAction && isBuilderRoute(a.headerAction.route);
   return [...actions.filter((a) => !isBuilder(a)), ...actions.filter(isBuilder)];
+}
+
+/** Actions that share one sidebar row, left to right. Scan and Build are the
+ *  foot's two capture tools; a row each cost a line of a short column, the
+ *  way Ask Cobb | Discussion would if it were split. Scan stays on the left:
+ *  the first thing under the nav is the one the eye lands on, which is why
+ *  the pair was once split when Build led it. */
+export const SHARED_FOOT_ROWS: readonly (readonly string[])[] = [["core-scan", "core-authoring"]];
+
+/** The sidebar rows the actions render as: each action on its own row, except
+ *  a SHARED_FOOT_ROWS pair whose members are all present, which takes the row
+ *  where its first member stands. Pure, so "Scan and Build share a line" is a
+ *  fact a test holds without rendering the layout. */
+export function footActionRows<T extends { name: string }>(actions: readonly T[]): T[][] {
+  const rows: T[][] = [];
+  const placed = new Set<string>();
+  for (const a of actions) {
+    if (placed.has(a.name)) continue;
+    const pair = SHARED_FOOT_ROWS.find((r) => r.includes(a.name));
+    const members = pair ? pair.map((n) => actions.find((x) => x.name === n)) : [];
+    if (pair && members.every((m): m is T => !!m)) {
+      for (const m of members) placed.add(m.name);
+      rows.push(members);
+    } else {
+      placed.add(a.name);
+      rows.push([a]);
+    }
+  }
+  return rows;
 }
 
 export function HeaderActions({ asRows = false }: {
@@ -91,38 +120,65 @@ export function HeaderActions({ asRows = false }: {
 
   if (actions.length === 0) return null;
 
+  const link = (m: (typeof actions)[number], inRow: "full" | "half" | "bar") => {
+    const ha = m.headerAction!;
+    const Icon = moduleIcon(ha.icon);
+    return (
+      <NavLink
+        key={m.name}
+        to={ha.route}
+        title={ha.label}
+        aria-label={ha.label}
+        data-testid={`header-action-${m.name}`}
+        className={({ isActive }) =>
+          inRow === "bar"
+            ? "relative transition p-1.5 flex items-center gap-1 " +
+              (isActive ? "text-accent" : "text-faint dark:text-slate-500 hover:text-accent")
+            : (inRow === "full" ? "w-full px-3 py-1.5 rounded " : "") +
+              "flex items-center gap-2.5 whitespace-nowrap text-[13px] transition " +
+              (isActive
+                ? "text-accent font-semibold" + (inRow === "full" ? " bg-subtle/60 dark:bg-slate-800/40" : "")
+                : "text-muted dark:text-slate-400 hover:text-accent" +
+                  (inRow === "full" ? " hover:bg-subtle/60 dark:hover:bg-slate-800/40" : ""))
+        }
+      >
+        <Icon size={16} className={inRow === "bar" ? undefined : "shrink-0"} />
+        {/* Text label where there's room — the bare icon alone was the
+            discoverability gap the author named. Phones keep icon-only;
+            a sidebar row is always labelled. */}
+        <span className={inRow === "bar" ? "hidden md:inline text-xs" : ""}>{ha.label}</span>
+      </NavLink>
+    );
+  };
+
+  if (!asRows) return <>{actions.map((m) => link(m, "bar"))}</>;
+
   return (
     <>
-      {actions.map((m) => {
-        const ha = m.headerAction!;
-        const Icon = moduleIcon(ha.icon);
-        return (
-          <NavLink
-            key={m.name}
-            to={ha.route}
-            title={ha.label}
-            aria-label={ha.label}
-            data-testid={`header-action-${m.name}`}
-            className={({ isActive }) =>
-              asRows
-                ? "w-full flex items-center gap-2.5 px-3 py-1.5 rounded text-[13px] transition " +
-                  (isActive
-                    ? "text-accent font-semibold bg-subtle/60 dark:bg-slate-800/40"
-                    : "text-muted dark:text-slate-400 hover:text-accent hover:bg-subtle/60 dark:hover:bg-slate-800/40")
-                : "relative transition p-1.5 flex items-center gap-1 " +
-                  (isActive
-                    ? "text-accent"
-                    : "text-faint dark:text-slate-500 hover:text-accent")
-            }
+      {footActionRows(actions).map((row) =>
+        row.length === 1 ? (
+          link(row[0]!, "full")
+        ) : (
+          // One row, two doors, the Ask Cobb | Discussion shape: a div of
+          // links, a quiet bar between them.
+          <div
+            key={row.map((m) => m.name).join("+")}
+            data-testid="foot-shared-row"
+            className="w-full flex items-center gap-1.5 px-3 py-1.5 rounded hover:bg-subtle/60 dark:hover:bg-slate-800/40 transition"
           >
-            <Icon size={16} className={asRows ? "shrink-0" : undefined} />
-            {/* Text label where there's room — the bare icon alone was the
-                discoverability gap the author named. Phones keep icon-only;
-                a sidebar row is always labelled. */}
-            <span className={asRows ? "" : "hidden md:inline text-xs"}>{ha.label}</span>
-          </NavLink>
-        );
-      })}
+            {row.map((m, i) => (
+              <Fragment key={m.name}>
+                {i > 0 && (
+                  <span aria-hidden className="px-1.5 text-[13px] text-faint/60 dark:text-slate-600 select-none">
+                    |
+                  </span>
+                )}
+                {link(m, "half")}
+              </Fragment>
+            ))}
+          </div>
+        ),
+      )}
     </>
   );
 }

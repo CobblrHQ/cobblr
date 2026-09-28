@@ -1,12 +1,12 @@
 {
   "manifest": {
     "id": "cobblr.flagship.yarn",
-    "version": "0.8.3",
+    "version": "0.9.1",
     "name": "Yarn",
-    "description": "Yarn as its own inventory instance: counted in balls, skeins or hanks, yarn-only fields, grouped by weight. Optional Hooks + Patterns tables.",
+    "description": "Yarn as its own inventory instance: counted in balls, skeins or hanks, yarn-only fields, grouped by weight. Optional Hooks, Supplies and Patterns tables.",
     "author": "Cobblr",
     "released_at": "2026-07-15",
-    "changelog": "A pattern now knows what it needs: its yarns and hooks are read from the PDF, matched against your stash, and what is missing goes on your shopping list in one tap. Finishing a pattern takes each yarn off its own balls. Earlier: The scanner fills Dye lot from the lot printed on a label, and a dye lot is never shared as a fact about the yarn. Earlier: Call your yarn what you call it: ball, skein or hank. Pick the word when you add Yarn, or change it in the Yarn table's settings, and every label, your yarn's counts and Cobb all say it. Earlier: Designs are now Patterns: a pattern keeps its PDF, photos and notes, its designer, where it came from and how hard it is, and the yarn it needs. Import patterns takes a pile of PDFs or a zipped folder: each PDF becomes a pattern with its file, a zip's folders fill in the category, and a PDF you already have is never added twice. Your Designs table is renamed on this update, and everything in it stays. Earlier: Yarn now counts in balls, the word everyone knows: the unit, Length / ball, Full ball, Price / ball and the Consumption panel (Track each ball separately, Open a ball). Yarn you already have moves over to balls on this update; field names and your values are unchanged. Earlier: per-ball tracking (Track each ball separately, Open a ball) and the stock counts from the first item.",
+    "changelog": "Notions is now Supplies: the table for stitch markers, yarn needles, safety eyes, stuffing and buttons says what goes in it under its name, and you can still call it Notions (pick the word in its Settings); searching for notions finds it, and a pattern's notions are still checked against it. Your Notions table is renamed on this update, and everything in it stays. Earlier: a Notions table for stitch markers, yarn needles, safety eyes and stuffing; a pattern's notions are checked against it. Earlier: Import from Ravelry on the Yarn table brings your Ravelry stash in, and your projects into Patterns: connect once, then press it again any time to update. Earlier: A pattern now knows what it needs: its yarns and hooks are read from the PDF, matched against your stash, and what is missing goes on your shopping list in one tap. Finishing a pattern takes each yarn off its own balls. Earlier: The scanner fills Dye lot from the lot printed on a label, and a dye lot is never shared as a fact about the yarn. Earlier: Call your yarn what you call it: ball, skein or hank. Pick the word when you add Yarn, or change it in the Yarn table's settings, and every label, your yarn's counts and Cobb all say it. Earlier: Designs are now Patterns: a pattern keeps its PDF, photos and notes, its designer, where it came from and how hard it is, and the yarn it needs. Import patterns takes a pile of PDFs or a zipped folder: each PDF becomes a pattern with its file, a zip's folders fill in the category, and a PDF you already have is never added twice. Your Designs table is renamed on this update, and everything in it stays.",
     "requires": [
       {
         "module": "inventory"
@@ -18,6 +18,14 @@
         "instance_name": "yarn",
         "faces": {
           "stock": true
+        },
+        "connector_import": {
+          "connector": "ravelry",
+          "label": "Import from Ravelry",
+          "sections": {
+            "stash": "yarn",
+            "projects": "designs"
+          }
         },
         "display_name": "Yarn",
         "glyph": "🧶",
@@ -483,6 +491,124 @@
                     "title",
                     "hook_gauge",
                     "hook_material",
+                    "qty"
+                  ]
+                }
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "key": "notions",
+        "name": "Supplies",
+        "question": "Keep track of your supplies (stitch markers, safety eyes, stuffing)?",
+        "description": "A 'Supplies' table (or 'Notions', if that is your word): stitch markers, yarn needles, safety eyes, stuffing, buttons. A pattern's notions are checked against it, and what is missing goes on your shopping list in one tap.",
+        "default": false,
+        "next_steps": [
+          {
+            "label": "Open your Supplies",
+            "module": "inventory",
+            "path": "/instances/notions",
+            "hint": "Markers, needles, eyes, stuffing: what each pattern asks for beside its yarn."
+          }
+        ],
+        "provides_instances": [
+          {
+            "module": "inventory",
+            "instance_name": "notions",
+            "display_name": "{{Nouns}}",
+            "glyph": "📍",
+            "item_noun": "supply",
+            "hint": "markers, needles, safety eyes, stuffing, buttons",
+            "noun": {
+              "of": "item",
+              "singular": "supply",
+              "plural": "supplies",
+              "alternatives": [
+                {
+                  "singular": "notion",
+                  "plural": "notions"
+                }
+              ]
+            },
+            "qty_unit": "each",
+            "faces": {
+              "stock": true
+            },
+            "field_defs": [
+              {
+                "entity_kind": "inventory:part",
+                "name": "notion_type",
+                "display_label": "Type",
+                "type": "text",
+                "position": 1,
+                "choices": [
+                  "Stitch markers",
+                  "Stitch holders",
+                  "Yarn needle",
+                  "Cable needle",
+                  "Safety eyes",
+                  "Stuffing",
+                  "Buttons",
+                  "Row counter",
+                  "Other"
+                ],
+                "help": "What it is. What a pattern asks for is matched to your {{nouns}} by this."
+              },
+              {
+                "entity_kind": "inventory:part",
+                "name": "notion_size",
+                "display_label": "Size",
+                "type": "text",
+                "position": 2,
+                "help": "For safety eyes and buttons: the size in mm (e.g. 8 mm)."
+              }
+            ],
+            "field_overrides": [
+              {
+                "entity_kind": "inventory:part",
+                "name": "category",
+                "hidden": true
+              },
+              {
+                "entity_kind": "inventory:part",
+                "name": "warranty",
+                "hidden": true
+              },
+              {
+                "entity_kind": "inventory:part",
+                "name": "supplier_url",
+                "hidden": true
+              },
+              {
+                "entity_kind": "inventory:part",
+                "name": "serial_number",
+                "hidden": true
+              },
+              {
+                "entity_kind": "inventory:part",
+                "name": "model_number",
+                "hidden": true
+              },
+              {
+                "entity_kind": "inventory:part",
+                "name": "maintenance",
+                "hidden": true
+              }
+            ],
+            "saved_views": [
+              {
+                "entity_kind": "inventory:part",
+                "name": "By type",
+                "view_type": "table",
+                "pinned": true,
+                "config": {
+                  "group_by": "notion_type",
+                  "visible_fields": [
+                    "title",
+                    "notion_type",
+                    "notion_size",
                     "qty"
                   ]
                 }

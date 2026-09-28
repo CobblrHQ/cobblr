@@ -25,7 +25,7 @@ import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } fro
 import { Link, useNavigate, useSearchParams } from "react-router-dom";
 import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { CheckCircle, ChevronDown, ExternalLink, Image as ImagePlus, LayoutGrid, List, Loader2, MapPin, MonitorSmartphone, Pencil, ReceiptText, RotateCcw, ScanLine, Search, Sparkles, Tag, Trash2, Truck, X, Zap, MoreHorizontal, Undo2 } from "lucide-react";
-import { useLater, Modal, useToast, usePageTitle, PopoverLayer, relativeTime } from "@cobblr/platform-web";
+import { useLater, Modal, useToast, usePageTitle, PopoverLayer, OverlayLayer, relativeTime, TILE_GRID } from "@cobblr/platform-web";
 import { ScanImportModal } from "../components/ScanImportModal";
 import { ExportInboxModal } from "../components/ExportInboxModal";
 import { } from "../components/CameraCaptureSheet";
@@ -49,10 +49,15 @@ import { HeaderMenu, MenuHead, MenuItem, MenuNote, MenuSep } from "../components
 import { DuplicateRecordsSheet } from "./DuplicateRecordsSheet";
 import { ReceiptAddressChip } from "../components/ReceiptAddressChip";
 import { classifyOmni, clipboardImages, omniPlaceholder } from "./omniIntake";
+import { ScanPendingPictures } from "./ScanPendingPictures";
+import { ScanTwinsContext, twinsOf } from "./scanTwins";
+import { usePendingPictures } from "../lib/pendingPictures";
 import { } from "./scanNameEdit";
 import { useAiStatus, AiOffNotice } from "../components/AiStatusNotice";
 export { useAiStatus, AiOffNotice } from "../components/AiStatusNotice";
 import { decideLocationScan, filingLabel } from "../lib/scanFiling";
+import { useScanItemLink } from "./scanItemLink";
+import { sessionPlaceItems } from "../lib/scanSessionPlace";
 import { useHandheld } from "../lib/useHandheld";
 import { } from "./ScanItemSheet";
 import { ScanInboxMenu } from "./ScanInboxMenu";
@@ -104,6 +109,8 @@ import { } from "../lib/useFieldPresentation";
 import { } from "../auth/AuthContext";
 import { destinationLabel, type DestinationTable } from "@cobblr/platform-contract";
 import { InboxCard, GalleryTile } from "./ScanInboxCard";
+import { FiledRowView, FiledSummaryView } from "./ScanFiledRow";
+import { useFiledRows, withFiledRows } from "../lib/filedRows";
 import { type ScanTarget } from "./scanInboxShared";
 import { scanInboxKeys } from "../lib/scan-inbox-keys";
 export type { ScanTarget } from "./scanInboxShared";
@@ -516,6 +523,7 @@ export function ScanPage() {
       qc.setQueryData(["scan-glance-config", activeSlug], r);
       void qc.invalidateQueries({ queryKey: ["scan-glance-config", activeSlug] });
     },
+    onError: (e: unknown) => toast.error(`Couldn't change that setting: ${e instanceof ApiError ? e.message : String(e)}`),
   });
 
   const into = params.get("into");
@@ -720,8 +728,34 @@ export function ScanPage() {
       .toLowerCase();
     return searchTokens.every((tok) => hay.includes(tok));
   };
+  // A filed row stays where it was, saying where it went (lib/filedRows.ts):
+  // until the next scan, leaving the inbox, or its ✕. Never on a timer.
+  const filed = useFiledRows(activeSlug, items);
+  const filedIds = useMemo(() => new Set(filed.rows.map((r) => r.item.id)), [filed.rows]);
+  // Several filed rows are one line, shown where the latest of them was.
+  const filedAnchor = filed.rows.at(-1)?.item.id ?? null;
+  const [undoingId, setUndoingId] = useState<string | null>(null);
+  const undoFiling = async (id: string) => {
+    setUndoingId(id);
+    try {
+      // The announcement from unconfirm takes the row out of the filed rows;
+      // the refreshed list puts it back as a pending card, in the same place.
+      await api.unconfirmScanItem(activeSlug, id);
+    } catch (e) {
+      toast.error(e instanceof ApiError ? e.message : String(e));
+    } finally {
+      setUndoingId(null);
+    }
+  };
   const searched = searchTokens.length ? items.filter(matchesSearch) : items;
   const visibleItems = searched;
+  const visibleIds = useMemo(() => new Set(visibleItems.map((i) => i.id)), [visibleItems]);
+  const twins = useMemo(() => twinsOf(visibleItems), [visibleItems]);
+  const pendingPictures = usePendingPictures(activeSlug);
+  // What the list DRAWS: the live rows, with each filed row back in its
+  // place. Everything that counts, selects or acts reads visibleItems, so a
+  // filed row is never counted, selected or filed again.
+  const shownItems = useMemo(() => withFiledRows(visibleItems, filed.rows), [visibleItems, filed.rows]);
   // Gallery ⇄ list — a photo-tile grid for visual triage (persisted).
   const [galleryView, setGalleryView] = useState(() => localStorage.getItem("cobblr-scan-view") === "gallery");
   const toggleGalleryView = () =>
@@ -847,30 +881,26 @@ export function ScanPage() {
       <div data-testid="combine-offer" className="rounded-lg border border-amber-300 dark:border-amber-700/60 bg-amber-50/70 dark:bg-amber-950/20 px-3 py-2.5 flex flex-wrap items-center gap-x-3 gap-y-2 sm:flex-nowrap">
         <Sparkles size={15} className="text-amber-500 shrink-0 max-sm:hidden" />
         <div className="min-w-0 basis-full sm:basis-auto sm:flex-1 text-sm">
+          {/* One line, the fact and the names (#3884: the sentence explaining
+              the combine was the longest thing on the card). What the tap
+              does is on the button, beside it, and in full on hover. */}
           <span className="font-medium text-content dark:text-mortar-100">
-            {cluster.items.length} items look like the same {isUnique ? clusterNoun : "product"}
+            Same {isUnique ? clusterNoun : "product"} {cluster.items.length === 2 ? "twice" : `${cluster.items.length} times`}
           </span>
-          <span className="text-muted">
-            {" — "}
-            {cluster.items.map((c) => displayName(c)).filter(Boolean).join(" · ")}.{" "}
-            {/* Say what the tap DOES, not only that it combines (#3009): one
-                pending row here, the rest to Recently deleted, nothing
-                already filed touched. "Merge" is kept for the open card's
-                write into a record you own. */}
-            {isUnique
-              ? `One row here with all their details? The other${cluster.items.length > 2 ? "s go" : " goes"} to Recently deleted; nothing already filed changes.`
-              : `One row here, ×${totalQty}? The other${cluster.items.length > 2 ? "s go" : " goes"} to Recently deleted; nothing already filed changes.`}
-          </span>
+          <span className="text-muted"> · {cluster.items.map((c) => displayName(c)).filter(Boolean).join(" · ")}</span>
         </div>
-        <button
-          type="button"
-          disabled={combineMut.isPending}
-          onClick={() => combineMut.mutate({ ids, ...(isUnique ? {} : { keepId: keep.id }) })}
-          title={`Combines these ${cluster.items.length} pending rows into one row in this inbox${isUnique ? " with all their details" : ` at ×${totalQty}`}. The other ${cluster.items.length > 2 ? "rows go" : "row goes"} to Recently deleted, where it can be restored. Nothing already filed changes.`}
-          className="shrink-0 rounded bg-amber-600 hover:bg-amber-700 text-white px-3 py-1.5 text-sm font-medium disabled:opacity-50 min-h-9 sm:min-h-0"
-        >
-          {isUnique ? "Combine into one row" : "Combine rows"}
-        </button>
+        <span className="inline-flex items-center gap-2">
+          <button
+            type="button"
+            disabled={combineMut.isPending}
+            onClick={() => combineMut.mutate({ ids, ...(isUnique ? {} : { keepId: keep.id }) })}
+            title={`Combines these ${cluster.items.length} pending rows into one row in this inbox${isUnique ? " with all their details" : ` at ×${totalQty}`}. The other ${cluster.items.length > 2 ? "rows go" : "row goes"} to Recently deleted, where it can be restored. Nothing already filed changes.`}
+            className="shrink-0 rounded bg-amber-600 hover:bg-amber-700 text-white px-3 py-1.5 text-sm font-medium disabled:opacity-50 min-h-9 sm:min-h-0"
+          >
+            {isUnique ? "Combine" : `Combine, ×${totalQty}`}
+          </button>
+          <span className="text-[11px] text-muted">the other{cluster.items.length > 2 ? "s go" : " goes"} to Recently deleted; nothing already filed changes</span>
+        </span>
         <button
           type="button"
           title="Not the same - keep separate"
@@ -905,6 +935,8 @@ export function ScanPage() {
       isBatch: boolean;
       batchId: string | null;
       items: ScanInboxItem[];
+      /** What the group draws: its items with any filed row in its place. */
+      shown: ScanInboxItem[];
       latest: number; // max(created_at) — the session's real scan time
       lastTouched: number; // max(updated_at) — later edits (un-confirm, fixes)
       area: string | null;
@@ -929,7 +961,7 @@ export function ScanPage() {
     // its own session group, whether or not a batch id was minted at the time.
     let pseudo: Group | null = null;
     let pseudoLastT = 0;
-    for (const it of visibleItems) {
+    for (const it of shownItems) {
       // visibleItems arrive newest-first, so the "previous" item is newer.
       const t = Date.parse(it.created_at);
       let g: Group;
@@ -938,18 +970,20 @@ export function ScanPage() {
         if (existing) g = existing;
         else {
           const meta = batchMeta[it.scan_batch_id];
-          g = { key: it.scan_batch_id, isBatch: true, batchId: it.scan_batch_id, items: [], latest: 0, lastTouched: 0, area: null, label: meta?.label ?? null, origin: meta?.origin ?? null, sourceFileId: meta?.source_file_id ?? null, orderRef: meta?.order_ref ?? null, trackingNumber: meta?.tracking_number ?? null, shipmentState: meta?.shipment_state ?? null, shipmentDescription: meta?.shipment_description ?? null, shipmentLocation: meta?.shipment_location ?? null, verdict: { kind: "plain" }, dateReading: null };
+          g = { key: it.scan_batch_id, isBatch: true, batchId: it.scan_batch_id, items: [], shown: [], latest: 0, lastTouched: 0, area: null, label: meta?.label ?? null, origin: meta?.origin ?? null, sourceFileId: meta?.source_file_id ?? null, orderRef: meta?.order_ref ?? null, trackingNumber: meta?.tracking_number ?? null, shipmentState: meta?.shipment_state ?? null, shipmentDescription: meta?.shipment_description ?? null, shipmentLocation: meta?.shipment_location ?? null, verdict: { kind: "plain" }, dateReading: null };
           byBatch.set(it.scan_batch_id, g);
           groups.push(g);
         }
       } else {
         if (!pseudo || !Number.isFinite(t) || pseudoLastT - t > SESSION_GAP_MS) {
-          pseudo = { key: `gap:${it.id}`, isBatch: false, batchId: null, items: [], latest: 0, lastTouched: 0, area: null, label: null, origin: null, sourceFileId: null, orderRef: null, trackingNumber: null, shipmentState: null, shipmentDescription: null, shipmentLocation: null, verdict: { kind: "plain" }, dateReading: null };
+          pseudo = { key: `gap:${it.id}`, isBatch: false, batchId: null, items: [], shown: [], latest: 0, lastTouched: 0, area: null, label: null, origin: null, sourceFileId: null, orderRef: null, trackingNumber: null, shipmentState: null, shipmentDescription: null, shipmentLocation: null, verdict: { kind: "plain" }, dateReading: null };
           groups.push(pseudo);
         }
         if (Number.isFinite(t)) pseudoLastT = t;
         g = pseudo;
       }
+      g.shown.push(it);
+      if (filedIds.has(it.id)) continue;
       g.items.push(it);
       if (Number.isFinite(t) && t > g.latest) g.latest = t;
       const u = Date.parse(it.updated_at);
@@ -959,7 +993,7 @@ export function ScanPage() {
     // A gap session is keyed by its OLDEST item once the burst is known: keyed
     // by the newest, the key moved on every new scan and the whole group
     // remounted, dropping every card's pick (#3021, scanSession.ts).
-    for (const g of groups) if (!g.isBatch) g.key = gapSessionKey(g.items);
+    for (const g of groups) if (!g.isBatch) g.key = gapSessionKey(g.items.length ? g.items : g.shown);
     // The verdict, once the lines are counted; a session in the list whose
     // read failed or is in flight has no lines of its own and is its own group.
     for (const g of groups) {
@@ -975,10 +1009,10 @@ export function ScanPage() {
       const v = sessionVerdict(meta, { pending: 0, ever: 0 });
       if (v.kind !== "failed" && v.kind !== "in_flight") continue;
       const t = meta.created_at ? Date.parse(meta.created_at) : 0;
-      groups.push({ key: id, isBatch: true, batchId: id, items: [], latest: Number.isFinite(t) ? t : 0, lastTouched: 0, area: null, label: meta.label ?? null, origin: meta.origin ?? null, sourceFileId: meta.source_file_id ?? null, orderRef: meta.order_ref ?? null, trackingNumber: meta.tracking_number ?? null, shipmentState: meta.shipment_state ?? null, shipmentDescription: meta.shipment_description ?? null, shipmentLocation: meta.shipment_location ?? null, verdict: v, dateReading: null });
+      groups.push({ key: id, isBatch: true, batchId: id, items: [], shown: [], latest: Number.isFinite(t) ? t : 0, lastTouched: 0, area: null, label: meta.label ?? null, origin: meta.origin ?? null, sourceFileId: meta.source_file_id ?? null, orderRef: meta.order_ref ?? null, trackingNumber: meta.tracking_number ?? null, shipmentState: meta.shipment_state ?? null, shipmentDescription: meta.shipment_description ?? null, shipmentLocation: meta.shipment_location ?? null, verdict: v, dateReading: null });
     }
     return groups.sort((a, b) => b.latest - a.latest);
-  }, [visibleItems, batchMeta, rowlessSessions]);
+  }, [shownItems, filedIds, batchMeta, rowlessSessions]);
 
   // The category label each item's SESSION agreed on, by item id.
   //
@@ -1031,23 +1065,15 @@ export function ScanPage() {
     const t = setTimeout(() => setHighlightId(null), 2600);
     return () => clearTimeout(t);
   }, [highlightId, sessionGroups, collapsedSessions]);
-  // A link to ONE row (the dashboard's captured-item card, #3049): open its
-  // sheet (the item screen on a phone, the card on a desk) and mark it in the
-  // list, then drop the param so a later poll does not reopen it.
-  const linkedItem = params.get("item");
+  // A link to ONE row (a search result, the dashboard's captured-item card):
+  // on a desk, that card opens in place, scrolled to and outlined; on a phone,
+  // its item screen. The link stays in the address (scanItemLink.ts, #3909).
+  const itemLink = useScanItemLink(items, handheld);
   useEffect(() => {
-    if (!linkedItem || !items.some((i) => i.id === linkedItem)) return;
-    setGalleryFocusId(linkedItem);
-    setHighlightId(linkedItem);
-    setParams(
-      (p) => {
-        const n = new URLSearchParams(p);
-        n.delete("item");
-        return n;
-      },
-      { replace: true },
-    );
-  }, [linkedItem, items, setParams]);
+    if (!itemLink.highlight) return;
+    setHighlightId(itemLink.highlight);
+    if (itemLink.openScreen) setGalleryFocusId(itemLink.openScreen);
+  }, [itemLink]);
   // Camera "Done" lands on /scan#s-<batchId> — the FULL grouped inbox (all
   // sessions as sections, newest first), with the just-scanned session scrolled
   // to. This replaced landing on ?batch, which scoped the inbox to one session
@@ -1502,7 +1528,7 @@ export function ScanPage() {
   const onOmniDrop = (e: React.DragEvent) => {
     e.preventDefault();
     setDropHot(false);
-    takeFiles(Array.from(e.dataTransfer.files ?? []));
+    takeFiles(Array.from(e.dataTransfer.files ?? []), "drop");
   };
   // Pasting a screenshot into the box is intake too. A receipt, a listing or a
   // spec sheet usually reaches you as an image on the clipboard, and without
@@ -1519,8 +1545,53 @@ export function ScanPage() {
     // preventDefault only cancels the browser's own behaviour; the event still
     // bubbles, so without this one paste into the focused field ran intake twice.
     e.stopPropagation();
-    takeFiles(files);
+    takeFiles(files, "paste");
   };
+
+  // A picture pasted or dropped ANYWHERE on the inbox is intake, not only in
+  // the box (#3852): the box is a collapsed icon on a phone and easy to miss
+  // on a desk, and a paste that lands nowhere shows nothing, so it gets
+  // pasted again. A field, a sheet or a dialog keeps its own paste; the box's
+  // own handlers stop the event, so one paste is never taken twice.
+  const takeFilesRef = useRef(takeFiles);
+  takeFilesRef.current = takeFiles;
+  const [pageDrop, setPageDrop] = useState(false);
+  useEffect(() => {
+    const ownsPaste = (t: EventTarget | null) =>
+      !!(t as HTMLElement | null)?.closest?.("input, textarea, select, [contenteditable='true'], [role='dialog']");
+    const onPaste = (e: ClipboardEvent) => {
+      if (e.defaultPrevented || ownsPaste(e.target)) return;
+      const files = clipboardImages(e.clipboardData);
+      if (!files.length) return;
+      e.preventDefault();
+      takeFilesRef.current(files, "paste");
+    };
+    const carriesFiles = (e: DragEvent) => Array.from(e.dataTransfer?.types ?? []).includes("Files");
+    const onOver = (e: DragEvent) => {
+      if (!carriesFiles(e)) return;
+      e.preventDefault();
+      setPageDrop(true);
+    };
+    const onLeave = (e: DragEvent) => {
+      if (!e.relatedTarget) setPageDrop(false);
+    };
+    const onDrop = (e: DragEvent) => {
+      setPageDrop(false);
+      if (!carriesFiles(e) || e.defaultPrevented) return;
+      e.preventDefault();
+      takeFilesRef.current(Array.from(e.dataTransfer?.files ?? []), "drop");
+    };
+    document.addEventListener("paste", onPaste);
+    window.addEventListener("dragover", onOver);
+    window.addEventListener("dragleave", onLeave);
+    window.addEventListener("drop", onDrop);
+    return () => {
+      document.removeEventListener("paste", onPaste);
+      window.removeEventListener("dragover", onOver);
+      window.removeEventListener("dragleave", onLeave);
+      window.removeEventListener("drop", onDrop);
+    };
+  }, []);
 
   // The inbox's own numbers, as ONE statement rather than four chips. They are
   // facets of the SAME pending items, so they read as a sentence and each is a
@@ -2211,6 +2282,7 @@ export function ScanPage() {
   };
 
   return (
+    <ScanTwinsContext.Provider value={twins}>
     <div className="space-y-3 max-w-4xl mx-auto">
       {/* ── ONE header row ───────────────────────────────────────────────────
           It never WRAPS; it yields, in a declared order (the field collapses to
@@ -2743,11 +2815,20 @@ className="rounded px-1 py-0.5 text-[12.5px] hover:bg-subtle dark:hover:bg-slate
       )}
       {/* Not empty while a receipt session is failed or being read: it has no
           rows, and it is the one thing on the page that needs a person. */}
-      {!list.isLoading && !list.isError && items.length === 0 && Object.keys(rowlessSessions).length === 0 && (
+      {pageDrop && (
+        <OverlayLayer className="pointer-events-none flex items-center justify-center bg-cobble-50/70 dark:bg-slate-900/70 border-4 border-dashed border-accent" data-testid="page-drop-zone">
+          <span className="rounded-lg bg-surface dark:bg-slate-800 px-4 py-2 text-sm font-medium text-content dark:text-mortar-100 shadow">Drop to add to the inbox</span>
+        </OverlayLayer>
+      )}
+      <ScanPendingPictures slug={activeSlug} rowIds={visibleIds} />
+      {!list.isLoading && !list.isError && shownItems.length === 0 && Object.keys(rowlessSessions).length === 0 && pendingPictures.length === 0 && (
         <div className="rounded-md border border-dashed border-line dark:border-slate-700 p-8 text-center">
           <ScanLine size={28} className="mx-auto text-faint dark:text-slate-600 mb-2" />
           <div className="text-sm text-muted dark:text-slate-400">
             Nothing pending. Open the camera, upload a photo, or paste a UPC into the search above.
+          </div>
+          <div className="hidden sm:block mt-1 text-xs text-faint dark:text-slate-500" data-testid="paste-anywhere-hint">
+            Or paste or drop a picture anywhere on this page.
           </div>
           {/* The receipt door, in the open: one photo of a paper receipt puts
               the whole trip here. It lived only inside the "..." menu, which a
@@ -3240,11 +3321,32 @@ className="rounded px-1 py-0.5 text-[12.5px] hover:bg-subtle dark:hover:bg-slate
             </button>
           </div>
         )}
+        <p className="hidden sm:block text-xs text-faint dark:text-slate-500" data-testid="paste-anywhere-hint">
+          Paste or drop a picture anywhere on this page to add it.
+        </p>
         <SeriesBanner slug={activeSlug} items={visibleItems.filter((i) => i.status === "pending")} />
         {(() => {
           // Each card, with the combine offer injected just above the first item
           // of any cluster it belongs to (so the offer sits with its items).
           const card = (item: ScanInboxItem) => {
+            if (filedIds.has(item.id)) {
+              if (filed.rows.length > 1) {
+                return item.id === filedAnchor ? (
+                  <FiledSummaryView key="filed-summary" slug={activeSlug} rows={filed.rows} onDismiss={filed.dismiss} />
+                ) : null;
+              }
+              const row = filed.rows[0]!;
+              return (
+                <FiledRowView
+                  key={item.id}
+                  slug={activeSlug}
+                  row={row}
+                  onUndo={() => void undoFiling(item.id)}
+                  undoing={undoingId === item.id}
+                  onDismiss={filed.dismiss}
+                />
+              );
+            }
             const cluster = clusterByFirstId.get(item.id);
             return (
               <div
@@ -3268,6 +3370,7 @@ className="rounded px-1 py-0.5 text-[12.5px] hover:bg-subtle dark:hover:bg-slate
                   onArmBin={setFileBin}
                   onOpenSheet={(cand) => openSheet(item.id, cand)}
                   selectionActive={selected.size > 0}
+                  openSignal={itemLink.openInPlace?.id === item.id ? itemLink.openInPlace.signal : 0}
                 />
               </div>
             );
@@ -3276,7 +3379,7 @@ className="rounded px-1 py-0.5 text-[12.5px] hover:bg-subtle dark:hover:bg-slate
           // the full card pre-expanded in a modal.
           if (galleryView) {
             return (
-              <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-2">
+              <div className={TILE_GRID}>
                 {visibleItems.map((it) => (
                   <GalleryTile key={it.id} item={it} slug={activeSlug} onOpen={() => setGalleryFocusId(it.id)} />
                 ))}
@@ -3284,10 +3387,19 @@ className="rounded px-1 py-0.5 text-[12.5px] hover:bg-subtle dark:hover:bg-slate
             );
           }
           // Flat list when there's nothing to group by (scoped ?batch view).
-          if (!showSessionHeaders) return visibleItems.map(card);
+          if (!showSessionHeaders) return shownItems.map(card);
           // Otherwise a collapsible header per group: a real session shows its
           // time (· area); a day bucket shows the day. Both show a count.
           return sessionGroups.map((g, gi) => {
+            // A session whose every row was just filed has nothing left to
+            // act on: its filed rows stand without a header offering File.
+            if (g.items.length === 0 && g.shown.length > 0) {
+              return (
+                <div key={g.key} className="space-y-2">
+                  {g.shown.map(card)}
+                </div>
+              );
+            }
             const collapsed = collapsedSessions.has(g.key);
             const groupIds = g.items.map((i) => i.id);
             const allGroupSelected = groupIds.length > 0 && groupIds.every((gid) => selected.has(gid));
@@ -3367,7 +3479,13 @@ className="rounded px-1 py-0.5 text-[12.5px] hover:bg-subtle dark:hover:bg-slate
                       .map((p) => `${p.count} into ${p.name}`)
                       .join(", ")}${placing.unplaced > 0 ? `, ${placing.unplaced} with no spot yet` : ""}`
                   : "";
-                const sessionLoc = sessionLocation(readyItems);
+                // WHERE a session's things go is asked of every pending item,
+                // not only the ones ready to file: a session whose rows all
+                // need a look lost its location control, so the one thing
+                // you could settle about them had no door (#3884).
+                const placeItems = sessionPlaceItems(g.items, readyItems);
+                const placeIds = placeItems.map((it) => it.id);
+                const sessionLoc = sessionLocation(placeItems);
                 const sessionLocName = sessionLoc.id
                   ? (locsQ.data?.items ?? []).find((l) => l.id === sessionLoc.id)
                   : null;
@@ -4034,7 +4152,7 @@ className="rounded px-1 py-0.5 text-[12.5px] hover:bg-subtle dark:hover:bg-slate
                       location only surfaced as a surprise question after the tap
                       (reported 2026-07-30). Now the missing half says so, and is one
                       tap from being set - set the location, then file. */}
-                  {busy === 0 && readyIds.length > 0 && !fileBin && hasLocations && (
+                  {busy === 0 && placeIds.length > 0 && !fileBin && hasLocations && (
                     <button
                       type="button"
                       onClick={(e) => {
@@ -4046,10 +4164,10 @@ className="rounded px-1 py-0.5 text-[12.5px] hover:bg-subtle dark:hover:bg-slate
                         sessionLoc.mixed
                           ? "These are set to different places - tap to give the whole session one location"
                           : sessionLocName && sessionLoc.missing === 0
-                          ? `All ${readyIds.length} are set to ${filingLabel(sessionLocName)} - tap to move them somewhere else`
+                          ? `All ${placeIds.length} are set to ${filingLabel(sessionLocName)} - tap to move them somewhere else`
                           : sessionLocName
-                          ? `${readyIds.length - sessionLoc.missing} of ${readyIds.length} are in ${filingLabel(sessionLocName)}; the other ${sessionLoc.missing} have no location yet - tap to set it`
-                          : `None of these ${readyIds.length} have a location yet - tap to set it`
+                          ? `${placeIds.length - sessionLoc.missing} of ${placeIds.length} are in ${filingLabel(sessionLocName)}; the other ${sessionLoc.missing} have no location yet - tap to set it`
+                          : `None of these ${placeIds.length} have a location yet - tap to set it`
                       }
                       className={`inline-flex shrink-0 items-center gap-1.5 rounded-full border px-2.5 py-1 text-[11.5px] font-medium ${
                         (sessionLocName && sessionLoc.missing === 0) ||
@@ -4084,7 +4202,7 @@ className="rounded px-1 py-0.5 text-[12.5px] hover:bg-subtle dark:hover:bg-slate
                         // to do; `sessionLocation` has always returned the count
                         // and this is the render that finally reads it.
                         <>
-                          {sessionLoc.missing} of {readyIds.length}
+                          {sessionLoc.missing} of {placeIds.length}
                           <span className="hidden sm:inline">&nbsp;need a location</span>
                           {/* A phone gets the shortest honest word rather than a
                               bare fraction (#3064: "2 of 8" said nothing). */}
@@ -4317,7 +4435,7 @@ className="rounded px-1 py-0.5 text-[12.5px] hover:bg-subtle dark:hover:bg-slate
                         configureAiHref={`/w/${activeSlug}/configuration/ai`}
                       />
                     )}
-                    {g.items.map(card)}
+                    {g.shown.map(card)}
                     {/* Merge lives INSIDE the expanded session (reveal-to-use),
                         not on the collapsed header where its old ↓ was mistaken
                         for the accordion and folded sessions by accident. It's a
@@ -4345,7 +4463,7 @@ className="rounded px-1 py-0.5 text-[12.5px] hover:bg-subtle dark:hover:bg-slate
               <SessionLocationModal
                 open={placingSession === g.key}
                 mode={placingMode}
-                count={readyIds.length}
+                count={placingMode === "set" ? placeIds.length : readyIds.length}
                 category={filing.category}
                 currentLocationId={sessionLoc.id}
                 onPick={(v) => {
@@ -4354,7 +4472,7 @@ className="rounded px-1 py-0.5 text-[12.5px] hover:bg-subtle dark:hover:bg-slate
                     // Fill only items with no location when the set is MIXED -
                     // the modal opened with no current value then, and a blanket
                     // write would flatten every per-item choice silently.
-                    void applySessionLocation(readyIds, v, sessionLoc.mixed);
+                    void applySessionLocation(placeIds, v, sessionLoc.mixed);
                   else void fileSession(readyIds, filing.category, v);
                 }}
                 onFileWithoutLocation={() => {
@@ -4709,6 +4827,7 @@ className="rounded px-1 py-0.5 text-[12.5px] hover:bg-subtle dark:hover:bg-slate
         />
       )}
     </div>
+    </ScanTwinsContext.Provider>
   );
 }
 

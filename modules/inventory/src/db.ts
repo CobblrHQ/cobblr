@@ -149,6 +149,9 @@ export interface InventoryConsumptionTable {
   reason: string | null;
   source_kind: string | null;
   source_id: string | null;
+  /** Null for an ordinary move; "correction" for a count set to what is
+   *  there (a recount), which is not consumption (0011). */
+  kind: string | null;
   at: Generated<Date>;
 }
 
@@ -203,6 +206,15 @@ export function sessionUser(req: Request): { id: string; email: string; display_
  *  query filters on this; every insert stamps it. */
 export function instanceOf(req: Request): string {
   return requestInstance(req, "inventory");
+}
+
+/** The entity kind a part is addressed as, which is what its pairings target:
+ *  `<instance>:item` for a named instance, `inventory:part` for the default.
+ *  Get this wrong and a pairing count is silently 0, so every route derives it
+ *  here rather than spelling it out. Mirrors the UI's rule (ui/context.tsx). */
+export function partKindOf(req: Request): string {
+  const instance = instanceOf(req);
+  return instance === "inventory" ? "inventory:part" : `${instance}:item`;
 }
 
 /** The instance's default quantity unit (a "yarn" instance tracks skeins),

@@ -9,7 +9,7 @@ import { useState } from "react";
 import { useMutation } from "@tanstack/react-query";
 import { Printer } from "lucide-react";
 import { BambuPrinterPicker } from "./BambuPrinterPicker";
-import { useToast, PasswordInput } from "@cobblr/platform-web";
+import { useToast, SecretInput } from "@cobblr/platform-web";
 import { useActiveOrg } from "../auth/ActiveOrgContext";
 import { ApiError, api, type BambuDiscoveredDevice, type DigifabConnection, type BambuLoginResponse } from "../lib/api";
 
@@ -76,7 +76,7 @@ export function BambuConnectWizard({
           </label>
           <label className="block">
             <span className={lbl}>Password</span>
-            <PasswordInput value={password} onChange={(e) => setPassword(e.target.value)} className={field} />
+            <SecretInput secret what="password" value={password} onChange={(e) => setPassword(e.target.value)} className={field} />
           </label>
           <p className="text-[11px] text-faint">Used once to get a token, then discarded. The token is stored encrypted and never reaches this browser.</p>
           <div className="flex justify-end gap-2 pt-1">

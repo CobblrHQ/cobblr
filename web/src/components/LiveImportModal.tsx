@@ -11,13 +11,17 @@
 // source (Part-DB) needed the same flow with different strings and one extra
 // step, so the flow moved here and each source became a descriptor.
 
-import { useState, type ReactNode } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 import { Loader2, CheckCircle2, AlertTriangle, ArrowRight, Link2, Camera, Info } from "lucide-react";
-import { Modal, useToast, PasswordInput } from "@cobblr/platform-web";
+import { Modal, useToast, SecretInput, AddressInput } from "@cobblr/platform-web";
 import { useQueryClient } from "@tanstack/react-query";
 import { api, ApiError, type ImportPlan, type SyncRunResult } from "../lib/api";
 import { useActiveOrg } from "../auth/ActiveOrgContext";
 import { BridgePicker } from "./BridgePicker";
+import { liveImportBlocker } from "../lib/bridge-choice";
+import { HomeNetworkHint } from "./HomeNetworkHint";
+import { useHosted } from "../lib/useHosted";
+import { needsBridge } from "@cobblr/platform-contract/address-reach";
 
 export interface LiveImportSection {
   /** The manifest entity-type key. */
@@ -75,6 +79,14 @@ export function LiveImportModal({ source, open, onClose }: { source: LiveImportS
   const [url, setUrl] = useState("");
   const [token, setToken] = useState("");
   const [onLan, setOnLan] = useState(false); // the app is on my LAN → route via an edge bridge
+  // A home address ticks the box by itself (#3904); once the person ticks or
+  // unticks it, their choice stands.
+  const hosted = useHosted();
+  const [lanChosen, setLanChosen] = useState(false);
+  const homeAddress = needsBridge(url, { hosted });
+  useEffect(() => {
+    if (!lanChosen) setOnLan(homeAddress);
+  }, [homeAddress, lanChosen]);
   const [bridge, setBridge] = useState<string | null>(null);
   const [status, setStatus] = useState("");
   const [error, setError] = useState<string | null>(null);
@@ -83,13 +95,14 @@ export function LiveImportModal({ source, open, onClose }: { source: LiveImportS
   const [notes, setNotes] = useState<string[]>([]);
   const [keeping, setKeeping] = useState(false);
 
-  const canSubmit = url.trim() !== "" && token.trim() !== "" && (!onLan || !!bridge);
+  const blocker = liveImportBlocker({ url, token, onLan, bridge, addressLabel: source.addressLabel });
+  const canSubmit = blocker === null;
 
   function reset() {
     setPhase("form"); setStatus(""); setError(null); setConnId(null);
     setCounts({}); setNotes([]); setKeeping(false);
   }
-  function close() { reset(); setUrl(""); setToken(""); setOnLan(false); setBridge(null); onClose(); }
+  function close() { reset(); setUrl(""); setToken(""); setOnLan(false); setLanChosen(false); setBridge(null); onClose(); }
 
   async function run() {
     setPhase("running"); setError(null);
@@ -188,27 +201,36 @@ export function LiveImportModal({ source, open, onClose }: { source: LiveImportS
 
             <label className="block">
               <span className="block text-[11px] font-medium text-content dark:text-mortar-200 mb-1">{source.addressLabel}</span>
-              <input
+              <AddressInput
                 value={url}
                 onChange={(e) => setUrl(e.target.value)}
                 className="input font-mono"
                 placeholder={source.addressPlaceholder}
-                autoComplete="off"
               />
+              <span className="block mt-1">
+                <HomeNetworkHint address={url} hosted={hosted} throughBridge={onLan} />
+              </span>
             </label>
             <label className="block">
               <span className="block text-[11px] font-medium text-content dark:text-mortar-200 mb-1">API token</span>
-              <PasswordInput what="token"
+              <SecretInput secret what="token"
                 value={token}
                 onChange={(e) => setToken(e.target.value)}
                 className="input font-mono"
                 placeholder={source.tokenPlaceholder}
-                autoComplete="off"
               />
             </label>
 
             <label className="flex items-start gap-2 text-sm text-muted dark:text-slate-400 cursor-pointer">
-              <input type="checkbox" checked={onLan} onChange={(e) => setOnLan(e.target.checked)} className="mt-0.5" />
+              <input
+                type="checkbox"
+                checked={onLan}
+                onChange={(e) => {
+                  setLanChosen(true);
+                  setOnLan(e.target.checked);
+                }}
+                className="mt-0.5"
+              />
               <span>
                 My {source.name} is on my local network
                 <span className="block text-[11px] text-faint">
@@ -239,6 +261,12 @@ export function LiveImportModal({ source, open, onClose }: { source: LiveImportS
                 <Link2 size={15} /> Connect &amp; import
               </button>
               <button type="button" onClick={close} className="text-sm text-muted hover:text-content">Cancel</button>
+              {/* A greyed button says why beside it, never nothing. */}
+              {blocker && (
+                <span className="text-xs text-muted dark:text-slate-400" data-testid="submit-blocker">
+                  {blocker}
+                </span>
+              )}
             </div>
           </>
         )}

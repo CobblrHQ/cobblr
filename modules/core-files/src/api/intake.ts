@@ -3,6 +3,7 @@
 // what "already here" means, where the bytes go, or what is metered and
 // logged.
 
+import { readableFilename } from "./filename.js";
 import { createHash, randomUUID } from "node:crypto";
 import type { Kysely } from "kysely";
 import { platform } from "@cobblr/platform-contract";
@@ -61,7 +62,7 @@ export async function intakeFile(db: Kysely<CoreFilesDB>, orgId: string, userId:
         id: fileId,
         org_id: orgId,
         owner_user_id: userId,
-        filename: f.filename || "untitled",
+        filename: readableFilename(f.filename),
         mime_type: stored.mime_type,
         size_bytes: String(stored.size_bytes),
         sha256: stored.sha256,

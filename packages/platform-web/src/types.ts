@@ -3,6 +3,19 @@
 // app's api client. Each host injects an api adapter (see api.ts).
 
 import type { ContributedPanelSpec } from "./panels";
+import type { BindingAskEntry } from "@cobblr/platform-contract/binding-ask";
+import type { ActionArgSpec } from "@cobblr/platform-contract/action-args";
+
+/** An action this record would have if a module that is off here were on:
+ *  shown as a door to that module, never as a button that runs (#3883). */
+export interface PlatformDormantAction {
+  id: string;
+  label: string;
+  description: string | null;
+  icon: string | null;
+  module_name: string;
+  module_label: string;
+}
 
 export interface PlatformAction {
   id: string;
@@ -15,6 +28,8 @@ export interface PlatformAction {
   invoke_handler: string | null;
   /** False = wire-only; the actions bar skips it. */
   user_invokable?: boolean;
+  /** Its arguments; a required one is asked for before a press runs it. */
+  args_schema?: Record<string, ActionArgSpec> | null;
   version: string;
 }
 
@@ -32,6 +47,13 @@ export interface PlatformActionBinding {
   /** False (the default) = a mistaken run cannot be put right, so a surface
    *  that fires it from a list row asks first. */
   undoable?: boolean;
+  /** What it asks before it runs (a collection's shortcut: "Open a bottle"
+   *  asks for a tasting note). Empty or absent asks nothing. */
+  ask?: BindingAskEntry[];
+  /** The arguments the button fixes, and the action's argument shape: a
+   *  required argument neither fixes is asked for before it runs. */
+  args?: unknown;
+  args_schema?: Record<string, ActionArgSpec> | null;
 }
 
 export interface PlatformResolvedEntity {
@@ -134,7 +156,15 @@ export interface PlatformWebApi {
   listActions(slug: string, kind: string): Promise<{
     items: PlatformAction[];
     bindings: PlatformActionBinding[];
+    /** What an off module would add here; a host that omits it shows none. */
+    dormant?: PlatformDormantAction[];
   }>;
+  /** Turn a module on for the workspace (an owner's or admin's act). Optional:
+   *  a host without it offers the ask instead. */
+  enableModule?(slug: string, module: string): Promise<unknown>;
+  /** Ask the workspace's admins to turn a module on, through the host's one
+   *  request surface. */
+  askForModule?(slug: string, module: string, label: string): Promise<void>;
   invokeAction(
     slug: string,
     body: {
@@ -186,6 +216,30 @@ export interface PlatformWebApi {
     slug: string,
     mode: UnitDisplayMode,
   ): Promise<{ display_mode: UnitDisplayMode }>;
+  /** Scan inbox rows headed for one table (an instance's name, or a module's
+   *  for its default table) whose name, code or maker contains `q`. A thing
+   *  scanned but not yet filed is in no table, so a collection's search could
+   *  not find it. Optional: a host without it shows no waiting strip. */
+  waitingScans?(slug: string, q: string, destination: string): Promise<{ items: PlatformWaitingScan[]; total: number }>;
+  /** File one waiting row where it is headed, in one tap (installing its
+   *  table first when needed), the way the inbox's Add does. */
+  fileWaitingScan?(slug: string, id: string): Promise<{ label: string; record: { kind: string; id: string } | null }>;
+}
+
+/** One scan inbox row waiting to be filed, as a collection's search shows it. */
+export interface PlatformWaitingScan {
+  id: string;
+  /** The name the inbox card shows, else its code. */
+  name: string;
+  image: string | null;
+  /** Where filing sends it, in the table's own words. */
+  destinationLabel: string | null;
+  /** One tap can file it now; otherwise the inbox card is where it is finished. */
+  canFile: boolean;
+  /** Why it cannot be filed yet, when it cannot. */
+  reason: string | null;
+  /** The inbox, opened on this row. */
+  href: string;
 }
 
 export type UnitDisplayMode = "symbol" | "name" | "both";

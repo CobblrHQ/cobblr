@@ -7,8 +7,11 @@
 // most-used action inside the least-used one). Then Search, Notifications, the
 // label queue, the Live box, Ask Cobb. Below the rule the META rows: Feedback
 // ("reach the makers", which used to head the foot and pushed every tool down
-// a row), Configuration, Your account, and the account accordion last, where a
-// person expects to find themselves.
+// a row), Configuration, and the person last, where they expect to find
+// themselves: ONE row, the name opening Your account and a chevron beside it
+// opening the menu. It used to be two (a Your account row over a name row that
+// only opened the menu), which said who you are twice and cost a line of a
+// short column (#3879).
 //
 // AppLayout renders from this list; sidebar-foot.test.ts holds the shape. So
 // the order is a fact in one place, and a "quick swap" of two rows has to say
@@ -30,8 +33,8 @@ export const SIDEBAR_FOOT_ORDER = [
   "divider",
   "feedback",
   "configuration",
+  /** The person: the name opens Your account, the chevron opens the menu. */
   "account",
-  "account-menu",
 ] as const;
 
 export type SidebarFootSlot = (typeof SIDEBAR_FOOT_ORDER)[number];
@@ -51,5 +54,4 @@ export const SIDEBAR_FOOT_META: readonly SidebarFootSlot[] = [
   "feedback",
   "configuration",
   "account",
-  "account-menu",
 ];

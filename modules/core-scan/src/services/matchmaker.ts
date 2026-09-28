@@ -13,6 +13,7 @@
 // targets, and the instance's noun/name is the routing signal — so a new bundle
 // becomes scannable just by shipping its fields, no scanner code changes.
 
+import type { ProviderReason } from "@cobblr/platform-contract/provider-reason";
 import { platform, extractJsonObject, repairJson, parseJsonReply, type CategoryAxisSlot } from "@cobblr/platform-contract";
 import { routingNoteBare, routingNoteWithCategory } from "./routing-note.js";
 import { scanTargetsRegistered } from "./scan-target.js";
@@ -98,6 +99,10 @@ export interface ScanMenuEntry extends FitTable {
    *  lot, a lot number, a batch). Filled from the lot read off the label
    *  (metadata.lot), never guessed. */
   lot_field?: { name: string; label: string };
+  /** This table's YEAR-MADE field: the field declaring `field_role:
+   *  "year-made"` (a wine's vintage). Filled from the year read off the label
+   *  (metadata.year_made), never guessed, so the card shows it before filing. */
+  year_field?: { name: string; label: string };
   /** The workspace's designated catch-all for this module: where an item that
    *  matches no table in particular lands, to then be told apart by its category.
    *  At most one entry per module carries this. */
@@ -194,7 +199,7 @@ export interface MatchCandidate {
   ai_fallback?: AiFallback;
   /** On a provider error, the provider's own reason (provider-reason.ts), so
    *  the chip can say "the key is not valid" rather than "the AI errored". */
-  ai_fallback_reason?: "invalid_key" | "quota" | "model_unavailable" | "unreachable" | "unknown";
+  ai_fallback_reason?: ProviderReason;
   /** The table the model picked when the noun plan overruled it (#2865):
    *  both verdicts stay visible, and the eval harness can see they disagreed. */
   overruled_model_pick?: string;
@@ -464,6 +469,7 @@ export async function assembleScanMenu(
     let categoryField: ScanMenuEntry["category_field"];
     let packField: ScanMenuEntry["pack_field"];
     let lotField: ScanMenuEntry["lot_field"];
+    let yearField: ScanMenuEntry["year_field"];
     try {
       const res = await fetch(`${baseUrl}/api/v1/orgs/${slug}/field-defs?kind=${encodeURIComponent(kind)}`, { headers: auth });
       if (res.ok) {
@@ -509,6 +515,8 @@ export async function assembleScanMenu(
         if (pack) {
           packField = { name: pack.name, label: pack.display_label };
         }
+        const year = defs.find((d) => d.field_role === "year-made");
+        if (year) yearField = { name: year.name, label: year.display_label };
         const lot = defs.find((d) => d.field_role === "lot");
         if (lot) lotField = { name: lot.name, label: lot.display_label };
       }
@@ -527,6 +535,7 @@ export async function assembleScanMenu(
       ...(categoryField ? { category_field: categoryField } : {}),
       ...(packField ? { pack_field: packField } : {}),
       ...(lotField ? { lot_field: lotField } : {}),
+      ...(yearField ? { year_field: yearField } : {}),
       ...(fallbackByModule.get(inst.module_name) === inst.instance_name ? { is_fallback: true } : {}),
     });
   }
@@ -779,6 +788,9 @@ function seedPackSize(
 ): void {
   const lot = (item.metadata as { lot?: unknown } | null | undefined)?.lot;
   if (entry.lot_field && typeof lot === "string" && lot.trim()) fields[entry.lot_field.name] = lot.trim();
+  // The year this unit was made, as the number its field holds.
+  const year = (item.metadata as { year_made?: unknown } | null | undefined)?.year_made;
+  if (entry.year_field && typeof year === "string" && /^\d{4}$/.test(year)) fields[entry.year_field.name] = Number(year);
   if (!entry.pack_field) return;
   const packSize = (item.metadata as { pack_size?: unknown } | null | undefined)?.pack_size;
   if ((typeof packSize === "number" || typeof packSize === "string") && String(packSize).trim() !== "") {

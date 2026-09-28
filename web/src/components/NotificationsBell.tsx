@@ -22,6 +22,7 @@ import { api, ApiError, type CrossOrgNotificationEntry } from "../lib/api";
 import { useActiveOrg } from "../auth/ActiveOrgContext";
 import { SidePanel } from "./SidePanel";
 import { notificationKeys } from "../lib/notification-keys";
+import { MutationError } from "@cobblr/platform-web";
 
 type Mode = "dropdown" | "sidebar";
 const MODE_KEY = "cobblr.notif.mode";
@@ -232,6 +233,8 @@ export function NotificationsBell({ panelOnly = false, asRow = false }: { panelO
           )}
         </div>
       </div>
+      <MutationError mutation={markAll} className="block px-3 pt-2">Couldn't mark them read:</MutationError>
+      <MutationError mutation={markRead} className="block px-3 pt-2">Couldn't mark that read:</MutationError>
       <div className={mode === "sidebar" ? "flex-1 overflow-y-auto" : ""}>
         {list.isLoading && <div className="px-3 py-4 text-[11px] text-faint">loading…</div>}
         {list.data && list.data.items.length === 0 && (

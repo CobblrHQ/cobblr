@@ -17,6 +17,9 @@ export interface LabelFacts {
    *  batch). Lands in whichever field of the destination carries the `lot`
    *  role; per unit, so never a fact about the product. */
   lot?: string;
+  /** The year printed on this unit (a vintage). Per unit like the lot: lands
+   *  in the field carrying the `year-made` role, never sent as a product fact. */
+  year_made?: string;
   colorway?: string;
   sku?: string;
   /** A GTIN-14 case code (packaging indicator 1 to 8), kept as the pack's
@@ -28,6 +31,19 @@ const LOT = /\b(?:dye\s*)?lot\s*(?:no\.?|number|#)?\s*[:.]?\s*([A-Z0-9][A-Z0-9-]
 const COLOUR = /\b(?:colou?r(?:way)?|shade)\s*(?:code|name)?\s*[:.]?\s*([A-Z0-9][A-Za-z0-9 ]{1,28}?)(?=\s*(?:\/|,|\.|;|\n|$|\band\b|\blot\b|\bsku\b|\bqty\b|\bquantity\b|\d{4,}))/i;
 const SKU = /\bSKU\s*(?:no\.?|#)?\s*[:.]?\s*([A-Z0-9][A-Z0-9-]{3,19})\b/i;
 const CODE14 = /\b(\d{14})\b/g;
+// Only a year a word introduces: a bare four-digit number on a label is as
+// often a phone prefix, a street number or "since 1887" as it is a vintage.
+const YEAR_MADE = /\b(?:vintage|millésime|millesime|cosecha|añada|jahrgang|annata|vendemmia|colheita|harvest(?:ed)?)\s*[:.]?\s*((?:1[89]|20)\d{2})\b/i;
+
+/** A year a unit could have been made in, as four digits, or null: from 1800
+ *  to next year (a wine is bottled the year after its harvest at the earliest,
+ *  and a label dated further ahead is a misread). */
+export function yearMadeOf(v: unknown, now: Date = new Date()): string | null {
+  const s = typeof v === "number" ? String(v) : typeof v === "string" ? v.trim() : "";
+  if (!/^\d{4}$/.test(s)) return null;
+  const y = Number(s);
+  return y >= 1800 && y <= now.getUTCFullYear() + 1 ? s : null;
+}
 
 /** The label's facts, from its text. Pure; only what is printed. */
 export function labelFactsOf(text: string | null | undefined): LabelFacts {
@@ -44,6 +60,8 @@ export function labelFactsOf(text: string | null | undefined): LabelFacts {
       break;
     }
   }
+  const year = yearMadeOf(YEAR_MADE.exec(t)?.[1]);
+  if (year) out.year_made = year;
   const colour = COLOUR.exec(t)?.[1]?.trim();
   if (colour && /[a-z]/i.test(colour)) out.colorway = colour.replace(/\b([A-Za-z])([A-Za-z]*)\b/g, (_, a: string, b: string) => a.toUpperCase() + b.toLowerCase());
   const sku = SKU.exec(t)?.[1];

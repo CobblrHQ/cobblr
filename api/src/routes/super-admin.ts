@@ -3203,6 +3203,7 @@ const ScanEvalMenuEntry = z.object({
     .optional(),
   pack_field: z.object({ name: z.string(), label: z.string() }).optional(),
   lot_field: z.object({ name: z.string(), label: z.string() }).optional(),
+  year_field: z.object({ name: z.string(), label: z.string() }).optional(),
   is_fallback: z.boolean().optional(),
   unique: z.boolean().optional(),
 });
@@ -3330,6 +3331,7 @@ superAdminRouter.post("/scan-eval", async (req, res, next) => {
         ...(m.category_field ? { category_field: m.category_field } : {}),
         ...(m.pack_field ? { pack_field: m.pack_field } : {}),
         ...(m.lot_field ? { lot_field: m.lot_field } : {}),
+        ...(m.year_field ? { year_field: m.year_field } : {}),
         ...(m.is_fallback ? { is_fallback: true } : {}),
         ...(m.unique ? { unique: true } : {}),
       }));

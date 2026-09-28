@@ -10,7 +10,7 @@ import { z } from "zod";
 import type { DateFieldDirection } from "@cobblr/platform-contract/date-field-direction";
 
 export type { DateFieldDirection } from "@cobblr/platform-contract/date-field-direction";
-export { dateFieldDirection, canBeOverdue, dateEventTitle } from "@cobblr/platform-contract/date-field-direction";
+export { dateFieldDirection, directionOfRole, canBeOverdue, dateEventTitle } from "@cobblr/platform-contract/date-field-direction";
 export { pluralise, countOf, wordForCount, countWordsFor, quantityWithUnit, itemNounFor, type CountWords } from "@cobblr/platform-contract/plural";
 export { PLATFORM_OWNER, PLATFORM_COMMANDS, PLATFORM_COMMANDS_VERSION } from "@cobblr/platform-contract/platform-commands";
 export { expiryState, expiryPhrase, EXPIRING_WITHIN_DAYS, type ExpiryState, type ExpiryReading } from "@cobblr/platform-contract/expiry-grace";
@@ -172,6 +172,9 @@ export const FIELD_ROLE_VALUES = [
   "seller",
   "location",
   "lot",
+  "ready-from",
+  "ready-until",
+  "year-made",
 ] as const;
 export type FieldRole = (typeof FIELD_ROLE_VALUES)[number];
 
@@ -213,6 +216,16 @@ export const FIELD_ROLE_LABELS: Record<
   // filament batch). Per unit, never a fact about the product: two balls of
   // one yarn can be two lots, so it never leaves the workspace.
   lot: { label: "Its lot or batch", pickable: true },
+  // A window, not a deadline: a wine is ready from one day and best by
+  // another, a cheese is aged from one date to the next, seed is viable to a
+  // year. Past the end is "past its best", never spoiled, so these are NOT
+  // expiry: no "Goes off" face, no Threw it out, no expiry reminder.
+  "ready-from": { label: "When it is ready from", pickable: true },
+  "ready-until": { label: "When it is at its best until", pickable: true },
+  // The year printed on this one unit (a wine's vintage, a coin's year). Per
+  // unit like the lot: one barcode covers every vintage of a wine, so the
+  // year never becomes a fact about the barcode.
+  "year-made": { label: "The year it was made", pickable: true },
 };
 
 /** The capability that already owns this role's question, or null when the
@@ -1372,6 +1385,13 @@ const EntityAction = z.object({
   // help. When in doubt, leave it: the cost is a refusal that explains itself,
   // not a silently missing capability.
   undoable: z.boolean().default(false),
+  /** What this action does to a dated thing that is due, when it is one of
+   *  the verbs that settle it: `used` (it is gone, used), `discarded` (it went
+   *  off and was thrown out), `still-good` (checked, fine, due again later).
+   *  A surface that lists what is due ("needs you") offers the applicable
+   *  actions that declare one, so no screen names a module's action ids and a
+   *  new module's verbs appear by declaring this. Absent = not such a verb. */
+  finishes: z.enum(["used", "discarded", "still-good"]).optional(),
   /** Which face this verb belongs to, for DISCLOSURE: a hidden face takes its
    *  verbs off the record along with its fields and panels. Eligibility is
    *  `appliesTo` (facts); this is the person's choice. Absent = the base
@@ -2124,6 +2144,10 @@ export interface ActivityLogParams {
   action: string;
   ref: ActivityRef;
   diff?: unknown;
+  /** HOW the write was made, when the caller knows better than the request
+   *  context: a sync names itself ("automation", "<connection> sync"), so a
+   *  record it creates is not a row with no actor (#3836). */
+  via?: { kind: "mcp" | "assistant" | "automation"; label?: string | null } | null;
 }
 
 export interface PlatformActivity {
@@ -2280,7 +2304,11 @@ export interface FilterPredicate {
   col: string;
   op: "<" | "<=" | ">" | ">=" | "=" | "!=";
   /** Literal value. Use the string `'now'` for current timestamp on
-   *  date/timestamptz columns. Mutually exclusive with `ref_col`. */
+   *  date/timestamptz columns, and `'today'` for the READER's calendar day
+   *  against a date field (`EntityListQuery.today`): "ready to drink" is
+   *  `drink_from <= today AND drink_by >= today` on the day the person is
+   *  living in, never the server's UTC one. A `YYYY-MM-DD` literal compares
+   *  as a day too. Mutually exclusive with `ref_col`. */
   value?: string | number | boolean | null;
   /** Compare against another column on the same row (low-stock-style
    *  qty < min_qty). Mutually exclusive with `value`. */
@@ -2321,6 +2349,11 @@ export interface EntityListQuery {
    *  search that cannot find it lies by omission. The resolver decides what
    *  retired means for its kind; a kind with no such notion ignores this. */
   include_retired?: boolean;
+  /** The reader's calendar day (YYYY-MM-DD), what a `'today'` predicate
+   *  compares against: the client's day when it said one, else the person's
+   *  (accounts.dayFor). Absent, a resolver uses the day that has arrived
+   *  everywhere, which is late for somebody rather than early for anybody. */
+  today?: string;
 }
 
 /** The query a saved view asks for, read off its config the ONE way every
@@ -2409,6 +2442,17 @@ export interface EntityListResult {
   /** Total matching rows ignoring limit/offset — optional because
    *  count-queries on large tables can be expensive. */
   total?: number;
+  /** The `where` predicates the resolver could not run. A predicate it
+   *  cannot honour used to be dropped in silence, so a "Ready to drink" view
+   *  whose date compare was unsupported showed EVERY bottle and said
+   *  nothing. Reported here, and a view shows them. */
+  unapplied?: FilterPredicate[];
+  /** The resolver THREW, so `items` is not the answer, it is nothing. A failed
+   *  list used to come back as `{ items: [] }`, indistinguishable from "no
+   *  matches": a search whose SQL named a column the table does not have
+   *  returned no orders and no projects on every surface for weeks, and only a
+   *  server log said so. Set by the platform's list(), never by a resolver. */
+  failed?: true;
 }
 
 /** Module-side list resolver for an entity kind. Optional — kinds
@@ -2556,6 +2600,20 @@ export interface EntityWriter {
   /** Create an entity; returns the new entity's id. */
   create(orgId: string, fields: Record<string, unknown>): Promise<string>;
   update(orgId: string, id: string, fields: Record<string, unknown>): Promise<void>;
+  /** Optional: set these metadata keys on one record and leave every other
+   *  key as the live row holds it, in one statement (`withMetadataMerged`).
+   *  `update` writes metadata wholesale, which is right for a sync that owns
+   *  the whole bag and wrong for anyone filling a few fields on a record they
+   *  do not own: an order stamping where a printer came from must not drop
+   *  the printer's other fields (#3856). */
+  mergeMetadata?(orgId: string, id: string, fields: Record<string, unknown>): Promise<void>;
+  /** Optional: the id of an existing record whose `field` (a column, or a key
+   *  inside `metadata` when `metadata` is true) equals `value`, or null. A sync
+   *  asks this before creating a record its id-map does not know, so a record
+   *  somebody already made with the source's key is ADOPTED instead of
+   *  duplicated: two copies of one printer with the same source id, one made by an
+   *  assistant and one by the next sync, was the bug (#3836). */
+  findByKey?(orgId: string, key: { field: string; metadata: boolean }, value: string): Promise<string | null>;
   delete(orgId: string, id: string): Promise<void>;
   /** Optional: existing entities of this kind, for a natural-key match during
    *  an import preview — so a one-time import MERGES a source record into an
@@ -2625,6 +2683,21 @@ export interface EntityWriter {
   dependents?(orgId: string, id: string): Promise<string[]>;
 }
 
+/** A writer's refusal to create a second record where one of that name
+ *  already is (a shelf called "Top" on a rack that has one). Carries the one
+ *  that is there, so a caller that mirrors another system can link to it
+ *  instead of failing: a sync whose source had the same place as a room made
+ *  by hand refused every run and left everything pointing at it unmapped
+ *  (#3900). The message is the writer's own sentence, unchanged. */
+export class DuplicateRecordError extends Error {
+  readonly existingId: string;
+  constructor(message: string, existingId: string) {
+    super(message);
+    this.name = "DuplicateRecordError";
+    this.existingId = existingId;
+  }
+}
+
 export interface PlatformEntities {
   /** Register a resolver for one kind. Called from a module's
    *  api/index.ts at module-load time. */
@@ -2641,6 +2714,11 @@ export interface PlatformEntities {
    *  of them and the miss looks exactly like "this kind is not writable", so
    *  the caller quietly skips the write. Pass the org and instances resolve. */
   getWriter(orgId: string, kind: string): Promise<EntityWriter | null>;
+  /** Set a few metadata keys on any record, whatever module owns it, leaving
+   *  the rest as they are (the kind's writer's `mergeMetadata`). False when
+   *  the kind cannot do it, so the caller can say so instead of claiming a
+   *  write. Instance kinds resolve like getWriter. */
+  mergeMetadata(orgId: string, kind: string, id: string, fields: Record<string, unknown>): Promise<boolean>;
   /** Put a row back exactly as it was, id and all. True when the kind's writer
    *  can do it; false when nothing here can, so the caller can fall back and
    *  say what it actually did instead of claiming a restore. */
@@ -2801,6 +2879,18 @@ export interface PlatformEntities {
     query?: EntityListQuery,
     viewer?: { userId?: string; role?: string; publicRead?: boolean },
   ): Promise<EntityListResult>;
+  /** Every record the query answers, walked a page at a time (list() answers
+   *  one page, usually 50, when no limit is asked). `total` is the
+   *  resolver's count, else the walked count once complete, else null;
+   *  `complete` is false only past `cap` (default 5000). A surface that
+   *  shows "all of them" uses this and shows `total`, never a page length. */
+  listAll(
+    orgId: string,
+    kind: string,
+    query?: EntityListQuery,
+    viewer?: { userId?: string; role?: string; publicRead?: boolean },
+    opts?: { pageSize?: number; cap?: number },
+  ): Promise<Omit<EntityListResult, "total"> & { total: number | null; complete: boolean }>;
   /** Batched lookup — resolve N (kind, id) refs in one call. Foreign
    *  callers that need joined data should use this instead of N
    *  separate single-hop calls. Same projection rules as lookup().
@@ -3230,6 +3320,8 @@ export interface EntityActionRecord {
   /** Runs on a record when given one, and with no record too (the manifest's
    *  `recordOptional`). */
   record_optional?: boolean;
+  /** What it does to a due, dated thing (the manifest's `finishes`), or null. */
+  finishes?: "used" | "discarded" | "still-good" | null;
   /** Disclosure: the face this verb belongs to, or null for the base. */
   face: string | null;
   /** Where the module declared it, 0-based. The strip lists a record's own
@@ -3664,6 +3756,15 @@ export interface SyncEntityType {
   key: string;
   label: string;
   targetKind: string;
+  /** Where the source's own id lands on the target record (a column, or a key
+   *  inside `metadata`), when the mapping stores it. The engine uses it to
+   *  ADOPT a record that already carries that id, one made by hand or by an
+   *  assistant before the sync ran, instead of creating a second one (#3836).
+   *  A declarative source derives it from its map; absent means no adoption. */
+  keyField?: { field: string; metadata: boolean } | null;
+  /** The source's display name ("My Shop"), for the activity rows the sync
+   *  writes ("via automation “My Shop sync”"). Falls back to the connector id. */
+  sourceLabel?: string | null;
   /** For a multi-instance target module: the instance slug to write into (e.g.
    *  "3d-printers"), so imported rows land under that instance's nav entry rather
    *  than the base. The engine passes it to the writer as the `instance` field. */
@@ -3934,6 +4035,14 @@ export const AI_CAPABILITY_FALLBACK: Partial<Record<AiCapability, AiCapability>>
   "design-workspace": "chat",
 };
 
+/** A model id that names whatever the provider currently points it at
+ *  ("gemini-flash-lite-latest", an Ollama "llama3:latest"): it can change, or
+ *  be overloaded for an hour, without anybody here touching anything, so the
+ *  AI page says so beside it. */
+export function isFloatingModel(model: string): boolean {
+  return /(^|[-:])latest$/i.test(model.trim());
+}
+
 /** The capabilities to try, in order, for one requested job. */
 export function aiCapabilityChain(capability: AiCapability): AiCapability[] {
   const next = AI_CAPABILITY_FALLBACK[capability];
@@ -4015,6 +4124,12 @@ export interface AiProviderDef {
    *  2026-08-15: the assistant's whole tool surface was dark on the managed
    *  bridge, and it read like a plausible refusal rather than a fault.) */
   relaysToolsViaMcp?: boolean;
+  /** Its connection test shows it a known picture (AiConnectionTest.photos),
+   *  because whether its backend looks at an image is in doubt (a bridge to an
+   *  agent). Until that test has run, the AI page says "not checked with a
+   *  photo" about it; a provider that reads images natively is not in doubt
+   *  and is never flagged. */
+  checksPhotosInTest?: boolean;
   /**
    * A fingerprint of the PROMPT this provider will actually send for
    * (capability, input) — i.e. the part of the request that the caller's `input`
@@ -4040,6 +4155,25 @@ export interface AiProviderDef {
    * key has would be pure waste.
    */
   promptFingerprint?: (capability: AiCapability, input: Record<string, unknown>) => string | null;
+  /** The model this provider will ACTUALLY send for a call, and whether a
+   *  person chose it (a model typed on the connection, or a workspace's choice
+   *  for the job) rather than it being the provider's own default. The call
+   *  log records this model: an adapter that resolves a placeholder such as
+   *  "default" internally used to leave the log naming the placeholder, so the
+   *  model that failed was the one thing a failure line never said (#3819).
+   *  Omit it and the log records the model the router handed over. */
+  resolveModel?: (ctx: {
+    capability: AiCapability;
+    model: string;
+    credentials: Record<string, unknown>;
+  }) => { model: string; chosen: boolean };
+  /** Other models on the SAME key to try, in order, when this one stays busy
+   *  after its retries, before the router tries another provider. Only used
+   *  for a model nobody chose (see resolveModel): a person's explicit model is
+   *  never swapped behind their back. For a provider whose default is a
+   *  floating alias that can be overloaded for an hour while its sibling
+   *  answers. */
+  busyAlternates?: (model: string) => string[];
   /** Run a single inference. The platform handles caching + audit
    *  before/after. */
   invoke: (ctx: {
@@ -4075,13 +4209,18 @@ export interface AiConnectionTest {
   error?: string;
   /** Why it failed, as the provider said it (provider-reason.ts): a bad key,
    *  a quota, a missing model, or a provider that did not answer. */
-  reason?: "invalid_key" | "quota" | "model_unavailable" | "unreachable" | "unknown";
+  reason?: import("./provider-reason.js").ProviderReason;
   /** Human-readable extra, e.g. a few model names. */
   detail?: string;
   /** Every model id the provider reported, unfiltered and in its own order. */
   models?: string[];
   /** Said instead of a verdict when the provider implements no test at all. */
   note?: string;
+  /** A provider that can be handed an image but whose backend may or may not
+   *  look at it (a bridge to an agent) is shown a known picture as part of
+   *  its test: `read` is whether its answer named what is in it. Absent when
+   *  the test did not try. */
+  photos?: { read: boolean; said?: string };
 }
 
 /** A pluggable entitlement guard. Called by invoke() AFTER the provider +
@@ -4199,6 +4338,16 @@ export interface PlatformAi {
     output_tokens?: number;
     cost_cents?: number;
     duration_ms: number;
+    /** The providers asked first that did not answer (busy, unreachable, a
+     *  limit, a key), oldest first, when this answer came from the next
+     *  provider the workspace lists (#3819). Absent when the first answered. */
+    answered_after?: Array<{ provider_id: string; label: string; model: string; reason: string }>;
+    /** What a person reads for the connection that answered: its own name
+     *  ("Claude bridge (Sam)") when it has one, else the provider's. */
+    provider_label?: string;
+    /** The kind of AI it is ("Local AI (via edge bridge)"), a secondary hint
+     *  beside the name. */
+    provider_kind_label?: string;
   }>;
 }
 
@@ -4598,8 +4747,13 @@ export interface PlatformPlacement {
  *  entity-kind registry uses. */
 export interface PlatformTags {
   /** Attach `tagName` to `target`, creating the tag if it does not exist.
-   *  `created` says whether a NEW assignment was made (false = already there). */
-  attach(args: { orgId: string; tagName: string; target: EntityRef }): Promise<{ tagId: string; created: boolean }>;
+   *  `created` says whether a NEW assignment was made (false = already there);
+   *  `tagCreated` whether the tag itself is new, so an undo knows whether the
+   *  tag is its to take away. */
+  attach(args: { orgId: string; tagName: string; target: EntityRef }): Promise<{ tagId: string; created: boolean; tagCreated?: boolean }>;
+  /** Take a tag away when nothing carries it: the inverse of the create inside
+   *  `attach`, for an undo. A tag still on anything stays. */
+  withdraw(args: { orgId: string; tagName: string }): Promise<"withdrawn" | "in-use" | "absent">;
   /** Remove `tagName` from `target`. No-op if absent; never deletes the tag. */
   detach(args: { orgId: string; tagName: string; target: EntityRef }): Promise<void>;
   /** The tag names on `target`. */
@@ -4682,6 +4836,20 @@ export interface PlatformCategoryAxis {
     value: string;
     instance?: string | null;
   }): Promise<CategoryAxisAssignment | null>;
+  /** Take a value back out of the vocabulary: the inverse of `commit`, for an
+   *  undo that grew it. Only when no record of the kind files under it; a
+   *  value somebody has used since stays, and the answer says so, because the
+   *  undo is taking back what IT did, not what a person did afterwards.
+   *
+   *  `withdrawn` it went; `in-use` a record still files under it; `absent`
+   *  it was not there (already gone is the state the caller wanted);
+   *  `unsupported` the kind has no axis. Never throws. */
+  withdraw(args: {
+    orgId: string;
+    kind: string;
+    value: string;
+    instance?: string | null;
+  }): Promise<"withdrawn" | "in-use" | "absent" | "unsupported">;
 }
 
 export interface PlatformPairings {
@@ -4873,9 +5041,13 @@ export interface FileWriteResult {
   mimeType: string;
   sizeBytes: number;
   kind: string;
+  /** The workspace already held these exact bytes: this is that file, and
+   *  nothing new was stored. */
+  existed?: boolean;
 }
-/** Stores bytes as a new file in `orgId` (its own variants + DB row) and
- *  returns the new file id. core-files registers it; the kernel calls it to
+/** Stores bytes as a file in `orgId` (its own variants + DB row) and returns
+ *  its id; bytes the workspace already holds return the file holding them
+ *  (`existed: true`) rather than a second copy. core-files registers it; the kernel calls it to
  *  COPY a file across workspaces (e.g. the graduation import duplicating a
  *  photo into the new workspace). */
 export type FileWriter = (
@@ -4945,6 +5117,33 @@ export type FileAttachmentsOfFile = (orgId: string, fileId: string) => Promise<F
  *  intake and land in `folder`; a zip's top folder fills `folder_field` when
  *  it names one of that field's choices; `ask` is asked once per batch. The
  *  server side is POST /orgs/:slug/instances/:instance/file-intake. */
+/** A table's "Import from <service>" button (Yarn: Import from Ravelry).
+ *  `connector` is a sync connector's id; `sections` maps each of its entity
+ *  types to the table (instance) its rows land in ("stash" → "yarn",
+ *  "projects" → "designs"). A section whose table the workspace lacks is left
+ *  out. The first press asks for the service's keys once; every press after
+ *  that re-imports, updating what is already here (TableConnectorImport). */
+/** What a maker's notions are called, one list for the pattern reader, the
+ *  pattern page and the Yarn bundle's Notions table (its Type choices), so a
+ *  pattern's "2 St markers" and the stash's "Stitch markers" are one word. */
+export const NOTION_NAMES = [
+  "Stitch markers",
+  "Stitch holders",
+  "Yarn needle",
+  "Cable needle",
+  "Safety eyes",
+  "Stuffing",
+  "Buttons",
+  "Row counter",
+] as const;
+export type NotionName = (typeof NOTION_NAMES)[number];
+
+export interface ConnectorImportDecl {
+  connector: string;
+  label?: string;
+  sections: Record<string, string>;
+}
+
 export interface FileIntakeDecl {
   accept: string[];
   role: string;
@@ -5073,9 +5272,9 @@ export interface PlatformFiles {
   ): Promise<FileBytes | null>;
   /** A file-storage module registers the byte writer once at boot. */
   registerWriter(writer: FileWriter): void;
-  /** Store bytes as a NEW file in `orgId` (variants + DB row). Returns the new
-   *  file id, or null if no writer is registered. Used for cross-workspace
-   *  file copies (the graduation import). */
+  /** Store bytes as a file in `orgId` (variants + DB row). Returns its id, or
+   *  null if no writer is registered. Bytes this workspace already holds
+   *  return the existing file (`existed: true`), never a second copy. */
   write(
     orgId: string,
     bytes: Uint8Array,
@@ -6011,6 +6210,44 @@ export async function snapshotRow(
   return (row as Record<string, unknown> | undefined) ?? null;
 }
 
+/** The whole of a writer's `findByKey`: the id of the row whose column, or
+ *  `metadata` key, equals `value`, oldest first; null when none. One copy for
+ *  every sync target, so a sync adopts a record the same way whichever module
+ *  owns it (#3836). The field name is an identifier and is checked as one:
+ *  it comes from a sync mapping, which a workspace can author. */
+/** A writer's `mergeMetadata`, the same for every module's table: these
+ *  keys set (a null removes one), every other key as the live row holds it,
+ *  in one statement (`platform().db.mergeJsonb`). */
+export async function mergeRowMetadata(db: unknown, table: string, id: string, fields: Record<string, unknown>): Promise<void> {
+  if (Object.keys(fields).length === 0) return;
+  /* eslint-disable @typescript-eslint/no-explicit-any */
+  const q = db as { updateTable: (t: string) => any };
+  /* eslint-enable @typescript-eslint/no-explicit-any */
+  await q
+    .updateTable(table)
+    .set({ metadata: platform().db.mergeJsonb("metadata", fields), updated_at: new Date() })
+    .where("id", "=", id)
+    .execute();
+}
+
+export async function findRowIdByKey(
+  db: unknown,
+  table: string,
+  key: { field: string; metadata: boolean },
+  value: string,
+): Promise<string | null> {
+  if (!/^[a-z_][a-z0-9_]*$/i.test(key.field) || !value) return null;
+  /* eslint-disable @typescript-eslint/no-explicit-any */
+  const q = db as { selectFrom: (t: string) => any };
+  let query = q.selectFrom(table).select("id");
+  query = key.metadata
+    ? query.where((eb: any) => eb(eb.ref("metadata", "->>").key(key.field), "=", value))
+    : query.where(key.field, "=", value);
+  /* eslint-enable @typescript-eslint/no-explicit-any */
+  const row = await query.orderBy("created_at", "asc").limit(1).executeTakeFirst();
+  return (row as { id?: string } | undefined)?.id ?? null;
+}
+
 /** The whole of a module's `restore`, so four modules do not keep four copies
  *  of it in step — and so a column added by a migration is restored the day it
  *  exists, instead of the day someone remembers to add it to a list here.
@@ -6030,14 +6267,19 @@ export async function restoreRow(
   /* eslint-disable @typescript-eslint/no-explicit-any */
   const q = db as { selectFrom: (t: string) => any; insertInto: (t: string) => any };
   /* eslint-enable @typescript-eslint/no-explicit-any */
-  const cols: Array<{ column_name: string; data_type: string }> = (
+  const all: Array<{ column_name: string; data_type: string; is_generated: string; identity_generation: string | null }> = (
     await q
       .selectFrom("information_schema.columns")
-      .select(["column_name", "data_type"])
+      .select(["column_name", "data_type", "is_generated", "identity_generation"])
       .where("table_name", "=", table)
       .execute()
-  ) as Array<{ column_name: string; data_type: string }>;
-  if (cols.length === 0) throw new Error(`unknown table ${table}`);
+  ) as Array<{ column_name: string; data_type: string; is_generated: string; identity_generation: string | null }>;
+  if (all.length === 0) throw new Error(`unknown table ${table}`);
+  // A column the database computes (a search vector generated from the name,
+  // an always-identity) is not part of the state to put back, and Postgres
+  // refuses any value for it: restoring a part failed on `search_blob` until
+  // these were left to the database.
+  const cols = all.filter((c) => c.is_generated !== "ALWAYS" && c.identity_generation !== "ALWAYS");
   const json = new Set(cols.filter((c) => /json/i.test(c.data_type)).map((c) => c.column_name));
   const row: Record<string, unknown> = {};
   for (const c of cols) {
@@ -6099,11 +6341,28 @@ export interface LikeBuilder {
   val(value: any): any;
 }
 
-export interface TextSearchColumns {
+/** The column names the caller's Kysely expression builder accepts: its
+ *  `ref()` parameter, i.e. the columns of the table(s) being queried. A name
+ *  the table does not have is a TYPE error here, not a `column "…" does not
+ *  exist` in production. That is how a search on orders named `description`
+ *  and a search on projects named `title` shipped and failed every search on
+ *  every surface for weeks (#3824): these lists used to be plain strings.
+ *  A builder with no `ref` (a hand-written fake) falls back to string. */
+export type ColumnOf<EB> = EB extends { ref: (reference: infer R) => unknown } ? Extract<R, string> : string;
+
+export interface TextSearchColumns<EB = unknown> {
   /** Plain text columns. A NULL never matches and never breaks the OR. */
-  text: string[];
+  text: readonly ColumnOf<EB>[];
   /** jsonb columns searched as text (custom fields live in `metadata`). */
-  json?: string[];
+  json?: readonly ColumnOf<EB>[];
+}
+
+/** A set of column names checked against a table's row type, for the lists a
+ *  resolver keeps at module scope (what may be sorted by, filtered on,
+ *  compared). `columnSet<PurchasesDB["purchases_orders"]>()(["ordered_at"])`:
+ *  a column the row type does not have fails typecheck (#3824). */
+export function columnSet<Row>() {
+  return <C extends keyof Row & string>(columns: readonly C[]): ReadonlySet<string> => new Set<string>(columns);
 }
 
 /** The needle a person typed, as the like pattern every resolver used. */
@@ -6117,14 +6376,14 @@ export function likeNeedle(q: string): string {
  * query.where(w)`). Case-insensitive, substring, every column OR-ed.
  */
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
-export function textSearchWhere(eb: LikeBuilder, q: string | undefined, columns: TextSearchColumns): any {
+export function textSearchWhere<EB extends LikeBuilder>(eb: EB, q: string | undefined, columns: TextSearchColumns<EB>): any {
   const needle = (q ?? "").trim();
   if (!needle) return null;
   const like = likeNeedle(needle);
   const empty = eb.val("");
   const exprs: any[] = [
-    ...columns.text.map((c) => eb(eb.fn("lower", [eb.fn.coalesce(c, empty)]), "like", like)),
-    ...(columns.json ?? []).map((c) => eb(eb.fn("lower", [eb.cast(c, "text")]), "like", like)),
+    ...columns.text.map((c: string) => eb(eb.fn("lower", [eb.fn.coalesce(c, empty)]), "like", like)),
+    ...(columns.json ?? []).map((c: string) => eb(eb.fn("lower", [eb.cast(c, "text")]), "like", like)),
   ];
   if (exprs.length === 0) return null;
   return eb.or(exprs);

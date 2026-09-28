@@ -10,7 +10,7 @@
 import { useState, type FormEvent } from "react";
 import { useNavigate } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useToast } from "@cobblr/platform-web";
+import { useToast, MutationError } from "@cobblr/platform-web";
 import { useInventory } from "./context";
 
 /** Who holds this unit — click to set/change. A plain string ("Janet", "IT
@@ -125,6 +125,7 @@ export function UnitsPanel({ partId }: { partId: string }) {
           ))}
         </ul>
       )}
+      <MutationError mutation={assign} className="block" />
       <form onSubmit={submit} className="flex gap-2 pt-1">
         <input
           className="input !w-full text-sm"

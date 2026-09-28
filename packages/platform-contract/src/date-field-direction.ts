@@ -156,3 +156,17 @@ export function dateEventTitle(entityName: string, fieldLabel: string): string {
   // it - which is exactly where the row puts it.
   return `${entityName} · ${label}`;
 }
+
+/**
+ * The direction a date field's ROLE declares, or null when the role says
+ * nothing about it. A role is what the field means, so it beats reading the
+ * label: "Drink from" names no marker and read as a record, "Drink by" read as
+ * due by the word "by", and a label in another language reads as neither.
+ *   ready-until  due: the end of a window is a moment to act by;
+ *   ready-from   record: the start of a window that has passed is not late.
+ */
+export function directionOfRole(role: string | null | undefined): DateFieldDirection | null {
+  if (role === "ready-until") return "due";
+  if (role === "ready-from") return "record";
+  return null;
+}
