@@ -1,7 +1,8 @@
 {
   "lint": "lint:sql-or-precedence",
-  "run": "tsx scripts/lint-sql-or-precedence.ts",
+  "run": "node scripts/lint-sql-or-precedence.ts",
   "ms": 1677,
   "recorded": "2026-09-14",
-  "source": "split from scripts/lint-durations.json (recorded 2026-09-14)"
+  "source": "split from scripts/lint-durations.json (recorded 2026-09-14)",
+  "readMB": 20.0
 }

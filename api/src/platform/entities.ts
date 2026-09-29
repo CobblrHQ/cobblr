@@ -358,6 +358,12 @@ function applyExposableProjection(
       if (!caps || !caps.has(cap)) delete fields[field];
     }
   }
+  // A search snippet quotes the record's words (a pattern's PDF, its notes),
+  // which the field whitelist exists to keep from an anonymous reader.
+  if (publicRead && resolved.snippet !== undefined) {
+    const { snippet: _quoted, ...rest } = resolved;
+    return { ...rest, fields };
+  }
   return { ...resolved, fields };
 }
 
@@ -555,7 +561,7 @@ export async function lookup(
       // whitelist above was already computed from the requested kind, so this is
       // consistent.
       const projected = { ...applyExposableProjection(resolved, whitelist, fieldReadScopes, undefined, publicRead), kind };
-      return applyServedTitle(await applyMemberFields(orgId, await applyRelationFields(orgId, await applyComputedFields(orgId, await applyCustomFieldValues(orgId, projected)))));
+      return applyServedTitle(await applyMemberFields(orgId, await applyRelationFields(orgId, await applyComputedFields(orgId, await applyCustomFieldValues(orgId, projected))), { publicRead }));
     }
   } catch (err) {
     console.error(`[entities] resolver for ${kind} failed:`, err);
@@ -848,7 +854,7 @@ export async function list(
             // lookup(). No-op for base kinds (resolver already returns them).
             await applyCustomFieldValues(orgId, { ...applyExposableProjection(r, whitelist, fieldReadScopes, readScope, publicRead), kind }),
           ),
-        ))),
+        ), { publicRead })),
       ),
     );
     total = result.total;

@@ -9,11 +9,13 @@
 //      hardcoded import. See machines-digifab-unification.md §5.
 // DigifabPage renders these same components on /digifab (Floor + Setup).
 
+import { cancelOutcome } from "../../lib/digifab-cancel";
+import { BridgeInstallMethod } from "../../components/BridgeInstallMethod";
 import { useState, useMemo, useEffect, useRef, Fragment, type ReactNode } from "react";
 import { Link } from "react-router-dom";
 import { createPortal } from "react-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Trash2, Wifi, Printer, RefreshCw, AlertTriangle, Layers, X, Ban, Camera, Pause, Play, Thermometer, Sliders, ShieldCheck } from "lucide-react";
+import { Trash2, Wifi, Printer, Send, RefreshCw, AlertTriangle, Layers, X, Ban, Camera, Pause, Play, Thermometer, Sliders, ShieldCheck } from "lucide-react";
 import { ApiError, api, fetchAuthBlobUrl, type DigifabFleet, type DigifabFleetDevice, type DigifabDeviceClass, type DigifabHistory, type DigifabDeviceDetail, type DigifabFileInfo } from "../../lib/api";
 import { deviceBucket, fleetStatusChip } from "../../lib/fleet-status";
 import { BambuConnectWizard } from "../../components/BambuConnectWizard";
@@ -25,6 +27,7 @@ import { useActiveOrg } from "../../auth/ActiveOrgContext";
 import { useLater, Modal, useToast, useConfirm, useImageSrc, OverlayLayer, relativeTime, EntityPhoto, SecretInput, AddressInput } from "@cobblr/platform-web";
 import { Combobox } from "../../components/Combobox";
 import type { ModulePageTabCtx, EntityDetailPanelCtx } from "../../panels/types";
+import { capitalise, machineWords, type MachineWords } from "../../lib/machine-words";
 
 export type LinkableMachine = { id: string; name: string; instLabel: string | null; image: string | null };
 
@@ -244,15 +247,10 @@ export function EdgeBridgeSetup({ onCreated, onClose, presetDriver, presetName }
     if (presetName?.trim()) m.name = presetName.trim(); // carry the name from the New-printer form
     return [m];
   });
-  const [token, setToken] = useState<string | null>(null);
-  const [cmdMode, setCmdMode] = useState<"run" | "compose">("compose");
   const bid = bridgeId.trim().toLowerCase().replace(/[^a-z0-9_-]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 40);
   // Name the bridge the status box is reporting on — you may run several, so
   // "your bridge is online" is ambiguous. Blank → the default/main bridge.
   const bridgeLabel = bid ? `the "${bid}" bridge` : "your main bridge";
-  // The canonical kernel wire (bridges installed pre-move keep polling the
-  // /modules/digifab/edge alias — both land on the same channel).
-  const relayUrl = `${window.location.origin}/api/v1/orgs/${activeSlug}/edge`;
   const status = useQuery({
     queryKey: ["digifab-edge-status", activeSlug, bid],
     queryFn: () => api.getDigifabEdgeStatus(activeSlug, bid || undefined),
@@ -275,56 +273,6 @@ export function EdgeBridgeSetup({ onCreated, onClose, presetDriver, presetName }
   })();
   const missing = machines.flatMap((m) => defOf(m).fields.filter((f) => !f.optional && !m.cfg[f.key]?.trim()).map((f) => `${m.name.trim() || defOf(m).label}: ${f.label}`));
 
-  const mint = useMutation({
-    mutationFn: () => api.createApiToken({ name: `Edge bridge: ${label.trim() || "bridge"}`, scopes: ["devices:edge"] }),
-    onSuccess: (r) => setToken(r.token),
-    onError: (e) => toast.error(e instanceof ApiError ? e.message : "Couldn't generate a token."),
-  });
-  // The command carries NOTHING machine-specific — just the relay token. The
-  // bridge installs once and stays open; machines are added below and ride down
-  // the tunnel per request (dynamic config), so the box never needs re-running.
-  const tok = token ?? "<generate the token first>";
-  // Registry-free bootstrap: a stock public node image fetches the bridge CODE
-  // from this Cobblr (loader → sha-verified bundle) with the tunnel token, and
-  // self-updates by restarting onto new versions. No private registry.
-  // The shell reads the token + URL from its ENVIRONMENT — the secret appears
-  // once (env), never in argv/shell history. `|| true` keeps a cached loader
-  // usable when the cloud blips during a restart.
-  const shellCmd = 'wget -qO loader.mjs --header "Authorization: Bearer $BRIDGE_RELAY_TOKEN" "$BRIDGE_RELAY_URL/release/loader" || true; node loader.mjs';
-  // docker run: single-quote for the HOST shell so $ survives to the container.
-  const runCmd = `sh -c '${shellCmd}'`;
-  // compose: list-form command (a colon inside a plain scalar breaks YAML) and
-  // $$ so compose's own interpolation leaves the $ for the container shell.
-  const composeCmd = `command: ["sh", "-c", "${shellCmd.replace(/\$/g, "$$$$").replace(/"/g, '\\"')}"]`;
-  const cmd = [
-    "docker run -d --name cobblr-edge-bridge --restart unless-stopped \\",
-    "  -v cobblr-bridge-data:/data -w /data \\",
-    "  -e BRIDGE_MODE=tunnel \\",
-    `  -e BRIDGE_RELAY_URL=${relayUrl} \\`,
-    `  -e BRIDGE_RELAY_TOKEN=${tok} \\`,
-    ...(bid ? [`  -e BRIDGE_ID=${bid} \\`] : []),
-    "  node:22-alpine \\",
-    `  ${runCmd}`,
-  ].join("\n");
-  const compose = [
-    "# docker-compose.yml — then: docker compose up -d",
-    "# Self-updating: the bridge fetches its own code from your Cobblr (sha-verified)",
-    "# and restarts onto new versions — stock node image, nothing else to pull.",
-    "services:",
-    "  cobblr-edge-bridge:",
-    "    image: node:22-alpine",
-    "    restart: unless-stopped",
-    "    working_dir: /data",
-    "    volumes:",
-    "      - ./bridge-data:/data",
-    "    environment:",
-    "      BRIDGE_MODE: tunnel",
-    `      BRIDGE_RELAY_URL: ${relayUrl}`,
-    `      BRIDGE_RELAY_TOKEN: ${tok}`,
-    ...(bid ? [`      BRIDGE_ID: ${bid}`] : []),
-    `    ${composeCmd}`,
-  ].join("\n");
-  const snippet = cmdMode === "compose" ? compose : cmd;
   // One connection per machine — base_url cobblr-edge://<id> + the machine config
   // stored on it (rides the tunnel). The first id is returned to link the printer.
   const create = useMutation({
@@ -376,35 +324,7 @@ export function EdgeBridgeSetup({ onCreated, onClose, presetDriver, presetName }
         <span className={lbl}>1 · Name this bridge</span>
         <input value={label} onChange={(e) => setLabel(e.target.value)} className={field} autoFocus />
       </label>
-      <div>
-        <div className="flex items-center justify-between mb-1">
-          <span className={lbl}>2 · Install the bridge</span>
-          {token && (
-            <div className="flex items-center gap-2">
-              <div className="inline-flex rounded border border-line dark:border-slate-600 overflow-hidden text-[10px]">
-                {(["run", "compose"] as const).map((mode) => (
-                  <button key={mode} type="button" onClick={() => setCmdMode(mode)} className={"px-1.5 py-0.5 " + (cmdMode === mode ? "bg-cobble-600 text-white" : "text-muted hover:bg-subtle dark:hover:bg-slate-800")}>
-                    {mode === "run" ? "docker run" : "compose"}
-                  </button>
-                ))}
-              </div>
-              <button type="button" onClick={() => { void navigator.clipboard?.writeText(snippet); toast.success("Copied"); }} className="text-[10px] text-accent hover:underline">Copy</button>
-            </div>
-          )}
-        </div>
-        {!token ? (
-          <button type="button" onClick={() => mint.mutate()} disabled={mint.isPending || !label.trim()}
-            className="rounded bg-cobble-600 hover:bg-cobble-700 disabled:opacity-50 text-white text-xs px-2.5 py-1.5">
-            {mint.isPending ? "Generating…" : "Generate token & command"}
-          </button>
-        ) : (
-          <>
-            <pre className="text-[11px] leading-relaxed bg-subtle dark:bg-slate-950 border border-line dark:border-slate-700 rounded p-2 overflow-x-auto whitespace-pre text-content dark:text-mortar-200">{snippet}</pre>
-            <p className="text-[11px] text-amber-600 dark:text-amber-400 mt-1">Run this on a box at your site. Token shown once - it can <strong>only</strong> run this bridge (scope <code>devices:edge</code>).</p>
-            <p className="text-[11px] text-faint mt-0.5">Stock public image - the bridge fetches its code from this Cobblr (sha-verified) and keeps itself updated automatically. Nothing to pull from a registry, ever.</p>
-          </>
-        )}
-      </div>
+      <BridgeInstallMethod slug={activeSlug} label={label} bridgeId={bid} />
       <div>
         <span className={lbl}>3 · Cobblr is watching for it</span>
         <div className={"flex items-center gap-2 text-sm rounded border p-2 " + (connected ? "border-moss-500/40 bg-moss-50 dark:bg-moss-950/30" : "border-line dark:border-slate-700")}>
@@ -1295,7 +1215,8 @@ function DeviceCard({ d, connId, slug, title, subtitle, dense, cams, selecting, 
   const stop = useMutation({
     mutationFn: () => api.cancelDigifabJob(slug, d.active_job!.id),
     onSuccess: (r) => {
-      toast[r.remote_cancelled ? "success" : "info"](r.remote_cancelled ? "Stopped — told the printer to abort" : "Marked cancelled — stop it at the machine if it's still moving");
+      const o = cancelOutcome(r);
+      toast[o.tone](o.text);
       invalidateFleet();
     },
     onError: (e) => toast.error(e instanceof ApiError ? e.message : String(e)),
@@ -2721,15 +2642,20 @@ export function PrintDetailModal({ item, onClose, onZoom, onReprint }: { item: D
 // pre-selects the right driver (Klipper→moonraker, Prusa→prusalink, Duet→duet).
 const KIND_BRIDGE_DRIVER: Record<string, string> = { klipper: "moonraker", prusa: "prusalink", reprap: "duet", duet: "duet" };
 
+/** A machine's jobs panel on its own page. Kind-neutral by contract: every
+ *  word about the work comes from `words`, and `lint:machine-words` refuses
+ *  a literal "print" in here. */
 export function MachineDigifabPanel({
   slug,
   machineId,
   machineName,
   driverHint,
+  words,
 }: {
   slug: string;
   machineId: string;
   machineName: string;
+  words: MachineWords;
   /** Pre-selected bridge driver (from the printer's kind), for the inline connect. */
   driverHint?: string;
 }) {
@@ -2798,7 +2724,7 @@ export function MachineDigifabPanel({
       });
     },
     onSuccess: () => {
-      toast.success("Linked to print manager.");
+      toast.success(`Linked to ${words.manager}.`);
       setConnId("");
       setDeviceId("");
       invalidate();
@@ -2808,7 +2734,7 @@ export function MachineDigifabPanel({
   const removeLink = useMutation({
     mutationFn: (id: string) => api.deleteDigifabLink(slug, id),
     onSuccess: () => {
-      toast.success("Unlinked from print manager.");
+      toast.success(`Unlinked from ${words.manager}.`);
       invalidate();
     },
     onError: (e: unknown) => toast.error(e instanceof ApiError ? e.message : "Couldn't unlink."),
@@ -2820,7 +2746,7 @@ export function MachineDigifabPanel({
     <div className="rounded-lg border border-line dark:border-slate-700 bg-subtle/40 dark:bg-slate-800/30 p-3 space-y-2">
       <div className="flex items-center gap-2">
         <div className="flex items-center gap-1.5 text-[10px] font-mono uppercase tracking-widest text-accent">
-          <Printer size={12} /> Print manager
+          {words.kind === "3d-printer" ? <Printer size={12} /> : <Send size={12} />} {words.manager}
         </div>
         {link && (
           <span className="ml-auto inline-flex items-center gap-1 rounded-full bg-subtle dark:bg-slate-800 px-2 py-0.5 text-[10px] font-mono uppercase tracking-wider text-content dark:text-mortar-200">
@@ -2856,7 +2782,7 @@ export function MachineDigifabPanel({
             type="button"
             onClick={() => setCockpitOpen(true)}
             disabled={!fleetDev}
-            title={fleetDev ? "Camera, temperatures, controls, files & history" : "Waiting for the manager to report this printer…"}
+            title={fleetDev ? "Camera, controls, files & history" : `Waiting for the manager to report this ${words.device}…`}
             className="w-full inline-flex items-center justify-center gap-1.5 rounded-md bg-cobble-600 hover:bg-cobble-700 disabled:opacity-50 disabled:cursor-not-allowed text-white text-xs font-medium py-1.5 transition"
           >
             <Sliders size={13} /> Open controls
@@ -2864,7 +2790,7 @@ export function MachineDigifabPanel({
         </div>
       ) : connections.length === 0 ? (
         <p className="text-xs text-muted dark:text-slate-400">
-          No print managers connected yet - add FDM Monster, OctoPrint, Klipper, Duet, Prusa, or Bambu.{" "}
+          {`No ${words.manager} connected yet - add ${words.managerExamples}.`}{" "}
           <button type="button" onClick={() => setCreateConnOpen(true)} className="text-accent hover:underline">
             Connect one →
           </button>
@@ -2901,12 +2827,12 @@ export function MachineDigifabPanel({
             // Monster / OctoPrint fronting several printers) needs a "which printer"
             // step. So show the dropdown only for 2+; otherwise state the target.
             if (devices.isLoading) return <span className="text-[11px] text-muted dark:text-slate-400 self-center">checking…</span>;
-            if (devices.isError) return <span className="text-[11px] text-rose-500 self-center">couldn't reach it - is the bridge + printer on?</span>;
-            if (devs.length === 0) return <span className="text-[11px] text-muted dark:text-slate-400 self-center">no printer found at this connection</span>;
+            if (devices.isError) return <span className="text-[11px] text-rose-500 self-center">{`couldn't reach it - is the bridge + ${words.device} on?`}</span>;
+            if (devs.length === 0) return <span className="text-[11px] text-muted dark:text-slate-400 self-center">{`no ${words.device} found at this connection`}</span>;
             if (devs.length === 1) return <span className="text-[11px] text-muted dark:text-slate-400 self-center">→ {devs[0]!.name} <span className="text-faint dark:text-slate-500">(direct)</span></span>;
             return (
               <label className="block">
-                <span className="block text-[10px] font-mono uppercase tracking-widest text-faint mb-1">Printer</span>
+                <span className="block text-[10px] font-mono uppercase tracking-widest text-faint mb-1">{capitalise(words.device)}</span>
                 <select value={deviceId} onChange={(e) => setDeviceId(e.target.value)} className="input !py-1 text-xs !w-auto">
                   <option value="">choose…</option>
                   {devs.map((d) => (<option key={d.id} value={d.id}>{d.name}</option>))}
@@ -2966,9 +2892,10 @@ export function FleetPageTab({ ctx }: { ctx: ModulePageTabCtx }) {
   return <FleetView slug={ctx.slug} machineIds={ctx.entityIds} scopeNoun={ctx.itemNoun} />;
 }
 
-/** contributes.panels "digifab:cockpit" — the per-machine Print manager in
- *  the machine's detail modal. The printer_kind hint (machines metadata)
- *  maps to a bridge driver HERE — driver keys are digifab knowledge. */
+/** contributes.panels "digifab:cockpit" — the per-machine jobs panel in the
+ *  machine's detail modal. The printer_kind hint (machines metadata) maps to a
+ *  bridge driver HERE — driver keys are digifab knowledge. The machine_kind
+ *  hint picks the words (a laser cutter's panel never says "print"). */
 export function MachineCockpitPanel({ ctx }: { ctx: EntityDetailPanelCtx }) {
   return (
     <MachineDigifabPanel
@@ -2976,6 +2903,7 @@ export function MachineCockpitPanel({ ctx }: { ctx: EntityDetailPanelCtx }) {
       machineId={ctx.entityId}
       machineName={ctx.entityTitle}
       driverHint={KIND_BRIDGE_DRIVER[ctx.hints?.printer_kind ?? ""]}
+      words={machineWords(ctx.hints?.machine_kind)}
     />
   );
 }

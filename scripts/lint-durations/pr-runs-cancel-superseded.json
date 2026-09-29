@@ -1,0 +1,10 @@
+{
+  "lint": "lint:pr-runs-cancel-superseded",
+  "run": "node scripts/lint-pr-runs-cancel-superseded.ts",
+  "rows": [
+    "ci-workflow"
+  ],
+  "ms": 4332,
+  "recorded": "2026-09-29",
+  "source": "scaffolded by new-lint.sh at twice a local run (a shared box); replaced from its first CI measurement"
+}

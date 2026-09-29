@@ -47,11 +47,11 @@ export async function previewBundleLocations(
 export async function applyBundleLocations(
   orgId: string,
   wanted: BundleLocation[],
-): Promise<{ created: number }> {
+): Promise<{ created: number; createdIds: string[] }> {
   const db = (await getTenantDb(orgId)) as unknown as Kysely<LocationsDB>;
   const plan = planLocations(wanted, await readExisting(db));
   const todo = locationsToCreate(plan);
-  if (todo.length === 0) return { created: 0 };
+  if (todo.length === 0) return { created: 0, createdIds: [] };
 
   // Parents first, so a child created in the same pass has something to hang
   // off. `plan` is already in that order (each parent immediately precedes
@@ -66,6 +66,9 @@ export async function applyBundleLocations(
   const depthById = new Map(depthRows.map((r) => [r.id, Number(r.depth)]));
 
   let created = 0;
+  // What this install MADE, so it can be claimed and put back on uninstall.
+  // A place that was already there is never among them.
+  const createdIds: string[] = [];
     for (const p of todo) {
       const parentId = p.parentName ? (idByName.get(p.parentName.toLowerCase()) ?? null) : null;
       // A child whose parent could not be resolved is skipped rather than
@@ -90,8 +93,9 @@ export async function applyBundleLocations(
         .returning("id")
         .executeTakeFirstOrThrow();
     idByName.set(p.name.toLowerCase(), row.id);
+    createdIds.push(row.id);
     created++;
   }
   if (created > 0) console.log(`[bundles] org ${orgId}: created ${created} location(s)`);
-  return { created };
+  return { created, createdIds };
 }

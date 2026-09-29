@@ -960,13 +960,20 @@ partsRouter.get(
       res.status(400).json({ error: { code: "missing_id", message: "id required" } });
       return;
     }
-    const items = await db
+    const rows = await db
       .selectFrom("inventory_consumption")
-      .select(["id", "delta", "reason", "source_kind", "source_id", "kind", "at"])
+      .select(["id", "delta", "reason", "source_kind", "source_id", "kind", "by_user", "at"])
       .where("part_id", "=", id)
       .orderBy("at", "desc")
       .limit(200)
       .execute();
+    // Who did it, by the name they go by now (#3801): "Sam took 1". A person
+    // who has since left the workspace has no name here and reads as such.
+    const people = await platform().accounts.displayNames(
+      tenantContext(req).org.id,
+      rows.map((r) => r.by_user).filter((u): u is string => !!u),
+    );
+    const items = rows.map((r) => ({ ...r, by_name: r.by_user ? (people[r.by_user] ?? null) : null }));
     res.json({ items });
   }),
 );
@@ -1129,13 +1136,14 @@ partsRouter.post(
     const liftKeys = Array.isArray(parentCfg?.key_fields)
       ? parentCfg!.key_fields.filter((f) => !["name", "manufacturer", "qty", "unit"].includes(f))
       : [];
+    let underType: { id: string; name: string; created: boolean; instance: string; noun?: string } | null = null;
     if (parentCfg?.instance && liftKeys.length > 0) {
       const md = (parsed.data.metadata ?? {}) as Record<string, unknown>;
       // Only when the (metadata) key fields are actually present — a manual
       // parent-picker create leaves them empty and links its own parent.
       const hasKeys = liftKeys.every((f) => md[f] != null && String(md[f]).trim() !== "");
       if (hasKeys) {
-        await platform()
+        const lift = await platform()
           .actions.invoke("inventory:lift-to-type", {
             orgId: ctx.org.id,
             userId: session.id,
@@ -1156,11 +1164,30 @@ partsRouter.post(
               source_ids: [inserted.id],
             },
           })
-          .catch((err) => console.error("[inventory] auto-lift to type failed:", (err as Error).message));
+          .catch((err) => {
+            console.error("[inventory] auto-lift to type failed:", (err as Error).message);
+            return null;
+          });
+        const p = (lift as { placed?: Array<{ source_id: string; type_id: string; type_name: string; type_created: boolean }> } | null)?.placed?.find(
+          (x) => x.source_id === inserted.id,
+        );
+        // `noun`: what one record of THIS table is called ("spool"), so the
+        // door can say "added 1 spool of …".
+        const noun = (req as unknown as { instanceConfig?: { item_noun?: unknown } }).instanceConfig?.item_noun;
+        if (p)
+          underType = {
+            id: p.type_id,
+            name: p.type_name,
+            created: p.type_created,
+            instance: parentCfg.instance,
+            ...(typeof noun === "string" && noun.trim() ? { noun: noun.trim() } : {}),
+          };
       }
     }
 
-    res.status(201).json(inserted);
+    // `under_type`: the type the item was filed under by the lift, for the
+    // door that made it to say so. Absent when there is no parent type.
+    res.status(201).json(underType ? { ...inserted, under_type: underType } : inserted);
   }),
 );
 

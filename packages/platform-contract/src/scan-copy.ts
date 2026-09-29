@@ -57,6 +57,12 @@ export const RECEIPT_UNREAD_TITLE = "Receipt not read";
 export const RECEIPT_UNREAD_SENTENCE = "Its lines could not be read yet. Read it again.";
 export const RECEIPT_READ_AGAIN = "Read again";
 export const RECEIPT_AS_ITEM = "Treat it as one item";
+export const RECEIPT_READ_ANYWAY = "Read it anyway";
+/** Why a photographed receipt was not read in: it is in already. */
+export function receiptAlreadyInSentence(label: string | null, lines: number): string {
+  const where = label?.trim() ? `"${label.trim()}"` : "a session";
+  return `This receipt is already in your inbox as ${where}${lines > 0 ? ` (${lines} line${lines === 1 ? "" : "s"})` : ""}.`;
+}
 
 /** A nameless row whose web guess was held for want of a second source
  *  (#2918): the card asks, with the guess as its one tap. The prompt, the
@@ -81,6 +87,11 @@ export const MERGE_SENTENCE = "You already have this. Adding counts one more.";
 /** The scan matches several things the workspace has, equally well: no
  *  machine can pick, so a person does. */
 export const AMBIGUOUS_MATCH_SENTENCE = "This could be any of {n} things you have. Open it to pick.";
+
+/** The scan is one thing the workspace keeps in several places, and nothing
+ *  says which place this is: not the place being worked in, and nobody has
+ *  picked. A person does, once; the choice stays on the row. */
+export const WHICH_PLACE_SENTENCE = "You keep this in {n} places. Open it to pick which one.";
 
 /** The destination is a table this workspace has not installed. `{table}`
  *  is the destination's label. */

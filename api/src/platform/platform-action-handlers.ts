@@ -80,7 +80,10 @@ const FIELD_TYPE_WORDS: Record<string, { type: string; impliesChoices?: boolean 
   link: { type: "url" },
   relation: { type: "relation" },
   member: { type: "member" },
-  person: { type: "member" },
+  // Anyone on the People list, member or not: an owner, a borrower's name.
+  person: { type: "person" },
+  people: { type: "person" },
+  owner: { type: "person" },
 };
 
 /** The workspace's override row for a field, as it stands: what an edit of

@@ -160,7 +160,7 @@ export async function planFor(
   return planner ? planner(ctx) : null;
 }
 
-type ArgsSchema = Record<string, { label?: string; type?: string; required?: boolean; oneOf?: string }> | null | undefined;
+type ArgsSchema = Record<string, { label?: string; type?: string; required?: boolean; oneOf?: string; with?: string }> | null | undefined;
 
 /** Does this action belong in a RECORD's action bar?
  *
@@ -543,6 +543,7 @@ function rowToActionRecord(row: {
   version: string;
   position?: number;
   face?: string | null;
+  undoable?: boolean;
 }): EntityActionRecord {
   return {
     id: row.id,
@@ -560,6 +561,7 @@ function rowToActionRecord(row: {
     internal: row.internal ?? false,
     wire_only: row.wire_only ?? false,
     record_optional: row.record_optional ?? false,
+    undoable: row.undoable === true,
     finishes: row.finishes === "used" || row.finishes === "discarded" || row.finishes === "still-good" ? row.finishes : null,
     args_schema:
       (row.args_schema as EntityActionRecord["args_schema"]) ?? null,

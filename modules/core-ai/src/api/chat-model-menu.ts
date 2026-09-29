@@ -1,9 +1,11 @@
 // What the chat's model pill can offer, and what it is set to.
 //
 // Two sources, one menu. The workspace's own installed providers, and the
-// personal connections routed INTO the workspace and approved (a "Share" the
-// owner accepted - the whole connection becomes a workspace connection, which
-// is the step the owner named first). Each brings its provider's short list of
+// personal connections that can answer THIS person here: their own, "Just me"
+// ones included, and a Share the owner accepted. The route reads that set from
+// the router's own walk (platform().ai.chainFor, #3842), so the menu offers
+// exactly the connections a chat could reach, in the order it would ask them.
+// Picking one pins this person's chat to it; nothing else's order changes. Each brings its provider's short list of
 // chat models, with a label a person can read and a note on what it costs.
 //
 // Pure: given the pieces, returns the menu. The route fetches the pieces.
@@ -90,6 +92,10 @@ export function chatModelMenu(args: {
   prefs: ModelChoice;
   /** What the workspace's own chat default resolves to, when known. */
   workspaceDefault?: { provider_id: string; model: string } | null;
+  /** The order the groups are asked in: "ws" for the workspace's own
+   *  providers, a credential id for a connection. Unlisted groups keep their
+   *  place after the listed ones. */
+  order?: string[];
 }): ChatModelMenu {
   const byId = new Map(args.providers.map((p) => [p.id, p]));
   const groups: MenuGroup[] = [];
@@ -143,6 +149,15 @@ export function chatModelMenu(args: {
       owner: mine ? "you" : "shared",
       options,
     });
+  }
+
+  if (args.order?.length) {
+    const rank = (g: MenuGroup): number => {
+      const key = g.heading === "Workspace" && !g.owner ? "ws" : g.options[0]?.choice.credential_id ?? "";
+      const i = args.order!.indexOf(key);
+      return i < 0 ? Number.MAX_SAFE_INTEGER : i;
+    };
+    groups.sort((a, b) => rank(a) - rank(b));
   }
 
   // What is in force. A pref that names something no longer on the menu

@@ -2,7 +2,7 @@
 // inline consume + release controls on the reserved ones, and a
 // "new reservation" form at the bottom.
 
-import { MutationError } from "@cobblr/platform-web";
+import { MutationError, SearchInput } from "@cobblr/platform-web";
 import { useEffect, useState, type FormEvent } from "react";
 import { collectionLabelFor } from "@cobblr/platform-contract/kind-label";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
@@ -235,15 +235,15 @@ export function EntityPicker({
   const items = results.data?.items ?? [];
   return (
     <div className="relative">
-      <input
+      <SearchInput
         value={q}
-        onChange={(e) => {
-          setQ(e.target.value);
+        onChange={(v) => {
+          setQ(v);
           setOpen(true);
         }}
         onFocus={() => setOpen(true)}
         placeholder={searchHint}
-        className="input text-sm"
+        aria-label={searchHint}
       />
       {open && debounced.trim().length >= 2 && (
         <ul className="absolute z-20 mt-1 w-full max-h-56 overflow-auto rounded-md border border-line dark:border-slate-700 bg-surface dark:bg-slate-900 shadow-lg">

@@ -258,6 +258,20 @@ export const GENERATED_SURFACE: Capability[] = [
     "module": "core-openapi"
   },
   {
+    "feature": "People",
+    "does": "Everyone a thing here can belong to: members, and anyone else by name (family, a friend whose things you keep). Invite someone to join and what is theirs stays theirs.",
+    "where": "/configuration/people",
+    "also": [
+      "owner",
+      "owners",
+      "whose",
+      "belongs to",
+      "family",
+      "contacts",
+      "person"
+    ]
+  },
+  {
     "feature": "Permissions",
     "does": "Who can do what: the capability overview + per-member grants, custom roles, and minted accounts.",
     "where": "/configuration/permissions",

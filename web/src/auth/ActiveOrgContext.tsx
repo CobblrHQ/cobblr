@@ -182,6 +182,13 @@ export function ActiveOrgProvider({
   );
 }
 
+/** The active workspace when there is one, else null: for a component that
+ *  only reads a detail (app mode for a link) and is also drawn outside the
+ *  workspace shell, where useActiveOrg would throw. */
+export function useActiveOrgOptional(): ActiveOrgCtx | null {
+  return useContext(Ctx) ?? null;
+}
+
 export function useActiveOrg(): ActiveOrgCtx {
   const v = useContext(Ctx);
   if (!v) throw new Error("useActiveOrg called outside ActiveOrgProvider");

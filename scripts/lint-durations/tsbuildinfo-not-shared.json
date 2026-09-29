@@ -1,7 +1,8 @@
 {
   "lint": "lint:tsbuildinfo-not-shared",
-  "run": "tsx scripts/lint-tsbuildinfo-not-shared.ts",
+  "run": "node scripts/lint-tsbuildinfo-not-shared.ts",
   "ms": 508,
   "recorded": "2026-09-14",
-  "source": "split from scripts/lint-durations.json (recorded 2026-09-14)"
+  "source": "split from scripts/lint-durations.json (recorded 2026-09-14)",
+  "readMB": 0.0
 }

@@ -29,6 +29,7 @@ import {
   changeWorkspaceShape,
 } from "@cobblr/platform-web";
 import { useInventory } from "./context";
+import { ColourInput } from "@cobblr/platform-web";
 import { useFieldPresentation } from "./useFieldPresentation";
 import { ParentPicker, type ParentRef } from "./ParentPicker";
 import { InventoryApiError, type InvFieldDef } from "./api";
@@ -538,18 +539,10 @@ function CustomFieldInput({
 
   // Colour: a real swatch picker (type a hex/name OR pick from the OS picker).
   if (control === "color") {
-    const t = s.trim();
-    const swatch = /^#?[0-9a-fA-F]{6}$/.test(t) ? (t[0] === "#" ? t : `#${t}`) : "#cccccc";
     return (
       <Field label={def.display_label}>
-        <div className="flex items-center gap-2">
-          <input
-            type="color"
-            value={swatch}
-            onChange={(e) => onChange(e.target.value)}
-            className="h-9 w-12 shrink-0 rounded border border-line dark:border-slate-600 cursor-pointer bg-transparent p-0.5"
-            aria-label={`${def.display_label} colour picker`}
-          />
+        <div className="flex flex-wrap items-center gap-2">
+          <ColourInput value={s} onPreview={onChange} onCommit={onChange} label={def.display_label} />
           <input
             type="text"
             value={s}

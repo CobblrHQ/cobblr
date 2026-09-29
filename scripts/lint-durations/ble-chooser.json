@@ -1,7 +1,8 @@
 {
   "lint": "lint:ble-chooser",
-  "run": "tsx scripts/lint-ble-chooser-filter.ts",
+  "run": "node scripts/lint-ble-chooser-filter.ts",
   "ms": 631,
   "recorded": "2026-09-14",
-  "source": "split from scripts/lint-durations.json (recorded 2026-09-14)"
+  "source": "split from scripts/lint-durations.json (recorded 2026-09-14)",
+  "readMB": 26.5
 }

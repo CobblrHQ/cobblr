@@ -6,6 +6,8 @@
 import type { ScanUrlResolution } from "@cobblr/platform-contract";
 import { contactSuffix, operatorEmail } from "@cobblr/platform-contract/outbound-identity";
 import type { FieldMap, ScanUrlResolverManifest } from "./types.js";
+import { withPreset } from "./presets.js";
+import { formatColour, MAX_COLOURS, normalizeColour } from "@cobblr/platform-contract/colour";
 
 /** Walk a dotted path ("spool.material_name") into a JSON value. */
 function getPath(obj: unknown, path: string): unknown {
@@ -15,6 +17,40 @@ function getPath(obj: unknown, path: string): unknown {
     cur = (cur as Record<string, unknown>)[seg];
   }
   return cur;
+}
+
+function byte(n: unknown): number | null {
+  return typeof n === "number" && Number.isInteger(n) && n >= 0 && n <= 255 ? n : null;
+}
+
+/** One [r, g, b, a] slot as "#rrggbb", or null for an unused (alpha 0) or
+ *  malformed one. The hex is read back through the platform's one colour
+ *  rule so a tag's colour and a typed one are spelt alike. */
+function rgbaSlot(v: unknown): string | null {
+  if (!Array.isArray(v) || v.length < 3) return null;
+  const [r, g, b, a] = v.map(byte);
+  if (r == null || g == null || b == null || a === 0) return null;
+  return normalizeColour([r, g, b].map((n) => n.toString(16).padStart(2, "0")).join(""));
+}
+
+function coloursValue(root: unknown, fm: Extract<FieldMap, object>): string | null {
+  // In order and with repeats: red / blue / red is three segments, and two
+  // identical slots are two, as the tag says. Only an unused slot drops.
+  const slots = (fm.colours ?? []).map((p) => rgbaSlot(getPath(root, p))).filter((c): c is string => !!c).slice(0, MAX_COLOURS);
+  if (slots.length <= 1) {
+    const name = fm.named_by ? getPath(root, fm.named_by) : null;
+    if (typeof name === "string" && name.trim()) return name.trim();
+    return slots[0] ?? null;
+  }
+  const said = (fm.gradient_if ?? []).map((p) => getPath(root, p)).filter((t): t is string => typeof t === "string").join(" ");
+  return formatColour({ style: /\b(gradient|ombre|fade)\b/i.test(said) ? "gradient" : "multi", colours: slots });
+}
+
+function ymd(v: unknown): string | null {
+  if (!Array.isArray(v) || v.length < 3) return null;
+  const [y, m, d] = v as unknown[];
+  if (typeof y !== "number" || typeof m !== "number" || typeof d !== "number" || y < 1900 || m < 1 || m > 12 || d < 1 || d > 31) return null;
+  return `${y}-${String(m).padStart(2, "0")}-${String(d).padStart(2, "0")}`;
 }
 
 function isBlank(v: unknown): boolean {
@@ -38,8 +74,12 @@ export function resolveField(root: unknown, fm: FieldMap): string | number | nul
     return s !== "" ? s : (fm.fallback ?? null);
   }
   let v: unknown = fm.path ? getPath(root, fm.path) : null;
+  if (fm.zero_is_empty && v === 0) v = null;
+  if (fm.colours) v = coloursValue(root, fm);
+  if (fm.ymd) v = ymd(v);
   if (isBlank(v)) return fm.default ?? null;
-  if (typeof fm.scale === "number" && typeof v === "number") v = v * fm.scale;
+  // Rounded so a tenth-of-a-mm encoding reads 0.3, not 0.30000000000000004.
+  if (typeof fm.scale === "number" && typeof v === "number") v = Math.round(v * fm.scale * 1e6) / 1e6;
   if (fm.stringify) v = String(v);
   if (fm.prefix !== undefined || fm.suffix !== undefined) {
     v = `${fm.prefix ?? ""}${typeof v === "string" ? v.trim() : v}${fm.suffix ?? ""}`;
@@ -53,7 +93,7 @@ export function mapResponse(
   json: unknown,
   manifest: ScanUrlResolverManifest,
 ): ScanUrlResolution | null {
-  const { response, output } = manifest;
+  const { response } = manifest;
   // Hard requirements: exact value (or "present" = any non-null).
   for (const [path, expected] of Object.entries(response.require ?? {})) {
     const actual = getPath(json, path);
@@ -69,6 +109,7 @@ export function mapResponse(
   }
   const root = response.root ? getPath(json, response.root) : json;
   if (root == null || typeof root !== "object") return null;
+  const output = withPreset(manifest.output);
 
   const fields: Record<string, unknown> = {};
   for (const [key, fm] of Object.entries(output.fields)) fields[key] = resolveField(root, fm);
@@ -134,6 +175,30 @@ export function matchesManifest(manifest: ScanUrlResolverManifest, value: string
   }
 }
 
+/** The longest a scan waits for its turn at a paced vendor before it gives up
+ *  and falls through to the generic path. */
+export const MAX_PACE_WAIT_MS = 20_000;
+
+// When each paced vendor may next be called. A reservation, so scans that
+// arrive together each take the next free slot rather than all waiting once.
+const nextCallAt = new Map<string, number>();
+
+/** Take this call's slot at a paced vendor; false when the queue is longer
+ *  than a scan should wait. */
+async function takeTurn(id: string, intervalMs: number): Promise<boolean> {
+  const now = Date.now();
+  const at = Math.max(now, nextCallAt.get(id) ?? 0);
+  if (at - now > MAX_PACE_WAIT_MS) return false;
+  nextCallAt.set(id, at + intervalMs);
+  if (at > now) await new Promise<void>((r) => setTimeout(r, at - now));
+  return true;
+}
+
+/** Test seam: forget every vendor's pace. */
+export function resetPacing(): void {
+  nextCallAt.clear();
+}
+
 export interface RunDeps {
   fetch: typeof fetch;
   cacheGet: (ns: string, key: string) => Promise<ScanUrlResolution | null>;
@@ -178,17 +243,21 @@ export async function runManifest(
   // written by people who have no reason to know the convention.
   const ua = Object.keys(headers).find((h) => h.toLowerCase() === "user-agent");
   if (ua && headers[ua] && !headers[ua].includes("(+")) headers[ua] += contactSuffix();
-  const init: RequestInit = {
-    method: manifest.request.method,
-    headers,
-    signal: AbortSignal.timeout(manifest.request.timeout_ms),
-  };
+  const init: RequestInit = { method: manifest.request.method, headers };
   if (manifest.request.method === "POST" && manifest.request.body !== undefined) {
     init.body = template(JSON.stringify(manifest.request.body), key, envDefaults);
     headers["content-type"] = headers["content-type"] ?? "application/json";
   }
-  const res = await deps.fetch(url, init);
-  if (!res.ok) return null;
+  const pace = manifest.request.min_interval_ms ?? 0;
+  const call = async (): Promise<Response | null> => {
+    if (pace && !(await takeTurn(manifest.id, pace))) return null;
+    return deps.fetch(url, { ...init, signal: AbortSignal.timeout(manifest.request.timeout_ms) });
+  };
+  let res = await call();
+  // Turned away for going too fast says nothing about the product: ask once
+  // more at the vendor's pace.
+  if (res?.status === 429 && pace) res = await call();
+  if (!res || !res.ok) return null;
   const json = await res.json().catch(() => null);
   if (json == null) return null;
   const resolution = mapResponse(json, manifest);

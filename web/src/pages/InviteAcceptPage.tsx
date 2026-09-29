@@ -90,7 +90,7 @@ export function InviteAcceptPage() {
           This invite link doesn't match any workspace. It may have been
           revoked, already used, or mistyped.
         </p>
-        <button onClick={() => navigate("/")} className="btn-secondary mt-4">
+        <button onClick={() => navigate("/")} className="rounded-md border border-line dark:border-slate-700 text-content dark:text-mortar-200 hover:bg-subtle dark:hover:bg-slate-800 text-sm px-3 py-1.5 transition disabled:opacity-50 mt-4">
           Go home
         </button>
       </CenteredCard>
@@ -105,11 +105,12 @@ export function InviteAcceptPage() {
       revoked: "This invite was revoked by the workspace owner.",
       expired: "This invite has expired.",
       full: "This join link has already let in everyone it was made for. Ask the workspace for a new one.",
+      paused: "This join link is paused for now: more people joined than it allows in a short time. The workspace has been told and can turn it back on.",
     };
     return (
       <CenteredCard tone="error" title="Invite unavailable">
         <p className="text-sm">{reason[p.status as Exclude<typeof p.status, "open">]}</p>
-        <button onClick={() => navigate("/")} className="btn-secondary mt-4">
+        <button onClick={() => navigate("/")} className="rounded-md border border-line dark:border-slate-700 text-content dark:text-mortar-200 hover:bg-subtle dark:hover:bg-slate-800 text-sm px-3 py-1.5 transition disabled:opacity-50 mt-4">
           Go home
         </button>
       </CenteredCard>

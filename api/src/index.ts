@@ -18,14 +18,16 @@ import { MEMBER_DEFAULT_CAPABILITIES, memberHoldsByDefault } from "./platform/ca
 import { fileURLToPath } from "node:url";
 import { withFieldLabels } from "./platform/field-labels.js";
 import { dirname, resolve } from "node:path";
+import { createServices } from "./platform/services.js";
 import { setPlatform, canContain, canBeContained } from "@cobblr/platform-contract";
 import { roleHoldsEveryCapability } from "@cobblr/platform-contract/org-roles";
 import { describeBlock, describeCapabilityBlock } from "./platform/approvals.js";
 import { mergeJsonb } from "./platform/jsonb-merge.js";
-import { resolveFieldDefsForKind } from "./platform/field-defs.js";
+import { deleteFieldDef, resolveFieldDefsForKind } from "./platform/field-defs.js";
 import { sql, type Kysely, type Generated } from "kysely";
 import { env } from "./env.js";
 import { meta, metaPool, pingMeta } from "./db/meta.js";
+import { currentActor } from "./lib/request-context.js";
 import { runMigrations } from "./db/migrate.js";
 import { getTenantDb, releaseIdleTenantPool, withTenantDbForSweep } from "./db/tenant.js";
 import { runExclusive } from "./platform/exclusive.js";
@@ -35,6 +37,7 @@ import { loadAllModules } from "./modules/loader.js";
 import { loadAllSandboxedModules } from "./sandbox/loader.js";
 import { syncTenantMigrations, reconcileDefaultModules } from "./modules/enable.js";
 import { startDeliverySweeper } from "./platform/delivery-sweeper.js";
+import { startBridgeOutageWatch } from "./platform/edge-outages.js";
 import { startPhotoRetentionSweeper } from "./platform/photo-retention.js";
 import { tenantSweeps, startTenantSweeps } from "./platform/tenant-sweeps.js";
 import { startPoolWatch, poolCounts } from "./db/pool-stats.js";
@@ -48,6 +51,7 @@ import * as actions from "./platform/actions.js";
 import * as live from "./platform/live.js";
 import * as devices from "./platform/devices.js";
 import * as entities from "./platform/entities.js";
+import { announceWrites } from "./platform/entity-saved.js";
 import * as files from "./platform/files.js";
 import * as hostedSeams from "./platform/hosted-seams.js";
 import { trackProductEvent, trackDailyProductEvent } from "./platform/product-events.js";
@@ -80,6 +84,7 @@ import { audienceFor } from "./platform/notification-audience.js";
 import * as integrationsImpl from "./platform/integrations.js";
 import * as aiImpl from "./platform/ai.js";
 import * as edgeImpl from "./platform/edge.js";
+import { reverifyWhenBridgesReturn } from "./platform/connection-probe.js";
 import * as egressImpl from "./platform/egress.js";
 import { syncManifestRegistries } from "./platform/registry-sync.js";
 import { registerPlatformActionHandlers } from "./platform/platform-action-handlers.js";
@@ -111,6 +116,7 @@ import { reconcileOrphanTenantRoles } from "./platform/reconcile-tenant-roles.js
 import { reconcileScanCategoryFields, retireScanCategoryPlaceholders } from "./platform/reconcile-scan-category.js";
 import { reconcileAppScanFallback } from "./platform/reconcile-app-scan-fallback.js";
 import { backfillBundleClaims } from "./platform/backfill-bundle-claims.js";
+import { backfillInstallSideEffectClaims } from "./platform/backfill-install-side-effect-claims.js";
 import { healTwinBundleWires } from "./platform/heal-twin-bundle-wires.js";
 import {
   registerDeclarativeScanResolver,
@@ -152,6 +158,7 @@ type PlacementDB = {
     container_kind: string;
     container_id: string;
     slot: string | null;
+    metadata: unknown;
     placed_by: string | null;
     placed_at: unknown;
   };
@@ -230,7 +237,10 @@ async function boot() {
     entities: {
       registerResolver: entities.registerResolver,
       registerWriter: entities.registerEntityWriter,
-      getWriter: async (orgId, kind) => (await entities.getEntityWriterFor(orgId, kind)) ?? null,
+      getWriter: async (orgId, kind) => {
+        const w = await entities.getEntityWriterFor(orgId, kind);
+        return w ? announceWrites(orgId, kind, w) : null;
+      },
       mergeMetadata: async (orgId, kind, id, fields) => {
         const w = await entities.getEntityWriterFor(orgId, kind);
         if (!w?.mergeMetadata) return false;
@@ -441,6 +451,7 @@ async function boot() {
       setEndpointPolicy: aiImpl.setEndpointPolicy,
       listProviders: aiImpl.listProviders,
       getProvider: aiImpl.getProvider,
+      chainFor: aiImpl.aiChainFor,
       invoke: aiImpl.invoke,
     },
     edge: {
@@ -451,6 +462,9 @@ async function boot() {
       relayPoll: edgeImpl.relayPoll,
       relayRespond: edgeImpl.relayRespond,
       relayAgents: edgeImpl.relayAgents,
+      listBridges: edgeImpl.listBridges,
+      renameBridge: edgeImpl.renameBridge,
+      disconnectBridge: edgeImpl.disconnectBridge,
       relayInfo: edgeImpl.relayInfo,
       registerConsumer: edgeImpl.registerConsumer,
       listConsumers: edgeImpl.listConsumers,
@@ -489,6 +503,7 @@ async function boot() {
       registerItemCounter: instancesImpl.registerItemCounter,
       registerMover: registerMover,
       patchDerivedConfig: instancesImpl.patchInstanceDerivedConfig,
+      configOf: async (orgId: string, instanceName: string) => (await instancesImpl.instanceConfig(orgId, instanceName))?.config ?? null,
       list: async (orgId: string) => {
         const rows = await instancesImpl.listInstances(orgId);
         return Promise.all(
@@ -535,6 +550,19 @@ async function boot() {
     accounts: {
       registerLifecycleHooks: hostedSeams.registerLifecycleHooks,
       dayFor: dayForPerson,
+      currentUserId: () => currentActor()?.userId ?? null,
+      displayNames: async (orgId, userIds) => {
+        const ids = [...new Set(userIds)].filter((u) => /^[0-9a-f-]{36}$/i.test(u));
+        if (ids.length === 0) return {};
+        const rows = await meta
+          .selectFrom("users as u")
+          .innerJoin("org_memberships as m", "m.user_id", "u.id")
+          .select(["u.id", "u.display_name", "u.email"])
+          .where("m.org_id", "=", orgId)
+          .where("u.id", "in", ids)
+          .execute();
+        return Object.fromEntries(rows.map((r) => [r.id, r.display_name || r.email]));
+      },
     },
     http: {
       registerRequestGuard: hostedSeams.registerRequestGuard,
@@ -704,6 +732,19 @@ async function boot() {
     // container." One relationship for the whole platform (a part in a machine,
     // a component in a server, an item in a location); see
     // docs/design-decisions/placement-and-containment.md.
+    fields: {
+      retire: async ({ orgId, kind, name }) => {
+        const rows = await meta
+          .selectFrom("module_field_defs")
+          .select("id")
+          .where("org_id", "=", orgId)
+          .where("entity_kind", "=", kind)
+          .where("name", "=", name)
+          .execute();
+        for (const r of rows) await deleteFieldDef(orgId, r.id);
+        return rows.length;
+      },
+    },
     // Tags — the in-process seam over core-tags' tables for writers that have
     // no request bearer (the sync engine). Same semantics as POST /attachments:
     // attach by name, create the tag on first use, idempotent per (tag, entity).
@@ -790,8 +831,12 @@ async function boot() {
         return rows.map((r) => r.name);
       },
     },
+    services: createServices(),
     placement: {
-      place: async ({ orgId, containee: asked, container: askedContainer, slot, placedBy }) => {
+      place: async ({ orgId, containee: asked, container: askedContainer, slot, placedBy, position, via }) => {
+        if (position && !(Number.isFinite(position.x_mm) && Number.isFinite(position.y_mm))) {
+          throw new Error("placement: a position is two numbers, x_mm and y_mm");
+        }
         // One record, one key: whatever spelling the caller holds (a
         // collection's "home-inventory:item" from a search, the base
         // "inventory:part" from the record page), placements are stored and
@@ -853,6 +898,21 @@ async function boot() {
           cursor = up ? { kind: up.container_kind, id: up.container_id } : null;
         }
         // Upsert — one container per containee (moving re-points the same row).
+        // The pin: given, it is set (null clears it); not given, it is kept
+        // while the thing stays in the same container and dropped when it
+        // moves to another, whose floor it did not measure.
+        const prev = await tdb
+          .selectFrom("core_placement_placements")
+          .select(["container_kind", "container_id", "metadata"])
+          .where("containee_kind", "=", containee.kind)
+          .where("containee_id", "=", containee.id)
+          .executeTakeFirst();
+        const md: Record<string, unknown> =
+          prev?.metadata && typeof prev.metadata === "object" && !Array.isArray(prev.metadata) ? { ...(prev.metadata as Record<string, unknown>) } : {};
+        const sameContainer = !!prev && prev.container_kind === container.kind && prev.container_id === container.id;
+        if (position) md.position = { x_mm: position.x_mm, y_mm: position.y_mm };
+        else if (position === null || !sameContainer) delete md.position;
+        const metadata = sql`${JSON.stringify(md)}::jsonb`;
         await tdb
           .insertInto("core_placement_placements")
           .values({
@@ -861,6 +921,7 @@ async function boot() {
             container_kind: container.kind,
             container_id: container.id,
             slot: slot ?? null,
+            metadata,
             placed_by: placedBy ?? null,
           })
           .onConflict((oc) =>
@@ -868,11 +929,29 @@ async function boot() {
               container_kind: container.kind,
               container_id: container.id,
               slot: slot ?? null,
+              metadata,
               placed_by: placedBy ?? null,
               placed_at: sql`now()`,
             }),
           )
           .execute();
+        if (via?.trim()) {
+          const [module, entityType] = containee.kind.includes(":") ? containee.kind.split(":", 2) : [null, containee.kind];
+          await activity
+            .log({
+              orgId,
+              userId: placedBy ?? undefined,
+              action: sameContainer ? "repositioned" : "moved",
+              ref: { module: module ?? null, entityType: entityType ?? containee.kind, entityId: containee.id },
+              diff: {
+                to: { kind: container.kind, id: container.id },
+                ...(prev && !sameContainer ? { from: { kind: prev.container_kind, id: prev.container_id } } : {}),
+                ...(md.position ? { position: md.position } : {}),
+              },
+              via: { kind: "surface", label: via.trim().slice(0, 80) },
+            })
+            .catch((err: unknown) => console.warn("[placement] activity row not written:", (err as Error).message));
+        }
         // ONE truth during the transition: keep the containee's legacy
         // location_id coherent with the placement, via the module's own entity
         // writer (the isolation-respecting cross-module write seam).
@@ -956,11 +1035,16 @@ async function boot() {
         const tdb = (await getTenantDb(orgId)) as unknown as Kysely<PlacementDB>;
         const rows = await tdb
           .selectFrom("core_placement_placements")
-          .select(["containee_kind", "containee_id"])
+          .select(["containee_kind", "containee_id", "slot", "metadata"])
           .where("container_kind", "=", container.kind)
           .where("container_id", "=", container.id)
           .execute();
-        return rows.map((r) => ({ kind: r.containee_kind, id: r.containee_id }));
+        return rows.map((r) => {
+          const pos = (r.metadata as { position?: { x_mm?: unknown; y_mm?: unknown } } | null)?.position;
+          const position =
+            pos && typeof pos.x_mm === "number" && typeof pos.y_mm === "number" ? { x_mm: pos.x_mm, y_mm: pos.y_mm } : null;
+          return { kind: r.containee_kind, id: r.containee_id, slot: r.slot, position };
+        });
       },
     },
     catalogs: {
@@ -1147,6 +1231,9 @@ async function boot() {
       },
     },
   });
+  // A connection that rides a person's bridge is re-tested when the bridge
+  // comes back, so an outage does not leave it reading "Could not verify".
+  reverifyWhenBridgesReturn();
 
   // Self-hoster BYO auth-email sender (env-configured SMTP / Mailgun / Resend /
   // Postmark). Registered BEFORE module load so the cloud overlay's managed
@@ -1302,6 +1389,7 @@ async function boot() {
   // which is the failure this exists to prevent. Costs nothing on a box where
   // nobody has set a window (one indexed "any pending?" read per tick).
   startDeliverySweeper();
+  startBridgeOutageWatch();
   startPhotoRetentionSweeper();
   startBundleUpdateSweeper();
   // A pool whose callers are waiting says so in the log while it is
@@ -1363,6 +1451,10 @@ async function boot() {
   if (claimsOrgs > 0) {
     console.log(`[cobblr-api] bundle-resource claims backfilled for ${claimsOrgs} org(s)`);
   }
+  // The modules an install switched on before installs claimed them (#3918),
+  // where the activity log can say so. One cobblr_meta query, no tenant pool.
+  const sideEffectClaims = await T("backfillInstallSideEffectClaims", backfillInstallSideEffectClaims());
+  if (sideEffectClaims > 0) console.log(`[cobblr-api] install side-effect claims backfilled: ${sideEffectClaims}`);
 
   // Central identity federation (Slice 3): link any unlinked local user to its global
   // identity by email. No-op unless IDENTITY_URL is wired. Meta-only, idempotent,

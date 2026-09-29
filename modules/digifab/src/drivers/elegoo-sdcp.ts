@@ -30,6 +30,7 @@ import type {
   UploadResult,
 } from "./types.js";
 import { assertSafeMachineUrl } from "./ssrf.js";
+import { uploadSignal } from "./timeouts.js";
 
 const DISCOVER_PORT = 3000;
 const WS_PORT = 3030;
@@ -265,7 +266,7 @@ export class ElegooSdcpDriver implements MachineDriver {
       form.append("Check", "1");
       form.append("S-File-MD5", md5);
       form.append("File", new Blob([chunk.buffer.slice(chunk.byteOffset, chunk.byteOffset + chunk.byteLength) as ArrayBuffer]), filename);
-      const res = await fetch(`http://${this.host}:${WS_PORT}/uploadFile/upload`, { method: "POST", body: form });
+      const res = await fetch(`http://${this.host}:${WS_PORT}/uploadFile/upload`, { method: "POST", body: form, signal: uploadSignal() });
       if (!res.ok) {
         const detail = await res.text().catch(() => "");
         throw new Error(`SDCP upload failed at offset ${offset}: HTTP ${res.status} ${detail.slice(0, 200)}`);

@@ -13,7 +13,7 @@ import { defineModule } from "@cobblr/platform-contract";
 
 export default defineModule({
   name: "core-maintenance",
-  version: "0.1.11",
+  version: "0.2.1",
   displayName: "Maintenance",
   description:
     "Service history + scheduled maintenance for any entity. Oil changes, firmware flashes, warranty renewals: log what's done, get pinged when something's due.",
@@ -62,6 +62,7 @@ export default defineModule({
       "core-maintenance.entry.created",
       "core-maintenance.entry.updated",
       "core-maintenance.entry.deleted",
+      "core-maintenance.schedule.created",
       "core-maintenance.entry.due-soon",
       // (removed core-maintenance.entry.overdue — declared but never emitted;
       //  the sweeper only emits due-soon. Audit 2026-06-26 follow-up.)
@@ -96,6 +97,51 @@ export default defineModule({
           scheduled_at: { label: "When it is next due (ISO date)", type: "text" },
           notes: { label: "Notes", type: "text" },
           cost_cents: { label: "Cost in cents", type: "number" },
+          schedule_id: { label: "The schedule it belongs to (optional; matched by name otherwise)", type: "text" },
+        },
+      },
+      {
+        id: "core-maintenance:schedule",
+        examples: ["change the oil every 3 months", "service the printer every 200 print hours"],
+        undoable: true,
+        label: "Set a service schedule",
+        face: "maintained",
+        description:
+          "Say how often this record wants servicing, by the calendar (`every_n` + `every_unit`: day, week, month, year) or by a usage counter the record keeps (`counter_every` + `counter_field`, e.g. 200 print_hours), or both. Its next service is then always scheduled, logging the service rolls it forward, and it is flagged when due.",
+        icon: "calendar-clock",
+        appliesTo: { traits: ["physical", "unique"] },
+        invokeHandler: "core-maintenance.schedule",
+        argsSchema: {
+          name: { label: "What needs doing", type: "text", required: true },
+          every_n: { label: "How often: every", type: "number", oneOf: "interval", with: "every_unit" },
+          every_unit: {
+            label: "Days, weeks, months or years",
+            type: "text",
+            with: "every_n",
+            choices: [
+              { value: "day", label: "Days" },
+              { value: "week", label: "Weeks" },
+              { value: "month", label: "Months" },
+              { value: "year", label: "Years" },
+            ],
+          },
+          counter_every: { label: "Or by use: every", type: "number", oneOf: "interval", with: "counter_field" },
+          counter_field: { label: "Of what", type: "text", with: "counter_every", choicesFrom: "counters" },
+          last_done_at: { label: "When it was last done (a date, optional)", type: "text" },
+        },
+      },
+      {
+        // NO-PHRASING: the way back for another action, run only from Undo
+        id: "core-maintenance:remove-schedule",
+        internal: true,
+        label: "Remove a service schedule",
+        description: "Internal, the inverse of setting a schedule: removes it and its open occurrence. Runs from Undo on the card; not for direct use.",
+        icon: "undo",
+        scope: "workspace" as const,
+        userInvokable: false,
+        invokeHandler: "core-maintenance.remove-schedule",
+        argsSchema: {
+          schedule_id: { label: "The schedule's id", type: "text" },
         },
       },
       {
@@ -110,6 +156,7 @@ export default defineModule({
         invokeHandler: "core-maintenance.remove-entry",
         argsSchema: {
           entry_id: { label: "The entry's id", type: "text" },
+          schedule_was: { label: "The schedule state to put back, if the entry rolled one", type: "json" },
         },
       },
       {
@@ -142,6 +189,22 @@ export default defineModule({
           entry_id: { label: "The scheduled entry's id", type: "text", required: true },
           performed_at: { label: "When it was done (ISO date)", type: "text" },
         },
+      },
+    ],
+  },
+
+  // "Service every… [3 months ▾]" on any record that can be serviced: the
+  // same eligibility as Log service (physical + unique) and the same face,
+  // so a collection that turned Service off loses both together (#3876).
+  contributes: {
+    panels: [
+      {
+        id: "core-maintenance:schedules",
+        surface: "entity-detail-panel" as const,
+        target: "*",
+        title: "Service schedule",
+        appliesTo: { traits: ["physical", "unique"] },
+        face: "maintained",
       },
     ],
   },

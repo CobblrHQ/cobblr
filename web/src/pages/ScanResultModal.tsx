@@ -17,6 +17,7 @@ import { useScanQuantity } from "../lib/scanQuantity";
 import { leadPhoto } from "../lib/scanPhoto";
 import { CaptureSheetShell, QtyStepper } from "./ScanCaptureDrawer";
 import { TrackedMatchBanner } from "../components/TrackedMatchBanner";
+import { useTrackedMatchList } from "../lib/useTrackedMatchList";
 import { EntityActionChip } from "../components/EntityActionChip";
 import { useAiStatus } from "./ScanPage";
 import { AiOffMissHint } from "./ScanInboxCard";
@@ -28,7 +29,8 @@ import { ScanNameItInline } from "../components/ScanNameItInline";
 import { scanInboxKeys } from "../lib/scan-inbox-keys";
 import { useScanViewer } from "./scanViewer";
 import { oneTapDestination, quickFileRow, stillRouting } from "./scanQuickFile";
-import { claimFirstFiling } from "../lib/filedRows";
+import { claimFirstFiling, filedNameOf, filedWords } from "../lib/filedRows";
+import { navTargetFor } from "../components/useNavModules";
 import { pointAtInNav } from "../lib/navPointer";
 import { announceJustFiled } from "../lib/justFiled";
 import { installToastLine } from "../lib/installSummary";
@@ -107,7 +109,7 @@ export function ScanResultModal({
     mode: "add-qty" | "replace" | "link-barcode" | "move" | "merge-fields" | "count",
   ) => void;
 }) {
-  const { activeSlug } = useActiveOrg();
+  const { activeSlug, activeOrg } = useActiveOrg();
   const aiStatus = useAiStatus();
   const qc = useQueryClient();
   const toast = useToast();
@@ -216,7 +218,9 @@ export function ScanResultModal({
         target_module: opts.module,
         target_kind: opts.kind,
         instance: opts.instance,
-        name: item.suggested_name ?? `Barcode ${barcode}`,
+        // No name is sent rather than the code dressed up as one: the server
+        // names it from the row, and refuses a bare code (#3930).
+        ...(item.suggested_name?.trim() ? { name: item.suggested_name } : {}),
         // NOT the stepper's display value: an untouched stepper shows 1 for
         // an item with no count, and sending that 1 told the server "I counted
         // one", which latches a catalog instance to the stock face off a single
@@ -230,9 +234,13 @@ export function ScanResultModal({
       });
     },
     onSuccess: (r) => {
-      const dest = r.item.target_module
-        ? `/w/${activeSlug}/${r.item.target_module === "inventory" ? "inventory/parts" : r.item.target_module + "s"}/${r.created.id}`
-        : null;
+      const into = filedIntoOf(r.item.suggested_metadata);
+      const dest = into?.under
+        ? `/w/${activeSlug}${navTargetFor(`__instance__${into.under.instance}`, !!activeOrg?.app_mode)}?highlight=${encodeURIComponent(r.created.id)}`
+        : r.item.target_module
+          ? `/w/${activeSlug}/${r.item.target_module === "inventory" ? "inventory/parts" : r.item.target_module + "s"}/${r.created.id}`
+          : null;
+      const underWords = into?.under ? filedWords({ destination: into.label, noun: into.noun ?? null, under: into.under }).headline : null;
       // The label offer rides on the toast: the thing just got a record and an
       // id, and "print a label for the box" is the next tap in a home. It never
       // prints on its own (a print is paper, not a toast), and it shows only
@@ -241,12 +249,21 @@ export function ScanResultModal({
       toast.success(
         (dest ? (
           <span className="inline-flex flex-wrap items-center gap-2">
-            <span>
-              Added - open{" "}
-              <a href={dest} className="underline">
-                {r.item.suggested_name ?? "the new entity"}
-              </a>
-            </span>
+            {underWords ? (
+              <span>
+                {underWords} ·{" "}
+                <a href={dest} className="underline">
+                  Go to it
+                </a>
+              </span>
+            ) : (
+              <span>
+                Added - open{" "}
+                <a href={dest} className="underline">
+                  {filedNameOf(r.item)}
+                </a>
+              </span>
+            )}
             {kind && (
               <EntityActionChip
                 entityKind={kind}
@@ -259,7 +276,7 @@ export function ScanResultModal({
             )}
           </span>
         ) : (
-          `Added ${r.item.suggested_name ?? barcode}`
+          `Added ${filedNameOf(r.item)}`
         )) as never,
       );
       void qc.invalidateQueries({ queryKey: scanInboxKeys.all(activeSlug) });
@@ -310,8 +327,14 @@ export function ScanResultModal({
   });
   const viewer = useScanViewer(menuQ.data?.items ?? null);
   const rowState = item ? scanRowState(item, viewer) : null;
+  // Count mode on something you already have is a stocktake: the only
+  // question is how many there are now (the banner's Set total). Every way
+  // of making a NEW record (the one-tap add, the ?into add, "this is the
+  // bin itself") is withheld, or a count of a book would file a second copy.
+  const { all: liveMatches } = useTrackedMatchList(item ?? null);
+  const countingWhatYouHave = !!countMode && !!item && (!!scanTrackedMatch(item) || liveMatches.length > 0);
   const oneTap =
-    !scanTarget.into && item && item.suggested_name && rowState && (rowState.eligibility === "ready" || rowState.eligibility === "needs-install")
+    !countingWhatYouHave && !scanTarget.into && item && item.suggested_name && rowState && (rowState.eligibility === "ready" || rowState.eligibility === "needs-install")
       ? oneTapDestination(item, rowState.destination)
       : null;
   const recordRoute = useDetailRoute(activeSlug);
@@ -326,11 +349,21 @@ export function ScanResultModal({
       // The table it went to, where the visitor can see it among the rest,
       // with the record itself one tap away on the notice.
       const record = into?.kind ? recordRoute(into.kind, filed.created.id) : null;
-      const to = (into?.kind ? listRoute(into.kind) : null) ?? record;
+      // A record under a type lands on the type's page, picked out there: the
+      // types and their records are one page (#3930).
+      const underPage = into?.under ? navTargetFor(`__instance__${into.under.instance}`, !!activeOrg?.app_mode) : null;
+      const to = underPage ?? (into?.kind ? listRoute(into.kind) : null) ?? record;
       onClose("handled");
       if (to) {
-        announceJustFiled({ label, firstEver: first, installed: installed ? installToastLine(installed) : null, record: to === record ? null : record, path: to });
-        navigate(to);
+        announceJustFiled({
+          label,
+          firstEver: first,
+          installed: installed ? installToastLine(installed) : null,
+          record: underPage ? null : to === record ? null : record,
+          path: to,
+          ...(into?.under ? { headline: filedWords({ destination: label, noun: into.noun ?? null, under: into.under }).headline } : {}),
+        });
+        navigate(underPage ? `${underPage}?highlight=${encodeURIComponent(filed.created.id)}` : to);
       } else {
         toast.success(`Filed in ${label}.`);
       }
@@ -615,7 +648,7 @@ export function ScanResultModal({
             chips are gone - the scanner never files (reported 2026-08-03: "we are
             filing into scan inbox for this category to get figured out
             later"); routing is the inbox's job, on the surface built for it. */}
-        {scanTarget.into ? (
+        {countingWhatYouHave ? null : scanTarget.into ? (
           <button
             type="button"
             disabled={!item || busy}
@@ -658,7 +691,7 @@ export function ScanResultModal({
             is. Writes the product identity onto the active bin itself instead
             of filing a new item into it. Only offered when a location bin is
             active and the scan actually identified a product. */}
-        {item && scanAreaId && item.suggested_name && (
+        {item && scanAreaId && item.suggested_name && !countingWhatYouHave && (
           <button
             type="button"
             disabled={busy}

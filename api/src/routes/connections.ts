@@ -17,7 +17,8 @@ import * as aiImpl from "../platform/ai.js";
 import * as connectionProviders from "../platform/connections.js";
 import { notifyAccount } from "../platform/notifications.js";
 import { absoluteAppUrl } from "../platform/public-url.js";
-import { unverifiedRefusal, verificationOf, type ConnectionVerification } from "@cobblr/platform-contract/connection-verification";
+import { unverifiedRefusal } from "@cobblr/platform-contract/connection-verification";
+import { carriesCredentials, probeConnection, testStoredConnection } from "../platform/connection-probe.js";
 import {
   addUserCredential,
   updateUserCredential,
@@ -64,30 +65,6 @@ const PatchBody = z.object({
   routes: z.array(Route).max(200).optional(),
   confirm_unverified: z.boolean().optional(),
 });
-
-/**
- * The probe a save runs before a key is presented as ready (#2895): the
- * provider's cheapest call, no workspace data, and the verdict becomes the
- * connection's verification. A provider with no probe is "unverified" by
- * construction and says so. `null` when the credentials carry nothing to
- * probe (an edit that changed only the label or the routing).
- */
-async function probeForSave(
-  providerId: string,
-  credentials: Record<string, unknown> | undefined,
-  userId: string,
-): Promise<ConnectionVerification | null> {
-  if (!credentials || !Object.values(credentials).some((v) => typeof v === "string" && v.trim())) return null;
-  const def = aiImpl.getProvider(providerId);
-  if (!def) return null;
-  if (!def.testConnection) return { state: "unverified", at: new Date().toISOString(), message: "This provider has no way to be tested from here." };
-  try {
-    const model = typeof credentials.model === "string" && credentials.model.trim() ? credentials.model.trim() : null;
-    return verificationOf(await def.testConnection({ ...credentials, __connection_user_id: userId }), model);
-  } catch (err) {
-    return verificationOf({ ok: false, reason: "unknown", error: (err as Error)?.message });
-  }
-}
 
 /** Every org id the user actually belongs to — guards explicit routing so you
  *  can't route a personal cred into a workspace you're not in. */
@@ -278,7 +255,8 @@ connectionsRouter.post("/me/connections", requireAuth, async (req, res, next) =>
     // The key is tested before the connection is presented as ready. A
     // rejected key is not saved unless the person says so, and then it is
     // saved as unverified, not as ready.
-    let verification = await probeForSave(parsed.data.provider_id, parsed.data.credentials, req.session!.id);
+    // Always probed, even with no key: a bridge has none and is still testable.
+    let verification = await probeConnection(parsed.data.provider_id, parsed.data.credentials, req.session!.id);
     if (verification?.state === "invalid" && !parsed.data.confirm_unverified) {
       res.status(409).json(unverifiedRefusal(verification));
       return;
@@ -328,10 +306,11 @@ connectionsRouter.patch("/me/connections/:id", requireAuth, async (req, res, nex
       res.status(404).json({ error: { code: "not_found", message: "Connection not found." } });
       return;
     }
-    let verification =
-      stored && parsed.data.credentials !== undefined
-        ? await probeForSave(stored.provider_id, { ...stored.credentials, ...parsed.data.credentials }, req.session!.id)
-        : null;
+    // An edit re-probes only a key: a bridge's settings are no key, and a
+    // bridge that is offline while its setting changes must not be refused
+    // for it. Its Test button, and its return, re-check it.
+    const merged = stored && parsed.data.credentials !== undefined ? { ...stored.credentials, ...parsed.data.credentials } : null;
+    let verification = stored && merged && carriesCredentials(merged) ? await probeConnection(stored.provider_id, merged, req.session!.id) : null;
     // A rejected key is always refused until confirmed; an unsettled one only
     // when it would displace a key that VERIFIED. A row never verified takes
     // the new state as it is.
@@ -359,21 +338,16 @@ connectionsRouter.patch("/me/connections/:id", requireAuth, async (req, res, nex
 });
 
 // The Test button: the same probe as a save, on the stored key nobody can
-// read back, and the verdict replaces the row's verification.
+// read back, and the verdict replaces the row's verification. It always
+// probes, key or no key: a bridge has none.
 connectionsRouter.post("/me/connections/:id/test", requireAuth, async (req, res, next) => {
   try {
     const id = req.params.id;
-    const stored = id ? await storedUserCredentials(req.session!.id, id) : null;
-    if (!id || !stored) {
+    const verification = id ? await testStoredConnection(req.session!.id, id) : null;
+    if (!verification) {
       res.status(404).json({ error: { code: "not_found", message: "Connection not found." } });
       return;
     }
-    const verification = (await probeForSave(stored.provider_id, stored.credentials, req.session!.id)) ?? {
-      state: "unverified" as const,
-      at: new Date().toISOString(),
-      message: "This connection holds nothing to test.",
-    };
-    await updateUserCredential(req.session!.id, id, { verification });
     res.json({ verification });
   } catch (err) {
     next(err);

@@ -1,6 +1,9 @@
 // Bundle resource claims — the provenance/refcount behind a clean bundle uninstall.
 //
-// A bundle install enables modules + creates module instances. Two bundles (and
+// A bundle install enables modules, creates module instances and sets up
+// places. Every one of those it CAUSED is claimed: the modules its tables live
+// on, the modules it switched on because it needed them, and the places it
+// created (never a place that was already there, never a module already on). Two bundles (and
 // the user) can all need the same module. So uninstall must disable a module /
 // delete an instance ONLY when no source still claims it — you can't tell that
 // from current state alone. Each install records a claim per resource it owns
@@ -12,7 +15,8 @@
 
 import { meta } from "../db/meta.js";
 
-export type ClaimType = "module" | "instance";
+/** `place` is a location an install created (resource_key = its id). */
+export type ClaimType = "module" | "instance" | "place";
 export interface ResourceClaim {
   resource_type: ClaimType;
   resource_key: string;

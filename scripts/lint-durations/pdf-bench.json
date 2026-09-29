@@ -1,5 +1,6 @@
 {
   "lint": "lint:pdf-bench",
   "run": "tsx modules/labels/tests/pdf-benchmark.mjs check",
-  "manual": "renders PDFs and compares ink coverage, so its baseline is font- and renderer-sensitive; in CI it would report label regressions that are really container font differences. Run it locally when changing label layout."
+  "manual": "renders PDFs and compares ink coverage, so its baseline is font- and renderer-sensitive; in CI it would report label regressions that are really container font differences. Run it locally when changing label layout.",
+  "readMB": 0.0
 }

@@ -1,12 +1,29 @@
 {
   "manifest": {
     "id": "cobblr.flagship.filament",
-    "version": "0.5.6",
+    "version": "0.8.0",
     "name": "Filament",
     "description": "A filament TYPE (Royal Blue PLA) defines the filament once: material, colour, diameter, nozzle/bed temps, needs-drying. SPOOLS pick a type + add only what's per-spool: size, batch code, remaining, state. Each type rolls up its spool count + total kg.",
     "author": "Cobblr",
     "released_at": "2026-06-17",
-    "changelog": "Opens as a catalog of things you own, and stays one: a number typed into one item no longer turns the whole collection into stock tracking with Use one, Used up and a reorder point. Earlier: Types and Spools now sit together in the navbar as one element, a quiet \"Filament\" stem with \"Types │ Spools\" links, so the two related tables read as one thing. (0.5.1: scanning a spool's QR find-or-creates its filament TYPE and links the spool automatically, a scan lands in the type→spool model instead of a flat row. 0.5.0: the TYPE defines the whole filament: colour, diameter, nozzle/bed temps and needs-drying live on the type, not re-entered per spool; a SPOOL just picks its type and carries the per-spool facts: size, batch code, remaining, state. Upgrading carries your existing temps + colour up onto the type automatically.)",
+    "changelog": "A filament type's fields sit under three headings, Identity, Printing and Spool, and each folds away, so a type's page reads in parts instead of one long list. A field you moved to another section stays where you put it when Filament updates. Earlier: A filament type has ONE colour field. It holds one colour, a blend or several, so a rainbow reads as a rainbow, and the separate colour swatch field is folded into it. Earlier: A scanned spool files as a spool: its type is found or made under it, and a scan never offers the table of types. The spools also know what filament is called (PLA, PETG, 1.75 mm), so a spool is not filed as generic inventory. Earlier: Scanning a spool's QR fills in everything its maker publishes: the exact colour swatch, the UPC, the nozzle and bed temperature ranges, the drying temperature, density, the empty spool weight, and the date the spool was made and its measured length. The UPC is the type's identifier, so scanning the box barcode finds the same type. Earlier: Opens as a catalog of things you own, and stays one: a number typed into one item no longer turns the whole collection into stock tracking with Use one, Used up and a reorder point. Earlier: Types and Spools now sit together in the navbar as one element, a quiet \"Filament\" stem with \"Types │ Spools\" links, so the two related tables read as one thing. (0.5.1: scanning a spool's QR find-or-creates its filament TYPE and links the spool automatically, a scan lands in the type→spool model instead of a flat row. 0.5.0: the TYPE defines the whole filament: colour, diameter, nozzle/bed temps and needs-drying live on the type, not re-entered per spool; a SPOOL just picks its type and carries the per-spool facts: size, batch code, remaining, state. Upgrading carries your existing temps + colour up onto the type automatically.)",
+    "releases": [
+      {
+        "version": "0.8.0",
+        "released_at": "2026-09-29",
+        "notes": "A filament type's fields sit under three headings, Identity, Printing and Spool, and each folds away, so a type's page reads in parts instead of one long list. A field you moved to another section stays where you put it when Filament updates."
+      },
+      {
+        "version": "0.7.0",
+        "released_at": "2026-09-29",
+        "notes": "A filament type has ONE colour field. It holds one colour, a blend or several, so a rainbow reads as a rainbow, and the separate colour swatch field is folded into it."
+      },
+      {
+        "version": "0.6.1",
+        "released_at": "2026-09-28",
+        "notes": "A scanned spool files as a spool: its type is found or made under it, and a scan never offers the table of types. The spools also know what filament is called (PLA, PETG, 1.75 mm), so a spool is not filed as generic inventory. Earlier: Scanning a spool's QR fills in everything its maker publishes: the exact colour swatch, the UPC, the nozzle and bed temperature ranges, the drying temperature, density, the empty spool weight, and the date the spool was made and its measured length. The UPC is the type's identifier, so scanning the box barcode finds the same type. Earlier: Opens as a catalog of things you own, and stays one: a number typed into one item no longer turns the whole collection into stock tracking with Use one, Used up and a reorder point. Earlier: Types and Spools now sit together in the navbar as one element, a quiet \\\"Filament\\\" stem with \\\"Types │ Spools\\\" links, so the two related tables read as one thing. (0.5.1: scanning a spool's QR find-or-creates its filament TYPE and links the spool automatically, a scan lands in the type→spool model instead of a flat row. 0.5.0: the TYPE defines the whole filament: colour, diameter, nozzle/bed temps and needs-drying live on the type, not re-entered per spool; a SPOOL just picks its type and carries the per-spool facts: size, batch code, remaining, state. Upgrading carries your existing temps + colour up onto the type automatically.)"
+      }
+    ],
     "requires": [
       {
         "module": "inventory"
@@ -60,6 +77,7 @@
             "display_label": "Material",
             "type": "text",
             "position": 1,
+            "section": "Identity",
             "choices": [
               "PLA",
               "PLA+",
@@ -80,8 +98,9 @@
             "display_label": "Colour",
             "type": "text",
             "position": 2,
+            "section": "Identity",
             "renderer": "color-hex",
-            "help": "Pick a swatch so the table shows the colour at a glance."
+            "help": "One colour, a blend or several: pick them, or type a colour's name."
           },
           {
             "entity_kind": "inventory:part",
@@ -89,6 +108,7 @@
             "display_label": "Diameter",
             "type": "text",
             "position": 3,
+            "section": "Identity",
             "choices": [
               "1.75 mm",
               "2.85 mm"
@@ -101,6 +121,7 @@
             "display_label": "Nozzle °C",
             "type": "number",
             "position": 4,
+            "section": "Printing",
             "help": "The hot-end temperature that prints this filament cleanly, same for every spool of it."
           },
           {
@@ -109,6 +130,7 @@
             "display_label": "Bed °C",
             "type": "number",
             "position": 5,
+            "section": "Printing",
             "help": "The bed temperature that makes the first layer stick."
           },
           {
@@ -117,6 +139,7 @@
             "display_label": "Needs drying",
             "type": "boolean",
             "position": 6,
+            "section": "Spool",
             "choices": [
               "Stable",
               "Hygroscopic"
@@ -140,6 +163,79 @@
             "position": 8,
             "template": "{{instances.total_qty}} kg",
             "help": "Total filament remaining across all your spools of this type."
+          },
+          {
+            "entity_kind": "inventory:part",
+            "name": "upc",
+            "display_label": "UPC",
+            "type": "text",
+            "position": 10,
+            "section": "Identity",
+            "field_role": "identifier",
+            "help": "The barcode on the spool's box, so a scan of it finds this type."
+          },
+          {
+            "entity_kind": "inventory:part",
+            "name": "nozzle_temp_min",
+            "display_label": "Nozzle min °C",
+            "type": "number",
+            "position": 11,
+            "section": "Printing",
+            "help": "The coolest nozzle temperature the maker lists."
+          },
+          {
+            "entity_kind": "inventory:part",
+            "name": "nozzle_temp_max",
+            "display_label": "Nozzle max °C",
+            "type": "number",
+            "position": 12,
+            "section": "Printing",
+            "help": "The hottest nozzle temperature the maker lists."
+          },
+          {
+            "entity_kind": "inventory:part",
+            "name": "bed_temp_min",
+            "display_label": "Bed min °C",
+            "type": "number",
+            "position": 13,
+            "section": "Printing",
+            "help": "The coolest bed temperature the maker lists."
+          },
+          {
+            "entity_kind": "inventory:part",
+            "name": "bed_temp_max",
+            "display_label": "Bed max °C",
+            "type": "number",
+            "position": 14,
+            "section": "Printing",
+            "help": "The hottest bed temperature the maker lists."
+          },
+          {
+            "entity_kind": "inventory:part",
+            "name": "dry_temp",
+            "display_label": "Dry °C",
+            "type": "number",
+            "position": 15,
+            "section": "Spool",
+            "help": "The highest temperature to dry this filament at."
+          },
+          {
+            "entity_kind": "inventory:part",
+            "name": "density",
+            "display_label": "Density g/cm³",
+            "type": "number",
+            "position": 16,
+            "section": "Spool",
+            "help": "Used to turn a weight into a length."
+          },
+          {
+            "entity_kind": "inventory:part",
+            "name": "empty_spool_g",
+            "display_label": "Empty spool g",
+            "type": "number",
+            "position": 17,
+            "section": "Spool",
+            "help": "What the empty spool weighs, to weigh what is left."
           }
         ],
         "field_overrides": [
@@ -227,6 +323,19 @@
         "display_name": "Spools",
         "glyph": "🧵",
         "item_noun": "spool",
+        "scan_keywords": [
+          "filament",
+          "3d printer filament",
+          "pla",
+          "pla+",
+          "petg",
+          "asa",
+          "tpu",
+          "1.75mm",
+          "1.75 mm",
+          "2.85mm",
+          "2.85 mm"
+        ],
         "qty_unit": "kg",
         "nav_group": {
           "key": "filament",
@@ -244,7 +353,15 @@
           "copy_fields": [
             "nozzle_temp",
             "bed_temp",
-            "needs_drying"
+            "needs_drying",
+            "upc",
+            "nozzle_temp_min",
+            "nozzle_temp_max",
+            "bed_temp_min",
+            "bed_temp_max",
+            "dry_temp",
+            "density",
+            "empty_spool_g"
           ]
         },
         "field_defs": [
@@ -285,6 +402,22 @@
               "empty"
             ],
             "help": "Sealed = unopened; open = in use; empty = used up (keep it for the record or delete it)."
+          },
+          {
+            "entity_kind": "inventory:part",
+            "name": "mfg_date",
+            "display_label": "Made on",
+            "type": "date",
+            "position": 4,
+            "help": "The date the maker's tag says this spool was made."
+          },
+          {
+            "entity_kind": "inventory:part",
+            "name": "length_m",
+            "display_label": "Length (m)",
+            "type": "number",
+            "position": 5,
+            "help": "The filament length the maker measured on this spool."
           }
         ],
         "field_overrides": [

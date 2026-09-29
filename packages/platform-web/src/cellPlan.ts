@@ -36,6 +36,7 @@ export type CellPlan =
   | { kind: "checkbox" }
   | { kind: "relation" }
   | { kind: "member" }
+  | { kind: "person" }
   | { kind: "choice" }
   | { kind: "color" }
   | { kind: "input" };
@@ -70,6 +71,8 @@ export function cellPlan(def: EditableCellDef): CellPlan {
       return { kind: "relation" };
     case "member":
       return { kind: "member" };
+    case "person":
+      return { kind: "person" };
     case "choice":
       return { kind: "choice" };
     case "color":

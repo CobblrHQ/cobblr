@@ -16,6 +16,7 @@ import { useEffect, useState } from "react";
 import { useNavPointer } from "../lib/navPointer";
 import { createPortal } from "react-dom";
 import { dismissOnEmptySpace } from "../lib/dismiss-on-empty";
+import { MoreAppsDoor } from "./MoreAppsDoor";
 import { NavLink, useNavigate } from "react-router-dom";
 import { Menu, X, Moon, Sun, LogOut, Sliders, UserCog, Bell } from "lucide-react";
 import { useQuery } from "@tanstack/react-query";
@@ -351,9 +352,9 @@ export function MobileNav() {
                 );
               })}
               {!appMode && (
-                <NavLink to="/apps" data-testid="nav-all-apps" className={linkClass} onClick={() => setOpen(false)}>
-                  All apps
-                </NavLink>
+                <div className="px-1 pt-1.5">
+                  <MoreAppsDoor onNavigate={() => setOpen(false)} />
+                </div>
               )}
 
               </div>

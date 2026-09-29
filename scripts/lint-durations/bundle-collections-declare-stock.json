@@ -1,10 +1,11 @@
 {
   "lint": "lint:bundle-collections-declare-stock",
-  "run": "tsx scripts/lint-bundle-collections-declare-stock.ts",
+  "run": "node scripts/lint-bundle-collections-declare-stock.ts",
   "rows": [
     "bundle"
   ],
   "ms": 1380,
   "recorded": "2026-09-24",
-  "source": "scaffolded by new-lint.sh at twice a local run (a shared box); replaced from its first CI measurement"
+  "source": "scaffolded by new-lint.sh at twice a local run (a shared box); replaced from its first CI measurement",
+  "readMB": 0.3
 }

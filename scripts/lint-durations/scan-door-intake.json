@@ -1,7 +1,8 @@
 {
   "lint": "lint:scan-door-intake",
-  "run": "tsx scripts/lint-scan-door-intake.ts",
+  "run": "node scripts/lint-scan-door-intake.ts",
   "ms": 701,
   "recorded": "2026-09-14",
-  "source": "split from scripts/lint-durations.json (recorded 2026-09-14)"
+  "source": "split from scripts/lint-durations.json (recorded 2026-09-14)",
+  "readMB": 12.0
 }

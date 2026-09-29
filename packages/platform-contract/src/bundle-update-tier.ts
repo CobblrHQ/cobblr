@@ -133,3 +133,35 @@ export function manifestShipsCatalogs(manifest: unknown): boolean {
 export function updateMayTeardownCatalogs(installedManifest: unknown, newManifest: unknown): boolean {
   return manifestShipsCatalogs(installedManifest) || manifestShipsCatalogs(newManifest);
 }
+
+function cmp(a: [number, number, number], b: [number, number, number]): number {
+  return a[0] - b[0] || a[1] - b[1] || a[2] - b[2];
+}
+
+/**
+ * The release notes an update has to show: every entry after the installed
+ * version, up to and including the offered one, newest first. Somebody three
+ * versions behind reads all three, not only the last.
+ *
+ * An entry whose version cannot be read is kept only when it IS the offered
+ * version, so an odd label never drops the notes for what is on offer.
+ */
+export function releasesBetween<R extends { version: string }>(
+  releases: readonly R[] | undefined,
+  installed: string | null,
+  offered: string,
+): R[] {
+  const hi = parse(offered);
+  const lo = installed ? parse(installed) : null;
+  const picked = (releases ?? []).filter((r) => {
+    if (r.version === offered) return true;
+    const v = parse(r.version);
+    if (!v || !hi) return false;
+    return cmp(v, hi) <= 0 && (!lo || cmp(v, lo) > 0);
+  });
+  return picked.sort((a, b) => {
+    const pa = parse(a.version);
+    const pb = parse(b.version);
+    return pa && pb ? cmp(pb, pa) : 0;
+  });
+}

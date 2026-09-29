@@ -1,7 +1,7 @@
 {
   "id": "octoprint",
   "name": "OctoPrint",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "auth": { "kind": "header", "header": "X-Api-Key", "from": "apiKey" },
   "routing": false,
   "test": { "method": "GET", "path": "/api/version" },
@@ -36,6 +36,7 @@
         "from": "$.state",
         "map": {
           "Operational": "completed",
+          "Starting": "printing",
           "Printing": "printing",
           "Paused": "paused",
           "Pausing": "paused",
@@ -44,7 +45,9 @@
           "Offline": "failed"
         }
       },
-      "progress": "$.progress.completion"
+      "progress": "$.progress.completion",
+      "progressScale": 100,
+      "message": "$.error"
     }
   },
   "commands": {

@@ -17,6 +17,7 @@
 // sticky bottom-0 and never a top-* of their own (lint:sticky-under-header).
 import type { ReactNode } from "react";
 import { ChevronLeft, ChevronRight, PackagePlus, Trash2 } from "lucide-react";
+import { StickyBottomBar } from "@cobblr/platform-web";
 
 /** The shape of a footer ACTION: the one commit door, "+1 more", the form's
  *  Add portalled into the slot. It never shrinks below its words: it may
@@ -114,7 +115,7 @@ export function ScanItemSheetFooter({
     // on that line its words wrap inside it. So no width, text size or label
     // can push an action off the screen or over its neighbour
     // (e2e/sheet-footer-never-clips.mjs walks every state).
-    <div data-testid="sheet-footer" className="sticky bottom-0 z-20 flex flex-wrap items-center justify-end gap-2 border-t border-line dark:border-slate-700 bg-surface dark:bg-slate-900 py-2 pb-[max(0.5rem,env(safe-area-inset-bottom))] pl-[max(0.75rem,env(safe-area-inset-left))] pr-[max(0.75rem,env(safe-area-inset-right))]">
+    <StickyBottomBar testId="sheet-footer" className="z-20 flex flex-wrap items-center justify-end gap-2 border-t border-line dark:border-slate-700 bg-surface dark:bg-slate-900 py-2 pb-[max(0.5rem,env(safe-area-inset-bottom))] pl-[max(0.75rem,env(safe-area-inset-left))] pr-[max(0.75rem,env(safe-area-inset-right))]">
       <button
         type="button"
         onClick={onDiscard}
@@ -158,6 +159,6 @@ export function ScanItemSheetFooter({
           )}
         </>
       )}
-    </div>
+    </StickyBottomBar>
   );
 }

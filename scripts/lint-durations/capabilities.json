@@ -1,7 +1,8 @@
 {
   "lint": "lint:capabilities",
-  "run": "tsx scripts/lint-capabilities.ts",
+  "run": "node scripts/lint-capabilities.ts",
   "ms": 4342,
   "recorded": "2026-09-28",
-  "source": "CI run 28712 (quiet: factor 1.00x, I/O 0.0%) after the per-row re-reads were memoised (#3882); the 1.09 s record from 2026-09-14 predated a fortnight of new rows"
+  "source": "CI run 28712 (quiet: factor 1.00x, I/O 0.0%) after the per-row re-reads were memoised (#3882); the 1.09 s record from 2026-09-14 predated a fortnight of new rows",
+  "readMB": 24.6
 }

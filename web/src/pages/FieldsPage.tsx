@@ -31,6 +31,7 @@ const RENDERERS_BY_TYPE: Record<PlatformFieldDef["type"], CatalogFieldRenderer[]
   number: ["text", "year"],
   // A person renders as their name; nothing else would mean anything.
   member: ["text"],
+  person: ["text"],
   boolean: ["boolean"],
   date: ["text"],
   url: ["url-link", "image-url"],

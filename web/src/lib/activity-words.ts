@@ -64,6 +64,12 @@ export function viaWords(e: ActivityWordsEntry): string | null {
       // names which one.
       if (!e.actor) return label ? `“${label}”` : null;
       return label ? `via automation “${label}”` : "via automation";
+    case "label":
+      // A scanned action label: the person pressed it, the label is how.
+      return label ? `via label “${label}”` : "via a label";
+    case "surface":
+      // A place in the app that is not the record's page: "via floor plan".
+      return label ? `via ${label}` : null;
   }
   if (e.auth_method === "api_token") return token ? `via ${token}` : "via API";
   return null;
@@ -144,6 +150,9 @@ export function activityVerb(a: string): string {
     wire_failed: "automation failed",
     // A trial brought in from the demo box; the row's title is the trial's name.
     carry_replayed: "brought in their trial:",
+    // One-tap stock changes (a button, or a scanned action label).
+    part_used: "took one of",
+    part_restocked: "restocked",
     // A spreadsheet import is one row for the whole run; its title is the file.
     sheet_imported: "imported",
     sheet_import_undone: "undid the import of",

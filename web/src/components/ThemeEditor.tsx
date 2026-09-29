@@ -4,7 +4,7 @@
 // (the workspace launcher's override theme). See web/src/lib/appTheme.ts
 // for how the tokens become CSS variables.
 
-import { useToast } from "@cobblr/platform-web";
+import { DragInput, useToast } from "@cobblr/platform-web";
 import type { AppTheme } from "../lib/api";
 
 const COLOR_FIELDS = [
@@ -59,10 +59,11 @@ export function ThemeEditor({
       <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
         {COLOR_FIELDS.map(([key, label, def]) => (
           <label key={key} className="flex items-center gap-2 text-xs text-content dark:text-mortar-200">
-            <input
-              type="color"
+            <DragInput
+              control="color"
               value={theme?.[key] ?? def}
-              onChange={(e) => onChange({ [key]: e.target.value })}
+              onPreview={(v) => onChange({ [key]: v })}
+              onCommit={(v) => onChange({ [key]: v })}
               className="w-7 h-7 rounded border border-line dark:border-slate-600 bg-transparent cursor-pointer p-0"
             />
             {label}

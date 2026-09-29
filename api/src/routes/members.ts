@@ -22,6 +22,8 @@ import { buildAuthResponse } from "./auth.js";
 import { canActOnRole } from "../auth/capability.js";
 import { ORG_ROLES, INVITABLE_ORG_ROLES } from "@cobblr/platform-contract/org-roles";
 import { REFUSAL, claimJoinUse, inviteStatus, joinThroughInvite } from "../platform/join-invite.js";
+import { clearPeopleCache, linkPersonToUser, listPeople, personForUser } from "../platform/people.js";
+import { handOffThings, type HandOffResult } from "../platform/person-things.js";
 
 export const membersRouter = Router({ mergeParams: true });
 // /accept-invite/:token doesn't have a tenant slug in the path so it
@@ -48,7 +50,7 @@ async function assertAdmin(req: import("express").Request, res: import("express"
   return true;
 }
 
-function newInviteToken(): string {
+export function newInviteToken(): string {
   // 24 bytes → 32-char base64url. Crypto-grade.
   const bytes = new Uint8Array(24);
   crypto.getRandomValues(bytes);
@@ -210,6 +212,21 @@ membersRouter.delete("/:userId", requireAuth, withTenant, async (req, res, next)
         return;
       }
     }
+    // ?hand_to=<person>: what they own goes to someone else on the People
+    // list before they go. Without it their things stay theirs, named and
+    // marked as having left, never silently unowned.
+    const handTo = typeof req.query.hand_to === "string" && req.query.hand_to ? req.query.hand_to : null;
+    let handOff: HandOffResult | null = null;
+    if (handTo && target) {
+      const orgId = req.tenant!.org.id;
+      const leaving = await personForUser(orgId, userId);
+      const people = await listPeople(orgId);
+      if (!leaving || !people.some((p) => p.id === handTo) || handTo === leaving) {
+        res.status(400).json({ error: { code: "bad_hand_to", message: "Hand their things to someone else on this workspace's People list." } });
+        return;
+      }
+      handOff = await handOffThings(orgId, leaving, handTo);
+    }
     const deleted = await meta
       .deleteFrom("org_memberships")
       .where("org_id", "=", req.tenant!.org.id)
@@ -220,11 +237,17 @@ membersRouter.delete("/:userId", requireAuth, withTenant, async (req, res, next)
       res.status(404).json({ error: { code: "not_found", message: "Member not found." } });
       return;
     }
+    clearPeopleCache(req.tenant!.org.id);
     await activity.log({
       orgId: req.tenant!.org.id,
       action: "member_removed",
       ref: { module: null, entityType: "membership", entityId: userId },
+      ...(handOff ? { diff: { handed_to: handTo, moved: handOff.moved, kept: handOff.kept.length } } : {}),
     });
+    if (handOff) {
+      res.status(200).json(handOff);
+      return;
+    }
     res.status(204).end();
   } catch (err) {
     next(err);
@@ -239,7 +262,7 @@ membersRouter.delete("/:userId", requireAuth, withTenant, async (req, res, next)
 // (mirrors the notification, and is the only reach for a brand-new person). The
 // link is still copied to the inviter's clipboard regardless. Best-effort — never
 // fails the mint.
-async function deliverInvite(opts: {
+export async function deliverInvite(opts: {
   req: Request;
   email: string;
   token: string;
@@ -315,10 +338,21 @@ const InviteCreate = z
     /** Item labels offer this join link to someone who scans one signed
      *  out ("Join <workspace> to take one"). Off unless asked for. */
     offer_on_labels: z.boolean().optional(),
+    /** At most `limit` people join per `period`; more pauses the link and
+     *  tells the admins. A join link gets 10 a day unless it says otherwise;
+     *  `pace: null` turns it off. */
+    pace: z
+      .object({ limit: z.number().int().min(1).max(10_000), period: z.enum(["day", "week", "month", "year"]) })
+      .nullable()
+      .optional(),
   })
   .refine((v) => !(v.reusable && v.email), { message: "A join link is for anyone who has it, so it names no email." })
   .refine((v) => v.max_uses === undefined || v.reusable, { message: "Only a join link can be used more than once." })
-  .refine((v) => !v.offer_on_labels || v.reusable, { message: "Only a join link can be offered from item labels." });
+  .refine((v) => !v.offer_on_labels || v.reusable, { message: "Only a join link can be offered from item labels." })
+  .refine((v) => !v.pace || v.reusable, { message: "Only a join link has a pace." });
+
+/** A wall QR's default: a burst guard, no total cap, no end date. */
+const DEFAULT_JOIN_PACE = { limit: 10, period: "day" as const };
 
 membersRouter.post("/invites", requireAuth, withTenant, async (req, res, next) => {
   try {
@@ -342,9 +376,14 @@ membersRouter.post("/invites", requireAuth, withTenant, async (req, res, next) =
       });
       return;
     }
+    // A join link runs until it is revoked: the pace, not a date, is what
+    // stops one that got out. An ordinary invite still lasts two weeks.
     const expiresAt = parsed.data.expires_at
       ? new Date(parsed.data.expires_at)
-      : new Date(Date.now() + (parsed.data.reusable ? 365 : 14) * 24 * 3600_000);
+      : parsed.data.reusable
+        ? null
+        : new Date(Date.now() + 14 * 24 * 3600_000);
+    const pace = parsed.data.reusable ? (parsed.data.pace === undefined ? DEFAULT_JOIN_PACE : parsed.data.pace) : null;
     const token = newInviteToken();
     const inserted = await meta
       .insertInto("workspace_invites")
@@ -358,6 +397,8 @@ membersRouter.post("/invites", requireAuth, withTenant, async (req, res, next) =
         reusable: parsed.data.reusable ?? false,
         max_uses: parsed.data.max_uses ?? null,
         offer_on_labels: parsed.data.offer_on_labels ?? false,
+        pace_limit: pace?.limit ?? null,
+        pace_period: pace?.period ?? null,
       })
       .returningAll()
       .executeTakeFirstOrThrow();
@@ -378,7 +419,8 @@ membersRouter.post("/invites", requireAuth, withTenant, async (req, res, next) =
         orgName: req.tenant!.org.name,
         inviterId: req.session!.id,
         inviteId: inserted.id,
-        expiresAt,
+        // An emailed invite is never a join link, so it always has an end date.
+        expiresAt: expiresAt ?? new Date(Date.now() + 14 * 24 * 3600_000),
       }).catch((e) => console.error("[invites] deliver failed:", (e as Error).message));
     }
     // SAY whether a mail went out. A workspace with no mail sender configured
@@ -464,6 +506,65 @@ membersRouter.delete("/invites/:id", requireAuth, withTenant, async (req, res, n
   }
 });
 
+// A join link that paused itself: turn it back on as it is, or give it a new
+// code, which retires the old QR (a photo of it that got out stops working)
+// and asks for the new one to be printed. Both are logged.
+membersRouter.post("/invites/:id/resume", requireAuth, withTenant, async (req, res, next) => {
+  try {
+    if (!(await assertAdmin(req, res))) return;
+    const row = await meta
+      .updateTable("workspace_invites")
+      .set({ paused_at: null, pace_since: new Date() })
+      .where("id", "=", req.params.id!)
+      .where("org_id", "=", req.tenant!.org.id)
+      .where("reusable", "=", true)
+      .where("revoked_at", "is", null)
+      .returningAll()
+      .executeTakeFirst();
+    if (!row) {
+      res.status(404).json({ error: { code: "not_found", message: "Join link not found." } });
+      return;
+    }
+    await activity.log({
+      orgId: req.tenant!.org.id,
+      userId: req.session!.id,
+      action: "join_link_resumed",
+      ref: { module: null, entityType: "invite", entityId: row.id },
+    });
+    res.json(row);
+  } catch (err) {
+    next(err);
+  }
+});
+
+membersRouter.post("/invites/:id/rotate", requireAuth, withTenant, async (req, res, next) => {
+  try {
+    if (!(await assertAdmin(req, res))) return;
+    const row = await meta
+      .updateTable("workspace_invites")
+      .set({ token: newInviteToken(), paused_at: null, pace_since: new Date() })
+      .where("id", "=", req.params.id!)
+      .where("org_id", "=", req.tenant!.org.id)
+      .where("reusable", "=", true)
+      .where("revoked_at", "is", null)
+      .returningAll()
+      .executeTakeFirst();
+    if (!row) {
+      res.status(404).json({ error: { code: "not_found", message: "Join link not found." } });
+      return;
+    }
+    await activity.log({
+      orgId: req.tenant!.org.id,
+      userId: req.session!.id,
+      action: "join_link_rotated",
+      ref: { module: null, entityType: "invite", entityId: row.id },
+    });
+    res.json(row);
+  } catch (err) {
+    next(err);
+  }
+});
+
 // ── /invites/:token (no tenant context) ──────────────────────────
 
 // GET — public-ish preview: anyone with the token can see workspace
@@ -489,6 +590,7 @@ invitesRootRouter.get("/invites/:token", async (req, res, next) => {
         "i.reusable",
         "i.max_uses",
         "i.use_count",
+        "i.paused_at",
         "o.name as org_name",
         "o.slug as org_slug",
         "u.display_name as invited_by_name",
@@ -668,8 +770,9 @@ invitesRootRouter.post("/invites/:token/accept-signup", async (req, res, next) =
     // redemptions cannot both succeed: a single-use invite is consumed, a join
     // link counts one use within its cap.
     if (invite.reusable) {
-      if (!(await claimJoinUse(invite.id))) {
-        res.status(410).json({ error: { code: "full", message: REFUSAL.full } });
+      const claimed = await claimJoinUse(invite.id);
+      if (!claimed.ok) {
+        res.status(410).json({ error: { code: claimed.why, message: REFUSAL[claimed.why] } });
         return;
       }
     } else {
@@ -703,6 +806,9 @@ invitesRootRouter.post("/invites/:token/accept-signup", async (req, res, next) =
         .where("id", "=", invite.id)
         .execute();
     }
+    // Invited as someone already on the People list: that entry is now them,
+    // so everything that was theirs stays theirs.
+    if (invite.person_id) await linkPersonToUser(invite.org_id, invite.person_id, userId);
 
     try {
       await activity.log({

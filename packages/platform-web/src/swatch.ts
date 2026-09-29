@@ -9,6 +9,8 @@
 // "hex/swatch" (yarn's colourway). The matchmaker is prompted to fill them
 // with CSS hex codes.
 
+import { colourFill, normalizeColour, parseColour } from "@cobblr/platform-contract/colour";
+
 /** The minimal field-def shape the swatch check needs — satisfied by platform
  *  field defs, the scan menu's trimmed fields, and anything with a name/type. */
 export interface SwatchFieldDef {
@@ -36,7 +38,10 @@ export function colorSwatch(value: unknown): string | null {
   if (typeof value !== "string") return null;
   const v = value.trim();
   if (!v) return null;
-  if (/^#?[0-9a-fA-F]{6}$/.test(v)) return v[0] === "#" ? v : `#${v}`;
+  // Any hex or rgb() form (a tag's RGBA, a short hex) is one swatch, and a
+  // gradient or multi-colour value its blend or segments.
+  const spec = /^[a-z\s]+$/i.test(v) && !/^rainbow$/i.test(v) ? null : parseColour(v);
+  if (spec) return colourFill(spec);
   const named = v.toLowerCase().replace(/\s+/g, "");
   return typeof CSS !== "undefined" && CSS.supports?.("color", named) ? named : null;
 }
@@ -48,13 +53,25 @@ export function colorSwatch(value: unknown): string | null {
 export function swatchHex(value: unknown): string | null {
   if (typeof value !== "string") return null;
   const v = value.trim();
-  if (!/^#?[0-9a-f]{6}$/i.test(v)) return null;
-  return (v[0] === "#" ? v : `#${v}`).toLowerCase();
+  // Every hex or rgb() spelling the item can carry (a tag's RGBA included),
+  // never a word: a word is not a colour the item carries.
+  if (/^[a-z\s]+$/i.test(v)) return null;
+  return normalizeColour(v);
+}
+
+/** The CSS background a colour value the item CARRIES fills a swatch with: a
+ *  hex (any spelling), or a gradient / multi-colour value's blend or
+ *  segments. Never a word: a word is not a colour the item carries. Use it as
+ *  `background`, not `backgroundColor`, which cannot draw a gradient. */
+export function swatchFill(value: unknown): string | null {
+  if (typeof value !== "string" || /^[a-z\s]*$/i.test(value.trim())) return null;
+  const spec = parseColour(value);
+  return spec ? colourFill(spec) : null;
 }
 
 /** Given an item's stored field VALUES (its metadata bag) and — optionally —
  *  its field DEFS, find the first swatch-eligible colour field carrying a hex
- *  value, and return that normalised hex (or null).
+ *  (or a gradient / multi-colour value), and return its CSS fill (or null).
  *
  *  With defs: only fields whose def passes `wantsSwatch` are considered, so a
  *  stray `color` key that isn't actually a declared colour field is ignored,
@@ -72,12 +89,12 @@ export function resolveSwatchHex(
   if (defs && defs.length) {
     for (const def of defs) {
       if (!wantsSwatch(def)) continue;
-      const hex = swatchHex(values[def.name]);
-      if (hex) return hex;
+      const fill = swatchFill(values[def.name]);
+      if (fill) return fill;
     }
     return null;
   }
-  return swatchHex(values.color) ?? swatchHex(values.colour) ?? null;
+  return swatchFill(values.color_hex) ?? swatchFill(values.color) ?? swatchFill(values.colour) ?? null;
 }
 
 /** What a thumbnail should render, decided BEFORE any image is fetched:

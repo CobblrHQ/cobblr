@@ -19,8 +19,10 @@
 import { createHash } from "node:crypto";
 import { sql } from "kysely";
 import { platform } from "@cobblr/platform-contract";
+import { splitEntityKind } from "@cobblr/platform-contract/entity-kind";
+import { isStockPreviewUrl } from "@cobblr/platform-contract/stock-preview";
 import type { CoreImportDB, ImportDb } from "../db.js";
-import type { SheetPlan, RecordPlan } from "./sheet-plan.js";
+import type { SheetPlan, RecordPlan, SummaryCheck } from "./sheet-plan.js";
 import { pathKey } from "./sheet-plan.js";
 
 export const SHEET_IMPORT_QUEUE = "core-import.sheet";
@@ -40,9 +42,13 @@ export interface WorkSheet {
   /** Every place path the sheet names, by pathKey, to its location id. */
   places: Record<string, string>;
   records: RecordPlan[];
+  /** The sheet's own totals, checked in the dry run, kept with the import. */
+  checks?: SummaryCheck[];
 }
 
 export interface RunWork {
+  /** The workspace's slug, for the address a stored picture is shown at. */
+  slug: string;
   sheets: WorkSheet[];
 }
 
@@ -54,12 +60,15 @@ export interface SheetSummary {
   updated: number;
   unchanged: number;
   failed: number;
+  /** Things imported as no longer the person's (sold, given away, …). */
+  retired?: number;
+  checks?: SummaryCheck[];
   problems: string[];
 }
 
 export interface StepRow {
   seq: number;
-  kind: "module" | "install" | "collection" | "field" | "location" | "category" | "record-create" | "record-update" | "tag";
+  kind: "module" | "install" | "collection" | "field" | "location" | "category" | "record-create" | "record-update" | "tag" | "photo";
   entity_kind?: string | null;
   entity_id?: string | null;
   label?: string | null;
@@ -173,7 +182,7 @@ export async function prepareRun(
   knownPlaces: Array<{ id: string; name: string; parent_id: string | null }>,
   placePaths: Map<string, string>,
 ): Promise<RunWork> {
-  const work: RunWork = { sheets: [] };
+  const work: RunWork = { slug: lb.slug, sheets: [] };
   const places = new Map(placePaths);
   for (const plan of plans) {
     const t = plan.target;
@@ -183,8 +192,7 @@ export async function prepareRun(
       if (!r.json?.already_enabled) await ledger.add({ kind: "module", entity_id: plan.enable.module, label: plan.enable.label });
     }
     if (plan.install) {
-      const placesBefore = new Set((await listPlaces(lb)).map((l) => l.id));
-      const r = await call<{ bundle?: { id: string }; applied?: { instances_created?: string[]; auto_enabled_modules?: string[] }; error?: { message?: string } }>(
+      const r = await call<{ bundle?: { id: string }; applied?: { instances_created?: string[] }; error?: { message?: string } }>(
         lb,
         "POST",
         "/bundles/install",
@@ -194,12 +202,12 @@ export async function prepareRun(
         throw new ImportRefused("install_failed", `Could not install ${plan.install.label}: ${r.json?.error?.message ?? `status ${r.status}`}`);
       }
       // An install does more than add a collection: it can switch on the
-      // modules it needs and set up places. All of it happened because of this
-      // import, so all of it is in the ledger, in an order an undo can walk
-      // back: the modules first (undone last), then the install, then its
-      // places (undone first, once they are empty).
-      for (const m of r.json.applied?.auto_enabled_modules ?? []) await ledger.add({ kind: "module", entity_id: m, label: m, detail: { by: plan.install.label } });
+      // modules it needs and set up places. The install itself claims them
+      // (bundle resource claims), and uninstalling it puts back whatever
+      // nobody has used since, so the ledger needs the install alone.
       await ledger.add({ kind: "install", entity_id: r.json.bundle.id, label: plan.install.label, detail: { instances_created: r.json.applied?.instances_created ?? [] } });
+      // The places it set up are where a row naming them lands ("Kitchen /
+      // Fridge"), rather than a second Fridge made beside the first.
       const after = await listPlaces(lb);
       const byId = new Map(after.map((l) => [l.id, l]));
       const pathOf = (l: { id: string; name: string; parent_id: string | null }): string[] => {
@@ -213,9 +221,9 @@ export async function prepareRun(
         }
         return segs;
       };
+      const known = new Set(knownPlaces.map((l) => l.id));
       for (const l of after) {
-        if (placesBefore.has(l.id)) continue;
-        await ledger.add({ kind: "location", entity_kind: LOCATION_KIND, entity_id: l.id, label: pathOf(l).join(" / "), detail: { by: plan.install.label } });
+        if (known.has(l.id)) continue;
         places.set(pathKey(pathOf(l)), l.id);
         knownPlaces.push(l);
       }
@@ -288,12 +296,12 @@ export async function prepareRun(
       // A collection's own kind (<instance>:item) says which instance; the
       // module's default table takes none.
       instance: t.kind.endsWith(":item") ? t.instance : null,
-      native: plan.columns
-        .map((c) => c.dest)
-        .filter((d): d is Extract<typeof d, { to: "field" }> => d.to === "field" && d.native)
-        .map((d) => d.field),
+      // Every column of the module's own table, not only those a sheet
+      // column chose: a count made from identical rows lands in one too.
+      native: t.fields.filter((f) => f.native).map((f) => f.name),
       places: sheetPlaces,
       records: plan.records.filter((r) => r.action !== "unchanged"),
+      ...(plan.summary.length ? { checks: plan.summary } : {}),
     });
   }
   return work;
@@ -320,6 +328,41 @@ async function placeRecord(orgId: string, baseKind: string, id: string, location
   await platform().placement.place({ orgId, containee: { kind: baseKind, id }, container: { kind: LOCATION_KIND, id: locationId } });
 }
 
+const PICTURE_MAX_BYTES = 8 * 1024 * 1024;
+const PICTURE_TIMEOUT_MS = 15_000;
+
+/** A picture from a row's image column, stored in the workspace's files, or
+ *  why not. The address is one a person typed into their sheet, so it goes
+ *  through the workspace's egress guard like any address a person gives; a
+ *  stock agency's watermarked preview is refused before it is fetched (#3804). */
+export async function storeRowPicture(orgId: string, url: string): Promise<{ fileId: string; existed: boolean } | { refused: string }> {
+  let u: URL;
+  try {
+    u = new URL(url.trim());
+  } catch {
+    return { refused: "not a web address" };
+  }
+  if (u.protocol !== "https:" && u.protocol !== "http:") return { refused: "not a web address" };
+  if (isStockPreviewUrl(u.href)) return { refused: "a watermarked stock preview, never used as a picture" };
+  let res: Response;
+  try {
+    res = await platform().egress.guardedFetch(orgId, u.href, { signal: AbortSignal.timeout(PICTURE_TIMEOUT_MS) });
+  } catch (err) {
+    return { refused: `could not be fetched (${(err as Error).message})` };
+  }
+  if (!res.ok) return { refused: `the address answered ${res.status}` };
+  const type = (res.headers.get("content-type") ?? "").split(";")[0]!.trim().toLowerCase();
+  if (!type.startsWith("image/")) return { refused: "the address is not a picture" };
+  if (Number(res.headers.get("content-length") ?? 0) > PICTURE_MAX_BYTES) return { refused: "the picture is over 8 MB" };
+  const buf = new Uint8Array(await res.arrayBuffer());
+  if (buf.byteLength > PICTURE_MAX_BYTES) return { refused: "the picture is over 8 MB" };
+  if (buf.byteLength === 0) return { refused: "the picture is empty" };
+  const name = decodeURIComponent(u.pathname.split("/").pop() || "picture");
+  const w = await platform().files.write(orgId, buf, { filename: name, mimeType: type });
+  if (!w) return { refused: "there is nowhere to store pictures" };
+  return { fileId: w.fileId, existed: !!w.existed };
+}
+
 async function setProgress(db: ImportDb, runId: string, done: number): Promise<void> {
   await db.updateTable("core_import_runs").set({ progress_done: done }).where("id", "=", runId).execute();
 }
@@ -342,7 +385,7 @@ export async function runImport(orgId: string, runId: string): Promise<void> {
 
   try {
     for (const ws of work.sheets) {
-      const sum: SheetSummary = { sheet: ws.sheet, label: ws.label, kind: ws.kind, created: 0, updated: 0, unchanged: 0, failed: 0, problems: [] };
+      const sum: SheetSummary = { sheet: ws.sheet, label: ws.label, kind: ws.kind, created: 0, updated: 0, unchanged: 0, failed: 0, retired: 0, ...(ws.checks ? { checks: ws.checks } : {}), problems: [] };
       summaries.push(sum);
       const writer = await platform().entities.getWriter(orgId, ws.kind);
       if (!writer) {
@@ -376,8 +419,47 @@ export async function runImport(orgId: string, runId: string): Promise<void> {
           }
           const locationId = rec.location_path ? ws.places[pathKey(rec.location_path)] : undefined;
 
+          // The picture is stored before the record is written, so the record
+          // arrives with it (and is not queued for a picture search it does
+          // not need). A picture a person set is never replaced: an update
+          // fills an empty picture only.
+          let picture: { fileId: string; existed: boolean } | null = null;
+          const wantsPicture =
+            !!rec.photo_url &&
+            (rec.action === "create" ||
+              (rec.action === "update" && rec.existing_id && !(await platform().entities.snapshot(orgId, ws.kind, rec.existing_id))?.image_path));
+          if (wantsPicture && rec.photo_url) {
+            const got = await storeRowPicture(orgId, rec.photo_url);
+            if ("refused" in got) {
+              if (sum.problems.length < 50) sum.problems.push(`Row ${rec.row} (${rec.name}): the picture was left out, ${got.refused}`);
+            } else {
+              picture = got;
+              top.image_path = `/api/v1/orgs/${work.slug}/modules/core-files/files/${got.fileId}/raw`;
+            }
+          }
+          const attachPicture = async (id: string) => {
+            if (!picture) return;
+            const { module, type } = splitEntityKind(baseKind);
+            const a = await platform().files.attach(orgId, { fileId: picture.fileId, source_module: module, source_type: type, source_id: id, role: "gallery" });
+            if (a && !a.existed) await ledger.add({ kind: "photo", entity_kind: baseKind, entity_id: a.attachmentId, label: rec.name, detail: { file_id: picture.fileId, file_existed: picture.existed, record_id: id } });
+          };
+
+          // Gone from the collection (sold, given away, …): marked the way the
+          // collection means "out of use", and the Fate's words stay on it.
+          const retire = async (id: string) => {
+            if (!rec.disposition) return;
+            if (!writer.retire) {
+              if (sum.problems.length < 50) sum.problems.push(`Row ${rec.row} (${rec.name}): ${ws.label} cannot mark things as no longer yours, so "${rec.disposition.text}" is kept as written`);
+              return;
+            }
+            await writer.retire(orgId, id, { disposition: rec.disposition.kind });
+            sum.retired = (sum.retired ?? 0) + 1;
+          };
+
           if (rec.action === "create") {
             const id = await writer.create(orgId, { ...top, metadata });
+            await retire(id);
+            await attachPicture(id);
             await placeRecord(orgId, baseKind, id, locationId);
             for (const t of rec.tags ?? []) {
               const r = await platform().tags.attach({ orgId, tagName: t, target: { kind: baseKind, id } });
@@ -396,6 +478,8 @@ export async function runImport(orgId: string, runId: string): Promise<void> {
             // is carried forward under what the sheet says.
             const held = (before.metadata && typeof before.metadata === "object" ? before.metadata : {}) as Record<string, unknown>;
             await writer.update(orgId, id, { ...top, metadata: { ...held, ...metadata } });
+            await retire(id);
+            await attachPicture(id);
             if (locationId) await placeRecord(orgId, baseKind, id, locationId);
             for (const t of rec.tags ?? []) {
               const r = await platform().tags.attach({ orgId, tagName: t, target: { kind: baseKind, id } });
@@ -507,6 +591,28 @@ export async function undoRun(orgId: string, db: ImportDb, lb: Loopback, runId: 
           // else carries it now.
           if (detail?.assigned !== false) await platform().tags.detach({ orgId, tagName: s.label ?? "", target: { kind: s.entity_kind ?? "", id: s.entity_id ?? "" } });
           if (detail?.tag_created) await platform().tags.withdraw({ orgId, tagName: s.label ?? "" });
+          await done(s.id);
+          break;
+        }
+        case "photo": {
+          const detail = (typeof s.detail === "string" ? JSON.parse(s.detail) : s.detail) as { file_id?: string; file_existed?: boolean; record_id?: string };
+          if (keptRecords.has(detail?.record_id ?? "")) {
+            hold(s, "kept with its record");
+            break;
+          }
+          await platform().files.detach(orgId, s.entity_id ?? "");
+          // The file goes only if this import stored it and nothing else
+          // shows it now.
+          if (detail?.file_id && !detail.file_existed) {
+            const still = (await platform().files.attachmentsOfFile(orgId, detail.file_id)) ?? [];
+            if (!still.length) {
+              const r = await call(lb, "DELETE", `/modules/core-files/files/${detail.file_id}`);
+              if (r.status >= 300 && r.status !== 404) {
+                hold(s, `the picture could not be removed (${r.status})`);
+                break;
+              }
+            }
+          }
           await done(s.id);
           break;
         }
@@ -633,7 +739,7 @@ export async function undoRun(orgId: string, db: ImportDb, lb: Loopback, runId: 
           modules.push(s);
           break;
         case "install": {
-          const preview = await call<{ instances?: Array<{ item_count?: number | null }> }>(lb, "GET", `/bundles/${s.entity_id}/uninstall-preview`);
+          const preview = await call<{ instances?: Array<{ item_count?: number | null }>; kept?: Array<{ name: string; reason: string }> }>(lb, "GET", `/bundles/${s.entity_id}/uninstall-preview`);
           if (preview.status === 404) {
             await done(s.id);
             break;
@@ -642,8 +748,20 @@ export async function undoRun(orgId: string, db: ImportDb, lb: Loopback, runId: 
             hold(s, "it holds things now");
             break;
           }
+          // What the install switched on or set up and somebody has used
+          // since (things kept in its Kitchen, a list in its Lists) stays
+          // when it is uninstalled; that is a later edit like any other, so
+          // it is said and waits for the person to say take it anyway.
+          if (!force && (preview.json?.kept ?? []).length) {
+            hold(s, (preview.json?.kept ?? []).map((k) => `${k.name}: ${k.reason}`).join("; "));
+            break;
+          }
           // Empty, so its collection goes with it: the workspace as it was
-          // before the install, not an install with nothing in it.
+          // before the install, not an install with nothing in it. The
+          // uninstall also switches off the modules it switched on and
+          // removes the empty places it made. An import recorded before the
+          // install claimed those has its own steps for them too; they find
+          // the work done (a place already gone, a module already off).
           const r = await call(lb, "DELETE", `/bundles/${s.entity_id}?delete_data=1`);
           if (r.status >= 300 && r.status !== 404) {
             hold(s, `could not remove it (${r.status})`);

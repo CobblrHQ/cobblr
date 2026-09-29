@@ -109,3 +109,59 @@ export function colourShows(stated: ReadonlySet<string>, picture: { family: Colo
   if (g === "neutral") return stated.has(picture.family);
   return [...stated].some((s) => (GROUP[s as ColourFamily] ?? s) === g);
 }
+
+/** A picture's colours by share of its non-white pixels (the studio field is
+ *  not the product), for comparing two pictures of what should be one thing. */
+export type ColourShares = Partial<Record<ColourFamily, number>>;
+
+export async function pictureColours(bytes: Uint8Array): Promise<ColourShares | null> {
+  try {
+    const { data, info } = await sharp(bytes).resize(48, 48, { fit: "inside" }).removeAlpha().raw().toBuffer({ resolveWithObject: true });
+    const counts = new Map<ColourFamily, number>();
+    let total = 0;
+    for (let i = 0; i + 2 < data.length; i += info.channels) {
+      const f = familyOfRgb(data[i]!, data[i + 1]!, data[i + 2]!);
+      if (f === "white") continue;
+      counts.set(f, (counts.get(f) ?? 0) + 1);
+      total++;
+    }
+    if (total === 0) return null;
+    const out: ColourShares = {};
+    for (const [f, c] of counts) out[f] = Math.round((c / total) * 100) / 100;
+    return out;
+  } catch {
+    return null;
+  }
+}
+
+/** A hue this much of one picture, and next to none of the other, is a
+ *  different-looking thing: a yellow handle on a lantern and none on a silver
+ *  flashlight. Neutrals never decide it (a dark shot reads black, a label
+ *  reads white), and a small accent in one and not the other does not either. */
+const HUE_PRESENT = 0.15;
+const HUE_ABSENT = 0.03;
+
+/** Does a found picture look like a different thing from the item's own
+ *  photo? The words it says so in, or null when nothing says they differ
+ *  (which is not a proof that they match: it is colour, not shape). */
+export function looksDifferent(own: ColourShares | null | undefined, picture: ColourShares | null | undefined): string | null {
+  if (!own || !picture) return null;
+  const byGroup = (s: ColourShares) => {
+    const g = new Map<string, number>();
+    for (const [f, v] of Object.entries(s)) {
+      const group = GROUP[f as ColourFamily];
+      if (!group || group === "neutral") continue;
+      g.set(group, (g.get(group) ?? 0) + (v ?? 0));
+    }
+    return g;
+  };
+  const a = byGroup(own);
+  const b = byGroup(picture);
+  for (const group of new Set([...a.keys(), ...b.keys()])) {
+    const inOwn = a.get(group) ?? 0;
+    const inPicture = b.get(group) ?? 0;
+    if (inPicture >= HUE_PRESENT && inOwn < HUE_ABSENT) return `the picture is largely ${group}, your photo has none`;
+    if (inOwn >= HUE_PRESENT && inPicture < HUE_ABSENT) return `your photo is largely ${group}, the picture has none`;
+  }
+  return null;
+}

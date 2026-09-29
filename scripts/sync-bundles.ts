@@ -24,6 +24,8 @@
 import { FEATURED_BUNDLES } from "../web/src/lib/featured-bundles.js";
 import fs from "node:fs";
 import path from "node:path";
+import { execFileSync } from "node:child_process";
+import { BUNDLE_RELEASE_KEYS } from "./lib/bundle-release-keys.js";
 
 const OUT = path.join(process.cwd(), "bundles");
 const CHECK = process.argv.includes("--check");
@@ -34,7 +36,9 @@ function slugOf(id: string): string {
 
 /** Content signature excluding the release-metadata keys (mirrors lint-versions). */
 function sig(manifest: Record<string, unknown>): string {
-  const { version: _v, changelog: _c, released_at: _r, ...rest } = manifest;
+  const rest = Object.fromEntries(
+    Object.entries(manifest).filter(([k]) => !(BUNDLE_RELEASE_KEYS as readonly string[]).includes(k)),
+  );
   return JSON.stringify(rest);
 }
 
@@ -113,4 +117,11 @@ if (CHECK) {
   console.log("[lint:bundles-synced] ✓ all bundles/*.json in sync with featured-bundles.ts");
 } else {
   console.log(`\n${wrote} written, ${unchanged} already in sync.`);
+  // A written bundle moved its version (or its content), so the content lock
+  // lint:bundle-content checks is stale until it is regenerated. Doing it here
+  // means the one command a bundle edit already needs leaves nothing for CI to
+  // find: three bumped machine bundles once reached CI with the lock behind.
+  if (wrote > 0) {
+    execFileSync(process.execPath, ["--import", "tsx", path.join("scripts", "lint-bundle-content.ts"), "--write"], { stdio: "inherit" });
+  }
 }

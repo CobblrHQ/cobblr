@@ -1,7 +1,8 @@
 {
   "lint": "lint:number-input-commits-a-number",
-  "run": "tsx scripts/lint-number-input-commits-a-number.ts",
+  "run": "node scripts/lint-number-input-commits-a-number.ts",
   "ms": 701,
   "recorded": "2026-09-14",
-  "source": "split from scripts/lint-durations.json (recorded 2026-09-14)"
+  "source": "split from scripts/lint-durations.json (recorded 2026-09-14)",
+  "readMB": 13.3
 }

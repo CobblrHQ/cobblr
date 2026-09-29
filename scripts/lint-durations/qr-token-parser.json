@@ -1,7 +1,8 @@
 {
   "lint": "lint:qr-token-parser",
-  "run": "tsx scripts/lint-qr-token-parser.ts",
+  "run": "node scripts/lint-qr-token-parser.ts",
   "ms": 716,
   "recorded": "2026-09-14",
-  "source": "split from scripts/lint-durations.json (recorded 2026-09-14)"
+  "source": "split from scripts/lint-durations.json (recorded 2026-09-14)",
+  "readMB": 22.6
 }

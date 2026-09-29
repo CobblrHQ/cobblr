@@ -1474,8 +1474,25 @@ function AutoPickPhotosSection({ slug, canEdit }: { slug: string; canEdit: boole
     },
     onError: (e) => toast.error(e instanceof Error ? e.message : "Couldn't save that"),
   });
+  // Pictures for records made without one (#3818): suggested by default, and
+  // this puts the top match on the record instead. No AI either way.
+  const suggestCfg = useQuery({
+    queryKey: ["photo-suggest-config", slug],
+    queryFn: () => api.photoSuggestConfig(slug),
+    enabled: !!slug && canEdit,
+    staleTime: 60_000,
+  });
+  const saveSuggest = useMutation({
+    mutationFn: (autoApply: boolean) => api.setPhotoSuggestConfig(slug, autoApply),
+    onSuccess: (r) => {
+      toast.success(r.auto_apply ? "New records get the photo Cobblr finds" : "New records are offered a photo to accept");
+      void qc.invalidateQueries({ queryKey: ["photo-suggest-config", slug] });
+    },
+    onError: (e) => toast.error(e instanceof Error ? e.message : "Couldn't save that"),
+  });
   if (!canEdit) return null;
   const on = cfg.data?.enabled === true;
+  const autoApply = suggestCfg.data?.auto_apply === true;
   return (
     <section className="rounded-xl border border-line dark:border-slate-700 bg-surface dark:bg-slate-900 p-4">
       <h2 className="text-sm font-semibold text-content dark:text-mortar-100">Scan photos</h2>
@@ -1501,6 +1518,25 @@ function AutoPickPhotosSection({ slug, canEdit }: { slug: string; canEdit: boole
             This is WHETHER Cobblr picks photos on its own. Which AI does the picking is the
             "Pick the best product photo" row under "What each job uses" below - that one is
             routing, and it applies to the ✨ Pick best button too.
+          </span>
+        </span>
+      </label>
+      <label className="mt-3 flex items-start gap-3 cursor-pointer" data-testid="photo-suggest-auto-apply">
+        <input
+          type="checkbox"
+          checked={autoApply}
+          disabled={saveSuggest.isPending || suggestCfg.isLoading}
+          onChange={(e) => saveSuggest.mutate(e.target.checked)}
+          className="mt-0.5 h-4 w-4 accent-cobble-600 shrink-0"
+        />
+        <span className="min-w-0">
+          <span className="text-sm text-content dark:text-mortar-100">
+            Put the photo Cobblr finds on new records
+          </span>
+          <span className="block text-xs text-faint dark:text-slate-400">
+            Off by default. A record made without a photo, however it was made, is looked up on the web
+            and offered a Suggested photo to accept or turn down. On, the top match goes straight onto the
+            record instead. No AI either way, and a photo someone chose is never replaced.
           </span>
         </span>
       </label>

@@ -23,7 +23,7 @@ const CHANNEL_LABEL: Record<string, string> = {
 };
 
 export function CommunicationPreferencesPage() {
-  usePageTitle("Communication preferences");
+  usePageTitle("Discord, email & in-app");
   const qc = useQueryClient();
   const toast = useToast();
   const confirm = useConfirm();
@@ -78,6 +78,21 @@ export function CommunicationPreferencesPage() {
     onSuccess: () => { toast.success("Discord disconnected."); qc.invalidateQueries({ queryKey: ["discord-status"] }); qc.invalidateQueries({ queryKey: ["comm-prefs"] }); },
     onError: (e: unknown) => toast.error(`Couldn't disconnect Discord: ${e instanceof ApiError ? e.message : String(e)}`),
   });
+
+  // Arriving from a "Connect Discord" door (the going-off offer, the setup
+  // card, the account menu, Your account) starts Discord's consent at once:
+  // the person already said what they want, and one more Connect button
+  // here would be a second ask. Once per visit, and only when there is
+  // something to connect.
+  const wantsConnect = params.get("connect") === "discord";
+  const [autoStarted, setAutoStarted] = useState(false);
+  useEffect(() => {
+    if (!wantsConnect || autoStarted || discordQ.isLoading || !discordQ.data) return;
+    setAutoStarted(true);
+    params.delete("connect");
+    setParams(params, { replace: true });
+    if (discordQ.data.configured && !discordQ.data.verified) connect.mutate();
+  }, [wantsConnect, autoStarted, discordQ.isLoading, discordQ.data, params, setParams, connect]);
 
   function clearDiscordParam() {
     if (discordParam) {

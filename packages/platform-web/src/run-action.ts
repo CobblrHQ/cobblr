@@ -35,6 +35,9 @@ export interface ActionBody {
   entityId: string;
   bindingId?: string;
   args?: Record<string, unknown>;
+  /** The code of the action label the press came from: the door checks it and
+   *  the history says "via label" (#3897). */
+  label?: string;
 }
 
 export interface ActionAffected {

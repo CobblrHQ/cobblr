@@ -21,7 +21,7 @@ import { Fragment, useCallback, useEffect, useMemo, useState } from "react";
 import { activityKind } from "../lib/activityKind";
 import { AUTOMATION_ACTIONS, activityVerb, actorWords, automationWords, hiddenFromDashboard, updatedFieldsWords } from "../lib/activity-words";
 import { openSheetImport } from "../lib/sheet-import";
-import { ActorVia, GroupActorVia } from "../components/ActorVia";
+import { ACTIVITY_ROW, ACTOR_CELL, ActorVia, GroupActorVia, ITEM_CELL } from "../components/ActorVia";
 import { useKindLabels } from "../lib/useKindLabels";
 import { useMutation, useQueries, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link, useNavigate } from "react-router-dom";
@@ -30,13 +30,15 @@ import { countOf, itemNounFor, pluralise } from "@cobblr/platform-contract";
 import { roleSatisfies } from "@cobblr/platform-contract/org-roles";
 import { putAwayParts } from "../lib/scannerNags";
 import { ScannerQueue, useScannerQueue } from "../components/ScannerQueue";
-import { offerMoves } from "../lib/table-move-offer";
+import { offerMoves, offerRowFrom } from "../lib/table-move-offer";
 import { choosePinnedViews, navNamesWithViewCards } from "../lib/dashboard-pinned";
 import { useBundleUpdates, type BundleUpdate } from "../lib/useBundleUpdates";
 import { classifyBundleUpdate, tierAutoApplies, updateMayTeardownCatalogs } from "../lib/bundleUpdateTier";
 import { useDetailRoute } from "../lib/useDetailRoute";
 import { composeAttention } from "../lib/attention-cards";
 import { DatedCard } from "../components/DatedCard";
+import { DiscordReminderOffer } from "../components/DiscordReminderOffer";
+import { CONNECT_DISCORD_PATH } from "../lib/discord-connect";
 import { groupRows, NO_GROUP, type GroupableRow } from "../lib/view-group-key";
 import { useViewData } from "../lib/useViewData";
 import { useAreaResolver } from "../lib/useAreaResolver";
@@ -50,6 +52,7 @@ import { EntityThumb, changeWorkspaceShape,
 // TileGrid renders whatever's registered for an enabled module — no per-module
 // knowledge here. (inventory / labels / projects register from their own /ui.)
 import "../dashboard/builtinWidgets";
+import { foldedNames, useInstanceFamilies } from "../lib/instance-families";
 import { expandInstanceWidgets } from "../dashboard/expandInstanceWidgets";
 import { useActiveOrg } from "../auth/ActiveOrgContext";
 import { useAuth } from "../auth/AuthContext";
@@ -377,11 +380,7 @@ function MoveIntoTablesCard({ slug }: { slug: string }) {
 
   if (!moduleName || !rowsQ.data || !defsQ.data) return null;
   const offers = offerMoves(
-    (rowsQ.data.items ?? []).map((r) => ({
-      id: r.id,
-      name: r.name ?? null,
-      fields: { ...(r as Record<string, unknown>), ...(r.metadata ?? {}) },
-    })),
+    (rowsQ.data.items ?? []).map(offerRowFrom),
     tables,
     defsQ.data.items ?? [],
     moduleName,
@@ -462,13 +461,17 @@ function AttentionFeed({ slug }: { slug: string }) {
     unreadable_date: "border-amber-300 dark:border-amber-800 bg-amber-50/70 dark:bg-amber-950/20",
   };
   const glyph: Record<string, string> = { overdue: "⏰", due_today: "📆", low_stock: "📉", pending_scans: "📷", photo_wanted: "📷", upcoming: "📅", unreadable_date: "❓" };
+  const cards = composeAttention(items);
   return (
     <section className="space-y-1.5">
       <div className="text-[10px] font-mono uppercase tracking-widest text-faint dark:text-slate-500">// needs you</div>
+      {/* Things with a date are what a reminder is for: the moment to say a
+          Discord message can bring them to you. */}
+      <DiscordReminderOffer hasDated={cards.some((c) => c.type === "dated")} />
       <ul className="space-y-1.5">
         {/* A collection's overdue, today and coming-up rows as ONE card
             (attention-cards.ts); every other row as it was. */}
-        {composeAttention(items).map((c, i) =>
+        {cards.map((c, i) =>
           c.type === "dated" ? (
             <DatedCard key={`dated-${c.collection.key}`} slug={slug} card={c} />
           ) : (
@@ -623,6 +626,13 @@ function AttentionRow({ slug, item: it, tone, glyph }: { slug: string; item: Att
     onSuccess: () => { toast.success("Task done."); refresh(); },
     onError: (e) => toast.error(e instanceof Error ? e.message : "Couldn't complete the task"),
   });
+  // A scheduled service done from here rolls its schedule forward, the same as
+  // marking it done on the record (#3876).
+  const doneService = useMutation({
+    mutationFn: (id: string) => api.completeMaintenance(slug, id),
+    onSuccess: () => { toast.success("Service logged."); refresh(); },
+    onError: (e) => toast.error(e instanceof Error ? e.message : "Couldn't log the service"),
+  });
   const verdict = useMutation({
     mutationFn: (v: { conn: string; dev: string; outcome: "good" | "scrapped" }) =>
       api.markDigifabDeviceReady(slug, v.conn, v.dev, v.outcome),
@@ -719,6 +729,17 @@ function AttentionRow({ slug, item: it, tone, glyph }: { slug: string; item: Att
                   >
                     <CheckCircle2 size={11} className="hover-reveal text-accent" />
                   </button>
+                ) : e.action?.maintenance_entry ? (
+                  <button
+                    type="button"
+                    onClick={() => doneService.mutate(e.action!.maintenance_entry!)}
+                    disabled={doneService.isPending}
+                    title="Mark this service done"
+                    aria-label={`Mark done: ${e.title}`}
+                    className="shrink-0 w-4 h-4 rounded border border-line dark:border-slate-600 hover:border-accent hover:bg-accent/10 transition flex items-center justify-center"
+                  >
+                    <CheckCircle2 size={11} className="hover-reveal text-accent" />
+                  </button>
                 ) : (
                   <span className="shrink-0 w-1.5 h-1.5 rounded-full bg-faint/50" />
                 )}
@@ -804,6 +825,11 @@ function SetupCardsPanel({ slug }: { slug: string }) {
   // Until bundles load, show what we have (the common case is they're valid);
   // once loaded, only render cards whose bundle is still installed.
   const visible = installed ? cards.filter((c) => installed.has(c.externalId)) : cards;
+  // "Get reminders on Discord" is a step only while it is one: not once a DM
+  // reaches this person, and never on a server that cannot send one.
+  const wantsDiscord = visible.some((c) => c.nextSteps.some((s) => s.path === CONNECT_DISCORD_PATH));
+  const discordQ = useQuery({ queryKey: ["discord-status"], queryFn: () => api.meDiscordStatus(), enabled: wantsDiscord, staleTime: 5 * 60_000, retry: false });
+  const stepShown = (s: { path?: string }) => s.path !== CONNECT_DISCORD_PATH || (!!discordQ.data?.configured && !discordQ.data.verified);
   if (visible.length === 0) return null;
   return (
     <div className="space-y-3">
@@ -830,7 +856,7 @@ function SetupCardsPanel({ slug }: { slug: string }) {
             </button>
           </div>
           <div className="grid sm:grid-cols-2 gap-2">
-            {card.nextSteps.map((s, i) => (
+            {card.nextSteps.filter(stepShown).map((s, i) => (
               <button
                 key={i}
                 type="button"
@@ -1092,19 +1118,23 @@ function BundleUpdateRow({
 
   const updateNow = () => void runUpdate(false);
 
+  // The versions never truncate: "v0.3.1 → v0…" hid the one fact the row is
+  // for. The name gives way first, and the actions wrap below on a phone.
   const version = (
     <>
-      {update.glyph} <strong>{update.name}</strong>{" "}
-      <span className="text-faint dark:text-slate-500">
+      <span className="min-w-0 truncate">
+        {update.glyph} <strong>{update.name}</strong>
+      </span>
+      <span data-testid="update-versions" className="shrink-0 whitespace-nowrap text-faint dark:text-slate-500">
         v{update.installedV} → v{update.latestV}
       </span>
     </>
   );
 
   return (
-    <div className="flex items-center gap-2 text-xs">
+    <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-xs">
       <ArrowUpCircle size={13} className="text-amber-500 dark:text-amber-400 shrink-0" />
-      <span className="flex-1 min-w-0 truncate text-content dark:text-mortar-200">{version}</span>
+      <span className="flex-1 basis-40 min-w-0 flex items-baseline gap-1 text-content dark:text-mortar-200">{version}</span>
       {install.isPending ? (
         <span className="shrink-0 text-faint dark:text-slate-500">Updating…</span>
       ) : preview.isPending ? (
@@ -1127,7 +1157,7 @@ function BundleUpdateRow({
           onClick={openModal}
           className="shrink-0 text-accent hover:underline font-medium"
         >
-          Resolve conflict to update
+          Choose what to keep
         </button>
       ) : (
         <>
@@ -1284,7 +1314,10 @@ function ArrangeableBody({
   const instancesByModule = new Map(
     instanceModules.map((m, i) => [m, instanceQs[i]?.data] as const),
   );
-  const widgets = expandInstanceWidgets(registered, instancesByModule);
+  // A type collection and the collection of its things (Filament Types +
+  // Spools) are one tile, named for their shared nav group.
+  const families = useInstanceFamilies(slug);
+  const widgets = expandInstanceWidgets(registered, instancesByModule, families);
   const layoutQ = useQuery({
     queryKey: ["dash-layout", slug],
     queryFn: () => api.getDashboardLayout(slug),
@@ -1500,7 +1533,7 @@ function TileGrid({
     staleTime: 30_000,
     enabled: !!slug,
   });
-  const carded = navNamesWithViewCards(dashViewsQ.data?.items ?? []);
+  const carded = navNamesWithViewCards(dashViewsQ.data?.items ?? [], foldedNames(useInstanceFamilies(slug)));
   const alsoEnabled = [...empties.entries()].filter(([, to]) => !carded.has(to.replace(/^\//, "")));
   const reportEmpty = useCallback((label: string, to: string, empty: boolean) => {
     setEmpties((prev) => {
@@ -1674,7 +1707,7 @@ function PinnedViews({ slug, editing = false }: { slug: string; editing?: boolea
   const allViews = views.data?.items ?? [];
   // The choice lives in dashboard-pinned.ts because the "Also enabled" line
   // needs the SAME answer to know which tables already have a card.
-  const pinned = choosePinnedViews(allViews);
+  const pinned = choosePinnedViews(allViews, foldedNames(useInstanceFamilies(slug)));
   // When arranging, the section bar (ArrangeableBody) supplies the title, and
   // an empty section must still show SOMETHING so it stays reorderable.
   if (pinned.length === 0) {
@@ -2093,9 +2126,15 @@ function ActivityRow({ entry: e, labels }: { entry: ActivityEntry; labels: KindL
   // An automation row is one sentence in the action's own words; the verb
   // column would only repeat "ran an automation" in front of it.
   const auto = AUTOMATION_ACTIONS.has(e.action) ? automationWords(e) : null;
+  const { activeSlug } = useActiveOrg();
+  const routeFor = useDetailRoute(activeSlug);
+  // The record, when it is still there (the server resolved its collection):
+  // the row names it AND opens it, the way every other mention of a record
+  // does. "stock moved part" had neither (#4032).
+  const href = !auto && e.entity_kind && e.entity_id ? routeFor(e.entity_kind, e.entity_id) : null;
   return (
-    <li className="px-3 py-2 flex items-baseline gap-1.5 text-sm">
-      <span className="text-muted dark:text-slate-400 shrink-0">
+    <li className={`px-3 py-2 text-sm ${ACTIVITY_ROW}`}>
+      <span className={`text-muted dark:text-slate-400 ${ACTOR_CELL}`}>
         <ActorVia entry={e} />
       </span>
       {!auto && (
@@ -2103,8 +2142,16 @@ function ActivityRow({ entry: e, labels }: { entry: ActivityEntry; labels: KindL
           {activityVerb(e.action)}
         </span>
       )}
-      <span className="text-content dark:text-mortar-100 truncate min-w-0">
-        {auto ? (auto.hidden ? null : auto.said) : activityTitle(e, labels)}
+      <span className={`text-content dark:text-mortar-100 ${ITEM_CELL}`} data-testid="activity-item">
+        {auto ? (
+          auto.hidden ? null : auto.said
+        ) : href ? (
+          <Link to={href} className="hover:underline" data-testid="activity-item-link">
+            {activityTitle(e, labels)}
+          </Link>
+        ) : (
+          activityTitle(e, labels)
+        )}
       </span>
       {e.entity_type === "import_run" && e.entity_id && (
         <button type="button" onClick={() => openSheetImport({ runId: e.entity_id })} className="shrink-0 text-xs text-accent hover:underline">
@@ -2163,8 +2210,8 @@ function ActivityGroupRow({ group, labels }: { group: ActivityGroup; labels: Kin
   const spanStart = relativeTime(last.occurred_at);
   const spanEnd = relativeTime(first.occurred_at);
   const rowContent = (
-    <div className="flex items-baseline gap-1.5 text-sm w-full min-w-0">
-      <span className="text-muted dark:text-slate-400 shrink-0">
+    <div className={`text-sm w-full min-w-0 ${ACTIVITY_ROW}`}>
+      <span className={`text-muted dark:text-slate-400 ${ACTOR_CELL}`}>
         <GroupActorVia entries={group.items} />
       </span>
       {action && (
@@ -2172,7 +2219,7 @@ function ActivityGroupRow({ group, labels }: { group: ActivityGroup; labels: Kin
           {action}
         </span>
       )}
-      <span className="text-content dark:text-mortar-100 truncate min-w-0">
+      <span className={`text-content dark:text-mortar-100 ${ITEM_CELL}`} data-testid="activity-item">
         {summary}
         {(allSame || auto) && (
           <span className="ml-1.5 inline-flex items-center text-[10px] font-mono uppercase tracking-widest text-accent dark:text-cobble-400 bg-cobble-50 dark:bg-cobble-900/40 rounded px-1.5 py-0.5">

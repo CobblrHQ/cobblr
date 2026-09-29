@@ -132,6 +132,33 @@ export interface LabelableItem {
   position?: number | null;
 }
 
+export interface ActionLabelButton {
+  entity_kind: string;
+  entity_id: string;
+  action_id: string;
+  binding_id?: string | null;
+  args?: Record<string, unknown>;
+  label?: string | null;
+}
+
+export interface ActionLabel {
+  id: string;
+  code: string;
+  url: string;
+  title: string;
+  hint: string | null;
+  buttons: ActionLabelButton[];
+  created_at: string;
+  revoked_at: string | null;
+}
+
+export interface ActionLabelPreviewShape {
+  id: string;
+  title: string;
+  hint: string | null;
+  buttons: Array<ActionLabelButton & { index: number; record_title: string | null; action_label: string; available: boolean }>;
+}
+
 export class LabelsApi {
   constructor(
     private readonly slug: string,
@@ -162,6 +189,18 @@ export class LabelsApi {
   }
 
   listQueue = () => this.request<{ items: QueueItem[] }>("GET", "/queue");
+
+  // Action labels (#3897): a printed QR whose page does one thing on Confirm.
+  listActionLabels = () => this.request<{ items: ActionLabel[] }>("GET", "/action-labels");
+  actionLabelPreview = (code: string) =>
+    this.request<ActionLabelPreviewShape>("GET", `/action-labels/by-code/${code.split("/").map(encodeURIComponent).join("/")}`);
+  createActionLabel = (b: { title: string; hint?: string | null; buttons: ActionLabelButton[] }) =>
+    this.request<ActionLabel>("POST", "/action-labels", b);
+  updateActionLabel = (id: string, b: { title?: string; hint?: string | null; buttons?: ActionLabelButton[] }) =>
+    this.request<ActionLabel>("PATCH", `/action-labels/${id}`, b);
+  revokeActionLabel = (id: string) => this.request<ActionLabel>("POST", `/action-labels/${id}/revoke`, {});
+  restoreActionLabel = (id: string) => this.request<ActionLabel>("POST", `/action-labels/${id}/restore`, {});
+  printActionLabel = (id: string, qty = 1) => this.request<{ queued: unknown }>("POST", `/action-labels/${id}/print`, { qty });
   addToQueue = (b: {
     module_name: string;
     entity_type: string;

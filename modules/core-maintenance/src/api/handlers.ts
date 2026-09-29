@@ -18,6 +18,8 @@
 import { platform } from "@cobblr/platform-contract";
 import type { Kysely } from "kysely";
 import type { CoreMaintenanceDB } from "../db.js";
+import { rollForward, rolledFromOf, unroll } from "../schedules-store.js";
+import { createSchedule, ScheduleCreateBody } from "./schedules.js";
 
 const str = (v: unknown): string | null =>
   typeof v === "string" && v.trim() ? v.trim() : null;
@@ -68,9 +70,12 @@ export function registerMaintenanceHandlers(): void {
         performed_by: performed ? ctx.userId : null,
         notes: str(args.notes),
         recurrence_rule: str(args.recurrence_rule),
+        schedule_id: str(args.schedule_id),
       } as never)
       .returningAll()
       .executeTakeFirstOrThrow();
+    // A service that belongs to a schedule moves it forward (#3876).
+    const rolled = await rollForward(db, ctx.orgId, row);
 
     return {
       ok: true,
@@ -80,8 +85,55 @@ export function registerMaintenanceHandlers(): void {
         logged: performed ? "history" : "scheduled",
         performed_at: row.performed_at,
         scheduled_at: row.scheduled_at,
+        ...(rolled ? { next_due_at: rolled.next?.scheduled_at ?? null, schedule_was: rolled.was } : {}),
       },
     };
+  });
+
+  // "Service it every 3 months" / "every 200 print hours" on the record (#3876).
+  platform().actions.registerHandler("core-maintenance.schedule", async (ctx) => {
+    const e = ctx.entity;
+    if (!e) return { ok: false, error: "this runs on a record: say which thing to service" };
+    const args = (ctx.args ?? {}) as Record<string, unknown>;
+    const [entityModule, entityType] = e.kind.includes(":") ? [e.kind.split(":")[0]!, e.kind.split(":")[1]!] : [e.kind, e.kind];
+    const numArg = (v: unknown): number | null => {
+      const n = typeof v === "number" ? v : typeof v === "string" && v.trim() ? Number(v) : NaN;
+      return Number.isFinite(n) && n > 0 ? n : null;
+    };
+    const parsed = ScheduleCreateBody.safeParse({
+      entity_module: entityModule,
+      entity_type: entityType,
+      entity_id: e.id,
+      name: str(args.name) ?? "",
+      every_n: numArg(args.every_n) != null ? Math.round(numArg(args.every_n)!) : null,
+      every_unit: str(args.every_unit),
+      counter_field: str(args.counter_field),
+      counter_every: numArg(args.counter_every),
+      last_done_at: str(args.last_done_at),
+    });
+    if (!parsed.success) {
+      return {
+        ok: false,
+        error: "Say how often: every so many days, weeks, months or years, or every so much use of a counter this record keeps.",
+      };
+    }
+    const db = (await platform().tenants.getDb(ctx.orgId)) as Kysely<CoreMaintenanceDB>;
+    const row = await createSchedule(db, ctx.orgId, parsed.data);
+    return { ok: true, result: { schedule_id: row.id, name: row.name } };
+  });
+  platform().actions.registerHandler("core-maintenance.remove-schedule", async (ctx) => {
+    const id = String((ctx.args as { schedule_id?: unknown } | null)?.schedule_id ?? "").trim();
+    if (!id) return { ok: false, error: "missing schedule_id" };
+    const db = (await platform().tenants.getDb(ctx.orgId)) as Kysely<CoreMaintenanceDB>;
+    const row = await db.deleteFrom("core_maintenance_schedules").where("id", "=", id).returning(["id", "name"]).executeTakeFirst();
+    await db.deleteFrom("core_maintenance_entries").where("schedule_id", "=", id).where("performed_at", "is", null).execute();
+    if (!row) return { ok: true, skipped: true, reason: "already gone" };
+    return { ok: true, summary: `Removed the ${row.name} schedule.` };
+  });
+  platform().actions.registerUndo("core-maintenance.schedule", (result) => {
+    const r = result as { ok?: unknown; result?: { schedule_id?: unknown } } | null;
+    if (r?.ok !== true || typeof r.result?.schedule_id !== "string") return null;
+    return { action_id: "core-maintenance:remove-schedule", args: { schedule_id: r.result.schedule_id } };
   });
 
   platform().actions.registerHandler("core-maintenance.complete", async (ctx) => {
@@ -109,9 +161,15 @@ export function registerMaintenanceHandlers(): void {
       .returningAll()
       .executeTakeFirst();
     if (!row) return { ok: false, error: `no maintenance entry with id ${id}` };
+    const rolled = await rollForward(db, ctx.orgId, row);
     return {
       ok: true,
-      result: { id: row.id, name: row.name, performed_at: row.performed_at },
+      result: {
+        id: row.id,
+        name: row.name,
+        performed_at: row.performed_at,
+        ...(rolled ? { next_due_at: rolled.next?.scheduled_at ?? null, schedule_was: rolled.was } : {}),
+      },
       was: { performed_at: before?.performed_at ?? null, performed_by: before?.performed_by ?? null },
     };
   });
@@ -125,6 +183,8 @@ function registerUndos(): void {
     if (!id) return { ok: false, error: "missing entry_id" };
     const db = (await platform().tenants.getDb(ctx.orgId)) as Kysely<CoreMaintenanceDB>;
     const row = await db.deleteFrom("core_maintenance_entries").where("id", "=", id).returning(["id", "name"]).executeTakeFirst();
+    const was = rolledFromOf((ctx.args as { schedule_was?: unknown } | null)?.schedule_was);
+    if (was) await unroll(db, ctx.orgId, was);
     if (!row) return { ok: true, skipped: true, reason: "already gone" };
     return { ok: true, summary: `Removed the ${row.name} entry.`, removed: row.id };
   });
@@ -152,9 +212,12 @@ function registerUndos(): void {
     };
   });
   platform().actions.registerUndo("core-maintenance.log", (result) => {
-    const r = (result as { ok?: unknown; result?: { id?: unknown } } | null);
+    const r = (result as { ok?: unknown; result?: { id?: unknown; schedule_was?: unknown } } | null);
     if (r?.ok !== true || typeof r.result?.id !== "string") return null;
-    return { action_id: "core-maintenance:remove-entry", args: { entry_id: r.result.id } };
+    return {
+      action_id: "core-maintenance:remove-entry",
+      args: { entry_id: r.result.id, ...(r.result.schedule_was ? { schedule_was: r.result.schedule_was } : {}) },
+    };
   });
   const reopen = (result: unknown) => {
     const r = result as { ok?: unknown; result?: { id?: unknown }; was?: { performed_at?: unknown; performed_by?: unknown } } | null;

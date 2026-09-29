@@ -1,10 +1,10 @@
 // discord — Discord channel webhook connector. Same shape as slack:
 // paste the webhook URL, post messages to it.
 
-import { platform } from "@cobblr/platform-contract";
+import { registerOutboundConnector } from "../services.js";
 
 export function register(): void {
-  platform().integrations.registerConnector({
+  registerOutboundConnector({
     id: "discord",
     label: "Discord (channel webhook)",
     describeCredentials: () => ({

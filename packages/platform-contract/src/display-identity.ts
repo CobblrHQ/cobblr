@@ -165,6 +165,18 @@ export function displayName(row: NamedRowLike, opts: { titleFormat?: TitleFormat
   return column ? presentName(column) : null;
 }
 
+/** A "name" that is only a code: the scanned code itself (bare, or dressed
+ *  as "Barcode 1989…"), or a run of six or more digits nobody reads as a
+ *  thing. A record filed under one reads as a number in every list, so a
+ *  row named this way is nameless: it waits for a name (#3930). */
+export function isBareCodeName(name: string | null | undefined, code?: string | null): boolean {
+  const n = (name ?? "").trim().replace(/^(?:barcode|upc|ean|code)\s*[:#]?\s*/i, "");
+  if (!n) return false;
+  const c = (code ?? "").trim();
+  if (c && n.toLowerCase() === c.toLowerCase()) return true;
+  return /^\d[\d\s-]{5,}$/.test(n);
+}
+
 /** The name to WRITE when a row is filed without one given: the person's
  *  when there is one, else the stored column as the source spelt it. Never
  *  the presentation (`displayName`): the first-letter rule and a title's

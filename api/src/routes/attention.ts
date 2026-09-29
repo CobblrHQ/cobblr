@@ -18,7 +18,7 @@ import { requireAuth } from "../auth/middleware.js";
 import { withTenant } from "../middleware/tenant.js";
 import { facesForKind } from "../platform/faces.js";
 import { listApplicable } from "../platform/actions.js";
-import { resolveKind } from "../platform/entities.js";
+import { resolveKind, titleForEntity } from "../platform/entities.js";
 import { hasPrimaryRouter } from "../modules/mount.js";
 import { countdownWords, fieldDay, fieldDayUnreadable, viewQuery } from "@cobblr/platform-contract";
 import { dueState, todayFrom } from "../lib/due-day.js";
@@ -406,6 +406,69 @@ attentionRouter.get("/", requireAuth, withTenant, async (req, res, next) => {
           collection: tasksCollection,
           entries: upcomingTasks.slice(0, 8).map(taskEntry),
         });
+    }
+
+    // Scheduled maintenance: every open service in the log, including each
+    // schedule's next occurrence ("Oil change on the van, overdue by 4 days";
+    // a printer whose print hours passed its mark, dated today by the
+    // sweeper). A native column, so the field sweep above never saw it; it
+    // only surfaced when a tracker happened to name a date field "service"
+    // (#3876). 404s harmlessly when core-maintenance is off.
+    const maint = await j<{
+      items: Array<{ id: string; name: string; entity_module: string; entity_type: string; entity_id: string; scheduled_at: string | null; schedule_id?: string | null }>;
+    }>(`/orgs/${slug}/modules/core-maintenance/entries?kind=scheduled&due_within_days=${WINDOW_DAYS}&limit=${ITEM_CAP}`, token);
+    if (maint && maint.items.length > 0) {
+      const orgId = req.tenant!.org.id;
+      // An occurrence of a schedule says where it stands in the schedule's own
+      // words: a printer past its service hours is "overdue by 125 print
+      // hours", not "due today" because the sweeper dated it today.
+      const schedules = maint.items.some((e) => e.schedule_id)
+        ? await j<{ items: Array<{ id: string; due: { state: "ok" | "due-soon" | "overdue"; reason: string } }> }>(
+            `/orgs/${slug}/modules/core-maintenance/schedules`,
+            token,
+          )
+        : null;
+      const dueBySchedule = new Map((schedules?.items ?? []).map((sc) => [sc.id, sc.due]));
+      const titled = await Promise.all(
+        maint.items.map(async (e) => {
+          const kind = `${e.entity_module}:${e.entity_type}`;
+          const title = await titleForEntity(orgId, kind, e.entity_id).catch(() => null);
+          return { ...e, kind, title };
+        }),
+      );
+      const entryOf = (e: (typeof titled)[number], words: string) => ({
+        id: e.id,
+        title: `${e.name}${e.title ? ` on ${e.title}` : ""}: ${words}`,
+        action: { record: e.entity_id, kind: e.kind, maintenance_entry: e.id },
+        record: { kind: e.kind, id: e.entity_id, name: e.title ?? e.name },
+      });
+      const byState = { overdue: [] as typeof titled, today: [] as typeof titled, upcoming: [] as typeof titled };
+      for (const e of titled) {
+        const day = e.scheduled_at ? e.scheduled_at.slice(0, 10) : null;
+        const own = e.schedule_id ? dueBySchedule.get(e.schedule_id) : undefined;
+        const state = own?.state === "overdue" ? "overdue" : day ? dueState(day, today, WINDOW_DAYS) : "none";
+        if (state === "overdue") byState.overdue.push(e);
+        else if (state === "today") byState.today.push(e);
+        else if (state === "upcoming") byState.upcoming.push(e);
+      }
+      const words = (e: (typeof titled)[number]) =>
+        (e.schedule_id ? dueBySchedule.get(e.schedule_id)?.reason : undefined) ??
+        (e.scheduled_at ? countdownWords(e.scheduled_at.slice(0, 10), today) : "");
+      const push = (kind: "overdue" | "due_today" | "upcoming", label: string, list: typeof titled) => {
+        if (list.length === 0) return;
+        list.sort((a, b) => String(a.scheduled_at).localeCompare(String(b.scheduled_at)));
+        rows.push({
+          kind,
+          label,
+          count: list.length,
+          sample: list.slice(0, 3).map((e) => (e.title ? `${e.name} on ${e.title}` : e.name)),
+          route: "/maintenance",
+          entries: list.slice(0, 8).map((e) => entryOf(e, words(e))),
+        });
+      };
+      push("overdue", `overdue maintenance`, byState.overdue);
+      push("due_today", `maintenance due today`, byState.today);
+      push("upcoming", `maintenance coming up`, byState.upcoming);
     }
 
     // Digifab (prototype, the author sign-off pending): printers holding a finished

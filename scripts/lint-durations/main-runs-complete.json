@@ -1,7 +1,8 @@
 {
   "lint": "lint:main-runs-complete",
-  "run": "tsx scripts/lint-main-runs-complete.ts",
+  "run": "node scripts/lint-main-runs-complete.ts",
   "ms": 388,
   "recorded": "2026-09-14",
-  "source": "split from scripts/lint-durations.json (recorded 2026-09-14)"
+  "source": "split from scripts/lint-durations.json (recorded 2026-09-14)",
+  "readMB": 0.3
 }

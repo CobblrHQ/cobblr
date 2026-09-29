@@ -24,6 +24,8 @@ import { stripPlaceFields } from "./place-fields.js";
 import { liveTableForOffer } from "./resolve-offers.js";
 import { normaliseCategory, isJunkCategory } from "@cobblr/platform-contract/category-reconcile";
 import { makeLexicalScorer, type FitTable, type LexicalEvidence } from "@cobblr/platform-contract/table-fit";
+import { parentInstanceOf, scanLabelForChild, typeTablesAmong, withTypeFields, type ParentedTable } from "@cobblr/platform-contract/scan-type-tables";
+import { bundleTableWords } from "@cobblr/platform-contract/bundle-words";
 
 // A HANG GUARD, not a latency knob: the matchmaker
 // runs detached server-side — nobody is blocked on it — and a queued
@@ -445,10 +447,22 @@ export async function assembleScanMenu(
     /* overrides are best-effort — nouns fall back to the module's default. */
   }
 
+  // A table another names as its parent holds the definitions (the types),
+  // never where a scanned thing lands; its child routes on the type's words
+  // too. The rule is the contract's, shared with the bundle menu.
+  const typeTables = new Set<string>();
+  for (const [moduleName, insts] of byModule) {
+    for (const t of typeTablesAmong(insts.map((i) => ({ instance: i.instance_name, parent: i.config?.parent as ParentedTable["parent"] })))) {
+      typeTables.add(`${moduleName}::${t}`);
+    }
+  }
+
   const entries: ScanMenuEntry[] = [];
   for (const inst of instances) {
     const scanInfo = scanByModule.get(inst.module_name);
     if (!scanInfo) continue;
+    if (typeTables.has(`${inst.module_name}::${inst.instance_name}`)) continue;
+    const parentName = parentInstanceOf({ instance: inst.instance_name, parent: inst.config?.parent as ParentedTable["parent"] });
     // Hide an empty auto-default that named instances have superseded — UNLESS it's
     // this module's scan catch-all. The fallback MUST be in the menu, or the model
     // has nowhere to route an unmatched item and it scatters into the named tables.
@@ -461,9 +475,11 @@ export async function assembleScanMenu(
     const kind = inst.is_default ? scanInfo.kind : `${inst.instance_name}:item`;
     const override = overridesByTarget.get(`${inst.module_name}:${inst.instance_name}`);
     const noun = override?.item_noun || scanInfo.noun;
-    const scanKeywords = Array.isArray(override?.scan_keywords)
-      ? override!.scan_keywords.filter((k): k is string => typeof k === "string" && k.trim() !== "")
-      : undefined;
+    const parentOverride = parentName ? overridesByTarget.get(`${inst.module_name}:${parentName}`) : undefined;
+    const wordsOf = (o: typeof override) =>
+      Array.isArray(o?.scan_keywords) ? o!.scan_keywords.filter((k): k is string => typeof k === "string" && k.trim() !== "") : [];
+    const allWords = bundleTableWords(wordsOf(override), wordsOf(parentOverride));
+    const scanKeywords = allWords.length ? allWords : undefined;
 
     let fields: MenuField[] = [];
     let categoryField: ScanMenuEntry["category_field"];
@@ -523,13 +539,29 @@ export async function assembleScanMenu(
     } catch {
       /* no fields → the table is still routable by its noun. */
     }
+    if (parentName) {
+      try {
+        const res = await fetch(`${baseUrl}/api/v1/orgs/${slug}/field-defs?kind=${encodeURIComponent(`${parentName}:item`)}`, { headers: auth });
+        if (res.ok) {
+          const defs = ((await res.json()) as { items?: Array<{ name: string; display_label: string; type: string; choices?: string[] | null }> }).items ?? [];
+          fields = withTypeFields(
+            fields,
+            defs
+              .filter((d) => d.type !== "computed")
+              .map((d) => ({ name: d.name, label: d.display_label, type: d.type, ...(d.choices && d.choices.length ? { choices: d.choices } : {}) })),
+          );
+        }
+      } catch {
+        /* the child still routes on its own fields. */
+      }
+    }
 
     entries.push({
       module: inst.module_name,
       instance: inst.is_default ? null : inst.instance_name,
       kind,
       noun,
-      label: inst.display_name,
+      label: parentName ? scanLabelForChild(inst.display_name, (inst.config?.nav_group as { label?: unknown } | undefined)?.label) : inst.display_name,
       fields,
       ...(scanKeywords && scanKeywords.length ? { scan_keywords: scanKeywords } : {}),
       ...(categoryField ? { category_field: categoryField } : {}),
@@ -1033,7 +1065,10 @@ export const MATCHMAKER_SYSTEM =
     "identifiable real-world entity you recognize with certainty — a named book, " +
     "film, album, or game by its title + creator, or a product by make + model. " +
     "For that exact known entity you MAY fill additional declared fields you " +
-    "reliably KNOW (e.g. a book's isbn, publisher, publication year, page count) " +
+    "reliably KNOW (e.g. a book's isbn, publisher, publication year, page count; " +
+    "a device's or machine's published stock specs for that exact model, such as " +
+    "its size or capacity, its stock firmware or controller, a choice field's " +
+    "matching value) " +
     "even when the photo does not show them, and you MUST list every field you " +
     "filled this way (from your own knowledge, not the item data) in `inferred`. " +
     "This is completing a known fact, not inventing: it applies ONLY to a " +

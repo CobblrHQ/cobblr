@@ -266,7 +266,8 @@ export interface BundleResourceClaimsTable {
   id: Generated<string>;
   org_id: string;
   source: string;
-  resource_type: "module" | "instance";
+  /** `place` = a location the install created; resource_key is its id. */
+  resource_type: "module" | "instance" | "place";
   resource_key: string;
   created_at: Generated<Date>;
 }
@@ -474,6 +475,29 @@ export interface WorkspaceInvitesTable {
   /** A join link the workspace's item labels may offer to someone who scans
    *  one signed out. Off unless the admin turns it on. */
   offer_on_labels: Generated<boolean>;
+  /** At most this many joins per `pace_period`; more pauses the link. */
+  pace_limit: number | null;
+  pace_period: "day" | "week" | "month" | "year" | null;
+  /** Set when the pace was exceeded: nobody new joins until an admin
+   *  resumes the link or gives it a new code. */
+  paused_at: Date | null;
+  /** Joins before this do not count toward the pace (set on resume). */
+  pace_since: Date | null;
+  /** The People-list entry this invite is for: accepting it ties that entry
+   *  to the account, so what was theirs stays theirs. */
+  person_id: string | null;
+}
+
+/** Someone a workspace's records can belong to (#3787): a member, tied to
+ *  their account, or anyone else by name. */
+export interface WorkspacePeopleTable {
+  id: Generated<string>;
+  org_id: string;
+  name: Generated<string>;
+  user_id: string | null;
+  email: string | null;
+  created_at: Generated<Date>;
+  archived_at: Date | null;
 }
 
 /** One person joining through a reusable invite. */
@@ -1244,9 +1268,34 @@ export interface TestOrgPoolTable {
 /** Bridge presence, shared across api processes. A row here means some process
  *  has a bridge long-polling for that CHANNEL KEY (a user id for a personal AI
  *  connection, `<orgId>` or `<orgId>::<name>` for a workspace bridge). */
+/** A one-time code that trades for a bridge's token at install. */
+export interface EdgePairingCodesTable {
+  code_hash: string;
+  org_id: string;
+  user_id: string;
+  bridge: string | null;
+  name: string;
+  created_at: Generated<Date>;
+  expires_at: Date;
+  used_at: Date | null;
+}
+
 export interface EdgeBridgesTable {
   channel_key: string;
   last_seen: Generated<Date>;
+  /** What a person calls it. Taken from the token it was installed with on
+   *  first contact, renamable after; null reads as the default wording. */
+  name: string | null;
+  first_seen: Generated<Date>;
+  /** The bridge's own report of itself at /register. */
+  version: string | null;
+  hostname: string | null;
+  /** When the workspace was told it went offline; cleared on return. */
+  offline_noticed_at: Date | null;
+  /** The addresses the bridge says it will reach (its BRIDGE_ALLOW), or null. */
+  allowlist: string[] | null;
+  /** The API token it last registered with: the key Disconnect revokes. */
+  token_id: string | null;
 }
 
 /** One relayed request. The bridge claims it from whichever process it polled,
@@ -1275,9 +1324,20 @@ export interface HealShimRunsTable {
   zero_since: Date | null;
 }
 
+/** A workspace's say over one service capability (20260929-153). No row is
+ *  the default: the capability's declared effect decides. */
+export interface ServiceCapabilityPoliciesTable {
+  org_id: string;
+  capability: string;
+  policy: "always_ask" | "run" | "off";
+  updated_by: string | null;
+  updated_at: Generated<Date>;
+}
+
 export interface MetaDB {
   feedback: FeedbackTable;
   edge_bridges: EdgeBridgesTable;
+  edge_pairing_codes: EdgePairingCodesTable;
   edge_relay_jobs: EdgeRelayJobsTable;
   users: UsersTable;
   orgs: OrgsTable;
@@ -1288,6 +1348,7 @@ export interface MetaDB {
   scan_url_resolvers: ScanUrlResolversTable;
   workspace_invites: WorkspaceInvitesTable;
   workspace_invite_uses: WorkspaceInviteUsesTable;
+  workspace_people: WorkspacePeopleTable;
   signup_invites: SignupInvitesTable;
   waitlist: WaitlistTable;
   api_tokens: ApiTokensTable;
@@ -1297,6 +1358,7 @@ export interface MetaDB {
   oauth_refresh_tokens: OauthRefreshTokensTable;
   user_credentials: UserCredentialsTable;
   user_credential_orgs: UserCredentialOrgsTable;
+  service_capability_policies: ServiceCapabilityPoliciesTable;
   platform_announce_settings: PlatformAnnounceSettingsTable;
   impersonation_sessions: ImpersonationSessionsTable;
   backup_destinations: BackupDestinationsTable;

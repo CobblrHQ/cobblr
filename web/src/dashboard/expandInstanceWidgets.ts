@@ -29,6 +29,9 @@ export const instanceTileId = (module: string, instanceName: string): string =>
 export function expandInstanceWidgets(
   widgets: DashboardWidgetSpec[],
   instancesByModule: Map<string, ModuleInstance[] | undefined>,
+  /** type collection → the collection of its things and the pair's one label
+   *  (Filament Types → Spools, "Filament"): one tile for the pair. */
+  families: ReadonlyMap<string, { child: string; label: string }> = new Map(),
 ): DashboardWidgetSpec[] {
   const out: DashboardWidgetSpec[] = [];
   for (const w of widgets) {
@@ -39,8 +42,11 @@ export function expandInstanceWidgets(
       continue;
     }
     const hasNamed = insts.some((i) => !i.is_default);
+    const present = new Set(insts.map((i) => i.instance_name));
+    const folded = new Set([...families].filter(([parent, f]) => present.has(parent) && present.has(f.child)).map(([, f]) => f.child));
+    // registry-filter-ok: folds a type collection's child into the type's own tile (the pair shows as one, counting both); no kind is dropped
     const shown = insts.filter(
-      (i) => !(i.is_default && hasNamed && i.item_count === 0),
+      (i) => !(i.is_default && hasNamed && i.item_count === 0) && !folded.has(i.instance_name),
     );
     // Nothing to show (shouldn't happen — a default always exists) → fall back.
     if (shown.length === 0) {
@@ -60,7 +66,7 @@ export function expandInstanceWidgets(
         id: instanceTileId(w.module, inst.instance_name),
         order: w.order,
         component: w.instanceTile,
-        _instance: inst,
+        _instance: families.has(inst.instance_name) && folded.has(families.get(inst.instance_name)!.child) ? { ...inst, family: families.get(inst.instance_name)! } : inst,
       });
     }
   }

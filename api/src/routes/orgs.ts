@@ -791,10 +791,14 @@ orgsRouter.get("/:slug/activity", requireAuth, withTenant, async (req, res, next
       if (!i.module_name || !i.entity_id) continue;
       const d = (i.diff ?? {}) as Record<string, unknown>;
       const titled = typeof d.name === "string" || typeof d.title === "string" || typeof d.label === "string";
-      toResolve.set(`${i.entity_type}:${i.entity_id}`, {
+      const key = `${i.entity_type}:${i.entity_id}`;
+      // One record, several rows: it needs its title looked up if ANY of them
+      // carries none. The last row used to decide for all, so "created BANANAS"
+      // (titled) left the newer "took one of" row reading only "part" (#3994).
+      toResolve.set(key, {
         kind: `${i.module_name}:${i.entity_type}`,
         entityId: i.entity_id,
-        needsTitle: !titled,
+        needsTitle: (toResolve.get(key)?.needsTitle ?? false) || !titled,
       });
     }
     await Promise.all(

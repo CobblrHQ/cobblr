@@ -4,10 +4,10 @@
 // One action: post-message. Args: { text, blocks? }. If a template
 // rendered string is provided, it goes in `text`.
 
-import { platform } from "@cobblr/platform-contract";
+import { registerOutboundConnector } from "../services.js";
 
 export function register(): void {
-  platform().integrations.registerConnector({
+  registerOutboundConnector({
     id: "slack",
     label: "Slack (incoming webhook)",
     describeCredentials: () => ({

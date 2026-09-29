@@ -9,6 +9,7 @@
 // the choices via api.appendFieldDefChoice (if the host adapter
 // implements it).
 
+import { ColourInput } from "./ColourInput";
 import { useMemo, useState, type FocusEvent } from "react";
 import { useFieldDraft } from "./use-field-draft";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
@@ -26,6 +27,7 @@ import { useUnits } from "./useUnits";
 import { Link as RouterLink } from "react-router-dom";
 import { FIELD_PROVENANCE_KEY, fieldProvenanceOf, type FieldProvenance } from "@cobblr/platform-contract/acquisition-source";
 import { openRecordPath } from "@cobblr/platform-contract/instance-detail";
+import { PersonSelect } from "./PersonSelect";
 
 interface Props {
   entityKind: string;
@@ -74,6 +76,9 @@ export function CustomFieldsPanel({
     staleTime: 60_000,
   });
   const [showAll, setShowAll] = useState(false);
+  // Sections a person folded away on this sheet. Every section starts open,
+  // so nothing a record holds is hidden until someone chooses to hide it.
+  const [folded, setFolded] = useState<ReadonlySet<string>>(() => new Set());
   const fields = useMemo(
     () => (data?.items ?? [])
       .filter((f) => !hideNames?.has(f.name))
@@ -122,10 +127,15 @@ export function CustomFieldsPanel({
   const visible = showAll ? fields : shown;
 
   // Group by form-builder section: ungrouped fields first (no heading), then
-  // each section (in its saved order) with a heading. A section with no visible
-  // fields is skipped.
+  // each section (in its saved order) under a heading that folds it away. A
+  // section with no visible fields is skipped.
   const sections = (data?.sections ?? []).slice().sort((a, b) => a.position - b.position);
-  const inSection = (sid: string | null) => visible.filter((f) => (f.section_id ?? null) === sid);
+  // A field filed under a section this read did not bring (an older server,
+  // a section deleted under it) shows with the ungrouped ones: a heading can
+  // go missing, a field never does.
+  const known = new Set(sections.map((s) => s.id));
+  const sectionOf = (f: PlatformFieldDef) => (f.section_id && known.has(f.section_id) ? f.section_id : null);
+  const inSection = (sid: string | null) => visible.filter((f) => sectionOf(f) === sid);
   const ungrouped = inSection(null);
   const grouped = sections.map((s) => ({ s, fs: inSection(s.id) })).filter((g) => g.fs.length > 0);
 
@@ -182,14 +192,29 @@ export function CustomFieldsPanel({
     // the sections they arranged in the form builder.
     <div className={"space-y-4 " + (className ?? "")}>
       {ungrouped.length > 0 && grid(ungrouped)}
-      {grouped.map(({ s, fs }) => (
-        <div key={s.id} className="space-y-2">
-          <div className="text-[10px] font-mono uppercase tracking-widest text-muted dark:text-slate-400 border-b border-line dark:border-slate-700 pb-1">
-            {s.name}
+      {grouped.map(({ s, fs }) => {
+        const open = !folded.has(s.id);
+        return (
+          <div key={s.id} className="space-y-2" data-testid="field-section">
+            <button
+              type="button"
+              aria-expanded={open}
+              onClick={() => setFolded((was) => {
+                const next = new Set(was);
+                if (next.has(s.id)) next.delete(s.id);
+                else next.add(s.id);
+                return next;
+              })}
+              className="w-full flex items-center gap-1.5 text-left text-[10px] font-mono uppercase tracking-widest text-muted dark:text-slate-400 border-b border-line dark:border-slate-700 pb-1 hover:text-content dark:hover:text-slate-200 transition"
+            >
+              <span aria-hidden className={"inline-block transition-transform " + (open ? "rotate-90" : "")}>›</span>
+              <span className="flex-1">{s.name}</span>
+              {!open && <span className="normal-case tracking-normal text-faint dark:text-slate-500">{fs.length} field{fs.length === 1 ? "" : "s"}</span>}
+            </button>
+            {open && grid(fs)}
           </div>
-          {grid(fs)}
-        </div>
-      ))}
+        );
+      })}
       {visible.length === 0 && !showAll && (
         <div className="text-[11px] text-faint dark:text-slate-500 italic">No fields set.</div>
       )}
@@ -241,6 +266,10 @@ function FieldRow({
     ) : control === "relation" ? (
       // Reference to another entity — a picker over the def's ref_kind.
       <RelationRow def={def} value={value} onCommit={onCommit} />
+    ) : control === "member" || control === "person" ? (
+      // A person: a picker by name. Without this branch the row fell through
+      // to a text box showing the stored id.
+      <PeopleRow def={def} value={value} onCommit={onCommit} kind={control} />
     ) : control === "color" ? (
       // Colour branch — a real swatch picker (type a hex/name OR pick).
       <ColorRow def={def} value={value} onCommit={onCommit} />
@@ -419,9 +448,11 @@ function ComputedRow({
     <label className="block">
       <span className="block text-[10px] font-mono uppercase tracking-widest text-faint dark:text-slate-500 mb-1">
         {def.display_label}
-        <span className="ml-2 italic text-accent normal-case tracking-normal">computed</span>
+        <span className="ml-2 normal-case tracking-normal text-faint dark:text-slate-500">worked out, not typed</span>
       </span>
-      <div className="input flex-1 bg-mortar-50/60 dark:bg-slate-800/60 text-content dark:text-mortar-100 cursor-default select-text">
+      {/* Plain text, never an input's box: a value nobody can type into must
+          not look like a field waiting for one (#3990). */}
+      <div data-testid="computed-value" className="py-1 text-sm text-content dark:text-mortar-100 cursor-default select-text">
         {str ? (
           // Honour the field's renderer so a {{ }}-built URL (renderer "url-link")
           // draws as a clickable link, not plain text.
@@ -619,6 +650,33 @@ function RelationRow({
   );
 }
 
+/** A `member` or `person` field row: label + the picker by name. */
+function PeopleRow({
+  def,
+  value,
+  onCommit,
+  kind,
+}: {
+  def: PlatformFieldDef;
+  value: unknown;
+  onCommit: (v: unknown) => void;
+  kind: "member" | "person";
+}) {
+  return (
+    <label className="block">
+      <span className="block text-[10px] font-mono uppercase tracking-widest text-faint dark:text-slate-500 mb-1">
+        {def.display_label}
+        {def.required ? <span className="text-ember-500"> *</span> : null}
+      </span>
+      {kind === "person" ? (
+        <PersonSelect value={value} onChange={(v) => onCommit(v)} className="w-full" />
+      ) : (
+        <MemberSelect value={value} onChange={(v) => onCommit(v)} className="w-full" />
+      )}
+    </label>
+  );
+}
+
 /** A boolean field — a real checkbox. Tolerant of legacy string values
  *  ("true"/"false") that the old text-box bug may have stored; toggling
  *  commits a proper boolean, so the row self-heals on next edit. */
@@ -689,7 +747,8 @@ function MarkdownRow({
 }
 
 /** A colour field — native OS swatch picker + a free-text box (so a named
- *  colour like "Peacock" still works). Commits on change/blur. */
+ *  colour like "Peacock" still works). The swatch previews while dragged and
+ *  saves once on release (ColourInput); the text box saves on blur. */
 function ColorRow({
   def,
   value,
@@ -701,25 +760,22 @@ function ColorRow({
 }) {
   const initial = value == null ? "" : String(value);
   const { draft, setDraft, committed } = useFieldDraft(initial);
-  const t = draft.trim();
-  const swatch = /^#?[0-9a-fA-F]{6}$/.test(t) ? (t[0] === "#" ? t : `#${t}`) : "#cccccc";
   return (
     <label className="block">
       <span className="block text-[10px] font-mono uppercase tracking-widest text-faint dark:text-slate-500 mb-1">
         {def.display_label}
         {def.required ? <span className="text-ember-500"> *</span> : null}
       </span>
-      <div className="flex items-center gap-2">
-        <input
-          type="color"
-          value={swatch}
-          onChange={(e) => {
-            setDraft(e.target.value);
-            committed(e.target.value);
-            onCommit(e.target.value);
+      <div className="flex flex-wrap items-center gap-2">
+        <ColourInput
+          value={draft}
+          label={def.display_label}
+          onPreview={setDraft}
+          onCommit={(next) => {
+            setDraft(next);
+            committed(next);
+            onCommit(next);
           }}
-          className="h-9 w-12 shrink-0 rounded border border-line dark:border-slate-600 cursor-pointer bg-transparent p-0.5"
-          aria-label={`${def.display_label} colour picker`}
         />
         <input
           type="text"
@@ -872,7 +928,7 @@ function NoteInput({
     <input
       type="text"
       value={draft}
-      placeholder="who specifically? (optional)"
+      placeholder="which one, specifically? (optional)"
       onChange={(e) => setDraft(e.target.value)}
       onBlur={() => {
         if (draft.trim() === value.trim()) return;

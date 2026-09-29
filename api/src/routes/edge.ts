@@ -35,7 +35,10 @@ import { requireAuth } from "../auth/middleware.js";
 import { requireRole } from "../auth/capability.js";
 import { withTenant } from "../middleware/tenant.js";
 import { meta } from "../db/meta.js";
-import { edgeBridgeName, edgeChannelKey } from "@cobblr/platform-contract/edge-channel";
+import { createPairingCode, redeemPairingCode } from "../platform/edge-pairing.js";
+import { INSTALL_SCRIPT } from "../platform/edge-bridge-install-script.js";
+import { makeIpLimiter, overLimit, rateLimited } from "../platform/ip-limiter.js";
+import { edgeBridgeName, edgeChannelKey, parseBridgeReport } from "@cobblr/platform-contract/edge-channel";
 
 export const edgeRouter = Router({ mergeParams: true });
 edgeRouter.use(requireAuth, withTenant);
@@ -54,6 +57,13 @@ function bridgeIdOf(req: Request): string | null {
   return edgeBridgeName(req.query.bridge);
 }
 
+/** What a registering bridge says about itself (its version and machine), and
+ *  the token it authenticated with, whose name becomes the bridge's name. An
+ *  older bridge sends no body; that is simply nothing to record. */
+export function bridgeReportOf(req: Request): ReturnType<typeof parseBridgeReport> {
+  return parseBridgeReport(req.body, req.session?.api_token_id ?? null);
+}
+
 // ── The wire (spoken by the bridge, authed with a devices:edge token) ──
 
 edgeRouter.post("/register", async (req, res, next) => {
@@ -61,7 +71,7 @@ edgeRouter.post("/register", async (req, res, next) => {
   // Express 4 does not forward a rejected promise, so an unhandled DB error
   // here leaves the bridge's request open until something times it out.
   try {
-    await platform().edge.relayTouch(channelKeyOf(req));
+    await platform().edge.relayTouch(channelKeyOf(req), bridgeReportOf(req));
     res.json({ ok: true });
   } catch (e) {
     next(e);
@@ -121,6 +131,84 @@ edgeRouter.get("/status", async (req, res) => {
     personal: { connected, backs },
     stale_after_ms: 60_000,
   });
+});
+
+// Every bridge this workspace has, online or not, by name (#3904). The page
+// and every bridge picker read this; the ids stay out of sight.
+edgeRouter.get("/bridges", async (req, res, next) => {
+  if (!requireRole(req, res, "owner", "admin", "member")) return;
+  try {
+    res.json({ bridges: await platform().edge.listBridges(req.tenant!.org.id) });
+  } catch (e) {
+    next(e);
+  }
+});
+
+const Rename = z.object({ bridge: z.string().min(1).nullable(), name: z.string().trim().min(1).max(120) });
+edgeRouter.post("/bridges/rename", async (req, res, next) => {
+  if (!requireRole(req, res, "owner", "admin")) return;
+  const parsed = Rename.safeParse(req.body);
+  if (!parsed.success) {
+    res.status(400).json({ error: { code: "bad_body", message: "a bridge (null for your first one) and a name are required" } });
+    return;
+  }
+  try {
+    const ok = await platform().edge.renameBridge(req.tenant!.org.id, parsed.data.bridge, parsed.data.name);
+    if (!ok) {
+      res.status(404).json({ error: { code: "no_such_bridge", message: "This workspace has no bridge by that id." } });
+      return;
+    }
+    res.json({ ok: true });
+  } catch (e) {
+    next(e);
+  }
+});
+
+const PairingBody = z.object({ name: z.string().trim().min(1).max(120), bridge: z.string().trim().max(60).nullable().optional() });
+// A one-time code the installer on the box trades for the bridge's token
+// (POST /api/v1/edge/pair), so the token itself is never pasted anywhere.
+// AI-REACH: exempt — installing a bridge is done at a keyboard on the box that
+// runs it; the assistant has nothing to type the code into.
+edgeRouter.post("/pairing-codes", async (req, res, next) => {
+  if (!requireRole(req, res, "owner", "admin")) return;
+  const parsed = PairingBody.safeParse(req.body);
+  if (!parsed.success) {
+    res.status(400).json({ error: { code: "bad_body", message: "Give the bridge a name." } });
+    return;
+  }
+  try {
+    res.status(201).json(
+      await createPairingCode({
+        orgId: req.tenant!.org.id,
+        userId: req.session!.id,
+        name: parsed.data.name,
+        bridge: edgeBridgeName(parsed.data.bridge ?? null),
+      }),
+    );
+  } catch (e) {
+    next(e);
+  }
+});
+
+const Disconnect = z.object({ bridge: z.string().min(1).nullable() });
+// Cut a bridge off: its key is revoked, so its next check-in is refused.
+edgeRouter.post("/bridges/disconnect", async (req, res, next) => {
+  if (!requireRole(req, res, "owner", "admin")) return;
+  const parsed = Disconnect.safeParse(req.body);
+  if (!parsed.success) {
+    res.status(400).json({ error: { code: "bad_body", message: "Which bridge? (null for your first one)" } });
+    return;
+  }
+  try {
+    const r = await platform().edge.disconnectBridge(req.tenant!.org.id, parsed.data.bridge);
+    if (!r) {
+      res.status(404).json({ error: { code: "no_such_bridge", message: "This workspace has no bridge by that id." } });
+      return;
+    }
+    res.json({ ok: true, also_cut: r.alsoCut });
+  } catch (e) {
+    next(e);
+  }
 });
 
 // Which modules can attach to a bridge — data-driven from the consumer
@@ -267,5 +355,61 @@ edgeRouter.delete("/drivers/:kind", async (req, res, next) => {
     res.status(204).end();
   } catch (err) {
     next(err);
+  }
+});
+
+// ── Pairing: the one door a bridge uses before it has a token ──
+//
+// Mounted at /api/v1/edge, outside any workspace and without auth: the
+// installer has only the code. The code is short, so this door is limited per
+// IP; a wrong or spent code gets the same answer as an expired one.
+export const edgePairRouter = Router();
+const pairLimiter = makeIpLimiter(60_000, 10);
+
+
+/** This instance's address as the person's browser reached it, which is the
+ *  one the installer must reach too. Refused when the Host is not a hostname. */
+export function publicOrigin(req: Request): string | null {
+  const host = (req.get("x-forwarded-host") ?? req.get("host") ?? "").split(",")[0]!.trim();
+  if (!/^[a-z0-9.-]+(:\d{1,5})?$/i.test(host)) return null;
+  return `${req.protocol}://${host}`;
+}
+
+// The installer the one-liner pipes into sh, with this instance's address
+// written in. Public: it carries no secret, only where to trade the code.
+// AI-REACH: exempt — a shell script for a machine, not an action.
+edgePairRouter.get("/install.sh", (req, res) => {
+  const origin = publicOrigin(req);
+  if (!origin) return void res.status(400).type("text/plain").send("echo 'cobblr bridge: bad Host header' >&2; exit 1\n");
+  // Never cached: the script names the address it was asked for.
+  res.setHeader("cache-control", "no-store");
+  res.type("text/x-shellscript").send(INSTALL_SCRIPT.split("@@COBBLR_URL@@").join(origin));
+});
+
+// AI-REACH: exempt — spoken by the installer on the bridge's box, never by a person or the assistant.
+edgePairRouter.post("/pair", async (req, res, next) => {
+  if (overLimit(pairLimiter, req)) return void rateLimited(res);
+  try {
+    const r = await redeemPairingCode((req.body as { code?: unknown } | undefined)?.code);
+    if (!r.ok) {
+      res.status(r.reason === "unknown" ? 404 : 403).json({
+        error: {
+          code: r.reason === "unknown" ? "pairing_code_unusable" : "pairing_not_allowed",
+          message:
+            r.reason === "unknown"
+              ? "That code is wrong, expired or already used. Make a new one in Cobblr under Configuration → Devices."
+              : "Whoever made this code can no longer add bridges to that workspace. Ask an owner or admin for a new one.",
+        },
+      });
+      return;
+    }
+    res.json({
+      relay_path: `/api/v1/orgs/${r.slug}/edge`,
+      token: r.token,
+      bridge: r.bridge,
+      name: r.name,
+    });
+  } catch (e) {
+    next(e);
   }
 });

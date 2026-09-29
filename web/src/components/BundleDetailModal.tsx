@@ -9,6 +9,7 @@
 // For installed bundles we additionally hit /bundles/:id to fetch the
 // actually-installed wires/field-defs (in case the manifest drifted).
 
+import { RemoveBundleDialog } from "./RemoveBundleDialog";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useNavigate, useSearchParams } from "react-router-dom";
@@ -32,11 +33,16 @@ import { recordSetup } from "../lib/setupCards";
 import { changeWorkspaceShape, downloadBlob, Modal, NounChoiceButtons, useToast, useConfirm } from "@cobblr/platform-web";
 import { installHeadline, installChanges } from "../lib/installSummary";
 import { featureChangeToast } from "../lib/featureChangeToast";
-import type { BundleInstallSummary } from "../lib/api";
+import type { BundleConflictResolution, BundleInstallSummary } from "../lib/api";
+import { releasesBetween } from "@cobblr/platform-contract/bundle-update-tier";
+import { BundleUpdateConflicts, resolutionsFor, type ConflictChoice } from "./BundleUpdateConflicts";
 
 interface InstalledMode {
   mode: "installed";
   bundle: PlatformBundle;
+  /** Features to tick on opening, beside the ones already on: the chip a
+   *  person tapped to get here ("Patterns"), so they are not asked twice. */
+  turnOn?: string[];
 }
 
 interface FeaturedMode {
@@ -72,6 +78,14 @@ interface FeaturedMode {
 }
 
 type InstallResult = Awaited<ReturnType<typeof api.installBundle>>;
+
+/** A release date as the person reads it. `released_at` is a calendar day;
+ *  parsed as-is it is UTC midnight, which is the day before everywhere west
+ *  of Greenwich. */
+function releaseDay(d: string): string {
+  const day = /^\d{4}-\d{2}-\d{2}$/.test(d) ? new Date(`${d}T00:00:00`) : new Date(d);
+  return Number.isNaN(day.getTime()) ? d : day.toLocaleDateString();
+}
 
 type Props = {
   open: boolean;
@@ -185,6 +199,17 @@ export function BundleDetailModal(props: Props) {
       ),
   });
   const incomingManifest = props.mode === "featured" ? props.manifest : null;
+  // What this update would change that the person had customised. The same
+  // query key as the dashboard's update row, so the row that said "resolve
+  // conflict" and this view read one answer.
+  const updatePreview = useQuery({
+    queryKey: ["bundle-update-preview", slug, incomingManifest?.id ?? "", incomingManifest?.version ?? ""],
+    queryFn: () => api.validateBundle(slug, incomingManifest!),
+    enabled: open && isUpdate && !!incomingManifest,
+    staleTime: 60_000,
+  });
+  const conflicts = updatePreview.data?.preview?.upgrade_conflicts ?? [];
+  const [picked, setPicked] = useState<Record<string, ConflictChoice>>({});
   const updateDiff = useMemo(() => {
     const installedManifest = detail.data?.bundle?.manifest;
     if (!isUpdate || !installedManifest || !incomingManifest) return null;
@@ -217,7 +242,7 @@ export function BundleDetailModal(props: Props) {
       }
       setSelectedFeatures(on);
     } else if (props.mode === "installed") {
-      setSelectedFeatures(new Set(detail.data.bundle.enabled_features ?? []));
+      setSelectedFeatures(new Set([...(detail.data.bundle.enabled_features ?? []), ...(props.turnOn ?? [])]));
     }
   }, [props.mode, alreadyInstalled, detail.data, enabledModuleNames]);
 
@@ -231,25 +256,12 @@ export function BundleDetailModal(props: Props) {
         ? props.installedBundleId ?? null
         : null;
 
-  const uninstall = useMutation({
-    // The confirmation above this names the instances and their items it
-    // deletes; this is the one caller that asks for the data to go.
-    mutationFn: () => changeWorkspaceShape(qc, slug, () => api.uninstallBundle(slug, uninstallId!, { deleteData: true })),
-    onSuccess: () => {
-      toast.success(`Uninstalled.`);
-      onClose();
-    },
-    onError: (e: unknown) => {
-      toast.error(e instanceof ApiError ? e.message : "Couldn't uninstall.");
-    },
-  });
-
   // "What do you call these?": the word picked for each table that offers
   // words (#3650), asked on a first install with the default preselected.
   const [nounChoices, setNounChoices] = useState<Record<string, string>>({});
   const install = useMutation({
-    mutationFn: (vars: { manifest: PlatformBundleManifest; confirm: boolean; enabledFeatures?: string[]; takeTheirs?: Array<{ entity_kind: string; name: string }>; nounChoices?: Record<string, string> }) =>
-      changeWorkspaceShape(qc, slug, () => api.installBundle(slug, vars.manifest, vars.confirm, vars.enabledFeatures, vars.takeTheirs, vars.nounChoices)),
+    mutationFn: (vars: { manifest: PlatformBundleManifest; confirm: boolean; enabledFeatures?: string[]; resolutions?: BundleConflictResolution[]; nounChoices?: Record<string, string> }) =>
+      changeWorkspaceShape(qc, slug, () => api.installBundle(slug, vars.manifest, vars.confirm, vars.enabledFeatures, vars.resolutions, vars.nounChoices)),
     onSuccess: (r) => {
       toast.success(
         isUpdate
@@ -290,6 +302,10 @@ export function BundleDetailModal(props: Props) {
       // surface them as a raw error toast.
       if (e instanceof ApiError && (e.code === "needs_enable" || e.code === "field_def_collision")) return;
       toast.error(e instanceof ApiError ? e.message : (e as Error).message);
+      // The server may have finished what the answer never reached us for (a
+      // proxy that dropped it): read the list again rather than trust the
+      // screen, so an install that happened shows as installed.
+      void qc.invalidateQueries({ queryKey: ["bundles", slug] });
     },
   });
 
@@ -308,45 +324,17 @@ export function BundleDetailModal(props: Props) {
       toast.success(featureChangeToast(r, detail.data?.bundle.manifest.features ?? []));
       onClose();
     },
-    onError: (e: unknown) => toast.error(e instanceof ApiError ? e.message : "Couldn't update features."),
+    onError: (e: unknown) => {
+      toast.error(e instanceof ApiError ? `The features were not saved: ${e.message}` : "The features were not saved.");
+      void qc.invalidateQueries({ queryKey: ["bundles", slug] });
+    },
   });
 
-  async function handleUninstall() {
-    if (!uninstallId) return;
-    const bundleName =
-      props.mode === "installed"
-        ? props.bundle.name
-        : props.mode === "featured"
-          ? props.manifest?.name ?? "this bundle"
-          : "this bundle";
-    // Fetch what the uninstall will actually tear down — the bundle's own
-    // instances (and their items) that nothing else still needs, plus modules it
-    // will turn off. Best-effort: a failed preview falls back to the generic note.
-    let removal = "";
-    if (props.mode === "installed") {
-      try {
-        const p = await api.bundleUninstallPreview(slug, uninstallId);
-        const instBits = p.instances.map((i) =>
-          i.item_count > 0
-            ? `${i.display_name} (${i.item_count} item${i.item_count === 1 ? "" : "s"})`
-            : i.display_name,
-        );
-        const cap = (s: string) => s.replace(/(^|[\s-])\w/g, (c) => c.toUpperCase());
-        const parts: string[] = [];
-        if (instBits.length) parts.push(`deletes ${instBits.join(", ")}`);
-        if (p.modules.length) parts.push(`turns off ${p.modules.map(cap).join(", ")}`);
-        if (parts.length) removal = `This ${parts.join(" and ")}. `;
-      } catch {
-        /* preview is best-effort — fall through to the generic message */
-      }
-    }
-    const ok = await confirm({
-      title: `Remove ${bundleName}?`,
-      message: `${removal}It also removes the bundle's wires and custom fields. Anything else you've added is untouched.`,
-      confirmLabel: "Remove",
-      destructive: true,
-    });
-    if (ok) uninstall.mutate();
+  // Remove opens the one Remove dialog every door uses (RemoveBundleDialog):
+  // the same words and the same choice about the bundle's records.
+  const [removing, setRemoving] = useState(false);
+  function handleUninstall() {
+    if (uninstallId) setRemoving(true);
   }
 
   // Which features this workspace ACTUALLY has on. Until the detail query lands
@@ -374,7 +362,9 @@ export function BundleDetailModal(props: Props) {
     const id = detail.data?.bundle.id ?? null;
     if (!id || syncedFor.current === id) return;
     syncedFor.current = id;
-    setSelectedFeatures(new Set(installedFeatureKeys));
+    // Plus the feature whose chip opened this sheet, so the person who tapped
+    // "Patterns" finds Patterns ticked and one Save away.
+    setSelectedFeatures(new Set([...installedFeatureKeys, ...(props.mode === "installed" ? props.turnOn ?? [] : [])]));
   }, [showingInstalled, installedFeatureKeys, detail.data?.bundle.id]);
 
   // Tables in what would be installed that offer a choice of word.
@@ -436,6 +426,11 @@ export function BundleDetailModal(props: Props) {
   const externalId =
     props.mode === "installed" ? props.bundle.external_id : manifest?.id ?? "";
   const version = props.mode === "installed" ? props.bundle.version : manifest?.version ?? "";
+  // On an update, the releases after the installed version; otherwise the
+  // entry for the version shown.
+  const releaseNotes = isUpdate
+    ? releasesBetween(manifest?.releases, installedVersion, version)
+    : (manifest?.releases ?? []).filter((r) => r.version === version);
   const author =
     props.mode === "installed" ? props.bundle.author : manifest?.author ?? null;
   const description =
@@ -537,33 +532,15 @@ export function BundleDetailModal(props: Props) {
     const enabledFeatures = featuresLocked
       ? [...new Set([...(detail.data?.bundle.enabled_features ?? []), ...[...selectedFeatures].filter(isNewToYou)])]
       : [...selectedFeatures];
-    // Phase 2 — on an UPDATE, surface fields the user customized that this version
-    // changes, and let them keep theirs (the safe default) or take the update's.
-    let takeTheirs: Array<{ entity_kind: string; name: string }> = [];
-    if (isUpdate) {
-      try {
-        const v = await api.validateBundle(slug, manifest);
-        const conflicts = v.preview?.upgrade_conflicts ?? [];
-        if (conflicts.length > 0) {
-          const fields = [...new Set(conflicts.map((c) => c.field_label))].join(", ");
-          const useTheirs = await confirm({
-            title: "This update changes fields you customized",
-            message: `The update changes ${fields}, which you'd customized. Keep your version, or use the update's?`,
-            confirmLabel: "Use the update's",
-            cancelLabel: "Keep mine",
-          });
-          if (useTheirs) takeTheirs = conflicts.map((c) => ({ entity_kind: c.entity_kind, name: c.name }));
-        }
-      } catch {
-        // validate failed — proceed with a normal install (keep-yours is the default).
-      }
-    }
+    // On an update, the answer picked for each conflicting item in the view
+    // above the button; an item left alone goes with its default.
+    const resolutions = isUpdate ? resolutionsFor(conflicts, picked) : [];
     let confirmEnable = false;
     // Up to a few passes: enable-modules confirm, then collision-supersede,
     // then the clean install. Each handled error sets up the next retry.
     for (let attempt = 0; attempt < 3; attempt++) {
       try {
-        const r = await install.mutateAsync({ manifest, confirm: confirmEnable, enabledFeatures, takeTheirs, ...(isUpdate ? {} : { nounChoices }) });
+        const r = await install.mutateAsync({ manifest, confirm: confirmEnable, enabledFeatures, resolutions, ...(isUpdate ? {} : { nounChoices }) });
         if (onInstalledCb) {
           await onInstalledCb(r);
           onClose();
@@ -768,6 +745,12 @@ export function BundleDetailModal(props: Props) {
   return (
     <Modal open={open} onClose={onClose} title={`${titlePrefix}${name}`} subtitle={subtitle} size="lg">
       <div className="space-y-5">
+        <RemoveBundleDialog
+          slug={slug}
+          bundle={removing && uninstallId ? { id: uninstallId, name } : null}
+          onClose={() => setRemoving(false)}
+          onRemoved={onClose}
+        />
         {props.mode === "featured" && props.blurb && (
           <p className="text-sm text-content dark:text-mortar-200 italic">
             {props.blurb}
@@ -805,25 +788,62 @@ export function BundleDetailModal(props: Props) {
           </button>
         )}
 
-        {/* What's new — shown prominently when updating; the technical detail of
-            what the new version touches stays in the requires/details accordion.
-            Hidden on a fresh install (noise for a first-time user). */}
-        {manifest?.changelog && !isFreshInstall && (
+        {/* The decisions first: an update that would overwrite something the
+            person customised says what, side by side, before anything else. */}
+        {isUpdate && conflicts.length > 0 && (
+          <BundleUpdateConflicts
+            conflicts={conflicts}
+            picked={picked}
+            onPick={(key, choice) => setPicked((p) => ({ ...p, [key]: choice }))}
+            tableName={(kind) =>
+              manifest?.provides_instances?.find((i) => `${i.instance_name}:item` === kind)?.display_name ?? null
+            }
+          />
+        )}
+
+        {/* What's new: on an update, every release between the installed
+            version and this one, newest first. Hidden on a fresh install
+            (noise for a first-time user). */}
+        {!isFreshInstall && releaseNotes.length > 0 && (
           <div
+            data-testid="release-notes"
             className={
-              "rounded-md border p-3 " +
+              "rounded-md border p-3 space-y-2.5 " +
               (isUpdate
                 ? "border-cobble-400 dark:border-cobble-600 bg-cobble-50 dark:bg-cobble-900/30"
                 : "border-line dark:border-slate-700 bg-subtle/50 dark:bg-slate-800/40")
             }
           >
+            {isUpdate && (
+              <div className="text-[10px] font-mono uppercase tracking-widest text-accent">
+                what's new since v{installedVersion}
+              </div>
+            )}
+            {releaseNotes.map((r) => (
+              <div key={r.version}>
+                <div className="flex items-baseline gap-2 mb-0.5">
+                  <span className="text-xs font-mono font-medium text-content dark:text-mortar-100">v{r.version}</span>
+                  {r.released_at && (
+                    <span className="text-[10px] font-mono text-faint dark:text-slate-500">
+                      {releaseDay(r.released_at)}
+                    </span>
+                  )}
+                </div>
+                <p className="text-sm text-content dark:text-mortar-200 whitespace-pre-line">{r.notes}</p>
+              </div>
+            ))}
+          </div>
+        )}
+        {/* A manifest from before per-version notes carries one changelog
+            string with no version of its own. Its date is shown and it is
+            never titled as the offered version's notes, which it may not be. */}
+        {!isFreshInstall && releaseNotes.length === 0 && manifest?.changelog && (
+          <div className="rounded-md border border-line dark:border-slate-700 bg-subtle/50 dark:bg-slate-800/40 p-3">
             <div className="flex items-baseline gap-2 mb-1">
-              <span className="text-[10px] font-mono uppercase tracking-widest text-accent">
-                {isUpdate ? `what's new in v${version}` : `v${version} changes`}
-              </span>
+              <span className="text-[10px] font-mono uppercase tracking-widest text-accent">release notes</span>
               {manifest.released_at && (
                 <span className="text-[10px] font-mono text-faint dark:text-slate-500">
-                  {new Date(manifest.released_at).toLocaleDateString()}
+                  {releaseDay(manifest.released_at)}
                 </span>
               )}
             </div>
@@ -1173,17 +1193,19 @@ export function BundleDetailModal(props: Props) {
           {props.mode === "installed" ? (
             <button
               onClick={handleUninstall}
-              disabled={uninstall.isPending}
+              disabled={removing}
               className="text-[10px] font-mono uppercase tracking-widest text-faint hover:text-ember-500 transition flex items-center gap-1"
             >
-              <Trash2 size={11} /> {uninstall.isPending ? "removing…" : "uninstall bundle"}
+              <Trash2 size={11} /> uninstall bundle
             </button>
           ) : isUpdate ? (
             // Installed, but an older version — offer the update (supersedes).
             <div className="flex items-center gap-2">
               <button
                 onClick={() => void handleInstall()}
-                disabled={!effectiveManifest || install.isPending}
+                // Not before the conflicts are known: an Update pressed first
+                // would apply without the person's answers.
+                disabled={!effectiveManifest || install.isPending || updatePreview.isPending}
                 className="text-xs font-medium px-3 py-1.5 rounded-md bg-cobble-600 hover:bg-cobble-700 text-white transition flex items-center gap-1.5 disabled:opacity-50 disabled:cursor-not-allowed"
               >
                 <Package size={13} />
@@ -1191,10 +1213,10 @@ export function BundleDetailModal(props: Props) {
               </button>
               <button
                 onClick={handleUninstall}
-                disabled={uninstall.isPending}
+                disabled={removing}
                 className="text-[10px] font-mono uppercase tracking-widest text-faint hover:text-ember-500 transition"
               >
-                {uninstall.isPending ? "removing…" : "remove"}
+                remove
               </button>
             </div>
           ) : props.alreadyInstalled && uninstallId ? (
@@ -1203,11 +1225,11 @@ export function BundleDetailModal(props: Props) {
             // installed-list row.
             <button
               onClick={handleUninstall}
-              disabled={uninstall.isPending}
+              disabled={removing}
               className="text-xs font-medium px-3 py-1.5 rounded-md bg-ember-600 hover:bg-ember-700 text-white transition flex items-center gap-1.5 disabled:opacity-50 disabled:cursor-not-allowed"
             >
               <Trash2 size={13} />
-              {uninstall.isPending ? "Removing…" : "Remove bundle"}
+              Remove bundle
             </button>
           ) : (
             <button

@@ -30,6 +30,7 @@ import {
 import { meta } from "../db/meta.js";
 import { getKind, listKindsForOrg, baseKindOf } from "./entities.js";
 import { fieldRolesForKind } from "./field-defs.js";
+import { familiesOf, isTypeCollection } from "./families.js";
 
 /** The stored explicit choices for a kind: an instance's own config, or the
  *  entity-kind override for a module's base kind. */
@@ -102,6 +103,10 @@ export function derivedCollectionTraits(input: {
 
 /** The verdict for one kind in one workspace. */
 export async function facesForKind(orgId: string, kind: string): Promise<FaceVerdict> {
+  // A family's type collection (Filament types) describes things; its things
+  // are stocked, serialled, lent and serviced. It wears no face and offers
+  // none, or a type's page reads as a spool's (#3990).
+  if (isTypeCollection(await familiesOf(orgId), kind)) return { kind, traits: {}, faces: [], explicit: [], offers: [] };
   let rec = await getKind(kind);
   if (!rec) rec = (await listKindsForOrg(orgId)).find((k) => k.id === kind) ?? null;
   const base = await baseKindOf(orgId, kind);
@@ -123,5 +128,6 @@ export async function facesForKind(orgId: string, kind: string): Promise<FaceVer
     traits,
     faces,
     explicit: FACE_NAMES.filter((f: FaceName) => typeof explicit[f] === "boolean"),
+    offers: FACE_NAMES.filter((f: FaceName) => !faces.includes(f)),
   };
 }

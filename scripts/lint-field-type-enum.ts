@@ -46,7 +46,7 @@ function walk(dir: string, out: string[] = []): string[] {
 }
 
 const TYPES = new Set([
-  "text", "number", "boolean", "date", "url", "richtext", "computed", "relation", "member",
+  "text", "number", "boolean", "date", "url", "richtext", "computed", "relation", "member", "person",
 ]);
 
 /** Runs of string literals joined only by `|` or `,` — i.e. an actual union or

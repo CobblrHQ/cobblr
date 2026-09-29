@@ -1,7 +1,8 @@
 {
   "lint": "lint:field-type-sql",
-  "run": "tsx scripts/lint-field-type-sql.ts",
+  "run": "node scripts/lint-field-type-sql.ts",
   "ms": 412,
   "recorded": "2026-09-14",
-  "source": "split from scripts/lint-durations.json (recorded 2026-09-14)"
+  "source": "split from scripts/lint-durations.json (recorded 2026-09-14)",
+  "readMB": 0.5
 }

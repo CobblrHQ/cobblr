@@ -2,6 +2,8 @@
 // the few words the import sheet uses for them. The server decides; this only
 // names what it said.
 
+import { DISPOSITION_LABELS, type Disposition } from "@cobblr/platform-contract/disposition";
+
 export type ColumnType =
   | "text"
   | "long-text"
@@ -16,7 +18,7 @@ export type ColumnType =
   | "url"
   | "image";
 
-export type PlainDestination = "name" | "quantity" | "location" | "category" | "tags" | "photo";
+export type PlainDestination = "name" | "quantity" | "location" | "category" | "tags" | "photo" | "disposition";
 
 export type Destination =
   | { to: PlainDestination }
@@ -44,6 +46,7 @@ export interface SheetTarget {
   fields: TargetField[];
   general?: boolean;
   counts?: boolean;
+  retires?: boolean;
   category?: { label: string; values: string[]; field?: string } | null;
 }
 
@@ -56,10 +59,13 @@ export interface ColumnPlan {
   dest: Destination;
   why: string;
   misfits: number;
+  as_written?: number;
+  named_by?: "values" | "ai";
 }
 
 export interface RecordPlan {
   row: number;
+  rows?: number[];
   action: "create" | "update" | "unchanged";
   name: string;
   existing_id?: string;
@@ -71,18 +77,33 @@ export interface RecordPlan {
   tags?: string[];
   photo_url?: string | null;
   changes?: Array<{ field: string; from: unknown; to: unknown }>;
+  disposition?: { kind: Disposition; text: string; price: number | null };
   problems: string[];
 }
 
 export interface SkippedRow {
   row: number;
-  reason: "title" | "blank" | "repeated-header" | "total" | "section" | "excluded";
+  reason: "title" | "blank" | "repeated-header" | "total" | "section" | "excluded" | "not-owned";
   text?: string;
+}
+
+export interface SummaryCheck {
+  row: number;
+  label: string;
+  value: number;
+  money: boolean;
+  /** The sheet's currency (USD), when its money columns say. */
+  currency?: string | null;
+  computed: number | null;
+  agrees: boolean | null;
+  basis: string;
 }
 
 export interface SheetPlanView {
   sheet: string;
   include: boolean;
+  header_row: number | null;
+  headerless: boolean;
   target: SheetTarget;
   alternatives: Array<{ id: string; label: string; status: SheetTarget["status"]; module: string }>;
   why_target: string;
@@ -100,6 +121,9 @@ export interface SheetPlanView {
   tags_used: string[];
   needs_admin: string[];
   skipped: SkippedRow[];
+  summary: SummaryCheck[];
+  ownership: { owned: number; gone: number; by: Partial<Record<Disposition, number>> } | null;
+  groups: Array<{ rows: number[]; name: string }>;
 }
 
 export interface SheetsPlan {
@@ -115,6 +139,8 @@ export interface SheetOverride {
   columns?: Record<string, Destination>;
   skip_rows?: number[];
   collection_label?: string;
+  only_owned?: boolean;
+  keep_identical_apart?: boolean;
 }
 
 export type SheetsSource = { file_b64: string; filename: string } | { url: string };
@@ -136,6 +162,8 @@ export interface ImportRunSheet {
   updated?: number;
   unchanged?: number;
   failed?: number;
+  retired?: number;
+  checks?: SummaryCheck[];
   problems?: string[];
   planned?: { create: number; update: number; unchanged: number };
 }
@@ -207,6 +235,8 @@ export function destinationLabel(d: Destination, target: SheetTarget): string {
       return "Tags";
     case "photo":
       return "Photo";
+    case "disposition":
+      return "What became of it";
     case "field":
       return d.label;
     case "new-field":
@@ -226,11 +256,14 @@ export function destinationChoices(target: SheetTarget, column: ColumnPlan): Arr
   if (target.category) out.push({ key: "category", label: target.category.label, dest: { to: "category" } });
   out.push({ key: "tags", label: "Tags", dest: { to: "tags" } });
   out.push({ key: "photo", label: "Photo", dest: { to: "photo" } });
+  if (column.role === "disposition" || column.dest.to === "disposition") out.push({ key: "disposition", label: "What became of it", dest: { to: "disposition" } });
   for (const f of target.fields) out.push({ key: `field:${f.name}`, label: f.label, dest: { to: "field", field: f.name, label: f.label, native: f.native } });
   const own = column.dest.to === "new-field" ? column.dest : null;
   out.push({
     key: "new-field",
-    label: `New field: ${column.header}`,
+    // The field the plan will make, by the name it will have ("Acquisition
+    // Date" is made as the provenance field Acquired on).
+    label: `New field: ${own?.label ?? column.header}`,
     dest: own ?? { to: "new-field", field: slugOf(column.header), label: column.header, type: newFieldType(column.type) },
   });
   out.push({ key: "skip", label: "Leave out", dest: { to: "skip" } });
@@ -277,6 +310,7 @@ const REASONS: Record<SkippedRow["reason"], string> = {
   total: "a total",
   section: "a heading over the rows below it",
   excluded: "you left it out",
+  "not-owned": "no longer yours, and you chose only what you still have",
 };
 
 export function skipReason(r: SkippedRow["reason"]): string {
@@ -290,6 +324,27 @@ export function showValue(v: unknown): string {
   if (Array.isArray(v)) return v.join(", ");
   if (typeof v === "object") return JSON.stringify(v);
   return String(v);
+}
+
+/** A figure the way the sheet showed it: money with two places. */
+export function showFigure(n: number, check: Pick<SummaryCheck, "money" | "currency">): string {
+  if (!check.money) return n.toLocaleString();
+  if (check.currency) {
+    try {
+      return n.toLocaleString(undefined, { style: "currency", currency: check.currency });
+    } catch {
+      // an unknown code reads as a plain amount below
+    }
+  }
+  return n.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+}
+
+/** "53 still yours, 13 no longer (sold 3, parted out 6, …)". */
+export function ownershipLine(o: NonNullable<SheetPlanView["ownership"]>): string {
+  const parts = (Object.entries(o.by) as Array<[Disposition, number]>)
+    .sort((a, b) => b[1] - a[1])
+    .map(([d, n]) => `${DISPOSITION_LABELS[d]} ${n}`);
+  return `${o.owned} still yours, ${o.gone} no longer${parts.length ? ` (${parts.join(", ")})` : ""}`;
 }
 
 export function isFinished(s: ImportRunStatus): boolean {

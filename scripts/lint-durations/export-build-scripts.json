@@ -1,7 +1,8 @@
 {
   "lint": "lint:export-build-scripts",
-  "run": "tsx scripts/lint-export-build-scripts.ts",
+  "run": "node scripts/lint-export-build-scripts.ts",
   "ms": 462,
   "recorded": "2026-09-14",
-  "source": "split from scripts/lint-durations.json (recorded 2026-09-14)"
+  "source": "split from scripts/lint-durations.json (recorded 2026-09-14)",
+  "readMB": 0.0
 }

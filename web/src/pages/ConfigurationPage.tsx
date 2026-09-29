@@ -11,7 +11,7 @@
 
 import { useEffect, useState, type ReactNode } from "react";
 import { Link, useNavigate, useSearchParams } from "react-router-dom";
-import { ArrowUpCircle, ChevronRight, Search, UserCircle, X } from "lucide-react";
+import { ArrowUpCircle, ChevronRight, UserCircle } from "lucide-react";
 import {
   CONFIG_SECTIONS,
   CONFIG_SECTION_ORDER,
@@ -22,7 +22,7 @@ import {
 } from "../lib/configuration-nav";
 import { useActiveOrg } from "../auth/ActiveOrgContext";
 import { displaySlug } from "../lib/workspaceSlug";
-import { usePageTitle } from "@cobblr/platform-web";
+import { usePageTitle, SearchInput } from "@cobblr/platform-web";
 import { useHostedPanels, type HostedPanel } from "../lib/useHostedPanels";
 import { useConfigVisibility } from "../lib/useConfigVisibility";
 import { isFocused } from "../lib/api";
@@ -91,30 +91,7 @@ export function ConfigurationPage() {
         <SimpleModeCard />
       ) : (
         <>
-          <div className="relative">
-            <Search
-              size={16}
-              className="absolute left-3 top-1/2 -translate-y-1/2 text-faint dark:text-slate-500"
-            />
-            <input
-              type="text"
-              value={query}
-              onChange={(e) => setQuery(e.target.value)}
-              placeholder="Search configuration…"
-              aria-label="Search configuration"
-              className="input !pl-9 !pr-9"
-            />
-            {q && (
-              <button
-                type="button"
-                onClick={() => setQuery("")}
-                aria-label="Clear search"
-                className="absolute right-3 top-1/2 -translate-y-1/2 text-faint hover:text-content dark:hover:text-mortar-100"
-              >
-                <X size={16} />
-              </button>
-            )}
-          </div>
+          <SearchInput value={query} onChange={setQuery} placeholder="Search configuration…" aria-label="Search configuration" />
 
           {q ? (
             <SearchResults hits={hits} hosted={hostedHits} query={q} />

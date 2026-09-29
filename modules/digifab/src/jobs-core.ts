@@ -2,6 +2,7 @@
 // polling a job's status. No express dependency, so both the HTTP route
 // and the core-queue poll worker use the same code.
 
+import { interpretReport, plainDriverError, unreachablePlan, POLL_MS } from "./job-truth.js";
 import { platform } from "@cobblr/platform-contract";
 import { isEdgeManagerUrl, edgeInstanceOf } from "@cobblr/platform-contract/edge-bridge-client";
 import type { Kysely } from "kysely";
@@ -27,6 +28,14 @@ async function cameraFor(db: Kysely<DigifabDB>, connectionId: string | null, dev
     .where("remote_device_id", "=", deviceId)
     .executeTakeFirst();
   return row?.camera_url ?? null;
+}
+
+/** What a person calls the manager a job runs on ("Shop OctoPrint"), for the
+ *  sentences a failure puts on the job. */
+export async function managerName(orgId: string, connectionId: string | null): Promise<string> {
+  if (!connectionId) return "the printer's manager";
+  const c = await platform().devices.connections().get(orgId, connectionId).catch(() => null);
+  return c?.label?.trim() || "the printer's manager";
 }
 
 export const TERMINAL = new Set(["completed", "failed", "cancelled"]);
@@ -110,16 +119,24 @@ export async function markJobTerminal(
   prev: { id: string; status: string; connection_id: string | null; target_device: string | null },
   status: "completed" | "failed" | "cancelled",
   extra: Record<string, unknown> = {},
-): Promise<void> {
+): Promise<boolean> {
   const bedClear = needsBedClear(prev);
+  let claimed = false;
   const write = async (trx: Kysely<DigifabDB>) => {
-    await trx
+    // A CLAIM, not a write: only a caller that finds the job still live ends
+    // it. Two polls landing together at the finish (the worker and a Refresh,
+    // or two tabs) both read "printing" and both got here; each then emitted
+    // print.completed and each charged the spool (#4031: 120 g for a 40 g
+    // print). The loser now learns it lost and emits nothing.
+    const r = await trx
       .updateTable("digifab_jobs")
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       .set({ status, updated_at: new Date(), ...extra } as any)
       .where("id", "=", prev.id)
-      .execute();
-    if (!bedClear) return;
+      .where("status", "not in", [...TERMINAL])
+      .executeTakeFirst();
+    claimed = Number(r.numUpdatedRows ?? 0) > 0;
+    if (!claimed || !bedClear) return;
     await trx
       .insertInto("digifab_device_attention")
       .values({
@@ -140,19 +157,15 @@ export async function markJobTerminal(
   // Callers inside an existing transaction pass it straight in — opening a
   // nested one on a second connection would sit behind the outer transaction's
   // own locks on these rows.
-  if ((db as unknown as { isTransaction?: boolean }).isTransaction) return write(db);
-  await db.transaction().execute(write);
+  if ((db as unknown as { isTransaction?: boolean }).isTransaction) await write(db);
+  else await db.transaction().execute(write);
+  return claimed;
 }
 
-/** Consecutive poll errors before a live job is declared `failed` (F-12) — so a
- *  transient network blip doesn't kill a healthy print. Driver-aware: the mock
- *  fails fast for tests/demos; a REAL farm gets a much longer grace window — a
- *  manager restart or a network flap must never fail (or worse, re-send onto) a
- *  print that's physically still running. */
-function pollTuning(connType: string | null): { intervalMs: number; errorThreshold: number } {
-  return connType === "mock"
-    ? { intervalMs: 4_000, errorThreshold: 3 } // ~12s to give up — tests stay fast
-    : { intervalMs: 30_000, errorThreshold: 6 }; // ~3min of unreachability tolerated
+/** The poll pace. The mock is fast for tests and demos; how long an
+ *  unreachable manager is tolerated is unreachablePlan's call (job-truth.ts). */
+function pollTuning(connType: string | null): { intervalMs: number; fast: boolean } {
+  return connType === "mock" ? { intervalMs: 4_000, fast: true } : { intervalMs: POLL_MS, fast: false };
 }
 
 /** Build a live driver from a connection ref (id OR label; decrypts creds). The
@@ -378,7 +391,7 @@ export async function pollJob(
   // spurious print.completed + filament deduction. Local terminal is final.
   if (TERMINAL.has(job.status)) return { status: job.status, terminal: true, intervalMs: 0 };
   const conn = await platform().devices.connections().getInternal(orgId, job.connection_id);
-  const { intervalMs, errorThreshold } = pollTuning(conn?.type ?? null);
+  const { intervalMs, fast } = pollTuning(conn?.type ?? null);
   const driver = await buildDriverById(db, orgId, job.connection_id);
   if (!driver) return null;
 
@@ -391,28 +404,47 @@ export async function pollJob(
   let error: string | null = null;
   let etaSec: number | null = null;
   let elapsedSec: number | null = null;
+  const manager = await managerName(orgId, job.connection_id);
   try {
     const st = await driver.getJobStatus(job.remote_job_id);
-    status = st.state;
     progress = st.progress ?? null;
     etaSec = st.timeRemainingSec ?? null;
     elapsedSec = st.elapsedSec ?? null;
+    // What the report means for THIS job (see job-truth.ts): an idle printer
+    // is not a finished print unless the job was seen printing and got to the
+    // end, and a cancel asked for from Cobblr is final only when the printer
+    // confirms it.
+    const truth = interpretReport({
+      reported: st.state,
+      progress,
+      prevStatus: job.status,
+      cancelRequested: job.cancel_requested_at != null,
+      sentAt: job.sent_at ?? null,
+      now: new Date(),
+    });
+    status = truth.status;
+    error = truth.note;
+    if (status === "failed" && !error) {
+      const said = st.message?.trim();
+      error = said ? `${manager} reported: ${said.slice(0, 240)}` : `${manager} reported an error and didn't say which.`;
+    }
   } catch (e) {
     const errs = (job.poll_errors ?? 0) + 1;
-    error = (e as Error).message.slice(0, 300);
-    if (errs < errorThreshold) {
-      // Keep the job's current (non-terminal) status; just record the transient
-      // error + the count, and try again next tick. Not terminal.
+    const now = new Date();
+    const since = job.unreachable_since ?? now;
+    const plan = unreachablePlan({ since, now, misses: errs, fast });
+    error = `${plainDriverError(e, manager, "checking on the print")} ${plan.note}`.slice(0, 300);
+    if (!plan.giveUp) {
+      // Out of reach is not a failed print: keep the job's status, say so,
+      // and ask again later, backing off while it stays out of reach.
       await db
         .updateTable("digifab_jobs")
-        .set({ error: `unreachable (${errs}/${errorThreshold}): ${error}`, poll_errors: errs, last_polled_at: new Date(), updated_at: new Date() })
+        .set({ error, poll_errors: errs, unreachable_since: since, last_polled_at: now, updated_at: now })
         .where("id", "=", jobId)
         .execute();
-      return { status: job.status, terminal: false, intervalMs };
+      return { status: job.status, terminal: false, intervalMs: plan.nextPollMs };
     }
-    // Repeatedly unreachable → give up.
     status = "failed";
-    error = `unreachable after ${errs} polls: ${error}`;
   }
 
   // Reprint-on-fail — a failed print with attempts left goes BACK to the queue
@@ -427,7 +459,7 @@ export async function pollJob(
     const max = job.max_attempts ?? 1;
     if (att < max) {
       const note = `auto-retry ${att}/${max} waiting for bed clear: ${error ?? "failed"}`.slice(0, 300);
-      const base = { status: "queued", attempts: att, remote_job_id: null, remote_file_id: null, progress: 0, error: note, poll_errors: 0, last_polled_at: new Date(), updated_at: new Date() };
+      const base = { status: "queued", attempts: att, remote_job_id: null, remote_file_id: null, progress: 0, error: note, poll_errors: 0, unreachable_since: null, last_polled_at: new Date(), updated_at: new Date() };
       if (job.connection_id && job.target_device) {
         await db
           .insertInto("digifab_device_attention")
@@ -452,10 +484,16 @@ export async function pollJob(
   }
 
   const terminal = TERMINAL.has(status);
-  const fields = { progress, error, eta_sec: etaSec != null ? Math.round(etaSec) : null, poll_errors: 0, last_polled_at: new Date() };
+  const fields = { progress, error, eta_sec: etaSec != null ? Math.round(etaSec) : null, poll_errors: 0, unreachable_since: null, last_polled_at: new Date() };
   if (terminal) {
-    // Status flip + bed-clear row, one transaction — see markJobTerminal.
-    await markJobTerminal(db, job as never, status as "completed" | "failed" | "cancelled", fields);
+    // Status flip + bed-clear row, one transaction — see markJobTerminal. A
+    // concurrent poll that already ended the job wins; this one emits nothing,
+    // so a finish is announced, and a spool charged, exactly once.
+    const claimed = await markJobTerminal(db, job as never, status as "completed" | "failed" | "cancelled", fields);
+    if (!claimed) {
+      const now = await db.selectFrom("digifab_jobs").select("status").where("id", "=", jobId).executeTakeFirst();
+      return { status: now?.status ?? status, terminal: true, intervalMs };
+    }
   } else {
     await db
       .updateTable("digifab_jobs")
@@ -635,7 +673,10 @@ export async function reverseBuildIfCommitted(
 
 export type SendJobResult =
   | { ok: true; status: string; remoteJobId: string | null; placement: SubmitResult; uploadedBytes: number; shouldPoll: boolean }
-  | { ok: false; code: "not_found" | "already_sent" | "already_terminal" | "no_connection" | "unknown_device" | "file_missing" };
+  | { ok: false; code: "not_found" | "already_sent" | "already_terminal" | "no_connection" | "unknown_device" | "file_missing" }
+  /** The manager refused or could not be reached: the job is failed with this
+   *  sentence on it, and the sentence is what the person sees. */
+  | { ok: false; code: "send_failed"; message: string };
 
 /** Upload + place a job on its connection's farm. Pure (no express, no poll
  *  enqueue) so the send ROUTE and the assignment WORKER share it — the caller
@@ -737,8 +778,22 @@ export async function sendJob(
     if (lan) sendDriver = lan;
   }
 
-  const up = await sendDriver.uploadFile(fileBytes, uploadName);
-  const sub = await sendDriver.submitJob({ fileId: up.fileId, deviceId, tag: job.target_tag });
+  // A manager that refuses, times out or cannot be reached ends the send
+  // here with a sentence on the job. It used to throw out through the route
+  // as a raw 500 carrying the manager's URL and JSON body, and the job itself
+  // stayed queued with nothing on it saying anything had gone wrong.
+  let up: Awaited<ReturnType<MachineDriver["uploadFile"]>>;
+  let sub: SubmitResult;
+  let doing = "uploading the file";
+  try {
+    up = await sendDriver.uploadFile(fileBytes, uploadName);
+    doing = "starting the print";
+    sub = await sendDriver.submitJob({ fileId: up.fileId, deviceId, tag: job.target_tag });
+  } catch (e) {
+    const message = plainDriverError(e, await managerName(orgId, job.connection_id), doing).slice(0, 300);
+    await markJobTerminal(db, job, "failed", { error: message });
+    return { ok: false, code: "send_failed", message };
+  }
   const status = sub.queued ? "sent" : "awaiting-assignment";
   // Normalize a driver's ""/undefined job id to null, and make the dead end LOUD:
   // a queued job with no remote id can never be polled — it would sit in `sent`
@@ -753,7 +808,13 @@ export async function sendJob(
       remote_job_id: remoteJobId,
       target_device: sub.deviceId ?? deviceId,
       status,
-      ...(untrackable ? { error: "the manager accepted the job but returned no job id. Cobblr can't track it to completion" } : {}),
+      sent_at: new Date(),
+      cancel_requested_at: null,
+      // A note from before the send (a stopped send, a retry waiting on the
+      // bed) no longer describes the job once it is on a printer.
+      error: untrackable ? "the manager accepted the job but returned no job id. Cobblr can't track it to completion" : null,
+      poll_errors: 0,
+      unreachable_since: null,
       updated_at: new Date(),
     })
     .where("id", "=", jobId)
@@ -820,7 +881,10 @@ export async function assignJob(
       target_device: sub.deviceId ?? deviceId,
       target_tag: null, // a specific printer was chosen — drop the ambiguous tag
       status,
-      ...(sub.queued && !remoteJobId ? { error: "the manager accepted the job but returned no job id. Cobblr can't track it to completion" } : {}),
+      sent_at: new Date(),
+      error: sub.queued && !remoteJobId ? "the manager accepted the job but returned no job id. Cobblr can't track it to completion" : null,
+      poll_errors: 0,
+      unreachable_since: null,
       updated_at: new Date(),
     })
     .where("id", "=", jobId)

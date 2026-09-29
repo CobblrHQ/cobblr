@@ -60,10 +60,10 @@ interface CandidateLike {
 
 /**
  * Strip the purchase fields a candidate carries when the capture holds no
- * purchase evidence. Mutates in place. Returns the names it removed (with
+ * purchase evidence, except the ones `evidence` stamped (a listing's). Mutates in place. Returns the names it removed (with
  * the values, for the log), empty when nothing was.
  */
-export function stripUnsupportedPurchaseFields(row: EvidenceRow, candidates: CandidateLike[]): string[] {
+export function stripUnsupportedPurchaseFields(row: EvidenceRow, candidates: CandidateLike[], evidence: FieldProvenanceMap = {}): string[] {
   if (hasPurchaseEvidence(row)) return [];
   const removed: string[] = [];
   for (const cand of candidates) {
@@ -71,6 +71,10 @@ export function stripUnsupportedPurchaseFields(row: EvidenceRow, candidates: Can
     if (!fields) continue;
     for (const name of Object.keys(fields)) {
       if (!isPurchaseField(name)) continue;
+      // What a listing screenshot printed (the shop, the seller, the price)
+      // was stamped as evidence a moment ago and stays; only the model's own
+      // guesses about the purchase go (#3853).
+      if (evidence[name]?.by === "evidence") continue;
       const v = fields[name];
       if (v === null || v === undefined || v === "") continue;
       removed.push(`${name}=${String(v)}`);

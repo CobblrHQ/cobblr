@@ -237,8 +237,8 @@ if (LOCATION !== -1 && FILE_ALL !== -1) {
 // to clip, which is why this is a lint and not a type.
 //
 // So the button renders the contract's TWO spellings, each scoped to its width:
-// `shortLabel` ("File N") below sm, `label` (which carries the install word)
-// from sm up. Both come from one scanSessionAction call, so they cannot
+// `shortLabel` ("File N") below lg, `label` (which carries the install word)
+// from lg up. Both come from one scanSessionAction call, so they cannot
 // disagree about what the tap covers, and a future growth of the desk label
 // cannot reach the phone. `shortLabel` itself is held to "File N" by the
 // contract's own test ("the merchant's name never pays for a longer verb").
@@ -252,8 +252,11 @@ if (FILE_ALL !== -1 && OPEN !== -1) {
     return tag.match(/className="([^"]*)"/)?.[1] ?? "";
   };
   const spellings: Array<[string, string, (c: string) => boolean, string]> = [
-    ["sessionAction.shortLabel", "the phone spelling", (c) => /\bsm:hidden\b/.test(c) && !/\bmax-sm:hidden\b/.test(c), "a span classed sm:hidden"],
-    ["sessionAction.label", "the desk spelling", (c) => /\bmax-sm:hidden\b/.test(c) || /\bhidden sm:(inline|block|flex)\b/.test(c), "a span classed max-sm:hidden"],
+    // Any breakpoint: the rule is that each spelling owns a width, not which
+    // width the row switches at (lg since #4029, where sm left the date and
+    // count no room at 640px).
+    ["sessionAction.shortLabel", "the compact spelling", (c) => /(^|\s)(sm|md|lg|xl):hidden\b/.test(c), "a span classed <bp>:hidden"],
+    ["sessionAction.label", "the full spelling", (c) => /\bmax-(sm|md|lg|xl):hidden\b/.test(c) || /\bhidden (sm|md|lg|xl):(inline|block|flex)\b/.test(c), "a span classed max-<bp>:hidden"],
   ];
   for (const [expr, what, ok, want] of spellings) {
     const hits = [...trio.matchAll(new RegExp(expr.replace(".", "\\."), "g"))];

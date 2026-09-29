@@ -45,10 +45,11 @@ import { calendarOrgRouter, calendarPublicRouter } from "./routes/calendar.js";
 import { bundlesRouter } from "./routes/bundles.js";
 import { quickstartRouter } from "./routes/quickstart.js";
 import { attentionRouter } from "./routes/attention.js";
-import { edgeRouter } from "./routes/edge.js";
+import { edgePairRouter, edgeRouter } from "./routes/edge.js";
 import { blueprintRouter } from "./routes/blueprint.js";
 import { backupRouter, backupGoogleCallbackRouter } from "./routes/backup.js";
 import { membersRouter, invitesRootRouter } from "./routes/members.js";
+import { peopleRouter } from "./routes/people.js";
 import { notificationAudiencesRouter } from "./routes/notification-audiences.js";
 import { pairingsRouter } from "./routes/pairings.js";
 import { portalRouter } from "./routes/portal.js";
@@ -410,6 +411,7 @@ export function createApp(): AppHandles {
   // the consumer registry, and the bridge self-update release. Module paths
   // (digifab's /modules/digifab/edge/*) remain as wire-compatible aliases.
   v1.use("/orgs/:slug/edge", edgeRouter);
+  v1.use("/edge", edgePairRouter);
   // Blueprint (workspace setup snapshot) + Backup (setup + data + files).
   // Both sit at the workspace level above bundles. See
   // docs/architecture/blueprint-backup-export.md.
@@ -418,6 +420,7 @@ export function createApp(): AppHandles {
   // Google Drive OAuth callback (the fixed redirect URI — not org-scoped).
   v1.use(backupGoogleCallbackRouter);
   v1.use("/orgs/:slug/members", membersRouter);
+  v1.use("/orgs/:slug/people", peopleRouter);
   // Who each kind of workspace notification is for (owner/admin setting).
   v1.use("/orgs/:slug/notification-audiences", notificationAudiencesRouter);
   v1.use("/orgs/:slug/pairings", pairingsRouter);
@@ -474,7 +477,9 @@ export function completeApp(app: Application): void {
       }
       console.error("[cobblr-api] unhandled", err);
       res.status(500).json({
-        error: { code: "internal", message: env.NODE_ENV === "production" ? "Internal error" : err.message },
+        // Never a blank message: an error thrown without one (a failed
+        // connection's AggregateError) left the person with nothing to read.
+        error: { code: "internal", message: env.NODE_ENV === "production" || !err.message?.trim() ? "Something went wrong on our side, and it did not say what. Try again." : err.message },
       });
     },
   );

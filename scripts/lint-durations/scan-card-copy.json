@@ -1,7 +1,8 @@
 {
   "lint": "lint:scan-card-copy",
-  "run": "tsx scripts/lint-scan-card-copy.ts",
+  "run": "node scripts/lint-scan-card-copy.ts",
   "ms": 444,
   "recorded": "2026-09-14",
-  "source": "split from scripts/lint-durations.json (recorded 2026-09-14)"
+  "source": "split from scripts/lint-durations.json (recorded 2026-09-14)",
+  "readMB": 2.0
 }

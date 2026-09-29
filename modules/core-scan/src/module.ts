@@ -16,7 +16,7 @@ import { defineModule } from "@cobblr/platform-contract";
 
 export default defineModule({
   name: "core-scan",
-  version: "0.47.74",
+  version: "0.49.13",
   displayName: "Scan",
   description:
     "Scan a barcode or take a photo of a thing; end up with a draft inventory row, pre-filled with the resolved name + brand + catalog photo. One tap to commit.",
@@ -46,6 +46,11 @@ export default defineModule({
       // heal-unconfirmed-identifiers.ts for when this call goes.
       const { registerUnconfirmedIdentifiersHeal } = await import("./heal-unconfirmed-identifiers.js");
       registerUnconfirmedIdentifiersHeal();
+      // Boot-time heal: a record filed from a scan before the commit wrote
+      // the barcode and the name's facts gets them, and so does its type -
+      // see the DONE WHEN in heal-scanned-type-facts.ts for when this goes.
+      const { registerScannedTypeFactsHeal } = await import("./heal-scanned-type-facts.js");
+      registerScannedTypeFactsHeal();
       // Boot-time heal: a stored catalog picture is measured, and set aside
       // when it shows another colour than its item states - see the DONE
       // WHEN in heal-picture-colour.ts for when this call goes.
@@ -55,6 +60,11 @@ export default defineModule({
       // asked again when it answers (hint-without-ai.ts).
       const { registerAiRerunSweep } = await import("./services/hint-without-ai.js");
       registerAiRerunSweep();
+      // A record made or renamed without a picture, by any door, is offered
+      // one (services/record-photos.ts).
+      const { subscribeRecordPhotos, registerRecordPhotoSweep } = await import("./services/record-photos.js");
+      subscribeRecordPhotos();
+      registerRecordPhotoSweep();
       // Boot-time heal: a stock agency's watermarked preview is set aside and
       // the next picture looked for - see the DONE WHEN in
       // heal-stock-pictures.ts for when this call goes.
@@ -294,6 +304,18 @@ export default defineModule({
         action_id: "core-scan:rank-catalog-photo",
         trigger_type: "event",
         trigger_event: "core-scan.scan.enriched",
+      },
+    ],
+    // A record made without a picture is offered one (#3818).
+    panels: [
+      {
+        // DELIBERATELY universal: any record whose kind has a picture can be
+        // offered one, including on module-owned pages; it says nothing on a
+        // record with a picture or no suggestion.
+        id: "core-scan:suggested-photo",
+        surface: "entity-detail-panel" as const,
+        target: "*",
+        title: "Suggested photo",
       },
     ],
   },

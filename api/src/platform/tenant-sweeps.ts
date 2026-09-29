@@ -156,6 +156,26 @@ async function round(now: number): Promise<void> {
   }
 }
 
+/** Run every pass's `onEnable` for a module just enabled in a workspace, so
+ *  the workspace is born with what the pass's first round would give it.
+ *  One pass failing is logged and never fails the enable. */
+export async function runSweepEnableSteps(
+  orgId: string,
+  moduleName: string,
+  openDb: (orgId: string) => Promise<unknown> = async (id) => (await import("../db/tenant.js")).getTenantDb(id),
+): Promise<void> {
+  const steps = [...registry.values()].filter((r) => r.pass.module === moduleName && r.pass.onEnable);
+  if (!steps.length) return;
+  const db = await openDb(orgId);
+  for (const r of steps) {
+    try {
+      await r.pass.onEnable!({ orgId, db, now: new Date() });
+    } catch (err) {
+      console.error(`[sweeps] ${r.pass.name}: its enable step for org ${orgId} failed:`, (err as Error).message);
+    }
+  }
+}
+
 /** Run one pass now: tests and admin doors. */
 export async function runTenantSweep(name: string, opts: { orgIds?: string[]; now?: Date } = {}): Promise<TenantSweepRunResult> {
   const r = registry.get(name);
@@ -255,7 +275,7 @@ export async function walkWith(
       let chosen: string[] | null = null;
       if (s.pass.candidates) {
         try {
-          chosen = await s.pass.candidates(inScope);
+          chosen = await s.pass.candidates(inScope, { named: opts.orgIds !== undefined });
         } catch (err) {
           console.warn(`[tenant-sweeps] ${s.pass.name}: candidates failed, visiting every workspace in scope:`, (err as Error).message);
         }

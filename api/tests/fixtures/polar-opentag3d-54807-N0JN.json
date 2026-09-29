@@ -1,0 +1,74 @@
+{
+    "opentag_version": "2.003",
+    "has_ui": false,
+    "tag_data": {
+        "tag_version": 2003,
+        "material": "PLA",
+        "material_mod": "Pure",
+        "manufacturer": "Polar Filament",
+        "color_name": "Royal Blue",
+        "color_1": [
+            17,
+            84,
+            207,
+            255
+        ],
+        "color_2": [
+            0,
+            0,
+            0,
+            0
+        ],
+        "color_3": [
+            0,
+            0,
+            0,
+            0
+        ],
+        "color_4": [
+            0,
+            0,
+            0,
+            0
+        ],
+        "serial": "54807-N0JN",
+        "sku": "P016",
+        "barcode": 749565057134,
+        "mfg_date": [
+            2026,
+            7,
+            6
+        ],
+        "mfg_time": [
+            9,
+            44,
+            5
+        ],
+        "diameter": 1750,
+        "tolerance": 2,
+        "nozzle_diameter": 4,
+        "print_temp": 43,
+        "min_print_temp": 41,
+        "max_print_temp": 49,
+        "chamber_temp": 0,
+        "bed_temp": 12,
+        "min_bed_temp": 10,
+        "max_bed_temp": 13,
+        "max_dry_temp": 13,
+        "dry_time": 0,
+        "density": 1240,
+        "weight": 1000,
+        "empty_spool_weight": 215,
+        "measured_length": 36,
+        "spool_core_diameter": 80,
+        "mfi_temp": 42,
+        "mfi_load": 216,
+        "mfi_value": 60,
+        "data_url": "pfil.us?k=EFz-N0JN"
+    },
+    "product_photos": [
+        "https://pfil.us/productPic_backend.php?id=8&token=6275",
+        "https://pfil.us/productPic_backend.php?id=7&token=6769"
+    ],
+    "qa_status": "Pass"
+}

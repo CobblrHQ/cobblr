@@ -2,6 +2,7 @@
 import { createPortal } from "react-dom";
 import { FileEverythingSheet } from "../components/FileEverythingSheet";
 import { ScanSessionTheme } from "../components/ScanSessionTheme";
+import { SessionPlaceChip } from "../components/SessionPlaceChip";
 import { SessionHeadline } from "../components/SessionHeadline";
 import { ScanPickerInput, useScanIntake } from "../components/ScanPhotoPicker";
 import { SessionReadVerdict } from "../components/SessionReadVerdict";
@@ -32,6 +33,7 @@ import { } from "../components/CameraCaptureSheet";
 import { } from "../panels/registry";
 import { LocationChipPicker } from "../components/LocationChipPicker";
 import { SessionLocationModal } from "../components/SessionLocationModal";
+import { sessionPlaceSuggestion } from "../lib/sessionPlaceSuggestion";
 import { OrganizePlanSheet, SortingPlanView } from "../components/OrganizePlanSheet";
 import { OrganizeWalkSheet } from "../components/OrganizeWalkSheet";
 import { LiveSortSheet } from "../components/LiveSortSheet";
@@ -108,6 +110,7 @@ import { roleSatisfies } from "@cobblr/platform-contract/org-roles";
 import { } from "../lib/useFieldPresentation";
 import { } from "../auth/AuthContext";
 import { destinationLabel, type DestinationTable } from "@cobblr/platform-contract";
+import { KeepAsPurchase } from "./KeepAsPurchase";
 import { InboxCard, GalleryTile } from "./ScanInboxCard";
 import { FiledRowView, FiledSummaryView } from "./ScanFiledRow";
 import { useFiledRows, withFiledRows } from "../lib/filedRows";
@@ -2300,7 +2303,15 @@ export function ScanPage() {
           icons but left one canyon after "Set location", which is not the same
           thing (reported 2026-08-10). gap-* stays the FLOOR; from `sm` up the
           omni box is the elastic member and normal packing is correct. */}
-      <div className="relative flex items-center gap-2 max-sm:gap-1.5 max-sm:justify-between flex-nowrap border-b border-line dark:border-slate-700 pb-2.5">
+      <div
+        data-inbox-header
+        className={
+          "relative flex items-center gap-2 max-sm:gap-1.5 max-sm:justify-between flex-nowrap border-b border-line dark:border-slate-700 pb-2.5 " +
+          // A phone's open search is a line of its own under the row (see the
+          // box below), the one time this row has two lines.
+          (omniOpen ? "max-sm:flex-wrap max-sm:gap-y-2" : "")
+        }
+      >
         {/* The nav bar above already names this page, so on a phone the word
             "Inbox" is row width spent repeating the shell (principle #4). */}
 
@@ -2560,14 +2571,15 @@ className="rounded px-1 py-0.5 text-[12.5px] hover:bg-subtle dark:hover:bg-slate
             (dropHot
               ? "border-accent border-dashed bg-cobble-50/60 dark:bg-cobble-900/25 "
               : "border-dashed border-line dark:border-slate-700 ") +
-            // Wide: always open and elastic, sharing the row. Tight: it MORPHS
-            // over the whole row - absolutely positioned across it, so the
-            // counts, the location chip and the icons are covered rather than
-            // competing for the same line. Sharing the row on a phone left the
-            // field a stub and the placeholder cut mid-word, which reads as
-            // broken (reported 2026-08-10). Same control, two shapes.
+            // Wide: always open and elastic, sharing the row. Tight: open, it
+            // takes a line of its own UNDER the row, full width. Sharing the
+            // row on a phone left the field a stub and the placeholder cut
+            // mid-word (reported 2026-08-10); covering the row instead hid the
+            // counts and Set location for as long as a search was typed in, so
+            // you could not see or change where the next scan files while
+            // looking for something (#3996's sibling). Same control, two shapes.
             (omniOpen
-              ? "flex-1 min-w-[9rem] max-sm:absolute max-sm:inset-x-0 max-sm:top-0 max-sm:bottom-2.5 max-sm:z-20 max-sm:flex-none max-sm:bg-canvas max-sm:dark:bg-slate-800"
+              ? "flex-1 min-w-[9rem] max-sm:order-last max-sm:basis-full"
               : "flex-1 min-w-[9rem] hidden sm:flex") +
             " " +
             (omniOpen ? "" : "cursor-text")
@@ -2580,6 +2592,7 @@ className="rounded px-1 py-0.5 text-[12.5px] hover:bg-subtle dark:hover:bg-slate
           ) : (
             <Search size={13} className="shrink-0 text-faint" />
           )}
+          {/* search-input-ok: the inbox omnibox also ADDS (a pasted UPC or link), with an intent icon and an action button; it carries its own × and Esc clears it */}
           <input
             ref={omniRef}
             value={searchQ}
@@ -2629,6 +2642,7 @@ className="rounded px-1 py-0.5 text-[12.5px] hover:bg-subtle dark:hover:bg-slate
               onClick={(e) => {
                 e.preventDefault();
                 setSearchQ("");
+                omniRef.current?.focus();
               }}
               aria-label="Clear search"
               className="shrink-0 text-faint hover:text-content"
@@ -4153,73 +4167,18 @@ className="rounded px-1 py-0.5 text-[12.5px] hover:bg-subtle dark:hover:bg-slate
                       (reported 2026-07-30). Now the missing half says so, and is one
                       tap from being set - set the location, then file. */}
                   {busy === 0 && placeIds.length > 0 && !fileBin && hasLocations && (
-                    <button
-                      type="button"
+                    <SessionPlaceChip
+                      total={placeIds.length}
+                      missing={sessionLoc.missing}
+                      suggested={sessionLoc.suggested}
+                      mixed={sessionLoc.mixed}
+                      placeName={sessionLocName ? filingLabel(sessionLocName) : null}
                       onClick={(e) => {
                         e.stopPropagation();
                         setPlacingMode("set");
                         setPlacingSession(placingSession === g.key ? null : g.key);
                       }}
-                      title={
-                        sessionLoc.mixed
-                          ? "These are set to different places - tap to give the whole session one location"
-                          : sessionLocName && sessionLoc.missing === 0
-                          ? `All ${placeIds.length} are set to ${filingLabel(sessionLocName)} - tap to move them somewhere else`
-                          : sessionLocName
-                          ? `${placeIds.length - sessionLoc.missing} of ${placeIds.length} are in ${filingLabel(sessionLocName)}; the other ${sessionLoc.missing} have no location yet - tap to set it`
-                          : `None of these ${placeIds.length} have a location yet - tap to set it`
-                      }
-                      className={`inline-flex shrink-0 items-center gap-1.5 rounded-full border px-2.5 py-1 text-[11.5px] font-medium ${
-                        (sessionLocName && sessionLoc.missing === 0) ||
-                        (sessionLoc.missing > 0 && sessionLoc.suggested === sessionLoc.missing)
-                          ? "border-line/70 dark:border-slate-700/70 text-content dark:text-mortar-100 hover:border-cobble-400"
-                          : "border-amber-400 dark:border-amber-700/80 bg-amber-50 dark:bg-amber-900/25 text-amber-700 dark:text-amber-300 hover:border-amber-500"
-                      }`}
-                    >
-                      <MapPin size={12} />
-                      {sessionLoc.mixed ? (
-                        <>
-                          Mixed<span className="hidden sm:inline">&nbsp;locations</span>
-                        </>
-                      ) : sessionLoc.missing > 0 && sessionLoc.suggested === sessionLoc.missing ? (
-                        // Every unplaced item has a suggested spot, and File all
-                        // will use them. Amber "Location" over that read as
-                        // "nothing has a home" (2026-09-06); this says what will
-                        // actually happen.
-                        <>
-                          {sessionLoc.suggested}
-                          <span className="hidden sm:inline">&nbsp;suggested</span>
-                          <span className="sm:hidden">&nbsp;→</span>
-                        </>
-                      ) : sessionLocName && sessionLoc.missing === 0 ? (
-                        filingLabel(sessionLocName)
-                      ) : sessionLocName ? (
-                        // PARTIAL. Naming the one location that IS set reads as
-                        // the whole session's home, when most of it has nowhere
-                        // to go - a session where 1 of 3 was placed showed a
-                        // confident "White Bookshelf" (reported 2026-08-01). Lead
-                        // with what is missing, because that is the thing left
-                        // to do; `sessionLocation` has always returned the count
-                        // and this is the render that finally reads it.
-                        <>
-                          {sessionLoc.missing} of {placeIds.length}
-                          <span className="hidden sm:inline">&nbsp;need a location</span>
-                          {/* A phone gets the shortest honest word rather than a
-                              bare fraction (#3064: "2 of 8" said nothing). */}
-                          <span className="sm:hidden">&nbsp;unplaced</span>
-                        </>
-                      ) : (
-                        // It's a button: say the action, not the absence. Also
-                        // the shortest honest label, which this row needs
-                        // (reported 2026-08-01). "Set" went too: the pin
-                        // already says it is a place, and the row needs the
-                        // characters more than it needs the verb (2026-08-24).
-                        // On a phone the pin alone (its title says the rest):
-                        // the word cost the identity beside it its last
-                        // characters (the owner, #2982).
-                        <span className="max-sm:hidden">Location</span>
-                      )}
-                    </button>
+                    />
                   )}
                   {/* The plan-first filer for this session: adds to what you
                       have where one thing matches, files the rest as new, leaves
@@ -4240,6 +4199,7 @@ className="rounded px-1 py-0.5 text-[12.5px] hover:bg-subtle dark:hover:bg-slate
                         });
                       }}
                       title="Shows a plan first: what gets added to things you already have, what is filed as new, what is left for you. Nothing is written until you confirm."
+                      aria-label="File everything"
                       // Not on a phone's queue: the put-away strip above is the
                       // plan door for every session, and the File N dialog
                       // carries it per session ("Review the plan first"). The
@@ -4249,7 +4209,7 @@ className="rounded px-1 py-0.5 text-[12.5px] hover:bg-subtle dark:hover:bg-slate
                       {/* On a phone the label says what OPENS: a plan to review,
                           not a file. "File" beside "File 2" was the owner's own
                           finding (#2982): two doors with one word. */}
-                      <Zap size={11} /> <span className="sm:hidden">Review plan</span><span className="hidden sm:inline">File everything</span>
+                      <Zap size={11} /> <span className="sm:hidden">Review plan</span><span className="hidden lg:inline">File everything</span>
                     </button>
                   )}
                   {busy > 0 ? (
@@ -4325,14 +4285,14 @@ className="rounded px-1 py-0.5 text-[12.5px] hover:bg-subtle dark:hover:bg-slate
                                       desk gets the install word too. Both come
                                       from one resolver call, so they cannot
                                       disagree about what the tap covers (#3393). */}
-                                  <span className="sm:hidden">{sessionAction.shortLabel}</span>
-                                  <span className="max-sm:hidden">{sessionAction.label}</span>
+                                  <span className="lg:hidden">{sessionAction.shortLabel}</span>
+                                  <span className="max-lg:hidden">{sessionAction.label}</span>
                                 </span>
                               </>
                             )}
                           </span>
                           {sessionCat.suggestion ? (
-                            <span className="hidden sm:inline max-w-[9rem] truncate opacity-80">
+                            <span className="hidden lg:inline max-w-[9rem] truncate opacity-80">
                               as {sessionCat.suggestion}
                             </span>
                           ) : null}
@@ -4353,8 +4313,8 @@ className="rounded px-1 py-0.5 text-[12.5px] hover:bg-subtle dark:hover:bg-slate
                                       desk gets the install word too. Both come
                                       from one resolver call, so they cannot
                                       disagree about what the tap covers (#3393). */}
-                                  <span className="sm:hidden">{sessionAction.shortLabel}</span>
-                                  <span className="max-sm:hidden">{sessionAction.label}</span>
+                                  <span className="lg:hidden">{sessionAction.shortLabel}</span>
+                                  <span className="max-lg:hidden">{sessionAction.label}</span>
                                 </span>
                               </>
                             )}
@@ -4366,7 +4326,7 @@ className="rounded px-1 py-0.5 text-[12.5px] hover:bg-subtle dark:hover:bg-slate
                             // the pair read like two different operations when
                             // the only real difference is whether it still has
                             // to ask you where (reported 2026-08-20).
-                            <span className="hidden sm:inline max-w-[9rem] truncate opacity-80">
+                            <span className="hidden lg:inline max-w-[9rem] truncate opacity-80">
                               as {sessionCat.suggestion}
                             </span>
                           ) : null}
@@ -4416,13 +4376,14 @@ className="rounded px-1 py-0.5 text-[12.5px] hover:bg-subtle dark:hover:bg-slate
                       {/* The bare arrow on a phone, the word from sm up. The
                           phone span comes first so the sm span's "open →"
                           stays the last text in the bar (the lint's anchor). */}
-                      <span className="sm:hidden">→</span>
-                      <span className="max-sm:hidden">open →</span>
+                      <span className="lg:hidden">→</span>
+                      <span className="max-lg:hidden">open →</span>
                     </Link>
                   )}
                 </div>
                 {!collapsed && (
                   <div className="space-y-2">
+                    {g.batchId && batchMeta[g.batchId]?.purchase_pending && <KeepAsPurchase slug={activeSlug} batchId={g.batchId} />}
                     {/* The read's verdict, in the session's own words: a failed
                         read says why, with a Read again you can see and the
                         connect link when a provider is the reason (#2892). The
@@ -4466,6 +4427,7 @@ className="rounded px-1 py-0.5 text-[12.5px] hover:bg-subtle dark:hover:bg-slate
                 count={placingMode === "set" ? placeIds.length : readyIds.length}
                 category={filing.category}
                 currentLocationId={sessionLoc.id}
+                suggestion={sessionPlaceSuggestion(g.items)}
                 onPick={(v) => {
                   setPlacingSession(null);
                   if (placingMode === "set")

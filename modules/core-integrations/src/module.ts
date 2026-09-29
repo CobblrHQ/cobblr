@@ -18,7 +18,7 @@ import { defineModule } from "@cobblr/platform-contract";
 
 export default defineModule({
   name: "core-integrations",
-  version: "0.1.2",
+  version: "0.1.3",
   displayName: "Integrations",
   description:
     "Connect your workspace to Slack, Discord, email, and any service with a webhook. Fire on entity events, receive external pings.",

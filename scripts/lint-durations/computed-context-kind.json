@@ -1,7 +1,8 @@
 {
   "lint": "lint:computed-context-kind",
-  "run": "tsx scripts/lint-computed-context-kind.ts",
+  "run": "node scripts/lint-computed-context-kind.ts",
   "ms": 589,
   "recorded": "2026-09-14",
-  "source": "split from scripts/lint-durations.json (recorded 2026-09-14)"
+  "source": "split from scripts/lint-durations.json (recorded 2026-09-14)",
+  "readMB": 12.6
 }

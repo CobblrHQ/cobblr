@@ -12,6 +12,8 @@ export function bridgeChosen(value: string | null): boolean {
 export function liveImportBlocker(s: { url: string; token: string; onLan: boolean; bridge: string | null; addressLabel: string }): string | null {
   if (!s.url.trim()) return `Fill in the ${s.addressLabel}.`;
   if (!s.token.trim()) return "Paste the API token.";
-  if (s.onLan && !bridgeChosen(s.bridge)) return "Type the bridge id, or pick Default bridge.";
+  if (s.onLan && !bridgeChosen(s.bridge)) return "Type the name you gave the new bridge, or pick one of yours.";
   return null;
 }
+
+export { bridgeDisplayName } from "@cobblr/platform-contract/edge-channel";

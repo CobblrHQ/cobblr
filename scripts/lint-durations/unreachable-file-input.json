@@ -1,7 +1,8 @@
 {
   "lint": "lint:unreachable-file-input",
-  "run": "tsx scripts/lint-unreachable-file-input.ts",
+  "run": "node scripts/lint-unreachable-file-input.ts",
   "ms": 393,
   "recorded": "2026-09-14",
-  "source": "split from scripts/lint-durations.json (recorded 2026-09-14)"
+  "source": "split from scripts/lint-durations.json (recorded 2026-09-14)",
+  "readMB": 12.1
 }

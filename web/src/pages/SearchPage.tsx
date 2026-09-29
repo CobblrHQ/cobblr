@@ -11,7 +11,7 @@ import { useKindLabels } from "../lib/useKindLabels";
 import { Link, useSearchParams } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
 import { Search, X } from "lucide-react";
-import { EntityThumb, usePageTitle } from "@cobblr/platform-web";
+import { EntityThumb, SnippetText, usePageTitle, SearchInput } from "@cobblr/platform-web";
 import { api, type SearchHit } from "../lib/api";
 import { QueryError } from "../components/QueryError";
 import { useActiveOrg } from "../auth/ActiveOrgContext";
@@ -94,17 +94,7 @@ export function SearchPage() {
           {results.data ? `${results.data.items.length} results` : ""}
         </span>
         <div className="flex-1" />
-        <div className="relative">
-          <Search size={12} className="absolute left-2 top-1/2 -translate-y-1/2 text-faint" />
-          <input
-            type="text"
-            value={q}
-            onChange={(e) => setParam("q", e.target.value || null)}
-            placeholder="search…"
-            className="input !py-1 !pl-7 text-xs !w-56"
-            autoFocus
-          />
-        </div>
+        <SearchInput value={q} onChange={(v) => setParam("q", v || null)} placeholder="search…" autoFocus wrapperClassName="w-56" />
       </div>
 
       {/* Active filter chips — clear individually with the × button. */}
@@ -159,13 +149,7 @@ export function SearchPage() {
         <span className="font-mono uppercase tracking-wider text-faint text-[10px]">
           tag
         </span>
-        <input
-          type="text"
-          value={tag ?? ""}
-          onChange={(e) => setParam("tag", e.target.value || null)}
-          placeholder="filter by tag name…"
-          className="input !py-1 text-xs !w-48"
-        />
+        <SearchInput value={tag ?? ""} onChange={(v) => setParam("tag", v || null)} placeholder="filter by tag name…" aria-label="Filter by tag name" size="sm" wrapperClassName="w-48" />
       </div>
 
       {!q && !tag && (
@@ -207,12 +191,21 @@ export function SearchPage() {
                   className="flex items-center gap-3 hover:text-accent"
                 >
                   <EntityThumb src={h.image_path} alt={h.title} size={36} />
-                  <span className="font-medium truncate">{h.title}</span>
-                  {h.subtitle && (
-                    <span className="text-xs text-muted truncate">
-                      {h.subtitle}
+                  <span className="min-w-0 flex flex-col">
+                    <span className="flex items-baseline gap-3 min-w-0">
+                      <span className="font-medium truncate">{h.title}</span>
+                      {h.subtitle && (
+                        <span className="text-xs text-muted truncate">
+                          {h.subtitle}
+                        </span>
+                      )}
                     </span>
-                  )}
+                    {h.snippet && (
+                      <span className="text-xs text-muted dark:text-slate-400 line-clamp-2" data-testid="search-snippet">
+                        <SnippetText text={h.snippet} q={q} />
+                      </span>
+                    )}
+                  </span>
                   {locName(h) && (
                     <span className="ml-auto shrink-0 font-mono text-[10px] uppercase tracking-wider text-accent border border-line dark:border-slate-600 rounded-full px-1.5 py-0.5">
                       {locName(h)}

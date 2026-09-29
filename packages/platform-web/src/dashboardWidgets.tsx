@@ -23,6 +23,10 @@ export interface DashboardInstance {
   is_default: boolean;
   /** Primary-item count for this instance; null/undefined if the module reports none. */
   item_count?: number | null;
+  /** This instance is a TYPE collection shown together with the collection of
+   *  its things (Filament Types + Spools): one tile for both, labelled
+   *  `label`, counting both. The child collection gets no tile of its own. */
+  family?: { child: string; label: string };
 }
 
 /** Props every dashboard widget receives. The active workspace slug plus a

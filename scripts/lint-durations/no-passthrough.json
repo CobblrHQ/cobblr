@@ -1,7 +1,8 @@
 {
   "lint": "lint:no-passthrough",
-  "run": "tsx scripts/lint-no-passthrough.ts",
+  "run": "node scripts/lint-no-passthrough.ts",
   "ms": 672,
   "recorded": "2026-09-14",
-  "source": "split from scripts/lint-durations.json (recorded 2026-09-14)"
+  "source": "split from scripts/lint-durations.json (recorded 2026-09-14)",
+  "readMB": 19.9
 }

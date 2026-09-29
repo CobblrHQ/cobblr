@@ -20,6 +20,9 @@ export interface FacesVerdict {
   traits: Record<string, string>;
   faces: FaceName[];
   explicit: FaceName[];
+  /** The faces a person may turn on here; absent from an older api, which
+   *  offered every face not worn. */
+  offers?: FaceName[];
 }
 
 /** The faces a kind wears in this workspace. Bias: until the answer arrives,
@@ -48,7 +51,9 @@ export function useFaces(kind: string): {
     // The wire carries strings; keep only names this build knows, so a newer
     // server's face never widens the set on an older client.
     const known = (xs: string[]): FaceName[] => xs.filter((x): x is FaceName => (FACE_NAMES as readonly string[]).includes(x));
-    const verdict: FacesVerdict | null = q.data ? { kind: q.data.kind, traits: q.data.traits ?? {}, faces: known(q.data.faces), explicit: known(q.data.explicit) } : null;
+    const verdict: FacesVerdict | null = q.data
+      ? { kind: q.data.kind, traits: q.data.traits ?? {}, faces: known(q.data.faces), explicit: known(q.data.explicit), ...(Array.isArray(q.data.offers) ? { offers: known(q.data.offers) } : {}) }
+      : null;
     return {
       on: new Set<FaceName>(verdict ? verdict.faces : q.isError ? [] : FACE_NAMES),
       // Unknown until the answer arrives: treat every trait as worn, so
@@ -100,7 +105,7 @@ export function RecordFaces({
     }),
     [opened, turnOn],
   );
-  const dormant = FACE_NAMES.filter((f) => !on.has(f) && !opened.has(f));
+  const dormant = (verdict?.offers ?? FACE_NAMES).filter((f) => !on.has(f) && !opened.has(f));
   return (
     <Opened.Provider value={ctx}>
       {children}

@@ -1,7 +1,8 @@
 {
   "lint": "lint:utc-day-comparison",
-  "run": "tsx scripts/lint-utc-day-comparison.ts",
+  "run": "node scripts/lint-utc-day-comparison.ts",
   "ms": 688,
   "recorded": "2026-09-14",
-  "source": "split from scripts/lint-durations.json (recorded 2026-09-14)"
+  "source": "split from scripts/lint-durations.json (recorded 2026-09-14)",
+  "readMB": 12.5
 }

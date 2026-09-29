@@ -1,7 +1,8 @@
 {
   "lint": "lint:jsonb-merge",
-  "run": "tsx scripts/lint-jsonb-merge.ts",
+  "run": "node scripts/lint-jsonb-merge.ts",
   "ms": 715,
   "recorded": "2026-09-14",
-  "source": "split from scripts/lint-durations.json (recorded 2026-09-14)"
+  "source": "split from scripts/lint-durations.json (recorded 2026-09-14)",
+  "readMB": 11.3
 }

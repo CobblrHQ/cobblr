@@ -1,7 +1,8 @@
 {
   "lint": "lint:kysely-raw-bool",
-  "run": "tsx scripts/lint-kysely-raw-bool.ts",
+  "run": "node scripts/lint-kysely-raw-bool.ts",
   "ms": 512,
   "recorded": "2026-09-14",
-  "source": "split from scripts/lint-durations.json (recorded 2026-09-14)"
+  "source": "split from scripts/lint-durations.json (recorded 2026-09-14)",
+  "readMB": 12.4
 }

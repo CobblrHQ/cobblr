@@ -1,7 +1,8 @@
 {
   "lint": "lint:sticky-under-header",
-  "run": "tsx scripts/lint-sticky-under-header.ts",
+  "run": "node scripts/lint-sticky-under-header.ts",
   "ms": 543,
   "recorded": "2026-09-14",
-  "source": "split from scripts/lint-durations.json (recorded 2026-09-14)"
+  "source": "split from scripts/lint-durations.json (recorded 2026-09-14)",
+  "readMB": 12.8
 }

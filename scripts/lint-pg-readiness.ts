@@ -27,10 +27,26 @@
 //
 // Run: npx tsx scripts/lint-pg-readiness.ts
 
-import { repoFiles } from "./lib/repo-files.js";
+import { execSync } from "node:child_process";
 import { readFileSync } from "node:fs";
 
-const files = repoFiles(["*.sh", "*.yml", "*.yaml", "*.ts", "*.mjs", "*.js", "Dockerfile*", "docker/*"]);
+// ONLY THE FILES THAT MENTION IT. This used to read every tracked source file
+// in full to find the handful containing pg_isready, so its time followed the
+// disk: 0.5 s recorded, 0.6-5 s in CI, and 12.6 s re-measured alone on a busy
+// runner, which failed main on its time budget (2026-09-28). git grep -F
+// searches in one fast pass, and --untracked keeps a new file that is not
+// committed yet in scope (lib/repo-files.ts says why). Exit 1 is "no match".
+let files: string[] = [];
+try {
+  files = execSync(
+    "git grep --untracked -l -F pg_isready -- '*.sh' '*.yml' '*.yaml' '*.ts' '*.mjs' '*.js' 'Dockerfile*' 'docker/*'",
+    { encoding: "utf8" },
+  )
+    .split("\n")
+    .filter(Boolean);
+} catch (e) {
+  if ((e as { status?: number }).status !== 1) throw e;
+}
 
 const failures: string[] = [];
 let probes = 0;

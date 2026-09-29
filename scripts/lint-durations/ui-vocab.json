@@ -1,7 +1,8 @@
 {
   "lint": "lint:ui-vocab",
-  "run": "tsx scripts/lint-ui-vocab.ts",
+  "run": "node scripts/lint-ui-vocab.ts",
   "ms": 2690,
   "recorded": "2026-09-14",
-  "source": "split from scripts/lint-durations.json (recorded 2026-09-14)"
+  "source": "split from scripts/lint-durations.json (recorded 2026-09-14)",
+  "readMB": 13.3
 }

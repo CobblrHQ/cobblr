@@ -2,19 +2,20 @@
   "fixture": "same-dye-lot-skeins.jpg",
   "image_sha256": "367d1be02b6df02d039614529c025ae795997b2db12b24103cb915843c10789e",
   "capability": "classify-image",
-  "prompt": "A scanned barcode resolved this item to: \"Chenille Yarn\". Look at the photo and decide whether the product visible in it plausibly matches that name/identity — consider the product type, packaging, and any readable label text, and allow for a generic or differently-angled shot. Only answer \"no\" when the photo clearly shows a DIFFERENT kind of product. When (and ONLY when) it's a clear mismatch AND the photo's label makes the real product unambiguous, also return what the item actually IS — a concise retail product name, plus brand if visible. Omit them if you can't read it confidently. Separately, in \"printed\", report what is PRINTED on the item or its cover, verbatim and only when clearly legible: the author, artist or maker as printed (a book's cover author, a record's artist), the brand as printed, the title as printed, and the lot or batch code as printed (a dye lot, a lot number, a batch: the code that changes from one production run to the next, never the barcode digits, a colour number or an article number), and the year this unit was made as printed (a wine's vintage, a coin's year: four digits, never a best-before date, a copyright year or a \"since\" or \"established\" year). Never complete or translate them; null when not shown. Reply with JSON only: {\"match\":\"yes\"|\"no\"|\"unsure\",\"reason\":\"<one short sentence>\",\"correct_name\":\"<the real product name, optional>\",\"correct_brand\":\"<brand, optional>\",\"printed\":{\"creator\":<string|null>,\"brand\":<string|null>,\"title\":<string|null>,\"lot\":<string|null>,\"year_made\":<string|null>}}.",
+  "prompt": "A scanned barcode resolved this item to: \"Chenille Yarn\". Look at the photo and decide whether the product visible in it plausibly matches that name/identity — consider the product type, packaging, and any readable label text, and allow for a generic or differently-angled shot. Only answer \"no\" when the photo clearly shows a DIFFERENT kind of product. When the photo shows several different products, the barcode is on one of them: answer \"yes\" when ANY of them plausibly matches, and \"no\" only when none does. Report \"things\": how many different products are in the photo. When (and ONLY when) it's a clear mismatch AND the photo's label makes the real product unambiguous, also return what the item actually IS — a concise retail product name, plus brand if visible. Omit them if you can't read it confidently. Separately, in \"printed\", report what is PRINTED on the item or its cover, verbatim and only when clearly legible: the author, artist or maker as printed (a book's cover author, a record's artist), the brand as printed, the title as printed, and the lot or batch code as printed (a dye lot, a lot number, a batch: the code that changes from one production run to the next, never the barcode digits, a colour number or an article number), and the year this unit was made as printed (a wine's vintage, a coin's year: four digits, never a best-before date, a copyright year or a \"since\" or \"established\" year). Never complete or translate them; null when not shown. Reply with JSON only: {\"match\":\"yes\"|\"no\"|\"unsure\",\"reason\":\"<one short sentence>\",\"things\":<integer>,\"correct_name\":\"<the real product name, optional>\",\"correct_brand\":\"<brand, optional>\",\"printed\":{\"creator\":<string|null>,\"brand\":<string|null>,\"title\":<string|null>,\"lot\":<string|null>,\"year_made\":<string|null>}}.",
   "crosscheck": {
     "result": {
       "role": "assistant",
-      "content": "{\"labels\": [{\"label\": \"yes\", \"confidence\": 0.6}, {\"label\": \"unsure\", \"confidence\": 0.3}, {\"label\": \"no\", \"confidence\": 0.1}]}\n\n```json\n{\"match\":\"unsure\",\"reason\":\"The image shows crocheted round pads with a tweedy, textured yarn look, which is consistent with chenille yarn crafts but no packaging or label confirms it.\",\"printed\":{\"creator\":null,\"brand\":null,\"title\":null,\"lot\":null,\"year_made\":null}}\n```"
+      "content": "{\"match\":\"yes\",\"reason\":\"The image shows a fuzzy, flecked tweed-textured fiber item consistent with something made from or being chenille yarn.\",\"things\":1,\"printed\":{\"creator\":null,\"brand\":null,\"title\":null,\"lot\":null,\"year_made\":null}}"
     },
     "provider_id": "openai-compat",
-    "model": "default",
+    "model": "sonnet",
     "cached": false,
-    "input_tokens": 57595,
-    "output_tokens": 381,
+    "input_tokens": 57751,
+    "output_tokens": 388,
     "cost_cents": 0,
-    "duration_ms": 6935,
-    "text": "{\"labels\": [{\"label\": \"yes\", \"confidence\": 0.6}, {\"label\": \"unsure\", \"confidence\": 0.3}, {\"label\": \"no\", \"confidence\": 0.1}]}\n\n```json\n{\"match\":\"unsure\",\"reason\":\"The image shows crocheted round pads with a tweedy, textured yarn look, which is consistent with chenille yarn crafts but no packaging or label confirms it.\",\"printed\":{\"creator\":null,\"brand\":null,\"title\":null,\"lot\":null,\"year_made\":null}}\n```"
+    "duration_ms": 7602,
+    "text": "{\"match\":\"yes\",\"reason\":\"The image shows a fuzzy, flecked tweed-textured fiber item consistent with something made from or being chenille yarn.\",\"things\":1,\"printed\":{\"creator\":null,\"brand\":null,\"title\":null,\"lot\":null,\"year_made\":null}}",
+    "provider_label": "OpenAI-compatible (LM Studio, vLLM, …)"
   }
 }

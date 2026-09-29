@@ -22,7 +22,7 @@ import { Fragment, useContext, useEffect, useId, useMemo, useRef, useState, type
 import { Link } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Camera, CheckCircle, ChevronDown, Download, ExternalLink, Flag, Image as ImageIcon, ImagePlus, Library, Loader2, MapPin, MoreHorizontal, Pencil, RefreshCw, RotateCcw, ScanLine, Scissors, Sparkles, X, Database } from "lucide-react";
-import { Modal, useLater, useImageSrc, EntityPhoto, useOverlayOpenFlag, useToast, colorSwatch, wantsSwatch, valueFromInput, PopoverLayer, BackdropLayer, FieldPack, fieldNeed, fieldControl, fieldPackControlClass, type FieldType, relativeTime } from "@cobblr/platform-web";
+import { Modal, useLater, useImageSrc, EntityPhoto, useOverlayOpenFlag, useToast, colorSwatch, wantsSwatch, ColourInput, valueFromInput, PopoverLayer, BackdropLayer, FieldPack, fieldNeed, fieldControl, fieldPackControlClass, type FieldType, relativeTime, SearchInput } from "@cobblr/platform-web";
 import { } from "../components/ScanImportModal";
 import { } from "../components/ExportInboxModal";
 import { CameraCaptureSheet } from "../components/CameraCaptureSheet";
@@ -85,7 +85,7 @@ import {
   type TrackedMatch,
 } from "../lib/api";
 import { } from "../lib/scanPayload";
-import { needsScanReview, scanRebuy, scanLooksFineResolves, scanDoubt, scanDoubtWords, scanProvenanceNote, scanReceiptReadFailed, scanSplitUncut, scanReviewQuestions, scanReviewReason, scanRowState, scanTrackedMatch, scanDeclinesRecord } from "@cobblr/platform-contract/scan-triage";
+import { needsScanReview, scanRebuy, scanLooksFineResolves, scanDoubt, scanDoubtWords, scanProvenanceNote, scanReceiptReadFailed, scanReceiptAlreadyIn, scanSplitUncut, scanReviewQuestions, scanReviewReason, scanRowState, scanTrackedMatch, scanDeclinesRecord } from "@cobblr/platform-contract/scan-triage";
 import { SCAN_UNDO_ACTIONS, scanCombinedCount } from "@cobblr/platform-contract/scan-recovery";
 import { ScanReceiptUnread } from "../components/ScanReceiptUnread";
 import { scanAssertedFields } from "@cobblr/platform-contract/scan-evidence";
@@ -115,7 +115,7 @@ import { useFieldPresentation } from "../lib/useFieldPresentation";
 import { useAuth } from "../auth/AuthContext";
 import { type ScanTarget } from "./scanInboxShared";
 import { ScanNameItInline as NameItInline } from "../components/ScanNameItInline";
-import { LOOKUP_GAVE_UP, RECEIPT_READ_AGAIN, RECEIPT_UNREAD_SENTENCE, STORE_CODE_TITLE } from "@cobblr/platform-contract/scan-copy";
+import { LOOKUP_GAVE_UP, RECEIPT_READ_AGAIN, RECEIPT_UNREAD_SENTENCE, STORE_CODE_TITLE, RECEIPT_READ_ANYWAY, receiptAlreadyInSentence } from "@cobblr/platform-contract/scan-copy";
 import { scanInboxKeys } from "../lib/scan-inbox-keys";
 
 /** Base-kind fallback for when the scan menu can't load — the menu
@@ -748,7 +748,7 @@ export function InboxCard({
     !!(item.suggested_metadata as { reading_receipt?: boolean } | null)?.reading_receipt;
   // Whatever the router gave it, a settled row with no name shows the name
   // field and gets no one-tap Add (lib/namelessCard.ts, #2918).
-  const nameless = namelessCard({ status: item.status, suggested_name: item.suggested_name, ai_suggested_at: item.ai_suggested_at, readingReceipt });
+  const nameless = namelessCard({ status: item.status, suggested_name: item.suggested_name, barcode_text: item.barcode_text, ai_suggested_at: item.ai_suggested_at, readingReceipt });
   const needsName = nameless.nameField;
   // How long ago enrichment finished — the matchmaker runs detached AFTER that
   // and stamps matched_at when done. If matched_at never lands (the match threw
@@ -1067,7 +1067,7 @@ export function InboxCard({
   // own verdict; when it misses, this sends the photo to the same receipt
   // parser from the card instead of a delete-and-rephotograph (#2882).
   const asReceipt = useMutation({
-    mutationFn: () => api.readScanItemAsReceipt(activeSlug, item.id),
+    mutationFn: (opts: { force?: boolean } | void) => api.readScanItemAsReceipt(activeSlug, item.id, opts ?? {}),
     onSuccess: (r) => {
       void qc.invalidateQueries({ queryKey: scanInboxKeys.all(activeSlug) });
       toast.success(`Found ${r.items} item${r.items === 1 ? "" : "s"} on the receipt: review below`);
@@ -1082,7 +1082,14 @@ export function InboxCard({
     onError: () => toast.error("Couldn't save that. Try again."),
   });
   const receiptBlock = receiptUnread
-    ? { reading: asReceipt.isPending, saving: asItem.isPending, onReadAgain: () => asReceipt.mutate(), onAsItem: () => asItem.mutate() }
+    ? {
+        reading: asReceipt.isPending,
+        saving: asItem.isPending,
+        onReadAgain: () => asReceipt.mutate(),
+        onAsItem: () => asItem.mutate(),
+        alreadyIn: scanReceiptAlreadyIn(item),
+        onReadAnyway: () => asReceipt.mutate({ force: true }),
+      }
     : null;
   // The title is the name: the card's own rename, the same PATCH the form's
   // NAME chip and the phone's Name box use (#2982).
@@ -1758,14 +1765,17 @@ export function InboxCard({
                   }}
                   className="flex items-center gap-1.5"
                 >
-                  <input
+                  <SearchInput
                     value={zoomTerm}
-                    onChange={(e) => {
+                    onChange={(v) => {
                       zoomTermTouched.current = true;
-                      setZoomTerm(e.target.value);
+                      setZoomTerm(v);
                     }}
                     placeholder="search, or paste an image link…"
-                    className="flex-1 min-w-0 rounded border border-white/20 bg-white/10 px-2 py-1 text-xs text-white placeholder:text-white/40 focus:outline-none focus:border-white/40"
+                    aria-label="Search for a picture, or paste an image link"
+                    size="sm"
+                    tone="onDark"
+                    wrapperClassName="flex-1 min-w-0"
                   />
                   <button
                     type="submit"
@@ -2494,7 +2504,14 @@ export function InboxCard({
           // the merge, and a blocked row's Ask raises the ask, never a form
           // whose Confirm would meet the refusal a second time.
           primary: receiptBlock
-            ? { label: RECEIPT_READ_AGAIN, title: RECEIPT_UNREAD_SENTENCE, busy: receiptBlock.reading, onClick: receiptBlock.onReadAgain }
+            ? receiptBlock.alreadyIn
+              ? {
+                  label: RECEIPT_READ_ANYWAY,
+                  title: receiptAlreadyInSentence(receiptBlock.alreadyIn.label, receiptBlock.alreadyIn.lines),
+                  busy: receiptBlock.reading,
+                  onClick: receiptBlock.onReadAnyway,
+                }
+              : { label: RECEIPT_READ_AGAIN, title: RECEIPT_UNREAD_SENTENCE, busy: receiptBlock.reading, onClick: receiptBlock.onReadAgain }
             : rowState.action.kind === "merge" && !restockMatch
               ? { label: rowState.action.label, title: rowState.action.title, busy: commitBusy, onClick: runCommit }
               : blockedAsk
@@ -3578,7 +3595,7 @@ export function InboxCard({
                           }}
                           disabled={acceptSuggestedLocation.isPending}
                           className="inline-flex items-center gap-1 rounded-md bg-moss-500/10 border border-moss-500/30 px-1.5 py-0.5 text-[11px] text-moss-700 dark:text-moss-400 min-w-0 hover:border-moss-500 transition disabled:opacity-50"
-                          title={`${item.suggested_location_note ?? "Suggested spot"} - File all puts it here; tap to set it now`}
+                          title={`${item.suggested_location_note ?? "Suggested spot"} - Add and File all put it here; tap to set it now`}
                         >
                           <MapPin size={11} className="shrink-0" />
                           <span className="truncate">{item.suggested_location_note?.split(" — ")[0] ?? "Suggested spot"}</span>
@@ -5816,8 +5833,6 @@ interface FieldDefLike {
 // `wantsSwatch` (is this field a colour swatch field?) now lives in
 // @cobblr/platform-web, shared with EntityThumb. Imported at the top.
 
-const HEX_RE = /^#[0-9a-f]{6}$/i;
-
 /** One custom-field input on the scan-confirm form, by the field def's type
  *  (dropdown for choices, checkbox/number/date/text otherwise) + its help. */
 
@@ -5842,21 +5857,13 @@ function ScanFieldInput({
   const inputId = useId();
   const s = value == null ? "" : String(value);
   if (wantsSwatch(def)) {
-    const hex = HEX_RE.test(s.trim()) ? s.trim() : null;
     return (
       <div className="block">
         <label htmlFor={inputId} className="block text-[10px] font-mono uppercase tracking-widest text-muted dark:text-slate-400 mb-1">
           {def.display_label}
         </label>
-        <div className="flex items-center gap-2">
-          <input
-            type="color"
-            aria-label={`${def.display_label}, picked`}
-            value={hex ?? "#888888"}
-            onChange={(e) => onChange(e.target.value)}
-            title={hex ?? "pick a colour"}
-            className="h-8 w-10 shrink-0 rounded border border-line dark:border-slate-600 bg-transparent p-0.5 cursor-pointer"
-          />
+        <div className="flex flex-wrap items-center gap-2">
+          <ColourInput value={s} onPreview={onChange} onCommit={onChange} label={def.display_label} compact />
           <input
             id={inputId}
             type="text"

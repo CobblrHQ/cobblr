@@ -1,7 +1,8 @@
 {
   "lint": "lint:alert-lib-sync",
-  "run": "tsx scripts/lint-alert-lib-sync.ts",
+  "run": "node scripts/lint-alert-lib-sync.ts",
   "ms": 315,
   "recorded": "2026-09-14",
-  "source": "split from scripts/lint-durations.json (recorded 2026-09-14)"
+  "source": "split from scripts/lint-durations.json (recorded 2026-09-14)",
+  "readMB": 0.0
 }

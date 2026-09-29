@@ -107,6 +107,25 @@ function usedAsLabel(line: string, phrase: RegExp): boolean {
   );
 }
 
+// Every row written is a row loaded. Rows are appended at the same place by
+// parallel branches, and a merge that drops a row's closing `},` joins it to
+// the next: the object keeps the LAST id, so a whole capability stopped being
+// checked while this lint stayed green (a floor-plan rebase, 2026-09-29).
+// TypeScript would call that a duplicate key, but nothing typechecks scripts.
+{
+  const written = [...readFileSync(join(ROOT, "scripts/capabilities.ts"), "utf8").matchAll(/^ {4}id: "([^"]+)"/gm)].map((m) => m[1]!);
+  const loaded = new Set(CAPABILITIES.map((c) => c.id));
+  const lost = written.filter((id) => !loaded.has(id));
+  if (lost.length || written.length !== CAPABILITIES.length) {
+    console.error(
+      `lint:capabilities ✗ scripts/capabilities.ts writes ${written.length} rows but ${CAPABILITIES.length} load` +
+        (lost.length ? `; lost: ${lost.join(", ")}` : "") +
+        ". A row is missing its closing `},` (a merge joined it to the next), or two rows share an id.",
+    );
+    process.exit(1);
+  }
+}
+
 for (const cap of CAPABILITIES) {
   if (cap.kind === "owns") {
     if (!existsSync(join(ROOT, cap.owner))) missing.push(cap.owner);

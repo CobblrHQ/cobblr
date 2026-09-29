@@ -31,12 +31,12 @@
 // lens-locked stream.
 
 import { afterArmedShot, ignoresCodes, isEchoOfHandled, type ArmOrigin, type HandledCode } from "../lib/scanArmedLanding";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { useLocation, useNavigate, useSearchParams } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { AlertTriangle, ArrowLeftRight, ArrowRight, Camera, Check, Flashlight, Hash, ImagePlus, Loader2, MapPin, Package, Plus, ScanLine, SkipForward, Undo2, X, Zap } from "lucide-react";
-import { useLater, LiveSurfaceProvider, Modal, usePageTitle, useOverlayOpenFlag, useLockPageScroll } from "@cobblr/platform-web";
+import { useLater, LiveSurfaceProvider, Modal, usePageTitle, useOverlayOpenFlag, useLockPageScroll, useLayerStack } from "@cobblr/platform-web";
 import { classifyScanPayload, scannerIgnores, typedVerdict } from "../lib/scanPayload";
 import { doorPlan, frameFromImage, type DoorPlan } from "../lib/imageDoor";
 import { captureRoute } from "../lib/captureRoute";
@@ -1734,6 +1734,37 @@ export function ScanCameraPage() {
   // review sheet and the expanded photo sheet used to leave the video running
   // behind themselves, which is the flicker the operator saw while resizing the drawer.
   const sheetBlocking = sheetOpen || !!reviewItem || phase === "result" || phase === "resolving";
+
+  // The reticle and its caption live in the space the chrome leaves: below
+  // the top strip, above whatever the bottom stack holds right now (the
+  // capture drawer, the Sort card, the typed-code field, the action bar).
+  // They were centred on the whole screen, so a drawer with its quantity and
+  // photo buttons drew over the instructions (#4035). Measured, so a taller
+  // drawer or a bigger text size moves them too; with too little room the
+  // caption goes first, then the reticle.
+  const topChromeRef = useRef<HTMLDivElement>(null);
+  const bottomChromeRef = useRef<HTMLDivElement>(null);
+  const [chrome, setChrome] = useState<{ top: number; bottom: number }>({ top: 72, bottom: 200 });
+  useLayoutEffect(() => {
+    const top = topChromeRef.current;
+    const bottom = bottomChromeRef.current;
+    if (!top || !bottom || typeof ResizeObserver === "undefined") return;
+    const measure = () => setChrome({ top: top.offsetHeight, bottom: bottom.offsetHeight });
+    measure();
+    const ro = new ResizeObserver(measure);
+    ro.observe(top);
+    ro.observe(bottom);
+    return () => ro.disconnect();
+  }, []);
+  const [viewH, setViewH] = useState(() => (typeof window === "undefined" ? 800 : window.innerHeight));
+  useEffect(() => {
+    const onResize = () => setViewH(window.innerHeight);
+    window.addEventListener("resize", onResize);
+    return () => window.removeEventListener("resize", onResize);
+  }, []);
+  const aimRoom = viewH - chrome.top - chrome.bottom;
+  const showReticle = aimRoom >= 176;
+  const showCaption = aimRoom >= 250;
   // A sheet means the scan landed (or review is up) — an AUTO torch has done
   // its job and goes out. A manual torch is the user's call and stays.
   useEffect(() => {
@@ -2150,13 +2181,16 @@ export function ScanCameraPage() {
   useEffect(() => {
     if (!drawerVisible && !reviewItemRef.current && sheetOpenRef.current) handleSheetExpanded(false);
   }, [drawerVisible, handleSheetExpanded]);
+  // A surface of its own, so what opens over the camera goes above it.
+  const shellRef = useRef<HTMLDivElement | null>(null);
+  useLayerStack(shellRef);
 
   return createPortal(
     // The viewfinder keeps running behind every modal this page opens, so they
     // must stay CARDS on a phone rather than claiming the screen - declared
     // once here instead of per modal (see platform-web/live-surface.tsx).
     <LiveSurfaceProvider>
-    <div className="fixed inset-0 z-40 bg-black">
+    <div ref={shellRef} className="fixed inset-0 z-40 bg-black">
       <video
         ref={videoRef}
         playsInline
@@ -2265,6 +2299,7 @@ export function ScanCameraPage() {
           buttons plus a "scanning" chip that only ever restated the reticle.
       */}
       <div
+        ref={topChromeRef}
         className="absolute top-0 inset-x-0 flex items-center gap-1.5 p-4"
         style={{ paddingTop: "max(1rem, env(safe-area-inset-top))" }}
       >
@@ -2299,6 +2334,11 @@ export function ScanCameraPage() {
         ) : (
           <span className="w-10 shrink-0" />
         )}
+        {/* Where you are and how scans behave. At 320px these five and Close
+            needed more room than the strip had, and the last one out was
+            Close (#4033). So they scroll sideways between the two pinned
+            ends, and Close never leaves the right edge. */}
+        <div className="flex flex-1 min-w-0 items-center gap-1.5 overflow-x-auto no-scrollbar" data-testid="camera-mode-strip">
         {containerBin ? (
           /* Container bin — you scanned a machine/asset QR, so every scan files
              INTO it (a placement). Tap to clear. */
@@ -2309,7 +2349,7 @@ export function ScanCameraPage() {
               containerBinRef.current = null;
             }}
             title="Scanning into this container - tap to clear"
-            className="inline-flex items-center gap-1.5 bg-cobble-600/85 hover:bg-cobble-600 rounded-full px-3 py-1.5 text-white text-xs min-w-0 flex-1"
+            className="inline-flex items-center gap-1.5 bg-cobble-600/85 hover:bg-cobble-600 rounded-full px-3 py-1.5 text-white text-xs min-w-[7rem] flex-1"
           >
             <Package size={13} className="shrink-0" />
             <span className="truncate min-w-0 flex-1 text-left">
@@ -2322,7 +2362,7 @@ export function ScanCameraPage() {
           <button
             type="button"
             onClick={() => setAssignOpen(true)}
-            className="inline-flex items-center gap-1.5 bg-black/50 hover:bg-black/70 rounded-full px-3 py-1.5 text-white text-xs min-w-0 flex-1"
+            className="inline-flex items-center gap-1.5 bg-black/50 hover:bg-black/70 rounded-full px-3 py-1.5 text-white text-xs min-w-[6rem] flex-1"
           >
             <MapPin
               size={13}
@@ -2377,6 +2417,7 @@ export function ScanCameraPage() {
         >
           <Hash size={13} /> Count
         </button>
+        </div>
         <button
           type="button"
           onClick={close}
@@ -2420,14 +2461,20 @@ export function ScanCameraPage() {
       )}
 
       {/* ── reticle + caption ────────────────────────────────────────── */}
-      {phase === "scanning" && !sheetOpen && !reviewItem && (
-        <div className="absolute inset-x-0 top-1/2 -translate-y-1/2 pointer-events-none">
-          <div className="mx-8 border-2 border-accent/80 rounded-xl h-40" />
-          <div className="mt-4 text-center text-white/85 text-sm px-8 [text-shadow:0_1px_2px_rgba(0,0,0,0.7)]">
-            {supported === false
-              ? "Hold a barcode steady, snap a photo, or type the barcode number below."
-              : "Point at a barcode or a Cobblr QR label — or hit the shutter to photograph it."}
-          </div>
+      {phase === "scanning" && !sheetOpen && !reviewItem && showReticle && (
+        <div
+          className="absolute inset-x-0 flex flex-col justify-center pointer-events-none"
+          style={{ top: chrome.top, bottom: chrome.bottom }}
+          data-testid="camera-aim"
+        >
+          <div className="mx-8 border-2 border-accent/80 rounded-xl h-40 shrink-0" />
+          {showCaption && (
+            <div className="mt-4 text-center text-white/85 text-sm px-8 [text-shadow:0_1px_2px_rgba(0,0,0,0.7)]" data-testid="camera-instructions">
+              {supported === false
+                ? "Hold a barcode steady, snap a photo, or type the barcode number below."
+                : "Point at a barcode or a Cobblr QR label — or hit the shutter to photograph it."}
+            </div>
+          )}
         </div>
       )}
 
@@ -2467,6 +2514,7 @@ export function ScanCameraPage() {
 
       {/* ── bottom chrome: session chip + manual UPC + action bar ────── */}
       <div
+        ref={bottomChromeRef}
         className="absolute bottom-0 inset-x-0 p-4 space-y-3"
         style={{ paddingBottom: "max(1rem, env(safe-area-inset-bottom))" }}
       >

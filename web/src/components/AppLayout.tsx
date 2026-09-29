@@ -37,6 +37,7 @@ import { FeedbackWidget } from "./FeedbackWidget";
 import { GlobalScanWedge } from "./GlobalScanWedge";
 import { SearchBar } from "./SearchBar";
 import { CommandPalette, OPEN_PALETTE_EVENT } from "./CommandPalette";
+import { noteSearchUsed, searchHintShown } from "../lib/moreApps";
 import { SheetImportHost } from "./SheetImportSheet";
 import { NewVersionNudge } from "./NewVersionNudge";
 import { QuickAccess } from "./QuickAccess";
@@ -437,18 +438,7 @@ export function AppLayout({ activeSlug }: { activeSlug: string }) {
     ),
     // Search opens the ⌘K palette: a centered overlay beats an expanding input
     // + popover crammed into a 208px column.
-    search: (
-      <button
-        type="button"
-        onClick={() => window.dispatchEvent(new Event(OPEN_PALETTE_EVENT))}
-        title="Search (⌘K)"
-        aria-label="Search"
-        className="w-full flex items-center gap-2.5 px-3 py-2 rounded text-[13px] text-muted dark:text-slate-400 hover:text-accent hover:bg-subtle/60 dark:hover:bg-slate-800/40 transition"
-      >
-        <Search size={16} className="shrink-0" />
-        Search
-      </button>
-    ),
+    search: <SearchRow />,
     notifications: <NotificationsBell panelOnly asRow />,
     // The label queue lives as a foot row here (not a floating pill) so it
     // reads as workspace chrome with its neighbours; renders nothing when the
@@ -815,4 +805,29 @@ function PublishModalInsets({ left, right }: { left: string; right: string }) {
     };
   }, [left, right]);
   return null;
+}
+
+/** The sidebar's Search row. It is the second way to any app (the palette
+ *  finds apps, things and settings by name), and the first few times it says
+ *  so, since a bare "Search" reads as searching this page (#3883). */
+function SearchRow() {
+  const [hint, setHint] = useState(searchHintShown);
+  return (
+    <button
+      type="button"
+      onClick={() => {
+        noteSearchUsed();
+        setHint(searchHintShown());
+        window.dispatchEvent(new Event(OPEN_PALETTE_EVENT));
+      }}
+      title="Search (⌘K)"
+      aria-label="Search"
+      className="w-full flex items-center gap-2.5 px-3 py-2 rounded text-[13px] text-muted dark:text-slate-400 hover:text-accent hover:bg-subtle/60 dark:hover:bg-slate-800/40 transition"
+    >
+      <Search size={16} className="shrink-0" />
+      <span className="truncate">
+        Search{hint && <span className="text-faint dark:text-slate-500"> · apps, things, settings</span>}
+      </span>
+    </button>
+  );
 }

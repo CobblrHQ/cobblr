@@ -31,6 +31,13 @@
 // is itself the layer the others yield to and cannot import the primitive.
 // The list is not a baseline; it does not grow for convenience.
 //
+// AND EVERY SURFACE TAKES ITS PLACE IN THE STACK. A layer that covers the page
+// and spells its own fixed (the files in SURFACES: an ALLOWed overlay, and
+// platform-web's Modal) must call useLayerStack, so it opens above whatever is
+// already open. OverlayLayer, PopoverLayer and BackdropLayer do it themselves.
+// Each surface once picked its own z-index, and a modal opened from Ask Cobb
+// on a phone landed under the panel with nothing in it pressable (#3954).
+//
 // PROVE IT RED before you trust it green: run it against the real violation
 // that motivated it, watch it fail, then fix the violation. A lint that has
 // never failed has never been verified.
@@ -52,6 +59,9 @@ const ALLOW: Record<string, string> = {
   "web/src/lib/outfit-planner-app.ts": "a drag ghost inside an app-player script that runs in the app's own frame, not the shell",
   "web/src/components/InstallPointer.tsx": "an arrow at the BROWSER's own bar (Safari's ⋯ or Share, a ⋮ menu), outside the page: it sits on the viewport edge above the overlay the install walk is shown in, where a corner piece would lift over the dock and yield",
 };
+
+/** The surfaces that place themselves: each must call useLayerStack. */
+const SURFACES = ["web/src/components/SidePanel.tsx", "web/src/pages/ScanCameraPage.tsx", "packages/platform-web/src/Modal.tsx"];
 
 /** Beside the word `fixed`, any of these makes a literal a class list. */
 const LAYOUT_TOKEN = /(^|\s)(?:[a-z-]+:)*(?:-?z-|inset-|top-|bottom-|left-|right-|hidden|block|flex|grid|w-|h-|p[xytrbl]?-|m[xytrbl]?-|-?translate-|pointer-events-|overflow-|rounded|bg-|shadow)/;
@@ -150,6 +160,21 @@ for (const root of ROOTS) {
     const found = file.endsWith(".css") ? checkCss(file, src) : checkSource(file, src);
     for (const v of found) files.add(v.file);
     violations.push(...found);
+  }
+}
+
+for (const file of SURFACES) {
+  let src: string;
+  try {
+    src = readFileSync(join(ROOT, file), "utf8");
+  } catch {
+    violations.push({ file, line: 1, what: "a surface named in SURFACES is gone: take it out of the list" });
+    files.add(file);
+    continue;
+  }
+  if (!/\buseLayerStack\(/.test(src)) {
+    violations.push({ file, line: 1, what: "covers the page with a fixed layer of its own but never calls useLayerStack, so what opens over it can land under it" });
+    files.add(file);
   }
 }
 

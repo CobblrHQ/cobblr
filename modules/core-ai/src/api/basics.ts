@@ -17,7 +17,7 @@ import { asyncHandler, badBody, requireRole } from "./util.js";
 import { matchBasics, normalize } from "../basics-match.js";
 import { CONTROL_KEYS, actReply, resolveControlAct } from "../control-context.js";
 import { COMPUTED_COMMANDS, computedCommandFor } from "../computed-commands.js";
-import { getTool, type WorkspaceApi } from "@cobblr/workspace-tools";
+import { getTool, unitsCounted, type WorkspaceApi } from "@cobblr/workspace-tools";
 import { bindCommand, deriveCommand, fillSlots, slotValues, type LearnedCommand, type Operation, writeOf } from "../learned-commands.js";
 import { readQuestionOf, MIN_PEEK_LENGTH, type KindWords } from "../live-answers.js";
 import { countQuestionOf, phraseCountText, phraseMostOf, type KindFields, type CountResult } from "../count-answers.js";
@@ -1167,6 +1167,17 @@ basicsRouter.post(
         }
         const over = items.length > CAP;
         const n = over ? CAP : items.length;
+        // A record can stand for several identical things (one entry for five
+        // printers). "How many printers" is the things; the entries go beside.
+        const countField = (kindRows as Array<{ id: string; count_field?: string | null }>).find((k) => k.id === q.entityKind)?.count_field;
+        const things = countField && !over ? unitsCounted(items as Array<Record<string, unknown>>, countField) : null;
+        if (things !== null && things !== n) {
+          const thingNoun = things === 1 ? label?.singular : label?.plural;
+          if (thingNoun) {
+            res.json({ answer: `${things} ${thingNoun}`, detail: `in ${n} ${n === 1 ? "entry" : "entries"}` });
+            return;
+          }
+        }
         // No word for the thing, no answer. readQuestionOf only matches a noun
         // it found in this workspace's own kinds, so this cannot normally
         // happen — and inventing a generic noun to fill the gap would put a

@@ -17,7 +17,8 @@
 // another (audit, 2026-09-08).
 
 import { useQuery } from "@tanstack/react-query";
-import { Printer } from "lucide-react";
+import { Printer, QrCode } from "lucide-react";
+import { Link } from "react-router-dom";
 import { usePlatformWeb } from "./context";
 import { useInvokeEntityAction, type RunArgs } from "./use-invoke-action";
 import { ActionOutcome } from "./ActionOutcome";
@@ -68,6 +69,22 @@ export function RecordHeaderChips({
           binding={bound}
         />
       )}
+      {/* An action label (#3897): a code that DOES one of this record's
+          buttons when scanned. Offered where a label can be printed, and only
+          when the record has a button a scan could press. */}
+      {(print || bound) &&
+        ((data?.items ?? []).some((a) => a.user_invokable !== false && !HEADER_ACTION_IDS.has(a.id)) ||
+          (data?.bindings ?? []).some((b) => !HEADER_ACTION_IDS.has(b.action_id))) && (
+          <Link
+            to={`/labels/action/new?kind=${encodeURIComponent(kind)}&id=${encodeURIComponent(id)}&title=${encodeURIComponent(label)}`}
+            title="Print a code that does one of this record's buttons when scanned"
+            data-testid="action-label-chip"
+            className="inline-flex items-center gap-1 rounded border border-line dark:border-slate-600 px-1.5 py-0.5 text-[10px] font-mono uppercase tracking-widest text-muted dark:text-slate-400 hover:text-accent hover:border-accent transition"
+          >
+            <QrCode size={10} />
+            Action label
+          </Link>
+        )}
       <AskCobbAbout kind={kind} id={id} label={label} />
     </span>
   );

@@ -26,7 +26,7 @@ const COLUMNS = 5;
 
 function candidates(): string[] {
   try {
-    const out = execFileSync("git", ["grep", "-lF", "--", "<table", "--", "*.tsx"], {
+    const out = execFileSync("git", ["grep", "--untracked", "-lF", "--", "<table", "--", "*.tsx"], {
       encoding: "utf8",
       maxBuffer: 8 * 1024 * 1024,
     });

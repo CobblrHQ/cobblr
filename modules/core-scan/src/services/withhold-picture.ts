@@ -13,7 +13,7 @@ import type { Kysely } from "kysely";
 import { sql } from "kysely";
 import { platform } from "@cobblr/platform-contract";
 import { catalogPictureContradicts, looksOfRow, statedColoursOf } from "./picture-agrees.js";
-import { colourShows, pictureColour, type ColourFamily } from "./picture-colour.js";
+import { colourShows, looksDifferent, pictureColour, pictureColours, type ColourFamily, type ColourShares } from "./picture-colour.js";
 
 interface WithholdDB {
   core_scan_inbox_items: {
@@ -25,8 +25,35 @@ interface WithholdDB {
     suggested_metadata: unknown;
     catalog_image_file_id: string | null;
     catalog_image_url: string | null;
+    image_file_id: string | null;
+    source_kind: string;
+    barcode_text: string | null;
     updated_at: Date;
   };
+}
+
+/** The colours of the item's OWN photo, when the row was identified from it
+ *  (a photo of the thing, not a frame of a barcode), measured once per file
+ *  and kept on the row. Null for any other row: there is nothing of the
+ *  item's own to compare a found picture with (#4037). */
+export async function ownPhotoColours(orgId: string, db: Kysely<WithholdDB>, itemId: string): Promise<ColourShares | null> {
+  const row = await db
+    .selectFrom("core_scan_inbox_items")
+    .select(["image_file_id", "source_kind", "barcode_text", "suggested_metadata"])
+    .where("id", "=", itemId)
+    .executeTakeFirst();
+  if (!row?.image_file_id || row.source_kind !== "photo" || row.barcode_text) return null;
+  const kept = ((row.suggested_metadata ?? {}) as { own_photo_colours?: { file_id?: string; shares?: ColourShares } }).own_photo_colours;
+  if (kept?.file_id === row.image_file_id && kept.shares) return kept.shares;
+  const file = await platform().files.read(orgId, row.image_file_id, "original").catch(() => null);
+  const shares = file ? await pictureColours(new Uint8Array(file.bytes)) : null;
+  if (!shares) return null;
+  await db
+    .updateTable("core_scan_inbox_items")
+    .set({ suggested_metadata: sql`coalesce(suggested_metadata, '{}'::jsonb) || ${JSON.stringify({ own_photo_colours: { file_id: row.image_file_id, shares } })}::jsonb` as never })
+    .where("id", "=", itemId)
+    .execute();
+  return shares;
 }
 
 export type WithholdOutcome = "withheld" | "kept" | "measured" | "nothing";
@@ -57,7 +84,15 @@ export async function withholdContradictedPicture(orgId: string, db: Kysely<With
       .execute();
     measured = true;
   }
-  const why = catalogPictureContradicts({ ...row, suggested_metadata: meta });
+  // Found for a row identified from its own photo: it has to look like that
+  // photo too, not only carry a colour word the row states (#4037).
+  const own = await ownPhotoColours(orgId, db, itemId);
+  let unlike: string | null = null;
+  if (own) {
+    const file = await platform().files.read(orgId, row.catalog_image_file_id, "original").catch(() => null);
+    unlike = looksDifferent(own, file ? await pictureColours(new Uint8Array(file.bytes)) : null);
+  }
+  const why = catalogPictureContradicts({ ...row, suggested_metadata: meta }) ?? unlike;
   if (!why) return measured ? "measured" : "kept";
   await db
     .updateTable("core_scan_inbox_items")

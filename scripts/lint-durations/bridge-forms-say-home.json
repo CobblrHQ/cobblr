@@ -1,6 +1,6 @@
 {
   "lint": "lint:bridge-forms-say-home",
-  "run": "tsx scripts/lint-bridge-forms-say-home.ts",
+  "run": "node scripts/lint-bridge-forms-say-home.ts",
   "rows": [
     "generic-web-component"
   ],

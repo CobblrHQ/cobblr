@@ -1,18 +1,28 @@
 {
   "id": "klipper-moonraker",
   "name": "Klipper (Moonraker)",
-  "version": "1.0.0",
+  "version": "1.2.0",
   "auth": { "kind": "header", "header": "X-Api-Key", "from": "apiKey" },
   "routing": false,
   "test": { "method": "GET", "path": "/printer/info" },
   "listDevices": {
     "method": "GET",
-    "path": "/printer/info",
+    "path": "/printer/objects/query?print_stats",
     "result": "single",
     "map": {
       "id": "='moonraker'",
-      "name": "$.result.hostname",
-      "state": "$.result.state"
+      "name": "='Klipper'",
+      "state": {
+        "from": "$.result.status.print_stats.state",
+        "map": {
+          "standby": "idle",
+          "complete": "idle",
+          "cancelled": "idle",
+          "printing": "printing",
+          "paused": "paused",
+          "error": "error"
+        }
+      }
     }
   },
   "upload": {
@@ -42,7 +52,9 @@
           "error": "failed"
         }
       },
-      "progress": "$.result.status.virtual_sdcard.progress"
+      "progress": "$.result.status.virtual_sdcard.progress",
+      "progressScale": 1,
+      "message": "$.result.status.print_stats.message"
     }
   },
   "commands": {

@@ -7,16 +7,19 @@
 // in the platform shell.
 
 import type { ConnectorImportDecl } from "@cobblr/platform-contract";
-import { Routes, Route, NavLink, useLocation } from "react-router-dom";
+import { Routes, Route, NavLink, useLocation, useSearchParams } from "react-router-dom";
 import { Boxes } from "lucide-react";
-import { TableTitle } from "@cobblr/platform-web";
+import { CollectionHeader } from "@cobblr/platform-web";
 // Side-effect: registers the inventory "at a glance" dashboard tile through
 // platform-web's registerDashboardWidget seam when this UI bundle loads.
 import "./DashboardWidget";
 import { InventoryProvider, useInventory, type ParentConfig } from "./context";
 import type { CountWords } from "@cobblr/platform-contract";
 import { PartsListPage } from "./PartsListPage";
+import { FamilyPage } from "./FamilyPage";
 import { SettingsPage } from "./SettingsPage";
+import { ExpiringPage } from "./ExpiringPage";
+import { useQuery } from "@tanstack/react-query";
 
 // Re-export the NewPartDialog + Provider so the portal shell can
 // mount a per-view create button when the user has the
@@ -53,20 +56,26 @@ interface InventoryUIProps {
   connectorImport?: ConnectorImportDecl;
   /** One line under the title saying what goes in the table. */
   hint?: string | null;
+  /** This is a TYPE collection with a collection of things of those types
+   *  (Filament Types → Spools): the list page is one card per type with its
+   *  things as rows. `childPath` is the things' own table, `tablePath` this
+   *  collection as a plain table (`?as=table`). */
+  family?: { childPath: string; tablePath: string };
 }
 
-export function InventoryUI({ orgSlug, getToken, instance, displayName, itemNoun, itemNounPlural, qtyUnit, countWords, parent, connectorImport, hint }: InventoryUIProps) {
+export function InventoryUI({ orgSlug, getToken, instance, displayName, itemNoun, itemNounPlural, qtyUnit, countWords, parent, connectorImport, hint, family }: InventoryUIProps) {
   return (
     <InventoryProvider orgSlug={orgSlug} getToken={getToken} instance={instance} itemNoun={itemNoun} itemNounPlural={itemNounPlural} qtyUnit={qtyUnit} countWords={countWords} parent={parent} connectorImport={connectorImport}>
       <div className="space-y-4">
-        <Header title={displayName ?? "inventory"} hint={hint} />
+        <Header title={displayName ?? "inventory"} hint={hint} listLabel={family ? displayName : undefined} />
         <Routes>
           {/* Both render the list; parts/:id additionally opens the
               detail MODAL (D4) — the list stays mounted underneath,
               mirroring machines. */}
-          <Route index element={<PartsListPage />} />
+          <Route index element={family ? <FamilyOrTable family={family} /> : <PartsListPage />} />
           <Route path="parts/:id" element={<PartsListPage />} />
           <Route path="settings" element={<SettingsPage />} />
+          <Route path="expiring" element={<ExpiringPage />} />
           {/* Bundle setup-cards / next-steps deep-link to
               /instances/<name>/items (mirroring the API path
               /orgs/:slug/instances/:name/items). That UI path had no
@@ -82,19 +91,28 @@ export function InventoryUI({ orgSlug, getToken, instance, displayName, itemNoun
   );
 }
 
-function Header({ title, hint }: { title: string; hint?: string | null }) {
+/** A type collection opens on its family page; `?as=table` is the plain table. */
+function FamilyOrTable({ family }: { family: { childPath: string; tablePath: string } }) {
+  const [params] = useSearchParams();
+  return params.get("as") === "table" ? <PartsListPage /> : <FamilyPage childPath={family.childPath} tablePath={family.tablePath} />;
+}
+
+function Header({ title, hint, listLabel: named }: { title: string; hint?: string | null; listLabel?: string }) {
   // The list tab is named after WHAT IT HOLDS. The noun is already in context
   // (every instance declares it) and the tabs used to throw it away: a base
   // inventory hardcoded "Parts" and a skinned instance fell back to the generic
   // "List", so Yarn's tab read "List" instead of "Skeins" (reported 2026-08-01).
-  const { itemNounPlural } = useInventory();
-  const listLabel = itemNounPlural
-    ? itemNounPlural.charAt(0).toUpperCase() + itemNounPlural.slice(1)
-    : "Items";
+  const { itemNounPlural, entityKind } = useInventory();
+  // A family page (Filament) is named for itself, not for its types.
+  const listLabel = named
+    ? named
+    : itemNounPlural
+      ? itemNounPlural.charAt(0).toUpperCase() + itemNounPlural.slice(1)
+      : "Items";
   // Underline TABS, not "// path" links. Prefixing each with "//" made a pair of
   // peers read as a breadcrumb - as though Settings lived under Parts.
   const cls = ({ isActive }: { isActive: boolean }) =>
-    "pb-3 -mb-3 border-b-2 transition " +
+    "h-9 inline-flex items-center border-b-2 transition " +
     (isActive
       ? "border-accent text-content dark:text-mortar-100 font-semibold"
       : "border-transparent text-faint dark:text-slate-500 hover:text-content dark:hover:text-mortar-200");
@@ -109,20 +127,38 @@ function Header({ title, hint }: { title: string; hint?: string | null }) {
   const base =
     pathname.match(/^.*\/instances\/[^/]+/)?.[0] ??
     pathname.match(/^.*\/inventory/)?.[0] ??
-    pathname.replace(/\/(settings|items|parts)(\/.*)?$/, "");
+    pathname.replace(/\/(settings|items|parts|expiring)(\/.*)?$/, "");
+  // "Going off" only where something is dated: a box of screws has no tab
+  // for a question it cannot have.
+  const { api } = useInventory();
+  const dated = useQuery({ queryKey: ["inventory-expiring", 30], queryFn: () => api.stockExpiring(30), staleTime: 60_000 });
+  const goingOff = (dated.data?.places ?? []).reduce((n, p) => n + p.lots.length, 0);
+  const onExpiring = /\/expiring$/.test(pathname);
   return (
-    <div className="flex items-baseline gap-4 border-b border-line dark:border-slate-700 pb-3">
-      <TableTitle title={title} hint={hint} />
-      {/* The default inventory page reads "// parts // settings". On a skinned
-          instance (Yarn) "parts" is the wrong noun, but settings still has to be
-          reachable — it's where you edit a list's dropdown options (otherwise
-          there's no findable "config area"). So keep a settings link either way. */}
-      <nav className="flex items-baseline gap-5 text-sm">
-        <NavLink to={base} end className={cls}>{listLabel}</NavLink>
-        <NavLink to={`${base}/settings`} className={cls}>Settings</NavLink>
-      </nav>
-    </div>
+    // The default inventory page reads "// parts // settings". On a skinned
+    // instance (Yarn) "parts" is the wrong noun, but settings still has to be
+    // reachable — it's where you edit a list's dropdown options (otherwise
+    // there's no findable "config area"). So keep a settings link either way.
+    <CollectionHeader
+      title={title}
+      hint={hint} kind={entityKind}
+      nav={
+        <>
+          <NavLink to={base} end className={cls}>{listLabel}</NavLink>
+          {(goingOff > 0 || onExpiring) && (
+            <NavLink to={`${base}/expiring`} className={cls}>
+              Going off{goingOff > 0 ? ` (${goingOff})` : ""}
+            </NavLink>
+          )}
+          <NavLink to={`${base}/settings`} className={cls}>Settings</NavLink>
+        </>
+      }
+    />
   );
 }
 
 export default InventoryUI;
+
+// The figures a stock row derives from its count, for any screen that steps
+// one (a saved view's row stepper redraws its row through the same rules).
+export { availableOnHand, withCount, type CountedRow } from "../stock-derived";

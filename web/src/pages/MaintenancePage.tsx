@@ -171,7 +171,7 @@ function MaintenanceCard({
   onDelete: () => void;
 }) {
   const done = !!entry.performed_at;
-  const due = entry.scheduled_at ? dueState(entry.scheduled_at, done) : null;
+  const due = done ? null : dueChip(entry.due);
   return (
     <div
       className="rounded-xl border border-line dark:border-slate-700 bg-surface dark:bg-slate-900 p-3"
@@ -255,22 +255,19 @@ function MaintenanceCard({
   );
 }
 
-function dueState(
-  scheduledAt: string,
-  done: boolean,
-): { label: string; cls: string } | null {
-  if (done) return null;
-  const due = new Date(scheduledAt).getTime();
-  const now = Date.now();
-  const days = Math.round((due - now) / 86_400_000);
-  if (days < 0)
+/** The chip for an open entry, from the server's count (the record's own
+ *  schedule rule, in this browser's zone). The page counts no days itself:
+ *  it said 10 where the printer said 9 when it did (#3991). */
+function dueChip(due: MaintenanceEntry["due"]): { label: string; cls: string } | null {
+  if (!due) return null;
+  if (due.days < 0)
     return {
-      label: `overdue ${-days}d`,
+      label: `overdue ${-due.days}d`,
       cls: "bg-ember-100 dark:bg-ember-900/40 text-ember-700 dark:text-ember-300",
     };
-  if (days <= 14)
+  if (due.days <= 14)
     return {
-      label: days === 0 ? "due today" : `in ${days}d`,
+      label: due.days === 0 ? "due today" : `in ${due.days}d`,
       cls: "bg-amber-100 dark:bg-amber-900/40 text-amber-700 dark:text-amber-300",
     };
   return null;

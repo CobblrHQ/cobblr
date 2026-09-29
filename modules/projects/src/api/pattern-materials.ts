@@ -90,9 +90,15 @@ const WEIGHT_WORDS: [RegExp, string][] = [
 
 const FIBERS = ["Merino", "Wool", "Cotton", "Acrylic", "Nylon", "Chenille", "Alpaca", "Silk", "Linen", "Bamboo", "Cashmere", "Polyester", "Mohair"];
 
-/** Straight quotes, no trademark marks, one space: what the regexes below read. */
+/** Straight quotes, no trademark marks, one space: what the regexes below read.
+ *  Markdown reads as the plain lines it stands for, so a pattern typed as an
+ *  answer ("## Materials", "**Materials:**", "- 1 skein …") has the same
+ *  headings and lines as the PDF it could have been. */
 export function normaliseText(text: string): string {
   return text
+    .replace(/^[ \t]*#{1,6}[ \t]+/gm, "")
+    .replace(/\*\*([^*\n]+)\*\*|__([^_\n]+)__/g, (_m, a: string | undefined, b: string | undefined) => a ?? b ?? "")
+    .replace(/^[ \t]*(?:[-*+•]|\d{1,2}[.)])[ \t]+/gm, "")
     .replace(/[®™©]/g, "")
     .replace(/[‘’`´]/g, "'")
     .replace(/[“”˝″]/g, '"')

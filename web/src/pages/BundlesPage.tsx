@@ -4,7 +4,7 @@
 
 import { useEffect, useState, type FormEvent } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { ChevronRight, Copy, Download, Library, Package, Plus, Search, Share2, Trash2, X } from "lucide-react";
+import { ChevronRight, Copy, Download, Library, Package, Plus, Share2, Trash2, X } from "lucide-react";
 import { Link, useSearchParams } from "react-router-dom";
 import { BundleSection, BundleTile, splitCatalog } from "../components/BundleBrowse";
 import { ApiError, api, type PlatformBundle, type PlatformBundleManifest, type RegistryDriverEntry, type RegistryModuleEntry, type RegistryRendererEntry } from "../lib/api";
@@ -13,8 +13,9 @@ import { useAuth } from "../auth/AuthContext";
 import { type FeaturedBundle } from "../lib/featured-bundles";
 import { useBundleCatalog } from "../lib/useBundleCatalog";
 import { BundleDetailModal } from "../components/BundleDetailModal";
+import { RemoveBundleDialog } from "../components/RemoveBundleDialog";
 import { RegistryItemModal, type RegistryItem } from "../components/RegistryItemModal";
-import { FieldPack, LabeledField, changeWorkspaceShape, downloadBlob, fieldNeed, Modal, useConfirm, useToast, usePageTitle } from "@cobblr/platform-web";
+import { FieldPack, LabeledField, changeWorkspaceShape, downloadBlob, fieldNeed, Modal, useConfirm, useToast, usePageTitle, SearchInput } from "@cobblr/platform-web";
 import { ConfigHeaderActions } from "../components/ConfigPageHeader";
 
 // Third-party source index URLs (the HACS "add a custom repository" list).
@@ -160,23 +161,9 @@ export function BundlesPage() {
   const isPlatformAdmin = !!user?.is_platform_admin;
   const confirm = useConfirm();
   // Direct remove from an installed-bundle row (was only reachable by opening
-  // the detail modal — users couldn't find it).
-  const uninstall = useMutation({
-    mutationFn: (id: string) => changeWorkspaceShape(qc, slug, () => api.uninstallBundle(slug, id)),
-    onSuccess: () => {
-      toast.success("Removed.");
-    },
-    onError: (e: unknown) => toast.error(e instanceof ApiError ? e.message : "Couldn't remove."),
-  });
-  async function handleRemoveBundle(b: PlatformBundle) {
-    const ok = await confirm({
-      title: `Remove “${b.name}”?`,
-      message: "This removes the bundle's fields, wires and views from this workspace. Your entities (parts, designs, …) stay.",
-      confirmLabel: "Remove",
-      destructive: true,
-    });
-    if (ok) uninstall.mutate(b.id);
-  }
+  // the detail modal — users couldn't find it). The same dialog the sheet
+  // opens: one Remove, one set of words, one choice about the records.
+  const [removing, setRemoving] = useState<{ id: string; name: string } | null>(null);
   const installModule = useMutation({
     mutationFn: (m: RegistryModuleEntry) => api.sandboxInstall({ name: m.name, version: m.version }),
     onSuccess: (_r, m) => toast.success(`Installed module ${m.name} v${m.version}.`),
@@ -377,27 +364,7 @@ export function BundlesPage() {
             </span>
           )}
           <div className="flex-1" />
-          <div className="relative w-full max-w-xs">
-            <Search size={13} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-faint pointer-events-none" />
-            <input
-              value={query}
-              onChange={(e) => setQuery(e.target.value)}
-              placeholder="Filter bundles…"
-              className="input text-xs py-1 pl-7 pr-7"
-              aria-label="Filter bundles"
-            />
-            {query && (
-              <button
-                type="button"
-                onClick={() => setQuery("")}
-                className="absolute right-2 top-1/2 -translate-y-1/2 text-faint hover:text-ember-500"
-                title="Clear filter"
-                aria-label="Clear filter"
-              >
-                <X size={13} />
-              </button>
-            )}
-          </div>
+          <SearchInput value={query} onChange={setQuery} placeholder="Filter bundles…" aria-label="Filter bundles" size="sm" wrapperClassName="w-full max-w-xs" />
           {/* Sources live behind this button (HACS-style) — the add-a-repo
               field doesn't deserve prime real estate. Badge shows how many
               third-party repos are added on top of the official index. */}
@@ -668,8 +635,7 @@ export function BundlesPage() {
               </button>
               <button
                 type="button"
-                onClick={() => handleRemoveBundle(b)}
-                disabled={uninstall.isPending}
+                onClick={() => setRemoving({ id: b.id, name: b.name })}
                 title={`Remove ${b.name}`}
                 aria-label={`Remove ${b.name}`}
                 // Icon-only + hover-only colour was invisible on mobile (no
@@ -684,6 +650,8 @@ export function BundlesPage() {
           ))}
         </ul>
       </div>
+
+      <RemoveBundleDialog slug={slug} bundle={removing} onClose={() => setRemoving(null)} />
 
       {selected?.mode === "installed" ? (
         <BundleDetailModal

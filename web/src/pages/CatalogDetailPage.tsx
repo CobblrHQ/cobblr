@@ -7,7 +7,7 @@ import { Link, useParams } from "react-router-dom";
 import { EntityAttachments } from "../components/EntityAttachments";
 import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { ArrowLeft, Download, Library, Upload } from "lucide-react";
-import { BackToTop, Modal, useToast, usePageTitle } from "@cobblr/platform-web";
+import { BackToTop, Modal, useToast, usePageTitle, SearchInput } from "@cobblr/platform-web";
 import { ApiError, api, type CatalogEntry, type CatalogSchema } from "../lib/api";
 import { useActiveOrg } from "../auth/ActiveOrgContext";
 import { CatalogFieldValue, NoImage } from "../components/CatalogFieldValue";
@@ -166,13 +166,7 @@ export function CatalogDetailPage() {
       )}
 
       <div className="flex items-center gap-2 border-t border-line dark:border-slate-700 pt-3">
-        <input
-          type="text"
-          value={search}
-          onChange={(e) => setSearch(e.target.value)}
-          placeholder={`Search entries by ${titleCol}…`}
-          className="flex-1 px-2 py-1 text-sm border border-line dark:border-slate-600 rounded bg-surface dark:bg-slate-900"
-        />
+        <SearchInput value={search} onChange={setSearch} placeholder={`Search entries by ${titleCol}…`} aria-label="Search entries" wrapperClassName="flex-1" />
       </div>
 
       {entries.length === 0 && !entriesQ.isLoading && (

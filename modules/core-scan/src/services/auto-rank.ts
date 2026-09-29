@@ -211,16 +211,51 @@ export async function deriveRankContext(
  *  (#2885). The field is rendered as a swatch beside the title; the name is
  *  the name. resolveItemColor above still reads the field, because a search
  *  phrase and a ranking want the most authoritative colour there is. */
-export function titleColorFor(row: {
-  suggested_metadata?: Record<string, unknown> | null;
-}): string | null {
+export function titleColorFor(
+  row: {
+    suggested_metadata?: Record<string, unknown> | null;
+    suggested_candidates?: unknown;
+  },
+  opts: { observedOnlyWhenIdentifying?: boolean } = {},
+): string | null {
   const meta = row.suggested_metadata ?? {};
   const hints = standingHints(meta);
   let fromHint: string | null = null;
   for (let i = hints.length - 1; i >= 0 && !fromHint; i--) fromHint = colorFromText(hints[i]!);
   if (fromHint) return fromHint;
+  // A colour the camera saw is part of the name only where colour is part of
+  // what the thing IS: a skein of yarn or a spool of filament is sold by its
+  // colour, a 3D printer is not ("Creality CR-10 3D printer, Blue", #3853).
+  // A person's own word above always is.
+  if (opts.observedOnlyWhenIdentifying && !colourIdentifies(row)) return null;
   const observed = typeof meta.color === "string" ? meta.color.trim() : "";
   return observed || null;
+}
+
+const COLOUR_FIELD = /^(colou?r|colou?rway|colou?r_name|shade)$/i;
+
+/** Whether colour tells this thing from others of its kind: a part (a
+ *  material, a consumable: sold by colour), a thing its table records a
+ *  colour for (the router filled a colour field on the destination), or a
+ *  row not routed anywhere yet. Read from what the row says, never a list
+ *  of categories. Pure. */
+export function colourIdentifies(row: { suggested_metadata?: Record<string, unknown> | null; suggested_candidates?: unknown }): boolean {
+  const meta = row.suggested_metadata ?? {};
+  if (meta.entity_type === "part") return true;
+  let list = row.suggested_candidates;
+  if (typeof list === "string") {
+    try {
+      list = JSON.parse(list) as unknown;
+    } catch {
+      list = null;
+    }
+  }
+  const top = Array.isArray(list) ? (list[0] as { fields?: Record<string, unknown> } | undefined) : undefined;
+  // Not routed yet: nothing says where it goes, so nothing says colour does
+  // not matter there. The title reads as it always has until a table does.
+  if (!top) return true;
+  const fields = top.fields ?? {};
+  return Object.entries(fields).some(([k, v]) => COLOUR_FIELD.test(k) && v !== null && v !== undefined && String(v).trim() !== "");
 }
 
 export function colouredTitleFor(row: {
@@ -236,7 +271,7 @@ export function colouredTitleFor(row: {
   // forever, and appending a colour compounds it - "…T-Shirt (Men's, Black".
   // Deriving means those rows heal themselves with no re-run.
   const current = tidyTruncatedName(stored);
-  const color = titleColorFor(row);
+  const color = titleColorFor(row, { observedOnlyWhenIdentifying: true });
   const titled = color ? nameWithColor(current, color, row.suggested_manufacturer ?? null) : current;
   return titled && titled !== stored ? titled : null;
 }

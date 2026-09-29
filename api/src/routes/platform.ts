@@ -16,6 +16,7 @@ import { requireAuth, appTokenMayInvoke } from "../auth/middleware.js";
 import { requireCapability, requireRole } from "../auth/capability.js";
 import { withTenant } from "../middleware/tenant.js";
 import { meta } from "../db/meta.js";
+import { labelVia } from "./label-via.js";
 import { getTenantDb } from "../db/tenant.js";
 import { listEntries } from "../modules/registry.js";
 import * as activity from "../platform/activity.js";
@@ -30,6 +31,7 @@ import { facesForKind } from "../platform/faces.js";
 import { platformActionMinRole } from "../platform/platform-actions.js";
 import { roleSatisfies } from "@cobblr/platform-contract/org-roles";
 import { templateDataOf } from "@cobblr/platform-contract/entity-metadata";
+import { namePeopleForTemplate } from "../platform/member-fields.js";
 import type { ActionAppliesToDecl } from "@cobblr/platform-contract";
 import {
   FIELD_SCOPE_PRESETS,
@@ -46,6 +48,7 @@ import {
   updateFieldDef,
 } from "../platform/field-defs.js";
 import { upsertNativeFieldOverride } from "../platform/native-field-overrides.js";
+import { getScannableForModule } from "../platform/scan-registry.js";
 import { FIELD_PRESETS, presetState } from "../platform/field-presets.js";
 import { presetFieldStates, turnPresetOff, turnPresetOn } from "../platform/field-preset-switch.js";
 
@@ -62,7 +65,14 @@ platformOrgRouter.get(
       // Org-scoped: manifest kinds + this workspace's synthesized instance
       // kinds (see listKindsForOrg) — search, MCP, and generic surfaces all
       // see instance items through the same registry.
-      const items = await platform().entities.listKindsForOrg(req.tenant!.org.id);
+      // count_field: the field that says how many things one record stands for
+      // (a machine record counting five identical printers), where the owning
+      // module declares that its list never also returns those things. A count of records and a
+      // count of things are different answers, and a reader needs both.
+      const items = (await platform().entities.listKindsForOrg(req.tenant!.org.id)).map((k) => {
+        const sc = getScannableForModule(k.module_name);
+        return sc?.qtyCountsThings && sc.qtyField ? { ...k, count_field: sc.qtyField } : k;
+      });
       // ?include=custom_fields — merge THIS workspace's user field-defs onto
       // each kind, so a schema-reading consumer (the AI tool registry, the MCP
       // server, form builders) sees the WHOLE shape, not just the manifest's
@@ -453,16 +463,39 @@ platformOrgRouter.get(
       // button that runs (#3883). Best-effort: a registry hiccup here costs
       // the doors, never the record's real actions.
       const dormant = await listDormant(kind, req.tenant!.org.id).catch(() => []);
+      const choose = await argChoicesFor(req.tenant!.org.id, kind, [...applicable.map((a) => a.args_schema), ...bindings.map((b) => b.args_schema)]);
       res.json({
-        items: applicable.filter((a) => installedSet.has(a.module_name)),
+        items: applicable.filter((a) => installedSet.has(a.module_name)).map((a) => ({ ...a, args_schema: choose(a.args_schema) })),
         dormant: dormant.map((a) => ({ id: a.id, label: a.label, description: a.description, icon: a.icon, module_name: a.module_name, module_label: a.module_label })),
-        bindings: bindings.map((b) => ({ ...b, ask: bindingAskOf(b.ask) })),
+        bindings: bindings.map((b) => ({ ...b, args_schema: choose(b.args_schema), ask: bindingAskOf(b.ask) })),
       });
     } catch (err) {
       next(err);
     }
   },
 );
+
+/** The kind's own choices put into its actions' argument schemas: an
+ *  argument whose choices depend on the kind (`choicesFrom: "counters"`)
+ *  gets the counters this kind keeps, so the form offers "Print hours" and
+ *  never asks for a field name (#3991). A kind that keeps none gets an empty
+ *  list, and the form leaves that pair unasked. */
+async function argChoicesFor(orgId: string, kind: string, schemas: readonly unknown[]): Promise<(schema: unknown) => unknown> {
+  type Spec = { choicesFrom?: string } & Record<string, unknown>;
+  const specsOf = (schema: unknown): [string, Spec][] =>
+    schema && typeof schema === "object" ? Object.entries(schema as Record<string, Spec>) : [];
+  const wanted = schemas.some((schema) => specsOf(schema).some(([, spec]) => spec?.choicesFrom === "counters"));
+  let counters: { value: string; label: string }[] = [];
+  if (wanted) {
+    const w = await platform().entities.getWriter(orgId, kind).catch(() => null);
+    counters = (w?.counters?.defs ?? []).map((d) => ({ value: d.key, label: d.label }));
+  }
+  return (schema) => {
+    const entries = specsOf(schema);
+    if (!entries.some(([, spec]) => spec?.choicesFrom)) return schema;
+    return Object.fromEntries(entries.map(([name, spec]) => [name, spec?.choicesFrom === "counters" ? { ...spec, choices: counters } : spec]));
+  };
+}
 
 const InvokeBody = z.object({
   // Not merely a string: "" matched no action, read as record-scoped, and was
@@ -603,6 +636,7 @@ platformOrgRouter.post(
   "/:slug/actions/invoke",
   requireAuth,
   withTenant,
+  labelVia,
   async (req, res, next) => {
     try {
       const parsed = InvokeBody.safeParse(req.body);
@@ -732,7 +766,7 @@ platformOrgRouter.post(
           // flatten onto event.* so {{event.delta}} works directly;
           // system-added keys come last to win on collision.
           rendered = platform().templates.render(b.template, {
-            ...templateDataOf(entityFields),
+            ...(ent ? await namePeopleForTemplate(req.tenant!.org.id, ent.kind, templateDataOf(entityFields)) : templateDataOf(entityFields)),
             _title: ent?.title ?? "",
             event: {
               ...(args ?? {}),
@@ -1189,6 +1223,13 @@ platformOrgRouter.get(
         bundle_external_id: f.bundle_id ? (bundleById.get(f.bundle_id)?.external_id ?? null) : null,
         bundle_name: f.bundle_id ? (bundleById.get(f.bundle_id)?.name ?? null) : null,
       }));
+      // The form-builder sections a kind's fields are filed under travel with
+      // every read of that kind: a reader that gets section_id without the
+      // sections cannot place (or, worse, shows none of) those fields.
+      const sectionsOf = async () =>
+        kind
+          ? meta.selectFrom("field_sections").select(["id", "name", "position"]).where("org_id", "=", req.tenant!.org.id).where("entity_kind", "=", kind).orderBy("position").orderBy("name").execute()
+          : [];
       if (!effective) {
         // The config read carries the two named ways to say "a class of things":
         //   broad   — "anything physical" (one or two axes, deliberately loose)
@@ -1199,6 +1240,7 @@ platformOrgRouter.get(
         // not. This list is a convenience, never the definition.
         res.json({
           items,
+          sections: await sectionsOf(),
           scopes: [
             ...FIELD_SCOPE_PRESETS.map((p) => ({
               key: fieldScopeSentinel(p.traits),
@@ -1465,6 +1507,57 @@ platformOrgRouter.get(
     }
   },
 );
+
+// A workspace's say over each service capability (services.md section 9):
+// always ask, run, or off; no row is the default (the capability's effect
+// decides). Member-readable, so the confirm card can say why it asks.
+platformOrgRouter.get("/:slug/services/policies", requireAuth, withTenant, async (req, res, next) => {
+  try {
+    const rows = await meta
+      .selectFrom("service_capability_policies")
+      .select(["capability", "policy", "updated_at"])
+      .where("org_id", "=", req.tenant!.org.id)
+      .orderBy("capability")
+      .execute();
+    res.json({ items: rows });
+  } catch (err) {
+    next(err);
+  }
+});
+
+const ServicePolicyBody = z.object({ policy: z.enum(["default", "always_ask", "run", "off"]) }).strict();
+
+// AI-REACH: exempt — what an assistant may run without asking is a person's to set, never the assistant's own.
+platformOrgRouter.put("/:slug/services/policies/:capability", requireAuth, withTenant, async (req, res, next) => {
+  try {
+    if (!requireRole(req, res, "owner", "admin")) return;
+    const capability = String(req.params.capability ?? "");
+    // Service capability ids always carry a dot; AI capabilities never do.
+    if (!/^[a-z0-9_-]+(\.[a-z0-9_-]+)+$/.test(capability)) {
+      res.status(400).json({ error: { code: "invalid_capability", message: "A service capability looks like slice.model." } });
+      return;
+    }
+    const parsed = ServicePolicyBody.safeParse(req.body);
+    if (!parsed.success) {
+      res.status(400).json({ error: { code: "invalid_body", message: "policy must be default, always_ask, run or off" } });
+      return;
+    }
+    const orgId = req.tenant!.org.id;
+    if (parsed.data.policy === "default") {
+      await meta.deleteFrom("service_capability_policies").where("org_id", "=", orgId).where("capability", "=", capability).execute();
+    } else {
+      const policy = parsed.data.policy;
+      await meta
+        .insertInto("service_capability_policies")
+        .values({ org_id: orgId, capability, policy, updated_by: req.session!.id })
+        .onConflict((oc) => oc.columns(["org_id", "capability"]).doUpdateSet({ policy, updated_by: req.session!.id, updated_at: new Date() }))
+        .execute();
+    }
+    res.json({ capability, policy: parsed.data.policy });
+  } catch (err) {
+    next(err);
+  }
+});
 
 // Who answers an AI call here, in the order they are asked (#3842): for the
 // person asking, and for automations (no person at the keyboard, so only

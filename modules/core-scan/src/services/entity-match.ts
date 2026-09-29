@@ -24,7 +24,8 @@ import { identifierFieldNames, platform, type ResolvedEntity, type ScannableKind
 import { scanTargetsForOrg, scanTargetsRegistered } from "./scan-target.js";
 import { isJunkName } from "./enrich.js";
 import { identifierEquals, identifierForms } from "./identifier-equals.js";
-import { sameProduct } from "@cobblr/platform-contract/same-product";
+import { sameProduct, versionsAgree } from "@cobblr/platform-contract/same-product";
+import { HOLDING_OF } from "@cobblr/platform-contract/holdings";
 
 export interface TrackedMatch {
   kind: string;
@@ -55,6 +56,11 @@ export interface TrackedMatch {
   /** For an identifier match, the field's label ("ISBN"), so the banner can say
    *  "same ISBN" rather than "same barcode". */
   matched_label?: string | null;
+  /** The thing this record is a place of: one item kept in several places is
+   *  one card with a record per place (`holding-of`), and every place carries
+   *  the item's barcode. Its own id for a record kept in one place. Matches
+   *  sharing it are ONE thing, never "any of N things". */
+  card_id?: string;
 }
 
 /** A named field's value, flat or nested under `metadata` — native columns land
@@ -454,23 +460,63 @@ export async function findTracked(
               // with the inbox's Combine offer). Two LEGO sets were offered
               // as one by their shared "building set" (#2977).
               .filter(({ e }) => sameProduct({ name, fields: opts.fields ?? null }, { name: e.title, fields: e.fields }).verdict !== "different")
-              .map(({ e, shared }) => ({ m: toMatch(e, k, "name", expiryByKind.get(e.kind)), shared }));
+              // The same version on both sides is the strongest name evidence
+              // there is: it ranks above a match that only shares words.
+              .map(({ e, shared }) => ({ m: toMatch(e, k, "name", expiryByKind.get(e.kind)), shared: shared + (versionsAgree(name, e.title) ? 2 : 0) }));
           } catch {
             return [];
           }
         }),
       );
-      nameMatches.push(
-        ...perKind
-          .flat()
-          .sort((a, b) => b.shared - a.shared)
-          .slice(0, 3)
-          .map(({ m }) => m),
-      );
+      // The three best THINGS, with every place of each: three places of one
+      // item must not crowd out a second item that also matched.
+      const ranked = perKind.flat().sort((a, b) => b.shared - a.shared);
+      await withCards(orgId, ranked.map(({ m }) => m));
+      const keep = new Set<string>();
+      for (const { m } of ranked) {
+        if (keep.size >= 3 && !keep.has(m.card_id ?? m.id)) continue;
+        keep.add(m.card_id ?? m.id);
+        nameMatches.push(m);
+      }
     }
   }
 
+  await withCards(orgId, barcodeMatches);
   return { barcode_matches: barcodeMatches, name_matches: nameMatches };
+}
+
+/** Stamp each match with the card it belongs to (itself when it is kept in
+ *  one place), one pairing read per kind. A lookup that fails leaves each
+ *  record its own card: the old behaviour, never a wrong grouping. */
+export async function withCards(orgId: string, matches: TrackedMatch[]): Promise<void> {
+  const byKind = new Map<string, TrackedMatch[]>();
+  for (const m of matches) if (!m.card_id) byKind.set(m.kind, [...(byKind.get(m.kind) ?? []), m]);
+  for (const [kind, ms] of byKind) {
+    let cardOf = new Map<string, string>();
+    try {
+      const pairs = await platform().pairings.findBySources({ orgId, sourceKind: kind, sourceIds: ms.map((m) => m.id), targetKind: kind, relationshipKind: HOLDING_OF });
+      cardOf = new Map(pairs.map((p) => [p.sourceId, p.targetId]));
+    } catch {
+      /* each record stays its own card */
+    }
+    for (const m of ms) m.card_id = cardOf.get(m.id) ?? m.id;
+  }
+}
+
+/** Every place one card is kept in: the card itself and its holdings, each
+ *  with where it is and how many are there. */
+export async function placesOfCard(orgId: string, kind: string, cardId: string): Promise<Array<{ id: string; location_id: string | null; qty: number | null; title: string }>> {
+  const held = await platform()
+    .pairings.findByTargets({ orgId, sourceKind: kind, targetKind: kind, targetIds: [cardId], relationshipKind: HOLDING_OF })
+    .catch(() => [] as Array<{ sourceId: string }>);
+  const refs = [cardId, ...held.map((h) => h.sourceId)].map((id) => ({ kind, id }));
+  const resolved = await platform().entities.lookupMany(orgId, refs);
+  return resolved.map((e) => ({
+    id: e.id,
+    title: e.title,
+    location_id: typeof e.fields.location_id === "string" ? e.fields.location_id : null,
+    qty: typeof e.fields.qty === "number" ? e.fields.qty : e.fields.qty != null && Number.isFinite(Number(e.fields.qty)) ? Number(e.fields.qty) : null,
+  }));
 }
 
 /** Everything that LIVES in one bin (location), across the scannable kinds.

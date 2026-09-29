@@ -53,3 +53,113 @@ export function edgeRouteKey(route: { ownerUserId?: unknown; orgId?: unknown; br
   if (!org) throw new Error("edge: no personal owner or workspace to route to a bridge");
   return edgeChannelKey(org, route.bridge);
 }
+
+/** A bridge's API token is named after the bridge, with this in front so the
+ *  token list says what each token is for. */
+const BRIDGE_TOKEN_PREFIX = "Edge bridge: ";
+
+/** The name to give the API token a bridge will install with. */
+export function bridgeTokenName(bridgeName: string): string {
+  return `${BRIDGE_TOKEN_PREFIX}${bridgeName.trim() || "bridge"}`;
+}
+
+/** The bridge's own name, read back from its token's name: what the person
+ *  typed on the setup screen. Null for a token that was not minted for a
+ *  bridge, so an unrelated token never names one. */
+export function bridgeNameFromToken(tokenName: string | null | undefined): string | null {
+  if (!tokenName || !tokenName.startsWith(BRIDGE_TOKEN_PREFIX)) return null;
+  const name = tokenName.slice(BRIDGE_TOKEN_PREFIX.length).trim();
+  return name && name !== "bridge" ? name : null;
+}
+
+/** The one line that installs a bridge on Linux, macOS or a Raspberry Pi with a
+ *  pairing code: the script comes from this Cobblr and trades the code for the
+ *  bridge's token on the box, so no token is ever pasted. */
+export function bridgeOneLineInstall(origin: string, code: string): string {
+  return `curl -fsSL ${origin.replace(/\/+$/, "")}/api/v1/edge/install.sh | sh -s -- ${code}`;
+}
+
+/** The copy-ready commands that install a tunnel bridge: `docker run` and a
+ *  compose file. One builder, because every setup screen hands out the same
+ *  install and a line added to one copy (the host's name, say) silently
+ *  missed the other.
+ *
+ *  Registry-free: a stock public node image fetches the bridge code from this
+ *  Cobblr (loader, then a sha-verified bundle) with the tunnel token, and
+ *  restarts onto new versions by itself. The shell reads the token and URL
+ *  from its environment, so the secret is never in argv or shell history;
+ *  `|| true` keeps a cached loader usable when the cloud blips on a restart.
+ *  `--hostname "$(hostname)"` makes the bridge report the box's own name
+ *  instead of the container's random id. Compose has no portable way to read
+ *  the host's name, so there the bridge reports none rather than a guess. */
+export function bridgeInstallCommands(opts: { relayUrl: string; token: string; bridgeId?: string | null }): {
+  run: string;
+  compose: string;
+} {
+  const { relayUrl, token } = opts;
+  const bid = opts.bridgeId?.trim() || null;
+  const shellCmd =
+    'wget -qO loader.mjs --header "Authorization: Bearer $BRIDGE_RELAY_TOKEN" "$BRIDGE_RELAY_URL/release/loader" || true; node loader.mjs';
+  // docker run: single-quote for the HOST shell so $ survives to the container.
+  const runCmd = `sh -c '${shellCmd}'`;
+  // compose: list-form command (a colon inside a plain scalar breaks YAML) and
+  // $$ so compose's own interpolation leaves the $ for the container shell.
+  const composeCmd = `command: ["sh", "-c", "${shellCmd.replace(/\$/g, "$$$$").replace(/"/g, '\\"')}"]`;
+  const run = [
+    "docker run -d --name cobblr-edge-bridge --restart unless-stopped \\",
+    '  --hostname "$(hostname)" \\',
+    "  -v cobblr-bridge-data:/data -w /data \\",
+    "  -e BRIDGE_MODE=tunnel \\",
+    `  -e BRIDGE_RELAY_URL=${relayUrl} \\`,
+    `  -e BRIDGE_RELAY_TOKEN=${token} \\`,
+    ...(bid ? [`  -e BRIDGE_ID=${bid} \\`] : []),
+    "  node:22-alpine \\",
+    `  ${runCmd}`,
+  ].join("\n");
+  const compose = [
+    "# docker-compose.yml, then: docker compose up -d",
+    "# Self-updating: the bridge fetches its own code from your Cobblr (sha-verified)",
+    "# and restarts onto new versions. Stock node image, nothing else to pull.",
+    "services:",
+    "  cobblr-edge-bridge:",
+    "    image: node:22-alpine",
+    "    restart: unless-stopped",
+    "    working_dir: /data",
+    "    volumes:",
+    "      - ./bridge-data:/data",
+    "    environment:",
+    "      BRIDGE_MODE: tunnel",
+    `      BRIDGE_RELAY_URL: ${relayUrl}`,
+    `      BRIDGE_RELAY_TOKEN: ${token}`,
+    ...(bid ? [`      BRIDGE_ID: ${bid}`] : []),
+    `    ${composeCmd}`,
+  ].join("\n");
+  return { run, compose };
+}
+
+/** What a person calls a bridge: the name it was given (at setup, when it was
+ *  installed, or set since). A bridge from before names reads as "Your bridge"
+ *  when it is the workspace's first, or by the id it was installed with. Never
+ *  the word "default", never "main". One rule, so a notice from the server and
+ *  the page it links to say the same name. */
+export function bridgeDisplayName(b: { bridge: string | null; name?: string | null }): string {
+  if (b.name && b.name.trim()) return b.name.trim();
+  return b.bridge === null ? "Your bridge" : b.bridge;
+}
+
+/** What a registering bridge says about itself: its version, its machine, and
+ *  (only when it reports one) the addresses it will reach. One reading for
+ *  every door a bridge registers through, so a field added to the report is
+ *  never learned by one door and missed by the other. */
+export function parseBridgeReport(
+  body: unknown,
+  tokenId: string | null,
+): { version: string | null; hostname: string | null; tokenId: string | null; allow?: string[] | null } {
+  const b = (body && typeof body === "object" ? body : {}) as { version?: unknown; hostname?: unknown; allow?: unknown };
+  return {
+    version: typeof b.version === "string" ? b.version : null,
+    hostname: typeof b.hostname === "string" ? b.hostname : null,
+    tokenId,
+    ...("allow" in b ? { allow: Array.isArray(b.allow) ? b.allow.filter((e): e is string => typeof e === "string") : null } : {}),
+  };
+}

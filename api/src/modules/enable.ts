@@ -23,6 +23,7 @@ import { clearRelationDefsCache } from "../platform/relation-fields.js";
 import { clearMemberFieldCaches } from "../platform/member-fields.js";
 import { clearFieldLabelDefsCache } from "../platform/field-labels.js";
 import { moduleHasScanFallback, reconcileScanCategoryFor } from "../platform/reconcile-scan-category.js";
+import { runSweepEnableSteps } from "../platform/tenant-sweeps.js";
 import { recordClaim } from "../platform/bundle-claims.js";
 import { releaseEmptyDefaultInstance } from "../platform/instances.js";
 
@@ -333,6 +334,11 @@ export async function enableModuleForOrg(
   // rather than at the api's next restart (#3252).
   if (moduleHasScanFallback(moduleName)) await reconcileScanCategoryFor(orgId);
 
+  // What the module's sweeps set up on their first round (a backfill's
+  // "done" marker, say), given now, so a workspace enabled between two rounds
+  // is not a workspace missing it (#4091).
+  await runSweepEnableSteps(orgId, moduleName);
+
   if (options.claimedBy) await recordClaim(orgId, options.claimedBy, "module", moduleName);
 
   void sql; // re-export kept in case future cleanup needs it
@@ -418,6 +424,43 @@ export async function disableModuleForOrg(orgId: string, moduleName: string): Pr
  *
  *  Returns the total number of (org, module) pairs that had at
  *  least one migration applied. */
+/** The (workspace, module) rows a migration can be applied to: workspaces
+ *  with tenant credentials only. A workspace whose signup never finished
+ *  provisioning keeps the module rows it was given, and has no database: the
+ *  sync could only fail on it ("has not been provisioned yet") at every boot,
+ *  and the health count read that as a migration this api never applied, a
+ *  deploy refusal over one half-made workspace (#3982). The sync and the
+ *  count read the rows here, so they cannot disagree about which workspaces
+ *  exist; reconcileDefaultModules skips the same workspaces. Finishing or
+ *  removing a half-made signup belongs to provisioning. */
+export async function provisionedModuleRows(): Promise<
+  Array<{ org_id: string; module_name: string; last_migration: string | null; migration_count: number | null; newest_breaking_migration: string | null }>
+> {
+  return meta
+    .selectFrom("org_modules")
+    .innerJoin("orgs", "orgs.id", "org_modules.org_id")
+    .where("orgs.db_credentials_encrypted", "is not", null)
+    .select([
+      "org_modules.org_id",
+      "org_modules.module_name",
+      "org_modules.last_migration",
+      "org_modules.migration_count",
+      "org_modules.newest_breaking_migration",
+    ])
+    .execute();
+}
+
+/** Workspaces that hold module rows but were never provisioned. */
+async function unprovisionedWorkspaceCount(): Promise<number> {
+  const r = await meta
+    .selectFrom("org_modules")
+    .innerJoin("orgs", "orgs.id", "org_modules.org_id")
+    .where("orgs.db_credentials_encrypted", "is", null)
+    .select(sql<string>`count(distinct org_modules.org_id)`.as("n"))
+    .executeTakeFirst();
+  return Number(r?.n ?? 0);
+}
+
 export async function syncTenantMigrations(): Promise<number> {
   // The version marker first, meta-side and per MODULE, not per workspace: a
   // manifest bump with no new migration left every existing workspace's
@@ -440,10 +483,7 @@ export async function syncTenantMigrations(): Promise<number> {
     }
   }
 
-  const rows = await meta
-    .selectFrom("org_modules")
-    .select(["org_id", "module_name", "last_migration", "migration_count"])
-    .execute();
+  const rows = await provisionedModuleRows();
   let touched = 0;
 
   // PRE-CHECK (meta-side, no tenant open): what is on disk per module, computed
@@ -573,16 +613,18 @@ export async function syncTenantMigrations(): Promise<number> {
  *  older reader that this build never shipped, the pair is information
  *  ("the peer is ahead by N"), not a refusal; see healthVerdict. */
 export interface MigrationSummary {
-  pending: { count: number; modules: string[] };
+  /** `unprovisioned_workspaces`: workspaces with module rows and no tenant
+   *  database this api can open. Never pending (there is nothing to migrate
+   *  into) and never a refusal, but said, so a half-made signup stays in
+   *  sight instead of vanishing from every count. */
+  pending: { count: number; modules: string[]; unprovisioned_workspaces: number };
   ahead: { count: number; modules: string[]; peer: string | null };
 }
 let pendingCache: { at: number; value: MigrationSummary } | null = null;
 export async function pendingMigrationSummary(): Promise<MigrationSummary> {
   if (pendingCache && Date.now() - pendingCache.at < 5_000) return pendingCache.value;
-  const rows = await meta
-    .selectFrom("org_modules")
-    .select(["module_name", "last_migration", "migration_count", "newest_breaking_migration"])
-    .execute();
+  const rows = await provisionedModuleRows();
+  const unprovisioned = await unprovisionedWorkspaceCount();
   const filesByModule = new Map<string, ModuleMigrationFiles>();
   const filesFor = (moduleName: string): ModuleMigrationFiles => {
     const cached = filesByModule.get(moduleName);
@@ -616,7 +658,7 @@ export async function pendingMigrationSummary(): Promise<MigrationSummary> {
     }
   }
   const value: MigrationSummary = {
-    pending: { count, modules: [...modules].sort() },
+    pending: { count, modules: [...modules].sort(), unprovisioned_workspaces: unprovisioned },
     ahead: { count: aheadCount, modules: [...aheadModules].sort(), peer: peer ?? null },
   };
   pendingCache = { at: Date.now(), value };

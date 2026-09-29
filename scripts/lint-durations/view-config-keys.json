@@ -1,7 +1,8 @@
 {
   "lint": "lint:view-config-keys",
-  "run": "tsx scripts/lint-view-config-keys.ts",
+  "run": "node scripts/lint-view-config-keys.ts",
   "ms": 475,
   "recorded": "2026-09-14",
-  "source": "split from scripts/lint-durations.json (recorded 2026-09-14)"
+  "source": "split from scripts/lint-durations.json (recorded 2026-09-14)",
+  "readMB": 0.3
 }

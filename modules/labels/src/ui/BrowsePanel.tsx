@@ -8,8 +8,8 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Check, Plus, Search, X } from "lucide-react";
-import { EntityThumb, buildLocationForest, flattenLocationForest, useToast } from "@cobblr/platform-web";
+import { Check, Plus, X } from "lucide-react";
+import { EntityThumb, buildLocationForest, flattenLocationForest, useToast, SearchInput } from "@cobblr/platform-web";
 import { useLabels } from "./context";
 import type { LabelableItem } from "./api";
 
@@ -192,15 +192,7 @@ export function BrowsePanel() {
       <div className="flex items-center gap-3 border-b border-line dark:border-slate-700 px-3 py-2 flex-wrap">
         <span className="text-[10px] font-mono uppercase tracking-widest text-accent">// add labels</span>
         <div className="flex-1" />
-        <label className="flex items-center gap-1.5 text-sm">
-          <Search size={13} className="text-faint dark:text-slate-500" />
-          <input
-            value={q}
-            onChange={(e) => setQ(e.target.value)}
-            placeholder="search this tab…"
-            className="input !w-48 !py-1 text-xs"
-          />
-        </label>
+        <SearchInput value={q} onChange={setQ} placeholder="search this tab…" aria-label="Search this tab" size="sm" wrapperClassName="w-48" />
       </div>
 
       {/* Tabs — one per labelable instance the workspace has */}

@@ -10,6 +10,16 @@ import { platform } from "@cobblr/platform-contract";
 import { instanceOf, sessionUser, tenantContext, tenantDb } from "../db.js";
 import { asyncHandler, badBody, requireRole } from "./util.js";
 import { routeUnknownToMetadata, refuseUnknownFields, withMetadataMerged } from "@cobblr/platform-contract/entity-metadata";
+import { isRefusal, liftUnits, unitIdsIn, mergeInto, nameUnit, releaseForDelete, splitOne, splitUnit, unitsSummary, type Refusal, type UnitsCtx } from "./units.js";
+
+function unitsCtx(req: Parameters<typeof tenantDb>[0]): UnitsCtx {
+  return { db: tenantDb(req), orgId: tenantContext(req).org.id, userId: sessionUser(req).id, instance: instanceOf(req) };
+}
+
+function answer(res: import("express").Response, out: Refusal | object) {
+  if (isRefusal(out)) res.status(out.status).json({ error: out.error });
+  else res.json(out);
+}
 
 export const machinesRouter = Router({ mergeParams: true });
 
@@ -46,14 +56,17 @@ machinesRouter.get(
   "/",
   asyncHandler(async (req, res) => {
     const db = tenantDb(req);
+    const units = await unitIdsIn(db, tenantContext(req).org.id, instanceOf(req));
     const items = await db
       .selectFrom("machines_machines")
       .selectAll()
       .where("instance", "=", instanceOf(req))
+      .$if(units.length > 0, (q) => q.where("id", "not in", units))
       .orderBy("name")
       .limit(500)
       .execute();
-    res.json({ items });
+    // A unit is one of its parent's N, never a machine of its own in the list.
+    res.json({ items: await liftUnits(db, tenantContext(req).org.id, items) });
   }),
 );
 
@@ -76,7 +89,8 @@ machinesRouter.get(
       res.status(404).json({ error: { code: "not_found", message: "machine not found" } });
       return;
     }
-    res.json(row);
+    const units = await unitsSummary(unitsCtx(req), id);
+    res.json({ ...row, units: units?.units ?? [], units_not_named: units?.not_named ?? 0, unit_of: units?.unit_of ?? null });
   }),
 );
 
@@ -212,6 +226,8 @@ machinesRouter.delete(
     }
     const db = tenantDb(req);
     const ctx = tenantContext(req);
+    const exists = await db.selectFrom("machines_machines").select("id").where("id", "=", id).where("instance", "=", instanceOf(req)).executeTakeFirst();
+    if (exists) await releaseForDelete(unitsCtx(req), id);
     const deleted = await db
       .deleteFrom("machines_machines")
       .where("id", "=", id)
@@ -232,6 +248,68 @@ machinesRouter.delete(
       diff: { name: deleted.name },
     });
     res.status(204).end();
+  }),
+);
+
+// ── units: one record standing for N machines (units.ts) ──────────────
+
+machinesRouter.get(
+  "/:id/units",
+  asyncHandler(async (req, res) => {
+    const out = await unitsSummary(unitsCtx(req), req.params.id!);
+    if (!out) {
+      res.status(404).json({ error: { code: "not_found", message: "machine not found" } });
+      return;
+    }
+    res.json(out);
+  }),
+);
+
+const NameUnit = z.object({ name: z.string().max(200).nullable().optional(), serial_number: z.string().max(120).nullable().optional() });
+
+// AI-REACH: action machines:name-unit
+// AI-ACTION: machines:name-unit
+machinesRouter.post(
+  "/:id/units",
+  asyncHandler(async (req, res) => {
+    const parsed = NameUnit.safeParse(req.body ?? {});
+    if (!parsed.success) return badBody(res, parsed.error);
+    const out = await nameUnit(unitsCtx(req), req.params.id!, parsed.data);
+    if (isRefusal(out)) answer(res, out);
+    else res.status(201).json(out);
+  }),
+);
+
+// AI-REACH: action machines:split-unit
+// AI-ACTION: machines:split-unit
+machinesRouter.post(
+  "/:id/split",
+  asyncHandler(async (req, res) => {
+    answer(res, await splitUnit(unitsCtx(req), req.params.id!));
+  }),
+);
+
+// AI-REACH: action machines:split-one
+// AI-ACTION: machines:split-one
+machinesRouter.post(
+  "/:id/split-one",
+  asyncHandler(async (req, res) => {
+    const parsed = NameUnit.pick({ name: true }).safeParse(req.body ?? {});
+    if (!parsed.success) return badBody(res, parsed.error);
+    answer(res, await splitOne(unitsCtx(req), req.params.id!, parsed.data));
+  }),
+);
+
+const MergeInto = z.object({ parent_id: z.string().uuid() });
+
+// AI-REACH: action machines:make-unit-of
+// AI-ACTION: machines:make-unit-of
+machinesRouter.post(
+  "/:id/unit-of",
+  asyncHandler(async (req, res) => {
+    const parsed = MergeInto.safeParse(req.body ?? {});
+    if (!parsed.success) return badBody(res, parsed.error);
+    answer(res, await mergeInto(unitsCtx(req), req.params.id!, parsed.data.parent_id));
   }),
 );
 

@@ -29,6 +29,7 @@ import { classifyFiles } from "../pages/omniIntake";
 import { UploadKindSheet } from "./UploadKindSheet";
 import { scanInboxKeys } from "../lib/scan-inbox-keys";
 import { addPending, dropPending, expirePending, pulseRow, updatePending } from "../lib/pendingPictures";
+import { KEEP_AS_PURCHASE_SENTENCE, useKeepAsPurchase } from "../pages/KeepAsPurchase";
 
 /** What the picker takes: a picture, or a receipt as a PDF or a CSV. One
  *  string, so no door can accept less than another. */
@@ -100,6 +101,7 @@ export function useScanIntake(slug: string, opts: ScanIntakeOptions): ScanIntake
   const lastTakeRef = useRef<{ key: string; at: number }>({ key: "", at: 0 });
 
   const invalidate = () => void qc.invalidateQueries({ queryKey: scanInboxKeys.all(slug) });
+  const keepAsPurchase = useKeepAsPurchase(slug);
 
   async function uploadPhotos(files: File[]) {
     if (files.length === 0) return;
@@ -209,6 +211,16 @@ export function useScanIntake(slug: string, opts: ScanIntakeOptions): ScanIntake
       );
     } else {
       toast.success(`${found} - review below`);
+    }
+    // Purchases is off: nothing was kept as a purchase, and that is said,
+    // with the one tap that turns it on and keeps this one (#3869).
+    const sessionId = out.batch_id;
+    if (out.purchase?.purchases_off && sessionId) {
+      toast.action(KEEP_AS_PURCHASE_SENTENCE, {
+        actionLabel: "Turn on Purchases",
+        duration: 12000,
+        onAction: () => keepAsPurchase.mutate(sessionId),
+      });
     }
     invalidate();
   }

@@ -1,7 +1,8 @@
 {
   "lint": "lint:pagination",
-  "run": "tsx scripts/lint-pagination.ts",
+  "run": "node scripts/lint-pagination.ts",
   "ms": 582,
   "recorded": "2026-09-14",
-  "source": "split from scripts/lint-durations.json (recorded 2026-09-14)"
+  "source": "split from scripts/lint-durations.json (recorded 2026-09-14)",
+  "readMB": 7.6
 }

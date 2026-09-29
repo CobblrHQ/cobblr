@@ -40,7 +40,10 @@ export function QrResolvePage() {
   // The token is EVERYTHING after "/qr/" — a single opaque segment OR a
   // descriptive "<kind>/<id>" with a slash. Reading the raw path keeps this
   // mount-agnostic across the two basenames (/qr/… and /w/<slug>/qr/…).
-  const token = window.location.pathname.split("/qr/")[1] ?? "";
+  // An action label (#3897) prints `/a/<code>`; the same resolver finds its
+  // workspace, then sends the phone to that workspace's label page.
+  const path = window.location.pathname;
+  const token = (path.includes("/a/") && !path.includes("/qr/") ? path.split("/a/")[1] : path.split("/qr/")[1]) ?? "";
 
   const [state, setState] = useState<"loading" | "dead" | "action" | "join" | "error">("loading");
   const [result, setResult] = useState<ResolveResult | null>(null);
@@ -58,6 +61,7 @@ export function QrResolvePage() {
         const body = (await res.json()) as ResolveResult;
         if (cancelled) return;
         if (!body.ok || !body.org_slug) {
+          setResult(body);
           setState("dead");
           return;
         }
@@ -73,8 +77,13 @@ export function QrResolvePage() {
           window.location.replace(`/w/${body.org_slug}${body.detail_path}`);
           return;
         }
-        // Action-mode confirm card isn't built yet (deferred in the
-        // module doc); offer the detail page so the scan still lands.
+        if (body.mode === "action") {
+          // An action label: its page shows what will happen and waits for
+          // Confirm. Signed out, the workspace shell asks for a sign-in at
+          // that same URL and comes back to it.
+          window.location.replace(`/w/${body.org_slug}/a/${token}`);
+          return;
+        }
         setState("action");
       } catch {
         if (!cancelled) setState("error");
@@ -157,12 +166,18 @@ export function QrResolvePage() {
     <>
       <QrCode size={28} className="mx-auto text-faint" />
       <div className="text-sm font-medium text-content dark:text-mortar-100">
-        {state === "error" ? "Couldn't resolve this QR code" : "This QR code is no longer active"}
+        {state === "error"
+          ? "Couldn't resolve this QR code"
+          : result?.status === "revoked"
+            ? "This label has been turned off"
+            : "This QR code is no longer active"}
       </div>
       <p className="text-xs text-muted dark:text-slate-400">
         {state === "error"
           ? "Check your connection and try again."
-          : "The label may have been revoked or expired. Ask a workspace admin if you think that's a mistake."}
+          : result?.status === "revoked"
+            ? "Scanning it does nothing now, and nothing was changed. If it should still work, someone in the workspace can turn it back on in Action labels."
+            : "The label may have been revoked or expired. Ask a workspace admin if you think that's a mistake."}
       </p>
     </>,
   );

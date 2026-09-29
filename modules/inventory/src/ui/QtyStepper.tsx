@@ -17,11 +17,12 @@ import { MutationError } from "@cobblr/platform-web";
 import { rollupHoldings, type CardRollup } from "@cobblr/platform-contract/holdings";
 import { useInventory } from "./context";
 import type { HoldingRow } from "./api";
+import { withCount, type CountedRow } from "../stock-derived";
 
 /** The slice of a cached parts-list row a stock adjust touches. A card kept in
  *  several places carries its places as `holdings`, and a place's stepper
  *  moves that row and the card's top line. */
-type QtyRow = { id: string; qty: number | string; available_qty: number | string; holdings?: HoldingRow[]; rollup?: CardRollup };
+type QtyRow = CountedRow & { id: string; holdings?: HoldingRow[]; rollup?: CardRollup };
 type QtyPage = { items: QtyRow[] };
 type QtyCache = { pages: QtyPage[]; pageParams: unknown[] };
 
@@ -42,9 +43,9 @@ export function QtyStepper({
     onSuccess: (resp) => {
       // Patch the row in place: the list is an INFINITE query, and this stepper
       // sits on every row — invalidating the list would refetch every loaded
-      // page per tap. Available moves by the same delta as qty (it derives as
-      // qty minus allocations, which a stock adjust doesn't touch); the list is
-      // marked stale so the next natural refetch converges the rest (low_stock).
+      // page per tap. The row is redrawn through withCount, the rules the list
+      // endpoint derives with, so Available, on hand and low move with the
+      // count; the list is marked stale so the next natural refetch converges.
       qc.setQueriesData<QtyCache>({ queryKey: ["inventory-parts"] }, (data) => {
         if (!data?.pages) return data;
         return {
@@ -62,12 +63,7 @@ export function QtyStepper({
                 next = { ...next, holdings, rollup: rollupHoldings(holdings) };
               }
               if (it.id !== partId) return next;
-              const delta = Number(resp.qty) - Number(it.qty);
-              return {
-                ...next,
-                qty: resp.qty,
-                available_qty: Number(it.available_qty) + delta,
-              };
+              return withCount(next, Number(resp.qty));
             }),
           })),
         };

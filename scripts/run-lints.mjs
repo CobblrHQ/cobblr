@@ -10,22 +10,23 @@
 // pasting a step into ci.yml, and two lints shipped orphaned.
 //
 // The lints are independent, read-only and short, so they parallelise perfectly.
-// Their cost is almost entirely process startup: ~90 of them at ~600ms of
-// pnpm + tsx boot each is ~70s serialised, ~10s at 8-wide.
+// Their cost is almost entirely process startup, which is why each runs on
+// plain node (~0.1 s to start) rather than tsx (~1.3 s): lib/lint-command.mjs.
 //
 //   node scripts/run-lints.mjs            (pnpm run lint:all)
 //   node scripts/run-lints.mjs --one isolation [args]   (pnpm lint isolation): one lint, its own output and exit code
 //   node scripts/run-lints.mjs --only isolation,docs
 //   COBBLR_LINT_CONCURRENCY=4 pnpm run lint:all
 
-import { readFileSync } from "node:fs";
-import { readQuietMs, readRegistry, writeQuietMs } from "./lib/lint-durations.mjs";
+import { readQuietMs, readRecordedReadMB, readRegistry, writeQuietMs } from "./lib/lint-durations.mjs";
 import { execFileSync } from "node:child_process";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { defaultConcurrency, runParallel } from "./lib/parallel.mjs";
-import { CEILING_MS, judgeRun, ioPressure, IO_CONTENDED_AT } from "./lib/lint-budget.mjs";
-import { writeFileSync } from "node:fs";
+import { lintCommand } from "./lib/lint-command.mjs";
+import { CEILING_MS, judgeRun, ioPressure, IO_CONTENDED_AT, cpuPressure, CPU_CONTENDED_AT, overReadBudget } from "./lib/lint-budget.mjs";
+import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
 
@@ -62,7 +63,7 @@ function runOne(rawName, args) {
   }
   const quoted = args.map((a) => `'${String(a).replace(/'/g, `'\\''`)}'`).join(" ");
   try {
-    execFileSync("bash", ["-c", `${cmd}${quoted ? ` ${quoted}` : ""}`], { cwd: ROOT, stdio: "inherit", env: { ...process.env, PATH: `${join(ROOT, "node_modules", ".bin")}:${process.env.PATH ?? ""}` } });
+    execFileSync("bash", ["-c", `${lintCommand(cmd)}${quoted ? ` ${quoted}` : ""}`], { cwd: ROOT, stdio: "inherit", env: { ...process.env, PATH: `${join(ROOT, "node_modules", ".bin")}:${process.env.PATH ?? ""}` } });
   } catch (e) {
     process.exitCode = typeof e?.status === "number" ? e.status : 1;
   }
@@ -116,12 +117,33 @@ function main() {
     "lint:env-icons",
   ];
   const rank = (n) => (SLOWEST_FIRST.indexOf(n) === -1 ? SLOWEST_FIRST.length : SLOWEST_FIRST.indexOf(n));
+  // Every lint's reads are counted (lib/lint-reads.cjs), one file per lint.
+  const readsDir = mkdtempSync(join(tmpdir(), "lint-reads-"));
+  const readsFile = (name) => join(readsDir, `${name.replace(/[^A-Za-z0-9_.-]/g, "_")}.jsonl`);
+  const preload = `--require ${join(ROOT, "scripts", "lib", "lint-reads.cjs")}`;
   const jobs = names
     .slice()
     .sort((a, b) => rank(a) - rank(b))
-    .map((name) => ({ name, cmd: scripts[name], cwd: ROOT }));
+    .map((name) => ({
+      name,
+      cmd: lintCommand(scripts[name]),
+      cwd: ROOT,
+      env: { NODE_OPTIONS: `${process.env.NODE_OPTIONS ?? ""} ${preload}`.trim(), COBBLR_LINT_READS_FILE: readsFile(name) },
+    }));
+  const readMBOf = (name) => {
+    try {
+      let bytes = 0;
+      for (const line of readFileSync(readsFile(name), "utf8").split("\n")) if (line.trim()) bytes += JSON.parse(line).bytes ?? 0;
+      return bytes / 1048576;
+    } catch {
+      return 0;
+    }
+  };
 
   const started = Date.now();
+  // CPU pressure at both ends of the run: avg60 read only at the end would
+  // miss a box that was starved while the slow lints ran and eased after.
+  const cpuAtStart = cpuPressure();
   let done = 0;
 
   runParallel(jobs, {
@@ -144,6 +166,7 @@ function main() {
     // lints once locked the two against each other, and no run could pass or
     // record (2026-09-14). It is re-checked against the written file below.
     const failed = results.filter((r) => r.code !== 0 && !(record && r.name === "lint:lint-durations"));
+    for (const r of results) r.readMB = readMBOf(r.name);
     const cpu = results.reduce((s, r) => s + r.ms, 0);
     const wall = Date.now() - started;
     const slowest = results
@@ -184,16 +207,24 @@ function main() {
     // started in the compiler's wave) does not reproduce, a regression does.
     // Both numbers are printed so the log tells the story either way.
     const rerun = async (name) => {
-      const [r] = await runParallel([{ name, cmd: scripts[name], cwd: ROOT }], { concurrency: 1 });
+      const [r] = await runParallel([{ name, cmd: lintCommand(scripts[name]), cwd: ROOT }], { concurrency: 1 });
       return r.ms;
     };
     // The box's I/O pressure is the second axis of contention: a docker prune
     // stalls every file-reading lint while the CPU factor reads quiet.
+    // And CPU pressure the third: other jobs starving the box slow every lint
+    // here, the re-measure included, while this run's own factor reads 1.00x.
     const io = ioPressure();
-    const { factor, contended, perLint, over, unknown, remeasured, ioContended } = await judgeRun(results, quietMs, record ? null : rerun, { ioPressure: io });
-    const factorLine = `this run ran at ${factor.toFixed(2)}x the recorded quiet baseline` + (io !== null ? `, I/O pressure ${io.toFixed(1)}%` : "");
+    const cpuAtEnd = cpuPressure();
+    const cpuPsi = cpuAtStart === null && cpuAtEnd === null ? null : Math.max(cpuAtStart ?? 0, cpuAtEnd ?? 0);
+    const { factor, contended, perLint, over, unknown, remeasured, ioContended, cpuContended } = await judgeRun(results, quietMs, record ? null : rerun, { ioPressure: io, cpuPressure: cpuPsi });
+    const factorLine =
+      `this run ran at ${factor.toFixed(2)}x the recorded quiet baseline` +
+      (io !== null ? `, I/O pressure ${io.toFixed(1)}%` : "") +
+      (cpuPsi !== null ? `, CPU pressure ${cpuPsi.toFixed(1)}%` : "");
     if (contended) {
-      console.log(`[lints] contended run (${factorLine}${ioContended ? `; the box is I/O-starved, at or over ${IO_CONTENDED_AT}%` : ""}): per-lint budgets deferred to the next quiet run; only the hard ceiling applies here`);
+      const starved = [ioContended ? `I/O-starved, at or over ${IO_CONTENDED_AT}%` : "", cpuContended ? `CPU-starved, at or over ${CPU_CONTENDED_AT}%` : ""].filter(Boolean).join(" and ");
+      console.log(`[lints] contended run (${factorLine}${starved ? `; the box is ${starved}` : ""}): per-lint budgets deferred to the next quiet run; only the hard ceiling applies here`);
     } else if (perLint) {
       console.log(`[lints] budget: ${factorLine}; every lint judged against its own quiet time`);
     }
@@ -214,6 +245,21 @@ function main() {
         `[lints] --record: ${overRatio.length} lint(s) over their previous budget, becoming the new baseline:\n` +
           overRatio.map((r) => `    ${r.name}  ${(r.ms / 1000).toFixed(1)}s — ${r.why}`).join("\n"),
       );
+    }
+    // The read budget: deterministic, so it is enforced on every run, contended
+    // or not (lib/lint-budget.mjs). Under --record the reads become the record.
+    const overRead = record ? [] : overReadBudget(results, readRecordedReadMB());
+    if (overRead.length) {
+      console.error(
+        `\n[lints] ✗ ${overRead.length} lint(s) over their read budget:\n` +
+          overRead.map((r) => `    ${r.name}  ${r.why}`).join("\n") +
+          `\n\n  A lint that reads the whole tree to find one pattern, or re-reads a file per\n` +
+          `  row or per variable, grows with the repo until it is the CI job. Read each file\n` +
+          `  once, or let \`git grep -l -F <pattern>\` pick the files first. If the reads are\n` +
+          `  justified, record them in the same change: node scripts/run-lints.mjs --record.\n`,
+      );
+      process.exitCode = 1;
+      return;
     }
     if (record ? overCeiling.length : over.length) {
       const shown = record ? overCeiling : over;
@@ -242,10 +288,10 @@ function main() {
         return;
       }
       const source = `run-lints.mjs --record (${results.length} lints, ${(wall / 1000).toFixed(1)}s wall, ${concurrency} at a time)`;
-      for (const r of results) writeQuietMs(r.name, r.ms, source);
+      for (const r of results) writeQuietMs(r.name, r.ms, source, undefined, undefined, r.readMB);
       console.log(`[lints] recorded ${results.length} quiet baselines to scripts/lint-durations/`);
       if (scripts["lint:lint-durations"]) {
-        const [again] = await runParallel([{ name: "lint:lint-durations", cmd: scripts["lint:lint-durations"], cwd: ROOT }], { concurrency: 1 });
+        const [again] = await runParallel([{ name: "lint:lint-durations", cmd: lintCommand(scripts["lint:lint-durations"]), cwd: ROOT }], { concurrency: 1 });
         if (again.code !== 0) {
           console.error(`[lints] ✗ lint:lint-durations still fails against the file just recorded`);
           process.exitCode = 1;

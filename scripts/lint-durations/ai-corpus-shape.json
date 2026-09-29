@@ -1,7 +1,8 @@
 {
   "lint": "lint:ai-corpus-shape",
-  "run": "tsx scripts/lint-ai-corpus-shape.ts",
+  "run": "node scripts/lint-ai-corpus-shape.ts",
   "ms": 415,
   "recorded": "2026-09-14",
-  "source": "split from scripts/lint-durations.json (recorded 2026-09-14)"
+  "source": "split from scripts/lint-durations.json (recorded 2026-09-14)",
+  "readMB": 0.0
 }

@@ -19,6 +19,7 @@
 // inbox's own pipeline) → `entity` (server-derived) → `query` (literal).
 
 import { useEffect, useRef, useState, type FormEvent, type ReactNode } from "react";
+import { SearchInput } from "@cobblr/platform-web";
 import { Maximize2, Sparkles, X } from "lucide-react";
 import { useQuery } from "@tanstack/react-query";
 import { api, type ImageOption } from "../lib/api";
@@ -364,16 +365,18 @@ export function ImageSearchPicker({
         </div>
         {searchable && searchOpen && (
           <form onSubmit={submit} className="flex items-center gap-1.5">
-            <input
+            <SearchInput
               autoFocus
               value={term}
-              onChange={(e) => {
+              onChange={(v) => {
                 setTouched(true);
-                setTerm(e.target.value);
+                setTerm(v);
               }}
               onPaste={paste}
               placeholder="search or paste a link…"
-              className="min-h-10 w-full min-w-0 rounded-md border border-line dark:border-slate-600 bg-surface dark:bg-slate-900 px-2.5 text-sm"
+              aria-label="Search for a picture, or paste a link"
+              size="lg"
+              wrapperClassName="w-full min-w-0"
             />
             <button
               type="submit"
@@ -475,15 +478,17 @@ export function ImageSearchPicker({
             )}
             {searchable && (!phone || searchOpen) && (
               <form onSubmit={submit} className="flex min-w-0 flex-1 items-center gap-1">
-                <input
+                <SearchInput
                   value={term}
-                  onChange={(e) => {
+                  onChange={(v) => {
                     setTouched(true);
-                    setTerm(e.target.value);
+                    setTerm(v);
                   }}
                   onPaste={paste}
                   placeholder="search or paste a link…"
-                  className="w-full min-w-0 rounded border border-line dark:border-slate-600 bg-surface dark:bg-slate-900 px-2 py-0.5 text-xs"
+                  aria-label="Search for a picture, or paste a link"
+                  size="sm"
+                  wrapperClassName="w-full min-w-0"
                 />
                 <button
                   type="submit"
@@ -537,15 +542,17 @@ export function ImageSearchPicker({
     <div className="space-y-1.5">
       {searchable && (
         <form onSubmit={submit} className="flex items-center gap-1.5">
-          <input
+          <SearchInput
             value={term}
-            onChange={(e) => {
+            onChange={(v) => {
               setTouched(true);
-              setTerm(e.target.value);
+              setTerm(v);
             }}
             onPaste={paste}
             placeholder="search or paste an image link…"
-            className="flex-1 min-w-0 rounded border border-line dark:border-slate-600 bg-surface dark:bg-slate-900 px-2 py-1 text-xs"
+            aria-label="Search for a picture, or paste an image link"
+            size="sm"
+            wrapperClassName="flex-1 min-w-0"
           />
           <button
             type="submit"

@@ -1,7 +1,8 @@
 {
   "lint": "lint:list-args-take-arrays",
-  "run": "tsx scripts/lint-list-args-take-arrays.ts",
+  "run": "node scripts/lint-list-args-take-arrays.ts",
   "ms": 3000,
   "recorded": "2026-09-14",
-  "source": "split from scripts/lint-durations.json (recorded 2026-09-14)"
+  "source": "split from scripts/lint-durations.json (recorded 2026-09-14)",
+  "readMB": 10.3
 }

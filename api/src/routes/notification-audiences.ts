@@ -18,6 +18,7 @@ import { withTenant } from "../middleware/tenant.js";
 import type { OrgRole } from "../db/schema.js";
 import { listEntries } from "../modules/registry.js";
 import { audienceRules, setAudience } from "../platform/notification-audience.js";
+import { BRIDGE_NOTIFICATION_KINDS } from "../platform/edge-outages.js";
 
 export const notificationAudiencesRouter = Router({ mergeParams: true });
 
@@ -50,6 +51,10 @@ async function kindsFor(orgId: string): Promise<KindRow[]> {
     (await meta.selectFrom("org_modules").select("module_name").where("org_id", "=", orgId).execute()).map((r) => r.module_name),
   );
   const declared = new Map<string, { label: string; description: string | null; module: string }>();
+  // Sent by the kernel itself, so present in every workspace.
+  for (const k of BRIDGE_NOTIFICATION_KINDS) {
+    declared.set(k.eventType, { label: k.label, description: k.description, module: "bridges" });
+  }
   for (const e of listEntries()) {
     if (!enabled.has(e.manifest.name)) continue;
     for (const k of e.manifest.exposes.notifications) {

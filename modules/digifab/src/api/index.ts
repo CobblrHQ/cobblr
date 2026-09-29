@@ -21,12 +21,14 @@ import { printRulesRouter } from "./print-rules.js";
 import { failureRouter } from "./failure.js";
 import { registerFarmResolvers } from "./resolvers.js";
 import { registerDeviceSeam } from "./device-provider.js";
+import { registerDetectorServices } from "../detectors/services.js";
 import { asyncHandler } from "./util.js";
 import { tenantContext } from "../db.js";
 import { extractPlateMetadata } from "../library/extract-metadata.js";
 
 registerFarmResolvers();
 registerDeviceSeam(); // back platform().devices.getDriver + the digifab:run-command alias
+registerDetectorServices(); // the in-process print checks as inspect.print built-ins
 
 // Edge-bridge consumer: the generic Edge-bridges page renders this card, so a
 // user who already has a bridge connected sees "attach machine managers"

@@ -152,6 +152,8 @@ export interface InventoryConsumptionTable {
   /** Null for an ordinary move; "correction" for a count set to what is
    *  there (a recount), which is not consumption (0011). */
   kind: string | null;
+  /** Who did it, when a person did (null for a wire, a sync, a job). */
+  by_user: string | null;
   at: Generated<Date>;
 }
 

@@ -1,7 +1,8 @@
 {
   "lint": "lint:csp-frame-ancestors",
-  "run": "tsx scripts/lint-csp-frame-ancestors.ts",
+  "run": "node scripts/lint-csp-frame-ancestors.ts",
   "ms": 476,
   "recorded": "2026-09-14",
-  "source": "split from scripts/lint-durations.json (recorded 2026-09-14)"
+  "source": "split from scripts/lint-durations.json (recorded 2026-09-14)",
+  "readMB": 0.0
 }

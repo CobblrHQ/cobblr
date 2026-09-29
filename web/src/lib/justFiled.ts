@@ -16,6 +16,9 @@ export interface JustFiled {
   record: string | null;
   /** The page the notice belongs to. */
   path: string;
+  /** Said instead of "Filed in <label>." when the filing has its own words
+   *  ("Added 1 spool of Royal Blue PLA (new type)", lib/filedRows.ts). */
+  headline?: string;
 }
 
 const KEY = "cobblr.just-filed";

@@ -3,11 +3,13 @@
 
 import { Router } from "express";
 import { entriesRouter } from "./entries.js";
+import { schedulesRouter } from "./schedules.js";
 import { tick } from "../sweeper.js";
 import { registerMaintenanceHandlers } from "./handlers.js";
 
 const router = Router({ mergeParams: true });
 router.use("/entries", entriesRouter);
+router.use("/schedules", schedulesRouter);
 
 // Synchronous tick endpoint — fires the due-soon sweeper for THIS
 // workspace only. Used by tests + ops; the background interval

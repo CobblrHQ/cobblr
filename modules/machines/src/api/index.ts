@@ -16,6 +16,9 @@ platform().entities.registerScannable("machines:machine", {
   noun: "machine",
   createEndpoint: "machines/machines",
   qtyField: "quantity",
+  // A record of five identical printers is five printers; its named units stay
+  // under it in every list (units.ts), so a count can say both.
+  qtyCountsThings: true,
 });
 
 // Per-instance item count — lets the nav hide an empty auto-created default

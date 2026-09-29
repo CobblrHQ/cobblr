@@ -1,7 +1,8 @@
 {
   "lint": "lint:import-no-silent-write",
-  "run": "tsx scripts/lint-import-no-silent-write.ts",
+  "run": "node scripts/lint-import-no-silent-write.ts",
   "ms": 408,
   "recorded": "2026-09-14",
-  "source": "split from scripts/lint-durations.json (recorded 2026-09-14)"
+  "source": "split from scripts/lint-durations.json (recorded 2026-09-14)",
+  "readMB": 0.0
 }

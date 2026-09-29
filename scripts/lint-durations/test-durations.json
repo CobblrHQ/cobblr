@@ -1,7 +1,8 @@
 {
   "lint": "lint:test-durations",
-  "run": "tsx scripts/lint-test-durations.ts",
+  "run": "node scripts/lint-test-durations.ts",
   "ms": 519,
   "recorded": "2026-09-14",
-  "source": "split from scripts/lint-durations.json (recorded 2026-09-14)"
+  "source": "split from scripts/lint-durations.json (recorded 2026-09-14)",
+  "readMB": 0.0
 }

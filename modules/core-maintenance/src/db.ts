@@ -18,12 +18,32 @@ export interface CoreMaintenanceEntriesTable {
   notes: string | null;
   recurrence_rule: string | null;
   last_notified_at: Date | null;
+  /** The schedule this entry is an occurrence of, or the one it rolled forward. */
+  schedule_id: string | null;
+  created_at: Generated<Date>;
+  updated_at: Generated<Date>;
+}
+
+export interface CoreMaintenanceSchedulesTable {
+  id: Generated<string>;
+  entity_module: string;
+  entity_type: string;
+  entity_id: string;
+  name: string;
+  every_n: number | null;
+  every_unit: "day" | "week" | "month" | "year" | null;
+  counter_field: string | null;
+  /** numeric: node-postgres hands it back as a string. */
+  counter_every: string | number | null;
+  last_done_at: Date | null;
+  last_done_counter: string | number | null;
   created_at: Generated<Date>;
   updated_at: Generated<Date>;
 }
 
 export interface CoreMaintenanceDB {
   core_maintenance_entries: CoreMaintenanceEntriesTable;
+  core_maintenance_schedules: CoreMaintenanceSchedulesTable;
 }
 
 /** Re-exported from the contract so this module cannot fall behind the

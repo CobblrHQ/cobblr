@@ -178,6 +178,9 @@ export async function suggestLocationForItem(
     /** The kind this is being filed as, when routing has decided. Turns on the
      *  broad half of learning from somebody: where the rest of these live. */
     kind?: string | null;
+    /** What the person calls that collection ("3D Printers"), for the reason
+     *  the suggestion gives: "where your other 3D Printers are". */
+    kindLabel?: string | null;
   },
 ): Promise<LocationSuggestion | null> {
   const name = opts.name && !isJunkName(opts.name) ? opts.name.trim() : null;
@@ -215,7 +218,7 @@ export async function suggestLocationForItem(
           location_id: home.id,
           location_name: home.title,
           count: home.count,
-          reason: `${home.count} others are kept here`,
+          reason: opts.kindLabel?.trim() ? `where your other ${opts.kindLabel.trim()} are` : `${home.count} others are kept here`,
         };
       }
     }
@@ -238,7 +241,11 @@ export async function suggestLocationForItem(
   // The kinds that hold records HERE, instances included: two tomatoes in
   // the Pantry live under groceries:item, which the base registry never
   // lists, so the sibling tier learned nothing from fifty groceries (#3132).
-  const kinds = await scanTargetsForOrg(orgId);
+  // Once routing has said what this is, its siblings are records of THAT
+  // kind. Across every table, a 3D printer's "siblings" were anything whose
+  // name shared a word with it, and three reels of printer filament in the Den
+  // outvoted the Printer Room every other printer is in (#3902).
+  const kinds = (await scanTargetsForOrg(orgId)).filter((k) => !opts.kind || k.kind === opts.kind);
 
   // Gather similar placed entities across kinds. Query by individual significant
   // TOKENS, not the full name — the entity `q` search AND-matches its words, so

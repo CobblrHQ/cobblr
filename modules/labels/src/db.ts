@@ -115,7 +115,33 @@ export interface LabelsAutoflushTable {
   updated_at: Generated<Date>;
 }
 
+/** One button on an action label: an action run on a record, with the
+ *  arguments it is always pressed with. */
+export interface ActionLabelButton {
+  entity_kind: string;
+  entity_id: string;
+  action_id: string;
+  binding_id?: string | null;
+  args?: Record<string, unknown>;
+  /** What the button says, when not the action's own label. */
+  label?: string | null;
+}
+
+export interface LabelsActionLabelsTable {
+  id: Generated<string>;
+  token_id: string;
+  code: string;
+  title: string;
+  hint: string | null;
+  buttons: ActionLabelButton[];
+  created_by: string | null;
+  created_at: Generated<Date>;
+  updated_at: Generated<Date>;
+  revoked_at: Date | null;
+}
+
 export interface LabelsDB {
+  labels_action_labels: LabelsActionLabelsTable;
   labels_templates: LabelsTemplatesTable;
   labels_queue: LabelsQueueTable;
   labels_batches: LabelsBatchesTable;

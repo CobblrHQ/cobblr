@@ -1,12 +1,24 @@
 {
   "manifest": {
     "id": "cobblr.flagship.yarn",
-    "version": "0.9.1",
+    "version": "0.9.2",
     "name": "Yarn",
     "description": "Yarn as its own inventory instance: counted in balls, skeins or hanks, yarn-only fields, grouped by weight. Optional Hooks, Supplies and Patterns tables.",
     "author": "Cobblr",
-    "released_at": "2026-07-15",
-    "changelog": "Notions is now Supplies: the table for stitch markers, yarn needles, safety eyes, stuffing and buttons says what goes in it under its name, and you can still call it Notions (pick the word in its Settings); searching for notions finds it, and a pattern's notions are still checked against it. Your Notions table is renamed on this update, and everything in it stays. Earlier: a Notions table for stitch markers, yarn needles, safety eyes and stuffing; a pattern's notions are checked against it. Earlier: Import from Ravelry on the Yarn table brings your Ravelry stash in, and your projects into Patterns: connect once, then press it again any time to update. Earlier: A pattern now knows what it needs: its yarns and hooks are read from the PDF, matched against your stash, and what is missing goes on your shopping list in one tap. Finishing a pattern takes each yarn off its own balls. Earlier: The scanner fills Dye lot from the lot printed on a label, and a dye lot is never shared as a fact about the yarn. Earlier: Call your yarn what you call it: ball, skein or hank. Pick the word when you add Yarn, or change it in the Yarn table's settings, and every label, your yarn's counts and Cobb all say it. Earlier: Designs are now Patterns: a pattern keeps its PDF, photos and notes, its designer, where it came from and how hard it is, and the yarn it needs. Import patterns takes a pile of PDFs or a zipped folder: each PDF becomes a pattern with its file, a zip's folders fill in the category, and a PDF you already have is never added twice. Your Designs table is renamed on this update, and everything in it stays.",
+    "released_at": "2026-09-29",
+    "changelog": "Importing patterns with Source: Ribblr now shows how to get them out of Ribblr: what can be downloaded, what cannot, and how to bring the downloads in.",
+    "releases": [
+      {
+        "version": "0.9.2",
+        "released_at": "2026-09-29",
+        "notes": "Importing patterns with Source: Ribblr now shows how to get them out of Ribblr: what can be downloaded, what cannot, and how to bring the downloads in."
+      },
+      {
+        "version": "0.9.0",
+        "released_at": "2026-07-15",
+        "notes": "Notions is now Supplies: the table for stitch markers, yarn needles, safety eyes, stuffing and buttons says what goes in it under its name, and you can still call it Notions (pick the word in its Settings); searching for notions finds it, and a pattern's notions are still checked against it. Your Notions table is renamed on this update, and everything in it stays. Earlier: a Notions table for stitch markers, yarn needles, safety eyes and stuffing; a pattern's notions are checked against it. Earlier: Import from Ravelry on the Yarn table brings your Ravelry stash in, and your projects into Patterns: connect once, then press it again any time to update. Earlier: A pattern now knows what it needs: its yarns and hooks are read from the PDF, matched against your stash, and what is missing goes on your shopping list in one tap. Finishing a pattern takes each yarn off its own balls. Earlier: The scanner fills Dye lot from the lot printed on a label, and a dye lot is never shared as a fact about the yarn. Earlier: Call your yarn what you call it: ball, skein or hank. Pick the word when you add Yarn, or change it in the Yarn table's settings, and every label, your yarn's counts and Cobb all say it. Earlier: Designs are now Patterns: a pattern keeps its PDF, photos and notes, its designer, where it came from and how hard it is, and the yarn it needs. Import patterns takes a pile of PDFs or a zipped folder: each PDF becomes a pattern with its file, a zip's folders fill in the category, and a PDF you already have is never added twice. Your Designs table is renamed on this update, and everything in it stays."
+      }
+    ],
     "requires": [
       {
         "module": "inventory"
@@ -290,7 +302,22 @@
               "ask": [
                 "pattern_source"
               ],
-              "label": "Import patterns"
+              "label": "Import patterns",
+              "guides": [
+                {
+                  "when": {
+                    "field": "pattern_source",
+                    "equals": "Ribblr"
+                  },
+                  "title": "Getting your patterns out of Ribblr",
+                  "steps": [
+                    "On Ribblr, open your library and download every pattern that shows a download icon: the designer attached a PDF.",
+                    "Download the PDFs you uploaded yourself too. They lock when a Ribblr+ membership lapses, and a month of Ribblr+ opens them again.",
+                    "A Ribblr ePattern cannot be downloaded. Ask its designer for a PDF, which is Ribblr's own advice, or email Ribblr support for a copy of your data.",
+                    "Zip your downloads folder, or pick the PDFs, and import them here. Each PDF becomes a pattern with its file."
+                  ]
+                }
+              ]
             },
             "field_defs": [
               {

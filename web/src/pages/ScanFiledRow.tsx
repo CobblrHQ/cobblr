@@ -7,7 +7,9 @@
 import { Link } from "react-router-dom";
 import { CheckCircle, RotateCcw, X } from "lucide-react";
 import { EntityPhoto } from "@cobblr/platform-web";
-import { filedSummary, type FiledRow } from "../lib/filedRows";
+import { filedNameOf, filedSummary, filedWords, type FiledRow } from "../lib/filedRows";
+import { navTargetFor } from "../components/useNavModules";
+import { useActiveOrgOptional } from "../auth/ActiveOrgContext";
 import { rowPictures } from "../lib/rowPictures";
 import { useDetailRoute, useListRoute } from "../lib/useDetailRoute";
 
@@ -17,7 +19,7 @@ function FiledThumb({ slug, row }: { slug: string; row: FiledRow }) {
   return <EntityPhoto src={first ? resolved.src(first, "thumb") : null} alt="" size={48} className="rounded-md" imgClassName="opacity-70" placeholder={null} />;
 }
 
-const nameOf = (row: FiledRow) => row.item.suggested_name?.trim() || row.item.barcode_text || "Your item";
+const nameOf = (row: FiledRow) => filedNameOf(row.item);
 
 export function FiledRowView({
   slug,
@@ -34,8 +36,13 @@ export function FiledRowView({
 }) {
   const recordRoute = useDetailRoute(slug);
   const listRoute = useListRoute(slug);
-  const to =
-    (row.kind && row.createdId ? recordRoute(row.kind, row.createdId) : null) ?? (row.kind ? listRoute(row.kind) : null);
+  const appMode = !!useActiveOrgOptional()?.activeOrg?.app_mode;
+  const words = filedWords(row);
+  // A record under a type opens the type's page with the record picked out:
+  // the types and their records are one page.
+  const to = row.under
+    ? `${navTargetFor(`__instance__${row.under.instance}`, appMode)}${row.createdId ? `?highlight=${encodeURIComponent(row.createdId)}` : ""}`
+    : ((row.kind && row.createdId ? recordRoute(row.kind, row.createdId) : null) ?? (row.kind ? listRoute(row.kind) : null));
   return (
     <div
       data-testid="filed-row"
@@ -46,7 +53,7 @@ export function FiledRowView({
         <div className="min-w-0 flex-1">
           <div className="truncate text-sm text-muted dark:text-slate-400">{nameOf(row)}</div>
           <div className="flex items-center gap-1 text-[13px] font-medium text-emerald-700 dark:text-emerald-400">
-            <CheckCircle size={14} className="shrink-0" /> Filed to {row.destination}
+            <CheckCircle size={14} className="shrink-0" /> {words.headline}
           </div>
         </div>
         <button type="button" onClick={onDismiss} aria-label="Close" className="shrink-0 self-start p-1 text-faint hover:text-content">
@@ -59,7 +66,7 @@ export function FiledRowView({
             to={to}
             className="inline-flex min-h-9 items-center rounded-md bg-cobble-600 px-3 text-[13px] font-semibold text-white hover:bg-cobble-700"
           >
-            Go to {row.destination}
+            {words.go}
           </Link>
         )}
         <button

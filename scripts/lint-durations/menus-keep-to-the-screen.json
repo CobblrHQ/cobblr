@@ -1,6 +1,6 @@
 {
   "lint": "lint:menus-keep-to-the-screen",
-  "run": "tsx scripts/lint-menus-keep-to-the-screen.ts",
+  "run": "node scripts/lint-menus-keep-to-the-screen.ts",
   "rows": [
     "generic-web-component"
   ],

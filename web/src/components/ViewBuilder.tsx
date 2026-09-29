@@ -19,7 +19,8 @@ export interface KindField {
   name: string;
   label: string;
   type: string;
-  /** Suggested values (custom text fields with choices, e.g. a `state`). */
+  /** The values the field takes, in order: a kind's declared native choices
+   *  (a machine's `state`) or a custom dropdown's. */
   choices?: string[];
   /** true for created_at/updated_at — sortable, but not a filter/group target
    *  we surface by default (they're timestamps). */
@@ -61,7 +62,7 @@ export function useKindFields(slug: string, entityKind: string): KindField[] {
     // Native declared fields for the kind.
     const kind = (kinds.data?.items ?? []).find((k) => k.id === entityKind);
     for (const f of kind?.fields ?? []) {
-      push({ name: f.name, label: presentation.label(f.name, humanize(f.name)), type: f.type });
+      push({ name: f.name, label: presentation.label(f.name, humanize(f.name)), type: f.type, choices: f.choices });
     }
     // Custom / bundle field-defs (carry display_label + choices).
     for (const f of customs.data?.items ?? []) {
@@ -80,6 +81,21 @@ export function useKindFields(slug: string, entityKind: string): KindField[] {
     }
     return out;
   }, [kinds.data, customs.data, entityKind, presentation]);
+}
+
+/** The values a kind's native field declares, in order (a machine's `state`),
+ *  from the same entity-kinds read useKindFields uses, and nothing else: a
+ *  dropdown needs the list, not the collection's labels. */
+export function useDeclaredChoices(slug: string, entityKind: string, field: string): string[] {
+  const kinds = useQuery({
+    queryKey: ["entity-kinds", slug],
+    queryFn: () => api.listEntityKinds(slug),
+    enabled: !!slug,
+  });
+  return useMemo(
+    () => (kinds.data?.items ?? []).find((k) => k.id === entityKind)?.fields.find((f) => f.name === field)?.choices ?? [],
+    [kinds.data, entityKind, field],
+  );
 }
 
 export function humanize(name: string): string {

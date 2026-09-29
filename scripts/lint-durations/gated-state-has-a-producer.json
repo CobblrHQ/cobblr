@@ -1,7 +1,8 @@
 {
   "lint": "lint:gated-state-has-a-producer",
-  "run": "tsx scripts/lint-gated-state-has-a-producer.ts",
+  "run": "node scripts/lint-gated-state-has-a-producer.ts",
   "ms": 3600,
   "recorded": "2026-09-14",
-  "source": "split from scripts/lint-durations.json (recorded 2026-09-14)"
+  "source": "split from scripts/lint-durations.json (recorded 2026-09-14)",
+  "readMB": 22.7
 }

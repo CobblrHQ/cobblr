@@ -1,7 +1,8 @@
 {
   "lint": "lint:header-rows",
-  "run": "tsx scripts/lint-header-rows.ts",
+  "run": "node scripts/lint-header-rows.ts",
   "ms": 495,
   "recorded": "2026-09-14",
-  "source": "split from scripts/lint-durations.json (recorded 2026-09-14)"
+  "source": "split from scripts/lint-durations.json (recorded 2026-09-14)",
+  "readMB": 5.7
 }

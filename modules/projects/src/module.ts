@@ -11,7 +11,7 @@ import { defineModule } from "@cobblr/platform-contract";
 
 export default defineModule({
   name: "projects",
-  version: "0.3.10",
+  version: "0.3.13",
   displayName: "Projects",
   description:
     "Projects + tasks + dependencies. Tasks can wait on other tasks or on any module's entity, the platform brokers.",
@@ -130,8 +130,8 @@ export default defineModule({
         invokeHandler: "projects.blocked-by",
         argsSchema: {
           depends_on_task_id: { label: "Id of the task this waits on", type: "text", oneOf: "waits-on" },
-          blocks_kind: { label: "Kind of record this waits on (e.g. purchases:order)", type: "text" },
-          blocks_id: { label: "Id of that record", type: "text", oneOf: "waits-on" },
+          blocks_kind: { label: "Kind of record this waits on (e.g. purchases:order)", type: "text", with: "blocks_id" },
+          blocks_id: { label: "Id of that record", type: "text", oneOf: "waits-on", with: "blocks_kind" },
         },
       },
       {
@@ -225,5 +225,14 @@ export default defineModule({
         trigger_event: "digifab.print.confirmed",
       },
     ],
+  },
+
+  lifecycle: {
+    onBoot: async () => {
+      // One-shot heal: keep the words of pattern PDFs read before words were
+      // kept (see heal-pattern-text.ts for the retirement condition).
+      const { registerPatternTextHeal } = await import("./api/heal-pattern-text.js");
+      registerPatternTextHeal();
+    },
   },
 });

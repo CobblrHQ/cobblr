@@ -1,7 +1,8 @@
 {
   "lint": "lint:ci-lanes",
-  "run": "tsx scripts/lint-ci-lanes.ts",
+  "run": "node scripts/lint-ci-lanes.ts",
   "ms": 422,
   "recorded": "2026-09-14",
-  "source": "split from scripts/lint-durations.json (recorded 2026-09-14)"
+  "source": "split from scripts/lint-durations.json (recorded 2026-09-14)",
+  "readMB": 0.1
 }

@@ -14,6 +14,9 @@
 
 import { Modal } from "@cobblr/platform-web";
 import { LocationChipPicker } from "./LocationChipPicker";
+import { useActiveOrg } from "../auth/ActiveOrgContext";
+import { noteRecentLocation } from "../lib/recentLocations";
+import type { PlaceSuggestion } from "../lib/sessionPlaceSuggestion";
 
 /** What the overlay is being opened FOR. `set` gives the session a location and
  *  stops there; `file` places and files in one go, because the button that
@@ -28,12 +31,15 @@ export function placementCopy(
   count: number,
   category: string | null,
 ): { title: string; subtitle: string } {
-  const title = mode === "set" ? `Where do these ${count} live?` : `Where do these ${count} go?`;
+  // One thing is "this one", never "these 1" (#3902).
+  const which = count === 1 ? "does this one" : `do these ${count}`;
+  const title = mode === "set" ? `Where ${which} live?` : `Where ${which} go?`;
+  const it = count === 1 ? "it's" : "they're";
   const subtitle =
     mode === "set"
       ? category
-        ? `Set the location for the whole session, then file as ${category}.`
-        : "Set the location for the whole session."
+        ? `Pick where ${count === 1 ? "this goes" : "these go"}, then ${it} filed as ${category}.`
+        : `Pick where ${count === 1 ? "this goes" : "these go"} for the whole session.`
       : category
       ? `Pick a location and the ${count} ready ${count === 1 ? "item is" : "items are"} filed into it as ${category}. Anything still needing review stays here.`
       : `Pick a location and the ${count} ready ${count === 1 ? "item is" : "items are"} filed into it. Anything still needing review stays here.`;
@@ -50,6 +56,8 @@ interface Props {
   category: string | null;
   /** The location the session is already set to, so the picker opens on it. */
   currentLocationId: string | null;
+  /** Where the session's items most likely go, and why (#3902). */
+  suggestion?: PlaceSuggestion | null;
   onPick: (locationId: string) => void;
   /** Only offered in `file` mode - a deliberate "I will place these later". */
   onFileWithoutLocation?: () => void;
@@ -66,19 +74,29 @@ export function SessionLocationModal({
   count,
   category,
   currentLocationId,
+  suggestion,
   onPick,
   onFileWithoutLocation,
   onReviewPlan,
   onClose,
 }: Props) {
+  const { activeSlug } = useActiveOrg();
   if (!open) return null;
   const { title, subtitle } = placementCopy(mode, count, category);
   return (
-    <Modal open onClose={onClose} size="lg" title={title} subtitle={subtitle}>
+    // The explanation is a sentence in the body, not the Modal's subtitle: that
+    // slot is small uppercase mono and read like a system message (#3902).
+    <Modal open onClose={onClose} size="lg" title={title}>
+      <p className="-mt-1 mb-3 text-sm text-muted dark:text-slate-400" data-testid="placement-explainer">
+        {subtitle}
+      </p>
       <LocationChipPicker
         value={currentLocationId}
+        suggestion={suggestion ?? null}
+        withShortcuts
         onChange={(v) => {
           if (!v) return;
+          noteRecentLocation(activeSlug, v);
           onPick(v);
         }}
       />

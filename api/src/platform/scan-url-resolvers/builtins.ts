@@ -5,48 +5,41 @@
 
 import type { ScanUrlResolverManifest } from "./types.js";
 
-/** Polar Filament — the QR (`3dqr.co/?i=<id>-<checksum>`) carries a spool ref;
- *  pfil.us returns structured spool JSON (Polar gave us the API directly).
- *  Replaces the old maker-scan/vendors/polar.ts code 1:1. */
+/** Polar Filament. The spool's QR (`3dqr.co/?i=<id>-<check>`) carries a key,
+ *  and Polar publishes the spool as OpenTag3D JSON at `ot3dWebApi.php?i=<key>`
+ *  (the page a `?j=` link redirects to). The key's check suffix is
+ *  anti-enumeration: only a scanned spool resolves. No email or key is sent.
+ *  The per-spool QC the HTML page (`view.php`) adds, measured tolerance and
+ *  ovality and who made it, is not read: the JSON carries everything a spool
+ *  record uses. */
 export const POLAR_FILAMENT: ScanUrlResolverManifest = {
   id: "polar-filament",
   label: "Polar Filament",
   enabled: true,
-  match: { pattern: "(?:3dqr\\.co|pfil\\.us)", key: "[?&]i=([0-9]+-[A-Za-z0-9]+)" },
+  // A printed QR carries `i=`; a pasted JSON link carries `j=`.
+  match: { pattern: "(?:3dqr\\.co|pfil\\.us)", key: "[?&][ij]=([0-9]+-[A-Za-z0-9]+)" },
   request: {
     method: "GET",
-    // `{contact:email}` resolves to THIS instance's operator address, so the
-    // vendor can reach whoever actually made the call. It used to be an
-    // env_defaults literal naming the publisher's own mailbox, which meant every
-    // self-hosted lookup was attributed to them. No default: with no contact
-    // configured the interpreter skips this resolver and says why.
-    url: "https://pfil.us/query_spool.php?i={key}&email={contact:email}&version=1.00",
-    // No URL here either — the interpreter appends this instance's own.
-    headers: { "user-agent": "CobblrScan/1.0" },
+    url: "https://3dqr.co/ot3dWebApi.php?i={key}",
+    // No URL here: the interpreter appends this instance's own.
+    headers: { "user-agent": "CobblrScan/1.0", accept: "application/json" },
     timeout_ms: 8000,
+    // Measured 2026-09-28: back-to-back calls get 429, one every 3 s is served.
+    min_interval_ms: 3000,
   },
   response: {
-    require: { status: "OK" },
-    require_any: ["spool.material_name", "spool.color"],
-    root: "spool",
+    require: { opentag_version: "present" },
+    require_any: ["tag_data.material", "tag_data.color_name"],
   },
   output: {
-    source: "polar-pfil",
-    name: { concat: ["color", "material_name"], sep: " ", fallback: "Filament" },
-    brand: { path: "brand_name", default: "Polar Filament" },
-    category: "filament",
-    entityType: "part",
-    fields: {
-      material: "material_name",
-      color: "color",
-      diameter: { path: "diameter", suffix: " mm" },
-      size: { path: "mass_grams", scale: 0.001, suffix: " kg" },
-      batch_code: { path: "id", stringify: true },
-      nozzle_temp: "nozzle_temp",
-      bed_temp: "bed_temp",
-    },
+    source: "polar-opentag3d",
+    preset: "opentag3d",
+    brand: { path: "tag_data.manufacturer", default: "Polar Filament" },
+    fields: {},
   },
-  cache_ns: "polar-spool-pfil-v2",
+  // A new namespace: a spool cached from the old endpoint carried none of the
+  // tag's temperature ranges, UPC or colour, and would be served for good.
+  cache_ns: "polar-spool-ot3d-v1",
 };
 
 export const BUILTIN_SCAN_URL_RESOLVERS: ScanUrlResolverManifest[] = [POLAR_FILAMENT];

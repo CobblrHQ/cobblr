@@ -34,7 +34,9 @@ import {
   RECEIPT_WEIGHT_NAMES as WEIGHT_NAMES,
   RECEIPT_WEIGHT_UNIT_NAMES as WEIGHT_UNIT_NAMES,
   RECEIPT_UNIT_PRICE_NAMES as UNIT_PRICE_NAMES,
+  PURCHASE_PRICE_NAMES,
 } from "@cobblr/platform-contract/receipt-fact-names";
+import { listingOf, type ListingRead } from "./listing-evidence.js";
 import {
   fieldProvenanceOf,
   isAcquiredFromField,
@@ -42,6 +44,7 @@ import {
   isSellerField,
   mayWriteField,
   purchaseFieldRole,
+  sameSource,
   type FieldProvenanceMap,
 } from "@cobblr/platform-contract/acquisition-source";
 
@@ -88,7 +91,11 @@ export function applyReceiptFacts(
   menu: readonly ScanMenuEntry[],
 ): FieldProvenanceMap {
   const stamps: FieldProvenanceMap = {};
-  if (!meta || meta.source !== "receipt") return stamps;
+  if (!meta) return stamps;
+  if (meta.source !== "receipt") {
+    const listing = listingOf(meta);
+    return listing ? applyListingFacts(listing, meta, candidates, menu) : stamps;
+  }
   const vendor = str(meta.receipt_vendor);
   const seller = str(meta.receipt_seller);
   const date = str(meta.receipt_date);
@@ -124,6 +131,71 @@ export function applyReceiptFacts(
       else if (weightUnit && WEIGHT_UNIT_NAMES.test(name)) write(f, weightUnit);
       else if (unitPrice !== null && weight !== null && UNIT_PRICE_NAMES.test(name) && f.type === "number") {
         write(f, unitPrice);
+      }
+    }
+  }
+  return stamps;
+}
+
+// ── A listing screenshot's facts (#3853) ─────────────────────────────────
+// The page printed where it was sold, by whom, for how much and in what
+// condition. Those are evidence exactly as a receipt's are, stamped
+// `from: "listing"`, written by the same rule (never over a person's
+// answer). No date: "listed 12 weeks ago" is when it went up for sale, not
+// when it was bought.
+
+const CONDITION_NAMES = /^(condition|item_condition)$/;
+
+/** The same words for one choice: case, dashes and spacing aside. */
+const choiceKey = (v: string): string => v.toLowerCase().replace(/[\u2012-\u2015-]+/g, "-").replace(/\s+/g, " ").trim();
+
+/** The value a field with choices takes: its own spelling of the choice
+ *  that means the same thing, or null when none does. A free field takes
+ *  the listing's words. */
+function onChoices(f: { choices?: string[] }, value: string, same: (a: string, b: string) => boolean): string | null {
+  if (!f.choices?.length) return value;
+  return f.choices.find((c) => same(c, value)) ?? null;
+}
+
+function priceWords(l: ListingRead): string {
+  const n = l.price!;
+  const amount = Number.isInteger(n) ? String(n) : n.toFixed(2);
+  if (!l.currency || l.currency === "USD") return `$${amount}`;
+  return `${amount} ${l.currency}`;
+}
+
+function applyListingFacts(
+  listing: ListingRead,
+  meta: ReceiptFactsMeta,
+  candidates: CandidateLike[],
+  menu: readonly ScanMenuEntry[],
+): FieldProvenanceMap {
+  const stamps: FieldProvenanceMap = {};
+  const prior = fieldProvenanceOf(meta);
+  for (const cand of candidates) {
+    const entry = entryFor(cand, menu);
+    if (!entry) continue;
+    const fields = (cand.fields ??= {});
+    const write = (f: { name: string; field_role?: string | null }, value: string | number) => {
+      const was = fields[f.name];
+      if (!mayWriteField(prior[f.name], "evidence", { hasEvidence: true, hasValue: was !== undefined && was !== null && was !== "" })) return;
+      fields[f.name] = value;
+      const role = purchaseFieldRole(f);
+      const displaced = was !== undefined && was !== null && String(was).trim() !== "" && String(was).trim() !== String(value).trim() ? String(was) : null;
+      stamps[f.name] = { by: "evidence", from: "listing", ...(role ? { role } : {}), ...(displaced ? { replaced: displaced } : {}) };
+    };
+    for (const f of entry.fields) {
+      const name = f.name.toLowerCase();
+      if (listing.marketplace && isAcquiredFromField(f)) {
+        const v = onChoices(f, listing.marketplace, sameSource);
+        if (v) write(f, v);
+      } else if (listing.seller && isSellerField(f) && !(listing.marketplace && sameSource(listing.seller, listing.marketplace))) {
+        write(f, listing.seller);
+      } else if (listing.price !== null && PURCHASE_PRICE_NAMES.test(name) && !/unit|per_/.test(name)) {
+        write(f, f.type === "number" || f.type === "currency" ? listing.price : priceWords(listing));
+      } else if (listing.condition && CONDITION_NAMES.test(name)) {
+        const v = onChoices(f, listing.condition, (a, b) => choiceKey(a) === choiceKey(b));
+        if (v) write(f, v);
       }
     }
   }

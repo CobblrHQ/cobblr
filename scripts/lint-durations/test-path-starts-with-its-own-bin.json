@@ -1,7 +1,8 @@
 {
   "lint": "lint:test-path-starts-with-its-own-bin",
-  "run": "tsx scripts/lint-test-path-starts-with-its-own-bin.ts",
+  "run": "node scripts/lint-test-path-starts-with-its-own-bin.ts",
   "ms": 820,
   "recorded": "2026-09-14",
-  "source": "split from scripts/lint-durations.json (recorded 2026-09-14)"
+  "source": "split from scripts/lint-durations.json (recorded 2026-09-14)",
+  "readMB": 7.1
 }

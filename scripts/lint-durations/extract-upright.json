@@ -1,7 +1,8 @@
 {
   "lint": "lint:extract-upright",
-  "run": "tsx scripts/lint-extract-upright.ts",
+  "run": "node scripts/lint-extract-upright.ts",
   "ms": 303,
   "recorded": "2026-09-14",
-  "source": "split from scripts/lint-durations.json (recorded 2026-09-14)"
+  "source": "split from scripts/lint-durations.json (recorded 2026-09-14)",
+  "readMB": 1.9
 }

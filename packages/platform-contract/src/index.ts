@@ -7,6 +7,8 @@
 // later phases.
 
 import { z } from "zod";
+import { SERVICE_EFFECTS, type PlatformServices } from "@cobblr/platform-contract/services";
+export type { PlatformServices } from "@cobblr/platform-contract/services";
 import type { DateFieldDirection } from "@cobblr/platform-contract/date-field-direction";
 
 export type { DateFieldDirection } from "@cobblr/platform-contract/date-field-direction";
@@ -26,6 +28,7 @@ export { approvalDedupeKey, blockedSentence, type ApprovalRemedy, type ApprovalR
 import type { BlockedAction } from "@cobblr/platform-contract/blocked-action";
 export { destinationLabel, normaliseTargetKind, type DestinationTable } from "@cobblr/platform-contract/destination-label";
 import type { TitleVariants } from "@cobblr/platform-contract/display-identity";
+import type { Disposition } from "@cobblr/platform-contract/disposition";
 export { NotificationBatcher, type ComposedBurst } from "@cobblr/platform-contract/notification-batcher";
 import type {
   ResolvableProvider,
@@ -111,6 +114,11 @@ export const FIELD_TYPE_VALUES = [
   // is the type the `assignee` role sits on — see
   // design-decisions/household-accountability.md §1.
   "member",
+  // Someone on the workspace's People list: a member (tied to their account)
+  // or anyone else by name, who may be invited later and keep what is theirs.
+  // Stored as the list entry's id, named at READ time. The type the `owner`
+  // meaning sits on (#3787).
+  "person",
 ] as const;
 export type FieldDefType = (typeof FIELD_TYPE_VALUES)[number];
 export const FieldTypeSchema = z.enum(FIELD_TYPE_VALUES);
@@ -175,6 +183,7 @@ export const FIELD_ROLE_VALUES = [
   "ready-from",
   "ready-until",
   "year-made",
+  "belongs-to",
 ] as const;
 export type FieldRole = (typeof FIELD_ROLE_VALUES)[number];
 
@@ -226,6 +235,10 @@ export const FIELD_ROLE_LABELS: Record<
   // unit like the lot: one barcode covers every vintage of a wine, so the
   // year never becomes a fact about the barcode.
   "year-made": { label: "The year it was made", pickable: true },
+  // Whose it is, which is not who has it now (that is `assignee`, and it
+  // turns on Lending). A member or anyone on the workspace's People list.
+  // Not called "owner": that word is the workspace role.
+  "belongs-to": { label: "Who it belongs to", pickable: true },
 };
 
 /** The capability that already owns this role's question, or null when the
@@ -1385,6 +1398,12 @@ const EntityAction = z.object({
   // help. When in doubt, leave it: the cost is a refusal that explains itself,
   // not a silently missing capability.
   undoable: z.boolean().default(false),
+  /** What running it does to the world, which decides who has to say yes
+   *  (services.md §9): `none`, `writes`, `physical` (moves or heats
+   *  something: sending a print) or `spends`. The same field a service
+   *  capability declares. Absent reads as `writes`. `physical` is never run
+   *  without a person's confirm, from any door. */
+  effect: z.enum(SERVICE_EFFECTS).optional(),
   /** What this action does to a dated thing that is due, when it is one of
    *  the verbs that settle it: `used` (it is gone, used), `discarded` (it went
    *  off and was thrown out), `still-good` (checked, fine, due again later).
@@ -1440,6 +1459,15 @@ const EntityAction = z.object({
         // Required as a group ("fields or rename_to"): at least one of the
         // arguments naming the same group must be carried.
         oneOf: z.string().min(1).optional(),
+        // What may be picked, in a person's words; the form offers a choice
+        // instead of a text box. `choicesFrom` is the same for choices that
+        // depend on the record's kind (its counters), resolved by the server
+        // when it lists the kind's actions.
+        choices: z.array(z.object({ value: z.string().min(1), label: z.string().min(1) })).optional(),
+        choicesFrom: z.enum(["counters"]).optional(),
+        // Asked and required together with that argument (every_n with
+        // every_unit): the form waits for both and the door refuses one alone.
+        with: z.string().min(1).optional(),
       }),
     )
     .optional(),
@@ -2147,8 +2175,14 @@ export interface ActivityLogParams {
   /** HOW the write was made, when the caller knows better than the request
    *  context: a sync names itself ("automation", "<connection> sync"), so a
    *  record it creates is not a row with no actor (#3836). */
-  via?: { kind: "mcp" | "assistant" | "automation"; label?: string | null } | null;
+  via?: { kind: ActivityViaKind; label?: string | null } | null;
 }
+
+/** HOW a write was made, beside who made it. The one list: the api's request
+ *  context and every module read it from here. `surface` is a place in the
+ *  app that is not a record's own page (a floor plan, a shelf drawing), its
+ *  label the words the activity shows ("via floor plan"). */
+export type ActivityViaKind = "mcp" | "assistant" | "automation" | "label" | "surface";
 
 export interface PlatformActivity {
   log(p: ActivityLogParams): Promise<void>;
@@ -2278,6 +2312,11 @@ export interface ResolvedEntity {
    *  served and never formats; the forms ride beside it for anything that
    *  needs to say where a title came from (#3061). */
   title_variants?: TitleVariants;
+  /** On a search result that matched inside the record's words rather than
+   *  its name (a pattern's PDF, its notes): the line the searched word is on,
+   *  so a surface can say why the record is here. Absent on a name match and
+   *  outside a search. */
+  snippet?: string;
 }
 
 /** Module-side resolver for an entity kind. Registered at module
@@ -2578,6 +2617,12 @@ export interface ScannableInfo {
    *  kinds without a native quantity (one row = one thing, e.g. a record):
    *  scan flows then skip the qty bump / adjust affordances for that kind. */
   qtyField?: string;
+  /** The qty field says how many identical things one record stands for, and
+   *  the kind's list never also returns those things as records of their own
+   *  (a unit named under its parent stays under it). Then a count answers in
+   *  both records and things (`count_records`' `units`). Leave it off while
+   *  the list can return a thing twice, or the count would add it twice. */
+  qtyCountsThings?: boolean;
   /** Marks this the fallback scan target when no identify hint matches a noun
    *  (at most one should set it). Lets core-scan route an unhinted scan without
    *  hardcoding a default module. */
@@ -2615,6 +2660,13 @@ export interface EntityWriter {
    *  assistant and one by the next sync, was the bug (#3836). */
   findByKey?(orgId: string, key: { field: string; metadata: boolean }, value: string): Promise<string | null>;
   delete(orgId: string, id: string): Promise<void>;
+  /** Optional: this thing is no longer the person's (sold, given away, parted
+   *  out, …; `@cobblr/platform-contract/disposition`). The module records it
+   *  the way its kind already means "out of use" (a machine's lifecycle
+   *  state, a part's archive flag), so the record reads back `retired: true`
+   *  and keeps its history. A kind without it has no such notion, and a
+   *  caller says so rather than pretending. */
+  retire?(orgId: string, id: string, how: { disposition: Disposition }): Promise<void>;
   /** Optional: existing entities of this kind, for a natural-key match during
    *  an import preview — so a one-time import MERGES a source record into an
    *  already-present row (same name) instead of duplicating it. Without this,
@@ -2681,6 +2733,24 @@ export interface EntityWriter {
    *
    *  Names, not a count, so the refusal can say WHICH thing it protected. */
   dependents?(orgId: string, id: string): Promise<string[]>;
+  /** Optional: the usage counters a record of this kind keeps (a printer's
+   *  print hours and prints), and a read of one record's current values. A
+   *  maintenance schedule "every 200 print hours" is due by these, and the
+   *  record's own module is the only one allowed to read its table (#3876).
+   *  A value is null when the record has not counted anything yet. */
+  counters?: EntityCounters;
+}
+
+/** One counter a kind keeps: its key in the kind's own storage, and what it
+ *  counts in words a person reads ("print hours"). */
+export interface EntityCounterDef {
+  key: string;
+  label: string;
+}
+
+export interface EntityCounters {
+  defs: readonly EntityCounterDef[];
+  read(orgId: string, id: string): Promise<Record<string, number | null>>;
 }
 
 /** A writer's refusal to create a second record where one of that name
@@ -3294,12 +3364,20 @@ export interface FaceVerdict {
   faces: FaceName[];
   /** Which faces were chosen in config rather than derived. */
   explicit: FaceName[];
+  /** The faces a person may turn on from a record ("More about this item").
+   *  Every face not worn, except where the collection's shape rules them
+   *  out: a family's type collection offers none (its things carry them). */
+  offers: FaceName[];
 }
 
 export interface EntityActionRecord {
   id: string;
   module_name: string;
   label: string;
+  /** Can a mistaken run be put back (the manifest's `undoable`)? A surface
+   *  that runs it one tap from a scan or a list row reads this: an action
+   *  label only offers what its Undo can take back (#3897). */
+  undoable?: boolean;
   description: string | null;
   icon: string | null;
   applies_to: ActionAppliesToDecl;
@@ -3329,7 +3407,7 @@ export interface EntityActionRecord {
   position: number;
   /** Machine-readable arg shape for the wire composer / invoke forms; null if
    *  the action declared none. */
-  args_schema: Record<string, { label: string; type: "text" | "number" | "boolean" | "list" | "json"; required?: boolean; oneOf?: string }> | null;
+  args_schema: Record<string, { label: string; type: "text" | "number" | "boolean" | "list" | "json"; required?: boolean; oneOf?: string; choices?: { value: string; label: string }[]; choicesFrom?: "counters"; with?: string }> | null;
   version: string;
 }
 
@@ -4250,6 +4328,23 @@ export interface AiEntitlementGuard {
  *  sets "strict" at boot. See docs/operations/security-audit.md §10. */
 export type AiEndpointPolicy = "lan" | "strict";
 
+/** One AI in the order a call would ask them (platform().ai.chainFor). */
+export interface AiChainStep {
+  position: number;
+  /** Within the providers one call may ask. */
+  asked: boolean;
+  provider_id: string;
+  /** The connection's own name for a personal one or a workspace provider
+   *  with a label; the provider's otherwise. */
+  label: string;
+  model: string;
+  floating: boolean;
+  source: "yours" | "shared" | "workspace" | "managed";
+  credential_id?: string;
+  owner_user_id?: string;
+  provider_row_id?: string;
+}
+
 export interface PlatformAi {
   registerProvider(p: AiProviderDef): void;
   /** Register the (single) entitlement guard. Last registration wins;
@@ -4276,6 +4371,12 @@ export interface PlatformAi {
     rank?: number;
   }>;
   getProvider(id: string): AiProviderDef | null;
+  /** Every AI a call for `capability` by `userId` would ask, in the order it
+   *  asks them: the router's own walk (#3842), so a surface that lists
+   *  choices cannot offer one the router would never reach or leave out one
+   *  it would. A person's own "Just me" connection is in it; somebody else's
+   *  is only when shared with the workspace. */
+  chainFor(orgId: string, userId: string | null, capability: AiCapability, opts?: { limit?: number }): Promise<{ steps: AiChainStep[] }>;
   /** Single entry point for any module to use AI. Picks provider +
    *  model from the workspace's capability defaults, calls the
    *  cache, calls the provider, writes audit + cache rows, returns
@@ -4430,6 +4531,26 @@ export interface EdgeConsumer {
   href: string;
 }
 
+/** One of a workspace's bridges, as a person would recognise it. */
+export interface EdgeBridgeRecord {
+  /** Its channel id; null for the workspace's first (default) bridge. Never
+   *  shown to a person: `name` is. */
+  bridge: string | null;
+  /** What a person calls it (the name typed when it was installed, or set
+   *  since); null when it was installed before bridges had names. */
+  name: string | null;
+  connected: boolean;
+  last_seen: string;
+  first_seen: string;
+  version: string | null;
+  hostname: string | null;
+  /** The addresses the bridge says it will reach (BRIDGE_ALLOW on the box);
+   *  null when it reaches whatever the workspace points it at. */
+  allowlist: string[] | null;
+  /** Whether Cobblr knows the key it registers with, so it can be cut off. */
+  can_disconnect: boolean;
+}
+
 export interface PlatformEdge {
   /** Hosted relay: register a live channel for a workspace. Returns an
    *  unregister fn. One channel per workspace — a newer connection replaces an
@@ -4450,8 +4571,18 @@ export interface PlatformEdge {
   // named one, or a bare userId for a personal (account-scoped) agent.
 
   /** Announce/refresh a bridge: registers the channel on first touch and
-   *  bumps its liveness clock. */
-  relayTouch(key: string): Promise<void>;
+   *  bumps its liveness clock. At /register the bridge's own report rides
+   *  along (its version and machine, and the token it installed with, whose
+   *  name becomes the bridge's first name). */
+  relayTouch(key: string, report?: { version?: string | null; hostname?: string | null; tokenId?: string | null; allow?: string[] | null }): Promise<void>;
+  /** Every bridge this workspace has, online or not, by the name a person
+   *  recognises. */
+  listBridges(orgId: string): Promise<EdgeBridgeRecord[]>;
+  /** Rename a bridge; false when this workspace has no such bridge. */
+  renameBridge(orgId: string, bridge: string | null, name: string): Promise<boolean>;
+  /** Revoke the key a bridge registers with and remove it; null when the
+   *  workspace has no such bridge. */
+  disconnectBridge(orgId: string, bridge: string | null): Promise<{ alsoCut: string[] } | null>;
   /** Long-poll for the next queued request; resolves null on keep-alive
    *  timeout or when the poller hangs up (pass an abort signal). */
   relayPoll(key: string, opts?: { signal?: AbortSignal }): Promise<EdgeRelayItem | null>;
@@ -4720,22 +4851,47 @@ export interface EntityRef {
  *  container (`place` upserts); `place` is trait-gated (container must be
  *  physical / `canContain`, containee `canBeContained`) and rejects a placement
  *  that would form a containment cycle. */
+/** Where a thing sits inside its container, in millimetres from the
+ *  container's top-left corner (a pin on a floor plan or a shelf drawing). */
+export interface PlacementPosition {
+  x_mm: number;
+  y_mm: number;
+}
+
 export interface PlatformPlacement {
   /** Put `containee` inside `container` (moving it if already placed). Throws on
-   *  a self-placement, an ineligible kind, or a cycle. */
+   *  a self-placement, an ineligible kind, or a cycle.
+   *
+   *  `position` pins it inside the container. Moving to ANOTHER container
+   *  without one drops the old pin (it measured a different room); placing in
+   *  the same container without one keeps it; `null` clears it.
+   *  `via` says what moved it ("floor plan"), and makes the move an activity
+   *  row on the thing, in the person's words. */
   place(args: {
     orgId: string;
     containee: EntityRef;
     container: EntityRef;
     slot?: string | null;
     placedBy?: string | null;
+    position?: PlacementPosition | null;
+    via?: string;
   }): Promise<void>;
   /** Take `containee` out of whatever container it's in (no-op if unplaced). */
   remove(args: { orgId: string; containee: EntityRef }): Promise<void>;
   /** The container a containee currently lives in, or null. */
   containerOf(args: { orgId: string; containee: EntityRef }): Promise<EntityRef | null>;
-  /** Everything directly inside a container (one level; not recursive). */
-  contents(args: { orgId: string; container: EntityRef }): Promise<EntityRef[]>;
+  /** Everything directly inside a container (one level; not recursive), with
+   *  its slot and pin where it has them. */
+  contents(args: { orgId: string; container: EntityRef }): Promise<Array<EntityRef & { slot?: string | null; position?: PlacementPosition | null }>>;
+}
+
+/** Fields as a platform seam, for a module that owns a field a bundle
+ *  declared and has folded into another: `retire` removes that field's
+ *  definition from one kind (values already recorded stay on the records, as
+ *  a hand-removed field's do). The one door so a module never reaches the
+ *  field-def table itself. Resolves with how many definitions went. */
+export interface PlatformFields {
+  retire(args: { orgId: string; kind: string; name: string }): Promise<number>;
 }
 
 /** Tags as a platform seam. core-tags OWNS the tables and the HTTP surface;
@@ -5144,6 +5300,15 @@ export interface ConnectorImportDecl {
   sections: Record<string, string>;
 }
 
+/** How to get files out of somewhere, shown on an import when the batch
+ *  question is answered with that place (Source: Ribblr). The bundle knows the
+ *  place; the import only knows to show what the bundle wrote. */
+export interface FileIntakeGuide {
+  when: { field: string; equals: string };
+  title: string;
+  steps: string[];
+}
+
 export interface FileIntakeDecl {
   accept: string[];
   role: string;
@@ -5151,6 +5316,7 @@ export interface FileIntakeDecl {
   folder_field?: string;
   ask?: string[];
   label?: string;
+  guides?: FileIntakeGuide[];
 }
 
 /** One owner per named job, across every api process sharing this database.
@@ -5216,11 +5382,24 @@ export interface TenantSweepPass {
   /** A meta-side gate: given the workspaces in scope, the ones worth opening
    *  a pool for this round, or null for all of them. Answering from what the
    *  process already knows costs zero tenant connections on a round with
-   *  nothing to do (#3034). */
-  candidates?: (orgIds: string[]) => Promise<string[] | null>;
+   *  nothing to do (#3034). `named` is true when the caller asked for these
+   *  workspaces by id (an operator or a test running the pass on one
+   *  workspace): a gate that skips what it already visited must not skip a
+   *  workspace somebody asked for. */
+  candidates?: (orgIds: string[], opts: { named: boolean }) => Promise<string[] | null>;
   /** One workspace, its db open (a Kysely instance, cast to the module's
    *  schema). Throwing fails this visit only; the walk continues. */
   visit: (ctx: TenantSweepVisit) => Promise<TenantSweepVisitResult | void>;
+  /** What a workspace needs from this pass the moment its `module` is
+   *  enabled there, so it is born with it instead of waiting for its first
+   *  round (CLAUDE.md 8.1, BORN WITH). Run once by enableModuleForOrg, with
+   *  the workspace's db open. Keep it cheap: no network, no long work; set
+   *  up state and leave the work to the rounds. Only a pass that names its
+   *  `module` has an enable to hook, so a pass without one never runs this.
+   *  At boot, reconcileDefaultModules can enable a module before its onBoot
+   *  has registered the pass; such a workspace gets the state from the
+   *  pass's first round instead, so this holds for enables after boot. */
+  onEnable?: (ctx: TenantSweepVisit) => Promise<void>;
 }
 
 export interface TenantSweepVisit {
@@ -5395,6 +5574,11 @@ export interface PlatformInstances {
     instanceName: string,
     patch: Record<string, unknown>,
   ): Promise<void>;
+  /** One instance's config as its module sees it on a request
+   *  (req.instanceConfig): the instance row's config under the presentation
+   *  override its bundle wrote (item noun, qty unit, `parent`). For work
+   *  outside a request, like a boot heal. Null when there is no such instance. */
+  configOf(orgId: string, instanceName: string): Promise<Record<string, unknown> | null>;
 }
 
 // ─────────────────────── Hosted-overlay extension seams ─────────────────────
@@ -5479,6 +5663,16 @@ export interface PlatformAccounts {
    *  late for somebody rather than early for anybody (#3351). The rule itself
    *  is `@cobblr/platform-contract/day`; this only knows where they are. */
   dayFor(userId: string | null | undefined, opts?: { said?: unknown; now?: Date }): Promise<string>;
+  /** The names people go by in a workspace, for a module that recorded WHO
+   *  did something ("Sam took 1") and must say it. Read at display time, so a
+   *  rename shows everywhere at once, never a copy taken when it happened.
+   *  Only members of `orgId`: an id that is not (someone who has left) is
+   *  simply absent, and the caller says so in its own words. */
+  displayNames(orgId: string, userIds: readonly string[]): Promise<Record<string, string>>;
+  /** The person this request acts for, or null outside one (a wire on a
+   *  timer, a boot pass, a sync). The same actor the activity log records,
+   *  so a module that writes its own history names the same person. */
+  currentUserId(): string | null;
 }
 
 export interface RequestGuardCtx { ip: string; path: string; method: string; userId?: string }
@@ -5748,12 +5942,15 @@ export interface Platform {
   nav: PlatformNav;
   edge: PlatformEdge;
   connections: PlatformConnections;
+  /** Outside work: services and their jobs (services.md §10). */
+  services: PlatformServices;
   egress: PlatformEgress;
   auth: PlatformAuth;
   pairings: PlatformPairings;
   placement: PlatformPlacement;
   categoryAxis: PlatformCategoryAxis;
   tags: PlatformTags;
+  fields: PlatformFields;
   catalogs: PlatformCatalogs;
   files: PlatformFiles;
   instances: PlatformInstances;

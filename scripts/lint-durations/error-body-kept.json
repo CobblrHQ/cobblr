@@ -1,7 +1,8 @@
 {
   "lint": "lint:error-body-kept",
-  "run": "tsx scripts/lint-error-body-kept.ts",
+  "run": "node scripts/lint-error-body-kept.ts",
   "ms": 418,
   "recorded": "2026-09-14",
-  "source": "split from scripts/lint-durations.json (recorded 2026-09-14)"
+  "source": "split from scripts/lint-durations.json (recorded 2026-09-14)",
+  "readMB": 0.4
 }

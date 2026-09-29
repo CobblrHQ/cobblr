@@ -47,7 +47,18 @@ function readLine(s: PatternNeedsState | undefined): { text: string; tone: "mute
   }
 }
 
-export function PatternNeedsPanel({ designId, api }: { designId: string; api: ProjectsApi }) {
+export function PatternNeedsPanel({
+  designId,
+  api,
+  bodyText,
+}: {
+  designId: string;
+  api: ProjectsApi;
+  /** The pattern's own text (its description). A pattern saved from words,
+   *  before its text was read on the way in, lists nothing until this is
+   *  read: the panel offers that as one tap. */
+  bodyText?: string | null;
+}) {
   const qc = useQueryClient();
   const units = useUnits();
   const [editing, setEditing] = useState<PatternNeed | { kind: PatternNeedKind } | null>(null);
@@ -61,6 +72,7 @@ export function PatternNeedsPanel({ designId, api }: { designId: string; api: Pr
   });
   const refresh = () => void qc.invalidateQueries({ queryKey: patternNeedsKey(designId) });
   const reread = useMutation({ mutationFn: () => api.rereadPattern(designId), onSuccess: refresh });
+  const fromText = useMutation({ mutationFn: () => api.readPastedMaterials(designId, (bodyText ?? "").slice(0, 20_000)), onSuccess: refresh });
   const pickLength = useMutation({
     mutationFn: (v: { id: string; choice: string }) => api.updateNeed(designId, v.id, { length_choice: v.choice }),
     onSuccess: refresh,
@@ -82,14 +94,16 @@ export function PatternNeedsPanel({ designId, api }: { designId: string; api: Pr
   const yarns = (s?.items ?? []).filter((n) => n.kind === "yarn");
   const tools = (s?.items ?? []).filter((n) => n.kind === "hook" || n.kind === "needle");
   const notions = (s?.items ?? []).filter((n) => n.kind === "notion");
-  const line = readLine(s);
+  // Nothing listed, no PDF, but words on the page: read them, one tap.
+  const canReadText = !!s && s.items.length === 0 && s.read.status === "none" && !!bodyText?.trim();
+  const line = canReadText ? { text: "Its text is on this page. Read the yarn, hook and notions it names from it.", tone: "muted" as const } : readLine(s);
   const metres = (m: number) => units.format(Math.round(m), "m");
 
   return (
     <div className="rounded-xl border border-line dark:border-slate-700 bg-surface dark:bg-slate-900 p-5" data-testid="pattern-needs-panel">
       <div className="flex items-center gap-2 mb-2">
         <div className="text-[10px] font-mono uppercase tracking-widest text-accent">// what this pattern needs</div>
-        {s && s.read.status !== "none" && s.read.status !== "pending" && (
+        {s && s.read.status !== "none" && s.read.status !== "pending" && s.read.pattern_file_id && (
           <button
             type="button"
             onClick={() => reread.mutate()}
@@ -102,12 +116,30 @@ export function PatternNeedsPanel({ designId, api }: { designId: string; api: Pr
         )}
       </div>
       <MutationError mutation={reread} className="block mb-2">Could not read it again:</MutationError>
+      <MutationError mutation={fromText} className="block mb-2">Could not read its text:</MutationError>
       <MutationError mutation={pickLength} className="block mb-2">Could not pick that length:</MutationError>
       <MutationError mutation={remove} className="block mb-2">Could not remove that row:</MutationError>
       {line && (
         <p className={`text-xs mb-3 ${line.tone === "warn" ? "text-ember-600 dark:text-ember-400" : "text-faint dark:text-slate-500"}`} data-testid="pattern-needs-read">
           {line.text}
         </p>
+      )}
+
+      {canReadText && (
+        <div className="mb-3">
+          <button
+            type="button"
+            onClick={() => fromText.mutate()}
+            disabled={fromText.isPending}
+            className="rounded-md bg-cobble-600 hover:bg-cobble-700 text-white text-sm px-3 py-2 min-h-9 disabled:opacity-40"
+            data-testid="pattern-needs-read-text"
+          >
+            {fromText.isPending ? "Reading…" : "Read what it needs from its text"}
+          </button>
+          {fromText.data && !fromText.data.ai && fromText.data.reason && (
+            <p className="text-xs text-ember-600 dark:text-ember-400 mt-2">{fromText.data.reason}</p>
+          )}
+        </div>
       )}
 
       {yarns.length > 0 && (

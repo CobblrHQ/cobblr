@@ -1,0 +1,7 @@
+{
+  "_fixture": "e2e/fixtures/scan-crop/voron-listing.jpg",
+  "_why": "#3853: where the item sits in the listing screenshot",
+  "image_ahash": "02000000ffffffff",
+  "capability": "split-image",
+  "reply": "{\"items\": [{\"name\": \"Voron 0.1 3D printer\", \"brand\": \"Voron\", \"qty\": 1, \"box\": {\"x\": 0.04, \"y\": 0.04, \"w\": 0.82, \"h\": 0.42}}]}"
+}

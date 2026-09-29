@@ -1,7 +1,8 @@
 {
   "lint": "lint:bundle-content",
-  "run": "tsx scripts/lint-bundle-content.ts",
+  "run": "node scripts/lint-bundle-content.ts",
   "ms": 487,
   "recorded": "2026-09-14",
-  "source": "split from scripts/lint-durations.json (recorded 2026-09-14)"
+  "source": "split from scripts/lint-durations.json (recorded 2026-09-14)",
+  "readMB": 1.0
 }

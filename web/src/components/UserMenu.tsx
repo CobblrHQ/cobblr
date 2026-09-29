@@ -9,11 +9,16 @@
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { Link, NavLink } from "react-router-dom";
+import { useQuery } from "@tanstack/react-query";
+import { CONNECT_DISCORD_PATH } from "../lib/discord-connect";
 import {
   ArrowRight,
+  Bell,
   Cable,
   CalendarDays,
   ChevronDown,
+  ChevronRight,
+  Settings,
   LogOut,
   MessageSquare,
   Rocket,
@@ -24,10 +29,8 @@ import {
   SlidersHorizontal,
   Sun,
   UserCog,
-  UserRound,
   Compass,
-  DoorOpen,
-} from "lucide-react";
+  DoorOpen, Package } from "lucide-react";
 import { startTour } from "../tour/useTour";
 import { useAuth } from "../auth/AuthContext";
 import { useActiveOrg } from "../auth/ActiveOrgContext";
@@ -42,6 +45,27 @@ import { api, isFocused, setFocused } from "../lib/api";
 import { COMMUNITY_HEADING, CommunityLinks } from "./CommunityLinks";
 import { useMyEdgeBridge } from "../lib/useMyEdgeBridge";
 import { PopoverLayer } from "@cobblr/platform-web";
+
+/** Account-menu row for how Cobblr reaches you, with Discord's state beside
+ *  it: the connection that sends "this is about to go off" had no door from
+ *  the menu at all (the owner, 2026-09-29). Not connected goes straight to
+ *  connecting. */
+function NotificationsMenuRow({ itemCls, onNavigate }: { itemCls: string; onNavigate: () => void }) {
+  const q = useQuery({ queryKey: ["discord-status"], queryFn: () => api.meDiscordStatus(), staleTime: 5 * 60_000, retry: false });
+  const offered = !!q.data?.configured;
+  const verified = !!q.data?.verified;
+  return (
+    <Link to={offered && !verified ? CONNECT_DISCORD_PATH : "/me/communication"} onClick={onNavigate} className={itemCls} role="menuitem">
+      <Bell size={14} className="text-faint dark:text-slate-400" /> Notifications
+      {offered && (
+        <span className="ml-auto flex items-center gap-1.5 whitespace-nowrap text-[11px] text-faint">
+          <span className={"w-1.5 h-1.5 rounded-full " + (verified ? "bg-emerald-500" : "bg-slate-400/60")} />
+          {verified ? "Discord on" : "Discord off"}
+        </span>
+      )}
+    </Link>
+  );
+}
 
 /** Account-menu row showing the personal edge bridge's live status — only for
  *  users who actually run one. Same emerald/slate "online/offline" dot as the
@@ -192,6 +216,7 @@ export function UserMenu({ themed, inline = false }: { themed: boolean; inline?:
           <Link to="/me" onClick={() => setOpen(false)} className={itemCls} role="menuitem">
             <UserCog size={14} className="text-faint dark:text-slate-400" /> Your account
           </Link>
+          <NotificationsMenuRow itemCls={itemCls} onNavigate={() => setOpen(false)} />
           <Link to="/me/feedback" onClick={() => setOpen(false)} className={itemCls} role="menuitem">
             <MessageSquare size={14} className="text-faint dark:text-slate-400" /> Your feedback
           </Link>
@@ -225,6 +250,9 @@ export function UserMenu({ themed, inline = false }: { themed: boolean; inline?:
                   <CalendarDays size={14} className="text-faint dark:text-slate-400" /> Calendar
                 </Link>
               )}
+              <Link to="/people/me" onClick={() => setOpen(false)} className={itemCls} role="menuitem">
+                <Package size={14} className="text-faint dark:text-slate-400" /> My things
+              </Link>
               <Link to="/changelog" onClick={() => setOpen(false)} className={itemCls} role="menuitem">
                 <Sparkles size={14} className="text-faint dark:text-slate-400" /> What's new
               </Link>
@@ -335,38 +363,41 @@ export function UserMenu({ themed, inline = false }: { themed: boolean; inline?:
           </PopoverLayer>,
           document.body,
         )}
-        {/* ONE row for the person (#3879): the name is the door to Your
-            account, one tap as #594 wanted it, and the chevron beside it opens
-            the menu. Until then the foot spent two rows on this, a Your account
-            row over a name row that only opened the menu. The identity header
-            inside the menu carries the admin chip. */}
-        <div data-tour="account" className="w-full flex items-center rounded">
+        {/* ONE row for the person, in two labelled parts with a bar between,
+            the Scan | Build shape (#3879): [⚙ Your account] opens the account
+            page in one tap, as #594 wanted it, and [name ›] opens the menu.
+            Tapping the name for the account page read as a guess (the owner,
+            2026-09-29); each part now says what it does. */}
+        <div data-tour="account" className="w-full flex items-center gap-1.5 px-3 py-1.5 rounded">
           <NavLink
             to="/me"
             end
             title="Your account"
-            aria-label={`${user.display_name}, your account`}
             className={({ isActive }) =>
-              "flex-1 min-w-0 flex items-center gap-2.5 px-3 py-1.5 rounded text-[13px] transition " +
-              (isActive
-                ? "text-accent font-semibold bg-subtle/60 dark:bg-slate-800/40"
-                : "text-muted dark:text-slate-400 hover:text-accent hover:bg-subtle/60 dark:hover:bg-slate-800/40")
+              "shrink-0 flex items-center gap-2.5 whitespace-nowrap text-[13px] transition " +
+              (isActive ? "text-accent font-semibold" : "text-muted dark:text-slate-400 hover:text-accent")
             }
           >
-            <UserRound size={16} className="shrink-0" />
-            <span className="font-medium truncate">{user.display_name}</span>
+            <Settings size={16} className="shrink-0" />
+            <span>Your account</span>
           </NavLink>
+          <span aria-hidden className="px-1.5 text-[13px] text-faint/60 dark:text-slate-600 select-none">
+            |
+          </span>
           <button
             ref={btnRef}
             type="button"
             onClick={() => setOpen((v) => !v)}
-            aria-label="Account menu"
             aria-haspopup="menu"
             aria-expanded={open}
-            title={`${user.display_name} — account menu`}
-            className="shrink-0 self-stretch px-2.5 rounded text-muted dark:text-slate-400 hover:text-accent hover:bg-subtle/60 dark:hover:bg-slate-800/40 transition"
+            aria-label={`${user.display_name}, account menu`}
+            title={`${user.display_name}: account menu`}
+            className="flex-1 min-w-0 flex items-center gap-1 text-[13px] text-muted dark:text-slate-400 hover:text-accent transition"
           >
-            <ChevronDown size={14} className={"transition " + (open ? "rotate-90" : "-rotate-90")} />
+            {/* The first name: a sidebar is narrow, and "Your account" takes
+                the left of the row. The menu's header says the full name. */}
+            <span className="font-medium truncate">{user.display_name.trim().split(/\s+/)[0] || user.display_name}</span>
+            <ChevronRight size={14} className={"shrink-0 transition " + (open ? "rotate-90" : "")} />
           </button>
         </div>
         {appMode && <GrowModal open={growOpen} onClose={() => setGrowOpen(false)} />}
@@ -428,6 +459,7 @@ export function UserMenu({ themed, inline = false }: { themed: boolean; inline?:
           <Link to="/me" onClick={() => setOpen(false)} className={itemCls} role="menuitem">
             <UserCog size={14} className="text-faint dark:text-slate-400" /> Your account
           </Link>
+          <NotificationsMenuRow itemCls={itemCls} onNavigate={() => setOpen(false)} />
           <Link to="/me/feedback" onClick={() => setOpen(false)} className={itemCls} role="menuitem">
             <MessageSquare size={14} className="text-faint dark:text-slate-400" /> Your feedback
           </Link>
@@ -461,6 +493,9 @@ export function UserMenu({ themed, inline = false }: { themed: boolean; inline?:
                   <CalendarDays size={14} className="text-faint dark:text-slate-400" /> Calendar
                 </Link>
               )}
+              <Link to="/people/me" onClick={() => setOpen(false)} className={itemCls} role="menuitem">
+                <Package size={14} className="text-faint dark:text-slate-400" /> My things
+              </Link>
               <Link to="/changelog" onClick={() => setOpen(false)} className={itemCls} role="menuitem">
                 <Sparkles size={14} className="text-faint dark:text-slate-400" /> What's new
               </Link>

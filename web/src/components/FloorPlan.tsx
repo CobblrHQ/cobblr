@@ -8,10 +8,10 @@
 // areas) are invisible regions with faint toggleable labels; dropping a
 // container inside one reparents it there (the plan is the filing UI).
 
-import { useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
-import { useMutation, useQueries, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Check, Flame, Loader2, Pencil, Plus, Printer, ScanLine, Sparkles, Tag, X } from "lucide-react";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { Check, Flame, Loader2, MapPin, Pencil, Plus, Printer, ScanLine, Sparkles, Tag, X } from "lucide-react";
 import { Modal, useImageSrc, useToast } from "@cobblr/platform-web";
 import { ApiError, api, type Location } from "../lib/api";
 import { totalUsage, useLocationUsage } from "../lib/useLocationUsage";
@@ -19,21 +19,31 @@ import {
   SNAP_MM,
   clampRect,
   collidingIds,
+  freeSpot,
+  hasOwnLayout,
+  newChildRect,
   planOwnerOf,
   readBound,
   readRect,
   rebaseRect,
   snap,
   wallSegments,
+  withBound,
+  withDecor,
+  withRect,
   zoneAt,
   type FpBound,
   type FpRect,
   type FpWall,
 } from "../lib/floorplanGeometry";
 import { formatLength, parseLength, type LengthUnit } from "../lib/lengthUnits";
-import { gridNames, gridRects, type GridNameScheme } from "../lib/gridFill";
+import { gridNames, gridRects } from "../lib/gridFill";
 import { OUTLINE_PRESETS, byAreaDesc, pointsAttr, readFill, readOutline } from "../lib/planDecor";
 import { useDetailRoute } from "../lib/useDetailRoute";
+import { parseRange } from "../lib/nameRange";
+import { LOCATION_KIND } from "../lib/placeItems";
+import { usePlaceableRecords } from "../lib/placeableRecords";
+import { PLACE_PLAN, PLACE_TARGET, pinAt, usePlacing } from "./placeItems/placing";
 
 type Sel =
   | { type: "item"; id: string }
@@ -52,23 +62,6 @@ interface PlanEntity {
   image_path: string | null;
   location_id: string | null;
   metadata: Record<string, unknown>;
-}
-
-/** Rows a declared listEndpoint returns (the manifest's row-shape contract). */
-interface ListedRow {
-  id: string;
-  name?: string;
-  title?: string;
-  image_path?: string | null;
-  location_id?: string | null;
-  metadata?: Record<string, unknown>;
-}
-
-function traitAxis(t: unknown): string | null {
-  if (t == null) return null;
-  if (typeof t === "string") return t;
-  const v = (t as { trait?: unknown }).trait;
-  return typeof v === "string" ? v : null;
 }
 
 const pct = (v: number, total: number) => `${(v / total) * 100}%`;
@@ -151,12 +144,20 @@ export function FloorPlan({ room, slug }: { room: Location; slug: string }) {
   );
 }
 
+/** A place's own plan or face, bare: what the place-items chooser shows so a
+ *  drawer can be tapped where it is drawn. */
+export function FaceFor({ room, slug }: { room: Location; slug: string }) {
+  return <PlanFor room={room} slug={slug} bare headTitle={room.name} capVh={40} />;
+}
+
 function PlanFor({
   room,
   slug,
   bare = false,
   headTitle,
   onAddFloor,
+  startWith,
+  capVh = 70,
 }: {
   room: Location;
   slug: string;
@@ -165,6 +166,10 @@ function PlanFor({
   headTitle?: string;
   /** Offered on an empty area's setup row — splits the space into floors. */
   onAddFloor?: () => void;
+  /** Open straight into adding drawers (the selection panel's "Add drawers"). */
+  startWith?: "drawers";
+  /** How much of the screen's height the plan may take. */
+  capVh?: number;
 }) {
   const qc = useQueryClient();
   const toast = useToast();
@@ -179,16 +184,30 @@ function PlanFor({
   const items = useMemo(() => locs.data?.items ?? [], [locs.data]);
   const byId = useMemo(() => new Map(items.map((l) => [l.id, l] as const)), [items]);
 
-  const bound = readBound(room.metadata);
-  const [edit, setEdit] = useState(false);
+  // A placed container's w × d is its footprint on the room's floor; it has a
+  // face of its own only once somebody set one up, or drew drawers in it (a
+  // record from before the two were split). Until then the peek asks for the
+  // face instead of drawing drawers over the footprint.
+  const self = byId.get(room.id) ?? room;
+  const ownsLayout =
+    room.kind === "area" ||
+    !readRect(self.metadata) ||
+    hasOwnLayout(self.metadata) ||
+    items.some((l) => l.parent_id === room.id && readRect(l.metadata));
+  const bound = ownsLayout ? readBound(self.metadata) : null;
+  // Place mode (a place-items view wraps the plan): every place is a target
+  // and the plan itself is not edited.
+  const placing = usePlacing();
+  const [editing, setEdit] = useState(startWith === "drawers");
+  const edit = editing && !placing;
   const [showZones, setShowZones] = useState(false);
   const [sel, setSel] = useState<Sel>(null);
   // Live rect during a drag/resize — rendered in place of the saved one.
   const [live, setLive] = useState<{ id: string; rect: FpRect } | null>(null);
   const [liveWall, setLiveWall] = useState<{ idx: number; wall: FpWall } | null>(null);
   const [seedOpen, setSeedOpen] = useState(false);
-  const [createAt, setCreateAt] = useState<FpRect | null>(null);
-  const [gridOpen, setGridOpen] = useState(false);
+  const [createOpen, setCreateOpen] = useState(false);
+  const [drawersOpen, setDrawersOpen] = useState(startWith === "drawers");
 
   // Everything drawn on THIS plan: descendants whose nearest planned ancestor
   // is this room (a rack reparented into Bay 1 stays on the garage's plan).
@@ -236,52 +255,19 @@ function PlanFor({
   );
 
   // ── entity occupants: the ratchet in the drawer, not just the drawer ──
-  // PLACEABLE KINDS come from the entity-kind registry: a kind that declares
-  // its own list + update endpoints (the manifest seam) and is physically
-  // tangible. Any future module joins with one manifest line; nothing is
-  // named here. Kinds whose rows carry no location_id simply never match.
-  const kindsQ = useQuery({
-    queryKey: ["entity-kinds", slug],
-    queryFn: () => api.listEntityKinds(slug),
-    enabled: !!slug,
-    staleTime: 5 * 60_000,
-  });
-  const placeableKinds = useMemo(
-    () =>
-      (kindsQ.data?.items ?? []).filter(
-        (k) =>
-          k.endpoints?.list &&
-          k.endpoints?.update &&
-          traitAxis(k.traits?.tangibility) === "physical",
-      ),
-    [kindsQ.data],
-  );
-  const kindLists = useQueries({
-    queries: placeableKinds.map((k) => ({
-      queryKey: ["kind-list", slug, k.id],
-      queryFn: () =>
-        api.request<{ items: ListedRow[] }>(
-          "GET",
-          `/orgs/${slug}/${k.instance_name ? `instances/${k.instance_name}` : `modules/${k.module_name}`}${k.endpoints!.list}`,
-        ),
-      staleTime: 30_000,
-    })),
-  });
+  // Every placeable record, from the one shared read (placeableRecords): the
+  // place-items rail and the per-place counts read the same list.
+  const { records: placeable, kinds: placeableKinds } = usePlaceableRecords(slug);
   const routeFor = useDetailRoute(slug);
   const occupants = useMemo(() => {
-    const all: PlanEntity[] = [];
-    placeableKinds.forEach((k, i) => {
-      for (const row of kindLists[i]?.data?.items ?? []) {
-        all.push({
-          kind: k.id,
-          id: row.id,
-          name: row.name ?? row.title ?? "(unnamed)",
-          image_path: row.image_path ?? null,
-          location_id: row.location_id ?? null,
-          metadata: row.metadata ?? {},
-        });
-      }
-    });
+    const all: PlanEntity[] = placeable.map((r) => ({
+      kind: r.kind,
+      id: r.id,
+      name: r.name,
+      image_path: r.image_path,
+      location_id: r.location_id,
+      metadata: r.metadata,
+    }));
     // An entity draws on the plan its LOCATION belongs to: the location
     // itself when it owns a plan (a drawer), else that location's plan owner.
     const ownerOfLoc = (locId: string): string | null => {
@@ -291,8 +277,7 @@ function PlanFor({
       return planOwnerOf(locId, byId);
     };
     return all.filter((e) => e.location_id && ownerOfLoc(e.location_id) === room.id);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [placeableKinds, ...kindLists.map((q) => q.data), byId, room.id]);
+  }, [placeable, byId, room.id]);
   const placedOccupants = useMemo(
     () =>
       occupants
@@ -317,9 +302,36 @@ function PlanFor({
     ];
     return collidingIds(items);
   }, [placed, placedOccupants]);
+  // What already stands here: a new thing goes where none of it is.
+  const taken = useMemo(
+    () => [...placed.filter((p) => p.loc.kind !== "area").map((p) => p.rect), ...placedOccupants.map((p) => p.rect)],
+    [placed, placedOccupants],
+  );
+  // This place's own drawers and bins, drawn or not: what "arrange" lays out.
+  const ownContainers = useMemo(
+    () => items.filter((l) => l.parent_id === room.id && l.kind !== "area"),
+    [items, room.id],
+  );
+  // Pins: things put at an exact spot on this plan (dropped on its bare
+  // floor in place mode), from what this place holds. The same read the
+  // place's own page lists, so the two never disagree.
+  const held = useQuery({
+    queryKey: ["location-contents", slug, room.id],
+    queryFn: () => api.placementContents(slug, LOCATION_KIND, room.id),
+    enabled: !!bound,
+    staleTime: 30_000,
+  });
+  const pins = useMemo(
+    () =>
+      (held.data?.items ?? []).filter(
+        (t) => t.position && bound && t.position.x_mm <= bound.w_mm && t.position.y_mm <= bound.d_mm,
+      ),
+    [held.data, bound],
+  );
   // Peek drill-in: a placed child that owns its own plan opens zoomed in a
   // modal (kept as an id so edits inside the peek see live data).
   const [peekId, setPeekId] = useState<string | null>(null);
+  const [peekStart, setPeekStart] = useState<"drawers" | undefined>(undefined);
   const peekLoc = peekId ? (byId.get(peekId) ?? null) : null;
 
   // Heat view: shade every placed rect by how much is stored in it (its own
@@ -362,6 +374,22 @@ function PlanFor({
       </span>
     ) : null;
 
+  // Place mode: how many things each place holds, its sub-places included.
+  const placeBadge = (id: string) => {
+    const n = placing?.withinAt(id) ?? 0;
+    if (!placing || n === 0) return null;
+    return (
+      <span
+        data-place-count={n}
+        className="absolute bottom-0.5 right-0.5 min-w-[1.1rem] rounded-full bg-cobble-600 px-1 text-center font-mono text-[9px] leading-4 text-white pointer-events-none"
+        style={{ writingMode: "horizontal-tb" }}
+        title={`${n} ${n === 1 ? "thing" : "things"} here`}
+      >
+        {n}
+      </span>
+    );
+  };
+
   const invalidate = () => {
     void qc.invalidateQueries({ queryKey: ["core-locations", slug] });
     void qc.invalidateQueries({ queryKey: ["location", slug, room.id] });
@@ -374,27 +402,27 @@ function PlanFor({
     onError: (e) => toast.error(e instanceof ApiError ? e.message : String(e)),
   });
 
+  // Every write goes through the geometry seam (withRect / withBound /
+  // withDecor), which keeps the rest of the blob: a drag never strips
+  // decoration, and moving a toolbox on the floor never stretches its face.
   const saveRect = (loc: Location, rect: FpRect | null) => {
-    const meta = { ...(loc.metadata ?? {}) } as Record<string, unknown>;
-    // MERGE into the blob — a drag must never strip decoration (fill/outline).
-    if (rect) meta.floorplan = { ...((meta.floorplan as Record<string, unknown>) ?? {}), ...rect };
-    else delete meta.floorplan;
-    saveMeta.mutate({ id: loc.id, metadata: meta });
+    const laidOut = hasOwnLayout(loc.metadata) || (placedByOwner.get(loc.id)?.length ?? 0) > 0;
+    saveMeta.mutate({ id: loc.id, metadata: withRect(loc.metadata, rect, { keepFace: loc.kind !== "area" && laidOut }) });
   };
   /** Patch decoration keys (fill/outline) on a placed location's blob. */
   const patchLocFloorplan = (loc: Location, patch: Record<string, unknown>) => {
-    const meta = { ...(loc.metadata ?? {}) } as Record<string, unknown>;
-    const fp = { ...((meta.floorplan as Record<string, unknown>) ?? {}), ...patch };
-    for (const k of Object.keys(fp)) if (fp[k] === undefined || fp[k] === null) delete fp[k];
-    meta.floorplan = fp;
-    saveMeta.mutate({ id: loc.id, metadata: meta });
+    saveMeta.mutate({ id: loc.id, metadata: withDecor(loc.metadata, patch) });
   };
   const saveBound = (next: FpBound) => {
-    saveMeta.mutate({
-      id: room.id,
-      metadata: { floorplan: next },
-    });
+    const self = byId.get(room.id) ?? room;
+    saveMeta.mutate({ id: room.id, metadata: withBound(self.metadata, next, self.kind === "area" ? "area" : "container") });
   };
+
+  const rename = useMutation({
+    mutationFn: (p: { id: string; name: string }) => api.updateLocation(slug, p.id, { name: p.name }),
+    onSuccess: invalidate,
+    onError: (e) => toast.error(e instanceof ApiError ? e.message : String(e)),
+  });
 
   const reparent = useMutation({
     mutationFn: (p: { id: string; parent_id: string; label: string }) =>
@@ -432,11 +460,7 @@ function PlanFor({
     onError: (e) => toast.error(e instanceof ApiError ? e.message : String(e)),
   });
   const saveEntityRect = (ent: PlanEntity, rect: FpRect | null) => {
-    const meta = { ...(ent.metadata ?? {}) } as Record<string, unknown>;
-    const fp = { ...((meta.floorplan as Record<string, unknown>) ?? {}) };
-    if (rect) meta.floorplan = { ...fp, ...rect };
-    else delete meta.floorplan;
-    saveEntity.mutate({ ent, body: { metadata: meta } });
+    saveEntity.mutate({ ent, body: { metadata: withRect(ent.metadata, rect) } });
   };
 
   function startEntityDrag(e: React.PointerEvent, ent: PlanEntity, rect: FpRect, mode: "move" | "resize") {
@@ -483,8 +507,7 @@ function PlanFor({
             rectToSave = rebaseRect(last, region, tBound);
           }
         }
-        const meta = { ...(ent.metadata ?? {}) } as Record<string, unknown>;
-        meta.floorplan = { ...((meta.floorplan as Record<string, unknown>) ?? {}), ...rectToSave };
+        const meta = withRect(ent.metadata, rectToSave);
         const moved = targetLocId !== ent.location_id;
         saveEntity.mutate({
           ent,
@@ -611,8 +634,9 @@ function PlanFor({
         </p>
         <div className="flex gap-2 flex-wrap">
           <BoundSetup
-            unitDefault="ft"
+            unitDefault={room.kind === "container" ? "in" : "ft"}
             view={defaultView}
+            initialW={readRect(room.metadata) ? formatLength(readRect(room.metadata)!.w_mm, room.kind === "container" ? "in" : "ft") : ""}
             onSet={(b) => saveBound(b)}
           />
           {room.kind === "area" && (
@@ -652,6 +676,8 @@ function PlanFor({
   const content = (
     <div className="space-y-3">
       <SectionHead room={room} edit={edit} title={headTitle}>
+        {!placing && (
+        <>
         <button
           type="button"
           onClick={() => setShowZones((z) => !z)}
@@ -684,6 +710,8 @@ function PlanFor({
         >
           <Printer size={12} /> print
         </button>
+        </>
+        )}
         {edit && (
           <>
             <button
@@ -704,25 +732,18 @@ function PlanFor({
             </button>
             <button
               type="button"
-              onClick={() =>
-                setCreateAt(
-                  clampRect(
-                    { x_mm: snap(bound.w_mm / 2 - 600), y_mm: snap(bound.d_mm / 2 - 300), w_mm: 1200, d_mm: 600 },
-                    bound,
-                  ),
-                )
-              }
+              onClick={() => setCreateOpen(true)}
               className="rounded-md border border-line dark:border-slate-600 px-2 py-1 text-xs text-muted hover:text-content transition"
             >
               + location
             </button>
             <button
               type="button"
-              onClick={() => setGridOpen(true)}
-              title="Create + place a whole grid of bins/cubbies in one shot (a parts rack's 24 bins, a cabinet's drawers)"
+              onClick={() => setDrawersOpen(true)}
+              title="Arrange the drawers this place has, or make a set of drawers or bins in one go"
               className="rounded-md border border-line dark:border-slate-600 px-2 py-1 text-xs text-muted hover:text-content transition"
             >
-              + grid
+              + drawers
             </button>
             <button
               type="button"
@@ -733,6 +754,7 @@ function PlanFor({
             </button>
           </>
         )}
+        {!placing && (
         <button
           type="button"
           onClick={() => {
@@ -747,18 +769,53 @@ function PlanFor({
             </>
           ) : (
             <>
-              <Pencil size={12} /> Edit
+              <Pencil size={12} /> Edit layout
             </>
           )}
         </button>
+        )}
       </SectionHead>
+
+      {/* ── tray: this place's own children not drawn yet, above the plan
+          so it is seen before anything is drawn. A tap puts one at the
+          first free spot (a drawer: the next row down). ── */}
+      {tray.length > 0 && !placing && (
+        <div className="flex items-center gap-1.5 flex-wrap text-xs text-muted dark:text-slate-400" data-testid="plan-tray">
+          <span>Not drawn yet, tap to put on the plan:</span>
+          {tray.map((l) => (
+            <button
+              key={l.id}
+              type="button"
+              onClick={() => saveRect(l, newChildRect({ ...bound, view }, taken))}
+              className="rounded-md border border-line dark:border-slate-700 bg-subtle dark:bg-slate-800 px-2 py-0.5 text-content dark:text-slate-300 hover:border-accent transition"
+            >
+              {l.name}
+            </button>
+          ))}
+          {view === "front" && ownContainers.length > 1 && (
+            <button
+              type="button"
+              onClick={() => {
+                setEdit(true);
+                setDrawersOpen(true);
+              }}
+              className="rounded-md border border-dashed border-accent text-accent px-2 py-0.5 font-medium"
+            >
+              Arrange all {ownContainers.length} as drawers
+            </button>
+          )}
+        </div>
+      )}
 
       {/* ── the plan ── */}
       <div
         ref={planRef}
-        className={`relative w-full border-2 border-slate-400 dark:border-slate-500 rounded bg-subtle/40 dark:bg-[#0d1526] select-none ${edit ? "bg-[radial-gradient(circle,rgba(100,116,139,.25)_1px,transparent_1px)]" : ""}`}
+        className={`relative mx-auto border-2 border-slate-400 dark:border-slate-500 rounded bg-subtle/40 dark:bg-[#0d1526] select-none ${edit ? "bg-[radial-gradient(circle,rgba(100,116,139,.25)_1px,transparent_1px)]" : ""}`}
         style={{
           aspectRatio: `${bound.w_mm} / ${bound.d_mm}`,
+          // The whole room on one screen: as wide as it can be while its
+          // bottom wall stays above the fold.
+          width: `min(100%, calc(${capVh}dvh * ${(bound.w_mm / bound.d_mm).toFixed(4)}))`,
           // Edit-mode dots sit at the layout's REAL pitch — a 42mm Gridfinity
           // drawer shows its actual cells, not a decorative texture.
           ...(edit
@@ -766,7 +823,23 @@ function PlanFor({
             : {}),
         }}
         onPointerDown={() => edit && setSel(null)}
+        {...(placing ? { [PLACE_TARGET]: room.id, [PLACE_PLAN]: `${bound.w_mm}x${bound.d_mm}` } : {})}
+        onClick={(e) => {
+          // The bare floor: right here, at this spot.
+          if (placing && e.target === e.currentTarget) placing.pick(room.id, placing.armed ? pinAt(e.currentTarget, e.clientX, e.clientY) : null);
+        }}
       >
+        {placed.length === 0 && placedOccupants.length === 0 && !placing && (
+          <div className="absolute inset-0 grid place-items-center p-4 pointer-events-none" data-testid="plan-empty-hint">
+            <p className="max-w-xs text-center text-xs text-muted dark:text-slate-400">
+              {edit
+                ? view === "front"
+                  ? "Nothing on this face yet. + drawers makes a set, or + location adds one."
+                  : `Nothing stands in ${room.name} yet. + location adds a shelf, a bench or a toolbox.`
+                : `Nothing drawn in ${room.name} yet. Tap Edit to add what is in it.`}
+            </p>
+          </div>
+        )}
         {/* walls, minus their door openings */}
         {walls.map((w, idx) =>
           wallSegments(w).map((s, si) => {
@@ -775,7 +848,7 @@ function PlanFor({
               <div
                 key={`w${idx}-${si}`}
                 onPointerDown={(e) => startWallDrag(e, idx)}
-                className={`absolute bg-slate-500 dark:bg-slate-400 rounded-sm ${edit ? "cursor-ew-resize" : ""} ${sel?.type === "wall" && sel.idx === idx ? "ring-1 ring-accent" : ""}`}
+                className={`absolute bg-slate-500 dark:bg-slate-400 rounded-sm ${edit ? "cursor-ew-resize touch-none" : ""} ${sel?.type === "wall" && sel.idx === idx ? "ring-1 ring-accent" : ""}`}
                 style={
                   vertical
                     ? { left: pct(s.x1, bound.w_mm), top: pct(s.y1, bound.d_mm), width: 4, height: pct(s.y2 - s.y1, bound.d_mm), transform: "translateX(-2px)" }
@@ -801,12 +874,17 @@ function PlanFor({
                 if (edit) {
                   e.stopPropagation();
                   setSel({ type: "item", id: loc.id });
+                } else if (placing?.armed) {
+                  e.stopPropagation();
+                  placing.pick(loc.id);
                 } else setPeekId(loc.id);
               }}
+              {...(placing ? { [PLACE_TARGET]: loc.id } : {})}
               title={`${loc.name} — open its plan`}
               className={`absolute rounded border border-slate-400 dark:border-slate-500 bg-slate-500/10 dark:bg-slate-400/10
-                ${edit ? "cursor-move" : "cursor-pointer hover:border-accent"}
-                ${selected ? "ring-1 ring-accent border-accent" : ""}`}
+                ${edit ? "cursor-move touch-none" : "cursor-pointer hover:border-accent"}
+                ${selected ? "ring-1 ring-accent border-accent" : ""}
+                ${placing?.over === loc.id ? "ring-2 ring-accent border-accent bg-cobble-500/10" : ""}`}
               style={{
                 left: pct(r.x_mm, bound.w_mm),
                 top: pct(r.y_mm, bound.d_mm),
@@ -844,10 +922,11 @@ function PlanFor({
                 {loc.name}
               </span>
               {heatBadge(loc.id)}
+              {placeBadge(loc.id)}
               {selected && edit && (
                 <span
                   onPointerDown={(e) => startDrag(e, loc, r, "resize")}
-                  className="absolute -right-1 -bottom-1 w-2.5 h-2.5 bg-accent rounded-sm cursor-nwse-resize"
+                  className="absolute -right-1 -bottom-1 w-2.5 h-2.5 bg-accent rounded-sm cursor-nwse-resize touch-none [@media(pointer:coarse)]:w-5 [@media(pointer:coarse)]:h-5"
                 />
               )}
             </div>
@@ -860,13 +939,27 @@ function PlanFor({
           const r = live?.id === z.id ? live.rect : z.rect;
           return (
             <div key={z.id}>
+              {placing && !edit && (
+                <div
+                  {...{ [PLACE_TARGET]: z.id }}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    placing.pick(z.id);
+                  }}
+                  title={z.name}
+                  className={`absolute border border-dashed rounded cursor-pointer ${placing.over === z.id ? "ring-2 ring-accent border-accent bg-cobble-500/10" : "border-slate-400/50 dark:border-slate-500/40 hover:border-accent"}`}
+                  style={{ left: pct(r.x_mm, bound.w_mm), top: pct(r.y_mm, bound.d_mm), width: pct(r.w_mm, bound.w_mm), height: pct(r.d_mm, bound.d_mm) }}
+                >
+                  {placeBadge(z.id)}
+                </div>
+              )}
               {edit && (
                 <div
                   onPointerDown={(e) => {
                     const loc = byId.get(z.id);
                     if (loc) startDrag(e, loc, r, "move");
                   }}
-                  className={`absolute border border-dashed border-slate-400/50 dark:border-slate-500/40 rounded cursor-move ${sel?.type === "item" && sel.id === z.id ? "ring-1 ring-accent/60" : ""}`}
+                  className={`absolute border border-dashed border-slate-400/50 dark:border-slate-500/40 rounded cursor-move touch-none ${sel?.type === "item" && sel.id === z.id ? "ring-1 ring-accent/60" : ""}`}
                   style={{ left: pct(r.x_mm, bound.w_mm), top: pct(r.y_mm, bound.d_mm), width: pct(r.w_mm, bound.w_mm), height: pct(r.d_mm, bound.d_mm) }}
                 >
                   {sel?.type === "item" && sel.id === z.id && (
@@ -875,12 +968,12 @@ function PlanFor({
                         const loc = byId.get(z.id);
                         if (loc) startDrag(e, loc, r, "resize");
                       }}
-                      className="absolute -right-1 -bottom-1 w-2.5 h-2.5 bg-accent rounded-sm cursor-nwse-resize"
+                      className="absolute -right-1 -bottom-1 w-2.5 h-2.5 bg-accent rounded-sm cursor-nwse-resize touch-none [@media(pointer:coarse)]:w-5 [@media(pointer:coarse)]:h-5"
                     />
                   )}
                 </div>
               )}
-              {(showZones || edit) && (
+              {(showZones || edit || placing) && (
                 <span
                   className="absolute font-mono text-[10px] uppercase tracking-[.2em] text-cobble-600/40 dark:text-cobble-300/30 pointer-events-none -translate-x-1/2 -translate-y-1/2"
                   style={{ left: pct(r.x_mm + r.w_mm / 2, bound.w_mm), top: pct(r.y_mm + r.d_mm / 2, bound.d_mm) }}
@@ -913,19 +1006,27 @@ function PlanFor({
                   if (edit) {
                     e.stopPropagation();
                     setSel({ type: "item", id: loc.id });
+                  } else if (placing && (placing.armed || !readBound(loc.metadata))) {
+                    // Put what is picked up here, or show what is in it; a
+                    // container with its own layout still opens it to reach
+                    // its drawers.
+                    e.stopPropagation();
+                    placing.pick(loc.id);
                   } else if (readBound(loc.metadata)) {
                     // Owns its own layout (a toolbox face) → zoom in place.
                     setPeekId(loc.id);
                   } else navigate(`/locations/${loc.id}`);
                 }}
                 title={loc.name}
+                {...(placing ? { [PLACE_TARGET]: loc.id } : {})}
                 data-collides={colliding.has(loc.id) ? "true" : undefined}
                 className={`absolute rounded border overflow-hidden text-[11px] leading-tight px-1 py-0.5
                   ${r.wall_mounted ? "bg-slate-200/80 dark:bg-slate-700/70" : "bg-white dark:bg-slate-800"}
                   border-slate-400 dark:border-slate-500 text-content dark:text-slate-200
-                  ${edit ? "cursor-move" : "cursor-pointer hover:border-accent hover:text-accent"}
+                  ${edit ? "cursor-move touch-none" : "cursor-pointer hover:border-accent hover:text-accent"}
                   ${colliding.has(loc.id) ? "border-dashed !border-ember-500 ring-1 ring-ember-500/60" : ""}
-                  ${selected ? "ring-1 ring-accent border-accent" : ""}`}
+                  ${selected ? "ring-1 ring-accent border-accent" : ""}
+                  ${placing?.over === loc.id ? "ring-2 ring-accent border-accent" : ""}`}
                 style={{
                   left: pct(r.x_mm, bound.w_mm),
                   top: pct(r.y_mm, bound.d_mm),
@@ -943,16 +1044,36 @@ function PlanFor({
                   {pxW < 30 && pxH < 30 ? (loc.short_name || "·") : (loc.short_name && pxW < 90 && !rotate ? loc.short_name : loc.name)}
                 </span>
                 {heatBadge(loc.id)}
+                {placeBadge(loc.id)}
                 {selected && edit && (
                   <span
                     onPointerDown={(e) => startDrag(e, loc, r, "resize")}
-                    className="absolute -right-0.5 -bottom-0.5 w-2.5 h-2.5 bg-accent rounded-sm cursor-nwse-resize"
+                    className="absolute -right-0.5 -bottom-0.5 w-2.5 h-2.5 bg-accent rounded-sm cursor-nwse-resize touch-none [@media(pointer:coarse)]:w-5 [@media(pointer:coarse)]:h-5"
                     style={rotate ? { writingMode: "horizontal-tb" } : undefined}
                   />
                 )}
               </div>
             );
           })}
+
+        {pins.map((t) => (
+          <button
+            key={`pin:${t.kind}:${t.id}`}
+            type="button"
+            data-pin={t.id}
+            title={t.title}
+            aria-label={`${t.title}, pinned here`}
+            onClick={(e) => {
+              e.stopPropagation();
+              const href = routeFor(t.kind, t.id);
+              if (href && !placing) navigate(href);
+            }}
+            className={`absolute -translate-x-1/2 -translate-y-full text-cobble-600 dark:text-cobble-300 ${placing ? "pointer-events-none" : ""}`}
+            style={{ left: pct(t.position!.x_mm, bound.w_mm), top: pct(t.position!.y_mm, bound.d_mm) }}
+          >
+            <MapPin size={16} className="fill-cobble-100 dark:fill-cobble-900" />
+          </button>
+        ))}
 
         {/* entity occupants — the THINGS themselves (ratchets, guns, parts),
             placed via their own metadata rect. Cobble-tinted = a thing;
@@ -977,7 +1098,7 @@ function PlanFor({
               title={ent.name}
               data-collides={colliding.has(key) ? "true" : undefined}
               className={`absolute rounded-md border border-cobble-500/70 dark:border-cobble-400/60 bg-cobble-50/60 dark:bg-cobble-900/30 overflow-hidden text-[10px] leading-tight px-1 py-0.5 text-content dark:text-slate-200
-                ${edit ? "cursor-move" : "cursor-pointer hover:border-accent"}
+                ${edit ? "cursor-move touch-none" : "cursor-pointer hover:border-accent"}
                 ${colliding.has(key) ? "border-dashed !border-ember-500 ring-1 ring-ember-500/60" : ""}
                 ${selected ? "ring-1 ring-accent border-accent" : ""}`}
               style={{
@@ -992,7 +1113,7 @@ function PlanFor({
               {selected && edit && (
                 <span
                   onPointerDown={(e) => startEntityDrag(e, ent, r, "resize")}
-                  className="absolute -right-0.5 -bottom-0.5 w-2.5 h-2.5 bg-accent rounded-sm cursor-nwse-resize"
+                  className="absolute -right-0.5 -bottom-0.5 w-2.5 h-2.5 bg-accent rounded-sm cursor-nwse-resize touch-none [@media(pointer:coarse)]:w-5 [@media(pointer:coarse)]:h-5"
                 />
               )}
             </div>
@@ -1000,24 +1121,21 @@ function PlanFor({
         })}
       </div>
 
-      {/* ── edit panel ── */}
-      {edit && sel?.type === "entity" && (
+      {/* ── edit panel: docked to the bottom of the screen while the plan
+          is on it, so selecting something visibly does something ── */}
+      {edit && (
+      <div className="sticky z-10 shadow-lg rounded-md" style={{ bottom: bare ? 0 : "var(--bottom-chrome-height, 0px)" }} data-testid="plan-panel">
+      {sel?.type === "entity" && (
         <EntityPanel
           ent={occupants.find((o) => o.id === sel.id && o.kind === sel.kind) ?? null}
           unit={unit}
           grid={bound.grid_mm}
           secondAxis={view === "front" ? "tall" : "deep"}
           onRect={saveEntityRect}
-          onDecor={(ent, patch) => {
-            const meta = { ...(ent.metadata ?? {}) } as Record<string, unknown>;
-            const fp = { ...((meta.floorplan as Record<string, unknown>) ?? {}), ...patch };
-            for (const k of Object.keys(fp)) if (fp[k] === undefined || fp[k] === null) delete fp[k];
-            meta.floorplan = fp;
-            saveEntity.mutate({ ent, body: { metadata: meta } });
-          }}
+          onDecor={(ent, patch) => saveEntity.mutate({ ent, body: { metadata: withDecor(ent.metadata, patch) } })}
         />
       )}
-      {edit && sel?.type !== "entity" && (
+      {sel?.type !== "entity" && (
         <EditPanel
           bound={bound}
           unit={unit}
@@ -1034,35 +1152,26 @@ function PlanFor({
             saveBound({ ...bound, walls: next });
             setSel(null);
           }}
+          onRename={(loc, name) => rename.mutate({ id: loc.id, name })}
+          onOpen={(loc) => setPeekId(loc.id)}
+          onAddDrawers={(loc) => {
+            // No face yet: give it one on the spot (as wide as it stands,
+            // three quarters as tall), so adding drawers is one step; its
+            // size is in the face's own panel when it is not right.
+            const r = readRect(loc.metadata);
+            const hasFace = hasOwnLayout(loc.metadata) || items.some((l) => l.parent_id === loc.id && readRect(l.metadata));
+            if (r && !hasFace) {
+              saveMeta.mutate({
+                id: loc.id,
+                metadata: withBound(loc.metadata, { w_mm: r.w_mm, d_mm: Math.max(300, snap(r.w_mm * 0.75, 50)), view: "front", unit: unit === "ft" ? "in" : unit }, "container"),
+              });
+            }
+            setPeekStart("drawers");
+            setPeekId(loc.id);
+          }}
         />
       )}
-
-      {/* ── tray: direct children not yet on the plan ── */}
-      {tray.length > 0 && (
-        <div className="flex items-baseline gap-2 flex-wrap text-xs text-faint dark:text-slate-500">
-          <span>not on the plan:</span>
-          {tray.map((l) => (
-            <button
-              key={l.id}
-              type="button"
-              disabled={!edit}
-              title={edit ? `Place ${l.name} at the center` : "Enter edit mode to place"}
-              onClick={() =>
-                saveRect(
-                  l,
-                  clampRect(
-                    { x_mm: snap(bound.w_mm / 2 - 600), y_mm: snap(bound.d_mm / 2 - 300), w_mm: 1200, d_mm: 600 },
-                    bound,
-                  ),
-                )
-              }
-              className="rounded-md border border-line dark:border-slate-700 bg-subtle dark:bg-slate-800 px-2 py-0.5 text-content dark:text-slate-300 disabled:opacity-60 hover:border-accent transition"
-            >
-              {l.name}
-            </button>
-          ))}
-          <span className="italic">placement is optional</span>
-        </div>
+      </div>
       )}
 
       {/* items filed here but not yet on the plan — tap to drop at center */}
@@ -1074,18 +1183,7 @@ function PlanFor({
               key={`${e.kind}:${e.id}`}
               type="button"
               onClick={() =>
-                saveEntityRect(
-                  e,
-                  clampRect(
-                    {
-                      x_mm: snap(bound.w_mm / 2 - grid * 2, grid),
-                      y_mm: snap(bound.d_mm / 2 - grid * 1.5, grid),
-                      w_mm: grid * 4,
-                      d_mm: grid * 3,
-                    },
-                    bound,
-                  ),
-                )
+                saveEntityRect(e, freeSpot(bound, taken, grid * 4, grid * 3))
               }
               className="rounded-md border border-cobble-300/60 dark:border-cobble-700/60 bg-cobble-50/50 dark:bg-cobble-900/20 px-2 py-0.5 text-content dark:text-slate-300 hover:border-accent transition"
             >
@@ -1099,30 +1197,45 @@ function PlanFor({
       )}
 
       {seedOpen && <SeedModal room={room} slug={slug} onClose={() => setSeedOpen(false)} onApplied={invalidate} />}
-      {createAt && (
+      {createOpen && (
         <CreateOnPlanModal
           slug={slug}
           room={room}
-          rect={createAt}
-          onClose={() => setCreateAt(null)}
+          bound={{ ...bound, view }}
+          taken={taken}
+          onClose={() => setCreateOpen(false)}
           onCreated={invalidate}
         />
       )}
-      {gridOpen && (
-        <GridFillModal
+      {drawersOpen && (
+        <DrawersModal
           slug={slug}
           room={room}
           bound={bound}
-          onClose={() => setGridOpen(false)}
+          children={ownContainers}
+          onPlaced={(loc, rect) =>
+            api.updateLocation(slug, loc.id, {
+              metadata: withRect(loc.metadata, rect, { keepFace: hasOwnLayout(loc.metadata) || (placedByOwner.get(loc.id)?.length ?? 0) > 0 }),
+            })
+          }
+          onClose={() => setDrawersOpen(false)}
           onCreated={invalidate}
         />
       )}
       {/* Peek drill-in: the child's own plan, zoomed, fully interactive —
           without losing where you were. */}
       {peekLoc && (
-        <Modal open onClose={() => setPeekId(null)} title={peekLoc.name} size="lg">
+        <Modal
+          open
+          onClose={() => {
+            setPeekId(null);
+            setPeekStart(undefined);
+          }}
+          title={peekLoc.name}
+          size="lg"
+        >
           <div className="space-y-2">
-            <PlanFor room={peekLoc} slug={slug} bare headTitle={peekLoc.kind === "container" ? "Layout" : peekLoc.name} />
+            <PlanFor room={peekLoc} slug={slug} bare headTitle={peekLoc.kind === "container" ? "Layout" : peekLoc.name} startWith={peekStart} />
             <div className="flex justify-end gap-4">
               <Link
                 to={`/scan/camera?bin=${peekLoc.id}`}
@@ -1166,9 +1279,12 @@ function SectionHead({
   title?: string;
 }) {
   return (
-    <div className="flex items-center gap-2">
-      <h2 className="text-sm font-medium text-content dark:text-mortar-100">
-        {title ?? (room.kind === "container" ? "Layout" : "Floor plan")}
+    <div className="flex items-center gap-x-2 gap-y-1.5 flex-wrap">
+      <h2 className="min-w-0 text-sm font-semibold text-content dark:text-mortar-100">
+        {title ?? room.name}
+        {!title && (
+          <span className="ml-1.5 font-normal text-faint dark:text-slate-500">{room.kind === "container" ? "layout" : "floor plan"}</span>
+        )}
       </h2>
       {edit && (
         <span className="font-mono text-[10px] uppercase tracking-widest text-accent">editing</span>
@@ -1191,8 +1307,21 @@ function DimInput({
   unit: LengthUnit;
   onCommit: (mm: number, unitTyped: LengthUnit | null) => void;
 }) {
-  const [text, setText] = useState(formatLength(mm, unit));
+  // The field follows the value it shows (another selection, a drag) while it
+  // is not being typed in; a blur with nothing typed writes nothing, so a
+  // number from a moment ago can never be committed.
+  const shown = formatLength(mm, unit);
+  const [text, setText] = useState(shown);
+  const typing = useRef(false);
+  useEffect(() => {
+    if (!typing.current) setText(shown);
+  }, [shown]);
   const commit = () => {
+    typing.current = false;
+    if (text.trim() === shown) {
+      setText(shown);
+      return;
+    }
     const parsed = parseLength(text, unit);
     if (parsed === null) {
       setText(formatLength(mm, unit));
@@ -1215,12 +1344,36 @@ function DimInput({
       {label}
       <input
         value={text}
-        onChange={(e) => setText(e.target.value)}
+        onChange={(e) => {
+          typing.current = true;
+          setText(e.target.value);
+        }}
         onBlur={commit}
         onKeyDown={(e) => e.key === "Enter" && (e.target as HTMLInputElement).blur()}
         className="w-20 rounded border border-line dark:border-slate-600 bg-surface dark:bg-slate-900 px-1.5 py-0.5 text-xs text-content dark:text-slate-200 font-mono"
       />
     </label>
+  );
+}
+
+/** A place's name, editable where it is selected: renaming no longer means
+ *  leaving the plan. Commits on Enter or blur, only when it changed. */
+function NameInput({ name, onCommit }: { name: string; onCommit: (name: string) => void }) {
+  const [text, setText] = useState(name);
+  const commit = () => {
+    const t = text.trim();
+    if (t && t !== name) onCommit(t);
+    else setText(name);
+  };
+  return (
+    <input
+      value={text}
+      onChange={(e) => setText(e.target.value)}
+      onBlur={commit}
+      onKeyDown={(e) => e.key === "Enter" && (e.target as HTMLInputElement).blur()}
+      aria-label="Name"
+      className="w-40 rounded border border-line dark:border-slate-600 bg-surface dark:bg-slate-900 px-1.5 py-0.5 text-sm font-medium text-content dark:text-slate-200"
+    />
   );
 }
 
@@ -1235,6 +1388,9 @@ function EditPanel({
   onRect,
   onFloorplanPatch,
   onDeleteWall,
+  onRename,
+  onOpen,
+  onAddDrawers,
 }: {
   bound: FpBound;
   unit: LengthUnit;
@@ -1246,6 +1402,10 @@ function EditPanel({
   onRect: (loc: Location, r: FpRect | null) => void;
   onFloorplanPatch: (loc: Location, patch: Record<string, unknown>) => void;
   onDeleteWall: (idx: number) => void;
+  onRename: (loc: Location, name: string) => void;
+  /** Open a place's own plan or face in place. */
+  onOpen: (loc: Location) => void;
+  onAddDrawers: (loc: Location) => void;
 }) {
   const secondAxis = view === "front" ? "tall" : "deep";
 
@@ -1259,7 +1419,7 @@ function EditPanel({
       onBound({ ...bound, walls });
     };
     return (
-      <div className="flex items-center gap-3 flex-wrap rounded-md border border-line dark:border-slate-700 bg-subtle/60 dark:bg-slate-800/40 px-3 py-2">
+      <div className="flex items-center gap-3 flex-wrap rounded-md border border-line dark:border-slate-700 bg-surface dark:bg-slate-800 px-3 py-2">
         <span className="text-xs font-medium text-content dark:text-slate-200">
           wall ({vertical ? "vertical" : "horizontal"})
         </span>
@@ -1343,11 +1503,16 @@ function EditPanel({
     const rect = loc ? readRect(loc.metadata) : null;
     if (!loc || !rect) return null;
     return (
-      <div className="flex items-center gap-3 flex-wrap rounded-md border border-line dark:border-slate-700 bg-subtle/60 dark:bg-slate-800/40 px-3 py-2">
-        <Link to={`/locations/${loc.id}`} className="text-xs font-medium text-content dark:text-slate-200 hover:text-accent">
-          {loc.name}
-        </Link>
-        <span className="font-mono text-[10px] uppercase tracking-widest text-faint">{loc.kind}</span>
+      <div className="flex items-center gap-3 flex-wrap rounded-md border border-line dark:border-slate-700 bg-surface dark:bg-slate-800 px-3 py-2">
+        <NameInput key={loc.id} name={loc.name} onCommit={(n) => onRename(loc, n)} />
+        <button type="button" onClick={() => onOpen(loc)} className="text-xs text-accent hover:underline">
+          Open
+        </button>
+        {loc.kind !== "area" && (
+          <button type="button" onClick={() => onAddDrawers(loc)} className="text-xs text-accent hover:underline">
+            Add drawers
+          </button>
+        )}
         <DimInput label="wide" mm={rect.w_mm} unit={unit} onCommit={(v) => onRect(loc, { ...rect, w_mm: v })} />
         <DimInput label={secondAxis} mm={rect.d_mm} unit={unit} onCommit={(v) => onRect(loc, { ...rect, d_mm: v })} />
         {bound.grid_mm && (
@@ -1380,7 +1545,7 @@ function EditPanel({
 
   // Nothing selected → the bound itself.
   return (
-    <div className="flex items-center gap-3 flex-wrap rounded-md border border-line dark:border-slate-700 bg-subtle/60 dark:bg-slate-800/40 px-3 py-2">
+    <div className="flex items-center gap-3 flex-wrap rounded-md border border-line dark:border-slate-700 bg-surface dark:bg-slate-800 px-3 py-2">
       <span className="text-xs font-medium text-content dark:text-slate-200">
         {view === "front" ? "face" : "room"}
       </span>
@@ -1424,13 +1589,16 @@ function EditPanel({
 function BoundSetup({
   unitDefault,
   view,
+  initialW = "",
   onSet,
 }: {
   unitDefault: LengthUnit;
   view: "plan" | "front";
+  /** A container's face starts as wide as it stands on the floor. */
+  initialW?: string;
   onSet: (b: FpBound) => void;
 }) {
-  const [w, setW] = useState("");
+  const [w, setW] = useState(initialW);
   const [d, setD] = useState("");
   const commit = () => {
     const wmm = parseLength(w, unitDefault);
@@ -1547,67 +1715,89 @@ function SeedModal({
 function CreateOnPlanModal({
   slug,
   room,
-  rect,
+  bound,
+  taken,
   onClose,
   onCreated,
 }: {
   slug: string;
   room: Location;
-  rect: FpRect;
+  bound: FpBound;
+  /** What already stands on this plan: each new one goes where none of it is. */
+  taken: FpRect[];
   onClose: () => void;
   onCreated: () => void;
 }) {
   const toast = useToast();
+  const face = bound.view === "front";
   const [name, setName] = useState("");
   const [kind, setKind] = useState<"container" | "area">("container");
+  // "Drawer 1-3" is three drawers here as it is in the list's form.
+  const names = parseRange(name)?.names ?? (name.trim() ? [name.trim()] : []);
   const create = useMutation({
-    mutationFn: () =>
-      api.createLocation(slug, {
-        name: name.trim(),
-        parent_id: room.id,
-        kind,
-        metadata: { floorplan: rect },
-      }),
+    mutationFn: async () => {
+      const placed = [...taken];
+      for (const n of names) {
+        const rect = newChildRect(bound, placed);
+        placed.push(rect);
+        await api.createLocation(slug, { name: n, parent_id: room.id, kind, metadata: withRect({}, rect) });
+      }
+    },
     onSuccess: () => {
-      toast.success(`${name.trim()} placed`);
+      toast.success(names.length === 1 ? `${names[0]} is on the plan` : `${names.length} places are on the plan`);
       onCreated();
       onClose();
     },
-    onError: (e) => toast.error(e instanceof ApiError ? e.message : String(e)),
+    onError: (e) => {
+      toast.error(e instanceof ApiError ? e.message : String(e));
+      onCreated();
+    },
   });
   return (
-    <Modal open onClose={onClose} title="New location on the plan" size="sm">
-      <div className="space-y-3">
+    <Modal open onClose={onClose} title={`Add to ${room.name}`} size="sm">
+      <form
+        className="space-y-3"
+        onSubmit={(e) => {
+          e.preventDefault();
+          if (names.length && !create.isPending) create.mutate();
+        }}
+      >
         <input
           value={name}
           onChange={(e) => setName(e.target.value)}
-          placeholder="Name (e.g. Workbench)"
+          placeholder={face ? "Name (e.g. Drawer 3, or Drawer 1-6)" : "Name (e.g. Workbench, Blue toolbox)"}
+          aria-label="Name"
           autoFocus
           className="w-full rounded border border-line dark:border-slate-600 bg-surface dark:bg-slate-900 px-2 py-1.5 text-sm text-content dark:text-slate-200"
         />
-        <div className="flex gap-2">
+        {names.length > 1 && (
+          <p className="text-[11px] text-accent dark:text-cobble-300">
+            Makes {names.length}: {parseRange(name)?.preview}
+          </p>
+        )}
+        <div className="flex gap-2 flex-wrap">
           {(["container", "area"] as const).map((k) => (
             <button
               key={k}
               type="button"
               onClick={() => setKind(k)}
+              aria-pressed={kind === k}
               className={`rounded-md border px-3 py-1 text-xs transition ${kind === k ? "border-accent text-accent" : "border-line dark:border-slate-600 text-muted"}`}
             >
-              {k === "container" ? "container (a thing items go into)" : "area (a zone of this space)"}
+              {k === "container" ? "a thing things go in" : "a part of this space"}
             </button>
           ))}
         </div>
         <div className="flex justify-end">
           <button
-            type="button"
-            disabled={!name.trim() || create.isPending}
-            onClick={() => create.mutate()}
+            type="submit"
+            disabled={!names.length || create.isPending}
             className="rounded-md bg-cobble-600 hover:bg-cobble-700 text-white px-3 py-1.5 text-sm transition disabled:opacity-50"
           >
-            Create + place
+            {create.isPending ? "Adding…" : names.length > 1 ? `Add ${names.length}` : "Add"}
           </button>
         </div>
-      </div>
+      </form>
     </Modal>
   );
 }
@@ -1633,7 +1823,7 @@ function NewFloorModal({
         name: name.trim(),
         parent_id: room.id,
         kind: "area",
-        metadata: { floorplan: bound },
+        metadata: withBound({}, bound, "area"),
       }),
     onSuccess: () => {
       toast.success(`${name.trim()} added`);
@@ -1671,131 +1861,169 @@ function NewFloorModal({
   );
 }
 
-/** "Fill grid" — a parts rack's 24 bins (or a cabinet's cubbies) created AND
- *  placed in one shot: rows × columns tiled at true scale across the face,
- *  named A1…C8 or Bin 1…24 in reading order. Adds to the existing layout;
- *  each bin is an ordinary container location afterward (scan, label, heat,
- *  single-SKU qty card — everything). */
-function GridFillModal({
+/** Drawers and bins on a face, in one go: the ones this place already has,
+ *  arranged in rows (existing drawers were otherwise each placed full-face at
+ *  the corner, stacked on one another), or new ones made and placed at true
+ *  scale, named the way people name them. Each is an ordinary container
+ *  afterward (scan, label, heat, a place to put things). */
+type DrawerNames = "drawer" | "bin" | "row-letter";
+
+function DrawersModal({
   slug,
   room,
   bound,
+  children,
+  onPlaced,
   onClose,
   onCreated,
 }: {
   slug: string;
   room: Location;
   bound: FpBound;
+  /** This place's own children: the drawers it already has. */
+  children: Location[];
+  /** Put one of them at a rect (or take it off the face). */
+  onPlaced: (loc: Location, rect: FpRect | null) => Promise<unknown>;
   onClose: () => void;
   onCreated: () => void;
 }) {
   const toast = useToast();
-  const [rows, setRows] = useState("3");
-  const [cols, setCols] = useState("8");
-  const [scheme, setScheme] = useState<GridNameScheme>("row-letter");
-  const [prefix, setPrefix] = useState("Bin ");
+  const ordered = useMemo(() => [...children].sort((x, y) => x.name.localeCompare(y.name, undefined, { numeric: true })), [children]);
+  const onFace = ordered.filter((c) => readRect(c.metadata));
+  const [mode, setMode] = useState<"arrange" | "new">(ordered.length ? "arrange" : "new");
+  const [cols, setCols] = useState("1");
+  const [rowsNew, setRowsNew] = useState("4");
+  const [names, setNames] = useState<DrawerNames>("drawer");
+  const [clear, setClear] = useState(false);
   const [progress, setProgress] = useState<number | null>(null);
 
-  const r = parseInt(rows, 10);
-  const c = parseInt(cols, 10);
-  const rects = Number.isFinite(r) && Number.isFinite(c) ? gridRects(bound, r, c) : null;
-  const preview = rects ? gridNames(r, c, scheme, prefix) : [];
+  const c = Math.max(1, parseInt(cols, 10) || 1);
+  const r = mode === "arrange" ? Math.max(1, Math.ceil(ordered.length / c)) : Math.max(1, parseInt(rowsNew, 10) || 0);
+  const count = mode === "arrange" ? ordered.length : r * c;
+  const rects = gridRects(bound, r, c)?.slice(0, count) ?? null;
+  const labels =
+    mode === "arrange"
+      ? ordered.map((o) => o.short_name || o.name)
+      : names === "row-letter"
+        ? gridNames(r, c, "row-letter", "")
+        : gridNames(r, c, "sequential", names === "drawer" ? "Drawer " : "Bin ");
+  const noun = names === "bin" ? "bins" : "drawers";
 
   const run = async () => {
     if (!rects) return;
     setProgress(0);
     try {
-      for (let i = 0; i < rects.length; i++) {
-        await api.createLocation(slug, {
-          name: preview[i]!,
-          parent_id: room.id,
-          kind: "container",
-          metadata: { floorplan: rects[i]! },
-        });
-        setProgress(i + 1);
+      if (mode === "arrange") {
+        for (let i = 0; i < ordered.length; i++) {
+          await onPlaced(ordered[i]!, rects[i]!);
+          setProgress(i + 1);
+        }
+        toast.success(`${ordered.length} drawers arranged in ${room.name}`);
+      } else {
+        if (clear) for (const o of onFace) await onPlaced(o, null);
+        for (let i = 0; i < rects.length; i++) {
+          await api.createLocation(slug, { name: labels[i]!, parent_id: room.id, kind: "container", metadata: withRect({}, rects[i]!) });
+          setProgress(i + 1);
+        }
+        toast.success(`${rects.length} ${noun} in ${room.name}`);
       }
-      toast.success(`${rects.length} bins placed — print their labels from the Labels page`);
       onCreated();
       onClose();
     } catch (e) {
-      toast.error(
-        `Stopped after ${progress ?? 0} of ${rects.length}: ${e instanceof ApiError ? e.message : String(e)} — created bins are kept; re-run with fewer.`,
-      );
+      toast.error(`Stopped after ${progress ?? 0} of ${rects.length}: ${e instanceof ApiError ? e.message : String(e)}`);
       onCreated();
       setProgress(null);
     }
   };
 
   const busy = progress !== null;
+  const tab = (on: boolean) =>
+    `flex-1 rounded-md border px-2.5 py-1.5 text-xs font-medium transition ${on ? "border-accent text-accent bg-cobble-50 dark:bg-cobble-900/30" : "border-line dark:border-slate-600 text-muted"}`;
+  const num = "w-14 rounded border border-line dark:border-slate-600 bg-surface dark:bg-slate-900 px-1.5 py-1 text-sm text-content dark:text-slate-200 text-center";
   return (
-    <Modal open onClose={busy ? () => {} : onClose} title={`Fill ${room.name} with a grid`} size="sm">
-      <div className="space-y-3">
-        <div className="flex items-center gap-2">
-          <label className="inline-flex items-center gap-1.5 text-xs text-muted dark:text-slate-400">
-            rows
-            <input
-              value={rows}
-              onChange={(e) => setRows(e.target.value)}
-              inputMode="numeric"
-              className="w-12 rounded border border-line dark:border-slate-600 bg-surface dark:bg-slate-900 px-1.5 py-1 text-sm text-content dark:text-slate-200 text-center"
-            />
-          </label>
-          <span className="text-faint">×</span>
-          <label className="inline-flex items-center gap-1.5 text-xs text-muted dark:text-slate-400">
-            columns
-            <input
-              value={cols}
-              onChange={(e) => setCols(e.target.value)}
-              inputMode="numeric"
-              className="w-12 rounded border border-line dark:border-slate-600 bg-surface dark:bg-slate-900 px-1.5 py-1 text-sm text-content dark:text-slate-200 text-center"
-            />
-          </label>
-        </div>
-        <div className="flex items-center gap-2 flex-wrap">
-          {(
-            [
-              ["row-letter", "A1 … C8"],
-              ["sequential", "Bin 1 … 24"],
-            ] as const
-          ).map(([k, label]) => (
-            <button
-              key={k}
-              type="button"
-              onClick={() => setScheme(k)}
-              className={`rounded-md border px-2.5 py-1 text-xs transition ${scheme === k ? "border-accent text-accent" : "border-line dark:border-slate-600 text-muted"}`}
-            >
-              {label}
+    <Modal open onClose={busy ? () => {} : onClose} title={`Drawers in ${room.name}`} size="sm">
+      <div className="space-y-3" data-testid="drawers-modal">
+        {ordered.length > 0 && (
+          <div className="flex gap-2">
+            <button type="button" className={tab(mode === "arrange")} aria-pressed={mode === "arrange"} onClick={() => setMode("arrange")}>
+              Arrange the {ordered.length} it has
             </button>
-          ))}
-          {scheme === "sequential" && (
-            <input
-              value={prefix}
-              onChange={(e) => setPrefix(e.target.value)}
-              placeholder="prefix"
-              className="w-20 rounded border border-line dark:border-slate-600 bg-surface dark:bg-slate-900 px-1.5 py-1 text-xs text-content dark:text-slate-200"
-            />
+            <button type="button" className={tab(mode === "new")} aria-pressed={mode === "new"} onClick={() => setMode("new")}>
+              Make new ones
+            </button>
+          </div>
+        )}
+        <div className="flex items-center gap-2 flex-wrap text-xs text-muted dark:text-slate-400">
+          {mode === "new" && (
+            <label className="inline-flex items-center gap-1.5">
+              rows
+              <input value={rowsNew} onChange={(e) => setRowsNew(e.target.value)} inputMode="numeric" aria-label="Rows" className={num} />
+            </label>
           )}
+          {mode === "new" && <span className="text-faint">×</span>}
+          <label className="inline-flex items-center gap-1.5">
+            {mode === "arrange" ? "side by side" : "columns"}
+            <input value={cols} onChange={(e) => setCols(e.target.value)} inputMode="numeric" aria-label="Columns" className={num} />
+          </label>
         </div>
+        {mode === "new" && (
+          <div className="flex items-center gap-2 flex-wrap">
+            {(
+              [
+                ["drawer", `Drawer 1 … ${r * c}`],
+                ["bin", `Bin 1 … ${r * c}`],
+                ["row-letter", `A1 … ${gridNames(r, c, "row-letter", "").at(-1) ?? "A1"}`],
+              ] as const
+            ).map(([k, label]) => (
+              <button
+                key={k}
+                type="button"
+                onClick={() => setNames(k)}
+                aria-pressed={names === k}
+                className={`rounded-md border px-2.5 py-1 text-xs transition ${names === k ? "border-accent text-accent" : "border-line dark:border-slate-600 text-muted"}`}
+              >
+                {label}
+              </button>
+            ))}
+          </div>
+        )}
         {rects ? (
-          <p className="text-xs text-muted dark:text-slate-400">
-            {/* Keep the separator on the SAME line as the name it follows. JSX
-                collapses the newline to nothing, so a leading "-" on the next
-                line rendered as "C8- placed at true scale" — reading as a bin
-                named "C8-". */}
-            {rects.length} bins: {preview.slice(0, 3).join(", ")} … {preview[preview.length - 1]} -{" "}
-            placed at true scale, added to what's already on the layout.
-          </p>
+          <div
+            className="relative mx-auto w-full max-w-xs border-2 border-slate-400 dark:border-slate-500 rounded bg-subtle/40 dark:bg-[#0d1526]"
+            style={{ aspectRatio: `${bound.w_mm} / ${bound.d_mm}`, maxHeight: "40dvh" }}
+            aria-label="Preview"
+          >
+            {rects.map((rc, i) => (
+              <span
+                key={i}
+                className="absolute rounded-sm border border-slate-400 dark:border-slate-500 bg-white dark:bg-slate-800 text-[10px] leading-tight px-1 overflow-hidden text-content dark:text-slate-200"
+                style={{ left: pct(rc.x_mm, bound.w_mm), top: pct(rc.y_mm, bound.d_mm), width: pct(rc.w_mm, bound.w_mm), height: pct(rc.d_mm, bound.d_mm) }}
+              >
+                {labels[i]}
+              </span>
+            ))}
+          </div>
         ) : (
-          <p className="text-xs text-ember-500">That grid doesn't fit this face - fewer rows or columns.</p>
+          <p className="text-xs text-ember-500">That many don't fit this face: fewer rows or columns.</p>
+        )}
+        {mode === "new" && onFace.length > 0 && (
+          <label className="flex items-center gap-2 text-xs text-muted dark:text-slate-400">
+            <input type="checkbox" checked={clear} onChange={(e) => setClear(e.target.checked)} className="accent-cobble-600" />
+            Take the {onFace.length} already on this face off it first (they are kept, just not drawn)
+          </label>
         )}
         <div className="flex justify-end">
           <button
             type="button"
-            disabled={!rects || busy}
+            disabled={!rects || busy || count === 0}
             onClick={() => void run()}
             className="rounded-md bg-cobble-600 hover:bg-cobble-700 text-white px-3 py-1.5 text-sm transition disabled:opacity-50"
           >
-            {busy ? `Creating ${progress}/${rects?.length ?? 0}…` : `Create ${rects?.length ?? 0} bins`}
+            {busy
+              ? `${mode === "arrange" ? "Arranging" : "Making"} ${progress}/${count}…`
+              : mode === "arrange"
+                ? `Arrange ${count} drawers`
+                : `Make ${count} ${noun}`}
           </button>
         </div>
       </div>
@@ -1912,7 +2140,7 @@ function EntityPanel({
   if (!rect) return null;
   const fp = (ent.metadata?.floorplan as Record<string, unknown>) ?? {};
   return (
-    <div className="flex items-center gap-3 flex-wrap rounded-md border border-cobble-300/60 dark:border-cobble-700/60 bg-cobble-50/40 dark:bg-cobble-900/20 px-3 py-2">
+    <div className="flex items-center gap-3 flex-wrap rounded-md border border-cobble-300/60 dark:border-cobble-700/60 bg-cobble-50 dark:bg-slate-800 px-3 py-2">
       <span className="text-xs font-medium text-content dark:text-slate-200">{ent.name}</span>
       <span className="font-mono text-[10px] uppercase tracking-widest text-faint">
         {ent.kind.split(":")[1]}

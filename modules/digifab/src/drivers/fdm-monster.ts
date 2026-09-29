@@ -8,6 +8,7 @@
 // print-jobs endpoints and confirmed when a real send is authorized
 // (the bits still worth re-checking with a real job are marked VERIFY).
 
+import { requestSignal, uploadSignal } from "./timeouts.js";
 import type {
   ConnectionResult,
   ManagerConfig,
@@ -93,6 +94,7 @@ export class FdmMonsterDriver implements MachineDriver {
   private async login(): Promise<void> {
     if (!this.cfg.username || !this.cfg.password) return;
     const res = await fetch(this.base + EP.login, {
+      signal: requestSignal(),
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ username: this.cfg.username, password: this.cfg.password }),
@@ -120,6 +122,7 @@ export class FdmMonsterDriver implements MachineDriver {
     if (!this.token && this.cfg.username && this.cfg.password) await this.login();
     const res = await fetch(this.base + path, {
       ...init,
+      signal: init.body instanceof FormData ? uploadSignal() : requestSignal(),
       headers: { ...(init.headers as Record<string, string>), ...this.authHeaders() },
     });
     if (res.status === 401 && retry && this.cfg.username && this.cfg.password) {
@@ -153,7 +156,7 @@ export class FdmMonsterDriver implements MachineDriver {
   private async probeRouting(): Promise<boolean> {
     if (this.routing !== null) return this.routing;
     try {
-      const res = await fetch(this.base + EP.spec);
+      const res = await fetch(this.base + EP.spec, { signal: requestSignal() });
       const spec = (await res.json()) as { paths?: Record<string, unknown> };
       const paths = Object.keys(spec.paths ?? {});
       // Matches both /api/v2/routing/resolve/{id} and
@@ -266,6 +269,7 @@ export class FdmMonsterDriver implements MachineDriver {
       state: toJobState(data),
       progress: prog != null ? (prog > 1 ? prog / 100 : prog) : null,
       deviceId: (pick<string>(data, "deviceId") ?? null) as string | null,
+      message: (pick<string>(data, "statusReason", "errorMessage", "error", "message") ?? null) as string | null,
       raw: data,
     };
   }

@@ -28,13 +28,14 @@ import { sql } from "kysely";
 import { meta } from "../db/meta.js";
 import type {
   EdgeAgentInfo,
+  EdgeBridgeRecord,
   EdgeChannelSender,
   EdgeConsumer,
   EdgeRelayItem,
   EdgeRequest,
   EdgeResponse,
 } from "@cobblr/platform-contract";
-import { edgeChannelKey } from "@cobblr/platform-contract/edge-channel";
+import { bridgeDisplayName, bridgeNameFromToken, edgeChannelKey } from "@cobblr/platform-contract/edge-channel";
 import { BRIDGE_BUNDLE_VERSION, BRIDGE_BUNDLE_SHA256, bridgeBundleJs } from "./edge-bridge-bundle.js";
 import { BRIDGE_LOADER_JS } from "./edge-bridge-loader.js";
 
@@ -61,8 +62,41 @@ function connectedChannels(): string {
     : "no bridge is connected to THIS api process at all (the registry is per-process, so a container that was just replaced starts empty until the bridge re-polls)";
 }
 
+// Who wants to know when a bridge comes back: a connection that rides it was
+// tested while it was away and still says so, until somebody presses Test.
+type OnlineListener = (key: string) => void;
+const onlineListeners: OnlineListener[] = [];
+
+/** Be told when a bridge that was away (or never seen) is heard from. Fires
+ *  in the process that heard it, once per return, not on every poll. */
+export function onBridgeOnline(fn: OnlineListener): () => void {
+  onlineListeners.push(fn);
+  return () => {
+    const i = onlineListeners.indexOf(fn);
+    if (i >= 0) onlineListeners.splice(i, 1);
+  };
+}
+
+function cameOnline(key: string): void {
+  for (const fn of onlineListeners) {
+    try {
+      fn(key);
+    } catch (err) {
+      console.warn(`[edge] online listener failed for ${key.slice(0, 8)}…: ${(err as Error).message}`);
+    }
+  }
+}
+
+/** Was a bridge last heard from so long ago (or never) that hearing it now is
+ *  a return? */
+export function isReturn(lastSeen: Date | null, now: number = Date.now()): boolean {
+  return !lastSeen || now - lastSeen.getTime() >= PRESENCE_FRESH_MS;
+}
+
 export function registerChannel(key: string, send: EdgeChannelSender): () => void {
+  const fresh = !channels.has(key);
   channels.set(key, send); // newest wins
+  if (fresh) cameOnline(key);
   return () => {
     // Only clear if still ours — a reconnect may have already replaced it.
     if (channels.get(key) === send) channels.delete(key);
@@ -81,14 +115,54 @@ export async function send(key: string, req: EdgeRequest): Promise<EdgeResponse>
   if (ch) return ch(req);
 
   if (await bridgeIsFresh(key)) return relaySend(key, req);
-  {
-    // Name the CHANNEL, never "this workspace": a personal bridge is keyed by
-    // user id and has no workspace, so blaming one sends the reader to a
-    // setting that was never involved.
-    throw new Error(
-      `no edge bridge is connected on channel ${key.slice(0, 8)}… — a PERSONAL AI connection routes by your user id (not by workspace), so check that the Cobblr edge bridge is running and signed in as the same user. ${connectedChannels()}`,
-    );
+  // The operator's diagnosis goes to the log; the person gets a sentence about
+  // their bridge, by its name, and what to do.
+  console.warn(`[edge] send on ${key.slice(0, 8)}… found no bridge; ${connectedChannels()}`);
+  throw new Error(await offlineReason(key));
+}
+
+/** How long ago, in words a person reads: "4 minutes", "3 hours", "2 days". */
+export function howLongAgo(then: Date, now: Date = new Date()): string {
+  const m = Math.max(1, Math.round((now.getTime() - then.getTime()) / 60_000));
+  if (m < 90) return `${m} minute${m === 1 ? "" : "s"}`;
+  const h = Math.round(m / 60);
+  if (h < 48) return `${h} hour${h === 1 ? "" : "s"}`;
+  const d = Math.round(h / 24);
+  return `${d} day${d === 1 ? "" : "s"}`;
+}
+
+async function workspaceBridge(key: string): Promise<{ bridge: string | null; name: string | null; last_seen: Date | null } | null> {
+  const i = key.indexOf("::");
+  const orgId = i < 0 ? key : key.slice(0, i);
+  const org = await meta
+    .selectFrom("orgs")
+    .select("id")
+    .where(sql<string>`id::text`, "=", orgId)
+    .executeTakeFirst();
+  if (!org) return null;
+  const row = await meta
+    .selectFrom("edge_bridges")
+    .select(["name", "last_seen"])
+    .where("channel_key", "=", key)
+    .executeTakeFirst();
+  return { bridge: i < 0 ? null : key.slice(i + 2), name: row?.name ?? null, last_seen: row ? new Date(row.last_seen) : null };
+}
+
+/** Why a send found nobody, said to the person who pressed the button. */
+export async function offlineReason(key: string): Promise<string> {
+  const w = await workspaceBridge(key).catch(() => null);
+  if (!w) {
+    // A personal bridge is keyed by the owner's user id, not a workspace, so
+    // it is never "this workspace's" bridge.
+    return "Your personal edge bridge is not connected. Check that the Cobblr edge bridge on your computer is running and signed in as you, then try again.";
   }
+  const name = bridgeDisplayName(w);
+  if (!w.last_seen) {
+    return w.bridge === null
+      ? "This workspace has no bridge yet. Set one up under Configuration → Devices, then try again."
+      : `This workspace has no bridge called “${w.bridge}”. Check the name, or set it up under Configuration → Devices.`;
+  }
+  return `Your bridge “${name}” is offline. It was last heard from ${howLongAgo(w.last_seen)} ago. Check that the box it runs on has power and a network connection, then try again.`;
 }
 
 /** Hand a request to whichever process is holding this bridge's poll, and wait
@@ -115,7 +189,11 @@ async function relaySend(key: string, req: EdgeRequest): Promise<EdgeResponse> {
     }
     if (Date.now() >= deadline) {
       await meta.deleteFrom("edge_relay_jobs").where("id", "=", id).execute().catch(() => {});
-      throw new Error("edge bridge did not respond in time");
+      const w = await workspaceBridge(key).catch(() => null);
+      const who = w ? `Your bridge “${bridgeDisplayName(w)}”` : "Your edge bridge";
+      throw new Error(
+        `${who} is online but did not answer within ${Math.round(timeoutMs / 1000)} seconds. The device behind it may be off or busy.`,
+      );
     }
     await sleep(CLAIM_POLL_MS);
   }
@@ -151,13 +229,121 @@ const DEFAULT_REQ_TIMEOUT_MS = 20_000;
 
 const sleep = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms));
 
-/** Record that a bridge is polling for this channel, right now. */
-export async function relayTouch(key: string): Promise<void> {
+/** Record that a bridge is polling for this channel, right now, and, when it
+ *  registers, what it says about itself. The name is taken ONCE, from the
+ *  token it was installed with (the name typed on the setup screen), so a
+ *  rename afterwards is never undone by the next registration. */
+export async function relayTouch(key: string, report?: BridgeReport): Promise<void> {
+  const clip = (v: string | null | undefined) => (typeof v === "string" && v.trim() ? v.trim().slice(0, 120) : null);
+  let name: string | null = null;
+  if (report?.tokenId) {
+    const tok = await meta.selectFrom("api_tokens").select("name").where("id", "=", report.tokenId).executeTakeFirst();
+    name = clip(bridgeNameFromToken(tok?.name));
+  }
+  const version = clip(report?.version);
+  const hostname = clip(report?.hostname);
+  // An older bridge says nothing about a list: keep what is known. A bridge
+  // that says null has had its list removed.
+  const saysAllow = report !== undefined && "allow" in report;
+  const allow = Array.isArray(report?.allow)
+    ? report!.allow.filter((e): e is string => typeof e === "string" && !!e.trim()).slice(0, 50).map((e) => e.trim().slice(0, 100))
+    : null;
+  const before = await meta.selectFrom("edge_bridges").select("last_seen").where("channel_key", "=", key).executeTakeFirst();
   await meta
     .insertInto("edge_bridges")
-    .values({ channel_key: key })
-    .onConflict((oc) => oc.column("channel_key").doUpdateSet({ last_seen: new Date() }))
+    .values({ channel_key: key, name, version, hostname, token_id: report?.tokenId ?? null, allowlist: saysAllow && allow?.length ? (JSON.stringify(allow) as never) : null })
+    .onConflict((oc) =>
+      oc.column("channel_key").doUpdateSet({
+        last_seen: new Date(),
+        // Keep what is known; a plain poll reports nothing and must not blank it.
+        name: sql`coalesce(edge_bridges.name, excluded.name)`,
+        version: sql`coalesce(excluded.version, edge_bridges.version)`,
+        hostname: sql`coalesce(excluded.hostname, edge_bridges.hostname)`,
+        token_id: sql`coalesce(excluded.token_id, edge_bridges.token_id)`,
+        ...(saysAllow ? { allowlist: sql`excluded.allowlist` } : {}),
+      }),
+    )
     .execute();
+  if (isReturn(before ? new Date(before.last_seen) : null)) cameOnline(key);
+}
+
+/** What a bridge says about itself when it registers. `tokenId` is the API
+ *  token it authenticated with; its name becomes the bridge's first name.
+ *  `allow` is present only when the bridge reports its list (null: none). */
+export interface BridgeReport {
+  version?: string | null;
+  hostname?: string | null;
+  tokenId?: string | null;
+  allow?: string[] | null;
+}
+
+/** Cut a bridge off: revoke the key it registers with, so its next check-in is
+ *  refused, and take it off the list. Returns null when the workspace has no
+ *  such bridge, else the names of any other bridges that shared the key and
+ *  are cut off with it. */
+export async function disconnectBridge(orgId: string, bridge: string | null): Promise<{ alsoCut: string[] } | null> {
+  const key = edgeChannelKey(orgId, bridge);
+  const row = await meta.selectFrom("edge_bridges").select(["token_id"]).where("channel_key", "=", key).executeTakeFirst();
+  if (!row) return null;
+  let alsoCut: string[] = [];
+  if (row.token_id) {
+    await meta.updateTable("api_tokens").set({ revoked_at: new Date() }).where("id", "=", row.token_id).where("revoked_at", "is", null).execute();
+    const others = await meta
+      .selectFrom("edge_bridges")
+      .select(["channel_key", "name"])
+      .where("token_id", "=", row.token_id)
+      .where("channel_key", "!=", key)
+      .execute();
+    alsoCut = others.map((o) => {
+      const i = o.channel_key.indexOf("::");
+      return bridgeDisplayName({ bridge: i < 0 ? null : o.channel_key.slice(i + 2), name: o.name });
+    });
+  }
+  await meta.deleteFrom("edge_relay_jobs").where("channel_key", "=", key).execute();
+  await meta.deleteFrom("edge_bridges").where("channel_key", "=", key).execute();
+  return { alsoCut };
+}
+
+/** Every bridge this workspace has, online or not, with what a person needs
+ *  to recognise it. Offline ones are listed too: a bridge that stopped is
+ *  exactly the one somebody is looking for. */
+export async function listBridges(orgId: string): Promise<EdgeBridgeRecord[]> {
+  const rows = await meta
+    .selectFrom("edge_bridges")
+    .select(["channel_key", "last_seen", "first_seen", "name", "version", "hostname", "allowlist", "token_id"])
+    .where((eb) => eb.or([eb("channel_key", "=", orgId), eb("channel_key", "like", `${orgId}::%`)]))
+    .execute();
+  const out = rows.map((r) => {
+    const age = Date.now() - new Date(r.last_seen).getTime();
+    return {
+      bridge: r.channel_key === orgId ? null : r.channel_key.slice(orgId.length + 2),
+      name: r.name,
+      // Fresh in the shared table, or held open in THIS process (a socket).
+      connected: age < PRESENCE_FRESH_MS || channels.has(r.channel_key),
+      last_seen: new Date(r.last_seen).toISOString(),
+      first_seen: new Date(r.first_seen).toISOString(),
+      version: r.version,
+      hostname: r.hostname,
+      allowlist: Array.isArray(r.allowlist) ? (r.allowlist as string[]) : null,
+      // A bridge from before keys were recorded cannot be cut off from here.
+      can_disconnect: !!r.token_id,
+    };
+  });
+  // The default bridge first, then by what people call them.
+  return out.sort((a, b) =>
+    a.bridge === null ? -1 : b.bridge === null ? 1 : (a.name ?? a.bridge).localeCompare(b.name ?? b.bridge),
+  );
+}
+
+/** Give a bridge the name a person will recognise it by. False when this
+ *  workspace has no such bridge. */
+export async function renameBridge(orgId: string, bridge: string | null, name: string): Promise<boolean> {
+  const r = await meta
+    .updateTable("edge_bridges")
+    .set({ name: name.trim().slice(0, 120) })
+    .where("channel_key", "=", edgeChannelKey(orgId, bridge))
+    .executeTakeFirst();
+  return Number(r.numUpdatedRows ?? 0) > 0;
 }
 
 /** Has a bridge been heard from recently, on ANY api process? */
@@ -208,8 +394,12 @@ export async function relayPoll(key: string, opts?: { signal?: AbortSignal }): P
     if (opts?.signal?.aborted || Date.now() >= deadline) return null;
     await sleep(CLAIM_POLL_MS);
     // Keep presence warm across a long park, or the reaper would call a bridge
-    // that is sitting right here "disconnected".
-    if (Date.now() % 10_000 < CLAIM_POLL_MS) await relayTouch(key);
+    // that is sitting right here "disconnected". Update only, never create: a
+    // poll that was already parked when the bridge was disconnected must not
+    // put it back on the list.
+    if (Date.now() % 10_000 < CLAIM_POLL_MS) {
+      await meta.updateTable("edge_bridges").set({ last_seen: new Date() }).where("channel_key", "=", key).execute();
+    }
   }
 }
 

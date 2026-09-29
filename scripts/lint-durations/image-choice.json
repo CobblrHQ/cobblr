@@ -1,7 +1,8 @@
 {
   "lint": "lint:image-choice",
-  "run": "tsx scripts/lint-image-choice-contain.ts",
+  "run": "node scripts/lint-image-choice-contain.ts",
   "ms": 516,
   "recorded": "2026-09-14",
-  "source": "split from scripts/lint-durations.json (recorded 2026-09-14)"
+  "source": "split from scripts/lint-durations.json (recorded 2026-09-14)",
+  "readMB": 5.7
 }

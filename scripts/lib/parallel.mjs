@@ -36,7 +36,7 @@ export async function runParallel(jobs, { concurrency = defaultConcurrency(), on
         shell: true,
         cwd: job.cwd,
         stdio: ["ignore", "pipe", "pipe"],
-        env: { ...process.env, CI: process.env.CI ?? "1", FORCE_COLOR: "0" },
+        env: { ...process.env, CI: process.env.CI ?? "1", FORCE_COLOR: "0", ...(job.env ?? {}) },
       });
       let out = "";
       child.stdout.on("data", (d) => (out += d));

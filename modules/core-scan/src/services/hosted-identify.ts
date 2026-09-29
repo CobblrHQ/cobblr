@@ -17,6 +17,8 @@
 //
 // Operator-configured internal service ⇒ plain fetch, strict-egress-safe
 // (the env-set-URL convention, CLAUDE.md §14.1).
+import { parseProductRegion } from "./image-ops.js";
+import { parseListing } from "./listing-evidence.js";
 import type { PhotoIdentity } from "./enrich-photo.js";
 import { seenCountOf, seenDistinctOf } from "./seen-count.js";
 import type { Kysely } from "kysely";
@@ -321,7 +323,11 @@ export function toPhotoIdentity(item: Record<string, unknown>): PhotoIdentity | 
     barcode: str(item.barcode),
     serial_number: str(item.serial_number),
     observations: str(item.observations) ?? "",
-    product_photo_box: null,
+    // The same two reads a tenant AI's reply carries, whenever the hosted
+    // service sends them: a listing screenshot's photo box and what the
+    // listing printed about the sale (#3853).
+    product_photo_box: parseProductRegion({ box: (item as { product_photo_box?: unknown }).product_photo_box }),
+    listing: parseListing((item as { listing?: unknown }).listing),
     distinct: individuals.length >= 2 ? individuals.length : seenDistinctOf(item.distinct),
     individuals,
   };

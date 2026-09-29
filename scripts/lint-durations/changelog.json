@@ -1,7 +1,8 @@
 {
   "lint": "lint:changelog",
-  "run": "tsx scripts/lint-changelog.ts",
+  "run": "node scripts/lint-changelog.ts",
   "ms": 1001,
   "recorded": "2026-09-14",
-  "source": "split from scripts/lint-durations.json (recorded 2026-09-14)"
+  "source": "split from scripts/lint-durations.json (recorded 2026-09-14)",
+  "readMB": 16.4
 }

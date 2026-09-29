@@ -1,10 +1,11 @@
 {
   "lint": "lint:entity-photo-frame",
-  "run": "tsx scripts/lint-entity-photo-frame.ts",
+  "run": "node scripts/lint-entity-photo-frame.ts",
   "rows": [
     "generic-web-component"
   ],
   "ms": 1910,
   "recorded": "2026-09-28",
-  "source": "scaffolded by new-lint.sh at twice a local run (a shared box); replaced from its first CI measurement"
+  "source": "scaffolded by new-lint.sh at twice a local run (a shared box); replaced from its first CI measurement",
+  "readMB": 6.1
 }

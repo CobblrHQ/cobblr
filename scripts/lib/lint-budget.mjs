@@ -41,6 +41,10 @@
 //     a lint that adds ten seconds serial is what "became the CI job" starts
 //     to look like. (fixtures-tracked, the lint behind four of those five,
 //     was walking node_modules; that was a real cost bug and was fixed.)
+//   - A run is CONTENDED when its factor is over CONTENDED_AT, or the box
+//     itself reads starved whatever the factor says: PSI io full at or over
+//     IO_CONTENDED_AT, or PSI cpu some at or over CPU_CONTENDED_AT (other jobs
+//     on the machine, which this run's own factor cannot see).
 //   - A CONTENDED run cannot judge a single lint (see the stalls), and the rule
 //     says so rather than pretending: only the hard CEILING applies, the runner
 //     prints the factor and that per-lint budgets are deferred, and the next
@@ -90,6 +94,28 @@ export function ioPressure(text) {
     return null;
   }
 }
+/** The box's CPU pressure (PSI `cpu` some, avg60, percent) at or above which
+ *  a run is contended whatever the factor says. The factor compares this
+ *  run's lints with their own quiet times, so it cannot see a box that other
+ *  jobs are starving: on 2026-09-28 the CI box sat at a load of 55 to 65 on
+ *  12 cores, PSI cpu some avg60 76%, and two runs went red on a factor of
+ *  1.00x, lint:scripts-typecheck at 104.8s re-measured alone (quiet 16.6s)
+ *  and lint:surface-names at 21.0s alone (quiet 0.69s), neither touched by
+ *  the change under test. The re-measure cannot help there: alone in this
+ *  job is not alone on the box. */
+export const CPU_CONTENDED_AT = 40;
+
+/** PSI cpu "some" avg60, in percent, from /proc/pressure/cpu; null where the
+ *  kernel does not offer it. */
+export function cpuPressure(text) {
+  try {
+    const src = text ?? readFileSync("/proc/pressure/cpu", "utf8");
+    const m = /^some .*?avg60=([\d.]+)/m.exec(src);
+    return m ? Number(m[1]) : null;
+  } catch {
+    return null;
+  }
+}
 export const CEILING_MS = 120_000;
 export const MIN_SAMPLE = 20;
 
@@ -131,7 +157,9 @@ export function overBudget(results, quietMs = {}, opts = {}) {
   const sampled = results.length >= minSample && known.length > 0;
   const io = opts.ioPressure ?? null;
   const ioContended = io !== null && io >= (opts.ioContendedAt ?? IO_CONTENDED_AT);
-  const contended = sampled && (factor > contendedAt || ioContended);
+  const cpu = opts.cpuPressure ?? null;
+  const cpuContended = cpu !== null && cpu >= (opts.cpuContendedAt ?? CPU_CONTENDED_AT);
+  const contended = sampled && (factor > contendedAt || ioContended || cpuContended);
   const perLint = sampled && !contended;
   const over = [];
   const unknown = [];
@@ -155,7 +183,7 @@ export function overBudget(results, quietMs = {}, opts = {}) {
     }
   }
   over.sort((a, b) => b.ms - a.ms);
-  return { factor, contended, perLint, over, unknown, ioPressure: io, ioContended };
+  return { factor, contended, perLint, over, unknown, ioPressure: io, ioContended, cpuPressure: cpu, cpuContended };
 }
 
 /**
@@ -216,4 +244,30 @@ export async function judgeRun(results, quietMs = {}, rerun, opts = {}) {
     r.name in alone ? { ...r, why: `${(pooled[r.name] / 1000).toFixed(1)}s in the pool, ${(alone[r.name] / 1000).toFixed(1)}s alone: ${r.why}` } : r,
   );
   return { ...final, remeasured };
+}
+
+/** THE READ BUDGET. Bytes read, unlike seconds, do not move with the machine,
+ *  so a lint whose reads grow is caught on the change that grew them rather
+ *  than on whichever slow runner it happens to tip over. Two of them turned
+ *  main red on time in one day (lint:capabilities re-reading the tree once per
+ *  row, lint:pg-readiness reading 3,740 files for eleven), and the
+ *  measurement of every lint found a third reading 608 MB a run (#3901).
+ *  A lint with a record fails past twice its record or its record + 10 MB,
+ *  whichever is more (a CI checkout is not byte-identical to where it was
+ *  recorded); one with none fails past NEW_READ_MB, and recording it is the
+ *  decision. */
+export const READ_FACTOR = 2;
+export const READ_SLACK_MB = 10;
+export const NEW_READ_MB = 30;
+export function overReadBudget(results, recordedMB = {}) {
+  const over = [];
+  for (const r of results) {
+    if (typeof r.readMB !== "number") continue;
+    const rec = recordedMB[r.name];
+    const limit = rec === undefined ? NEW_READ_MB : Math.max(rec * READ_FACTOR, rec + READ_SLACK_MB);
+    if (r.readMB > limit) {
+      over.push({ name: r.name, readMB: r.readMB, limitMB: limit, why: rec === undefined ? `read ${r.readMB.toFixed(1)} MB with no recorded read volume (limit ${NEW_READ_MB} MB for a lint without one)` : `read ${r.readMB.toFixed(1)} MB against its recorded ${rec} MB (limit ${limit.toFixed(1)} MB)` });
+    }
+  }
+  return over.sort((a, b) => b.readMB - a.readMB);
 }

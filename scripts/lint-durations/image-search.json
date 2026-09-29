@@ -1,7 +1,8 @@
 {
   "lint": "lint:image-search",
-  "run": "tsx scripts/lint-image-search-single-surface.ts",
+  "run": "node scripts/lint-image-search-single-surface.ts",
   "ms": 598,
   "recorded": "2026-09-14",
-  "source": "split from scripts/lint-durations.json (recorded 2026-09-14)"
+  "source": "split from scripts/lint-durations.json (recorded 2026-09-14)",
+  "readMB": 12.7
 }

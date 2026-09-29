@@ -65,7 +65,7 @@ function candidates(): string[] {
   try {
     const out = execFileSync(
       "git",
-      ["grep", "-lE", "--", '"(owner|guest|editor)"', "--", "*.ts", "*.tsx"],
+      ["grep", "--untracked", "-lE", "--", '"(owner|guest|editor)"', "--", "*.ts", "*.tsx"],
       { encoding: "utf8", maxBuffer: 8 * 1024 * 1024 },
     );
     return out.split("\n").filter(Boolean);

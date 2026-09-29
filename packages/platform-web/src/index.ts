@@ -22,11 +22,14 @@ export { AskBeforeRun, type Asking } from "./AskBeforeRun";
 export { summariseParts, summaryLine, type TileSummary } from "./tileSummary";
 export { EntityChip } from "./EntityChip";
 export { EntityThumb } from "./EntityThumb";
+export { Swatch } from "./Swatch";
+export { ColourInput } from "./ColourInput";
 export { EntityPhoto, type EntityPhotoProps, type PhotoAspect } from "./EntityPhoto";
 export {
   wantsSwatch,
   colorSwatch,
   swatchHex,
+  swatchFill,
   resolveSwatchHex,
   pickThumb,
   type SwatchFieldDef,
@@ -45,12 +48,13 @@ export {
   type FlatLocation,
   type AreaContainerGroup,
 } from "./locationTree";
-export { EntityTile, TILE_GRID, TILE_TITLE, distinctSubtitle } from "./EntityTile";
+export { EntityTile, TILE_GRID, TILE_TITLE, distinctSubtitle, countBadge } from "./EntityTile";
 export { ViewModeToggle, useViewMode, type ViewMode } from "./ViewModeToggle";
 export { useImageSrc } from "./useImageSrc";
 export { openAuthedFile, type OpenAuthedFileOptions } from "./openAuthedFile";
 export { FileIntake, FileIntakePanels, useFileIntake, describeLine, type IntakeLine, type FileIntakeOptions } from "./FileIntake";
 export { TableFileIntake, intakeSummary, type TableFileIntakeResult, type AskField } from "./TableFileIntake";
+export { SnippetText } from "./SnippetText";
 export { TableConnectorImport, importSummary, type SectionOutcome } from "./TableConnectorImport";
 export { MutationError, errorSentence } from "./MutationError";
 export { PasswordInput, SecretInput, AddressInput, NOT_A_LOGIN, type PasswordInputProps } from "./PasswordInput";
@@ -147,12 +151,15 @@ export {
 export { Modal } from "./Modal";
 export { lockPageScroll, useLockPageScroll } from "./scrollLock";
 export { ContentsPanel, useHoldsContents } from "./ContentsPanel";
-export { ToastProvider, useToast } from "./ToastContext";
+export { ToastProvider, useToast, ERROR_WITHOUT_WORDS } from "./ToastContext";
 export { ConfirmProvider, useConfirm } from "./ConfirmContext";
 export { UnitInput } from "./UnitInput";
 export { InboxWaitingStrip } from "./InboxWaitingStrip";
+export { PersonSelect, usePersonName, useMemberName } from "./PersonSelect";
 export { useUnits, type UseUnits } from "./useUnits";
-export { formatQuantity, formatUnit, resolveUnit, convertQuantity, unitLens } from "./units";
+export { formatQuantity, formatUnit, resolveUnit, convertQuantity, unitLens, usedInUnit } from "./units";
+export { AmountControl } from "./AmountControl";
+export { StickyBottomBar } from "./StickyBottomBar";
 export type {
   FieldRendererId,
   FieldType,
@@ -160,6 +167,7 @@ export type {
   PlatformDormantAction,
   PlatformActionBinding,
   PlatformFieldDef,
+  PlatformPerson,
   PlatformResolvedEntity,
   PlatformWebApi,
   PlatformWaitingScan,
@@ -254,6 +262,8 @@ export { withPngDpi, readPngDpi, isPng, crc32, dpiToPixelsPerMetre } from "./png
 export { YIELDING_CLASS, useYieldToContent, pressableBeneath, samplePoints } from "./yield-to-content";
 export { FloatingChrome, type FloatingChromeProps, type FloatingAnchor } from "./FloatingChrome";
 export { registerBottomChrome, registerCornerChrome, stackBottomChrome, bottomClearance, layoutDockNow, BOTTOM_CHROME_HEIGHT_VAR, BOTTOM_CLEARANCE_VAR } from "./bottom-dock";
+export { useLayerStack, topLayerZ, stackedZ } from "./layer-stack";
+export { DragInput, type DragInputProps } from "./DragInput";
 export { OverlayLayer, PopoverLayer, BackdropLayer, clampToViewport, POPOVER_GUTTER, OVERLAY_LAYER_CLASS, POPOVER_LAYER_CLASS, BACKDROP_LAYER_CLASS, type LayerProps, type PopoverLayerProps } from "./fixed-layers";
 export { LiveSurfaceProvider, useOverLiveSurface } from "./live-surface";
 export { describeUnreadableBody } from "./unreadableBody";
@@ -263,4 +273,8 @@ export {
   localFetch, isLocalAddress, localAccessAllowed, allowLocalAccess, revokeLocalAccess, LocalAccessDenied,
 } from "./local-network.js";
 export { viewCardFields, CARD_FIELDS_ON_CARD, type ViewCardFields } from "./view-card-fields";
-export { TableTitle } from "./TableTitle";
+export { SearchInput, type SearchInputProps } from "./SearchInput";
+export { CollectionHeader, HEADER_CONTROL, headerButton } from "./CollectionHeader";
+export { usePhotoSuggestions, usePhotoSuggestionFor, suggestedSrcFor, pictureStateFor, PICTURE_STATE_TEXT, markShownBeside, useShownBeside } from "./photoSuggestions";
+export type { PictureState } from "./photoSuggestions";
+export type { PhotoSuggestionRow } from "./types";

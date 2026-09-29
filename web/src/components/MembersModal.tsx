@@ -8,7 +8,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Copy, Plus, Printer, Trash2, X } from "lucide-react";
 import {
   ApiError, api,
-  type OrgMembership, type WorkspaceInvite, type WorkspaceMember,
+  type OrgMembership, type WorkspaceInvite, type WorkspaceMember, type WorkspacePerson,
 } from "../lib/api";
 import { Modal, useToast, useConfirm } from "@cobblr/platform-web";
 import { displaySlug } from "../lib/workspaceSlug";
@@ -89,6 +89,10 @@ export function MembersModal({ open, onClose, slug, inline, chromeless, focus }:
   // Item labels may offer the join link to someone who scans one signed out.
   // Off unless asked: a label leaves the room with the thing it is stuck to.
   const [onLabels, setOnLabels] = useState(false);
+  // A burst guard by default: at most 10 joins a day, then the link pauses
+  // itself and the admins are told. No total cap, no end date.
+  const [paceLimit, setPaceLimit] = useState("10");
+  const [pacePeriod, setPacePeriod] = useState<"day" | "week" | "month" | "year">("day");
   const { activeOrg } = useActiveOrg();
   const workspaceName = activeOrg?.slug === slug && activeOrg.name ? activeOrg.name : displaySlug(slug);
   useEffect(() => {
@@ -102,6 +106,30 @@ export function MembersModal({ open, onClose, slug, inline, chromeless, focus }:
     return () => clearTimeout(t);
   }, [open, focus]);
 
+  // A paused join link: turn it back on, or give it a new code so the old QR
+  // (the one that got out) stops working, then print the new one.
+  const resumeLink = useMutation({
+    mutationFn: (id: string) => api.resumeJoinLink(slug, id),
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: ["invites", slug] });
+      toast.success("Join link on again.");
+    },
+    onError: (e: unknown) => toast.error(e instanceof ApiError ? e.message : "Couldn't resume it."),
+  });
+  const rotateLink = useMutation({
+    mutationFn: (id: string) => api.rotateJoinLink(slug, id),
+    onSuccess: async (inv) => {
+      void qc.invalidateQueries({ queryKey: ["invites", slug] });
+      const ok = await printJoinSheet({ url: `${window.location.origin}/invite/${inv.token}`, workspace: workspaceName });
+      toast.success(
+        ok
+          ? "New code made; the old QR no longer works. Print the new one and swap it on the wall."
+          : "New code made; the old QR no longer works. Press Print QR to print the new one.",
+      );
+    },
+    onError: (e: unknown) => toast.error(e instanceof ApiError ? e.message : "Couldn't make a new code."),
+  });
+
   const createInvite = useMutation({
     mutationFn: () =>
       api.createInvite(
@@ -112,6 +140,7 @@ export function MembersModal({ open, onClose, slug, inline, chromeless, focus }:
               reusable: true,
               ...(Number(maxUses) > 0 ? { max_uses: Math.floor(Number(maxUses)) } : {}),
               ...(onLabels ? { offer_on_labels: true } : {}),
+              pace: Number(paceLimit) > 0 ? { limit: Math.floor(Number(paceLimit)), period: pacePeriod } : null,
             }
           : { email: inviteEmail.trim() || undefined, role: inviteRole },
       ),
@@ -211,7 +240,40 @@ export function MembersModal({ open, onClose, slug, inline, chromeless, focus }:
     }
   }
 
+  // A member who owns things is asked who gets them (#3787): they stay the
+  // leaver's, named "(left)", unless someone else is picked.
+  const [leaving, setLeaving] = useState<{ member: WorkspaceMember; count: number; others: WorkspacePerson[] } | null>(null);
+  const [handTo, setHandTo] = useState("");
+  const removeWithHandOff = useMutation({
+    mutationFn: (v: { userId: string; handTo: string | null }) => api.removeMember(slug, v.userId, v.handTo ?? undefined),
+    onSuccess: (r, v) => {
+      setLeaving(null);
+      setHandTo("");
+      void qc.invalidateQueries({ queryKey: ["members", slug] });
+      void qc.invalidateQueries({ queryKey: ["platform-people", slug] });
+      const moved = r && typeof r === "object" && "moved" in r ? (r as { moved: number; kept: unknown[] }) : null;
+      toast.success(
+        moved && v.handTo
+          ? `Member removed. ${moved.moved} thing${moved.moved === 1 ? "" : "s"} handed on${moved.kept.length ? `; ${moved.kept.length} could not be and stay theirs` : ""}.`
+          : "Member removed. What they own stays theirs.",
+      );
+    },
+    onError: (e: unknown) => toast.error(e instanceof ApiError ? e.message : "Couldn't remove."),
+  });
+
   async function handleRemoveMember(m: WorkspaceMember) {
+    try {
+      const people = (await api.listPeople(slug)).items;
+      const theirs = people.find((p) => p.user_id === m.user_id);
+      const things = theirs ? await api.personThings(slug, theirs.id) : null;
+      if (things && things.count > 0) {
+        setHandTo("");
+        setLeaving({ member: m, count: things.count, others: people.filter((p) => p.id !== theirs!.id && (p.member || !p.user_id)) });
+        return;
+      }
+    } catch {
+      /* no People list to ask: remove the plain way */
+    }
     const ok = await confirm({
       title: `Remove ${m.display_name}?`,
       message: `They'll lose access to ${displaySlug(slug)}. They can be re-invited later.`,
@@ -311,6 +373,7 @@ export function MembersModal({ open, onClose, slug, inline, chromeless, focus }:
                 return (
                   <li
                     key={inv.id}
+                    id={`invite-${inv.id}`}
                     className="rounded-md border border-line dark:border-slate-700 bg-surface dark:bg-slate-900 p-2 text-xs flex items-center gap-2"
                   >
                     <div className="flex-1 min-w-0">
@@ -327,6 +390,7 @@ export function MembersModal({ open, onClose, slug, inline, chromeless, focus }:
                           <span className="text-content dark:text-mortar-200" data-testid="join-link-count">
                             join link · {inv.use_count ?? 0}
                             {inv.max_uses ? ` of ${inv.max_uses}` : ""} joined
+                            {inv.pace_limit && inv.pace_period ? ` · at most ${inv.pace_limit} a ${inv.pace_period}` : ""}
                             {inv.offer_on_labels ? " · labels offer it" : ""}
                           </span>
                         )}
@@ -351,6 +415,29 @@ export function MembersModal({ open, onClose, slug, inline, chromeless, focus }:
                         )}
                       </div>
                     </div>
+                    {inv.reusable && inv.paused_at && (
+                      <span className="flex flex-col items-end gap-1" data-testid="join-link-paused">
+                        <span className="text-[10px] font-mono uppercase tracking-widest text-ember-500">paused</span>
+                        <span className="flex gap-2">
+                          <button
+                            type="button"
+                            className="text-[11px] text-accent hover:underline"
+                            onClick={() => resumeLink.mutate(inv.id)}
+                            data-testid="join-link-resume"
+                          >
+                            Resume
+                          </button>
+                          <button
+                            type="button"
+                            className="text-[11px] text-accent hover:underline"
+                            onClick={() => rotateLink.mutate(inv.id)}
+                            data-testid="join-link-rotate"
+                          >
+                            New code
+                          </button>
+                        </span>
+                      </span>
+                    )}
                     {inv.reusable && (
                       <button
                         onClick={async () => {
@@ -442,6 +529,30 @@ export function MembersModal({ open, onClose, slug, inline, chromeless, focus }:
             )}
             <div className="flex flex-col sm:flex-row sm:items-end gap-2">
               {inviteKind === "workspace" && joinLink ? (
+              <>
+              <label className="flex-1 block min-w-0">
+                <span className="block text-[10px] font-mono uppercase tracking-widest text-faint dark:text-slate-500 mb-1">
+                  At most, then pause
+                </span>
+                <span className="flex gap-1">
+                  <input
+                    type="number"
+                    min={1}
+                    value={paceLimit}
+                    onChange={(e) => setPaceLimit(e.target.value)}
+                    placeholder="no pace"
+                    className="input w-20"
+                    aria-label="Joins allowed"
+                    data-testid="join-link-pace"
+                  />
+                  <select value={pacePeriod} onChange={(e) => setPacePeriod(e.target.value as typeof pacePeriod)} className="input flex-1" aria-label="Per">
+                    <option value="day">a day</option>
+                    <option value="week">a week</option>
+                    <option value="month">a month</option>
+                    <option value="year">a year</option>
+                  </select>
+                </span>
+              </label>
               <label className="flex-1 block min-w-0">
                 <span className="block text-[10px] font-mono uppercase tracking-widest text-faint dark:text-slate-500 mb-1">
                   Stop after (optional)
@@ -455,6 +566,7 @@ export function MembersModal({ open, onClose, slug, inline, chromeless, focus }:
                   className="input"
                 />
               </label>
+              </>
               ) : (
               <label className="flex-1 block min-w-0">
                 <span className="block text-[10px] font-mono uppercase tracking-widest text-faint dark:text-slate-500 mb-1">
@@ -536,6 +648,45 @@ export function MembersModal({ open, onClose, slug, inline, chromeless, focus }:
           <p className="text-xs text-muted dark:text-slate-400">
             Only owners and admins can invite or change roles.
           </p>
+        )}
+
+        {leaving && (
+          <Modal open onClose={() => setLeaving(null)} title={`Remove ${leaving.member.display_name}?`}>
+            <div className="space-y-3 text-sm" data-testid="remove-hand-off">
+              <p className="text-content dark:text-mortar-200">
+                They'll lose access to {displaySlug(slug)}. {leaving.member.display_name} owns{" "}
+                <strong>
+                  {leaving.count} thing{leaving.count === 1 ? "" : "s"}
+                </strong>{" "}
+                here.
+              </p>
+              <label className="block">
+                <span className="block text-[10px] font-mono uppercase tracking-widest text-faint mb-1">Their things go to</span>
+                <select value={handTo} onChange={(e) => setHandTo(e.target.value)} className="input w-full" data-testid="hand-off-to">
+                  <option value="">Keep them as {leaving.member.display_name}'s</option>
+                  {leaving.others.map((p) => (
+                    <option key={p.id} value={p.id}>
+                      {p.name}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <div className="flex justify-end gap-2 pt-1">
+                <button type="button" onClick={() => setLeaving(null)} className="rounded-md border border-line dark:border-slate-700 text-content dark:text-mortar-200 hover:bg-subtle dark:hover:bg-slate-800 text-sm px-3 py-1.5 transition disabled:opacity-50">
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  disabled={removeWithHandOff.isPending}
+                  onClick={() => removeWithHandOff.mutate({ userId: leaving.member.user_id, handTo: handTo || null })}
+                  className="rounded-md bg-ember-500 hover:bg-ember-600 text-white text-sm font-medium px-3 py-1.5 transition disabled:opacity-50"
+                  data-testid="hand-off-remove"
+                >
+                  {handTo ? "Hand on and remove" : "Remove"}
+                </button>
+              </div>
+            </div>
+          </Modal>
         )}
 
         <div className="flex items-center justify-end pt-3 border-t border-line dark:border-slate-700">

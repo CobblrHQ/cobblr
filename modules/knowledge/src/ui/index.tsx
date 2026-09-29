@@ -16,9 +16,8 @@ import {
   useToast,
   useConfirm,
   usePageTitle,
-  EntityPhoto,
-} from "@cobblr/platform-web";
-import { BookOpen, Plus, Pin, PinOff, Trash2, Search, ImagePlus, X } from "lucide-react";
+  EntityPhoto, SearchInput } from "@cobblr/platform-web";
+import { BookOpen, Plus, Pin, PinOff, Trash2, ImagePlus, X } from "lucide-react";
 import { KnowledgeApi, type Entry, type EntryInput, KnowledgeApiError } from "./api.js";
 
 export const navItems = [{ label: "Knowledge Base", path: "/knowledge", icon: BookOpen }];
@@ -85,15 +84,7 @@ export function KnowledgeUI({ orgSlug, getToken }: Props) {
 
       {/* Search + category filter chips (in-vault organisation) */}
       <div className="flex flex-wrap items-center gap-2">
-        <div className="relative flex-1 min-w-[12rem]">
-          <Search size={14} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-faint" />
-          <input
-            value={q}
-            onChange={(e) => setQ(e.target.value)}
-            placeholder="Search entries…"
-            className="input w-full pl-8"
-          />
-        </div>
+        <SearchInput value={q} onChange={setQ} placeholder="Search entries…" wrapperClassName="w-full flex-1 min-w-[12rem]" />
         <div className="flex flex-wrap gap-1">
           <Chip active={kindFilter === null} onClick={() => setKindFilter(null)}>
             All

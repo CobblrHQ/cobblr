@@ -209,6 +209,16 @@ export async function workspacePicture(orgId: string, auth: LoopbackAuth | null)
     });
   }
 
+  // Whether a collection can mark a thing as no longer yours (a sheet's Fate
+  // column), asked of the module that would hold it.
+  for (const t of targets) {
+    const base = baseKindOf(t.module);
+    // import-swallow-ok: a read for the preview; a collection whose writer
+    // cannot be asked is offered as one that keeps the words only.
+    const w = base ? await p.entities.getWriter(orgId, base.id).catch(() => null) : null;
+    t.retires = typeof w?.retire === "function";
+  }
+
   const locations: KnownLocation[] = (locs.items as Array<{ id: string; title: string; fields: Record<string, unknown> }>).map((l) => ({
     id: l.id,
     name: String(l.fields?.name ?? l.title),
@@ -237,6 +247,7 @@ export function newCollectionTarget(sheetName: string, targets: Target[]): Targe
     ...(general.enable_module ? { enable_module: general.enable_module } : {}),
     fields: general.fields.filter((f) => f.native),
     counts: general.counts ?? false,
+    ...(general.retires ? { retires: true } : {}),
     // A collection made a moment ago has no category field of its own yet.
     category: null,
   };

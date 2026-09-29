@@ -1,0 +1,10 @@
+{
+  "lint": "lint:machine-words",
+  "run": "node scripts/lint-machine-words.ts",
+  "rows": [
+    "page-level-module-ui"
+  ],
+  "ms": 5928,
+  "recorded": "2026-09-28",
+  "source": "scaffolded by new-lint.sh at twice a local run (a shared box); replaced from its first CI measurement"
+}

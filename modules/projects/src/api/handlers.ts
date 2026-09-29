@@ -10,6 +10,7 @@ import { sql, type Kysely } from "kysely";
 import { columnSet, platform, type EntityListQuery, type ResolvedEntity, textSearchWhere } from "@cobblr/platform-contract";
 import type { ProjectsDB } from "../db.js";
 import { resolveDetailPath } from "@cobblr/platform-contract/instance-detail";
+import { patternTextMatches, snippetsFor } from "./pattern-text.js";
 
 let registered = false;
 
@@ -55,7 +56,11 @@ export function registerProjectsHandlers(): void {
     const offset = query.offset ?? 0;
     let q = db.selectFrom("projects_projects").selectAll();
     if (instance) q = q.where("instance", "=", instance as never);
-    if (query.q?.trim()) q = q.where((eb) => textSearchWhere(eb, query.q, { text: ["name", "description", "status"], json: ["metadata"] })!);
+    // A pattern's own words count too: the text of its PDF (pattern-text.ts).
+    if (query.q?.trim()) {
+      const words = query.q;
+      q = q.where((eb) => eb.or([textSearchWhere(eb, words, { text: ["name", "description", "status"], json: ["metadata"] }), patternTextMatches(words)]));
+    }
     if (query.filter) {
       const NATIVE = columnSet<ProjectsDB["projects_projects"]>()(["status", "priority"]);
       for (const [key, val] of Object.entries(query.filter)) {
@@ -89,7 +94,14 @@ export function registerProjectsHandlers(): void {
       q = q.orderBy(col as never, desc ? "desc" : "asc");
     }
     const rows = await q.limit(limit).offset(offset).execute();
-    return { items: rows.map((r) => toResolvedProject(r)) };
+    const snippets = query.q?.trim() ? await snippetsFor(db, rows, query.q) : new Map<string, string>();
+    return {
+      items: rows.map((r) => {
+        const e = toResolvedProject(r);
+        const snippet = snippets.get(r.id);
+        return snippet ? { ...e, snippet } : e;
+      }),
+    };
   };
   // Scoped to the default instance - same leak as inventory's base kind; see
   // the note there. An Outfits instance's rows must not double up here.

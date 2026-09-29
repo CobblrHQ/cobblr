@@ -16,6 +16,7 @@ import { withTenant } from "../middleware/tenant.js";
 import * as activity from "../platform/activity.js";
 import { linkWords, recordKindSpellings } from "../platform/record-kind-spellings.js";
 import { listOverrides } from "../platform/entity-kind-overrides.js";
+import { familiesFromOverrides, familiesOf } from "../platform/families.js";
 import { resolveKind } from "../platform/entities.js";
 
 export const pairingsRouter = Router({ mergeParams: true });
@@ -104,7 +105,8 @@ pairingsRouter.get("/link-kinds", requireAuth, withTenant, async (req, res, next
     // a laser cutter does not take the links a 3D printer table declares.
     const mine = kind ? [...new Set([kind, (await resolveKind(orgId, kind)).base])] : [];
     const declared: Array<{ collection: string; link: DeclaredLink }> = [];
-    for (const o of await listOverrides(orgId)) {
+    const overrides = await listOverrides(orgId);
+    for (const o of overrides) {
       if (o.target_kind !== "instance") continue;
       const links = ((o.config ?? {}) as { links?: DeclaredLink[] | null }).links;
       const name = String(o.target_id).split(":")[1];
@@ -113,6 +115,13 @@ pairingsRouter.get("/link-kinds", requireAuth, withTenant, async (req, res, next
     }
     const words: Record<string, { label: string; inverse: string }> = {};
     for (const { link } of declared) words[link.kind] ??= { label: link.label, inverse: link.inverse };
+    // A thing's link to its type (a spool to its filament type) is declared
+    // as the family's `parent`, not as a link: it reads "type" from the thing
+    // and "spool" from the type, and is not removed from here (`fixed`), since
+    // a thing's type is changed where types are kept (#3990).
+    const families = familiesFromOverrides(overrides);
+    for (const f of families) words[f.rel] ??= { label: f.parentWord, inverse: f.childWord };
+    const fixed = [...new Set(families.map((f) => f.rel))];
     const offered: Array<{ kind: string; label: string; to: string[]; reverse: boolean }> = [];
     // What to LIST for a target: a module kind lists only the records outside
     // any table, so "any machine" is the module kind and each of its tables.
@@ -124,7 +133,7 @@ pairingsRouter.get("/link-kinds", requireAuth, withTenant, async (req, res, next
       const targets = link.to.map(toKind);
       if (targets.some((t) => mine.includes(t))) offered.push({ kind: link.kind, label: link.inverse, to: [collection], reverse: true });
     }
-    res.json({ offered, words });
+    res.json({ offered, words, fixed });
   } catch (err) {
     next(err);
   }
@@ -252,6 +261,16 @@ pairingsRouter.delete("/:id", requireAuth, withTenant, async (req, res, next) =>
     if (!id) {
       res.status(400).json({ error: { code: "missing_id", message: "id required" } });
       return;
+    }
+    // A thing's link to its type is the family's to change, not a Links row's:
+    // taken away here, a spool would be left with no type (#3990).
+    const fixedRels = new Set((await familiesOf(req.tenant!.org.id)).map((f) => f.rel));
+    if (fixedRels.size) {
+      const row = await meta.selectFrom("entity_pairings").select("relationship_kind").where("id", "=", id).where("org_id", "=", req.tenant!.org.id).executeTakeFirst();
+      if (row && fixedRels.has(row.relationship_kind)) {
+        res.status(409).json({ error: { code: "family_link", message: "This is its type. Change the type where the types are kept, not here." } });
+        return;
+      }
     }
     const deleted = await meta
       .deleteFrom("entity_pairings")

@@ -28,6 +28,8 @@ export interface PlatformAction {
   invoke_handler: string | null;
   /** False = wire-only; the actions bar skips it. */
   user_invokable?: boolean;
+  /** Can a mistaken run be put back? */
+  undoable?: boolean;
   /** Its arguments; a required one is asked for before a press runs it. */
   args_schema?: Record<string, ActionArgSpec> | null;
   version: string;
@@ -94,6 +96,16 @@ export interface PlatformMember {
   display_name: string;
 }
 
+/** Someone on the workspace's People list: a member, or anyone else by name.
+ *  A `person` field stores `id`. */
+export interface PlatformPerson {
+  id: string;
+  name: string;
+  member: boolean;
+  /** A member who has left; their things are still theirs. */
+  left: boolean;
+}
+
 export interface PlatformFieldDef {
   id: string;
   entity_kind: string;
@@ -149,7 +161,7 @@ export interface PlatformWebApi {
   listNativeFieldOverrides?(slug: string, kind: string): Promise<{ items: Array<{ name: string; display_label: string | null; hidden: boolean }> }>;
   /** Which faces a collection wears (GET /:slug/faces). Optional so a host
    *  without it shows every face, as before. */
-  listFaces?(slug: string, kind: string): Promise<{ kind: string; traits?: Record<string, string>; faces: string[]; explicit: string[] }>;
+  listFaces?(slug: string, kind: string): Promise<{ kind: string; traits?: Record<string, string>; faces: string[]; explicit: string[]; offers?: string[] }>;
   /** Write a collection's override config (PUT /:slug/entity-kind-overrides);
    *  the faces row uses it to turn a face on. */
   upsertOverride?(slug: string, body: { target_kind: "instance" | "entity_kind" | "bundle"; target_id: string; config?: Record<string, unknown> }): Promise<unknown>;
@@ -173,6 +185,8 @@ export interface PlatformWebApi {
       entityId: string;
       bindingId?: string;
       args?: Record<string, unknown>;
+      /** A scanned action label's code (#3897). */
+      label?: string;
     },
   ): Promise<{ ok: boolean; result: unknown; undo?: unknown; affected?: { kinds: string[]; entity?: { kind: string; id: string } } }>;
   lookupEntity(slug: string, kind: string, id: string): Promise<PlatformResolvedEntity>;
@@ -198,11 +212,21 @@ export interface PlatformWebApi {
    *  Optional, exactly like listEntities: a host that does not wire it renders
    *  the value read-only rather than a picker it cannot populate. */
   listMembers?(slug: string): Promise<{ items: PlatformMember[] }>;
+  /** The People list — the data source for `person`-field pickers. Optional
+   *  like listMembers: without it the value renders read-only. */
+  listPeople?(slug: string): Promise<{ items: PlatformPerson[] }>;
+  /** Add someone by name from a person picker ("+ Someone else…"). */
+  addPerson?(slug: string, name: string): Promise<PlatformPerson>;
   listFieldDefs(slug: string, kind: string): Promise<{ items: PlatformFieldDef[]; sections?: FieldSection[] }>;
   /** Manifest-declared UI contributions from the workspace's ENABLED modules
    *  (`contributes.panels`). Optional: a host that doesn't wire it simply
    *  renders no contributed panels. See panels.tsx. */
   listContributedPanels?(slug: string): Promise<ContributedPanelSpec[]>;
+  /** Pictures suggested for records made without one (#3818), by kind, or by
+   *  record id alone (kind null). Optional: a host without it shows none. */
+  listPhotoSuggestions?(slug: string, kind: string | null, ids?: string[]): Promise<{ items: PhotoSuggestionRow[] }>;
+  /** Search again for a record whose picture was not found. */
+  searchPhotoFor?(slug: string, kind: string, id: string): Promise<{ ok: true }>;
   /** Append a new choice to a text field-def's `choices` array. The
    *  CustomFieldsPanel's "+ add new" affordance calls this. */
   appendFieldDefChoice?(slug: string, id: string, value: string): Promise<PlatformFieldDef>;
@@ -267,4 +291,15 @@ export interface PlatformUnitVocabulary {
   builtins: PlatformUnitDef[];
   custom: PlatformUnitDef[];
   display_mode: UnitDisplayMode;
+}
+
+/** A picture suggested for a record made without one (#3818). */
+export interface PhotoSuggestionRow {
+  entity_kind: string;
+  entity_id: string;
+  /** "queued" while it is still being looked for; "none" when it was looked
+   *  for and nothing was found. */
+  status: "queued" | "suggested" | "none";
+  image_path: string | null;
+  query: string | null;
 }

@@ -16,8 +16,9 @@
 // navigation at all once you were inside a page.
 
 import { useMemo, useState, type ComponentType } from "react";
+import { SearchInput } from "@cobblr/platform-web";
 import { NavLink, Outlet, useLocation, useNavigate } from "react-router-dom";
-import { ChevronLeft, Search, Settings2 } from "lucide-react";
+import { ChevronLeft, Settings2 } from "lucide-react";
 import { iconForName as iconForPanel } from "../lib/panel-icons";
 import { useNavMode } from "../lib/nav-mode";
 import { useConfigVisibility } from "../lib/useConfigVisibility";
@@ -115,24 +116,19 @@ export function ConfigSidebarBody() {
         <Settings2 size={15} />
         Configuration
       </NavLink>
-      <div className="relative mb-2 px-0.5">
-        <Search
-          size={13}
-          className="absolute left-2.5 top-1/2 -translate-y-1/2 text-faint dark:text-slate-500"
-        />
-        <input
+      <div className="mb-2 px-0.5">
+        <SearchInput
           value={q}
-          onChange={(e) => setQ(e.target.value)}
+          onChange={setQ}
           onKeyDown={(e) => {
             if (e.key === "Enter" && firstHit) {
               navigate(firstHit.to);
               setQ("");
             }
-            if (e.key === "Escape") setQ("");
           }}
           placeholder="Search settings…"
           aria-label="Search settings"
-          className="input !pl-7 !py-1 text-xs w-full"
+          size="sm"
         />
       </div>
       {query && filtered.length === 0 && (

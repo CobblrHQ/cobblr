@@ -9,10 +9,10 @@
 // flip it on with just a URL param read — the wiring is already
 // in place for `columns = base + lens.contributedFieldDefs`.
 
-import { useEffect, useMemo, useRef, useState, type FormEvent } from "react";
+import { useEffect, useMemo, useState, type FormEvent } from "react";
 import { Link, useNavigate, useParams, useSearchParams } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { ChevronRight, Plus, Printer, Search, Tag as TagIcon, Trash2, Wrench } from "lucide-react";
+import { ChevronRight, Plus, Printer, Send, Tag as TagIcon, Trash2, Wrench } from "lucide-react";
 import { ModuleInstanceChooser } from "../components/ModuleInstanceChooser";
 import { queueLabelsBulk } from "../lib/queue-label";
 import { usePersistedState } from "../lib/use-persisted-state";
@@ -22,7 +22,10 @@ import { fleetStatusChip, indexFleetByMachine } from "../lib/fleet-status";
 import { ContributedPageTab, ContributedDetailPanels, hasPageTab } from "../panels/registry";
 import { DirectManagerConnect } from "../components/DirectManagerConnect";
 import { EntityImageEdit } from "../components/EntityImageEdit";
+import { MachineUnits } from "../components/MachineUnits";
 import { ImageSearchPicker } from "../components/ImageSearchPicker";
+import { SuggestedPhoto } from "../components/SuggestedPhoto";
+import { pictureStateFor, suggestedSrcFor, usePhotoSuggestions } from "../lib/photoSuggestions";
 // NewMachineModal's inline "connect its manager" flow still reaches the
 // digifab feature directly — candidate for its own seam (an intent/action),
 // noted in machines-digifab-unification.md §9. The Fleet tab and the Print
@@ -31,6 +34,7 @@ import { EdgeBridgeSetup } from "../features/digifab/fleet";
 import { BambuConnectWizard } from "../components/BambuConnectWizard";
 import { BambuPrinterPicker } from "../components/BambuPrinterPicker";
 import { resolvePrinterKind, hiddenPrinterFields } from "../lib/printerKind";
+import { capitalise, machineKindOf, machineWordsFor, type MachineWords } from "../lib/machine-words";
 
 // Printer "kind" options for the detail-modal selector (same ids as the
 // New-3D-printer picker). The kind drives which spec fields are relevant.
@@ -43,16 +47,11 @@ const PRINTER_KIND_OPTIONS = [
   { id: "other", label: "Other / not sure" },
 ];
 
-// Machine state vocabulary — the lifecycle (kit → building → built → functional →
-// rebuilding → loaned → sold) plus the maintenance states. A dropdown, not free
-// text. An existing value outside this set is preserved (shown as the first option).
-const MACHINE_STATES = [
-  "functional", "needs maintenance", "broken", "building", "built", "kit", "rebuilding", "loaned", "sold", "decommissioned",
-];
+import { useDeclaredChoices } from "../components/ViewBuilder";
 import { useActiveOrg } from "../auth/ActiveOrgContext";
 import { useFieldPresentation } from "../lib/useFieldPresentation";
 import { ContentsPanel, useHoldsContents } from "../components/ContentsPanel";
-import { CustomFieldsPanel, EditField, EditSelect, EntityActionsBar, FaceSection, FacesOn, faceShows, FieldPack, RecordFaces, editFieldItem, fieldNeed, useAskCobbAboutSelection, Modal, useToast, useConfirm, usePageTitle, usePageWidth, BackdropLayer, TILE_GRID, InboxWaitingStrip } from "@cobblr/platform-web";
+import { CustomFieldsPanel, EditField, EditSelect, EntityActionsBar, FaceSection, FacesOn, faceShows, FieldPack, RecordFaces, editFieldItem, fieldNeed, useAskCobbAboutSelection, Modal, useToast, useConfirm, usePageTitle, usePageWidth, BackdropLayer, TILE_GRID, InboxWaitingStrip, SearchInput, CollectionHeader, HEADER_CONTROL, headerButton } from "@cobblr/platform-web";
 import {
   BulkActionBar,
   EntityThumb,
@@ -65,7 +64,6 @@ import { EntityAttachments } from "../components/EntityAttachments";
 import { LocationTreePicker } from "../components/LocationTreePicker";
 import { itemNounFor, pluralise } from "@cobblr/platform-contract";
 import { PresentationGate, useFaces } from "@cobblr/platform-web";
-import { TableTitle } from "@cobblr/platform-web";
 
 const ENTITY_KIND = "machines:machine";
 
@@ -191,10 +189,16 @@ export function MachinesPage({
       .map(([s, n]) => `${n} ${s}`)
       .join(", ");
   })();
+  const allUnits = machineCount(allRows);
   usePublishChatContext({
     kind: instance ? `${instance}:item` : ENTITY_KIND,
     label: instance ? `Machines (${instance})` : "Machines",
-    summary: `${allRows.length} machine${allRows.length === 1 ? "" : "s"}` + (machineStates ? ` (${machineStates})` : ""),
+    // A record can count several identical machines: say the machines, and
+    // the entries when they differ, so "how many printers" is answered right.
+    summary:
+      (allUnits !== allRows.length
+        ? `${allUnits} machine${allUnits === 1 ? "" : "s"} in ${allRows.length} entr${allRows.length === 1 ? "y" : "ies"}`
+        : `${allRows.length} machine${allRows.length === 1 ? "" : "s"}`) + (machineStates ? ` (${machineStates})` : ""),
   });
   const rows = lensName
     ? allRows.filter((m) =>
@@ -401,27 +405,28 @@ export function MachinesPage({
 
   return (
     <div className="space-y-4">
-      <div className="flex flex-wrap items-baseline gap-x-3 gap-y-2 border-b border-line dark:border-slate-700 pb-3">
-        <TableTitle title={displayName ?? "machines"} hint={hint} />
+      <CollectionHeader
+        title={displayName ?? "machines"}
+        count={`${filtered.length} of ${allRows.length}${allUnits !== allRows.length ? ` · ${machineCount(filtered)} machines` : ""}`}
+        hint={hint} kind={instance ? `${instance}:item` : ENTITY_KIND}
+        filters={
+          <>
         {!instance && lensModule && (
           <Link
             to="/machines"
-            className="inline-flex items-center gap-1 px-2 py-0.5 rounded bg-cobble-100 text-accent dark:bg-cobble-700/40 dark:text-cobble-200 text-[10px] font-mono uppercase tracking-widest hover:bg-cobble-200 transition"
+            className={`${HEADER_CONTROL} gap-1 px-2.5 rounded-md bg-cobble-100 text-accent dark:bg-cobble-700/40 dark:text-cobble-200 text-[10px] font-mono uppercase tracking-widest hover:bg-cobble-200 transition`}
             title="Clear lens"
           >
             lens: {lensModule.displayName} ×
           </Link>
         )}
-        <span className="text-[10px] font-mono text-faint dark:text-slate-500">
-          {filtered.length} of {allRows.length}
-        </span>
         {allStates.length > 1 && !viewStateFilter && (
           <div className="relative">
             <button
               type="button"
               onClick={() => setStateMenuOpen((o) => !o)}
               className={
-                "text-[10px] font-mono uppercase tracking-widest px-2 py-0.5 rounded border transition " +
+                `${HEADER_CONTROL} text-[10px] font-mono uppercase tracking-widest px-2.5 rounded-md border transition ` +
                 (hiddenStates.size
                   ? "border-accent text-accent bg-accent/5"
                   : "border-line dark:border-slate-600 text-muted hover:text-accent hover:border-accent")
@@ -469,12 +474,12 @@ export function MachinesPage({
           </div>
         )}
         {showContributedTabs && (
-          <div className="inline-flex rounded-md border border-line dark:border-slate-600 overflow-hidden text-xs">
-            <button type="button" onClick={() => setPageTab("items")} className={"px-2.5 py-1 " + (pageTab === "items" ? "bg-cobble-600 text-white" : "text-muted hover:bg-subtle dark:hover:bg-slate-800")}>
+          <div className="h-9 inline-flex items-stretch rounded-md border border-line dark:border-slate-600 overflow-hidden text-xs">
+            <button type="button" onClick={() => setPageTab("items")} className={"px-3 " + (pageTab === "items" ? "bg-cobble-600 text-white" : "text-muted hover:bg-subtle dark:hover:bg-slate-800")}>
               {pluralise(noun)}
             </button>
             {contributedTabs.map((p) => (
-              <button key={p.id} type="button" onClick={() => setPageTab(p.id)} className={"px-2.5 py-1 " + (pageTab === p.id ? "bg-cobble-600 text-white" : "text-muted hover:bg-subtle dark:hover:bg-slate-800")}>
+              <button key={p.id} type="button" onClick={() => setPageTab(p.id)} className={"px-3 " + (pageTab === p.id ? "bg-cobble-600 text-white" : "text-muted hover:bg-subtle dark:hover:bg-slate-800")}>
                 {p.title}
               </button>
             ))}
@@ -486,7 +491,7 @@ export function MachinesPage({
             onChange={(e) => {
               if (e.target.value) navigate(`/machines?lens=${encodeURIComponent(e.target.value)}`);
             }}
-            className="input !py-1 text-xs !w-auto"
+            className="input !h-9 !py-0 text-xs !w-auto"
             title="Focus the table on one machine type's fields"
           >
             <option value="">lens…</option>
@@ -497,24 +502,18 @@ export function MachinesPage({
             ))}
           </select>
         )}
-        <div className="flex-1" />
-        <div className="relative">
-          <Search size={12} className="absolute left-2 top-1/2 -translate-y-1/2 text-faint" />
-          <input
-            value={query}
-            onChange={(e) => setQuery(e.target.value)}
-            placeholder="search…"
-            className="input !py-1 !pl-7 text-xs !w-48"
-          />
-        </div>
-        <ViewModeToggle mode={viewMode} onChange={setViewMode} />
-        <button
-          onClick={() => setNewOpen(true)}
-          className="rounded-md bg-slate-700 hover:bg-slate-600 text-mortar-50 text-sm font-medium px-3 py-2 transition flex items-center gap-1.5"
-        >
-          <Plus size={14} /> New {noun}
-        </button>
-      </div>
+          </>
+        }
+        search={<SearchInput value={query} onChange={setQuery} placeholder="search…" aria-label={`Search ${pluralise(noun)}`} wrapperClassName="w-48 max-sm:w-full max-sm:flex-1" />}
+        actions={
+          <>
+            <ViewModeToggle mode={viewMode} onChange={setViewMode} />
+            <button onClick={() => setNewOpen(true)} className={headerButton("primary")}>
+              <Plus size={14} /> New {noun}
+            </button>
+          </>
+        }
+      />
 
       {/* Saved-view chips — one-click perspectives (the bundle's "Printer fleet
           by state", plus any you save). Only on the flat instance/lens list,
@@ -565,12 +564,12 @@ export function MachinesPage({
                   <div className="text-[10px] font-mono uppercase tracking-widest text-accent mb-2 capitalize">
                     // {g.key} <span className="text-faint dark:text-slate-500">({g.rows.length})</span>
                   </div>
-                  <MachineTileGrid rows={g.rows} onRowClick={rowClick} live={liveByMachine} />
+                  <MachineTileGrid rows={g.rows} onRowClick={rowClick} live={liveByMachine} instance={instance} />
                 </section>
               ))}
             </div>
           ) : (
-            <MachineTileGrid rows={filtered} onRowClick={rowClick} live={liveByMachine} />
+            <MachineTileGrid rows={filtered} onRowClick={rowClick} live={liveByMachine} instance={instance} />
           )
         ) : (
           <div className="space-y-5">
@@ -580,7 +579,7 @@ export function MachinesPage({
                   // {s.label}{" "}
                   <span className="text-faint dark:text-slate-500">({s.rows.length})</span>
                 </div>
-                <MachineTileGrid rows={s.rows} onRowClick={rowClick} live={liveByMachine} />
+                <MachineTileGrid rows={s.rows} onRowClick={rowClick} live={liveByMachine} instance={instance} />
               </section>
             ))}
           </div>
@@ -666,6 +665,7 @@ export function MachinesPage({
         instance={instance}
         specialisations={instance ? [] : availableLenses}
         onClose={closeDetail}
+        onOpen={openDetail}
       />
       <NewMachineModal
         open={newOpen}
@@ -1027,6 +1027,7 @@ function MachineTable({
   // The column header must respect a relabel too, or the list says "Manufacturer"
   // while the detail page says "Make".
   const fp = useFieldPresentation(instance ? `${instance}:item` : ENTITY_KIND);
+  const suggestions = usePhotoSuggestions(instance ? `${instance}:item` : ENTITY_KIND);
   const showSelect = !!selected && !!onToggle;
   const allChecked = showSelect && rows.length > 0 && rows.every((r) => selected!.has(r.id));
   return (
@@ -1081,12 +1082,17 @@ function MachineTable({
               )}
               <td className="px-3 py-2 text-content dark:text-mortar-100 font-medium">
                 <div className="flex items-center gap-3">
-                  <EntityThumb src={m.image_path} alt={m.name} size={56} />
+                  <EntityThumb src={m.image_path} suggestedSrc={suggestedSrcFor(suggestions, m.id, m.image_path)} pictureState={pictureStateFor(suggestions, m.id, m.image_path)} alt={m.name} size={56} />
                   <span className="truncate">
                     {m.name}
                     {m.short_name && (
                       <span className="ml-1.5 text-[10px] font-mono text-faint">
                         {m.short_name}
+                      </span>
+                    )}
+                    {groupWords(m) && (
+                      <span className="block text-[11px] font-normal text-muted" data-testid="machine-group-words">
+                        {groupWords(m)}
                       </span>
                     )}
                   </span>
@@ -1116,6 +1122,7 @@ function MachineTable({
               })}
               <td className="px-3 py-2 text-right font-mono text-xs text-muted">
                 {m.quantity}
+                {m.units?.length ? <span className="block text-[10px] text-faint">{m.units.length} named</span> : null}
               </td>
               <td className="px-2 py-2 text-faint dark:text-slate-600">
                 <ChevronRight size={14} />
@@ -1128,16 +1135,30 @@ function MachineTable({
   );
 }
 
-function MachineTileGrid({
+/** How many machines these records stand for: a record counts its quantity. */
+function machineCount(rows: Machine[]): number {
+  return rows.reduce((n, m) => n + (Number.isFinite(m.quantity) && m.quantity >= 0 ? m.quantity : 1), 0);
+}
+
+/** "×5 · 2 named" for a record that counts several machines. */
+function groupWords(m: Machine): string | null {
+  if (!(m.quantity > 1)) return null;
+  return `×${m.quantity}${m.units?.length ? ` · ${m.units.length} named` : ""}`;
+}
+
+export function MachineTileGrid({
   rows,
   onRowClick,
   live,
+  instance,
 }: {
+  instance?: string;
   rows: Machine[];
   onRowClick: (id: string) => void;
   /** machine_id → its linked fleet device, for the live status chip. */
   live?: Map<string, { dev: DigifabFleetDevice; connId: string }>;
 }) {
+  const suggestions = usePhotoSuggestions(instance ? `${instance}:item` : ENTITY_KIND);
   return (
     <div className={TILE_GRID}>
       {rows.map((m) => (
@@ -1149,8 +1170,10 @@ function MachineTileGrid({
         >
           <EntityTile
             src={m.image_path}
+            suggestedSrc={suggestedSrcFor(suggestions, m.id, m.image_path)} pictureState={pictureStateFor(suggestions, m.id, m.image_path)}
             title={m.name}
-            subtitle={m.family || m.manufacturer || m.short_name || null}
+            subtitle={[m.family || m.manufacturer || m.short_name || null, m.units?.length ? `${m.units.length} named` : null].filter(Boolean).join(" · ") || null}
+            count={m.quantity}
             badge={m.state}
             status={live?.get(m.id) ? <LiveChip dev={live.get(m.id)!.dev} /> : undefined}
           />
@@ -1165,16 +1188,23 @@ export function MachineDetailModal({
   instance,
   specialisations,
   onClose,
+  onOpen,
 }: {
   machineId: string | null;
   instance?: string;
   specialisations: { name: string; label: string }[];
   onClose: () => void;
+  /** Open another machine of this collection in place (a unit, its group). */
+  onOpen?: (id: string) => void;
 }) {
   const { activeSlug } = useActiveOrg();
   const qc = useQueryClient();
   const toast = useToast();
   const confirm = useConfirm();
+  // The state vocabulary is the kind's declared `state` choices, the one list a
+  // board grouped by state also reads its columns from. A dropdown, not free
+  // text; a stored value outside it is kept (EditSelect shows it first).
+  const machineStates = useDeclaredChoices(activeSlug, "machines:machine", "state");
   const machine = useQuery({
     queryKey: ["machine", activeSlug, machineId],
     queryFn: () => api.getMachine(activeSlug, machineId!, instance),
@@ -1222,9 +1252,8 @@ export function MachineDetailModal({
   const printerKind = m ? resolvePrinterKind(m.metadata as Record<string, unknown>, m.manufacturer) : null;
   const printerHidden = hiddenPrinterFields(printerKind);
 
-  // Auto-fetch a product photo for a printer that has none (e.g. one connected
-  // before this shipped) — once, the user does nothing; it appears on refresh.
-  const enrichFired = useRef(false);
+  // A printer with no picture is OFFERED one (SuggestedPhoto below), never
+  // given one on open: a picture the person did not choose is a suggestion.
   const [autoBusy, setAutoBusy] = useState(false);
   // Manual re-fetch (the "Auto" button on the image editor): grab a fresh product
   // photo for this printer on demand, even if it already has one.
@@ -1275,25 +1304,6 @@ export function MachineDetailModal({
     }
   }
 
-  useEffect(() => {
-    // Once per modal open; if no image lands (a transient failure), it simply
-    // retries the next time the printer is opened — no permanent "tried" flag.
-    if (!m || enrichFired.current) return;
-    if (printerKind === null || m.image_path) return;
-    const q = [m.manufacturer, m.family, "3D printer"].filter(Boolean).join(" ");
-    if (!q.replace("3D printer", "").trim()) return;
-    enrichFired.current = true;
-    // Await the result and refetch so the photo appears LIVE in the open modal —
-    // no need to close/refresh.
-    void (async () => {
-      const r = await api.enrichEntityImage(activeSlug, { entity_kind: "machines:machine", entity_id: m.id, query: q, instance }).catch(() => null);
-      if (r?.image_path) {
-        void qc.invalidateQueries({ queryKey: ["machine", activeSlug, machineId] });
-        void qc.invalidateQueries({ queryKey: ["machines", activeSlug] });
-      }
-    })();
-  }, [m, printerKind, activeSlug, instance, qc, machineId]);
-
   async function handleDelete() {
     if (!m) return;
     const ok = await confirm({
@@ -1342,6 +1352,20 @@ export function MachineDetailModal({
                 onChange={(image_path) => update.mutate({ image_path })}
                 onAutoFetch={printerKind !== null ? runAutoFetch : undefined}
                 autoBusy={autoBusy}
+              />
+              {/* A record made without a picture is offered one (#3818):
+                  suggested, never put on it until someone says Use it. */}
+              <SuggestedPhoto
+                kind={instance ? `${instance}:item` : ENTITY_KIND}
+                id={m.id}
+                hasPicture={!!m.image_path}
+                brand={m.manufacturer}
+                onApplied={() => {
+                  void qc.invalidateQueries({ queryKey: ["machine", activeSlug, machineId] });
+                  void qc.invalidateQueries({ queryKey: ["machines", activeSlug] });
+                }}
+                onPickOther={pickWebPhoto}
+                pickBusy={photoPickBusy}
               />
               {/* Universal web-image picker — pick the machine's photo from a web search. */}
               <div>
@@ -1424,8 +1448,8 @@ export function MachineDetailModal({
               !fp.hidden("serial_number") && (m.serial_number || !instance) ? editFieldItem("serial_number", { label: fp.label("serial_number", "Serial number"), value: m.serial_number ?? "", onCommit: (v) => update.mutate({ serial_number: v || null }) }) : null,
               !fp.hidden("state")
                 ? {
-                    need: fieldNeed("state", { control: "choice", label: fp.label("state", "State"), choices: MACHINE_STATES }),
-                    node: <EditSelect label={fp.label("state", "State")} value={m.state} options={MACHINE_STATES} onCommit={(v) => update.mutate({ state: v })} />,
+                    need: fieldNeed("state", { control: "choice", label: fp.label("state", "State"), choices: machineStates }),
+                    node: <EditSelect label={fp.label("state", "State")} value={m.state} options={machineStates} onCommit={(v) => update.mutate({ state: v })} />,
                   }
                 : null,
               !fp.hidden("quantity") && faceShows(stockOn && !instance, m.quantity, 1) ? editFieldItem("quantity", { label: fp.label("quantity", "Quantity"), value: String(m.quantity), numeric: true, onCommit: (v) => update.mutate({ quantity: Number(v) || 0 }) }) : null,
@@ -1437,6 +1461,13 @@ export function MachineDetailModal({
           />
             )}
           </FacesOn>
+
+          {/* One record standing for several identical machines, or one of
+              them named under it (#3817). A single machine offers joining a
+              group from the add-pills below instead. */}
+          {(m.unit_of || m.quantity > 1 || (m.units?.length ?? 0) > 0) && (
+            <MachineUnits slug={activeSlug} machine={m} instance={instance} onOpen={onOpen} />
+          )}
 
           {/* Custom fields render inline (they self-collapse empty ones, and are
               null entirely for a closed printer once hideNames strips them). */}
@@ -1466,6 +1497,7 @@ export function MachineDetailModal({
               hints: {
                 printer_kind: typeof m.metadata?.printer_kind === "string" ? (m.metadata.printer_kind as string) : undefined,
                 collection: instance ? `${instance}:item` : undefined,
+                machine_kind: machineKindOf(instance),
               },
             }}
           />
@@ -1482,6 +1514,9 @@ export function MachineDetailModal({
               compact
               omit={["tags", "discussion", "pairings"]}
             />
+            {!(m.unit_of || m.quantity > 1 || (m.units?.length ?? 0) > 0) && (
+              <MachineUnits slug={activeSlug} machine={m} instance={instance} onOpen={onOpen} />
+            )}
             {!(m.notes || notesOpen) && (
               <button
                 type="button"
@@ -1522,6 +1557,26 @@ export function MachineDetailModal({
   );
 }
 
+/** The offer to turn on digifab from the new-machine form, in the machine's
+ *  own words. Kind-neutral by contract: `lint:machine-words` refuses a
+ *  literal "print" here. */
+export function EnableJobManagerCard({ words, noun, pending, onEnable }: { words: MachineWords; noun?: string; pending: boolean; onEnable: () => void }) {
+  return (
+    <div className="rounded-lg border border-line dark:border-slate-700 bg-subtle/40 dark:bg-slate-800/30 p-3 space-y-1.5">
+      <div className="flex items-center gap-1.5 text-[10px] font-mono uppercase tracking-widest text-accent">
+        {words.kind === "3d-printer" ? <Printer size={12} /> : <Send size={12} />} {words.manager}
+      </div>
+      <p className="text-[11px] text-muted dark:text-slate-400">
+        Want to send {words.jobs} to this {noun ?? words.device}? Turn on the {words.Manager} to connect to {words.managerExamples}.
+      </p>
+      <button type="button" onClick={onEnable} disabled={pending}
+        className="rounded bg-cobble-600 hover:bg-cobble-700 disabled:opacity-50 text-white text-xs px-2.5 py-1.5">
+        {pending ? "enabling…" : `Enable ${words.Manager}`}
+      </button>
+    </div>
+  );
+}
+
 function NewMachineModal({
   open,
   onClose,
@@ -1548,6 +1603,7 @@ function NewMachineModal({
   const [manufacturer, setManufacturer] = useState("");
   const [family, setFamily] = useState("");
   const [locationId, setLocationId] = useState<string | null>(null);
+  const words = machineWordsFor(instance);
   // The two-question printer flow: (1) what kind / how does it talk, (2) how to
   // connect — flexible: directly (Bambu API today) OR through a manager.
   const [view, setView] = useState<"form" | "bambu" | "direct" | "edge">("form");
@@ -1595,7 +1651,9 @@ function NewMachineModal({
   // Reuse it — a Bambu connection IS the account; listDevices returns every
   // printer on it — so a second printer never re-logs in; it just picks from the
   // account's not-yet-added printers.
-  const printerFlow = !!instance && !!digifabEnabled;
+  // Printer kinds, Bambu and the printer drivers are 3D-printer knowledge; a
+  // laser cutter or a CNC machine connects from its own page afterwards.
+  const printerFlow = !!instance && !!digifabEnabled && words.kind === "3d-printer";
   // A Bambu connection IS an account. Multiple accounts can be connected at once
   // (each login = its own connection), so the add-printer flow lets you choose
   // WHICH account and then which of its not-yet-added printers.
@@ -1639,11 +1697,11 @@ function NewMachineModal({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [reuseEnabled, acctId, bambuConn, bambuAcctDevices.dataUpdatedAt, allLinks.dataUpdatedAt]);
 
-  // One-click turn-on for the Print Manager (digifab) when it's off.
+  // One-click turn-on for digifab when it's off.
   const enableDigifab = useMutation({
     mutationFn: () => changeWorkspaceShape(qc, activeSlug, () => api.enableModule(activeSlug, "digifab")),
     onSuccess: () => {
-      toast.success("Print Manager enabled.");
+      toast.success(`${words.Manager} enabled.`);
     },
     onError: (e: unknown) => toast.error(e instanceof ApiError ? e.message : "Couldn't enable."),
   });
@@ -1745,7 +1803,7 @@ function NewMachineModal({
           await api.createDigifabLink(activeSlug, { connection_id: directConn.id, remote_device_id: directDeviceId, remote_device_name: dev?.name ?? null, machine_id: m.id, machine_label: name.trim() });
         }
       } catch (e) {
-        toast.error(`Printer created, but linking failed: ${e instanceof ApiError ? e.message : String(e)}`);
+        toast.error(`${capitalise(noun ?? words.device)} created, but linking failed: ${e instanceof ApiError ? e.message : String(e)}`);
       }
       return m;
     },
@@ -1863,24 +1921,13 @@ function NewMachineModal({
           <input value={manufacturer} onChange={(e) => setManufacturer(e.target.value)} className="input" />
         </label>
         <label className="block">
-          <span className={lblCls}>Family (e.g. "Voron", "Railcore")</span>
+          <span className={lblCls}>{words.familyExample ? `Family (${words.familyExample})` : "Family"}</span>
           <input value={family} onChange={(e) => setFamily(e.target.value)} className="input" />
         </label>
         <LocationTreePicker label="Location" kind="area" value={locationId} onChange={setLocationId} />
 
         {instance && !digifabEnabled && (
-          <div className="rounded-lg border border-line dark:border-slate-700 bg-subtle/40 dark:bg-slate-800/30 p-3 space-y-1.5">
-            <div className="flex items-center gap-1.5 text-[10px] font-mono uppercase tracking-widest text-accent">
-              <Printer size={12} /> Print manager
-            </div>
-            <p className="text-[11px] text-muted dark:text-slate-400">
-              Want to send prints to this {noun ?? "machine"}? Turn on the Print Manager to connect to Bambu, FDM Monster, or OctoPrint.
-            </p>
-            <button type="button" onClick={() => enableDigifab.mutate()} disabled={enableDigifab.isPending}
-              className="rounded bg-cobble-600 hover:bg-cobble-700 disabled:opacity-50 text-white text-xs px-2.5 py-1.5">
-              {enableDigifab.isPending ? "enabling…" : "Enable Print Manager"}
-            </button>
-          </div>
+          <EnableJobManagerCard words={words} noun={noun} pending={enableDigifab.isPending} onEnable={() => enableDigifab.mutate()} />
         )}
 
         {printerFlow && kind && (

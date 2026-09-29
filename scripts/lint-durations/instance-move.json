@@ -1,7 +1,8 @@
 {
   "lint": "lint:instance-move",
-  "run": "tsx scripts/lint-instance-move-satellites.ts",
+  "run": "node scripts/lint-instance-move-satellites.ts",
   "ms": 484,
   "recorded": "2026-09-14",
-  "source": "split from scripts/lint-durations.json (recorded 2026-09-14)"
+  "source": "split from scripts/lint-durations.json (recorded 2026-09-14)",
+  "readMB": 0.4
 }

@@ -4,25 +4,14 @@
 import { Fragment, useCallback, useMemo, useState } from "react";
 import { Link, useNavigate, useParams, useSearchParams } from "react-router-dom";
 import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import {
-  AlertTriangle,
-  Archive,
-  ArrowRightLeft,
-  Download,
-  ExternalLink,
-  FileDown,
-  FileUp,
-  Plus,
-  Printer,
-  ScanLine,
-  Search,
-  ShieldCheck,
-  Tag as TagIcon, MoreHorizontal } from "lucide-react";
+import { AlertTriangle, Archive, ArrowRightLeft, Download, ExternalLink, FileDown, FileUp, Plus, Printer, ScanLine, ShieldCheck, Tag as TagIcon, MoreHorizontal } from "lucide-react";
 import {
   BulkActionBar,
   EditableCell,
   EntityThumb,
   EntityTile,
+  suggestedSrcFor,
+  usePhotoSuggestions,
   Modal,
   MoveToInstanceModal,
   ViewModeToggle,
@@ -35,10 +24,12 @@ import {
   usePublishChatContext,
   makeAreaResolver,
   LOCATION_GROUP_KEY,
-  type EditableCellDef, useAskCobbAboutSelection, useUnits, TILE_GRID, InboxWaitingStrip } from "@cobblr/platform-web";
+  type EditableCellDef, useAskCobbAboutSelection, useUnits, TILE_GRID, InboxWaitingStrip, SearchInput } from "@cobblr/platform-web";
 import { useInventory } from "./context";
 import { QtyStepper } from "./QtyStepper";
+import { availableOnHand } from "../stock-derived";
 import { HoldingRows, RollupLine } from "./HoldingRows";
+import { CombineSuggestionsBanner } from "./CombineSuggestions";
 import { openUnitsLabel } from "./consumption/perUnit";
 import { assortedQty, isAssorted } from "./assorted";
 import { noteOf, TableConnectorImport, useCreateDoor, viewCardFields } from "@cobblr/platform-web";
@@ -475,15 +466,7 @@ export function PartsListPage() {
         </div>
       )}
       <div className="flex items-center gap-3 flex-wrap">
-        <div className="relative flex-1 min-w-[200px]">
-          <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-faint dark:text-slate-500" />
-          <input
-            value={search}
-            onChange={(e) => setSearch(e.target.value)}
-            placeholder={`search ${itemNounPlural.toLowerCase()}…`}
-            className="input pl-9"
-          />
-        </div>
+        <SearchInput value={search} onChange={setSearch} placeholder={`search ${itemNounPlural.toLowerCase()}…`} wrapperClassName="flex-1 min-w-[200px]" />
         {/* The generic inventory filters (category / location / state /
             lifecycle / low-stock / archived / warranty / insured) are
             base-inventory concepts — noise on a skinned instance (Yarn). Hide
@@ -804,6 +787,8 @@ export function PartsListPage() {
           ))
         : (
           <>
+            {/* The same thing entered once per place: offered as one item. */}
+            {partItems.length > 1 && <CombineSuggestionsBanner />}
             {partItems.length > 0 && viewMode === "tiles" && <PartsTileGrid items={partItems} basePath={basePath} />}
             {partItems.length > 0 && viewMode === "list" && (
               <PartsTable
@@ -1139,6 +1124,8 @@ function PartsTable({
   // instance kind ("yarn:item"), so read it from context like NewPartDialog.
   const { entityKind } = useInventory();
   const fp = useFieldPresentation(entityKind);
+  // Pictures offered to records made without one (#3818).
+  const suggestions = usePhotoSuggestions(entityKind);
   // Compose the workspace override with the stock-vs-catalog disclosure: a lean
   // catalog instance (films, books) hides the whole stock column set (qty,
   // available, min, ...) so its list reads as its own fields, not inventory's.
@@ -1219,6 +1206,7 @@ function PartsTable({
                 <div className="flex items-center gap-3">
                   <EntityThumb
                     src={p.image_path}
+                    suggestedSrc={suggestedSrcFor(suggestions, p.id, p.image_path)}
                     alt={p.name}
                     size={56}
                     color={(p.metadata as Record<string, unknown> | null)?.color as string | undefined}
@@ -1458,6 +1446,7 @@ function PartsTable({
               />
               <EntityThumb
                 src={p.image_path}
+                suggestedSrc={suggestedSrcFor(suggestions, p.id, p.image_path)}
                 alt={p.name}
                 size={48}
                 color={(p.metadata as Record<string, unknown> | null)?.color as string | undefined}
@@ -1677,6 +1666,8 @@ function groupItems(
 function PartsTileGrid({ items, basePath }: { items: PartListItem[]; basePath: string }) {
   // A lean catalog tile shows no qty badge — it's a record, not stock.
   const disclosure = useDisclosure();
+  const { entityKind } = useInventory();
+  const suggestions = usePhotoSuggestions(entityKind);
   const units = useUnits();
   return (
     <div className={TILE_GRID}>
@@ -1684,6 +1675,7 @@ function PartsTileGrid({ items, basePath }: { items: PartListItem[]; basePath: s
         <Link key={p.id} to={`${basePath}/parts/${p.id}`} className="block">
           <EntityTile
             src={p.image_path}
+            suggestedSrc={suggestedSrcFor(suggestions, p.id, p.image_path)}
             color={(p.metadata as Record<string, unknown> | null)?.color as string | undefined}
             values={p.metadata as Record<string, unknown> | null}
             title={p.name}
@@ -1709,6 +1701,17 @@ function PartsTileGrid({ items, basePath }: { items: PartListItem[]; basePath: s
               )
             }
             attention={!disclosure.stock ? false : p.rollup ? p.rollup.low : p.low_stock}
+            // The table's rule, on the tile: a counted thing in one place
+            // steps; an estimate or a thing held in several places does not
+            // (each place steps on its own row). The tile keeps the tap from
+            // opening the item behind it.
+            status={
+              disclosure.stock && !isAssorted(p) && !p.rollup ? (
+                <span className="flex justify-end">
+                  <QtyStepper partId={p.id} qty={Number(p.qty)} size="sm" />
+                </span>
+              ) : undefined
+            }
           />
         </Link>
       ))}
@@ -1716,13 +1719,6 @@ function PartsTileGrid({ items, basePath }: { items: PartListItem[]; basePath: s
   );
 }
 
-/** Available to use: what is on hand (the unopened count plus every open
- *  unit still holding something) minus what is reserved. An older api answers
- *  without `on_hand`, and then this is the count face's own figure. */
-function availableOnHand(p: { qty: number | string; available_qty: number; on_hand?: number }): number {
-  if (typeof p.on_hand !== "number") return p.available_qty;
-  return p.available_qty + (p.on_hand - Number(p.qty));
-}
 
 /** On hand, or the count face itself on an older api. */
 function onHandOf(p: { qty: number | string; on_hand?: number }): number {

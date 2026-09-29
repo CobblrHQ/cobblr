@@ -79,6 +79,22 @@ export function useNoteOf(v: unknown): string | null {
   return t ? t.slice(0, 280) : null;
 }
 
+/** A history line for a one-tap change, so the feed says who took one and
+ *  how ("Alex took one of Toilet paper · via label 'Bathroom'", #3897). The
+ *  via comes from the request, never from here. */
+async function logTap(orgId: string, userId: string | null | undefined, action: "part_used" | "part_restocked", applied: Record<string, unknown>): Promise<void> {
+  if (applied.ok !== true || applied.skipped || typeof applied.partId !== "string") return;
+  await platform()
+    .activity.log({
+      orgId,
+      userId: userId ?? null,
+      action,
+      ref: { module: "inventory", entityType: "part", entityId: applied.partId },
+      diff: { delta: applied.delta ?? null, qty: applied.newQty ?? applied.qty ?? null },
+    })
+    .catch(() => undefined);
+}
+
 async function announce(orgId: string, userId: string | null | undefined, applied: Record<string, unknown>, obs: StockObservation[]): Promise<void> {
   if (applied.ok !== true || applied.skipped) return;
   for (const o of obs) {
@@ -197,8 +213,13 @@ export async function applyStockDelta(
   return {
     ok: true,
     partId: updated.id,
+    name: updated.name,
     delta: applied,
     newQty,
+    // Where it now stands against the minimum kept, so a surface that just
+    // took one off can offer the shopping list there and then (#3897).
+    minQty,
+    low: minQty != null && minQty > 0 && isLowStock({ onHand, minQty }),
     ...(verdict.kind === "clamp" ? { clamped: true, requested: delta, note: verdict.note } : {}),
   };
 }
@@ -341,6 +362,140 @@ async function restorePart(ctx: ActionInvokeContext): Promise<Record<string, unk
   }
   await platform().events.emit("inventory.part.updated", { orgId: ctx.orgId, partId });
   return { ok: true, summary: `Put ${current.name} back the way it was.`, partId };
+}
+
+/** An item dated in a field the workspace declared as its expiry but not
+ *  named `expires_on` (a "Best before" added on /fields): its lots read that
+ *  date, by the role, instead of treating the item as undated. */
+async function roleExpiry(orgId: string, partId: string, md: Record<string, unknown>): Promise<string | null> {
+  try {
+    const kind = await platform().entities.resolvedKindForEntity(orgId, "inventory:part", partId);
+    const name = (await platform().entities.roledFieldsFor(orgId, kind)).find((f) => f.field_role === "expiry")?.name;
+    const v = name ? md[name] : undefined;
+    return typeof v === "string" && v ? v : null;
+  } catch {
+    return null;
+  }
+}
+
+
+
+/**
+ * Change stock while keeping the lots underneath honest.
+ *
+ * Batches are the detail; `qty` and `expires_on` are the visible summary every
+ * other consumer reads. They have to move together or the summary starts lying,
+ * so both writes happen here and nowhere else.
+ *
+ * RECONCILES FIRST. Most of inventory does not know batches exist - adjust-stock,
+ * the restock wire, a scan add-qty - and any of them can have moved `qty` since
+ * the lots were last touched. Rather than forbidding that (which would mean
+ * teaching every path about batches), the drift is absorbed: fewer than the lots
+ * expect means the oldest went, more means stock arrived by a route that recorded
+ * no date.
+ */
+export async function withBatches(
+  orgId: string,
+  partId: string,
+  reason: string,
+  delta: number,
+  mutate: (batches: Batch[], ctx: { today: string; shelfLifeDays: number | null; qtyBefore: number }) => Batch[],
+  opts: { timezone?: string; userId?: string | null; sourceKind?: string | null; sourceId?: string | null; correction?: boolean } = {},
+): Promise<Record<string, unknown>> {
+  const db = (await platform().tenants.getDb(orgId)) as Kysely<InventoryDB>;
+  const row = await db
+    .selectFrom("inventory_parts")
+    .select(["id", "qty", "metadata"])
+    .where("id", "=", partId)
+    .executeTakeFirst();
+  if (!row) return { ok: false, error: "missing_part" };
+
+  const md = ((row.metadata as Record<string, unknown> | null) ?? {}) as Record<string, unknown>;
+  const qtyNow = Number(row.qty);
+  const expiresOn = typeof md.expires_on === "string" && md.expires_on ? md.expires_on : await roleExpiry(orgId, partId, md);
+
+  const current = reconcileToQty(batchesFrom(md, qtyNow, expiresOn), qtyNow);
+  // Through the one reader the shopping row uses too (fresh-lot.ts): a
+  // number field typed on a form arrives as "10", and a `typeof` check here
+  // dated no lot while the row promised one.
+  const shelfLifeDays = shelfLifeDaysOf(md.shelf_life_days);
+  const today = await personToday(opts.userId, opts.timezone);
+
+  // The CALLER decides how much stock moves; the lots only describe it. This
+  // used to run the other way - the delta was read back out of the mutated
+  // batches - and an item with stock but no expiry date has no lots to read, so
+  // `use-one` computed 0 - qty and wiped the whole record to zero. Every screw,
+  // spool and tool in a workspace is exactly that shape, so one everyday tap
+  // emptied it, with a ledger line that looked deliberate.
+  //
+  // Reconciling the lots to the new qty afterwards keeps them honest without
+  // ever letting them govern: a dateless item stays batch-free and behaves
+  // exactly as it did before batches existed.
+  // The floor, before any lot is touched: a decrement on an empty record is
+  // refused with the one sentence every surface shows, and a larger one than
+  // what is on hand is clamped (stock-floor.ts). The stock write below applies
+  // the same rule again; this keeps the lots from being rewritten for nothing.
+  const verdict = floorDelta(qtyNow, delta);
+  if (verdict.kind === "refuse") {
+    return { ok: false, error: verdict.error, partId, delta: 0, newQty: Math.max(0, qtyNow), qty: Math.max(0, qtyNow) };
+  }
+  const qtyAfter = Math.max(0, qtyNow + verdict.applied);
+  const next = reconcileToQty(mutate(current, { today, shelfLifeDays, qtyBefore: qtyNow }), qtyAfter);
+  const visible = visibleFrom(next);
+
+  // A lot dated today grew: stock arrived. The record's own role fields say
+  // so, by the workspace's declarations rather than by name. Read through the
+  // entities door so an instance row (a Groceries table's milk) answers with
+  // its own fields. A use-one, or a bare correction (reconcile files those as
+  // an undated lot), never rewrites a bought-on date.
+  let stamps: Record<string, string | null> = {};
+  if (arrivedToday(current, next, today)) {
+    try {
+      const kind = await platform().entities.resolvedKindForEntity(orgId, "inventory:part", partId);
+      const roled = await platform().entities.roledFieldsFor(orgId, kind);
+      stamps = freshLotStamps({
+        today,
+        visibleExpiry: visible.expires_on,
+        qtyBefore: qtyNow,
+        roles: {
+          acquiredOn: roled.find((f) => f.field_role === "acquired-on")?.name ?? null,
+          expiry: roled.find((f) => f.field_role === "expiry")?.name ?? null,
+        },
+      });
+    } catch (err) {
+      console.warn(`[inventory] arrival stamps skipped for ${partId}:`, (err as Error).message);
+    }
+  }
+
+  // Metadata first, so a failure in the stock write leaves the lots describing
+  // what is really there rather than what we hoped to do.
+  await db
+    .updateTable("inventory_parts")
+    .set({
+      metadata: sql`coalesce(metadata, '{}'::jsonb) || ${JSON.stringify({
+        batches: next,
+        ...(visible.expires_on !== null ? { expires_on: visible.expires_on } : {}),
+        ...stamps,
+      })}::jsonb`,
+    })
+    .where("id", "=", partId)
+    .execute();
+
+  // Through the normal path, so the consumption ledger, stock.changed and the
+  // running-low wire all fire exactly as they do for any other stock move.
+  const applied =
+    verdict.applied === 0
+      ? { ok: true, skipped: true, reason: "no quantity change" }
+      : await applyStockDelta(orgId, {
+          partId,
+          delta: verdict.applied,
+          reason,
+          sourceKind: opts.sourceKind ?? null,
+          sourceId: opts.sourceId ?? null,
+          ...(opts.correction ? { correction: true } : {}),
+        });
+
+  return { ...applied, batches: next, expires_on: visible.expires_on, qty: qtyAfter };
 }
 
 export function registerInventoryActionHandlers(): void {
@@ -494,123 +649,6 @@ export function registerInventoryActionHandlers(): void {
   );
 
 
-/**
- * Change stock while keeping the lots underneath honest.
- *
- * Batches are the detail; `qty` and `expires_on` are the visible summary every
- * other consumer reads. They have to move together or the summary starts lying,
- * so both writes happen here and nowhere else.
- *
- * RECONCILES FIRST. Most of inventory does not know batches exist - adjust-stock,
- * the restock wire, a scan add-qty - and any of them can have moved `qty` since
- * the lots were last touched. Rather than forbidding that (which would mean
- * teaching every path about batches), the drift is absorbed: fewer than the lots
- * expect means the oldest went, more means stock arrived by a route that recorded
- * no date.
- */
-async function withBatches(
-  orgId: string,
-  partId: string,
-  reason: string,
-  delta: number,
-  mutate: (batches: Batch[], ctx: { today: string; shelfLifeDays: number | null; qtyBefore: number }) => Batch[],
-  opts: { timezone?: string; userId?: string | null; sourceKind?: string | null; sourceId?: string | null; correction?: boolean } = {},
-): Promise<Record<string, unknown>> {
-  const db = (await platform().tenants.getDb(orgId)) as Kysely<InventoryDB>;
-  const row = await db
-    .selectFrom("inventory_parts")
-    .select(["id", "qty", "metadata"])
-    .where("id", "=", partId)
-    .executeTakeFirst();
-  if (!row) return { ok: false, error: "missing_part" };
-
-  const md = ((row.metadata as Record<string, unknown> | null) ?? {}) as Record<string, unknown>;
-  const qtyNow = Number(row.qty);
-  const expiresOn = typeof md.expires_on === "string" ? md.expires_on : null;
-
-  const current = reconcileToQty(batchesFrom(md, qtyNow, expiresOn), qtyNow);
-  // Through the one reader the shopping row uses too (fresh-lot.ts): a
-  // number field typed on a form arrives as "10", and a `typeof` check here
-  // dated no lot while the row promised one.
-  const shelfLifeDays = shelfLifeDaysOf(md.shelf_life_days);
-  const today = await personToday(opts.userId, opts.timezone);
-
-  // The CALLER decides how much stock moves; the lots only describe it. This
-  // used to run the other way - the delta was read back out of the mutated
-  // batches - and an item with stock but no expiry date has no lots to read, so
-  // `use-one` computed 0 - qty and wiped the whole record to zero. Every screw,
-  // spool and tool in a workspace is exactly that shape, so one everyday tap
-  // emptied it, with a ledger line that looked deliberate.
-  //
-  // Reconciling the lots to the new qty afterwards keeps them honest without
-  // ever letting them govern: a dateless item stays batch-free and behaves
-  // exactly as it did before batches existed.
-  // The floor, before any lot is touched: a decrement on an empty record is
-  // refused with the one sentence every surface shows, and a larger one than
-  // what is on hand is clamped (stock-floor.ts). The stock write below applies
-  // the same rule again; this keeps the lots from being rewritten for nothing.
-  const verdict = floorDelta(qtyNow, delta);
-  if (verdict.kind === "refuse") {
-    return { ok: false, error: verdict.error, partId, delta: 0, newQty: Math.max(0, qtyNow), qty: Math.max(0, qtyNow) };
-  }
-  const qtyAfter = Math.max(0, qtyNow + verdict.applied);
-  const next = reconcileToQty(mutate(current, { today, shelfLifeDays, qtyBefore: qtyNow }), qtyAfter);
-  const visible = visibleFrom(next);
-
-  // A lot dated today grew: stock arrived. The record's own role fields say
-  // so, by the workspace's declarations rather than by name. Read through the
-  // entities door so an instance row (a Groceries table's milk) answers with
-  // its own fields. A use-one, or a bare correction (reconcile files those as
-  // an undated lot), never rewrites a bought-on date.
-  let stamps: Record<string, string | null> = {};
-  if (arrivedToday(current, next, today)) {
-    try {
-      const kind = await platform().entities.resolvedKindForEntity(orgId, "inventory:part", partId);
-      const roled = await platform().entities.roledFieldsFor(orgId, kind);
-      stamps = freshLotStamps({
-        today,
-        visibleExpiry: visible.expires_on,
-        qtyBefore: qtyNow,
-        roles: {
-          acquiredOn: roled.find((f) => f.field_role === "acquired-on")?.name ?? null,
-          expiry: roled.find((f) => f.field_role === "expiry")?.name ?? null,
-        },
-      });
-    } catch (err) {
-      console.warn(`[inventory] arrival stamps skipped for ${partId}:`, (err as Error).message);
-    }
-  }
-
-  // Metadata first, so a failure in the stock write leaves the lots describing
-  // what is really there rather than what we hoped to do.
-  await db
-    .updateTable("inventory_parts")
-    .set({
-      metadata: sql`coalesce(metadata, '{}'::jsonb) || ${JSON.stringify({
-        batches: next,
-        ...(visible.expires_on !== null ? { expires_on: visible.expires_on } : {}),
-        ...stamps,
-      })}::jsonb`,
-    })
-    .where("id", "=", partId)
-    .execute();
-
-  // Through the normal path, so the consumption ledger, stock.changed and the
-  // running-low wire all fire exactly as they do for any other stock move.
-  const applied =
-    verdict.applied === 0
-      ? { ok: true, skipped: true, reason: "no quantity change" }
-      : await applyStockDelta(orgId, {
-          partId,
-          delta: verdict.applied,
-          reason,
-          sourceKind: opts.sourceKind ?? null,
-          sourceId: opts.sourceId ?? null,
-          ...(opts.correction ? { correction: true } : {}),
-        });
-
-  return { ...applied, batches: next, expires_on: visible.expires_on, qty: qtyAfter };
-}
 
   // ───────────── one-tap consumption (P1 — consumption capture) ─────────────
   // The binary "used" signal, at the moment you're already handling the item —
@@ -618,6 +656,27 @@ async function withBatches(
   // want exact). userInvokable, unlike adjust-stock: these are buttons a person
   // taps. Both decrement through applyStockDelta, so the ledger, stock.changed,
   // and the stock.low → shopping-list wire all fire for free.
+
+  // What a one-tap change will do, in the words a confirm shows before
+  // anything moves: "Toilet paper: 12 → 11". An action label's page reads it
+  // (#3897), as does any confirm card.
+  const stockPlanner = (delta: (args: Record<string, unknown>) => number) => async (ctx: ActionInvokeContext) => {
+    const args = (ctx.args ?? {}) as Record<string, unknown>;
+    const partId = ctx.entity?.id ?? (typeof args.partId === "string" ? args.partId : null);
+    if (!partId) return null;
+    const db = (await platform().tenants.getDb(ctx.orgId)) as Kysely<InventoryDB>;
+    const part = await db.selectFrom("inventory_parts").select(["name", "qty", "min_qty"]).where("id", "=", partId).executeTakeFirst();
+    if (!part) return { error: "that item is not here any more" };
+    const now = Number(part.qty ?? 0);
+    const next = Math.max(0, now + delta(args));
+    const min = part.min_qty == null ? null : Number(part.min_qty);
+    return {
+      title: `${part.name}: ${now} → ${next}`,
+      lines: min != null && min > 0 ? [`Keep at least ${min}${next <= min ? " (this takes it there)" : ""}`] : [],
+    };
+  };
+  platform().actions.registerPlanner("inventory.use-one", stockPlanner(() => -1));
+  platform().actions.registerPlanner("inventory.restock-one", stockPlanner((a) => Math.max(1, Math.trunc(Number(a.qty ?? 1)))));
 
   // Use one: knock a single unit off. The everyday tap ("took one out").
   platform().actions.registerHandler("inventory.use-one", (ctx) =>
@@ -641,6 +700,7 @@ async function withBatches(
         { ...(tz ? { timezone: tz } : {}), userId: ctx.userId },
       );
       await announce(ctx.orgId, ctx.userId, applied, [observation(partId, "consume", -1)]);
+      await logTap(ctx.orgId, ctx.userId, "part_used", applied);
       return applied;
     }),
   );
@@ -672,6 +732,7 @@ async function withBatches(
         { ...(args.timezone ? { timezone: args.timezone } : {}), userId: ctx.userId },
       );
       await announce(ctx.orgId, ctx.userId, applied, [observation(partId, "purchase", add)]);
+      await logTap(ctx.orgId, ctx.userId, "part_restocked", applied);
       return applied;
     }),
   );
@@ -1303,12 +1364,21 @@ async function withBatches(
       .where("instance", "=", typeInstance as never)
       .execute();
     const typeByKey = new Map<string, string>();
-    for (const t of existingTypes) typeByKey.set(keyOf(t as Record<string, unknown>), t.id);
+    const typeName = new Map<string, string>();
+    for (const t of existingTypes) {
+      typeByKey.set(keyOf(t as Record<string, unknown>), t.id);
+      typeName.set(t.id, t.name);
+    }
+    // Per source item, the type it sits under now and whether this run made
+    // it, so the door that created the item can say so ("added a spool of
+    // Royal Blue PLA, a new filament type").
+    const placed: Array<{ source_id: string; type_id: string; type_name: string; type_created: boolean }> = [];
 
     let typesCreated = 0, linked = 0, converted = 0, toppedUp = 0;
     // Types whose copy_fields we've already ensured this run (avoid re-querying
     // for every spool of the same type).
     const toppedUpTypes = new Set<string>();
+    const madeNow = new Set<string>();
     for (const s of sources) {
       const meta = (s.metadata as Record<string, unknown> | null) ?? {};
       // Is this spool already linked to a type (from an earlier migration)?
@@ -1343,6 +1413,8 @@ async function withBatches(
           if (!created) continue;
           typeId = created.id;
           typeByKey.set(k, typeId);
+          typeName.set(typeId, name);
+          madeNow.add(typeId);
           typesCreated++;
           toppedUpTypes.add(typeId); // a fresh type already carries the copy_fields
         }
@@ -1361,6 +1433,8 @@ async function withBatches(
           converted++;
         }
       }
+
+      if (typeId) placed.push({ source_id: s.id, type_id: typeId, type_name: typeName.get(typeId) ?? "", type_created: madeNow.has(typeId) });
 
       // Ensure the type carries the copy_fields. This runs for ALREADY-LINKED
       // spools too — so a second migration that introduces copy_fields (e.g.
@@ -1384,7 +1458,7 @@ async function withBatches(
         }
       }
     }
-    return { ok: true, types_created: typesCreated, linked, converted, topped_up: toppedUp };
+    return { ok: true, types_created: typesCreated, linked, converted, topped_up: toppedUp, placed };
   });
 
   // ─────────────────────── split-lot ───────────────────────────────

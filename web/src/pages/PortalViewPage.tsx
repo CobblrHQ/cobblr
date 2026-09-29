@@ -13,9 +13,9 @@
 import { Link, useOutletContext, useParams } from "react-router-dom";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { QueryError } from "../components/QueryError";
-import { ArrowLeft, Plus, Search } from "lucide-react";
+import { ArrowLeft, Plus } from "lucide-react";
 import { useState } from "react";
-import { EntityThumb, usePageTitle } from "@cobblr/platform-web";
+import { EntityThumb, usePageTitle, SearchInput } from "@cobblr/platform-web";
 import { NewPartDialog, InventoryProvider } from "@cobblr/inventory/ui";
 import { useViewData } from "../lib/useViewData";
 import { ViewMore } from "../components/ViewMore";
@@ -90,16 +90,7 @@ export function PortalViewPage() {
               subject={`Add to ${data.view?.name ?? "this view"}`}
             />
           )}
-          <div className="flex items-center gap-2 rounded-md border border-line dark:border-slate-700 bg-surface dark:bg-slate-900 px-2">
-            <Search size={14} className="text-faint" />
-            <input
-              type="text"
-              value={q}
-              onChange={(e) => setQ(e.target.value)}
-              placeholder="search…"
-              className="bg-transparent text-sm py-1.5 focus:outline-none text-content dark:text-mortar-100 placeholder:text-faint w-48"
-            />
-          </div>
+          <SearchInput value={q} onChange={setQ} placeholder="search…" wrapperClassName="w-48" />
         </div>
       </div>
 

@@ -14,6 +14,7 @@
 // `edge_adapter` is a BUILT-IN driver key (always available); no install
 // needed — just create a connection pointing base_url at your bridge.
 
+import { DriverSaid, sentenceIn } from "../job-truth.js";
 import type {
   CommandResult,
   ControlDef,
@@ -200,7 +201,13 @@ export class EdgeAdapterDriver implements MachineDriver {
       // Prefix the instance so one bridge (one workspace channel) routes the call
       // to the right machine: "/voron" + "/devices" → "/voron/devices".
       const r = await this.relay({ method, path: this.tunnelPrefix + path, body });
-      if (r.status >= 400) throw new Error(`adapter ${method} ${this.tunnelPrefix + path} → ${r.status} (tunnel)`);
+      if (r.status >= 400) {
+        // The bridge says why in a sentence (an allowlist refusal, a service
+        // that did not answer). Keep its words; a 403 from the bridge is not a
+        // refused key.
+        const said = sentenceIn(r.body);
+        throw said ? new DriverSaid(r.status, said) : new Error(`adapter ${method} ${this.tunnelPrefix + path} → ${r.status} (tunnel)`);
+      }
       return r.body ?? null;
     }
     await assertSafeMachineUrl(this.base + path);

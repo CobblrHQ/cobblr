@@ -5,7 +5,7 @@
 // template (or the event payload). Lets a wire call ANY HTTP API without a
 // dedicated connector — the make.com "HTTP" app equivalent.
 
-import { platform } from "@cobblr/platform-contract";
+import { registerOutboundConnector } from "../services.js";
 import { assertSafeOutboundUrl } from "./ssrf.js";
 
 function parseJsonObject(v: unknown): Record<string, string> {
@@ -21,7 +21,7 @@ function parseJsonObject(v: unknown): Record<string, string> {
 }
 
 export function register(): void {
-  platform().integrations.registerConnector({
+  registerOutboundConnector({
     id: "http",
     label: "HTTP request",
     describeCredentials: () => ({

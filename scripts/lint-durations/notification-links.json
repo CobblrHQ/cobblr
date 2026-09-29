@@ -1,7 +1,8 @@
 {
   "lint": "lint:notification-links",
-  "run": "tsx scripts/lint-notification-links.ts",
+  "run": "node scripts/lint-notification-links.ts",
   "ms": 2190,
   "recorded": "2026-09-14",
-  "source": "split from scripts/lint-durations.json (recorded 2026-09-14)"
+  "source": "split from scripts/lint-durations.json (recorded 2026-09-14)",
+  "readMB": 12.8
 }

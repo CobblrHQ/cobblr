@@ -1,7 +1,8 @@
 {
   "lint": "lint:scan-keywords",
-  "run": "tsx scripts/lint-scan-keywords.ts",
+  "run": "node scripts/lint-scan-keywords.ts",
   "ms": 594,
   "recorded": "2026-09-14",
-  "source": "split from scripts/lint-durations.json (recorded 2026-09-14)"
+  "source": "split from scripts/lint-durations.json (recorded 2026-09-14)",
+  "readMB": 1.0
 }

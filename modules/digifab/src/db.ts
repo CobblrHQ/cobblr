@@ -62,6 +62,13 @@ export interface DigifabJobsTable {
   /** Consecutive poll errors (F-12) — reset to 0 on a successful poll; a job is
    *  only declared `failed` after this crosses the threshold. */
   poll_errors: Generated<number>;
+  /** When the job reached its printer (send or assign). Bounds how long a sent
+   *  print may sit unstarted before it is failed as never started. */
+  sent_at: Date | null;
+  /** When someone asked Cobblr to cancel it. The cancel is final only when the
+   *  printer's own state confirms it; a poll finishes it. */
+  cancel_requested_at: Date | null;
+  unreachable_since: Date | null;
   /** A stored core-files file whose bytes are uploaded at send. */
   file_id: string | null;
   linked_machine_id: string | null;

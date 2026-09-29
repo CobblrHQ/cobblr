@@ -1,7 +1,8 @@
 {
   "lint": "lint:ci-exit-read-under-set-e",
-  "run": "tsx scripts/lint-ci-exit-read-under-set-e.ts",
+  "run": "node scripts/lint-ci-exit-read-under-set-e.ts",
   "ms": 1200,
   "recorded": "2026-09-14",
-  "source": "split from scripts/lint-durations.json (recorded 2026-09-14)"
+  "source": "split from scripts/lint-durations.json (recorded 2026-09-14)",
+  "readMB": 0.9
 }

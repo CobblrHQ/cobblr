@@ -8,6 +8,7 @@
 
 import { AsyncLocalStorage } from "node:async_hooks";
 import type { AuthMethod } from "../db/schema.js";
+import type { ActivityViaKind } from "@cobblr/platform-contract";
 
 export interface RequestActor {
   userId: string;
@@ -40,10 +41,12 @@ export function currentActor(): RequestActor | null {
 // actor because an automation runs with the originating actor when there is
 // one and with none when a background event fired it, and in both cases the
 // activity row must say an automation did it. activity.log() reads this.
-export type ViaKind = "mcp" | "assistant" | "automation";
+export type ViaKind = ActivityViaKind;
 export interface Via {
   kind: ViaKind;
-  /** The automation's label, for kind 'automation'. */
+  /** The automation's name for kind 'automation'; the label's title for
+   *  kind 'label' (a scanned action label, #3897); the surface's name for
+   *  kind 'surface' ("floor plan"). */
   label?: string | null;
 }
 const viaStorage = new AsyncLocalStorage<Via>();

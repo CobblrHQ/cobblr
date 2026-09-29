@@ -1,7 +1,8 @@
 {
   "lint": "lint:local-network",
-  "run": "tsx scripts/lint-local-network.ts",
+  "run": "node scripts/lint-local-network.ts",
   "ms": 601,
   "recorded": "2026-09-14",
-  "source": "split from scripts/lint-durations.json (recorded 2026-09-14)"
+  "source": "split from scripts/lint-durations.json (recorded 2026-09-14)",
+  "readMB": 7.8
 }

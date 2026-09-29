@@ -1,7 +1,8 @@
 {
   "lint": "lint:entity-action-uses-entity",
-  "run": "tsx scripts/lint-entity-action-uses-entity.ts",
+  "run": "node scripts/lint-entity-action-uses-entity.ts",
   "ms": 3318,
   "recorded": "2026-09-14",
-  "source": "split from scripts/lint-durations.json (recorded 2026-09-14)"
+  "source": "split from scripts/lint-durations.json (recorded 2026-09-14)",
+  "readMB": 8.2
 }

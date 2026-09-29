@@ -378,7 +378,7 @@ function nonSecretValues(
  *  the bridge (credentials.transit = "bridge…"). Computed server-side so the
  *  client gets a boolean, never the credential values — it drives the "Edge
  *  bridge ● online/offline" indicators. */
-function usesEdge(providerId: string, encrypted: string): boolean {
+export function usesEdge(providerId: string, encrypted: string): boolean {
   if (providerId === "edge-bridge") return true;
   try {
     const obj = JSON.parse(decryptCreds(encrypted)) as Record<string, unknown>;

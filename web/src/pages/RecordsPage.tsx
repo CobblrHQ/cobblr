@@ -8,7 +8,7 @@ import { countOf, itemNounFor, pluralise } from "@cobblr/platform-contract";
 import { useCallback, useEffect, useState, type FormEvent } from "react";
 import { useNavigate, useParams, useSearchParams } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Album, ChevronRight, Image as ImageIcon, Plus, Search, Trash2 } from "lucide-react";
+import { Album, ChevronRight, Image as ImageIcon, Plus, Trash2 } from "lucide-react";
 import { ApiError, api, type RecordItem, type PlatformFieldDef } from "../lib/api";
 import { ModuleInstanceChooser } from "../components/ModuleInstanceChooser";
 import { useActiveOrg } from "../auth/ActiveOrgContext";
@@ -29,14 +29,15 @@ import {
   usePageTitle,
   usePageWidth,
   useToast,
-  useViewMode, TILE_GRID, InboxWaitingStrip } from "@cobblr/platform-web";
+  useViewMode, TILE_GRID, InboxWaitingStrip, SearchInput, CollectionHeader, headerButton } from "@cobblr/platform-web";
 import { EntityAttachments } from "../components/EntityAttachments";
 import { EntityImageEdit } from "../components/EntityImageEdit";
 import { ImageSearchPicker } from "../components/ImageSearchPicker";
+import { SuggestedPhoto } from "../components/SuggestedPhoto";
+import { pictureStateFor, suggestedSrcFor, usePhotoSuggestions } from "../lib/photoSuggestions";
 import { LocationTreePicker } from "../components/LocationTreePicker";
 import { resolveDetailPath } from "@cobblr/platform-contract/instance-detail";
 import { PresentationGate, useFaces } from "@cobblr/platform-web";
-import { TableTitle } from "@cobblr/platform-web";
 
 const ENTITY_KIND = "records:record";
 
@@ -168,40 +169,31 @@ export function RecordsPage({
 
   return (
     <div className="space-y-4">
-      <div className="flex flex-wrap items-baseline gap-x-3 gap-y-2 border-b border-line dark:border-slate-700 pb-3">
-        <TableTitle title={displayName ?? "records"} hint={hint} />
-        <span className="text-[10px] font-mono text-faint dark:text-slate-500">
-          {filtered.length} of {allRows.length}
-        </span>
-        <div className="flex-1" />
-        <div className="relative">
-          <Search size={12} className="absolute left-2 top-1/2 -translate-y-1/2 text-faint" />
-          <input
-            value={query}
-            onChange={(e) => setQuery(e.target.value)}
-            placeholder="search…"
-            className="input !py-1 !pl-7 text-xs !w-48"
-          />
-        </div>
-        {missingCovers > 0 && (
-          <button
-            onClick={() => backfill.mutate()}
-            disabled={backfill.isPending}
-            title={`Look up an image for the ${countOf(missingCovers, noun)} without one`}
-            className="rounded-md border border-line dark:border-slate-600 hover:border-faint disabled:opacity-50 text-muted hover:text-content text-xs font-medium px-3 py-2 transition flex items-center gap-1.5"
-          >
-            <ImageIcon size={13} />
-            {backfill.isPending ? "starting…" : `fetch ${missingCovers} missing image${missingCovers === 1 ? "" : "s"}`}
-          </button>
-        )}
-        <ViewModeToggle mode={viewMode} onChange={setViewMode} />
-        <button
-          onClick={() => setNewOpen(true)}
-          className="rounded-md bg-slate-700 hover:bg-slate-600 text-mortar-50 text-sm font-medium px-3 py-2 transition flex items-center gap-1.5"
-        >
-          <Plus size={14} /> New {noun}
-        </button>
-      </div>
+      <CollectionHeader
+        title={displayName ?? "records"}
+        count={`${filtered.length} of ${allRows.length}`}
+        hint={hint} kind={instance ? `${instance}:item` : ENTITY_KIND}
+        search={<SearchInput value={query} onChange={setQuery} placeholder="search…" aria-label={`Search ${pluralise(noun)}`} wrapperClassName="w-48 max-sm:w-full max-sm:flex-1" />}
+        actions={
+          <>
+            {missingCovers > 0 && (
+              <button
+                onClick={() => backfill.mutate()}
+                disabled={backfill.isPending}
+                title={`Look up an image for the ${countOf(missingCovers, noun)} without one`}
+                className={`${headerButton("secondary")} text-xs text-muted hover:text-content disabled:opacity-50`}
+              >
+                <ImageIcon size={13} />
+                {backfill.isPending ? "starting…" : `fetch ${missingCovers} missing image${missingCovers === 1 ? "" : "s"}`}
+              </button>
+            )}
+            <ViewModeToggle mode={viewMode} onChange={setViewMode} />
+            <button onClick={() => setNewOpen(true)} className={headerButton("primary")}>
+              <Plus size={14} /> New {noun}
+            </button>
+          </>
+        }
+      />
 
       {filtered.length === 0 ? (
         // The instance-chooser is a BASE-page affordance ("pick one of your
@@ -216,9 +208,9 @@ export function RecordsPage({
           </div>
         )
       ) : viewMode === "tiles" ? (
-        <RecordsTiles rows={filtered} onOpen={openRecord} />
+        <RecordsTiles rows={filtered} onOpen={openRecord} kind={instance ? `${instance}:item` : ENTITY_KIND} />
       ) : (
-        <RecordsTable rows={filtered} customCols={customCols} onOpen={openRecord} />
+        <RecordsTable rows={filtered} customCols={customCols} onOpen={openRecord} kind={instance ? `${instance}:item` : ENTITY_KIND} />
       )}
       {/* What is waiting in the scan inbox to come here, under the filed
           results: a thing just scanned is in no table until it is filed. */}
@@ -238,12 +230,13 @@ export function RecordsPage({
   );
 }
 
-function RecordsTiles({ rows, onOpen }: { rows: RecordItem[]; onOpen: (id: string) => void }) {
+function RecordsTiles({ rows, onOpen, kind }: { rows: RecordItem[]; onOpen: (id: string) => void; kind: string }) {
+  const suggestions = usePhotoSuggestions(kind);
   return (
     <div className={TILE_GRID}>
       {rows.map((r) => (
         <button key={r.id} type="button" onClick={() => onOpen(r.id)} className="text-left">
-          <EntityTile src={r.image_path} title={r.name} subtitle={null} />
+          <EntityTile src={r.image_path} suggestedSrc={suggestedSrcFor(suggestions, r.id, r.image_path)} pictureState={pictureStateFor(suggestions, r.id, r.image_path)} title={r.name} subtitle={null} />
         </button>
       ))}
     </div>
@@ -254,11 +247,14 @@ function RecordsTable({
   rows,
   customCols,
   onOpen,
+  kind,
 }: {
   rows: RecordItem[];
   customCols: PlatformFieldDef[];
   onOpen: (id: string) => void;
+  kind: string;
 }) {
+  const suggestions = usePhotoSuggestions(kind);
   return (
     <div className="rounded-xl border border-line dark:border-slate-700 bg-surface dark:bg-slate-900 overflow-x-auto">
       <table className="w-full text-sm">
@@ -280,7 +276,7 @@ function RecordsTable({
             >
               <td className="px-3 py-2 text-content dark:text-mortar-100 font-medium">
                 <div className="flex items-center gap-3">
-                  <EntityThumb src={r.image_path} alt={r.name} size={56} />
+                  <EntityThumb src={r.image_path} suggestedSrc={suggestedSrcFor(suggestions, r.id, r.image_path)} pictureState={pictureStateFor(suggestions, r.id, r.image_path)} alt={r.name} size={56} />
                   <span className="truncate">{r.name}</span>
                 </div>
               </td>
@@ -434,6 +430,17 @@ export function RecordDetailModal({
                 onChange={(image_path) => update.mutate({ image_path })}
                 onAutoFetch={runAutoFetch}
                 autoBusy={autoBusy}
+              />
+              <SuggestedPhoto
+                kind={kind}
+                id={r.id}
+                hasPicture={!!r.image_path}
+                onApplied={() => {
+                  void qc.invalidateQueries({ queryKey: ["record", activeSlug, instance ?? null, recordId] });
+                  void qc.invalidateQueries({ queryKey: ["records", activeSlug] });
+                }}
+                onPickOther={pickWebPhoto}
+                pickBusy={photoPickBusy}
               />
               <div>
                 <button

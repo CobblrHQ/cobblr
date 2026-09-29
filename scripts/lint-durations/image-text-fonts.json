@@ -1,7 +1,8 @@
 {
   "lint": "lint:image-text-fonts",
-  "run": "tsx scripts/lint-image-text-fonts.ts",
+  "run": "node scripts/lint-image-text-fonts.ts",
   "ms": 564,
   "recorded": "2026-09-14",
-  "source": "split from scripts/lint-durations.json (recorded 2026-09-14)"
+  "source": "split from scripts/lint-durations.json (recorded 2026-09-14)",
+  "readMB": 13.6
 }

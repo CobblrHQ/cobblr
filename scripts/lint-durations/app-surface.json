@@ -1,7 +1,8 @@
 {
   "lint": "lint:app-surface",
-  "run": "tsx scripts/lint-app-surface.ts",
+  "run": "node scripts/lint-app-surface.ts",
   "ms": 1499,
   "recorded": "2026-09-14",
-  "source": "split from scripts/lint-durations.json (recorded 2026-09-14)"
+  "source": "split from scripts/lint-durations.json (recorded 2026-09-14)",
+  "readMB": 0.2
 }

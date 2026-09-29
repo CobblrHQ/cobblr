@@ -1,7 +1,8 @@
 {
   "lint": "lint:porcelain-parse",
-  "run": "tsx scripts/lint-porcelain-parse.ts",
+  "run": "node scripts/lint-porcelain-parse.ts",
   "ms": 418,
   "recorded": "2026-09-14",
-  "source": "split from scripts/lint-durations.json (recorded 2026-09-14)"
+  "source": "split from scripts/lint-durations.json (recorded 2026-09-14)",
+  "readMB": 2.6
 }

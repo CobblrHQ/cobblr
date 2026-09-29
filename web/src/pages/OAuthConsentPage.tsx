@@ -112,10 +112,10 @@ export function OAuthConsentPage() {
           <p className="text-xs text-ember-500">{decide.error instanceof ApiError ? decide.error.message : "That did not go through."}</p>
         )}
         <div className="flex items-center justify-end gap-2 pt-2 border-t border-line dark:border-slate-700">
-          <button type="button" className="btn-secondary" disabled={decide.isPending} onClick={() => decide.mutate("deny")}>
+          <button type="button" className="rounded-md border border-line dark:border-slate-700 text-content dark:text-mortar-200 hover:bg-subtle dark:hover:bg-slate-800 text-sm px-3 py-1.5 transition disabled:opacity-50" disabled={decide.isPending} onClick={() => decide.mutate("deny")}>
             Cancel
           </button>
-          <button type="button" className="btn-primary" disabled={decide.isPending || d.workspaces.length === 0} onClick={() => decide.mutate("allow")}>
+          <button type="button" className="rounded-md bg-slate-700 hover:bg-slate-600 text-mortar-50 text-sm font-medium px-3 py-1.5 transition disabled:opacity-50" disabled={decide.isPending || d.workspaces.length === 0} onClick={() => decide.mutate("allow")}>
             {decide.isPending ? "Connecting…" : "Connect"}
           </button>
         </div>

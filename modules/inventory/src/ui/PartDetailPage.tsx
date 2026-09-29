@@ -6,7 +6,7 @@ import { useEffect, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Archive, ArrowRightLeft, Copy, Library, Minus, Plus, ShieldCheck, Trash2 } from "lucide-react";
 import { consumptionGauge, type ConsumptionGauge as ConsumptionGaugeT } from "@cobblr/platform-contract/consumption-gauge";
-import { PresentationGate, MutationError, AssortmentCard, ContentsPanel, ContributedDetailPanels, CustomFieldsPanel, EntityActionsBar, EntityThumb, FaceSection, faceShows, useHoldsContents, FieldPack, LabeledField, Modal, RecordFaces, RecordHeaderChips, editFieldItem, fieldNeed, useFaces, MoveToInstanceModal, UnitInput, useConfirm, usePageTitle, useToast, useUnits } from "@cobblr/platform-web";
+import { PresentationGate, StickyBottomBar, MutationError, AssortmentCard, ContentsPanel, ContributedDetailPanels, CustomFieldsPanel, EntityActionsBar, EntityThumb, FaceSection, faceShows, useHoldsContents, FieldPack, LabeledField, Modal, RecordFaces, RecordHeaderChips, editFieldItem, fieldNeed, useFaces, MoveToInstanceModal, UnitInput, useConfirm, usePageTitle, useToast, useUnits } from "@cobblr/platform-web";
 import { useInventory } from "./context";
 import { QtyStepper } from "./QtyStepper";
 import { isAssorted } from "./assorted";
@@ -818,7 +818,7 @@ export function PartDetailPage({ id, onClose }: { id: string; onClose: () => voi
       />
 
       {/* Stays in reach on a phone: this row used to be five screens down. */}
-      <div className="flex items-center justify-center gap-4 pt-4 sticky bottom-0 -mx-5 px-5 py-2 bg-surface dark:bg-slate-900 border-t border-line dark:border-slate-700">
+      <StickyBottomBar className="flex items-center justify-center gap-4 pt-4 -mx-5 px-5 py-2 bg-surface dark:bg-slate-900 border-t border-line dark:border-slate-700">
         <button
           onClick={() => setDup(true)}
           className="text-xs text-faint dark:text-slate-500 hover:text-accent inline-flex items-center gap-1.5"
@@ -829,7 +829,7 @@ export function PartDetailPage({ id, onClose }: { id: string; onClose: () => voi
           onClick={() => setMoving(true)}
           className="text-xs text-faint dark:text-slate-500 hover:text-accent inline-flex items-center gap-1.5"
         >
-          <ArrowRightLeft size={12} /> Move to…
+          <ArrowRightLeft size={12} /> Move to another list…
         </button>
         <button
           onClick={async () => {
@@ -845,7 +845,7 @@ export function PartDetailPage({ id, onClose }: { id: string; onClose: () => voi
         >
           <Trash2 size={12} /> Delete this {itemNoun}
         </button>
-      </div>
+      </StickyBottomBar>
 
       <MoveToInstanceModal
         open={moving}
@@ -1240,6 +1240,13 @@ function FlatConsumptionPanel({
                   {/* Wraps: a line can carry a note typed for that use (a tasting note),
                       and a note cut to one line is a note nobody can read. */}
                   <span className="text-muted dark:text-slate-400 flex-1 min-w-0 break-words">{r.reason ?? r.source_kind ?? "adjustment"}</span>
+                  {/* Who, when a person did it: in a shared closet the question
+                      is "who took the last one" (#3801). */}
+                  {r.by_user && (
+                    <span className="text-[12px] text-content dark:text-mortar-200 shrink-0" data-testid="ledger-who">
+                      {r.by_name ?? "someone who has left"}
+                    </span>
+                  )}
                   <span className="text-[11px] text-faint shrink-0">{new Date(r.at).toLocaleDateString()}</span>
                 </li>
               );

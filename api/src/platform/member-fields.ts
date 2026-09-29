@@ -16,9 +16,14 @@
 
 import { meta } from "../db/meta.js";
 import type { ResolvedEntity } from "@cobblr/platform-contract";
+import { personNamesFor } from "./people.js";
+import { resolveFieldDefsForKind } from "./field-defs.js";
 
+// `person` fields (#3787) resolve here too: the same problem (an id nobody
+// should see) and the same answer, from the workspace's People list.
 interface MemberDef {
   name: string;
+  type: string;
 }
 
 const TTL_MS = 5_000;
@@ -36,13 +41,11 @@ async function memberDefsFor(orgId: string, kind: string): Promise<MemberDef[]> 
   if (hit && Date.now() - hit.at < TTL_MS) return hit.defs;
   let defs: MemberDef[] = [];
   try {
-    defs = await meta
-      .selectFrom("module_field_defs")
-      .select(["name"])
-      .where("org_id", "=", orgId)
-      .where("entity_kind", "=", kind)
-      .where("type", "=", "member")
-      .execute();
+    // Through the one resolver, so a person field scoped to a kind by its
+    // traits is named too, not only one keyed to the kind.
+    defs = (await resolveFieldDefsForKind(orgId, kind))
+      .filter((d) => d.type === "member" || d.type === "person")
+      .map((d) => ({ name: d.name, type: d.type }));
   } catch {
     defs = []; // never fail a read over a label
   }
@@ -82,7 +85,11 @@ export async function memberNamesFor(orgId: string): Promise<Map<string, string>
 export async function applyMemberFields(
   orgId: string,
   resolved: ResolvedEntity,
+  opts: { publicRead?: boolean } = {},
 ): Promise<ResolvedEntity> {
+  // A public surface (a shared link, a kiosk) never names people: who owns a
+  // thing, or who it is assigned to, is the workspace's business.
+  if (opts.publicRead) return resolved;
   const defs = await memberDefsFor(orgId, resolved.kind);
   if (defs.length === 0) return resolved;
 
@@ -93,15 +100,44 @@ export async function applyMemberFields(
       : {};
 
   const present = defs
-    .map((d) => ({ name: d.name, value: metadata[d.name] ?? fields[d.name] }))
+    .map((d) => ({ name: d.name, type: d.type, value: metadata[d.name] ?? fields[d.name] }))
     .filter((f) => typeof f.value === "string" && f.value.trim());
   if (present.length === 0) return resolved;
 
-  const names = await memberNamesFor(orgId);
+  const names = present.some((f) => f.type === "member") ? await memberNamesFor(orgId) : new Map<string, string>();
+  const people = present.some((f) => f.type === "person") ? await personNamesFor(orgId) : new Map<string, string>();
   const labels: Record<string, unknown> = {};
   for (const f of present) {
-    labels[`${f.name}_label`] = names.get(String(f.value)) ?? "Former member";
+    labels[`${f.name}_label`] =
+      f.type === "person"
+        ? (people.get(String(f.value)) ?? "Someone no longer listed")
+        : (names.get(String(f.value)) ?? "Former member");
   }
 
   return { ...resolved, fields: { ...fields, ...labels } };
+}
+
+/**
+ * A template names people by name. A label reading "{{owner}}" must print
+ * "Alex", not the id the field stores, so before a record is rendered into
+ * text its person and member fields are replaced by the names read above
+ * (`<name>_label`). The id stays reachable as `<name>_id`. Only these two
+ * types: a linked record's id can be an action's argument, a person's never is.
+ */
+export async function namePeopleForTemplate(
+  orgId: string,
+  kind: string,
+  data: Record<string, unknown>,
+): Promise<Record<string, unknown>> {
+  const defs = await memberDefsFor(orgId, kind);
+  if (defs.length === 0) return data;
+  const out = { ...data };
+  for (const d of defs) {
+    const label = data[`${d.name}_label`];
+    if (typeof label === "string" && label) {
+      out[`${d.name}_id`] = data[d.name];
+      out[d.name] = label;
+    }
+  }
+  return out;
 }

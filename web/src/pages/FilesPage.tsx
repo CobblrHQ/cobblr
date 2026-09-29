@@ -9,10 +9,10 @@
 import { useMemo, useRef, useState } from "react";
 import { openAuthedFile } from "../lib/authed-file";
 import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { ChevronRight, File as FileIcon, Folder, FolderPlus, Pencil, Search, Trash2, Upload } from "lucide-react";
+import { ChevronRight, File as FileIcon, Folder, FolderPlus, Pencil, Trash2, Upload } from "lucide-react";
 import { api, ApiError, type FileFolder, type FileRecord } from "../lib/api";
 import { useActiveOrg } from "../auth/ActiveOrgContext";
-import { canPreviewFile, FilePreview, FileIntakePanels, Modal, useFileIntake, useFilePreviewRegistry, useToast, useConfirm, usePageTitle, EntityPhoto } from "@cobblr/platform-web";
+import { canPreviewFile, FilePreview, FileIntakePanels, Modal, useFileIntake, useFilePreviewRegistry, useToast, useConfirm, usePageTitle, EntityPhoto, SearchInput } from "@cobblr/platform-web";
 
 const TOP = "top";
 
@@ -177,16 +177,7 @@ export function FilesPage() {
           </span>
         )}
         <div className="flex-1" />
-        <label className="relative flex items-center">
-          <Search size={14} className="absolute left-2 text-faint" />
-          <input
-            type="search"
-            value={search}
-            onChange={(e) => setSearch(e.target.value)}
-            placeholder="Find a file by name"
-            className="w-44 sm:w-56 rounded border border-line dark:border-slate-700 bg-surface dark:bg-slate-900 pl-7 pr-2 py-1.5 text-sm"
-          />
-        </label>
+        <SearchInput value={search} onChange={setSearch} placeholder="Find a file by name" aria-label="Find a file by name" wrapperClassName="w-44 sm:w-56" />
         {newFolder === null ? (
           <button
             type="button"

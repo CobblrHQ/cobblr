@@ -12,6 +12,7 @@
 // six rows is the location of those six things.
 
 import { productCodeKind } from "@cobblr/platform-contract/identifier-check";
+import { readDisposition } from "@cobblr/platform-contract/disposition";
 import type { Cell, RawSheet } from "./sheet-read.js";
 
 export type ColumnType =
@@ -29,7 +30,7 @@ export type ColumnType =
   | "image";
 
 // VOCAB-ENUMERATION OK: a spreadsheet column's own roles, declared here; not the field-role vocabulary
-export type ColumnRole = "name" | "key" | "quantity" | "location" | "category" | "photo" | "notes";
+export type ColumnRole = "name" | "key" | "quantity" | "location" | "category" | "photo" | "notes" | "disposition";
 
 export type DateOrder = "ymd" | "mdy" | "dmy";
 
@@ -59,6 +60,12 @@ export interface UnderstoodColumn {
   samples: string[];
   /** Values that do not fit the column's type, kept as written. */
   odd: { count: number; samples: string[] };
+  /** Where the header came from when the sheet had none: its values, or a
+   *  model shown the first rows. Absent when the sheet named it. */
+  named_by?: "values" | "ai";
+  /** How many values read as what became of the thing ("Sold for $100",
+   *  "Parted out"). */
+  fates?: number;
 }
 
 /** A quantity keeps the words it was written with ("3 cans") beside the
@@ -71,13 +78,23 @@ export interface UnderstoodRow {
   values: Value[];
 }
 
-/** `excluded`: a person left the row out in the dry run. */
-export type SkipReason = "title" | "blank" | "repeated-header" | "total" | "section" | "excluded";
+/** `excluded`: a person left the row out in the dry run. `not-owned`: the
+ *  row says the thing is gone, and the person asked for only what they have. */
+export type SkipReason = "title" | "blank" | "repeated-header" | "total" | "section" | "excluded" | "not-owned";
 
 export interface SkippedRow {
   row: number;
   reason: SkipReason;
   text?: string;
+}
+
+/** One figure from a sheet's own summary rows ("Price Totals $4,873.00"), to
+ *  check the import against rather than to import. */
+export interface SummaryFact {
+  row: number;
+  label: string;
+  value: number;
+  money: boolean;
 }
 
 export interface UnderstoodSheet {
@@ -86,11 +103,15 @@ export interface UnderstoodSheet {
   truncated: boolean;
   empty: boolean;
   title: string | null;
-  /** 1-based; null for an empty sheet. */
+  /** 1-based; null for an empty sheet or one with no header row. */
   header_row: number | null;
+  /** The sheet starts with its data: no row names the columns, so they are
+   *  named from what they hold ("ISBN", "Date") or by letter. */
+  headerless: boolean;
   columns: UnderstoodColumn[];
   rows: UnderstoodRow[];
   skipped: SkippedRow[];
+  summary: SummaryFact[];
 }
 
 export interface UnderstandOptions {
@@ -101,6 +122,9 @@ export interface UnderstandOptions {
 // ─── cell readers ────────────────────────────────────────────────────────────
 
 const CURRENCY_RE = /[$€£¥₹]|\b(USD|EUR|GBP|CAD|AUD|NZD|CHF|JPY)\b/i;
+
+/** A price of nothing, as people write it: "Free", "Free in Trade", "Gift". */
+const FREE_RE = /^(free|gratis|gift(ed)?|no charge|n\/c)\b/i;
 
 function textOf(c: Cell): string {
   // A whole number keeps every digit: a 13-digit ISBN stored as a number
@@ -299,6 +323,7 @@ const H = {
   notes: /\b(notes?|comments?|remarks?|details|description|desc)\b/,
   tags: /\b(tags?|labels?|keywords?)\b/,
   money: /\b(price|cost|paid|value|msrp|spent|retail|worth)\b/,
+  fate: /\b(fate|disposition|what happened|outcome|status|gone|sold|still own(ed)?)\b/,
 };
 
 function norm(header: string): string {
@@ -327,6 +352,11 @@ function describeColumn(d: ColumnDraft, dateOrderHint: DateOrder): UnderstoodCol
     odd: { count: 0, samples: [] },
   };
   if (filled === 0) return col;
+  const fates = texts.filter((t) => {
+    const d = readDisposition(t);
+    return d !== null && d !== "owned";
+  }).length;
+  if (fates) col.fates = fates;
 
   const share = (pred: (c: Cell, t: string) => boolean) => cells.filter((c, i) => pred(c, texts[i]!)).length / filled;
   const oddOf = (pred: (c: Cell, t: string) => boolean) => {
@@ -351,6 +381,7 @@ function describeColumn(d: ColumnDraft, dateOrderHint: DateOrder): UnderstoodCol
   const isCode = (_c: Cell, t: string) => productCodeKind(t) !== null || (/^\d{11}$/.test(t) && productCodeKind(`0${t}`) !== null);
   const isUrl = (_c: Cell, t: string) => /^https?:\/\/\S+$/i.test(t);
   const isNum = (c: Cell, t: string) => typeof c.v === "number" || parseNumber(t) !== null;
+  const isNumOrFree = (c: Cell, t: string) => isNum(c, t) || FREE_RE.test(t);
   const isQty = (_c: Cell, t: string) => parseQuantity(t) !== null;
 
   if (realDates / filled >= FIT) {
@@ -375,7 +406,10 @@ function describeColumn(d: ColumnDraft, dateOrderHint: DateOrder): UnderstoodCol
     return col;
   }
 
-  if (share(isNum) >= FIT) {
+  // "Free" is a price, so a price column with free things in it is still
+  // money; only where something IS a price, never a column of the word alone.
+  const priced = cells.some((c, i) => isNum(c, texts[i]!)) && (texts.some((t) => CURRENCY_RE.test(t)) || H.money.test(h));
+  if (share(isNum) >= FIT || (priced && share(isNumOrFree) >= FIT)) {
     const withCurrency = texts.filter((t) => CURRENCY_RE.test(t)).length;
     if (withCurrency / filled >= 0.3 || H.money.test(h)) {
       col.type = "money";
@@ -384,7 +418,7 @@ function describeColumn(d: ColumnDraft, dateOrderHint: DateOrder): UnderstoodCol
     } else {
       col.type = "number";
     }
-    oddOf(isNum);
+    oddOf(col.type === "money" ? isNumOrFree : isNum);
     return col;
   }
 
@@ -472,6 +506,13 @@ function assignRoles(cols: UnderstoodColumn[], rowCount: number): void {
   give("photo", withData.find((c) => c.type === "image") ?? withData.find((c) => c.type === "url" && H.photo.test(h(c))));
 
   const texty = (c: UnderstoodColumn) => c.type === "text" || c.type === "long-text";
+  // What became of each thing, where the column says anything at all (a blank
+  // is still here): mostly sold, given away, parted out… Settled before the
+  // name, so a sheet of fates is never taken for the names of things.
+  give(
+    "disposition",
+    withData.find((c) => (c.fates ?? 0) >= 2 && (c.fates ?? 0) >= c.filled * (H.fate.test(h(c)) ? 0.5 : 0.8)),
+  );
   give(
     "name",
     withData.find((c) => texty(c) && H.name.test(h(c))) ??
@@ -511,8 +552,16 @@ function valueOf(c: Cell | null, col: UnderstoodColumn): Value {
     case "boolean":
       return parseBoolean(c) ?? t;
     case "number":
-    case "money":
       return typeof c.v === "number" ? c.v : (parseNumber(t) ?? t);
+    case "money": {
+      if (typeof c.v === "number") return c.v;
+      const n = parseNumber(t);
+      if (n !== null) return n;
+      const free = FREE_RE.exec(t);
+      // "Free in Trade" is nothing paid, and the words say how.
+      if (free) return free[0].length === t.trim().length ? 0 : { amount: 0, unit: null, text: t };
+      return t;
+    }
     case "quantity": {
       const q = parseQuantity(t);
       return q ? { ...q, text: t } : t;
@@ -536,6 +585,112 @@ export function defaultDateOrder(locale: string | undefined): DateOrder {
 
 // ─── the sheet ───────────────────────────────────────────────────────────────
 
+/** Whether the row taken as the header reads like the data under it: a
+ *  checked code, a date or a number where the column holds them, or a value
+ *  the column repeats further down. Two such cells and it is data. */
+function looksLikeData(rows: RawSheet["rows"], header: number, lastUsed: number): boolean {
+  const row = rows[header] ?? [];
+  const below = rows.slice(header + 1, Math.min(lastUsed + 1, header + 31));
+  let evidence = 0;
+  row.forEach((cell, c) => {
+    if (!cell) return;
+    const t = cell.text.trim();
+    const column = below.map((r) => r?.[c]).filter((x): x is Cell => Boolean(x));
+    if (productCodeKind(t) && column.some((x) => productCodeKind(x.text))) evidence++;
+    else if (dateParts(t) && column.some((x) => dateParts(x.text) || x.v instanceof Date)) evidence++;
+    else if (column.some((x) => x.text.trim().toLowerCase() === t.toLowerCase())) evidence++;
+  });
+  return evidence >= 2;
+}
+
+/** A header row BELOW the data, as a list kept by adding to the top shows it:
+ *  a row of labels as wide as the data, whose columns hold numbers or dates in
+ *  the rows above it, and none of whose labels is a value its column repeats
+ *  (a row of data that happens to be all words has neighbours that agree with
+ *  it). -1 when there is none. */
+function headerBelowData(rows: RawSheet["rows"], firstUsed: number, lastUsed: number): number {
+  const widest = Math.max(...rows.slice(firstUsed, lastUsed + 1).map(width));
+  const typed = (x: Cell) => typeof x.v === "number" || x.v instanceof Date || parseNumber(x.text) !== null || dateParts(x.text) !== null;
+  for (let r = firstUsed + 1; r <= lastUsed; r++) {
+    const row = rows[r];
+    if (width(row) < Math.max(2, Math.ceil(widest * 0.8)) || !headerLike(row, widest)) continue;
+    const near = [...rows.slice(Math.max(firstUsed, r - 40), r), ...rows.slice(r + 1, r + 41)];
+    const above = rows.slice(Math.max(firstUsed, r - 40), r);
+    let namesTyped = 0;
+    let repeats = false;
+    (row ?? []).forEach((cell, c) => {
+      if (!cell) return;
+      const t = cell.text.trim().toLowerCase();
+      if (near.some((x) => x?.[c]?.text.trim().toLowerCase() === t)) repeats = true;
+      const under = above.map((x) => x?.[c]).filter((x): x is Cell => Boolean(x));
+      if (under.length >= 2 && under.filter(typed).length >= under.length * 0.5) namesTyped++;
+    });
+    if (!repeats && namesTyped >= 1) return r;
+  }
+  return -1;
+}
+
+// A row of a sheet's own arithmetic: "Price Totals", "Average Cost",
+// "Total Still Owned". Recognised by its words where the data ends; a row
+// that is only the word Total is one anywhere.
+const SUMMARY_WORDS = /\b((grand|sub)\s*)?totals?\b|\bsum\b|\baverage\b|\bavg\b|\bmean\b|\bcount\b/i;
+const TOTAL_ONLY = /^(grand\s+)?(sub)?totals?:?$|^sum:?$/i;
+
+function numberIn(c: Cell): number | null {
+  return typeof c.v === "number" ? c.v : parseNumber(c.text);
+}
+
+function summaryLike(row: Array<Cell | null>, anywhere: boolean): boolean {
+  const first = row.find(Boolean);
+  if (!first || !isLabel(first) || !row.some((c) => c && numberIn(c) !== null)) return false;
+  return anywhere ? TOTAL_ONLY.test(first.text.trim()) : SUMMARY_WORDS.test(first.text);
+}
+
+/** Each label in a summary row with the number that follows it. */
+function summaryFacts(row: Array<Cell | null>, rowNumber: number): SummaryFact[] {
+  const out: SummaryFact[] = [];
+  let label: string | null = null;
+  for (const c of row) {
+    if (!c) continue;
+    const n = numberIn(c);
+    if (n !== null && label) {
+      out.push({ row: rowNumber, label, value: n, money: CURRENCY_RE.test(c.text) });
+      label = null;
+    } else if (n === null && isLabel(c)) {
+      label = c.text.trim();
+    }
+  }
+  return out;
+}
+
+/** Names for the columns of a sheet with no header row, where the values
+ *  leave no doubt; the rest keep their letter. */
+function nameFromValues(columns: UnderstoodColumn[]): void {
+  const taken = new Set(columns.map((c) => c.header.toLowerCase()));
+  for (const col of columns) {
+    if (col.derived || !/^Column [A-Z]+$/.test(col.header)) continue;
+    const name =
+      col.type === "code" ? (col.code_kind === "isbn" ? "ISBN" : "Barcode")
+      : col.type === "image" ? "Photo"
+      : col.type === "url" ? "Link"
+      : col.type === "date" ? "Date"
+      : col.type === "money" ? "Price"
+      : null;
+    if (!name || taken.has(name.toLowerCase())) continue;
+    taken.add(name.toLowerCase());
+    col.header = name;
+    col.header_parts = [];
+    col.named_by = "values";
+  }
+}
+
+/** Roles again, after a column was renamed (the header is half of how a role
+ *  is recognised). */
+export function reassignRoles(sheet: UnderstoodSheet): void {
+  for (const c of sheet.columns) if (!c.derived) c.role = null;
+  assignRoles(sheet.columns, sheet.rows.length);
+}
+
 export function understandSheet(raw: RawSheet, opts: UnderstandOptions = {}): UnderstoodSheet {
   const base: UnderstoodSheet = {
     name: raw.name,
@@ -544,9 +699,11 @@ export function understandSheet(raw: RawSheet, opts: UnderstandOptions = {}): Un
     empty: true,
     title: null,
     header_row: null,
+    headerless: false,
     columns: [],
     rows: [],
     skipped: [],
+    summary: [],
   };
   const rows = raw.rows;
   const lastUsed = rows.reduce((n, r, i) => (width(r) > 0 ? i : n), -1);
@@ -566,13 +723,33 @@ export function understandSheet(raw: RawSheet, opts: UnderstandOptions = {}): Un
       break;
     }
   }
-  if (header < 0) header = rows.findIndex((r) => width(r) > 0);
+  // A first row that reads like the rows under it is data, not a header: a
+  // book list saved without its header row starts "Dune, Frank Herbert,
+  // 978-0-441-17271-9, Science fiction…", and taking that row as the header
+  // would lose the first book without a word.
+  const firstUsed = rows.findIndex((r) => width(r) > 0);
+  // A list kept by adding at the top can have its header BELOW the data, with
+  // its totals under that: the header is looked for there before the sheet is
+  // taken to have none.
+  let below = false;
+  if (header < 0 || looksLikeData(rows, header, lastUsed)) {
+    const found = headerBelowData(rows, firstUsed, lastUsed);
+    if (found >= 0) {
+      header = found;
+      below = true;
+    } else {
+      base.headerless = true;
+      header = firstUsed - 1;
+    }
+  }
 
   // A group header ("Build volume" merged over X, Y, Z) sits on the row above
   // the leaf headers, or the first header-like row IS the group row.
   let group = -1;
   const hasHorizontalMerge = (row: Array<Cell | null> | undefined) => (row ?? []).some((c, i) => c?.merged && row?.[i - 1]?.text === c.text);
-  if (hasHorizontalMerge(rows[header]) && headerLike(rows[header + 1], maxWidth) && !isTitleOnly(rows[header])) {
+  if (base.headerless || below) {
+    // no header on top, so no group header either
+  } else if (hasHorizontalMerge(rows[header]) && headerLike(rows[header + 1], maxWidth) && !isTitleOnly(rows[header])) {
     group = header;
     header = header + 1;
   } else if (header > 0 && hasHorizontalMerge(rows[header - 1]) && !isTitleOnly(rows[header - 1])) {
@@ -580,21 +757,23 @@ export function understandSheet(raw: RawSheet, opts: UnderstandOptions = {}): Un
   }
 
   const titleCells = rows
-    .slice(0, group >= 0 ? group : header)
+    .slice(0, below ? 0 : group >= 0 ? group : header)
     .flatMap((r) => (r ?? []).filter((c): c is Cell => Boolean(c) && !c!.merged))
     .map((c) => c.text);
   base.title = titleCells[0] ?? null;
-  for (let r = 0; r < (group >= 0 ? group : header); r++) {
+  for (let r = 0; r < (below ? 0 : group >= 0 ? group : header); r++) {
     if (width(rows[r]) > 0) base.skipped.push({ row: r + 1, reason: "title", text: rowText(rows[r]) });
   }
-  base.header_row = header + 1;
+  base.header_row = base.headerless ? null : header + 1;
 
   // Columns: every position that has a header or any value.
-  const colCount = Math.max(...rows.slice(header, lastUsed + 1).map((r) => (r ? r.length : 0)));
+  const dataIndexes: number[] = [];
+  for (let r = below ? firstUsed : header + 1; r <= lastUsed; r++) if (r !== header) dataIndexes.push(r);
+  const colCount = Math.max(...rows.slice(below ? firstUsed : Math.max(header, 0), lastUsed + 1).map((r) => (r ? r.length : 0)));
   const drafts: ColumnDraft[] = [];
   const seen = new Map<string, number>();
   const firstDataCol = (() => {
-    for (let c = 0; c < colCount; c++) if (rows.slice(header + 1, lastUsed + 1).some((r) => r?.[c])) return c;
+    for (let c = 0; c < colCount; c++) if (dataIndexes.some((r) => rows[r]?.[c])) return c;
     return 0;
   })();
 
@@ -602,8 +781,8 @@ export function understandSheet(raw: RawSheet, opts: UnderstandOptions = {}): Un
   const dataRows: Array<{ row: number; cells: Array<Cell | null>; section: string | null }> = [];
   let section: string | null = null;
   let sawSection = false;
-  const headerKey = (rows[header] ?? []).map((c) => c?.text.toLowerCase() ?? "").join("\u0001");
-  for (let r = header + 1; r <= lastUsed; r++) {
+  const headerKey = base.headerless ? "\u0000" : (rows[header] ?? []).map((c) => c?.text.toLowerCase() ?? "").join("\u0001");
+  for (const r of dataIndexes) {
     const row = rows[r] ?? [];
     const w = width(row);
     if (w === 0) {
@@ -615,8 +794,9 @@ export function understandSheet(raw: RawSheet, opts: UnderstandOptions = {}): Un
       continue;
     }
     const first = row.find(Boolean)!;
-    if (/^(grand\s+)?(sub)?totals?:?$|^sum:?$/i.test(first.text) && row.some((c) => c && typeof c.v === "number")) {
+    if (summaryLike(row, true)) {
       base.skipped.push({ row: r + 1, reason: "total", text: rowText(row) });
+      base.summary.push(...summaryFacts(row, r + 1));
       continue;
     }
     const sectionLike =
@@ -631,9 +811,17 @@ export function understandSheet(raw: RawSheet, opts: UnderstandOptions = {}): Un
     }
     dataRows.push({ row: r + 1, cells: row, section });
   }
+  // The block of arithmetic where the data ends: kept out of the records and
+  // read, so the import can be checked against the sheet's own sums.
+  const tail: typeof dataRows = [];
+  while (dataRows.length > 1 && summaryLike(dataRows[dataRows.length - 1]!.cells, false)) tail.unshift(dataRows.pop()!);
+  for (const t of tail) {
+    base.skipped.push({ row: t.row, reason: "total", text: rowText(t.cells) });
+    base.summary.push(...summaryFacts(t.cells, t.row));
+  }
 
   for (let c = 0; c < colCount; c++) {
-    const leaf = rows[header]?.[c]?.text ?? "";
+    const leaf = base.headerless ? "" : (rows[header]?.[c]?.text ?? "");
     const grp = group >= 0 ? (rows[group]?.[c]?.text ?? "") : "";
     const cells = dataRows.map((d) => d.cells[c] ?? null);
     if (!leaf && !grp && !cells.some(Boolean)) continue;
@@ -655,6 +843,7 @@ export function understandSheet(raw: RawSheet, opts: UnderstandOptions = {}): Un
 
   const hint = defaultDateOrder(opts.locale);
   base.columns = drafts.map((d) => describeColumn(d, hint));
+  if (base.headerless) nameFromValues(base.columns);
   assignRoles(base.columns, dataRows.length);
   base.rows = dataRows.map((d, i) => ({
     row: d.row,

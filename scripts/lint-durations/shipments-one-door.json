@@ -1,7 +1,8 @@
 {
   "lint": "lint:shipments-one-door",
-  "run": "tsx scripts/lint-shipments-one-door.ts",
+  "run": "node scripts/lint-shipments-one-door.ts",
   "ms": 431,
   "recorded": "2026-09-14",
-  "source": "split from scripts/lint-durations.json (recorded 2026-09-14)"
+  "source": "split from scripts/lint-durations.json (recorded 2026-09-14)",
+  "readMB": 0.0
 }

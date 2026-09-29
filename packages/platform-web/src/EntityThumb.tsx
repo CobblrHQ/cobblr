@@ -25,6 +25,7 @@
 // Callers that pass neither keep the photo-first behaviour. See swatch.ts.
 
 import { EntityPhoto } from "./EntityPhoto";
+import { PICTURE_STATE_TEXT, type PictureState } from "./photoSuggestions";
 import type { SwatchFieldDef } from "./swatch";
 
 interface Props {
@@ -50,21 +51,37 @@ interface Props {
    *  stray `color` key that isn't a declared colour field). Optional — without
    *  defs the conventional `color`/`colour` keys are recognised by name. */
   fieldDefs?: readonly SwatchFieldDef[] | null;
+  /** A picture the platform found for a record that has none (#3818): shown
+   *  faded, with a dashed edge, only while the record has no picture. */
+  suggestedSrc?: string | null;
+  /** With no picture and no suggestion: still being looked for, or not found.
+   *  Too small for words, so it pulses while looking and says it on hover and
+   *  to a screen reader. */
+  pictureState?: PictureState;
 }
 
-export function EntityThumb({ src, alt, size, className, color, values, fieldDefs }: Props) {
+export function EntityThumb({ src, alt, size, className, color, values, fieldDefs, suggestedSrc, pictureState }: Props) {
+  const suggesting = !src && !!suggestedSrc;
+  const saying = !src && !suggesting ? pictureState : undefined;
   // The frame decides everything a thumbnail is: the fixed square, the swatch
   // that wins over a photo, the initial when there is none, the broken-image
   // fallback. A thumbnail is one size of it.
   return (
     <EntityPhoto
-      src={src}
+      src={suggesting ? suggestedSrc : src}
       alt={alt}
       size={size}
       color={color}
       values={values}
       fieldDefs={fieldDefs}
-      className={"rounded" + (className ? ` ${className}` : "")}
-    />
+      title={saying ? PICTURE_STATE_TEXT[saying] : undefined}
+      className={"rounded" + (suggesting ? " opacity-70 outline-2 outline-dashed outline-accent/70" : "") + (saying === "looking" ? " animate-pulse" : "") + (className ? ` ${className}` : "")}
+    >
+      {saying && (
+        <span data-testid="thumb-picture-state" data-state={saying} className="sr-only">
+          {PICTURE_STATE_TEXT[saying]}
+        </span>
+      )}
+    </EntityPhoto>
   );
 }

@@ -9,7 +9,7 @@ import { z } from "zod";
 import { platform } from "@cobblr/platform-contract";
 import { asyncHandler, badBody, requireRole } from "./util.js";
 import { bearer, tenantContext } from "../db.js";
-import { enrichEntityImage, setEntityImageFile } from "../services/entity-image.js";
+import { derivedQueryFor, enrichEntityImage, setEntityImageFile } from "../services/entity-image.js";
 import { deriveImageQuery } from "../services/ddg-images.js";
 import { pictureOptions } from "../services/picture-options.js";
 import { needsImage } from "../services/needs-image.js";
@@ -31,33 +31,6 @@ const Body = z.object({
    *  handed to the record with no second download. Skips the search too. */
   file_id: z.string().uuid().optional(),
 });
-
-/** The image-search phrase for an entity, derived server-side from its own
- *  name / brand / fields. Shared by the options strip and the auto-fetch so
- *  they can never search differently for the same thing. */
-async function derivedQueryFor(
-  orgId: string,
-  kind: string,
-  id: string,
-  override?: string | null,
-): Promise<{ query: string | null; brand: string | null; resolved: boolean }> {
-  const e = await platform().entities.lookup(orgId, kind, id).catch(() => null);
-  // `resolved` separates "this kind has no single-entity resolver" (a wiring
-  // gap) from "resolved fine but there's nothing to search for" (a data gap).
-  if (!e) return { query: (override ?? "").trim() || null, brand: null, resolved: false };
-  const fields = (e.fields ?? {}) as Record<string, unknown>;
-  // The custom-field bag lives under `metadata` for the physical kinds; merge
-  // it so a declared author/director/colour sharpens the phrase just like a
-  // native column does.
-  const meta = (fields.metadata ?? {}) as Record<string, unknown>;
-  const merged = { ...meta, ...fields };
-  const brand = typeof merged.manufacturer === "string" ? (merged.manufacturer as string) : null;
-  return {
-    query: deriveImageQuery({ name: e.title, brand, fields: merged, override: override ?? null }),
-    brand,
-    resolved: true,
-  };
-}
 
 // GET /image-options — the universal "search the web for a photo" strip, for
 // ANY entity. Three ways to say what to search, in precedence order:

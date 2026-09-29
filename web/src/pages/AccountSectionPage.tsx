@@ -7,6 +7,7 @@
 // the card at its first leaf instead would make "You" mean "Identity", which is
 // only true until someone reorders the list.
 
+import { useOfferedAccountFeatures } from "../lib/accountFeatures";
 import { Link, Navigate, useParams } from "react-router-dom";
 import { ChevronLeft, ChevronRight } from "lucide-react";
 import { usePageTitle } from "@cobblr/platform-web";
@@ -17,7 +18,8 @@ export function AccountSectionPage() {
   const { section } = useParams<{ section: string }>();
   const { activeOrg } = useActiveOrg();
   const known = ACCOUNT_SECTION_ORDER.includes(section as AccountSection);
-  const hit = accountSections({ appMode: !!activeOrg?.app_mode }).find((s) => s.id === section);
+  const offered = useOfferedAccountFeatures();
+  const hit = accountSections({ appMode: !!activeOrg?.app_mode, offered }).find((s) => s.id === section);
 
   usePageTitle(hit?.meta.label ?? "Your account");
 

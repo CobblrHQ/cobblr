@@ -30,6 +30,26 @@ export const FieldMap = z.union([
     /** Coerce the resolved value to a string. (Named `stringify`, not `toString`,
      *  to avoid colliding with Object.prototype.toString during validation.) */
     stringify: z.boolean().optional(),
+    /** An encoding that uses 0 for "not given" (a tag's chamber temperature):
+     *  a 0 reads as empty, so it is never shown as 0 °C. */
+    zero_is_empty: z.boolean().optional(),
+    /** Paths to [r, g, b, a] arrays, a tag's colour slots in order. One set
+     *  slot reads as "#rrggbb"; two or more as the platform's several-colour
+     *  value (`multi(...)`, or `gradient(...)` when a `gradient_if` text says
+     *  so), so every swatch draws the segments. Alpha 0 is an unused slot.
+     *  Read through @cobblr/platform-contract/colour, the one colour rule. */
+    colours: z.array(z.string()).max(8).optional(),
+    /** Paths whose text, when it says gradient or ombre, makes several
+     *  colours a gradient rather than segments. */
+    gradient_if: z.array(z.string()).max(8).optional(),
+    /** A path to the colour's NAME. With it, one colour (or none) reads as
+     *  that name when there is one, and several colours are still the
+     *  several-colour value: a colour field holds a name where one is given,
+     *  because types are matched by it, and a code only where nothing named
+     *  the colour. */
+    named_by: z.string().optional(),
+    /** The value is a [year, month, day] array: read it as "YYYY-MM-DD". */
+    ymd: z.boolean().optional(),
   }),
 ]);
 export type FieldMap = z.infer<typeof FieldMap>;
@@ -55,6 +75,10 @@ export const ScanUrlResolverManifest = z.object({
     body: z.unknown().optional(),
     env_defaults: z.record(z.string()).optional(),
     timeout_ms: z.number().int().positive().max(30_000).default(8000),
+    /** The vendor's own pace: at most one call per this many ms from this
+     *  process, and a 429 is asked once more after it. Scans of a shelf of
+     *  spools queue behind each other instead of being turned away. */
+    min_interval_ms: z.number().int().nonnegative().max(60_000).optional(),
   }),
   /** Validate + locate the payload. `require` = path→expected ("present" = any
    *  non-null); `require_any` = at least one path present; `root` = base path
@@ -74,6 +98,10 @@ export const ScanUrlResolverManifest = z.object({
     imageUrl: FieldMap.optional(),
     /** Custom fields seeded onto the created entity's metadata. */
     fields: z.record(FieldMap).default({}),
+    /** A shared mapping for a published data format, so every maker that
+     *  publishes it resolves the same way. The manifest's own name, brand,
+     *  imageUrl and fields override the preset's, key by key. See ./presets.ts. */
+    preset: z.enum(["opentag3d"]).optional(),
   }),
   /** sharedCache namespace; the key is the extracted `{key}`. Omit to skip caching. */
   cache_ns: z.string().max(80).optional(),

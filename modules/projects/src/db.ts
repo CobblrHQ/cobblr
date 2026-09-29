@@ -124,6 +124,16 @@ export interface ProjectsPatternReadsTable {
   read_at: Generated<Date>;
 }
 
+/** A pattern's words, for search: the text of its latest pattern PDF.
+ *  `pending` = made before the text was kept; the heal reads it. */
+export interface ProjectsPatternTextsTable {
+  project_id: string;
+  pattern_file_id: string | null;
+  text: string | null;
+  pending: Generated<boolean>;
+  indexed_at: Generated<Date>;
+}
+
 export interface ProjectsDB {
   projects_projects: ProjectsProjectsTable;
   projects_tasks: ProjectsTasksTable;
@@ -132,6 +142,7 @@ export interface ProjectsDB {
   projects_pattern_photo_candidates: ProjectsPatternPhotoCandidatesTable;
   projects_pattern_needs: ProjectsPatternNeedsTable;
   projects_pattern_reads: ProjectsPatternReadsTable;
+  projects_pattern_texts: ProjectsPatternTextsTable;
 }
 
 /** Re-exported from the contract so this module cannot fall behind the

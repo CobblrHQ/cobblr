@@ -131,3 +131,17 @@ export function unitLens(units: PlatformUnitDef[]): {
     convert: (value, from, to) => convertQuantity(value, from, to, units),
   };
 }
+
+/** The unit a person uses "some" of, for a quantity kept in a MEASURED unit:
+ *  grams of a spool kept in kg, millilitres of a bottle kept in litres. Null
+ *  for a counted unit (each, packs), free text, or a unit with no factor, where
+ *  a step of one is the right move. A step of one in kg empties a spool, so a
+ *  measured quantity is used by typing the amount, never by a fixed tap. */
+const SMALL_CODE: Record<string, string> = { mass: "gram", length: "meter", volume: "milliliter" };
+export function usedInUnit(raw: string | null | undefined, units: PlatformUnitDef[]): PlatformUnitDef | null {
+  const u = resolveUnit(raw, units);
+  if (!u || u.factor == null || u.category === "count") return null;
+  if (!["mass", "length", "volume", "area"].includes(u.category)) return null;
+  const small = units.find((x) => x.code === SMALL_CODE[u.category]);
+  return small && small.factor != null && small.factor < u.factor ? small : u;
+}

@@ -1,7 +1,8 @@
 {
   "lint": "lint:notification-deep-links",
-  "run": "tsx scripts/lint-notification-deep-links.ts",
+  "run": "node scripts/lint-notification-deep-links.ts",
   "ms": 682,
   "recorded": "2026-09-14",
-  "source": "split from scripts/lint-durations.json (recorded 2026-09-14)"
+  "source": "split from scripts/lint-durations.json (recorded 2026-09-14)",
+  "readMB": 11.3
 }

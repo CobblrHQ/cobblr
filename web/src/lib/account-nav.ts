@@ -15,7 +15,8 @@
 // happened the first time.
 
 import type { LucideIcon } from "lucide-react";
-import { Bell, History, LayoutList, MessageSquare, Monitor, Moon, Plug, Printer, UserCog } from "lucide-react";
+import { CONNECT_DISCORD_PATH } from "./discord-connect";
+import { Bell, Camera, History, LayoutList, MessageSquare, Monitor, Moon, Plug, Printer, UserCog } from "lucide-react";
 
 /** The reading column. Same measure as Configuration, so moving between
  *  "your account" and "this workspace" does not move the text. */
@@ -47,6 +48,7 @@ export const ACCOUNT_PAGES: AccountPage[] = [
   { to: "/me/connections" },
   { to: "/me/printer" },
   { to: "/me/communication" },
+  { to: "/me/photos" },
   {
     to: "/me/notification-channels",
     width: "wide",
@@ -99,19 +101,22 @@ export const ACCOUNT_SECTIONS: Record<AccountSection, AccountSectionMeta> = {
   },
   notifications: {
     label: "Notifications",
-    blurb: "What reaches you, and by which route.",
+    blurb: "What reaches you, and by which route: Discord, email or in-app.",
     icon: Bell,
+    // The standing intent here is "message me before things go off", and the
+    // Discord connection that does it sat three levels down with nothing
+    // pointing at it (the owner, 2026-09-29). One tap starts it.
+    action: { label: "Connect Discord", to: CONNECT_DISCORD_PATH },
   },
   connections: {
     label: "Connections",
     blurb: "Services and devices of your own that follow you between workspaces.",
     icon: Plug,
-    // The one account section with a standing "I want to add one" intent: you
-    // arrive meaning to plug in your own AI key. Notifications has an add flow
-    // too (Add binding) and deliberately does NOT get a button — a per-workspace
-    // routing table is something you go and manage, not something you arrive
-    // wanting to create. The bar is the four tests in the design doc, and
-    // "it has a create form" is not one of them.
+    // A standing "I want to add one" intent: you arrive meaning to plug in
+    // your own AI key. Notifications' button is Connect Discord, not its
+    // per-workspace routing table (Add binding), which is something you go
+    // and manage rather than arrive wanting to create. The bar is the four
+    // tests in the design doc, and "it has a create form" is not one of them.
     action: { label: "+ Add a connection", to: "/me/connections/new" },
   },
   history: {
@@ -133,7 +138,16 @@ export interface AccountDestination {
    *  destination rather than as a block of JSX around half the list, so adding
    *  a leaf means answering the question. */
   platformOnly?: boolean;
+  /** Shown only where the server offers it (a setting that ships dark until
+   *  its terms do). The hub and section pages pass what is offered. */
+  onlyWhen?: AccountFeature;
+  /** Words a person types into search for this page that its label does not
+   *  say ("dm", "reminders"). Search reads every destination here. */
+  keywords?: string[];
 }
+
+/** Account settings a deployment may or may not offer yet. */
+export type AccountFeature = "photo-consent";
 
 /** Every leaf under "Your account". Identity, password and appearance are
  *  destinations now rather than forms stacked on the hub. */
@@ -141,10 +155,13 @@ export const ACCOUNT_DESTINATIONS: AccountDestination[] = [
   { label: "Identity & password", description: "Your display name, the address you sign in with, and your password.", to: "/me/identity", section: "you", icon: UserCog },
   { label: "Appearance", description: "Light or dark, and your desktop layout - for your account and for this device.", to: "/me/appearance", section: "you", icon: Moon },
   { label: "Menu & surfaces", description: "Hide the parts of the app you do not use.", to: "/me/app-settings", platformOnly: true, section: "you", icon: LayoutList },
-  { label: "Communication preferences", description: "Whether Cobblr reaches you in-app, by Discord DM, or by email.", to: "/me/communication", section: "notifications", icon: Bell },
-  { label: "Notification channels", description: "Per-workspace Discord, Slack, email, SMS and webhook routes.", to: "/me/notification-channels", platformOnly: true, section: "notifications", icon: Bell },
-  { label: "Your notifications", description: "Everything Cobblr has sent you.", to: "/me/notifications", platformOnly: true, section: "notifications", icon: Bell },
-  { label: "Connections", description: "Your own AI keys and edge bridge, shared with the workspaces you choose.", to: "/me/connections", platformOnly: true, section: "connections", icon: Plug },
+  { label: "Photos of things you file", description: "Whether Cobblr keeps them to improve identification. You can change your mind at any time.", to: "/me/photos", onlyWhen: "photo-consent", section: "you", icon: Camera },
+  // First in Notifications: the Discord connection lives on this page, and
+  // the name says so.
+  { label: "Discord, email & in-app", description: "Connect Discord for a message before things go off, and choose what reaches you where and when.", to: "/me/communication", section: "notifications", icon: Bell, keywords: ["discord", "dm", "direct message", "reminders", "notifications", "alerts", "digest", "going off", "expiring", "communication preferences", "delivery", "email"] },
+  { label: "Notification channels", description: "Per-workspace Discord, Slack, email, SMS and webhook routes.", to: "/me/notification-channels", platformOnly: true, section: "notifications", icon: Bell, keywords: ["slack", "webhook", "sms", "discord channel", "routing"] },
+  { label: "Your notifications", description: "Everything Cobblr has sent you.", to: "/me/notifications", platformOnly: true, section: "notifications", icon: Bell, keywords: ["inbox", "bell", "notifications"] },
+  { label: "Connections", description: "Your own AI keys and edge bridge, shared with the workspaces you choose.", to: "/me/connections", platformOnly: true, section: "connections", icon: Plug, keywords: ["personal connections", "byo", "credentials", "relay", "ai keys"] },
   // NOT platformOnly: a locked home app prints labels from the camera, and this
   // is the only door inside its surface where a Bluetooth printer can be paired
   // (Configuration → Devices is outside it).
@@ -159,7 +176,7 @@ export const ACCOUNT_SECTION_ORDER: AccountSection[] = ["you", "notifications", 
 /** The destinations a given user can see, grouped into their sections, with
  *  empty sections dropped — so a locked managed app shows two cards rather than
  *  four, two of them empty. */
-export function accountSections(opts: { appMode: boolean }): Array<{
+export function accountSections(opts: { appMode: boolean; offered?: ReadonlySet<AccountFeature> }): Array<{
   id: AccountSection;
   meta: AccountSectionMeta;
   items: AccountDestination[];
@@ -168,7 +185,7 @@ export function accountSections(opts: { appMode: boolean }): Array<{
     id,
     meta: ACCOUNT_SECTIONS[id],
     items: ACCOUNT_DESTINATIONS.filter(
-      (d) => d.section === id && !(opts.appMode && d.platformOnly),
+      (d) => d.section === id && !(opts.appMode && d.platformOnly) && !(d.onlyWhen && !opts.offered?.has(d.onlyWhen)),
     ),
   })).filter((s) => s.items.length > 0);
 }

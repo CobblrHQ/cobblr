@@ -100,6 +100,13 @@ const Schema = z.object({
     .default("true")
     .transform((v) => v === "true"),
 
+  // Keeping photos of filed items as internal examples (#3769 step 3). Off
+  // until the updated terms ship and the owner says go after a legal check:
+  // while off, the Your account setting is hidden and nothing can be set.
+  COBBLR_PHOTO_OBSERVATIONS: z
+    .preprocess((v) => (v === "" ? undefined : v), z.enum(["true", "false"]).default("false"))
+    .transform((v) => v === "true"),
+
   // Drop `maturity: "experimental"` modules at load (public / trial deploys
   // set this; self-host default is off so an install is never surprised by a
   // module vanishing). Validated here because the loader used to read it raw

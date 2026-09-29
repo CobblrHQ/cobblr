@@ -1,7 +1,8 @@
 {
   "lint": "lint:catalog-schema-complete",
-  "run": "tsx scripts/lint-catalog-schema-complete.ts",
+  "run": "node scripts/lint-catalog-schema-complete.ts",
   "ms": 497,
   "recorded": "2026-09-14",
-  "source": "split from scripts/lint-durations.json (recorded 2026-09-14)"
+  "source": "split from scripts/lint-durations.json (recorded 2026-09-14)",
+  "readMB": 0.7
 }

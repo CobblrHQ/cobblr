@@ -232,6 +232,30 @@ export function orderTops<T extends { name: string; navOrder?: number | null }>(
   return [...rawTops].sort((a, b) => cmp(keys.get(a.name)!, keys.get(b.name)!));
 }
 
+/** A nav group made of a type collection and the collection of its things
+ *  (a child whose `parent` is the other member) is one entry: the type
+ *  collection, relabelled with the group's name, and the child drops out of
+ *  the nav. Both leave `groupOf` (mutated), so what is left of the group, if
+ *  anything, still collapses as before. Pure apart from that; returns a copy. */
+export function foldTypeFamilies(
+  rawTops: OrgModuleListItem[],
+  groupOf: Map<string, { key: string; label: string }>,
+  parentOf: ReadonlyMap<string, string>,
+): OrgModuleListItem[] {
+  const present = new Set(rawTops.map((t) => t.name));
+  const drop = new Set<string>();
+  const relabel = new Map<string, string>();
+  for (const [child, parent] of parentOf) {
+    const cg = groupOf.get(child);
+    const pg = groupOf.get(parent);
+    if (!present.has(child) || !present.has(parent) || !cg || !pg || cg.key !== pg.key) continue;
+    drop.add(child);
+    relabel.set(parent, pg.label);
+  }
+  for (const n of [...drop, ...relabel.keys()]) groupOf.delete(n);
+  return rawTops.filter((t) => !drop.has(t.name)).map((t) => (relabel.has(t.name) ? { ...t, displayName: relabel.get(t.name)! } : t));
+}
+
 /** Collapse sibling instance tops that share a `nav_group` key into one
  *  synthetic `__navgroup__<key>` entry (the connected stem+segments element),
  *  preserving order — the group lands at its FIRST member's slot. Only groups
@@ -566,6 +590,18 @@ export function useNavModules(activeSlug: string): NavModules {
       groupOf.set(`${INSTANCE_PREFIX}${inst.instance_name}`, { key: ng.key, label: ng.label });
     }
   }
+  // A type collection and the collection of things of that type (Filament
+  // Types + Spools) are ONE entry, named for the group and opening the type
+  // collection's page, where each type shows its things as rows. The child
+  // collection stays reachable from that page, not the nav.
+  const parentOf = new Map<string, string>();
+  for (const inst of instances.data?.items ?? []) {
+    const p = overridesByKey.get(`instance:${inst.module_name}:${inst.instance_name}`)?.config?.parent as { instance?: string } | undefined;
+    if (p?.instance) parentOf.set(`${INSTANCE_PREFIX}${inst.instance_name}`, `${INSTANCE_PREFIX}${p.instance}`);
+  }
+  const folded = foldTypeFamilies(rawTops, groupOf, parentOf);
+  rawTops.length = 0;
+  rawTops.push(...folded);
   const { tops: groupedTops, groups: instanceGroups } = collapseNavGroups(rawTops, groupOf);
   rawTops.length = 0;
   rawTops.push(...groupedTops);

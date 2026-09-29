@@ -22,9 +22,10 @@
 // Batched across the whole page on purpose: a 200-row list must cost one lookup
 // per referenced KIND, not one per row.
 
-import { meta } from "../db/meta.js";
+import { resolveFieldDefsForKind } from "./field-defs.js";
 import { lookupMany } from "./entities.js";
 import { memberNamesFor } from "./member-fields.js";
+import { personNamesFor } from "./people.js";
 import { withServedTitle } from "./served-title.js";
 
 interface LabelDef {
@@ -46,13 +47,11 @@ async function labelDefsFor(orgId: string, kind: string): Promise<LabelDef[]> {
   if (hit && Date.now() - hit.at < TTL_MS) return hit.defs;
   let defs: LabelDef[] = [];
   try {
-    defs = await meta
-      .selectFrom("module_field_defs")
-      .select(["name", "type", "ref_kind"])
-      .where("org_id", "=", orgId)
-      .where("entity_kind", "=", kind)
-      .where("type", "in", ["relation", "member"])
-      .execute();
+    // Through the one resolver, so a field scoped to this kind by its traits
+    // is named too, not only one keyed to the kind.
+    defs = (await resolveFieldDefsForKind(orgId, kind))
+      .filter((d) => d.type === "relation" || d.type === "member" || d.type === "person")
+      .map((d) => ({ name: d.name, type: d.type, ref_kind: d.ref_kind ?? null }));
   } catch {
     defs = []; // a label is never worth failing a read over
   }
@@ -84,6 +83,8 @@ export async function withFieldLabels<T extends Record<string, unknown>>(
   if (defs.length === 0) return titled;
 
   const memberDefs = defs.filter((d) => d.type === "member");
+  const personDefs = defs.filter((d) => d.type === "person");
+  const people = personDefs.length > 0 ? await personNamesFor(orgId) : new Map<string, string>();
   const relationDefs = defs.filter((d) => d.type === "relation" && d.ref_kind);
 
   const names = memberDefs.length > 0 ? await memberNamesFor(orgId) : new Map<string, string>();
@@ -121,6 +122,10 @@ export async function withFieldLabels<T extends Record<string, unknown>>(
     for (const d of relationDefs) {
       const v = valueOf(row, d.name);
       if (v) labels[`${d.name}_label`] = titles.get(`${d.ref_kind}:${v}`) ?? null;
+    }
+    for (const d of personDefs) {
+      const v = valueOf(row, d.name);
+      if (v) labels[`${d.name}_label`] = people.get(v) ?? "Someone no longer listed";
     }
     return Object.keys(labels).length > 0 ? { ...row, ...labels } : row;
   });

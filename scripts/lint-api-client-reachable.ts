@@ -25,8 +25,8 @@ const ROOTS = ["web/src", "packages/platform-web/src", "modules"];
  *  delete; either way, wiring one REMOVES it from here. */
 const BASELINE = new Set([
   "listMySignupInvites", "revokeMySignupInvite", "pairStart", "verifyEmail", "orgLocal",
-  "addOrderItem", "markConversationRead", "placementContents", "placementContainerOf",
-  "placementPlace", "placementRemove", "uninstallRenderer", "authoringContext",
+  "addOrderItem", "markConversationRead", "placementContainerOf",
+  "uninstallRenderer", "authoringContext",
   "markNotificationRead", "markAllNotificationsRead", "mintAppToken",
   "setDigifabDevicePosition", "patchDigifabChannel", "renameDigifabLibrary", "deleteInstance",
   "updateNavHeading", "updateSyncConnection", "putawayConfirm", "setupPutawayBins",

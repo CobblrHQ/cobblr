@@ -69,7 +69,7 @@ function candidates(): string[] {
     // `:(glob)` makes `**` mean "any depth, including none".
     const out = execFileSync(
       "git",
-      ["grep", "-lE", "--", PREFILTER, ...ROOTS.map((r) => `:(glob)${r}/**/*.ts`), ...ROOTS.map((r) => `:(glob)${r}/**/*.tsx`)],
+      ["grep", "--untracked", "-lE", "--", PREFILTER, ...ROOTS.map((r) => `:(glob)${r}/**/*.ts`), ...ROOTS.map((r) => `:(glob)${r}/**/*.tsx`)],
       { encoding: "utf8", maxBuffer: 8 * 1024 * 1024 },
     );
     return out.split("\n").filter(Boolean);

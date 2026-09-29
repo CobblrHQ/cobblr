@@ -6,6 +6,7 @@
 // (`search=`, the same trigram search the inventory page uses) and says
 // plainly when a page is not the whole stash.
 import { useEffect, useRef, useState } from "react";
+import { SearchInput } from "@cobblr/platform-web";
 import { useQuery } from "@tanstack/react-query";
 import { X } from "lucide-react";
 import type { InvPart, ProjectsApi } from "./api";
@@ -94,10 +95,10 @@ export function PartPicker({
 
   return (
     <div ref={root} className="relative flex-1 min-w-0">
-      <input
+      <SearchInput
         value={q}
-        onChange={(e) => {
-          setQ(e.target.value);
+        onChange={(v) => {
+          setQ(v);
           setActive(0);
           setOpen(true);
         }}
@@ -121,10 +122,10 @@ export function PartPicker({
           }
         }}
         placeholder={placeholder}
+        aria-label={placeholder}
         role="combobox"
         aria-expanded={open}
         aria-autocomplete="list"
-        className="input text-sm w-full"
       />
       {open && (
         <ul role="listbox" className="absolute z-20 mt-1 w-full max-h-56 overflow-auto rounded-md border border-line dark:border-slate-700 bg-surface dark:bg-slate-900 shadow-lg">

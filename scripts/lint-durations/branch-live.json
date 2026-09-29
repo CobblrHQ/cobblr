@@ -1,5 +1,6 @@
 {
   "lint": "lint:branch-live",
   "run": "node scripts/lint-branch-live.mjs",
-  "manual": "asks the Forgejo API whether THIS branch's PR is still open: a pre-push guard against building on a spent branch, with no meaning in a CI job that already checked the branch out."
+  "manual": "asks the Forgejo API whether THIS branch's PR is still open: a pre-push guard against building on a spent branch, with no meaning in a CI job that already checked the branch out.",
+  "readMB": 0.0
 }

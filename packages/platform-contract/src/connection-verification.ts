@@ -37,6 +37,8 @@ export interface ConnectionVerification {
   photos?: "read" | "not-read";
   /** What it said about the picture, when it did not name it. */
   photos_said?: string;
+  /** How long the whole probe took, in milliseconds, whatever it said. */
+  latency_ms?: number;
 }
 
 /** The verification a probe's verdict becomes. A quota or an unreachable
@@ -46,15 +48,17 @@ export function verificationOf(
   probe: { ok: boolean; reason?: ConnectionVerification["reason"]; error?: string; detail?: string; models?: string[]; note?: string; photos?: { read: boolean; said?: string } },
   model?: string | null,
   now: Date = new Date(),
+  latencyMs?: number,
 ): ConnectionVerification {
   const at = now.toISOString();
+  const took = typeof latencyMs === "number" && Number.isFinite(latencyMs) ? { latency_ms: Math.max(0, Math.round(latencyMs)) } : {};
   const photos = probe.photos
     ? { photos: probe.photos.read ? ("read" as const) : ("not-read" as const), ...(!probe.photos.read && probe.photos.said ? { photos_said: probe.photos.said.slice(0, 200) } : {}) }
     : {};
-  if (probe.ok) return { state: "verified", at, ...(model ? { model } : probe.models?.[0] ? { model: probe.models[0] } : {}), ...(probe.note ? { message: probe.note } : {}), ...photos };
+  if (probe.ok) return { state: "verified", at, ...(model ? { model } : probe.models?.[0] ? { model: probe.models[0] } : {}), ...(probe.note ? { message: probe.note } : {}), ...photos, ...took };
   const reason = probe.reason ?? "unknown";
   const state: VerificationState = reason === "invalid_key" || reason === "model_unavailable" ? "invalid" : "unverifiable";
-  return { state, reason, at, ...(probe.error ? { message: probe.error } : {}) };
+  return { state, reason, at, ...(probe.error ? { message: probe.error } : {}), ...took };
 }
 
 /** Read a stored value back as a verification, or null for none / garbage. */

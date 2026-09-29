@@ -39,7 +39,10 @@ export const SUPPORTED: Partial<Record<AiCapability, { models: string[]; default
   // through the bridge (its /models lists nothing; the name goes to `claude
   // -p --model`). Opus for a change is a real choice, and the chat's model
   // pill is where it gets made.
-  chat: { models: ["sonnet", "opus", "haiku", "llama3.2", "qwen2.5"], defaultModel: "sonnet" },
+  // A full id pins one model; an alias is whatever the bridge's CLI calls its
+  // newest of that tier. Both are offered: "Sonnet 5.5" means that model
+  // even after a newer Sonnet ships.
+  chat: { models: ["sonnet", "claude-sonnet-5-5", "opus", "haiku", "llama3.2", "qwen2.5"], defaultModel: "sonnet" },
   "design-workspace": { models: ["opus", "sonnet", "haiku", "llama3.2", "qwen2.5"], defaultModel: "sonnet" },
   summarise: { models: ["sonnet", "llama3.2", "qwen2.5"], defaultModel: "sonnet" },
   "classify-image": { models: ["sonnet", "llava", "llama3.2-vision"], defaultModel: "sonnet" },
@@ -186,6 +189,12 @@ export function register(): void {
     // and routed via a personal Connection. Excluding it from auto-select keeps a
     // no-provider workspace's degrade path a clean no_ai_provider.
     autoSelectable: false,
+    modelNotes: {
+      sonnet: { label: "Sonnet (newest)", short: "Sonnet", note: "The newest Sonnet the bridge's Claude CLI knows" },
+      "claude-sonnet-5-5": { label: "Sonnet 5.5", short: "Sonnet 5.5", note: "Pinned: stays on 5.5 when a newer Sonnet ships" },
+      opus: { label: "Opus (newest)", short: "Opus", note: "The newest Opus the bridge's Claude CLI knows" },
+      haiku: { label: "Haiku (newest)", short: "Haiku" },
+    },
     checksPhotosInTest: true,
     capabilities: SUPPORTED,
     // The prompt this adapter INJECTS (absent from `input` for the image

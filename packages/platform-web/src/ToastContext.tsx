@@ -56,8 +56,12 @@ const Ctx = createContext<ToastCtx | null>(null);
 
 let nextId = 1;
 
+/** What an error toast says when the caller had no words for it. */
+export const ERROR_WITHOUT_WORDS = "That did not go through, and no reason came back. Try again.";
+
 export function ToastProvider({ children }: { children: ReactNode }) {
   const [toasts, setToasts] = useState<Toast[]>([]);
+
 
   const dismiss = useCallback((id: number) => {
     setToasts((cur) => cur.filter((t) => t.id !== id));
@@ -72,7 +76,9 @@ export function ToastProvider({ children }: { children: ReactNode }) {
   const toastApi: ToastCtx = {
     info: (message, opts) => push({ kind: "info", message, duration: 4000, ...opts }),
     success: (message, opts) => push({ kind: "success", message, duration: 5000, ...opts }),
-    error: (message, opts) => push({ kind: "error", message, duration: 8000, ...opts }),
+    // A failure is never silent: an error with no words still says that
+    // something failed (a blank message used to render as nothing at all).
+    error: (message, opts) => push({ kind: "error", message: String(message ?? "").trim() ? message : ERROR_WITHOUT_WORDS, duration: 8000, ...opts }),
     action: (message, opts) =>
       push({
         kind: "action",

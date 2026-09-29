@@ -11,6 +11,8 @@ import { sql } from "kysely";
 import { platform } from "@cobblr/platform-contract";
 import { sessionUser, tenantContext, tenantDb } from "../db.js";
 import { asyncHandler, badBody, requireRole } from "./util.js";
+import { rollForward } from "../schedules-store.js";
+import { calendarDue } from "../schedule.js";
 
 export const entriesRouter = Router({ mergeParams: true });
 
@@ -27,6 +29,8 @@ const EntryCreate = z
     cost_cents: z.number().int().nonnegative().nullable().optional(),
     notes: z.string().max(4_000).nullable().optional(),
     recurrence_rule: z.string().max(500).nullable().optional(),
+    /** The schedule this service belongs to; matched by name when absent. */
+    schedule_id: z.string().uuid().nullable().optional(),
   })
   .refine(
     (d) => Boolean(d.performed_at) || Boolean(d.scheduled_at),
@@ -57,6 +61,9 @@ const ListQuery = z.object({
   /** Cap scheduled-at to this many days from now (e.g. "due soon"). */
   due_within_days: z.coerce.number().int().positive().max(3650).optional(),
   limit: z.coerce.number().int().min(1).max(500).default(100),
+  /** The reader's zone, so an open entry's "overdue by N days" counts their
+   *  days, the same count the record's schedule shows. */
+  tz: z.string().max(64).optional(),
   /** Skip this many, for the next page. */
   offset: z.coerce.number().int().min(0).max(100000).default(0),
 });
@@ -96,7 +103,14 @@ entriesRouter.get(
       .limit(filter.limit)
       .offset(filter.offset)
       .execute();
-    res.json({ items: rows });
+    // Where each open entry stands, from the one calendar rule the record's
+    // schedule uses, so the list never counts its own days (#3991).
+    const now = new Date();
+    res.json({
+      items: rows.map((r) =>
+        r.scheduled_at && !r.performed_at ? { ...r, due: calendarDue(new Date(r.scheduled_at), now, filter.tz ?? null) } : r,
+      ),
+    });
   }),
 );
 
@@ -147,9 +161,12 @@ entriesRouter.post(
         performed_by: parsed.data.performed_at ? session.id : null,
         notes: parsed.data.notes ?? null,
         recurrence_rule: parsed.data.recurrence_rule ?? null,
+        schedule_id: parsed.data.schedule_id ?? null,
       })
       .returningAll()
       .executeTakeFirstOrThrow();
+    // A service that belongs to a schedule rolls it forward (#3876).
+    await rollForward(db, ctx.org.id, row);
 
     void platform().events.emit("core-maintenance.entry.created", {
       orgId: ctx.org.id,
@@ -202,6 +219,7 @@ entriesRouter.patch(
       res.status(404).json({ error: { code: "not_found", message: "entry not found" } });
       return;
     }
+    if (parsed.data.performed_at) await rollForward(db, ctx.org.id, row);
     void platform().events.emit("core-maintenance.entry.updated", {
       orgId: ctx.org.id,
       entryId: row.id,
@@ -242,8 +260,8 @@ entriesRouter.delete(
 /** Mark a scheduled entry as done. Convenience over PATCH:
  *  performed_at = now (or supplied date), keeping scheduled_at so
  *  the history shows when it was due vs when it was actually
- *  completed. Optionally spawns a follow-up if recurrence_rule is
- *  set (deferred — Phase 2). */
+ *  completed. An occurrence of a schedule rolls the schedule forward
+ *  and makes the next one (#3876). */
 // AI-ACTION: core-maintenance:complete
 entriesRouter.post(
   "/:id/complete",
@@ -255,6 +273,7 @@ entriesRouter.post(
       return;
     }
     const session = sessionUser(req);
+    const ctx = tenantContext(req);
     const db = tenantDb(req);
     const completedAt = typeof req.body?.performed_at === "string"
       ? new Date(req.body.performed_at)
@@ -273,6 +292,7 @@ entriesRouter.post(
       res.status(404).json({ error: { code: "not_found", message: "entry not found" } });
       return;
     }
+    await rollForward(db, ctx.org.id, row);
     res.json(row);
   }),
 );

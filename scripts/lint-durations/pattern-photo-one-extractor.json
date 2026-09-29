@@ -1,7 +1,8 @@
 {
   "lint": "lint:pattern-photo-one-extractor",
-  "run": "tsx scripts/lint-pattern-photo-one-extractor.ts",
+  "run": "node scripts/lint-pattern-photo-one-extractor.ts",
   "ms": 416,
   "recorded": "2026-09-14",
-  "source": "split from scripts/lint-durations.json (recorded 2026-09-14)"
+  "source": "split from scripts/lint-durations.json (recorded 2026-09-14)",
+  "readMB": 0.0
 }

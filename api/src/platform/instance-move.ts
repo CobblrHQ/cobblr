@@ -133,6 +133,15 @@ export const SATELLITE_TABLES: SatelliteRef[] = [
     moduleCol: "entity_module",
     splitKind: true,
   },
+  // A record's service schedule follows it, as its log does.
+  {
+    table: "core_maintenance_schedules",
+    db: "tenant",
+    kindCol: "entity_type",
+    idCol: "entity_id",
+    moduleCol: "entity_module",
+    splitKind: true,
+  },
   { table: "core_devices_links", db: "tenant", kindCol: "entity_kind", idCol: "entity_id" },
   { table: "core_ai_chat_writes", db: "tenant", kindCol: "entity_kind", idCol: "entity_id" },
   // A spreadsheet import's steps follow the record too: its undo finds each
@@ -151,6 +160,9 @@ export const SATELLITE_TABLES: SatelliteRef[] = [
   { table: "purchases_order_items", db: "tenant", kindCol: "consumed_by_entity_type", idCol: "consumed_by_entity_id", moduleCol: "consumed_by_module", splitKind: true },
   // A task blocked on this record stays blocked on it.
   { table: "projects_task_dependencies", db: "tenant", kindCol: "target_entity_type", idCol: "target_entity_id", moduleCol: "target_module", splitKind: true },
+  // A picture offered to one record (#3818): it follows the record, and so
+  // does a No thanks.
+  { table: "core_scan_record_photo_suggestions", db: "tenant", kindCol: "entity_kind", idCol: "entity_id" },
 ];
 
 /** Kind-keyed tables that belong to the INSTANCE, not to any record, and are

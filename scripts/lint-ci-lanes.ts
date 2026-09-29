@@ -42,6 +42,11 @@ if (!gate || !trk) problems.push("ci.yml must have a `test` job and ci-tracker.y
 else {
   if (!/^    runs-on: ci-test\n/m.test(gate)) problems.push("`test` must run on ci-test");
   if (!/^    runs-on: ci-test-full\n/m.test(trk)) problems.push("`test-full` must run on ci-test-full");
+  // A hung test job must free its slot on its own. Without a job timeout a
+  // hang holds one of the few test slots for the runner's 2 h ceiling while
+  // the queue grows behind it (2026-09-28: the lane read as hung fleet-wide).
+  if (!/^    timeout-minutes: \d+\n/m.test(gate)) problems.push("`test` needs `timeout-minutes:`, so a hung run frees its slot");
+  if (!/^    timeout-minutes: \d+\n/m.test(trk)) problems.push("`test-full` needs `timeout-minutes:`, so a hung run frees its slot");
   // The tracker must never run on a PR: there the gate is the whole answer, and
   // a second full suite per push would double the queue for nothing. It DOES
   // run on a dispatch and on the nightly heartbeat, where a full check is the

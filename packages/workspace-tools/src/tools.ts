@@ -43,6 +43,17 @@ export type WorkspaceTool =
 
 /** Clamp big reads so a tool result stays prompt-sized. */
 const LIST_LIMIT_MAX = 50;
+/** How many things records stand for: each record's count field, where it
+ *  says; a record that does not say is one thing. */
+export function unitsCounted(recs: Array<Record<string, unknown>>, countField: string): number {
+  let n = 0;
+  for (const r of recs) {
+    const v = Number(fieldValue(r, countField));
+    n += Number.isFinite(v) && v >= 0 ? v : 1;
+  }
+  return n;
+}
+
 /** count_records walks the whole kind in pages; the route caps a page at 200. */
 const COUNT_PAGE = 200;
 const COUNT_SCAN_MAX = 5000;
@@ -51,18 +62,66 @@ const SEARCH_PER_KIND = 10;
 /** list_scan_inbox with a text filter reads up to this many 200-row pages. */
 const SCAN_INBOX_TEXT_PAGES = 10;
 
+/** Words that carry the sentence, not the thing: "how much of MY PLA offcuts
+ *  do I have" names two things, PLA and offcuts. */
+const QUERY_STOPWORDS = new Set([
+  "a", "an", "the", "my", "mine", "our", "your", "me", "i", "we", "of", "and", "or", "in", "on", "at", "to",
+  "for", "with", "is", "are", "it", "its", "do", "does", "did", "have", "has", "got", "how", "much", "many",
+  "what", "which", "where", "any", "some", "left", "there", "this", "that", "these", "those",
+]);
+
+/** The words of a query that name the thing, lower case, sentence words out. */
+export function significantWords(q: string): string[] {
+  return q
+    .toLowerCase()
+    .split(/[^\p{L}\p{N}.]+/u)
+    .map((w) => w.replace(/^\.+|\.+$/g, ""))
+    .filter((w) => w.length > 0 && !QUERY_STOPWORDS.has(w));
+}
+
+/** Does this text contain what was asked: the phrase as typed, or, for a query
+ *  of two or more words, every one of its words. A query is matched as a
+ *  phrase by every list and search route, so "my PLA offcuts" found nothing
+ *  under a name reading "Review measured stock - PLA offcuts", the model
+ *  widened to "PLA", and answered about a PLA spool (#4038). Every word, never
+ *  any word: "PLA offcuts" must not match the spool, which is PLA and is not
+ *  offcuts. */
+export function textMatches(text: string, q: string): boolean {
+  const hay = text.toLowerCase();
+  const needle = q.trim().toLowerCase();
+  if (!needle) return true;
+  if (hay.includes(needle)) return true;
+  const words = significantWords(needle);
+  return words.length >= 2 && words.every((w) => hay.includes(w));
+}
+
 /** Case-insensitive "does any text on this record contain q" — title, every
  *  field, nested bags. What a person means by "the Bambu" or "my deltas". */
 export function recordMatchesText(rec: unknown, q: string): boolean {
-  const needle = q.trim().toLowerCase();
-  if (!needle) return true;
+  if (!q.trim()) return true;
   let text: string;
   try {
     text = JSON.stringify(rec) ?? "";
   } catch {
     text = String(rec);
   }
-  return text.toLowerCase().includes(needle);
+  return textMatches(text, q);
+}
+
+/** When more than one record answers to what was asked BY NAME, the answer is
+ *  a question, never a pick: the model must not report on one of several as if
+ *  it were the one the person named. */
+function severalMatch(items: unknown[], q: string): { several_match: string } | Record<string, never> {
+  const named = items.filter((it) => matchedOn(it, q) === "name");
+  if (named.length < 2) return {};
+  const names = named.slice(0, 6).map((it) => {
+    const r = it as Record<string, unknown>;
+    const f = (r.fields && typeof r.fields === "object" ? r.fields : r) as Record<string, unknown>;
+    return String(r.title ?? f.name ?? r.name ?? "");
+  });
+  return {
+    several_match: `${named.length} records match "${q}" by name (${names.join("; ")}). Before stating a quantity, place or detail, ask which one the person means, or answer about each by name; never report on one as if it were the only one.`,
+  };
 }
 
 /** What list_records' `q` does, said once: the parameter's description and
@@ -79,7 +138,7 @@ export function matchedOn(rec: unknown, q: string): string | null {
   if (!needle || !rec || typeof rec !== "object") return null;
   const r = rec as Record<string, unknown>;
   const fields = (r.fields && typeof r.fields === "object" ? r.fields : r) as Record<string, unknown>;
-  const has = (v: unknown) => typeof v === "string" && v.toLowerCase().includes(needle);
+  const has = (v: unknown) => typeof v === "string" && textMatches(v, needle);
   if (has(r.title) || has(fields.name) || has(r.name)) return "name";
   const bags: Array<Record<string, unknown>> = [fields];
   if (fields.metadata && typeof fields.metadata === "object") bags.push(fields.metadata as Record<string, unknown>);
@@ -101,8 +160,17 @@ function labelMatches<T>(items: T[], q: string): Array<T & { matched_on?: string
   return [...labelled.filter((i) => i.matched_on === "name"), ...labelled.filter((i) => i.matched_on !== "name")];
 }
 
-/** A record's value for a key: top-level, or inside `fields` / `data`. */
+/** A record's value for a key: top-level, or inside `fields` / `data`. A
+ *  field that stores an id (a person, a linked record) reads as the name
+ *  beside it (`<key>_label`), so counting by owner counts by "Alex", not by
+ *  Alex's id. */
 function fieldValue(rec: Record<string, unknown>, key: string): unknown {
+  const label = fieldValueRaw(rec, `${key}_label`);
+  if (typeof label === "string" && label.length > 0) return label;
+  return fieldValueRaw(rec, key);
+}
+
+function fieldValueRaw(rec: Record<string, unknown>, key: string): unknown {
   if (key in rec) return rec[key];
   for (const bag of ["fields", "data", "custom_fields"]) {
     const inner = rec[bag];
@@ -733,7 +801,11 @@ export const WORKSPACE_TOOLS: WorkspaceTool[] = [
           const end = offset + shown;
           const more = typeof page.total === "number" ? end < page.total : shown === limit;
           const shownPage = qText && Array.isArray(page.items) ? { ...page, items: labelMatches(page.items, qText) } : page;
-          return toolOk({ ...(explainRecords(shownPage, await kinds()) as Record<string, unknown>), ...pageEnd("list_records", more ? state(end) : null) });
+          return toolOk({
+            ...(explainRecords(shownPage, await kinds()) as Record<string, unknown>),
+            ...(qText && Array.isArray(page.items) ? severalMatch(page.items, qText) : {}),
+            ...pageEnd("list_records", more ? state(end) : null),
+          });
         }
       }
       // The kind's own search matched nothing by name. Before the model tells
@@ -741,13 +813,36 @@ export const WORKSPACE_TOOLS: WorkspaceTool[] = [
       const scan = await scanByText(api, kind, qText, limit, { includeRetired }, st?.s ? offset : 0);
       if (!scan) return toolOk({ ...(explainRecords({ shown: 0, total: 0, partial: false, items: [] }, await kinds()) as Record<string, unknown>), ...pageEnd("list_records", null) });
       const scanned = Array.isArray(scan.body.items) ? { ...scan.body, items: labelMatches(scan.body.items as unknown[], qText) } : scan.body;
-      return toolOk({ ...(explainRecords(scanned, await kinds()) as Record<string, unknown>), ...pageEnd("list_records", scan.next === null ? null : state(scan.next, true)) });
+      return toolOk({
+        ...(explainRecords(scanned, await kinds()) as Record<string, unknown>),
+        ...(Array.isArray(scan.body.items) ? severalMatch(scan.body.items as unknown[], qText) : {}),
+        ...pageEnd("list_records", scan.next === null ? null : state(scan.next, true)),
+      });
+    },
+  },
+  {
+    name: "things_of_person",
+    // By name as said: the route resolves it on the People list (members and
+    // anyone added by name), "me" is the asker, and a name matching two people
+    // comes back as a question rather than a guess.
+    description: "What one person owns, across every collection (\"what does Alex own\", \"my things\").",
+    mode: "read",
+    paging: { by: "one-call", why: "one person's things across every collection; a person owns tens of things, not thousands" },
+    params: {
+      person: z.string().describe("Their name as said, or \"me\""),
+    },
+    execute: async (api, args) => {
+      const person = String(args.person ?? "").trim();
+      if (!person) return toolFail("say whose things: a name, or me");
+      const res = await api.request("GET", `/people/things?person=${encodeURIComponent(person)}`);
+      if (res.status >= 400) return toolFail(apiErrorMessage(res, `couldn't find what belongs to ${person}`));
+      return toolOk(res.body);
     },
   },
   {
     name: "count_records",
     description:
-      "Count records of ONE kind, optionally grouped by a field (e.g. group_by \"model\" or \"kinematics\"). Use this for \"how many\", \"which do I have the most of\", \"do I have any X\" — it counts EVERY record in code, so the answer is exact even when the list is too long to read. Group values are compared case-insensitively.",
+      "Count records of ONE kind, optionally grouped by a field (e.g. group_by \"model\"). Use for \"how many\", \"which do I have most of\", \"any X?\": it counts EVERY record in code, exact however long the list. Groups compare case-insensitively. `units`, if present, counts things: \"how many printers\" is units.",
     mode: "read",
     paging: { by: "one-call", why: "counts in code over every record (walks the kind itself); returns numbers, not rows" },
     params: {
@@ -768,22 +863,34 @@ export const WORKSPACE_TOOLS: WorkspaceTool[] = [
       const total = qText ? all.length : walked.total;
       const scanned = walked.items.length;
       const complete = walked.complete;
-      if (!groupBy) return toolOk({ kind, ...(qText ? { q: qText, matched_by: "any text field" } : {}), total, scanned, complete });
-      const counts = new Map<string, { value: string; count: number }>();
+      const countField = (await fetchKinds(api).catch(() => [])).find((k) => k.id === kind)?.count_field ?? null;
+      const unitsOf = (recs: Array<Record<string, unknown>>) => (countField ? unitsCounted(recs, countField) : null);
+      const units = unitsOf(all);
+      const unitsPart = units !== null && units !== total ? { units, units_means: `how many things these records stand for (the sum of ${countField}); total is how many records` } : {};
+      if (!groupBy) return toolOk({ kind, ...(qText ? { q: qText, matched_by: "any text field" } : {}), total, ...unitsPart, scanned, complete });
+      const counts = new Map<string, { value: string; count: number; records: Array<Record<string, unknown>> }>();
       for (const rec of all) {
         const raw = fieldValue(rec, groupBy);
         const value = raw === undefined || raw === null || raw === "" ? "(blank)" : String(raw);
         const key = value.toLowerCase();
         const hit = counts.get(key);
-        if (hit) hit.count += 1;
-        else counts.set(key, { value, count: 1 });
+        if (hit) {
+          hit.count += 1;
+          hit.records.push(rec);
+        } else counts.set(key, { value, count: 1, records: [rec] });
       }
-      const groups = [...counts.values()].sort((a, b) => b.count - a.count || a.value.localeCompare(b.value));
+      const groups = [...counts.values()]
+        .map(({ value, count, records }) => {
+          const u = unitsOf(records);
+          return { value, count, ...(u !== null && u !== count ? { units: u } : {}) };
+        })
+        .sort((a, b) => b.count - a.count || a.value.localeCompare(b.value));
       return toolOk({
         kind,
         group_by: groupBy,
         ...(qText ? { q: qText, matched_by: "any text field" } : {}),
         total,
+        ...unitsPart,
         scanned,
         complete,
         groups,
@@ -838,8 +945,32 @@ export const WORKSPACE_TOOLS: WorkspaceTool[] = [
       if (res.status >= 400) return toolFail(apiErrorMessage(res, "search failed"));
       const more = (res.body as { has_more?: unknown }).has_more === true;
       const { has_more: _h, ...body } = res.body as Record<string, unknown>;
+      const found = Array.isArray(body.items) ? (body.items as unknown[]) : [];
+      // The routes match a query as one phrase. When the phrase finds nothing
+      // and it has two or more words, ask again by its longest word and keep
+      // only what holds EVERY word, so "my PLA offcuts" finds the offcuts and
+      // not the spool (#4038).
+      const words = significantWords(q);
+      if (found.length === 0 && offset === 0 && words.length >= 2) {
+        const longest = [...words].sort((a, b) => b.length - a.length)[0]!;
+        const again = await api.request(
+          "GET",
+          `/modules/core-search/search?q=${encodeURIComponent(longest)}${kinds}&per_kind=${perKind}&offset=0`,
+        );
+        if (again.status < 400) {
+          const { has_more: _h2, ...wide } = again.body as Record<string, unknown>;
+          const every = (Array.isArray(wide.items) ? (wide.items as unknown[]) : []).filter((it) => recordMatchesText(it, q));
+          return toolOk({
+            ...(explainRecords({ ...wide, q, items: every }, await fetchKinds(api).catch(() => [])) as Record<string, unknown>),
+            matched_by: `every word of "${q}" (${words.join(", ")}); nothing held the words as one phrase`,
+            ...severalMatch(every, q),
+            ...pageEnd("search_records", null),
+          });
+        }
+      }
       return toolOk({
         ...(explainRecords(body, await fetchKinds(api).catch(() => [])) as Record<string, unknown>),
+        ...severalMatch(found, q),
         ...pageEnd("search_records", more ? { q, ...(kindList ? { k: kindList } : {}), o: offset + perKind } : null),
       });
     },

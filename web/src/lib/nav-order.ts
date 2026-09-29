@@ -81,12 +81,13 @@ export function writeNavHidden(slug: string, hidden: string[]) {
   }
 }
 
-export function toggleNavHidden(slug: string, name: string) {
+/** Hide or show one entry; true when it is hidden now. Surfaces call it
+ *  through useToggleNavHidden (lib/moreApps.ts), which says where it went. */
+export function toggleNavHidden(slug: string, name: string): boolean {
   const cur = readNavHidden(slug);
-  writeNavHidden(
-    slug,
-    cur.includes(name) ? cur.filter((n) => n !== name) : [...cur, name],
-  );
+  const hide = !cur.includes(name);
+  writeNavHidden(slug, hide ? [...cur, name] : cur.filter((n) => n !== name));
+  return hide;
 }
 
 // ── per-device "always in More" nav entries ─────────────────────────

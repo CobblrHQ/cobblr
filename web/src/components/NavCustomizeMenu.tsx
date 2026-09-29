@@ -22,14 +22,15 @@ import {
   moveInOrder,
   readNavActionsHidden,
   toggleNavActionHidden,
-  toggleNavHidden,
   toggleNavOverflow,
   writeNavOrder,
 } from "../lib/nav-order";
 import { PopoverLayer } from "@cobblr/platform-web";
+import { useToggleNavHidden } from "../lib/moreApps";
 
 export function NavCustomizeMenu() {
   const { activeSlug } = useActiveOrg();
+  const toggleHidden = useToggleNavHidden();
   const { allTops, hiddenNames, overflowNames } = useNavModules(activeSlug);
   // Modules that contribute a right-cluster icon (the "quick actions").
   const modules = useQuery({
@@ -138,7 +139,7 @@ export function NavCustomizeMenu() {
                   >
                     <button
                       type="button"
-                      onClick={() => toggleNavHidden(activeSlug, t.name)}
+                      onClick={() => toggleHidden(activeSlug, t.name)}
                       title={hidden ? "Show in nav" : "Hide from nav"}
                       className="shrink-0 p-0.5"
                       data-testid={`nav-toggle-${t.name}`}

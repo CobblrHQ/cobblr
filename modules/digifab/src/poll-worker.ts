@@ -8,6 +8,7 @@ import type { Kysely } from "kysely";
 import type { DigifabDB } from "./db.js";
 import { pollJob } from "./jobs-core.js";
 import { ensureFailureWatch } from "./failure-detect.js";
+import { noteFarmActive } from "./farm-active.js";
 
 export const POLL_QUEUE = "digifab.poll";
 // First-poll delay after a send — quick for every driver so the queue shows
@@ -58,6 +59,7 @@ export function registerPollWorker(): void {
 }
 
 export async function enqueuePoll(orgId: string, jobId: string): Promise<void> {
+  noteFarmActive(orgId);
   await platform().queue.enqueue({
     orgId,
     queue: POLL_QUEUE,

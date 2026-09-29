@@ -11,8 +11,9 @@ import { z } from "zod";
 import { platform } from "@cobblr/platform-contract";
 import { tenantDb, tenantContext, sessionUser } from "../db.js";
 import { asyncHandler, badBody, requireRole } from "./util.js";
-import { pollJob, sendJob, assignJob, buildDriverById, reverseBuildIfCommitted, TERMINAL, markJobTerminal } from "../jobs-core.js";
+import { pollJob, sendJob, assignJob, buildDriverById, reverseBuildIfCommitted, TERMINAL, markJobTerminal, managerName } from "../jobs-core.js";
 import { enqueuePoll, reconcilePolls } from "../poll-worker.js";
+import { plainDriverError } from "../job-truth.js";
 
 export const jobsRouter = Router({ mergeParams: true });
 
@@ -231,6 +232,7 @@ jobsRouter.post(
     const ctx = tenantContext(req);
     const r = await sendJob(tenantDb(req), ctx.org.id, req.params.id!);
     if (!r.ok) {
+      if (r.code === "send_failed") return void res.status(502).json({ error: { code: r.code, message: r.message } });
       const status = r.code === "not_found" ? 404 : 409;
       const message =
         r.code === "already_sent"
@@ -420,28 +422,45 @@ jobsRouter.post(
     if (!job) return void res.status(404).json({ error: { code: "not_found", message: "no such job" } });
     if (TERMINAL.has(job.status)) return void res.status(409).json({ error: { code: "already_terminal", message: `job is ${job.status}` } });
 
-    // Best-effort: ask the manager to abort if the driver + the job support it.
-    let remoteCancelled = false;
-    if (job.connection_id && job.remote_job_id) {
-      try {
-        const driver = await buildDriverById(db, ctx.org.id, job.connection_id);
-        if (driver?.cancelJob) {
-          await driver.cancelJob(job.remote_job_id);
-          remoteCancelled = true;
-        }
-      } catch {
-        /* best-effort — the local cancel below is the source of truth */
-      }
+    // Not on a printer yet (queued, or sent with no id to track): there is
+    // nothing physical to stop, so the cancel is Cobblr's alone.
+    if (!job.connection_id || !job.remote_job_id) {
+      await markJobTerminal(db, job, "cancelled");
+      await reverseBuildIfCommitted(db, ctx.org.id, job.id, "print cancelled");
+      return void res.json({ status: "cancelled", remote_cancelled: false });
     }
-    // Cancelling a RUNNING print leaves the most debris of any ending — half a
-    // part welded to the plate — so it takes the same bed-clear gate a normal
-    // finish does. It used to write a bare status, and the next queued plate
-    // could be dripped onto the abandoned one.
-    await markJobTerminal(db, job, "cancelled");
-    // A cancelled job never produces its build — undo the send-time commit
-    // (idempotent no-op when nothing was committed).
-    await reverseBuildIfCommitted(db, ctx.org.id, job.id, "print cancelled");
-    res.json({ status: "cancelled", remote_cancelled: remoteCancelled });
+
+    // On a printer: the cancel is real only when the printer says it stopped.
+    // It used to be marked Cancelled whatever happened, so on a manager that
+    // cannot cancel (PrusaLink, FDM Monster) the job read Cancelled while the
+    // printer kept printing, and someone walked away from a running print.
+    const manager = await managerName(ctx.org.id, job.connection_id);
+    const driver = await buildDriverById(db, ctx.org.id, job.connection_id);
+    if (!driver?.cancelJob) {
+      return void res.status(501).json({
+        error: {
+          code: "cannot_cancel",
+          message: `${manager} can't stop a print from Cobblr. Stop it at the printer; Cobblr will see it stop.`,
+        },
+      });
+    }
+    try {
+      await driver.cancelJob(job.remote_job_id);
+    } catch (e) {
+      return void res.status(502).json({ error: { code: "cancel_failed", message: plainDriverError(e, manager, "cancelling the print") } });
+    }
+    await db.updateTable("digifab_jobs").set({ cancel_requested_at: new Date(), updated_at: new Date() }).where("id", "=", job.id).execute();
+    // Ask straight away: most managers stop within the request. What the
+    // printer answers decides, through the same rule every poll uses.
+    const polled = await pollJob(db, ctx.org.id, job.id).catch(() => null);
+    const now = await db.selectFrom("digifab_jobs").select(["status", "error"]).where("id", "=", job.id).executeTakeFirst();
+    if (now?.status === "cancelled") {
+      await reverseBuildIfCommitted(db, ctx.org.id, job.id, "print cancelled");
+      return void res.json({ status: "cancelled", remote_cancelled: true });
+    }
+    // Still going: the poll chain finishes the cancel when the printer stops.
+    if (polled && !polled.terminal) await enqueuePoll(ctx.org.id, job.id);
+    res.status(202).json({ status: now?.status ?? job.status, remote_cancelled: false, cancelling: true, message: "Cancel sent; waiting for the printer to stop." });
   }),
 );
 
@@ -456,12 +475,17 @@ async function controlJob(req: import("express").Request, res: import("express")
   if (TERMINAL.has(job.status)) return void res.status(409).json({ error: { code: "already_terminal", message: `job is ${job.status}` } });
   if (!job.connection_id || !job.remote_job_id) return void res.status(409).json({ error: { code: "not_running", message: "job isn't on a printer yet" } });
   const driver = await buildDriverById(db, ctx.org.id, job.connection_id);
+  const manager = await managerName(ctx.org.id, job.connection_id);
   if (action === "pause") {
-    if (!driver?.pauseJob) return void res.status(501).json({ error: { code: "unsupported", message: "this connection can't pause a job" } });
-    await driver.pauseJob(job.remote_job_id);
-  } else {
-    if (!driver?.resumeJob) return void res.status(501).json({ error: { code: "unsupported", message: "this connection can't resume a job" } });
-    await driver.resumeJob(job.remote_job_id);
+    if (!driver?.pauseJob) return void res.status(501).json({ error: { code: "unsupported", message: `${manager} can't pause a print from Cobblr. Pause it at the printer.` } });
+  } else if (!driver?.resumeJob) {
+    return void res.status(501).json({ error: { code: "unsupported", message: `${manager} can't resume a print from Cobblr. Resume it at the printer.` } });
+  }
+  try {
+    if (action === "pause") await driver!.pauseJob!(job.remote_job_id);
+    else await driver!.resumeJob!(job.remote_job_id);
+  } catch (e) {
+    return void res.status(502).json({ error: { code: `${action}_failed`, message: plainDriverError(e, manager, action === "pause" ? "pausing the print" : "resuming the print") } });
   }
   const status = action === "pause" ? "paused" : "printing";
   await db.updateTable("digifab_jobs").set({ status, updated_at: new Date() }).where("id", "=", job.id).execute();

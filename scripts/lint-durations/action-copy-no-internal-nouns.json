@@ -1,7 +1,8 @@
 {
   "lint": "lint:action-copy-no-internal-nouns",
-  "run": "tsx scripts/lint-action-copy-no-internal-nouns.ts",
+  "run": "node scripts/lint-action-copy-no-internal-nouns.ts",
   "ms": 9900,
   "recorded": "2026-09-14",
-  "source": "split from scripts/lint-durations.json (recorded 2026-09-14)"
+  "source": "split from scripts/lint-durations.json (recorded 2026-09-14)",
+  "readMB": 10.3
 }

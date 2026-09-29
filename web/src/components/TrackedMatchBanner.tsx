@@ -13,13 +13,14 @@
 // It used to say "you already have this, add to it" four ways on one card: the
 // line, three re-buy buttons, the card's own "+1 more" and a destination
 // picker naming the same record (#3884). One line, one control.
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { catalogChosen } from "../lib/scanPhoto";
 import { useEffect, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { CheckCircle2, HelpCircle, ExternalLink, MapPin, X } from "lucide-react";
 import { useToast } from "@cobblr/platform-web";
 import { api, ApiError, type ScanInboxItem, type TrackedMatch } from "../lib/api";
+import { useTrackedMatchList } from "../lib/useTrackedMatchList";
 import { useActiveOrg } from "../auth/ActiveOrgContext";
 import { useBestTrackedMatch } from "./RepurchaseControls";
 import { ScanCountBlock } from "./ScanCountBlock";
@@ -27,7 +28,7 @@ import type { ScanCountMode } from "@cobblr/platform-contract/scan-count";
 import { EntityThumb } from "@cobblr/platform-web";
 import { useHandheld } from "../lib/useHandheld";
 import { TrackedMatchNudges } from "./TrackedMatchNudges";
-import { scanDeclinesRecord, scanRowState, scanTrackedMatch } from "@cobblr/platform-contract/scan-triage";
+import { scanRowState, scanTrackedMatch } from "@cobblr/platform-contract/scan-triage";
 import { evidencedFill } from "@cobblr/platform-contract/scan-evidence";
 import { scanInboxKeys } from "../lib/scan-inbox-keys";
 
@@ -179,22 +180,34 @@ export function TrackedMatchBanner({
   const handheld = useHandheld();
   const [dismissed, setDismissed] = useState(false);
 
-  const matches = useQuery({
-    queryKey: ["scan-tracked", activeSlug, item.id, item.barcode_text, item.suggested_name],
-    queryFn: () => api.scanTrackedMatches(activeSlug, item.id),
-    enabled: !!item.id && item.status === "pending" && (!!item.barcode_text || !!item.suggested_name),
-    staleTime: 60_000,
-  });
-  // A record the person said this is not stays said: the card files the
-  // scan as a new item, so the banner does not offer to add to it.
-  const all = [...(matches.data?.barcode_matches ?? []), ...(matches.data?.name_matches ?? [])].filter(
-    (m) => !scanDeclinesRecord(item, { kind: m.kind, id: m.id, instance: m.instance }),
-  );
+  const { matches, all } = useTrackedMatchList(item);
   // Several records could be this one: the person picks which, here, rather
-  // than a second panel telling them to "open it to pick" (#3884).
-  const [picked, setPicked] = useState(0);
-  const best = all[picked] ?? all[0] ?? stamped ?? null;
+  // than a second panel telling them to "open it to pick" (#3884). One thing
+  // kept in several places is one record to pick, never one per place.
+  const cards = all.filter((m, i) => all.findIndex((o) => (o.card_id ?? o.id) === (m.card_id ?? m.id)) === i);
+  const [pickedCard, setPicked] = useState(0);
+  const chosen = cards[pickedCard] ?? cards[0] ?? stamped ?? null;
+  // One thing kept in several places: which place this scan goes to is the
+  // one question left. The pick is stored on the row (a reload never asks
+  // twice); the place being worked in answers it too. Adding goes to that
+  // place, never to whichever record the matcher listed first. The places
+  // are the top match's, so they ask only while that is the one chosen.
+  const places = matches.data?.places ?? [];
+  const top = all[0];
+  const several = places.length > 1 && !!chosen && !!top && (chosen.card_id ?? chosen.id) === (top.card_id ?? top.id);
+  const pickedId = matches.data?.place_choice ?? (locationId ? places.find((p) => p.location_id === locationId)?.id : undefined) ?? null;
+  const picked = several ? places.find((p) => p.id === pickedId) ?? null : null;
+  const best: TrackedMatch | null =
+    chosen && picked ? { ...chosen, id: picked.id, location_id: picked.location_id, qty: picked.qty ?? chosen.qty } : chosen;
   const { where } = useBestTrackedMatch(item.id, best);
+  const pickPlace = useMutation({
+    mutationFn: (recordId: string) => api.scanPickPlace(activeSlug, item.id, recordId),
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: ["scan-tracked", activeSlug, item.id] });
+      void qc.invalidateQueries({ queryKey: scanInboxKeys.all(activeSlug) });
+    },
+    onError: (e) => toast.error(e instanceof ApiError ? e.message : String(e)),
+  });
 
   // "Not the same" is kept on the row, so the pill, +1 more and File all
   // stop treating the scan as this record everywhere, not only here (#3707).
@@ -314,21 +327,21 @@ export function TrackedMatchBanner({
           <X size={15} />
         </button>
       </div>
-      {all.length > 1 && (
+      {cards.length > 1 && (
         <div data-testid="match-pick" className="space-y-1">
           <div className="text-xs text-content dark:text-mortar-100">
-            This could be any of {all.length} things you have. Which is it?
+            This could be any of {cards.length} things you have. Which is it?
           </div>
           <div role="radiogroup" aria-label="Which one this is" className="flex flex-wrap gap-1.5">
-            {all.map((m, i) => (
+            {cards.map((m, i) => (
               <button
                 key={`${m.kind}:${m.id}`}
                 type="button"
                 role="radio"
-                aria-checked={m === best}
+                aria-checked={m === chosen}
                 onClick={() => setPicked(i)}
                 className={`inline-flex max-w-full items-center gap-1 rounded-full border px-2.5 py-1 text-xs ${
-                  m === best
+                  m === chosen
                     ? "border-emerald-600 bg-emerald-600 text-white"
                     : "border-emerald-300 dark:border-emerald-700 text-emerald-800 dark:text-emerald-200 hover:bg-emerald-100/60 dark:hover:bg-emerald-900/30"
                 }`}
@@ -372,8 +385,36 @@ export function TrackedMatchBanner({
           </p>
         </details>
       )}
+      {several && (
+        <div data-testid="which-place">
+          <div className="text-[11px] text-muted mb-1">
+            {picked ? "Adds to" : `You keep this in ${places.length} places. Which one is this?`}
+          </div>
+          <div className="flex flex-wrap gap-1.5">
+            {places.map((p) => (
+              <button
+                key={p.id}
+                type="button"
+                aria-pressed={picked?.id === p.id}
+                disabled={pickPlace.isPending}
+                onClick={() => pickPlace.mutate(p.id)}
+                className={
+                  "inline-flex items-center gap-1 rounded-full px-2.5 py-1 text-xs border transition " +
+                  (picked?.id === p.id
+                    ? "bg-emerald-600 border-emerald-600 text-white"
+                    : "border-emerald-300 dark:border-emerald-700 text-content dark:text-mortar-100 hover:bg-white/70 dark:hover:bg-slate-900/40")
+                }
+              >
+                <MapPin size={11} /> {p.location_name ?? "No place set"}
+                {p.qty != null ? <span className="font-mono opacity-80"> · {p.qty}</span> : null}
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
       <TrackedMatchNudges item={item} match={best} />
-      {best.qty != null && (
+      {/* Counting into one of several places waits for the place. */}
+      {best.qty != null && (!several || picked) && (
         <ScanCountBlock
           itemId={item.id}
           match={best}
@@ -395,7 +436,7 @@ export function TrackedMatchBanner({
             <CheckCircle2 size={12} /> Yes, fill it in from this scan
           </button>
         )}
-        {locationId && best.location_id !== locationId && (
+        {locationId && !several && best.location_id !== locationId && (
           <button type="button" disabled={busy} onClick={() => attach.mutate({ m: best, mode: "move" })} className={pill}>
             <MapPin size={12} /> Move here
           </button>

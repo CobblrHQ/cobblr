@@ -1,10 +1,11 @@
 {
   "lint": "lint:query-key-families",
-  "run": "tsx scripts/lint-query-key-families.ts",
+  "run": "node scripts/lint-query-key-families.ts",
   "rows": [
     "page-level-module-ui"
   ],
   "ms": 1598,
   "recorded": "2026-09-24",
-  "source": "scaffolded by new-lint.sh at twice a local run (a shared box); replaced from its first CI measurement"
+  "source": "scaffolded by new-lint.sh at twice a local run (a shared box); replaced from its first CI measurement",
+  "readMB": 12.8
 }

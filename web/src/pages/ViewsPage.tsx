@@ -19,7 +19,8 @@ import { useMutation } from "@tanstack/react-query";
 import { ApiError, api, type SavedView } from "../lib/api";
 import { useActiveOrg } from "../auth/ActiveOrgContext";
 import { Modal, useToast, useConfirm, usePageTitle, BulkActionBar, useFlowHost, EntityPhoto, useRunAction, LOCATION_GROUP_KEY, TILE_GRID, TILE_TITLE, distinctSubtitle } from "@cobblr/platform-web";
-import { groupRows, fieldVal } from "../lib/view-group-key";
+import { groupRows, fieldVal, orderedGroups, NO_GROUP, NO_GROUP_LABEL } from "../lib/view-group-key";
+import { RowStockProvider, useRowStock } from "../components/ViewRowStock";
 import { useAreaResolver } from "../lib/useAreaResolver";
 import { useViewData, type ViewData } from "../lib/useViewData";
 import { ViewMore } from "../components/ViewMore";
@@ -307,8 +308,12 @@ export function SavedViewBody({
           seeAllTo={listRoute ? `${listRoute}?view=table` : null}
         />
       )}
+      {/* Every view of a counted collection steps its rows' counts (#3884).
+          Mounted only with rows to step: an empty view asks nothing. */}
+      {items.length > 0 && (
+      <RowStockProvider slug={activeSlug} kind={view.entity_kind}>
       {items.length > 0 && view.view_type === "kanban" && (
-        <KanbanRenderer items={items} groupBy={cfg.group_by ?? "subtitle"} />
+        <KanbanRenderer slug={activeSlug} kind={view.entity_kind} items={items} groupBy={cfg.group_by ?? "subtitle"} />
       )}
       {items.length > 0 && view.view_type === "table" && (
         <TableRenderer
@@ -360,6 +365,8 @@ export function SavedViewBody({
       )}
       {items.length > 0 && view.view_type !== "kanban" && view.view_type !== "table" && view.view_type !== "trend" && view.view_type !== "calendar" && view.view_type !== "gantt" && view.view_type !== "gallery" && view.view_type !== "heatmap" && view.view_type !== "vending" && (
         <ListRenderer items={items} />
+      )}
+      </RowStockProvider>
       )}
       {/* Past the server's walk (thousands of records) the rest is paged in
           here, visibly: a view never passes a page off as the whole. */}
@@ -1007,16 +1014,18 @@ function VendingTile({
   );
 }
 
-function ListRenderer({ items }: { items: ViewRow[] }) {
+export function ListRenderer({ items }: { items: ViewRow[] }) {
+  const stock = useRowStock();
   return (
     <ul className="divide-y divide-line dark:divide-slate-800 border border-line dark:border-slate-700 rounded">
       {items.map((row) => (
         <RecordCard as="li" key={`${row.kind}:${row.id}`} row={row} className="px-3 py-2 text-sm">
-          <div className="flex items-baseline gap-3">
+          <div className="flex items-center gap-3">
             <EntityTitleLink row={row} className="font-medium" />
             {row.subtitle && (
               <span className="text-xs text-muted">{row.subtitle}</span>
             )}
+            {stock.on && <span className="ml-auto shrink-0">{stock.stepper(row)}</span>}
           </div>
         </RecordCard>
       ))}
@@ -1024,27 +1033,34 @@ function ListRenderer({ items }: { items: ViewRow[] }) {
   );
 }
 
-function KanbanRenderer({
+export function KanbanRenderer({
+  slug,
+  kind,
   items,
   groupBy,
 }: {
+  slug: string;
+  kind: string;
   items: ViewRow[];
   groupBy: string;
 }) {
-  // Group rows by config.group_by through the one rule (groupKeyOf).
+  // Group rows by config.group_by through the one rule (groupKeyOf), and lay
+  // the columns out in the field's declared order, empty ones kept.
   const areaOf = useAreaResolver(groupBy === LOCATION_GROUP_KEY);
-  const buckets = groupRows(items, groupBy, areaOf);
-  const cols = Array.from(buckets.entries()).sort(([a], [b]) => a.localeCompare(b));
+  const declared = useKindFields(slug, kind).find((f) => f.name === groupBy)?.choices;
+  const cols = orderedGroups(groupRows(items, groupBy, areaOf), declared);
+  const stock = useRowStock();
   return (
     <div className="flex gap-3 overflow-x-auto pb-2">
       {cols.map(([col, rows]) => (
         <div
           key={col}
+          data-board-column={col}
           className="min-w-[200px] max-w-[260px] shrink-0 border border-line dark:border-slate-700 rounded bg-subtle/50 dark:bg-slate-900/40"
         >
           <div className="px-2 py-1.5 border-b border-line dark:border-slate-700 flex items-center justify-between">
             <span className="text-xs font-medium text-content dark:text-slate-300 truncate">
-              {col}
+              {col === NO_GROUP ? NO_GROUP_LABEL : col}
             </span>
             <span className="text-[10px] text-faint">{rows.length}</span>
           </div>
@@ -1064,6 +1080,7 @@ function KanbanRenderer({
                     {r.subtitle}
                   </div>
                 )}
+                {stock.on && <div className="mt-1 flex justify-end">{stock.stepper(r)}</div>}
               </RecordCard>
             ))}
           </ul>
@@ -1100,14 +1117,21 @@ export function TableRenderer({
   // The cell that opens the record: its title, or the first column when a
   // view shows no title.
   const linkCol = cols.includes("title") ? "title" : cols[0];
-  const selectCols = selection ? cols.length + 1 : cols.length;
+  // A counted collection steps its count in the view's own qty column, or in
+  // one of its own when the view does not show qty.
+  const stock = useRowStock();
+  const stockCol = stock.on && !cols.includes("qty");
+  const selectCols = (selection ? cols.length + 1 : cols.length) + (stockCol ? 1 : 0);
 
   // When group_by is set, split rows into ordered sections with a header
   // row each, through the one rule (groupKeyOf).
   const areaOf = useAreaResolver(groupBy === LOCATION_GROUP_KEY);
   const groups: Array<{ key: string; rows: ViewRow[] }> = [];
   if (groupBy) {
-    for (const [key, rows] of groupRows(items, groupBy, areaOf)) groups.push({ key, rows });
+    // Sections in the field's declared order too; a table leaves out the empty
+    // ones a board keeps, since an empty section header is a row of nothing.
+    const declared = fields.find((f) => f.name === groupBy)?.choices;
+    for (const [key, rows] of orderedGroups(groupRows(items, groupBy, areaOf), declared)) if (rows.length) groups.push({ key, rows });
   } else {
     groups.push({ key: "", rows: items });
   }
@@ -1128,11 +1152,14 @@ export function TableRenderer({
         <td key={c} className="px-3 py-1.5 align-top truncate max-w-[260px]">
           {c === linkCol ? (
             <RecordLink row={r} className="hover:text-accent hover:underline">{formatCell(c, r)}</RecordLink>
+          ) : c === "qty" && stock.on ? (
+            stock.stepper(r) ?? formatCell(c, r)
           ) : (
             formatCell(c, r)
           )}
         </td>
       ))}
+      {stockCol && <td className="px-3 py-1 align-top text-right">{stock.stepper(r)}</td>}
     </RecordCard>
   );
 
@@ -1150,6 +1177,7 @@ export function TableRenderer({
                 {headerOf(c)}
               </th>
             ))}
+            {stockCol && <th className="px-3 py-1.5 text-right font-mono text-[10px] uppercase text-muted tracking-wider">{headerOf("qty")}</th>}
           </tr>
         </thead>
         {groupBy ? (
@@ -1157,7 +1185,7 @@ export function TableRenderer({
             <tbody key={g.key}>
               <tr className="bg-cobble-50/70 dark:bg-cobble-900/20">
                 <td colSpan={selectCols} className="px-3 py-1 font-mono text-[10px] uppercase tracking-widest text-accent">
-                  {g.key} · {g.rows.length}
+                  {g.key === NO_GROUP ? NO_GROUP_LABEL : g.key} · {g.rows.length}
                 </td>
               </tr>
               {g.rows.map(Row)}
@@ -1202,7 +1230,10 @@ function formatCell(col: string, row: ViewRow): string {
 // is the one door for both: it resolves the path and gives the cover its 2:3
 // box before the picture arrives.
 function GalleryTile({ row, src, title, caption }: { row: ViewRow; src: string | null; title: string; caption: string }) {
-  return (
+  // The stepper sits under the tile, outside its link: a button inside the
+  // link that opens the record would open it on every tap.
+  const stock = useRowStock().stepper(row);
+  const tile = (
     <RecordLink
       row={row}
       card
@@ -1216,9 +1247,16 @@ function GalleryTile({ row, src, title, caption }: { row: ViewRow; src: string |
       </div>
     </RecordLink>
   );
+  if (!stock) return tile;
+  return (
+    <div className="flex flex-col gap-1">
+      {tile}
+      <div className="flex justify-end">{stock}</div>
+    </div>
+  );
 }
 
-function GalleryRenderer({ items, cfg }: { items: ViewRow[]; cfg: ViewConfig }) {
+export function GalleryRenderer({ items, cfg }: { items: ViewRow[]; cfg: ViewConfig }) {
   const imageField = (cfg.image_field as string) || "image_path";
   const captionField = cfg.caption_field as string | undefined;
   return (

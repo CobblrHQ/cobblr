@@ -356,6 +356,15 @@ export const CONFIG_DESTINATIONS: ConfigDestination[] = [
   {
     section: "people",
     icon: Users,
+    label: "People",
+    description:
+      "Everyone a thing here can belong to: members, and anyone else by name (family, a friend whose things you keep). Invite someone to join and what is theirs stays theirs.",
+    to: "/configuration/people",
+    keywords: ["owner", "owners", "whose", "belongs to", "family", "contacts", "person"],
+  },
+  {
+    section: "people",
+    icon: Users,
     label: "Who gets told",
     description:
       "For each kind of workspace notification (things to use up, maintenance due, an order that should have arrived), choose everyone, the owners only, or specific people.",

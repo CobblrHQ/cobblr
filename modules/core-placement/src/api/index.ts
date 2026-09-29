@@ -46,7 +46,10 @@ router.get(
       return;
     }
     const refs = await platform().placement.contents({ orgId: orgId(req), container: parsed.data });
-    const items = refs.length ? await platform().entities.lookupMany(orgId(req), refs) : [];
+    const found = refs.length ? await platform().entities.lookupMany(orgId(req), refs.map(({ kind, id }) => ({ kind, id }))) : [];
+    // Each thing with where it sits: the slot, and the pin a floor plan drew.
+    const at = new Map(refs.map((r) => [r.id, r]));
+    const items = found.map((e) => ({ ...e, slot: at.get(e.id)?.slot ?? null, position: at.get(e.id)?.position ?? null }));
     res.json({ items });
   }),
 );
@@ -66,9 +69,18 @@ router.get(
   }),
 );
 
-const PlaceBody = z.object({ containee: Ref, container: Ref, slot: z.string().max(120).nullish() });
+const Position = z.object({ x_mm: z.number().finite().min(-1_000_000).max(1_000_000), y_mm: z.number().finite().min(-1_000_000).max(1_000_000) });
+const PlaceBody = z.object({
+  containee: Ref,
+  container: Ref,
+  slot: z.string().max(120).nullish(),
+  // A pin inside the container, millimetres from its top-left; null clears it.
+  position: Position.nullish(),
+  // What made the move ("floor plan"): the activity row says so.
+  via: z.string().trim().min(1).max(80).optional(),
+});
 
-// POST /place { containee, container, slot? } — put a thing inside a container.
+// POST /place { containee, container, slot?, position?, via? } — put a thing inside a container.
 // AI-REACH: covered by core-placement:place and :remove actions on the placed record
 router.post(
   "/place",
@@ -85,6 +97,8 @@ router.post(
       container: parsed.data.container,
       slot: parsed.data.slot ?? null,
       placedBy: sessionUser(req)?.id ?? null,
+      ...(parsed.data.position !== undefined ? { position: parsed.data.position } : {}),
+      ...(parsed.data.via ? { via: parsed.data.via } : {}),
     });
     res.status(204).end();
   }),

@@ -1,7 +1,8 @@
 {
   "lint": "lint:dark-mode-tints",
-  "run": "tsx scripts/lint-dark-mode-tints.ts",
+  "run": "node scripts/lint-dark-mode-tints.ts",
   "ms": 586,
   "recorded": "2026-09-14",
-  "source": "split from scripts/lint-durations.json (recorded 2026-09-14)"
+  "source": "split from scripts/lint-durations.json (recorded 2026-09-14)",
+  "readMB": 6.1
 }

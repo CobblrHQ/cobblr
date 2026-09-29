@@ -16,6 +16,9 @@ export interface Project {
   metadata: Record<string, unknown>;
   created_at: string;
   updated_at: string;
+  /** On a searched list, when the match was inside the project's words (its
+   *  notes, its pattern's PDF) rather than its name: the line it was on. */
+  snippet?: string;
 }
 
 export interface Task {
@@ -93,6 +96,9 @@ export class ProjectsApi {
   }
 
   listProjects = () => this.projectsRequest<{ items: Project[] }>("GET", "");
+  /** The table's search, on the server: it reads the pattern's own words,
+   *  which the page does not hold. */
+  searchProjects = (q: string) => this.projectsRequest<{ items: Project[] }>("GET", `?q=${encodeURIComponent(q)}`);
   getProject = (id: string) => this.projectsRequest<Project>("GET", `/${id}`);
   createProject = (b: {
     name: string;

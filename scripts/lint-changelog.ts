@@ -383,8 +383,18 @@ if (touchedScopes.size > 0) {
 const hasChangeset = touchedEntries.length > 0;
 let bundleBumped = false;
 for (const f of changed.filter((f) => /^bundles\/[^/]+\.json$/.test(f))) {
+  if (!existsSync(f)) continue;
   const oldRaw = tryGit(`show ${base}:${f}`);
-  if (!oldRaw || !existsSync(f)) continue;
+  // A new bundle is its own first release: its manifest `changelog` is the entry.
+  if (!oldRaw) {
+    try {
+      const m = JSON.parse(readFileSync(f, "utf8")) as { manifest?: { changelog?: string }; changelog?: string };
+      if ((m.manifest?.changelog ?? m.changelog ?? "").trim()) bundleBumped = true;
+    } catch {
+      /* ignore */
+    }
+    continue;
+  }
   try {
     if (ver(JSON.parse(oldRaw)) !== ver(JSON.parse(readFileSync(f, "utf8")))) bundleBumped = true;
   } catch {

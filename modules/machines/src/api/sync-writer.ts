@@ -8,6 +8,7 @@
 // wires, and the instance counters stay consistent with the HTTP path.
 
 import { findRowIdByKey, mergeRowMetadata, platform, restoreRow, snapshotRow } from "@cobblr/platform-contract";
+import { DISPOSITION_LABELS } from "@cobblr/platform-contract/disposition";
 import { sql, type Kysely } from "kysely";
 import type { MachinesDB } from "../db.js";
 
@@ -84,6 +85,18 @@ export function registerMachinesWriter(): void {
       void platform().events.emit("machines.machine.deleted", { orgId, machineId: id });
     },
 
+    /** A machine that left the collection keeps its row; its lifecycle state
+     *  says how it left, beside "loaned" and "decommissioned". */
+    async retire(orgId, id, how) {
+      const db = (await platform().tenants.getDb(orgId)) as Kysely<MachinesDB>;
+      await db
+        .updateTable("machines_machines")
+        .set({ state: DISPOSITION_LABELS[how.disposition], updated_at: new Date() } as never)
+        .where("id", "=", id)
+        .execute();
+      void platform().events.emit("machines.machine.updated", { orgId, machineId: id });
+    },
+
     /** Put the row back exactly as it was, id and all (EntityWriter.restore).
      *  Not a create: no name-clash rule, no re-derived id, no new row for
      *  everything that pointed at the old one to miss. */
@@ -95,6 +108,25 @@ export function registerMachinesWriter(): void {
      *  has something real to put back (EntityWriter.snapshot). */
     async snapshot(orgId, id) {
       return snapshotRow(await platform().tenants.getDb(orgId), "machines_machines", id);
+    },
+
+    // What a machine counts as it is used, so a maintenance schedule can be
+    // due "every 200 print hours" (#3876). machines:record-usage writes them.
+    counters: {
+      defs: [
+        { key: "print_hours", label: "print hours" },
+        { key: "print_count", label: "prints" },
+      ],
+      async read(orgId, id) {
+        const db = (await platform().tenants.getDb(orgId)) as Kysely<MachinesDB>;
+        const row = await db.selectFrom("machines_machines").select("metadata").where("id", "=", id).executeTakeFirst();
+        const m = (row?.metadata ?? {}) as Record<string, unknown>;
+        const num = (v: unknown): number | null => {
+          const n = typeof v === "number" ? v : typeof v === "string" && v.trim() ? Number(v) : NaN;
+          return Number.isFinite(n) ? n : null;
+        };
+        return { print_hours: num(m.print_hours), print_count: num(m.print_count) };
+      },
     },
 
     // Existing machines, for the import preview's name-merge.

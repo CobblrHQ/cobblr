@@ -10,6 +10,10 @@
 //
 // The batch question (`ask`, e.g. Source) is asked once, before the drop, from
 // the field's own choices. The report says what became of every file.
+//
+// An answer can carry a guide the bundle wrote (`guides`): Source: Ribblr
+// shows how to get your patterns out of Ribblr, since the person importing
+// them is exactly the person who has not yet.
 import { useState } from "react";
 import type { FileIntakeDecl } from "@cobblr/platform-contract";
 import { FileIntake, type IntakeLine } from "./FileIntake";
@@ -76,6 +80,7 @@ export function TableFileIntake({
     }
   })());
   const asked = (decl.ask ?? []).map((n) => askFields.find((f) => f.name === n)).filter((f): f is AskField => !!f);
+  const guides = (decl.guides ?? []).filter((g) => values[g.when.field] === g.when.equals);
 
   async function makeRecords(lines: IntakeLine[]) {
     const t = token();
@@ -141,6 +146,21 @@ export function TableFileIntake({
           onResults={(lines) => void makeRecords(lines)}
         />
       </div>
+      {guides.map((g) => (
+        <details
+          key={`${g.when.field}:${g.when.equals}`}
+          open
+          className="rounded border border-line dark:border-slate-700 bg-subtle/40 dark:bg-slate-800/40 px-3 py-2 text-sm"
+          data-testid="table-file-intake-guide"
+        >
+          <summary className="cursor-pointer font-medium text-content dark:text-mortar-100">{g.title}</summary>
+          <ol className="mt-1.5 list-decimal space-y-1 pl-5 text-content dark:text-mortar-200">
+            {g.steps.map((s) => (
+              <li key={s}>{s}</li>
+            ))}
+          </ol>
+        </details>
+      ))}
       {(tally || error) && (
         <div role="status" className="rounded border border-line dark:border-slate-700 px-3 py-2 text-sm" data-testid="table-file-intake-summary">
           <div className="flex items-start gap-2">

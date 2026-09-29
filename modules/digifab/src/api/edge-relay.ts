@@ -21,7 +21,7 @@ import { platform } from "@cobblr/platform-contract";
 import type { Request } from "express";
 import { tenantContext } from "../db.js";
 import { asyncHandler, requireRole } from "./util.js";
-import { edgeBridgeName, edgeChannelKey } from "@cobblr/platform-contract/edge-channel";
+import { edgeBridgeName, edgeChannelKey, parseBridgeReport } from "@cobblr/platform-contract/edge-channel";
 
 // Multi-bridge: a workspace can run more than one bridge (separate sites/VLANs,
 // or LightBurn which must run its bridge on the LightBurn PC). Each bridge polls
@@ -41,7 +41,12 @@ export const edgeRelayRouter = Router({ mergeParams: true });
 // POST /register — the bridge announces itself (Bearer = a workspace API token).
 edgeRelayRouter.post("/register", asyncHandler(async (req, res) => {
   if (!requireRole(req, res, "owner", "admin", "member")) return;
-  await platform().edge.relayTouch(channelKeyOf(req));
+  // Same report as the kernel's /register, so a bridge on this older path is
+  // named and described the same way.
+  await platform().edge.relayTouch(
+    channelKeyOf(req),
+    parseBridgeReport(req.body, (req as { session?: { api_token_id?: string | null } }).session?.api_token_id ?? null),
+  );
   res.json({ ok: true });
 }));
 
@@ -195,18 +200,12 @@ async function directBridges(orgId: string): Promise<DirectBridge[]> {
 edgeRelayRouter.get("/bridges", asyncHandler(async (req, res) => {
   if (!requireRole(req, res, "owner", "admin", "member")) return;
   const orgId = tenantContext(req).org.id;
-  const agents = await platform().edge.relayAgents(orgId);
-  const bridges = await Promise.all(
-    agents.map(async (a) => ({
-      bridge: a.bridge,
-      connected: await platform().edge.hasChannel(edgeChannelKey(orgId, a.bridge)),
-      last_seen: Date.now() - a.last_seen_ms,
-    })),
-  );
-  // Default first, then named bridges alphabetically.
-  bridges.sort((a, b) =>
-    a.bridge === null ? -1 : b.bridge === null ? 1 : a.bridge.localeCompare(b.bridge),
-  );
+  // Every bridge, online or not, by name: the kernel's one list (#3904).
+  // `last_seen` stays an epoch-ms number here for callers of this older path.
+  const bridges = (await platform().edge.listBridges(orgId)).map((b) => ({
+    ...b,
+    last_seen: new Date(b.last_seen).getTime(),
+  }));
   // Separate key rather than merged into `bridges`: they are the same CONCEPT to
   // a user and different DATA to a caller (a tunnel bridge is connected-or-not,
   // a direct one is reachable-or-not and from where). The page presents them as

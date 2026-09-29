@@ -29,7 +29,7 @@ import { liveTablesOf, withResolvedOffers } from "../services/resolve-offers.js"
 import { destinationTables } from "../services/destination.js";
 import { assembleScanMenu } from "../services/matchmaker.js";
 import { withPersonName } from "../services/user-name.js";
-import { INTERNAL_API } from "./inbox.js";
+import { filingKindFor, INTERNAL_API, servedItemName } from "./inbox.js";
 import { isJunkName } from "../services/enrich.js";
 import { needsScanReview, SCAN_TRIAGE_COLUMNS } from "@cobblr/platform-contract/scan-triage";
 import { LengthUnitResolver, inboxLongestMm } from "../services/organize-dims.js";
@@ -98,12 +98,17 @@ export function planItemPhotos(
 export function planItemNames(
   plannable: ReadonlyArray<{ id: string; name: string | null }>,
   readyRows: ReadonlyArray<{ id: string; suggested_name: string | null }>,
+  shown: ReadonlyMap<string, string | null> = new Map(),
 ): Record<string, string | null> {
   const out: Record<string, string | null> = {};
   // Planned first and unfiltered: the plan-reuse check compares these to the
-  // live names, so a null must stay a null there.
-  for (const p of plannable) out[p.id] = p.name;
-  for (const r of readyRows) if (r.suggested_name) out[r.id] = r.suggested_name;
+  // live names, so a null must stay a null there. The name as the card shows
+  // it (`shown`), because the card is what the sheet compares against.
+  for (const p of plannable) out[p.id] = shown.has(p.id) ? shown.get(p.id)! : p.name;
+  for (const r of readyRows) {
+    const n = shown.get(r.id) ?? r.suggested_name;
+    if (n) out[r.id] = n;
+  }
   return out;
 }
 
@@ -235,6 +240,9 @@ organizeRouter.post(
       q = q.orderBy("created_at", "desc").orderBy("id", "desc");
     }
     const rows = await q.execute();
+    // Each row's name as the card shows it: what the sheet's "changed since
+    // this plan" compares against, so it is what the plan remembers.
+    const shown = new Map(rows.map((r) => [r.id, servedItemName(r as unknown as Parameters<typeof servedItemName>[0], req)] as const));
     if (rows.length > PLAN_MAX_ITEMS) {
       res.status(422).json({
         error: {
@@ -295,6 +303,7 @@ organizeRouter.post(
         category,
         quantity: r.quantity ?? 1,
         ...(dims ? { longest_mm: dims.longest_mm, dims_detail: dims.detail } : {}),
+        kind: await filingKindFor(r as unknown as Parameters<typeof filingKindFor>[0], req),
       });
     }
     // All-ready is a fine plan ("this is all set — you gonna do it?"): only
@@ -402,7 +411,7 @@ organizeRouter.post(
             const planned = (pl.groups ?? []).filter((g) => !g.ready);
             const plannedIds = planned.flatMap((g) => g.item_ids);
             if (plannedIds.length === 0) return false;
-            const nowById = new Map(plannable.map((p) => [p.id, p.name] as const));
+            const nowById = new Map(plannable.map((p) => [p.id, shown.has(p.id) ? shown.get(p.id)! : p.name] as const));
             // Every planned item still present with the SAME name (a rename
             // changes grouping, so bail to a full recompute then).
             if (!plannedIds.every((id) => nowById.get(id) === (pl.item_names ?? {})[id])) return false;
@@ -480,7 +489,7 @@ organizeRouter.post(
       subject: "inbox" as const,
       // Display names ride the payload so the walk never depends on the inbox
       // query still holding the item (it may commit/resolve mid-walk).
-      item_names: planItemNames(plannable, readyRows),
+      item_names: planItemNames(plannable, readyRows, shown),
       item_photos: planItemPhotos(rows),
       already_filed_item_ids: alreadyFiled,
       needs_review_item_ids: needsReview,

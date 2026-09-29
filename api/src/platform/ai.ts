@@ -13,6 +13,7 @@
 //
 // See docs/modules/core-ai.md.
 
+import { askInOrder, listInOrder } from "./chain.js";
 import { aiRefusal, refusalCodeOf, type AiAttempt } from "@cobblr/platform-contract/ai-refusal";
 import { providerReasonOf, REASONS_ANOTHER_PROVIDER_MAY_ANSWER } from "@cobblr/platform-contract/provider-reason";
 import { createHash } from "node:crypto";
@@ -23,7 +24,7 @@ import type {
   AiProviderDef,
   PlatformAi,
 } from "@cobblr/platform-contract";
-import { aiCapabilityChain, isFloatingModel } from "@cobblr/platform-contract";
+import { aiCapabilityChain, isFloatingModel, type AiChainStep } from "@cobblr/platform-contract";
 import { getTenantDb } from "../db/tenant.js";
 import { meta } from "../db/meta.js";
 import * as integrationsImpl from "./integrations.js";
@@ -529,45 +530,37 @@ export function mayAskAnotherProvider(err: unknown, req: { provider_id?: string;
  *  the workspace lists for the job, in the workspace's order, up to three.
  *  The answer says who answered and who was asked first (#3819). */
 export const invoke: PlatformAi["invoke"] = async (req) => {
-  const tried: TriedProvider[] = [];
-  let lastFailure: unknown = null;
-  for (;;) {
-    const current: { rowId?: string; providerId?: string; model?: string; label?: string } = {};
-    try {
-      const r = await invokeRaw(req, tried, current);
-      const answered_after = tried.length ? tried.map(({ rowId: _rowId, ...a }) => a) : undefined;
-      if (answered_after) {
-        console.warn(
-          `[ai] ${req.capability} answered by ${r.provider_id}/${r.model} after ${answered_after.map((a) => `${a.provider_id}/${a.model} (${a.reason})`).join(", ")}`,
-        );
-      }
-      return {
-        ...r,
-        text: aiAnswerText(r.result),
-        provider_label: current.label ?? labelOf(r.provider_id),
-        provider_kind_label: labelOf(r.provider_id),
-        ...(answered_after ? { answered_after } : {}),
-      };
-    } catch (err) {
-      // Nothing left to ask (every other provider was excluded, or the next
-      // one is not allowed): the last provider's own failure is the answer,
-      // not "no provider".
-      // `attempts` are the providers asked BEFORE the one whose failure this
-      // is, so the last one tried is not listed twice.
-      if (lastFailure && refusalCodeOf(err) !== "provider_error") throw withAttempts(lastFailure, tried.slice(0, -1));
-      if (!mayAskAnotherProvider(err, req) || !current.rowId || tried.length + 1 >= MAX_PROVIDERS_PER_CALL) {
-        throw withAttempts(err, tried);
-      }
-      tried.push({
-        rowId: current.rowId,
-        provider_id: current.providerId ?? "",
-        label: current.label ?? labelOf(current.providerId ?? ""),
-        model: current.model ?? "",
-        reason: providerReasonOf(err) ?? "unknown",
-      });
-      lastFailure = err;
-    }
+  const { result: r, asked: tried, current } = await askInOrder<TriedProvider, { rowId?: string; providerId?: string; model?: string; label?: string }, Awaited<ReturnType<typeof invokeRaw>>>({
+    max: MAX_PROVIDERS_PER_CALL,
+    newCurrent: () => ({}),
+    attempt: (asked, current) => invokeRaw(req, asked, current),
+    record: (current, err) =>
+      current.rowId
+        ? {
+            rowId: current.rowId,
+            provider_id: current.providerId ?? "",
+            label: current.label ?? labelOf(current.providerId ?? ""),
+            model: current.model ?? "",
+            reason: providerReasonOf(err) ?? "unknown",
+          }
+        : null,
+    mayAskAnother: (err) => mayAskAnotherProvider(err, req),
+    isCandidateFailure: (err) => refusalCodeOf(err) === "provider_error",
+    finish: (err, asked) => withAttempts(err, [...asked]),
+  });
+  const answered_after = tried.length ? tried.map(({ rowId: _rowId, ...a }) => a) : undefined;
+  if (answered_after) {
+    console.warn(
+      `[ai] ${req.capability} answered by ${r.provider_id}/${r.model} after ${answered_after.map((a) => `${a.provider_id}/${a.model} (${a.reason})`).join(", ")}`,
+    );
   }
+  return {
+    ...r,
+    text: aiAnswerText(r.result),
+    provider_label: current.label ?? labelOf(r.provider_id),
+    provider_kind_label: labelOf(r.provider_id),
+    ...(answered_after ? { answered_after } : {}),
+  };
 };
 
 /** The refusal with every provider asked before it on it. */
@@ -703,28 +696,7 @@ async function nextCandidate(
   return { row, model, personalCredentials, personal: personalServed };
 }
 
-/** One provider in the order a call would ask them (#3842). */
-export interface AiChainStep {
-  /** 1 is asked first. */
-  position: number;
-  /** Within the providers one call may ask; a step past that cap is listed
-   *  so the order reads whole, but no single call reaches it. */
-  asked: boolean;
-  provider_id: string;
-  /** The connection's own name for a personal one, the provider's otherwise. */
-  label: string;
-  /** The model this step would send, as the provider resolves it. */
-  model: string;
-  /** A model id that moves under you ("...-latest"). */
-  floating: boolean;
-  /** yours: the caller's own connection. shared: somebody's connection this
-   *  workspace approved and uses. workspace: installed on the workspace.
-   *  managed: the deployment's own, no key needed. */
-  source: "yours" | "shared" | "workspace" | "managed";
-  credential_id?: string;
-  owner_user_id?: string;
-  provider_row_id?: string;
-}
+export type { AiChainStep } from "@cobblr/platform-contract";
 
 /** Every provider a call for `capability` would ask, in the order it asks
  *  them. Walks `nextCandidate`, the function the router itself asks once per
@@ -737,43 +709,41 @@ export async function aiChainFor(
   capability: AiCapability,
   opts: { limit?: number } = {},
 ): Promise<{ steps: AiChainStep[]; refusal?: { code: string; message: string } }> {
-  const limit = opts.limit ?? MAX_PROVIDERS_PER_CALL + 3;
-  const tried: TriedProvider[] = [];
-  const steps: AiChainStep[] = [];
-  let refusal: { code: string; message: string } | undefined;
-  while (steps.length < limit) {
-    let next: Awaited<ReturnType<typeof nextCandidate>>;
-    try {
-      next = await nextCandidate({ orgId, userId: userId ?? undefined, capability }, tried);
-    } catch (err) {
-      if (!steps.length) refusal = { code: refusalCodeOf(err) ?? "no_provider", message: (err as Error).message };
-      break;
-    }
-    const { row, personal } = next;
-    const def = providers.get(row.provider_id);
-    let model = next.model;
-    try {
-      const credentials =
-        next.personalCredentials ?? (row.credentials_enc ? await integrationsImpl.decryptCredentials(orgId, row.credentials_enc) : {});
-      model = def?.resolveModel?.({ capability, model, credentials }).model ?? model;
-    } catch {
-      /* the router's own model stands */
-    }
-    const isPersonal = String(row.id).startsWith("personal:");
-    steps.push({
-      position: steps.length + 1,
-      asked: steps.length < MAX_PROVIDERS_PER_CALL,
-      provider_id: row.provider_id,
-      label: nameOf(row),
-      model,
-      floating: isFloatingModel(model),
-      source: isPersonal ? (personal && userId && personal.ownerUserId === userId ? "yours" : "shared") : String(row.id).startsWith("virtual:") ? "managed" : "workspace",
-      ...(isPersonal && personal ? { credential_id: personal.credentialId, owner_user_id: personal.ownerUserId } : {}),
-      ...(!isPersonal && !String(row.id).startsWith("virtual:") ? { provider_row_id: row.id } : {}),
-    });
-    tried.push({ rowId: row.id, provider_id: row.provider_id, label: nameOf(row), model, reason: "busy" });
-  }
-  return { steps, ...(refusal ? { refusal } : {}) };
+  const { steps, stoppedBy } = await listInOrder<TriedProvider, Awaited<ReturnType<typeof nextCandidate>>, AiChainStep>({
+    limit: opts.limit ?? MAX_PROVIDERS_PER_CALL + 3,
+    next: (asked) => nextCandidate({ orgId, userId: userId ?? undefined, capability }, asked),
+    step: async (next, position) => {
+      const { row, personal } = next;
+      const def = providers.get(row.provider_id);
+      let model = next.model;
+      try {
+        const credentials =
+          next.personalCredentials ?? (row.credentials_enc ? await integrationsImpl.decryptCredentials(orgId, row.credentials_enc) : {});
+        model = def?.resolveModel?.({ capability, model, credentials }).model ?? model;
+      } catch {
+        /* the router's own model stands */
+      }
+      const isPersonal = String(row.id).startsWith("personal:");
+      return {
+        step: {
+          position,
+          asked: position <= MAX_PROVIDERS_PER_CALL,
+          provider_id: row.provider_id,
+          label: nameOf(row),
+          model,
+          floating: isFloatingModel(model),
+          source: isPersonal ? (personal && userId && personal.ownerUserId === userId ? "yours" : "shared") : String(row.id).startsWith("virtual:") ? "managed" : "workspace",
+          ...(isPersonal && personal ? { credential_id: personal.credentialId, owner_user_id: personal.ownerUserId } : {}),
+          ...(!isPersonal && !String(row.id).startsWith("virtual:") ? { provider_row_id: row.id } : {}),
+        },
+        asked: { rowId: row.id, provider_id: row.provider_id, label: nameOf(row), model, reason: "busy" },
+      };
+    },
+  });
+  return {
+    steps,
+    ...(stoppedBy !== undefined ? { refusal: { code: refusalCodeOf(stoppedBy) ?? "no_provider", message: (stoppedBy as Error).message } } : {}),
+  };
 }
 
 const invokeRaw = async (

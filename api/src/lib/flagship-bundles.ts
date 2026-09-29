@@ -13,6 +13,7 @@
 
 import fs from "node:fs";
 import { bundleTableWords } from "@cobblr/platform-contract/bundle-words";
+import { parentInstanceOf, scanLabelForChild, typeTablesAmong, withTypeFields, type ParentedTable } from "@cobblr/platform-contract/scan-type-tables";
 import path from "node:path";
 import { getOfficialBundleManifest } from "../routes/registry.js";
 import { inCatalogScope, type CatalogScope } from "./catalog-tier.js";
@@ -247,17 +248,26 @@ export function flagshipBundleMenu(): BundleMenuEntry[] {
     const id = m.id as string;
     const pis = Array.isArray(m.provides_instances) ? m.provides_instances : [];
     if (pis.length) {
+      const shaped = pis.map((pi) => ({ instance: String(pi.instance_name ?? ""), parent: pi.parent as ParentedTable["parent"] }));
+      const typeTables = typeTablesAmong(shaped);
       for (const pi of pis) {
         const moduleName = String(pi.module ?? "");
         const instName = String(pi.instance_name ?? "");
         if (!moduleName || !instName) continue;
+        // A type table is the definitions, never where a scanned thing lands.
+        if (typeTables.has(instName)) continue;
+        const parentName = parentInstanceOf({ instance: instName, parent: pi.parent as ParentedTable["parent"] });
+        const typePi = parentName ? pis.find((p) => String(p.instance_name ?? "") === parentName) : undefined;
+        const ownFields = mapFields(pi.field_defs as Array<Record<string, unknown>> | undefined);
         out.push({
           module: moduleName,
           instance: instName,
           kind: `${instName}:item`,
           noun: String(pi.item_noun || pi.display_name || instName).toLowerCase(),
-          label: String(pi.display_name || m.name || instName),
-          fields: mapFields(pi.field_defs as Array<Record<string, unknown>> | undefined),
+          label: typePi
+            ? scanLabelForChild(String(pi.display_name || m.name || instName), (pi.nav_group as { label?: unknown } | undefined)?.label)
+            : String(pi.display_name || m.name || instName),
+          fields: typePi ? withTypeFields(ownFields, mapFields(typePi.field_defs as Array<Record<string, unknown>> | undefined)) : ownFields,
           // BOTH lists, deduped: the bundle's words AND the table's.
           //
           // This picked one and threw the other away, which is fine until a
@@ -271,7 +281,10 @@ export function flagshipBundleMenu(): BundleMenuEntry[] {
           // which used to write only the table's own words: the same drift,
           // one door later (2026-09-12).
           ...(() => {
-            const words = bundleTableWords(keywordsOf(pi.scan_keywords), keywordsOf(m.scan_keywords));
+            const words = bundleTableWords(
+              [...(keywordsOf(pi.scan_keywords) ?? []), ...(keywordsOf(typePi?.scan_keywords) ?? [])],
+              keywordsOf(m.scan_keywords),
+            );
             return words.length > 0 ? { scan_keywords: words } : {};
           })(),
           ...fieldRoleAxes(pi.field_defs as Array<Record<string, unknown>> | undefined),
@@ -315,10 +328,13 @@ export function flagshipBundleTargets(id: string): BundleTarget[] {
   const out: BundleTarget[] = [];
   const pis = Array.isArray(m.provides_instances) ? m.provides_instances : [];
   if (pis.length) {
+    // A type table is not where a captured thing is filed; its child is.
+    const typeTables = typeTablesAmong(pis.map((pi) => ({ instance: String(pi.instance_name ?? ""), parent: pi.parent as ParentedTable["parent"] })));
     for (const pi of pis) {
       const moduleName = String(pi.module ?? "");
       const instName = String(pi.instance_name ?? "");
       if (!moduleName) continue;
+      if (typeTables.has(instName)) continue;
       // The base create-kind is the kind the instance's field defs live on
       // (e.g. "inventory:part") — read from the manifest, not hardcoded.
       const piFields = Array.isArray(pi.field_defs) ? pi.field_defs : [];

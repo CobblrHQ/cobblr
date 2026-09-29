@@ -29,6 +29,10 @@ registerDetailPanel(
   lazy(() => import("../features/digifab/fleet").then((m) => ({ default: m.MachineCockpitPanel }))),
 );
 registerDetailPanel(
+  "inventory:stock-here",
+  lazy(() => import("../features/inventory/stockHere").then((m) => ({ default: m.StockHerePanel }))),
+);
+registerDetailPanel(
   "purchases:price-history",
   lazy(() => import("../features/purchases/priceHistory").then((m) => ({ default: m.PriceHistoryPanel }))),
 );
@@ -44,6 +48,10 @@ registerDetailPanel(
 // then discussion) so a record does not rearrange itself depending on which
 // half of the app drew the page.
 registerDetailPanel(
+  "core-scan:suggested-photo",
+  lazy(() => import("../features/core-scan/suggestedPhoto").then((m) => ({ default: m.SuggestedPhotoPanel }))),
+);
+registerDetailPanel(
   "core-tags:tags",
   lazy(() => import("../features/core-tags/panel").then((m) => ({ default: m.TagsPanel }))),
 );
@@ -56,6 +64,10 @@ registerDetailPanel(
 registerDetailPanel(
   "platform:links",
   lazy(() => import("../features/links/panel").then((m) => ({ default: m.LinksPanel }))),
+);
+registerDetailPanel(
+  "core-maintenance:schedules",
+  lazy(() => import("../features/core-maintenance/schedules").then((m) => ({ default: m.MaintenanceSchedulesPanel }))),
 );
 registerDetailPanel(
   "core-shipments:shipment",

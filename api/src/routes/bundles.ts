@@ -11,8 +11,10 @@ import { BindingAsk, BindingLabel } from "@cobblr/platform-contract/binding-ask"
 import { chosenNoun, nounOptions, type NounChoiceDecl } from "@cobblr/platform-contract/kind-label";
 import { fillInstanceNoun, storedNounChoices, withNounsFilled } from "../platform/noun-choice.js";
 import { applyBundleLocations, previewBundleLocations } from "../platform/apply-bundle-locations.js";
+import { describeKept, moduleRecordCount, previewPlaces, releaseUnclaimed, type ReleaseSummary } from "../platform/bundle-release.js";
 import { resolveEnabledFeatures, featuresToOffer as pickFeaturesToOffer } from "../platform/feature-defaults.js";
 import { sql, type Kysely } from "kysely";
+import type { MetaDB } from "../db/schema.js";
 import { platform, CatalogSchemaConfig, packFieldIssues, FieldRoleSchema, FieldTypeSchema, isFieldScope, parseFieldScope, FaceSchema } from "@cobblr/platform-contract";
 import { requireAuth } from "../auth/middleware.js";
 import { requireRole } from "../auth/capability.js";
@@ -38,9 +40,9 @@ import { featureChange, diffLedger, describeFeatureChange, type FeatureManifest,
 import { SCAN_CATEGORY_SOURCE } from "../platform/reconcile-scan-category.js";
 import { listNavHeadings, createNavHeading, addNavMember } from "../platform/nav-headings.js";
 import { tearDownInstance, countInstanceItems, listInstances, instanceRowCount } from "../platform/instances.js";
-import { disableModuleForOrg } from "../modules/enable.js";
 import {
   recordClaims,
+  type ResourceClaim,
   removeClaimsForSource,
   claimsForSource,
   countClaimsFor,
@@ -160,6 +162,11 @@ const FieldDefEntry = z
     /** Plain-language one-line hint shown under the input ("the maker's named
      *  shade — e.g. 'Peacock Heather'") so jargon fields explain themselves. */
     help: z.string().max(280).optional(),
+    /** The heading this field sits under on a record's sheet ("Printing",
+     *  "Spool"), the same form-builder sections a person arranges by hand. A
+     *  section is found by name or made on install and upgrade, in the order
+     *  its first field appears; a field with none sits above the sections. */
+    section: z.string().trim().min(1).max(60).optional(),
     /** The unit a type='number' value is measured in ("mm", "g") — free text,
      *  resolved against the units vocabulary at render/consume time. Declares
      *  physical semantics (a length-category unit IS a length), never derived
@@ -282,6 +289,18 @@ const InstanceEntry = z.object({
       folder_field: z.string().min(1).optional(),
       ask: z.array(z.string().min(1)).optional(),
       label: z.string().min(1).optional(),
+      /** How to get the files out of a place, shown when the batch question
+       *  is answered with it (FileIntakeGuide). */
+      guides: z
+        .array(
+          z.object({
+            when: z.object({ field: z.string().min(1), equals: z.string().min(1) }),
+            title: z.string().min(1).max(120),
+            steps: z.array(z.string().min(1).max(400)).min(1).max(12),
+          }),
+        )
+        .max(20)
+        .optional(),
     })
     .optional(),
   /** When this instance's items belong to a parent "type" in another instance
@@ -417,6 +436,15 @@ export const BundleManifest = z.object({
    *  the update prompt. Display-only; stored in the manifest jsonb. */
   released_at: z.string().optional(),
   changelog: z.string().max(2000).optional(),
+  /** What changed in each version, newest first. An update shows every entry
+   *  between the installed version and this one, so somebody three versions
+   *  behind reads all three. lint:versions refuses a version bump that adds
+   *  no entry for the new version: without it the prompt showed the notes of
+   *  a release months older than the one on offer. Display-only. */
+  releases: z
+    .array(z.object({ version: z.string().min(1), released_at: z.string().optional(), notes: z.string().min(1).max(2000) }))
+    .max(100)
+    .optional(),
   /** The bundle's own routing vocabulary: what its things are CALLED. Read by
    *  the per-scan offer for a bundle not yet installed (lib/flagship-bundles.ts)
    *  and, since 2026-09-12, unioned into each provided table's words at install
@@ -767,6 +795,47 @@ export function resolveManifestFeatures(full: BundleManifestT, enabledKeys: stri
   };
 }
 
+/** A manifest as stored or as sent: the parsed shape, or a loose JSON copy of
+ *  it (a snapshot's jsonb). Only the keys that declare fields and wires. */
+interface DeclaringManifest {
+  field_defs?: ReadonlyArray<{ entity_kind: string; name: string }>;
+  wires?: readonly unknown[];
+  provides_instances?: ReadonlyArray<{
+    instance_name: string;
+    field_defs?: ReadonlyArray<{ name: string }>;
+    wires?: readonly unknown[];
+  }>;
+  features?: readonly DeclaringManifest[];
+}
+
+/** Every field a manifest declares, wherever it declares it: the base kinds,
+ *  each table it provides (stored under `<instance_name>:item`, the kind the
+ *  install writes), and every optional feature. A reader that walks
+ *  `field_defs` alone sees an instance bundle as having no fields at all, and
+ *  then reads each of its fields as "removed by the update". */
+export function declaredFieldDefs<F extends { name: string }>(
+  m: DeclaringManifest & { field_defs?: ReadonlyArray<F & { entity_kind: string }>; provides_instances?: ReadonlyArray<{ instance_name: string; field_defs?: readonly F[] }> },
+): Array<{ entity_kind: string; def: F }> {
+  const out: Array<{ entity_kind: string; def: F }> = [];
+  const walk = (x: DeclaringManifest) => {
+    for (const f of (x.field_defs ?? []) as ReadonlyArray<F & { entity_kind: string }>) out.push({ entity_kind: f.entity_kind, def: f });
+    for (const inst of x.provides_instances ?? []) {
+      for (const f of (inst.field_defs ?? []) as readonly F[]) out.push({ entity_kind: `${inst.instance_name}:item`, def: f });
+    }
+    for (const feat of x.features ?? []) walk(feat);
+  };
+  walk(m);
+  return out;
+}
+
+/** Every wire a manifest declares: base, per table, per feature. */
+export function declaredWireCount(m: DeclaringManifest): number {
+  let n = (m.wires ?? []).length;
+  for (const inst of m.provides_instances ?? []) n += (inst.wires ?? []).length;
+  for (const feat of m.features ?? []) n += declaredWireCount(feat);
+  return n;
+}
+
 export async function validateBundle(
   orgId: string,
   rawManifest: unknown,
@@ -1115,7 +1184,7 @@ export async function validateBundle(
         .where("bundle_id", "in", selfIds)
         .execute();
       const curByKey = new Map(curDefs.map((d) => [`${d.entity_kind}\x00${d.name}`, d]));
-      const newByKey = new Map(m.field_defs.map((f) => [`${f.entity_kind}\x00${f.name}`, f]));
+      const newByKey = new Map(declaredFieldDefs(m).map(({ entity_kind, def }) => [`${entity_kind}\x00${def.name}`, def]));
       const userOvrs = await meta
         .selectFrom("native_field_overrides")
         .select(["entity_kind", "name", "display_label", "overrides"])
@@ -1137,7 +1206,10 @@ export async function validateBundle(
           upgradeConflicts.push({ entity_kind: o.entity_kind, name: o.name, field_label: fieldLabel, attr: "label", yours: o.display_label, theirs: incoming.display_label });
         }
         const userChoices = o.overrides?.choices ?? null;
-        if (userChoices != null && !sameJson(incoming.choices, cur.choices)) {
+        // Your list already carries every option the update offers: keeping
+        // it loses nothing, so there is nothing to decide.
+        const nothingNewForYou = (incoming.choices ?? []).every((c) => userChoices?.includes(c));
+        if (userChoices != null && !sameJson(incoming.choices, cur.choices) && !nothingNewForYou) {
           upgradeConflicts.push({ entity_kind: o.entity_kind, name: o.name, field_label: fieldLabel, attr: "choices", yours: userChoices, theirs: incoming.choices ?? null });
         }
       }
@@ -1512,8 +1584,83 @@ bundlesRouter.post(
  *  to build this literal separately, and the instance copy lost `field_role`:
  *  a groceries app filed eight items and dated none, because the expiry stamp
  *  reads the role and the role never arrived (2026-09-02). Roles ride here. */
-function fieldDefRow(orgId: string, entityKind: string, f: z.infer<typeof FieldDefEntry>, bundleId: string) {
+/** The form-builder section each named `section` of a set of field defs is
+ *  filed under, for one kind: found by name, or made after the kind's last
+ *  section, in the order the sections first appear among the fields (by
+ *  position). A person's own sections are left as they are. */
+async function bundleSectionIds(
+  trx: Kysely<MetaDB>,
+  orgId: string,
+  entityKind: string,
+  defs: ReadonlyArray<{ section?: string; position?: number }>,
+): Promise<Map<string, string>> {
+  const names: string[] = [];
+  for (const f of [...defs].sort((a, b) => (a.position ?? 0) - (b.position ?? 0))) {
+    if (f.section && !names.includes(f.section)) names.push(f.section);
+  }
+  const out = new Map<string, string>();
+  if (!names.length) return out;
+  const have = await trx.selectFrom("field_sections").select(["id", "name", "position"]).where("org_id", "=", orgId).where("entity_kind", "=", entityKind).execute();
+  let next = have.reduce((m, r) => Math.max(m, r.position), -1) + 1;
+  for (const name of names) {
+    const found = have.find((r) => r.name.toLowerCase() === name.toLowerCase());
+    if (found) {
+      out.set(name, found.id);
+      continue;
+    }
+    const made = await trx.insertInto("field_sections").values({ org_id: orgId, entity_kind: entityKind, name, position: next }).returning("id").executeTakeFirstOrThrow();
+    have.push({ id: made.id, name, position: next++ });
+    out.set(name, made.id);
+  }
+  return out;
+}
+
+type PriorDefs = { field_defs?: Array<{ entity_kind?: string; name?: string; section?: string }>; provides_instances?: Array<{ instance_name?: string; field_defs?: Array<{ name?: string; section?: string }> }> };
+
+/** The section each of these installed versions' fields sits in, where it is
+ *  not the one that version declared: a person put it there (or took it out
+ *  of one), so it is theirs to keep. Keyed `<kind>\u0000<name>`. */
+async function personPlacedSections(
+  orgId: string,
+  versions: ReadonlyArray<{ id: string; manifest: unknown }>,
+): Promise<Map<string, string | null>> {
+  const declared = new Map<string, string>();
+  for (const v of versions) {
+    const pm = (typeof v.manifest === "string" ? JSON.parse(v.manifest) : v.manifest) as (PriorDefs & { features?: PriorDefs[] }) | null;
+    for (const part of [pm, ...(pm?.features ?? [])]) {
+      for (const f of part?.field_defs ?? []) if (f.entity_kind && f.name && f.section) declared.set(`${f.entity_kind}\u0000${f.name}`, f.section);
+      for (const inst of part?.provides_instances ?? []) {
+        for (const f of inst.field_defs ?? []) if (inst.instance_name && f.name && f.section) declared.set(`${inst.instance_name}:item\u0000${f.name}`, f.section);
+      }
+    }
+  }
+  const rows = await meta
+    .selectFrom("module_field_defs as d")
+    .leftJoin("field_sections as s", "s.id", "d.section_id")
+    .select(["d.entity_kind", "d.name", "d.section_id", "s.name as section_name"])
+    .where("d.org_id", "=", orgId)
+    .where("d.bundle_id", "in", versions.map((v) => v.id))
+    .execute();
+  const out = new Map<string, string | null>();
+  for (const r of rows) {
+    const key = `${r.entity_kind}\u0000${r.name}`;
+    const was = declared.get(key)?.toLowerCase() ?? null;
+    if ((r.section_name?.toLowerCase() ?? null) !== was) out.set(key, r.section_id);
+  }
+  return out;
+}
+
+function fieldDefRow(
+  orgId: string,
+  entityKind: string,
+  f: z.infer<typeof FieldDefEntry>,
+  bundleId: string,
+  sections?: ReadonlyMap<string, string>,
+  kept?: ReadonlyMap<string, string | null>,
+) {
+  const key = `${entityKind}\u0000${f.name}`;
   return {
+    section_id: kept?.has(key) ? (kept.get(key) ?? null) : (f.section && sections?.get(f.section)) || null,
     org_id: orgId,
     entity_kind: entityKind,
     name: f.name,
@@ -1547,12 +1694,73 @@ function roleOverridesBlob(fo: { decode_role?: string; field_role?: string }) {
     : null;
 }
 
+/** What the person chose for one conflicting item: keep theirs as they have
+ *  it, take the update's, or (for a list of options) keep both lists. */
+export const ConflictResolutionSchema = z
+  .object({
+    entity_kind: z.string().min(1),
+    name: z.string().min(1),
+    attr: z.enum(["label", "choices", "removed"]),
+    choice: z.enum(["mine", "theirs", "both"]),
+  })
+  .refine((r) => r.choice !== "both" || r.attr === "choices", {
+    message: "keep both applies to a list of options only; a name or a removed field is yours or the update's",
+  });
+export type ConflictResolution = z.infer<typeof ConflictResolutionSchema>;
+
+/** Apply one answer to the person's own override row (bundle_id null). Only
+ *  the part in conflict moves: taking the update's options leaves a renamed
+ *  label alone. "both" exists only for options (the schema refuses it
+ *  elsewhere), where it is the union with the person's own first. */
+async function resolveUpgradeConflict(
+  orgId: string,
+  r: ConflictResolution,
+  conflicts: BundleValidationPreview["upgrade_conflicts"],
+): Promise<void> {
+  if (r.choice === "mine") return;
+  const c = conflicts.find((x) => x.entity_kind === r.entity_kind && x.name === r.name && x.attr === r.attr);
+  if (!c) return; // not a conflict this update has: nothing of theirs to take
+  const row = meta
+    .updateTable("native_field_overrides")
+    .where("org_id", "=", orgId)
+    .where("entity_kind", "=", r.entity_kind)
+    .where("name", "=", r.name)
+    .where("bundle_id", "is", null);
+  if (r.attr === "removed") {
+    await meta
+      .deleteFrom("native_field_overrides")
+      .where("org_id", "=", orgId)
+      .where("entity_kind", "=", r.entity_kind)
+      .where("name", "=", r.name)
+      .where("bundle_id", "is", null)
+      .execute();
+    return;
+  }
+  if (r.attr === "label") {
+    await row.set({ display_label: null, updated_at: sql`now()` }).execute();
+    return;
+  }
+  const yours = Array.isArray(c.yours) ? c.yours : [];
+  const theirs = Array.isArray(c.theirs) ? c.theirs : [];
+  if (r.choice === "theirs") {
+    await row.set({ overrides: sql`overrides - 'choices'`, updated_at: sql`now()` }).execute();
+    return;
+  }
+  const both = [...yours, ...theirs.filter((t) => !yours.includes(t))];
+  await row
+    .set({ overrides: sql`jsonb_set(overrides, '{choices}', ${JSON.stringify(both)}::jsonb)`, updated_at: sql`now()` })
+    .execute();
+}
+
 export async function applyValidatedBundle(
   orgId: string,
   sess: { id: string; display_name?: string | null; auth_method: "session" | "api_token" | "system"; api_token_id?: string | null },
   v: BundleValidationResult,
   opts: {
     takeTheirs?: Array<{ entity_kind: string; name: string }>;
+    /** One answer per upgrade conflict, from the update's conflict view.
+     *  Absent for a conflict: keep yours. */
+    resolutions?: ConflictResolution[];
     /** The word picked for a table that offers them, by instance name
      *  ("yarn" → "skein"). Absent: the stored choice, else the default. */
     nounChoices?: Record<string, string>;
@@ -1591,6 +1799,8 @@ export async function applyValidatedBundle(
       .execute();
   }
 
+  for (const r of opts.resolutions ?? []) await resolveUpgradeConflict(orgId, r, v.preview?.upgrade_conflicts ?? []);
+
   // Confirmed path: enable the modules that need enabling, parents
   // before children (dependency order).
   const autoEnabled: string[] = [];
@@ -1601,6 +1811,10 @@ export async function applyValidatedBundle(
     await enableModuleForOrg(orgId, name, { userId: sess.id });
     autoEnabled.push(name);
   }
+  // This install switched these on, so it claims them: an uninstall switches
+  // them off again when nothing else claims them and they hold nothing (#3918).
+  // A module that was already on is not in this list and never claimed here.
+  await recordClaims(orgId, m.id, autoEnabled.map((name) => ({ resource_type: "module" as const, resource_key: name })));
 
   // Already installed? Replace ANY existing version of the same bundle
   // (external_id) — not just the same version — so installing a newer
@@ -1656,6 +1870,12 @@ export async function applyValidatedBundle(
       }
     }
   }
+  // Where a person moved one of this bundle's fields ("Spool" → "Printing",
+  // or out of any section), keyed kind + name. The replace below re-inserts
+  // every def, so without this an update would put their fields back where
+  // the bundle first had them. A field still in the section the previous
+  // version gave it follows the new version's.
+  const keptSections = existing.length > 0 ? await personPlacedSections(orgId, existing) : new Map<string, string | null>();
   for (const old of existing) {
     await uninstallBundleId(old.id, { snapshotReason: "replaced" });
   }
@@ -1668,7 +1888,10 @@ export async function applyValidatedBundle(
   // useful without them.
   if ((m.provides_locations ?? []).length > 0) {
     try {
-      await applyBundleLocations(orgId, m.provides_locations);
+      const made = await applyBundleLocations(orgId, m.provides_locations);
+      // Claim only the places this install MADE; a Kitchen that was already
+      // there is the workspace's, and an uninstall never touches it.
+      await recordClaims(orgId, m.id, made.createdIds.map((id) => ({ resource_type: "place" as const, resource_key: id })));
     } catch (err) {
       console.error(`[bundles] locations for ${m.id} not applied:`, (err as Error).message);
     }
@@ -1793,6 +2016,9 @@ export async function applyValidatedBundle(
     const bundle = await trx
       .insertInto("bundles")
       .values({
+        // The installed bundle keeps its id through an update or a feature
+        // change: an open sheet, a link or a bookmark holding it stays good.
+        ...(priorBundle ? { id: priorBundle.id } : {}),
         org_id: orgId,
         external_id: m.id,
         name: m.name,
@@ -1842,13 +2068,17 @@ export async function applyValidatedBundle(
         )
         .execute();
     }
+    const baseSections = new Map<string, Map<string, string>>();
+    for (const kind of new Set(m.field_defs.map((f) => f.entity_kind))) {
+      baseSections.set(kind, await bundleSectionIds(trx, orgId, kind, m.field_defs.filter((d) => d.entity_kind === kind)));
+    }
     for (const f of m.field_defs) {
       // Q6: collisions were pre-checked above and the install
       // would have already failed with 409 field_def_collision.
       // Plain insert; the unique constraint will surface any
       // unexpected races as a 500 (and the transaction rolls
       // back).
-      await trx.insertInto("module_field_defs").values(fieldDefRow(orgId, f.entity_kind, f, bundle.id)).execute();
+      await trx.insertInto("module_field_defs").values(fieldDefRow(orgId, f.entity_kind, f, bundle.id, baseSections.get(f.entity_kind), keptSections)).execute();
     }
     // Native-field overrides (relabel / show-hide). Upsert so a bundle can
     // reshape a field another bundle already touched (last writer wins);
@@ -1917,8 +2147,9 @@ export async function applyValidatedBundle(
           })
           .execute();
       }
+      const instSections = await bundleSectionIds(trx, orgId, kind, inst.field_defs);
       for (const f of inst.field_defs) {
-        await trx.insertInto("module_field_defs").values(fieldDefRow(orgId, kind, f, bundle.id)).execute();
+        await trx.insertInto("module_field_defs").values(fieldDefRow(orgId, kind, f, bundle.id, instSections, keptSections)).execute();
       }
       for (const fo of inst.field_overrides) {
         const foBlob = roleOverridesBlob(fo);
@@ -2236,28 +2467,6 @@ export async function applyValidatedBundle(
   const instanceWires = m.provides_instances.reduce((n, inst) => n + inst.wires.length, 0);
   const totalFieldDefs = m.field_defs.length + instanceFieldDefs;
   const totalWires = m.wires.length + instanceWires;
-  // Credit the installer the caller named. The row used to read the request
-  // context only, so an install run outside a request (an automatic bundle
-  // update, an approval applied later) had no actor and read "someone
-  // installed Yarn" on the dashboard (#3833). A system install (the automatic
-  // update) is the platform's own work: no user, and the feed says "Cobblr".
-  await activity.log({
-    orgId: orgId,
-    userId: sess.auth_method === "system" ? null : sess.id,
-    authMethod: sess.auth_method,
-    apiTokenId: sess.api_token_id ?? null,
-    action: "bundle_installed",
-    ref: { module: null, entityType: "bundle", entityId: inserted.id },
-    diff: {
-      external_id: m.id,
-      version: m.version,
-      name: m.name,
-      wires: totalWires,
-      field_defs: totalFieldDefs,
-      saved_views: viewsInstalled,
-      catalogs: catalogsInstalled,
-    },
-  });
   // Run the bundle's OWN data migrations whose to_version we just crossed —
   // only on an UPGRADE (priorVersion set + below to_version). A fresh install
   // runs none (no data to move). Idempotent: the migration actions skip
@@ -2315,6 +2524,31 @@ export async function applyValidatedBundle(
   }
   // Installed: its collections, fields and views are part of the shape now.
   await bumpWorkspaceShape(orgId);
+  // The activity says installed only once it is: written last, so a step
+  // that throws first (an outage mid-install) leaves no "installed" for an
+  // install the person was told had failed.
+  // Credit the installer the caller named. The row used to read the request
+  // context only, so an install run outside a request (an automatic bundle
+  // update, an approval applied later) had no actor and read "someone
+  // installed Yarn" on the dashboard (#3833). A system install (the automatic
+  // update) is the platform's own work: no user, and the feed says "Cobblr".
+  await activity.log({
+    orgId: orgId,
+    userId: sess.auth_method === "system" ? null : sess.id,
+    authMethod: sess.auth_method,
+    apiTokenId: sess.api_token_id ?? null,
+    action: "bundle_installed",
+    ref: { module: null, entityType: "bundle", entityId: inserted.id },
+    diff: {
+      external_id: m.id,
+      version: m.version,
+      name: m.name,
+      wires: totalWires,
+      field_defs: totalFieldDefs,
+      saved_views: viewsInstalled,
+      catalogs: catalogsInstalled,
+    },
+  });
   return {
     bundle: inserted,
     applied: {
@@ -2377,6 +2611,9 @@ bundlesRouter.post(
         /** Upgrade conflicts (preview.upgrade_conflicts) the user chose to
          *  "take theirs" on: drop the user override so the new bundle wins. */
         take_theirs: z.array(z.object({ entity_kind: z.string(), name: z.string() })).optional(),
+        /** One answer per upgrade conflict (keep mine / take theirs / keep
+         *  both for a list of options). Absent for a conflict: keep mine. */
+        resolutions: z.array(ConflictResolutionSchema).max(500).optional(),
         /** The word picked for each table that offers them (#3650), by
          *  instance name: { yarn: "skein" }. Omitted: the stored choice on
          *  an update, the bundle's default on a first install. */
@@ -2470,7 +2707,7 @@ bundlesRouter.post(
         req.tenant!.org.id,
         { id: req.session!.id, display_name: req.session!.display_name ?? null, auth_method: req.session!.auth_method, api_token_id: req.session!.api_token_id ?? null },
         v,
-        { takeTheirs: body.data.take_theirs, nounChoices: body.data.noun_choices },
+        { takeTheirs: body.data.take_theirs, resolutions: body.data.resolutions, nounChoices: body.data.noun_choices },
       );
       // DID IT ACTUALLY DO IT?
       //
@@ -2768,7 +3005,16 @@ bundlesRouter.get(
 async function previewBundleUninstall(
   orgId: string,
   externalId: string,
-): Promise<{ instances: { name: string; display_name: string; item_count: number }[]; modules: string[] }> {
+): Promise<{
+  instances: { name: string; display_name: string; item_count: number }[];
+  modules: string[];
+  /** The same modules, as a person reads them. */
+  module_names: string[];
+  /** Places this bundle made that an uninstall removes (they are empty). */
+  places: { id: string; name: string }[];
+  /** What it would leave, and why: a place in use, a module with records. */
+  kept: { type: "module" | "place"; name: string; reason: string }[];
+}> {
   const claims = await claimsForSource(orgId, externalId);
   const instances: { name: string; display_name: string; item_count: number }[] = [];
   for (const c of claims.filter((x) => x.resource_type === "instance")) {
@@ -2784,10 +3030,41 @@ async function previewBundleUninstall(
     }
   }
   const modules: string[] = [];
+  const kept: { type: "module" | "place"; name: string; reason: string }[] = [];
+  const goingInstances = new Set(instances.map((i) => i.name));
   for (const c of claims.filter((x) => x.resource_type === "module")) {
-    if ((await countClaimsFor(orgId, "module", c.resource_key)) <= 1) modules.push(c.resource_key);
+    if ((await countClaimsFor(orgId, "module", c.resource_key)) > 1) continue;
+    const label = getEntry(c.resource_key)?.manifest.displayName ?? c.resource_key;
+    // Records in the module's own kinds (a collection going with this
+    // uninstall takes its records with it, so those do not count).
+    // The named collections of one module that outlive this uninstall; the
+    // default one is the module itself.
+    // registry-filter-ok: one module's surviving collections, not a listing
+    const survivors = (await listInstances(orgId, c.resource_key)).filter((i) => !i.is_default && !goingInstances.has(i.instance_name));
+    if (survivors.length > 0) {
+      kept.push({ type: "module", name: label, reason: `${survivors.map((i) => i.display_name).join(", ")} still ${survivors.length === 1 ? "uses" : "use"} it` });
+      continue;
+    }
+    const held = await moduleRecordCount(orgId, c.resource_key, { skipInstances: goingInstances });
+    if (held === null || held > 0) {
+      kept.push({ type: "module", name: label, reason: held ? `${held} record${held === 1 ? " uses" : "s use"} it` : "what it holds could not be checked" });
+      continue;
+    }
+    modules.push(c.resource_key);
   }
-  return { instances, modules };
+  const placeIds: string[] = [];
+  for (const c of claims.filter((x) => x.resource_type === "place")) {
+    if ((await countClaimsFor(orgId, "place", c.resource_key)) <= 1) placeIds.push(c.resource_key);
+  }
+  const plan = await previewPlaces(orgId, placeIds);
+  for (const k of plan.kept) kept.push({ type: "place", ...k });
+  return {
+    instances,
+    modules,
+    module_names: modules.map((m) => getEntry(m)?.manifest.displayName ?? m),
+    places: plan.going,
+    kept,
+  };
 }
 
 // ── Version history (audit F3): list snapshots + revert to one ─────
@@ -2812,11 +3089,7 @@ bundlesRouter.get(
         .execute();
       res.json({
         items: rows.map((r) => {
-          const m = (typeof r.manifest === "string" ? JSON.parse(r.manifest) : r.manifest) as {
-            field_defs?: unknown[];
-            wires?: unknown[];
-            provides_instances?: unknown[];
-          } | null;
+          const m = (typeof r.manifest === "string" ? JSON.parse(r.manifest) : r.manifest) as DeclaringManifest | null;
           return {
             id: r.id,
             external_id: r.external_id,
@@ -2826,8 +3099,8 @@ bundlesRouter.get(
             enabled_features: r.enabled_features,
             created_at: r.created_at,
             counts: {
-              field_defs: m?.field_defs?.length ?? 0,
-              wires: m?.wires?.length ?? 0,
+              field_defs: m ? declaredFieldDefs(m).length : 0,
+              wires: m ? declaredWireCount(m) : 0,
               instances: m?.provides_instances?.length ?? 0,
             },
           };
@@ -2927,16 +3200,28 @@ bundlesRouter.delete(
       // wires and views go and its instances and records stay, exactly as an
       // upgrade leaves them.
       const deleteData = req.query.delete_data === "1" || (req.body as { delete_data?: unknown } | undefined)?.delete_data === true;
-      await uninstallBundleId(bundle.id, deleteData ? { teardownResources: true } : { snapshotReason: "uninstalled" });
+      const released = await uninstallBundleId(bundle.id, deleteData ? { teardownResources: true } : { snapshotReason: "uninstalled" });
       await activity.log({
         orgId: req.tenant!.org.id,
         action: "bundle_uninstalled",
         ref: { module: null, entityType: "bundle", entityId: bundle.id },
         // The bundle row is gone after uninstall, so carry its name so the
         // activity feed reads "bundle uninstalled · <name>" (mirrors install).
-        diff: { name: bundle.name },
+        diff: {
+          name: bundle.name,
+          ...(released ? { removed: released.removed.map((r) => r.name), kept: released.kept.map((k) => k.name) } : {}),
+        },
       });
-      res.status(204).end();
+      // What it put back and what it kept, in words, so the dialog can say
+      // "Kept Pantry: 12 things live there" instead of "done".
+      res.status(200).json({
+        removed: released?.removed ?? [],
+        kept: released?.kept ?? [],
+        kept_words: describeKept(released?.kept ?? []),
+        // Undo: reverting this snapshot puts the bundle back as it was. Only
+        // when its records were kept; deleted records cannot come back.
+        ...(released?.snapshotId && !deleteData ? { undo_snapshot_id: released.snapshotId } : {}),
+      });
     } catch (err) {
       next(err);
     }
@@ -2946,7 +3231,9 @@ bundlesRouter.delete(
 async function uninstallBundleId(
   bundleId: string,
   opts?: { teardownResources?: boolean; snapshotReason?: "replaced" | "uninstalled" },
-): Promise<void> {
+): Promise<(ReleaseSummary & { snapshotId?: string }) | null> {
+  let summary: (ReleaseSummary & { snapshotId?: string }) | null = null;
+  let snapshotId: string | undefined;
   // v1.5: bundles can also have installed saved views in the
   // tenant DB. Delete those FIRST (so they're gone whether or not
   // the meta-side delete succeeds), then drop the meta-side rows
@@ -2975,7 +3262,11 @@ async function uninstallBundleId(
           manifest: sql`${JSON.stringify(bundleRow.manifest)}::jsonb`,
           enabled_features: bundleRow.enabled_features ?? [],
         })
-        .execute();
+        .returning("id")
+        .executeTakeFirst()
+        .then((r) => {
+          snapshotId = r?.id;
+        });
     } catch (err) {
       console.error(`[bundle-uninstall] snapshot failed for ${bundleRow.external_id}:`, err);
     }
@@ -3073,17 +3364,33 @@ async function uninstallBundleId(
         await tearDownInstance(bundleRow.org_id, c.resource_key);
       }
     }
-    for (const c of claims.filter((x) => x.resource_type === "module")) {
-      if ((await countClaimsFor(bundleRow.org_id, "module", c.resource_key)) === 0) {
-        try {
-          await disableModuleForOrg(bundleRow.org_id, c.resource_key);
-        } catch (err) {
-          // disableModuleForOrg refuses foundational / dependency-pinned modules —
-          // leave those enabled; not an error for the uninstall.
-          console.error(`[bundle-uninstall] could not disable ${c.resource_key}:`, err);
-        }
-      }
+    // Places and modules nothing else claims any more go back, unless a
+    // person has used them since: an empty place is removed, a module with no
+    // records is switched off, and whatever stays is said, with why (#3918).
+    const unclaimed: ResourceClaim[] = [];
+    for (const c of claims.filter((x) => x.resource_type !== "instance")) {
+      if ((await countClaimsFor(bundleRow.org_id, c.resource_type, c.resource_key)) === 0) unclaimed.push(c);
     }
+    summary = await releaseUnclaimed(bundleRow.org_id, unclaimed);
+  } else if (opts?.snapshotReason === "uninstalled" && bundleRow) {
+    // A plain uninstall keeps the bundle's tables and their records, so its
+    // instance claims stay; what it switched on and the places it made are
+    // released the same way, under the same "unless used" rule, so a person
+    // who removes Groceries is not left with Lists and an empty Kitchen.
+    const claims = (await claimsForSource(bundleRow.org_id, bundleRow.external_id)).filter((c) => c.resource_type !== "instance");
+    await meta
+      .deleteFrom("bundle_resource_claims")
+      .where("org_id", "=", bundleRow.org_id)
+      .where("source", "=", bundleRow.external_id)
+      .where("resource_type", "in", ["module", "place"])
+      .execute();
+    const unclaimed: ResourceClaim[] = [];
+    for (const c of claims) {
+      if ((await countClaimsFor(bundleRow.org_id, c.resource_type, c.resource_key)) === 0) unclaimed.push(c);
+    }
+    summary = await releaseUnclaimed(bundleRow.org_id, unclaimed);
   }
   if (bundleRow) await bumpWorkspaceShape(bundleRow.org_id);
+  if (snapshotId) summary = { ...(summary ?? { removed: [], kept: [] }), snapshotId };
+  return summary;
 }

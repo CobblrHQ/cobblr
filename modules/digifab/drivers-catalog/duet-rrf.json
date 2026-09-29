@@ -1,7 +1,7 @@
 {
   "id": "duet-rrf",
   "name": "Duet (RepRapFirmware)",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "routing": false,
   "test": { "method": "GET", "path": "/rr_status?type=1" },
   "listDevices": {
@@ -11,7 +11,24 @@
     "map": {
       "id": "='duet'",
       "name": "='Duet'",
-      "state": "$.status"
+      "state": {
+        "from": "$.status",
+        "map": {
+          "I": "idle",
+          "P": "printing",
+          "M": "printing",
+          "R": "printing",
+          "B": "busy",
+          "T": "busy",
+          "D": "paused",
+          "S": "paused",
+          "A": "paused",
+          "H": "error",
+          "O": "offline",
+          "F": "busy",
+          "C": "busy"
+        }
+      }
     }
   },
   "upload": {
@@ -40,8 +57,8 @@
           "R": "printing",
           "B": "printing",
           "F": "completed",
-          "A": "failed",
-          "H": "paused",
+          "A": "paused",
+          "H": "failed",
           "M": "printing"
         }
       },

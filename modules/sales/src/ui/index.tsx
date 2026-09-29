@@ -6,7 +6,7 @@
 
 import { useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { ContributedDetailPanels, Modal, useToast, useConfirm, usePageTitle } from "@cobblr/platform-web";
+import { ContributedDetailPanels, Modal, useToast, useConfirm, usePageTitle, SearchInput } from "@cobblr/platform-web";
 import { ShoppingCart, Plus, Trash2, X, Users, PackageCheck } from "lucide-react";
 import {
   SalesApi, SalesApiError,
@@ -276,11 +276,11 @@ function AddLineRow({ api, onAdd }: { api: SalesApi; onAdd: (b: { part_id: strin
           </div>
         ) : (
           <>
-            <input
+            <SearchInput
               value={q}
-              onChange={(e) => { setQ(e.target.value); setDesc(e.target.value); }}
+              onChange={(v) => { setQ(v); setDesc(v); }}
               placeholder="Search a part, or type a free-text item…"
-              className="w-full rounded border border-line dark:border-slate-600 bg-surface dark:bg-slate-900 px-3 py-2 text-sm"
+              aria-label="Search a part, or type a free-text item"
             />
             {q.length > 0 && (parts.data?.length ?? 0) > 0 && (
               <div className="absolute z-10 mt-1 w-full rounded border border-line dark:border-slate-700 bg-surface dark:bg-slate-900 shadow-lg max-h-48 overflow-auto">

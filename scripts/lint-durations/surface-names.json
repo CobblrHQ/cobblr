@@ -1,7 +1,8 @@
 {
   "lint": "lint:surface-names",
-  "run": "tsx scripts/lint-surface-names.ts",
+  "run": "node scripts/lint-surface-names.ts",
   "ms": 685,
   "recorded": "2026-09-14",
-  "source": "split from scripts/lint-durations.json (recorded 2026-09-14)"
+  "source": "split from scripts/lint-durations.json (recorded 2026-09-14)",
+  "readMB": 26.5
 }

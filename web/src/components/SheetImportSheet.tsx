@@ -19,6 +19,8 @@ import {
   isFinished,
   looksLikeSheetsLink,
   OPEN_SHEET_IMPORT_EVENT,
+  ownershipLine,
+  showFigure,
   showValue,
   skipReason,
   targetChoiceLabel,
@@ -29,8 +31,10 @@ import {
   type SheetPlanView,
   type SheetsPlan,
   type SheetsSource,
+  type SummaryCheck,
   type UndoReport,
 } from "../lib/sheet-import";
+import { DISPOSITION_LABELS } from "@cobblr/platform-contract/disposition";
 
 const SHOWN_ROWS = 12;
 
@@ -319,9 +323,9 @@ function SheetCard({ plan, busy, override, onChange }: { plan: SheetPlanView; bu
     plan.install && `adds the ${plan.install.label} collection`,
     plan.enable && `turns on ${plan.enable.label}`,
     plan.new_collection && `makes a new collection, ${plan.new_collection.label}`,
-    plan.fields_to_create.length && `${plan.fields_to_create.length} new ${plan.fields_to_create.length === 1 ? "field" : "fields"}`,
-    plan.locations_to_create.length && `${plan.locations_to_create.length} new ${plan.locations_to_create.length === 1 ? "place" : "places"}`,
-    plan.categories_to_create.length && `${plan.categories_to_create.length} new ${plan.categories_to_create.length === 1 ? "category" : "categories"}`,
+    plan.fields_to_create.length && `adds ${plan.fields_to_create.length} new ${plan.fields_to_create.length === 1 ? "field" : "fields"}`,
+    plan.locations_to_create.length && `adds ${plan.locations_to_create.length} new ${plan.locations_to_create.length === 1 ? "place" : "places"}`,
+    plan.categories_to_create.length && `adds ${plan.categories_to_create.length} new ${plan.categories_to_create.length === 1 ? "category" : "categories"}`,
   ].filter(Boolean) as string[];
 
   return (
@@ -380,13 +384,28 @@ function SheetCard({ plan, busy, override, onChange }: { plan: SheetPlanView; bu
 
           <div className="space-y-1.5">
             <div className="text-xs font-medium text-muted dark:text-slate-400">Every column, and where it goes</div>
+            {plan.headerless && (
+              <p className="text-xs text-content dark:text-mortar-200">This sheet has no header row, so its first row is a record too, and the columns are named from what they hold.</p>
+            )}
+            {plan.header_row !== null && plan.skipped.every((k) => k.reason !== "title") && plan.records.some((r) => r.row < plan.header_row!) && (
+              <p className="text-xs text-content dark:text-mortar-200" data-testid="header-below">
+                The header is row {plan.header_row}, under the data, so every row above it comes in.
+              </p>
+            )}
             <ul className="divide-y divide-line/70 dark:divide-slate-800 rounded-lg border border-line dark:border-slate-700">
               {plan.columns.map((c) => {
                 const choices = destinationChoices(target, c);
                 return (
                   <li key={c.column} className="flex flex-col gap-1.5 p-2.5 sm:flex-row sm:items-center">
                     <div className="min-w-0 flex-1">
-                      <div className="text-sm font-medium text-content dark:text-mortar-100 truncate">{c.header}</div>
+                      <div className="text-sm font-medium text-content dark:text-mortar-100 truncate">
+                        {c.header}
+                        {c.named_by && (
+                          <span className="ml-1.5 text-[11px] font-normal text-muted dark:text-slate-400">
+                            {c.named_by === "ai" ? "named by AI from the first rows" : "named from its values"}
+                          </span>
+                        )}
+                      </div>
                       <div className="text-xs text-muted dark:text-slate-400 truncate">{c.samples.slice(0, 2).join(" · ") || "no values"}</div>
                       {c.misfits > 0 && <div className="text-xs text-ember-600 dark:text-ember-400">{c.misfits} kept as written: they don't fit {destinationLabel(c.dest, target)}.</div>}
                     </div>
@@ -411,6 +430,51 @@ function SheetCard({ plan, busy, override, onChange }: { plan: SheetPlanView; bu
               })}
             </ul>
           </div>
+
+          {plan.ownership && (
+            <div className="space-y-1.5 rounded-lg border border-line dark:border-slate-700 p-2.5" data-testid="ownership">
+              <p className="text-sm text-content dark:text-mortar-100">{ownershipLine(plan.ownership)}.</p>
+              <p className="text-xs text-muted dark:text-slate-400">
+                {target.retires
+                  ? `The ones no longer yours come in marked that way in ${target.label}, with what became of them kept beside it.`
+                  : `${target.label} has no way to mark things as gone, so what became of them is kept as written.`}
+              </p>
+              {plan.ownership.gone > 0 && (
+                <label className="flex items-center gap-2 text-sm text-content dark:text-mortar-200">
+                  <input
+                    type="checkbox"
+                    checked={!!override.only_owned}
+                    onChange={(e) => onChange({ only_owned: e.target.checked })}
+                    disabled={busy}
+                    className="h-4 w-4 accent-cobble-600"
+                  />
+                  Import only what you still have
+                </label>
+              )}
+            </div>
+          )}
+
+          {(plan.groups.length > 0 || override.keep_identical_apart) && (
+            <div className="space-y-1.5 rounded-lg border border-line dark:border-slate-700 p-2.5" data-testid="identical-rows">
+              {plan.groups.map((g) => (
+                <p key={g.rows[0]} className="text-sm text-content dark:text-mortar-100">
+                  {g.rows.length} identical {g.name} (rows {g.rows[0]} to {g.rows[g.rows.length - 1]}) become one record of {g.rows.length}.
+                </p>
+              ))}
+              <label className="flex items-center gap-2 text-sm text-content dark:text-mortar-200">
+                <input
+                  type="checkbox"
+                  checked={!!override.keep_identical_apart}
+                  onChange={(e) => onChange({ keep_identical_apart: e.target.checked })}
+                  disabled={busy}
+                  className="h-4 w-4 accent-cobble-600"
+                />
+                Keep identical rows as a record each
+              </label>
+            </div>
+          )}
+
+          {plan.summary.length > 0 && <SummaryChecks checks={plan.summary} />}
 
           <div className="space-y-1.5">
             <div className="text-xs font-medium text-muted dark:text-slate-400">What each row becomes</div>
@@ -437,7 +501,9 @@ function SheetCard({ plan, busy, override, onChange }: { plan: SheetPlanView; bu
           {plan.skipped.filter((k) => k.reason !== "blank").length > 0 && (
             <details className="text-xs text-muted dark:text-slate-400">
               <summary className="cursor-pointer">
-                {plan.skipped.filter((k) => k.reason !== "blank").length} lines of the sheet are left out
+                {plan.skipped.filter((k) => k.reason !== "blank").length === 1
+                  ? "1 line of the sheet is left out"
+                  : `${plan.skipped.filter((k) => k.reason !== "blank").length} lines of the sheet are left out`}
               </summary>
               <ul className="mt-1.5 space-y-1">
                 {plan.skipped
@@ -469,15 +535,51 @@ function SheetCard({ plan, busy, override, onChange }: { plan: SheetPlanView; bu
   );
 }
 
+/** The sheet's own totals beside what this import comes to. */
+function SummaryChecks({ checks }: { checks: SummaryCheck[] }) {
+  return (
+    <div className="space-y-1.5 rounded-lg border border-line dark:border-slate-700 p-2.5" data-testid="summary-checks">
+      <div className="text-xs font-medium text-muted dark:text-slate-400">Your sheet's own totals, checked against this import</div>
+      <ul className="space-y-1">
+        {checks.map((c) => (
+          <li key={`${c.row}-${c.label}`} className="flex items-start gap-2 text-sm">
+            {c.agrees === true ? (
+              <CheckCircle2 size={15} className="mt-0.5 shrink-0 text-emerald-600 dark:text-emerald-400" aria-label="agrees" />
+            ) : c.agrees === false ? (
+              <AlertTriangle size={15} className="mt-0.5 shrink-0 text-ember-600 dark:text-ember-400" aria-label="does not agree" />
+            ) : (
+              <span className="mt-0.5 w-[15px] shrink-0" />
+            )}
+            <span className="min-w-0 text-content dark:text-mortar-200">
+              {c.label} {showFigure(c.value, c)}
+              <span className="block text-xs text-muted dark:text-slate-400">
+                {c.computed === null
+                  ? `Not checked: ${c.basis}.`
+                  : c.agrees
+                    ? `The import agrees: ${showFigure(c.computed, c)}, ${c.basis}.`
+                    : `The import comes to ${showFigure(c.computed, c)}, ${c.basis}.`}
+              </span>
+            </span>
+          </li>
+        ))}
+      </ul>
+      <p className="text-xs text-muted dark:text-slate-400">These rows are not imported as things. They stay with this import, so you can check them again under your imports.</p>
+    </div>
+  );
+}
+
 function RowCard({ record, onLeaveOut, disabled }: { record: RecordPlan; onLeaveOut: () => void; disabled: boolean }) {
   const facts = useMemo(() => {
     const out: string[] = [];
     if (record.qty != null) out.push(`${record.qty}${record.unit ? ` ${record.unit}` : ""}`);
     if (record.location_path) out.push(record.location_path.join(" / "));
     if (record.category) out.push(record.category);
-    for (const v of Object.values(record.fields).slice(0, 3)) {
+    // What became of it has its own line below; its words and price are not
+    // said twice.
+    const said = new Set(record.disposition ? [record.disposition.text, ...(record.disposition.price !== null ? [String(record.disposition.price)] : [])] : []);
+    for (const v of Object.values(record.fields)) {
       const t = showValue(v);
-      if (t) out.push(t);
+      if (t && !said.has(t) && out.length < 5) out.push(t);
     }
     return out.slice(0, 5);
   }, [record]);
@@ -494,7 +596,16 @@ function RowCard({ record, onLeaveOut, disabled }: { record: RecordPlan; onLeave
           {record.action === "create" ? "New" : record.action === "update" ? "Update" : "Same"}
         </span>
         <div className="min-w-0 flex-1">
-          <div className="text-sm text-content dark:text-mortar-100 truncate">{record.name}</div>
+          <div className="text-sm text-content dark:text-mortar-100 truncate">
+            {record.name}
+            {record.rows && <span className="ml-1.5 text-xs text-muted dark:text-slate-400">×{record.rows.length}, rows {record.rows[0]} to {record.rows[record.rows.length - 1]}</span>}
+          </div>
+          {record.disposition && (
+            <div className="text-xs text-content dark:text-mortar-200">
+              No longer yours: {DISPOSITION_LABELS[record.disposition.kind]}
+              {record.disposition.text.toLowerCase() !== DISPOSITION_LABELS[record.disposition.kind] ? ` ("${record.disposition.text}")` : ""}
+            </div>
+          )}
           {facts.length > 0 && <div className="text-xs text-muted dark:text-slate-400 truncate">{facts.join(" · ")}</div>}
           {record.changes?.map((c) => (
             <div key={c.field} className="text-xs text-content dark:text-mortar-200">
@@ -561,8 +672,9 @@ function RunView({
               {s.sheet} → {s.label}
             </div>
             <div className="text-xs text-muted dark:text-slate-400">
-              {s.created ?? 0} added · {s.updated ?? 0} updated{s.failed ? ` · ${s.failed} could not be written` : ""}
+              {s.created ?? 0} added · {s.updated ?? 0} updated{s.retired ? ` · ${s.retired} marked no longer yours` : ""}{s.failed ? ` · ${s.failed} could not be written` : ""}
             </div>
+            {s.checks && s.checks.length > 0 && <SummaryChecks checks={s.checks} />}
             {run.status === "done" && (s.created ?? 0) + (s.updated ?? 0) > 0 && (
               <Link to={collectionRoute(s.kind)} onClick={onLeave} className="mt-1 inline-flex items-center gap-1 text-xs text-accent hover:underline">
                 Open {s.label} <ArrowRight size={12} />

@@ -54,6 +54,7 @@ import { JoinMachinesPage } from "./pages/JoinMachinesPage";
 import { PublicSurfacePage } from "./pages/PublicSurfacePage";
 import { ChangelogPage } from "./pages/ChangelogPage";
 import { QrResolvePage } from "./pages/QrResolvePage";
+import { ActionLabelPage } from "./pages/ActionLabelPage";
 import { ResetPasswordPage } from "./pages/ResetPasswordPage";
 import { VerifyEmailPage } from "./pages/VerifyEmailPage";
 // Eager: nav-linked pages users hit from the dashboard frequently.
@@ -70,6 +71,8 @@ import { ConfigurationPage } from "./pages/ConfigurationPage";
 import { ConfigurationLayout } from "./components/ConfigurationLayout";
 import { AccountLayout } from "./components/AccountLayout";
 import { ConfigInvitePage, ConfigMembersPage, ConfigModulesPage, ConfigNewThingPage } from "./pages/ConfigLauncherPages";
+import { PeoplePage } from "./pages/PeoplePage";
+import { PersonThingsPage } from "./pages/PersonThingsPage";
 // Lazy: rarely-visited admin / drill-down pages. Splitting these
 // out keeps the dashboard's initial bundle smaller. Each becomes
 // its own chunk; the chunk loads on first navigation.
@@ -95,6 +98,7 @@ const PrintPageLazy = lazy(() => import("./pages/PrintPage").then((m) => ({ defa
 const MeAppearancePage = lazy(() => import("./pages/MeProfilePage").then((m) => ({ default: m.MeAppearancePage })));
 const AppSettingsPage = lazy(() => import("./pages/AppSettingsPage").then((m) => ({ default: m.AppSettingsPage })));
 const CommunicationPreferencesPage = lazy(() => import("./pages/CommunicationPreferencesPage").then((m) => ({ default: m.CommunicationPreferencesPage })));
+const PhotoConsentPage = lazy(() => import("./pages/PhotoConsentPage").then((m) => ({ default: m.PhotoConsentPage })));
 const MyFeedbackPage = lazy(() => import("./pages/MyFeedbackPage").then((m) => ({ default: m.MyFeedbackPage })));
 const DriveSettingsPage = lazy(() => import("./pages/DriveSettingsPage").then((m) => ({ default: m.DriveSettingsPage })));
 const ConnectionsPage = lazy(() => import("./pages/ConnectionsPage").then((m) => ({ default: m.ConnectionsPage })));
@@ -116,6 +120,7 @@ const ApiRecipesPage = lazy(() => import("./pages/ApiRecipesPage").then((m) => (
 const QueuePage = lazy(() => import("./pages/QueuePage").then((m) => ({ default: m.QueuePage })));
 const LinksPage = lazy(() => import("./pages/LinksPage").then((m) => ({ default: m.LinksPage })));
 const LocationsPage = lazy(() => import("./pages/LocationsPage").then((m) => ({ default: m.LocationsPage })));
+const PlaceItemsPage = lazy(() => import("./pages/PlaceItemsPage").then((m) => ({ default: m.PlaceItemsPage })));
 const LocationDetailPage = lazy(() => import("./pages/LocationDetailPage").then((m) => ({ default: m.LocationDetailPage })));
 const OpenRecordPage = lazy(() => import("./pages/OpenRecordPage").then((m) => ({ default: m.OpenRecordPage })));
 const TemplatesPage = lazy(() => import("./pages/TemplatesPage").then((m) => ({ default: m.TemplatesPage })));
@@ -352,6 +357,8 @@ function PublicRoutes() {
           here bare, signed-in or signed-out). Navigate-mode forwards to
           /w/<org>/<detail>; the workspace shell handles login from there. */}
       <Route path="/qr/*" element={<QrResolvePage />} />
+      {/* A printed action label (#3897): found by the same resolver. */}
+      <Route path="/a/*" element={<QrResolvePage />} />
       {/* Streamlined consumer signup for a managed app ("Cobblr for Yarn"). */}
       <Route path="/start/:app" element={<StartAppPage />} />
       {/* Legacy un-prefixed member-portal links → workspace-scoped portal. */}
@@ -606,10 +613,21 @@ function ActiveOrgScopedRoutes() {
             display_name: m.display_name,
           })),
         }),
-        listFieldDefs: (slug, kind) => api.listFieldDefs(slug, kind),
+        listPeople: async (slug) => ({
+          items: (await api.listPeople(slug)).items.map((p) => ({ id: p.id, name: p.name, member: p.member, left: p.left })),
+        }),
+        addPerson: async (slug, name) => {
+          const p = await api.addPerson(slug, { name });
+          return { id: p.id, name: p.name, member: p.member, left: p.left };
+        },
+        // The resolved read: a record shows its fields as the workspace
+        // arranged them (relabelled, hidden, filed under sections).
+        listFieldDefs: (slug, kind) => api.listFieldDefs(slug, kind, true),
         // Contributed panels: what ENABLED modules declare for other modules'
         // detail pages. platform-web renders them; this is the gate that keeps
         // a disabled module's panel off the page.
+        listPhotoSuggestions: (slug, kind, ids) => api.photoSuggestions(slug, kind, ids),
+        searchPhotoFor: (slug, kind, id) => api.searchPhotoFor(slug, kind, id),
         listContributedPanels: (slug) =>
           api
             .orgModules(slug)
@@ -756,6 +774,7 @@ function ActiveOrgScopedRoutes() {
             {/* Launcher PAGES (settings-cohesion): the dialogs, in-flow. */}
             <Route path="/configuration/modules" element={<ConfigModulesPage />} />
             <Route path="/configuration/members" element={<ConfigMembersPage />} />
+            <Route path="/configuration/people" element={<PeoplePage />} />
             <Route path="/configuration/members/invite" element={<ConfigInvitePage />} />
             <Route path="/configuration/new-thing" element={<ConfigNewThingPage />} />
             {/* Merged into Fields & forms — same act, one page, two tabs. */}
@@ -870,8 +889,10 @@ function ActiveOrgScopedRoutes() {
           <Route path="/digifab" element={<DigifabPage />} />
           <Route path="/calendar" element={<CalendarPage />} />
           <Route path="/apps" element={<AllAppsPage />} />
+          <Route path="/people/:who" element={<PersonThingsPage />} />
           {/* Nav alias — the synthetic "Locations" top routes here (useNavModules). */}
           <Route path="/locations" element={<LocationsPage />} />
+          <Route path="/locations/place" element={<PlaceItemsPage />} />
           <Route path="/locations/:id" element={<LocationDetailPage />} />
           <Route path={OPEN_RECORD_ROUTE} element={<OpenRecordPage />} />
           <Route path="/scan" element={<ScanPage />} />
@@ -882,6 +903,7 @@ function ActiveOrgScopedRoutes() {
               navigates here on a label hit, and LandingRedirect rewrites
               bare /qr/<token> URLs into /w/<default>/qr/<token>. */}
           <Route path="/qr/*" element={<QrResolvePage />} />
+          <Route path="/a/*" element={<ActionLabelPage />} />
           <Route path="/bricklink-connector" element={<BrickLinkPage />} />
           {/* Legacy alias — pre-rename. A redirect, not a second URL for one page, so bookmarks keep working. */}
           <Route path="/bricklink" element={<Navigate to="/bricklink-connector" replace />} />
@@ -901,6 +923,7 @@ function ActiveOrgScopedRoutes() {
             <Route path="/me/notifications" element={<MeNotificationsPage />} />
             <Route path="/me/notification-channels" element={<MeNotificationChannelsPage />} />
             <Route path="/me/communication" element={<CommunicationPreferencesPage />} />
+            <Route path="/me/photos" element={<PhotoConsentPage />} />
             <Route path="/me/feedback" element={<MyFeedbackPage />} />
             <Route path="/me/app-settings" element={<AppSettingsPage />} />
             <Route path="/me/drive" element={<DriveSettingsPage />} />

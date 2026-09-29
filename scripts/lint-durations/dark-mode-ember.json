@@ -1,7 +1,8 @@
 {
   "lint": "lint:dark-mode-ember",
-  "run": "tsx scripts/lint-dark-mode-ember.ts",
+  "run": "node scripts/lint-dark-mode-ember.ts",
   "ms": 581,
   "recorded": "2026-09-14",
-  "source": "split from scripts/lint-durations.json (recorded 2026-09-14)"
+  "source": "split from scripts/lint-durations.json (recorded 2026-09-14)",
+  "readMB": 6.7
 }

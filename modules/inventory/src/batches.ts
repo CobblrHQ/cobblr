@@ -30,6 +30,10 @@ export interface Batch {
   expires_on: string;
   /** How many of this lot are left. */
   qty: number;
+  /** The lot number printed on the box, when there is one. Two deliveries on
+   *  one day with one date but different lot numbers stay two lots: a recall
+   *  names a lot, not a date. */
+  lot?: string;
 }
 
 /** Oldest-expiring first. Ordering is not cosmetic: consumption takes from the
@@ -71,16 +75,17 @@ export function earliestExpiry(batches: Batch[]): string | null {
  */
 export function addBatch(
   batches: Batch[],
-  add: { received_on: string; expires_on: string; qty?: number },
+  add: { received_on: string; expires_on: string; qty?: number; lot?: string },
 ): Batch[] {
   const qty = Math.max(1, Math.trunc(add.qty ?? 1));
+  const lot = add.lot?.trim() || undefined;
   const same = batches.find(
-    (b) => b.received_on === add.received_on && b.expires_on === add.expires_on,
+    (b) => b.received_on === add.received_on && b.expires_on === add.expires_on && (b.lot || undefined) === lot,
   );
   if (same) {
     return sortBatches(batches.map((b) => (b === same ? { ...b, qty: b.qty + qty } : b)));
   }
-  return sortBatches([...batches, { ...add, qty }]);
+  return sortBatches([...batches, { received_on: add.received_on, expires_on: add.expires_on, qty, ...(lot ? { lot } : {}) }]);
 }
 
 /**
@@ -112,6 +117,57 @@ export function consumeOldest(
 }
 
 /**
+ * Take `count` out of these lots to move somewhere else, keeping what each
+ * piece IS: its expiry, when it arrived, its lot number. The soonest-expiring
+ * goes first, the same rule as eating one, so restocking a vehicle from the
+ * closet sends out what would otherwise go off in the closet. A caller may
+ * name a lot instead (by lot number or by expiry date); then only that lot is
+ * taken from, and asking for more than it holds is refused, never quietly made
+ * up from another lot.
+ *
+ * Stock with no lots (nothing dated) moves as a plain count: `moved` is empty
+ * and the receiving end files it the way it files any undated arrival.
+ */
+export function takeLots(
+  batches: Batch[],
+  count: number,
+  pick?: { lot?: string; expires_on?: string },
+): { batches: Batch[]; moved: Batch[] } | { refused: "no_such_lot" | "lot_too_small"; have: number } {
+  let left = Math.max(0, count);
+  const out = sortBatches(batches).map((b) => ({ ...b }));
+  const matches = (b: Batch) =>
+    (pick?.lot ? b.lot === pick.lot.trim() : true) && (pick?.expires_on ? b.expires_on === pick.expires_on : true);
+  if (pick && (pick.lot || pick.expires_on)) {
+    const chosen = out.filter(matches);
+    const have = chosen.reduce((n, b) => n + Math.max(0, b.qty), 0);
+    if (!chosen.length) return { refused: "no_such_lot", have: 0 };
+    if (have < left) return { refused: "lot_too_small", have };
+  }
+  const moved: Batch[] = [];
+  for (const b of out) {
+    if (left <= 0) break;
+    if (b.qty <= 0) continue;
+    if (pick && (pick.lot || pick.expires_on) && !matches(b)) continue;
+    const take = Math.min(b.qty, left);
+    b.qty -= take;
+    left -= take;
+    moved.push({ received_on: b.received_on, expires_on: b.expires_on, qty: take, ...(b.lot ? { lot: b.lot } : {}) });
+  }
+  return { batches: out.filter((b) => b.qty > 0), moved };
+}
+
+/** Receive lots that came from somewhere else, each keeping its own dates and
+ *  lot number; the same lot arriving twice is one lot. */
+export function putLots(batches: Batch[], moved: Batch[]): Batch[] {
+  let out = batches;
+  for (const m of moved) {
+    if (m.qty <= 0) continue;
+    out = addBatch(out, { received_on: m.received_on, expires_on: m.expires_on, qty: m.qty, ...(m.lot ? { lot: m.lot } : {}) });
+  }
+  return out;
+}
+
+/**
  * What an item with no batch history looks like as batches.
  *
  * Everything already in a workspace has a plain qty and maybe an expires_on and
@@ -128,11 +184,15 @@ export function batchesFrom(
   if (Array.isArray(raw)) {
     const parsed = raw
       .filter((b): b is Batch => !!b && typeof b === "object")
-      .map((b) => ({
-        received_on: String((b as Batch).received_on ?? ""),
-        expires_on: String((b as Batch).expires_on ?? ""),
-        qty: Number((b as Batch).qty ?? 0),
-      }))
+      .map((b) => {
+        const lot = typeof (b as Batch).lot === "string" && (b as Batch).lot!.trim() ? (b as Batch).lot!.trim() : undefined;
+        return {
+          received_on: String((b as Batch).received_on ?? ""),
+          expires_on: String((b as Batch).expires_on ?? ""),
+          qty: Number((b as Batch).qty ?? 0),
+          ...(lot ? { lot } : {}),
+        };
+      })
       .filter((b) => b.expires_on && b.qty > 0);
     if (parsed.length > 0) return sortBatches(parsed);
   }
@@ -163,9 +223,10 @@ export function describeBatches(batches: Batch[], today: string): string[] {
     );
     const when =
       days < 0 ? `${-days}d past its date` : days === 0 ? "use by today" : `use by ${b.expires_on}`;
+    const lot = b.lot ? `lot ${b.lot}, ` : "";
     return b.received_on
-      ? `${b.qty} received ${b.received_on}, ${when}`
-      : `${b.qty} already here, ${when}`;
+      ? `${b.qty} ${lot}received ${b.received_on}, ${when}`
+      : `${b.qty} ${lot}already here, ${when}`;
   });
 }
 

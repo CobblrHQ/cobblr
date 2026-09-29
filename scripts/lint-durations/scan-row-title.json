@@ -1,7 +1,8 @@
 {
   "lint": "lint:scan-row-title",
-  "run": "tsx scripts/lint-scan-row-title.ts",
+  "run": "node scripts/lint-scan-row-title.ts",
   "ms": 376,
   "recorded": "2026-09-14",
-  "source": "split from scripts/lint-durations.json (recorded 2026-09-14)"
+  "source": "split from scripts/lint-durations.json (recorded 2026-09-14)",
+  "readMB": 0.4
 }

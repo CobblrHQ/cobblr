@@ -6,7 +6,7 @@
 import { useEffect, useState, type FormEvent } from "react";
 import { useNavigate, useParams, Link } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { ChevronRight, Plus, Receipt, Search, Store, Trash2 } from "lucide-react";
+import { ChevronRight, Plus, Receipt, Store, Trash2 } from "lucide-react";
 import { ApiError, api, type Order, type OrderItem, type VendorSummary } from "../lib/api";
 import { useActiveOrg } from "../auth/ActiveOrgContext";
 import { useFieldPresentation } from "../lib/useFieldPresentation";
@@ -15,7 +15,7 @@ import { ReceiptSourceViewer } from "../components/ReceiptSourceViewer";
 import { ModuleInstanceChooser } from "../components/ModuleInstanceChooser";
 import { ModulePurposeHint } from "../components/ModulePurposeHint";
 import { usePublishChatContext, useAskCobbAboutSelection } from "../lib/chat-context";
-import { BulkActionBar, EditSelect, EntityActionsBar, EntityThumb, FieldPack, LabeledField, Modal, editFieldItem, fieldNeed, useToast, useConfirm, usePageTitle, usePageWidth } from "@cobblr/platform-web";
+import { BulkActionBar, EditSelect, EntityActionsBar, EntityThumb, FieldPack, LabeledField, Modal, editFieldItem, fieldNeed, useToast, useConfirm, usePageTitle, usePageWidth, SearchInput } from "@cobblr/platform-web";
 import { ContributedDetailPanels } from "../panels/registry";
 import { receiptGroupSummary } from "./receiptLabel";
 import { ReceiptAddressChip } from "../components/ReceiptAddressChip";
@@ -337,15 +337,7 @@ export function PurchasesPage() {
           ))}
         </select>
         {/* The elastic member: it absorbs the squeeze so the row never wraps. */}
-        <div className="relative flex-1 min-w-[5rem]">
-          <Search size={12} className="absolute left-2 top-1/2 -translate-y-1/2 text-faint pointer-events-none" />
-          <input
-            value={query}
-            onChange={(e) => setQuery(e.target.value)}
-            placeholder="vendor / order# / notes…"
-            className="input !py-1 !pl-7 text-xs !w-full"
-          />
-        </div>
+        <SearchInput value={query} onChange={(v) => setQuery(v)} placeholder="vendor / order# / notes…" wrapperClassName="w-full flex-1 min-w-[5rem]" />
         {/* Receipt intake belongs WITH the other header controls, not on a line
             of its own: the address was a permanent wall of text under the title,
             and the same chip already carries it on the scan header. Same

@@ -8,8 +8,7 @@
 // See docs/architecture/instances.md §5.
 
 import type { NextFunction, Request, Response } from "express";
-import { getOverrideConfig } from "../platform/entity-kind-overrides.js";
-import { getInstance } from "../platform/instances.js";
+import { getInstance, instanceConfig } from "../platform/instances.js";
 
 declare module "express-serve-static-core" {
   interface Request {
@@ -58,13 +57,9 @@ export async function resolveInstance(
     req.instanceModule = inst.module_name;
     // Instance presentation/config (item_noun, qty_unit, …) lives on the
     // entity-kind-override row bundle install writes (target "instance"),
-    // not the instance row itself — merge both so module CRUD sees one blob.
-    const overrideCfg = await getOverrideConfig(
-      orgId,
-      "instance",
-      `${inst.module_name}:${inst.instance_name}`,
-    );
-    req.instanceConfig = { ...inst.config, ...overrideCfg };
+    // not the instance row itself; instanceConfig merges both, the same merge
+    // a module reads outside a request (platform().instances.configOf).
+    req.instanceConfig = (await instanceConfig(orgId, inst.instance_name))?.config ?? {};
     next();
   } catch (err) {
     next(err);

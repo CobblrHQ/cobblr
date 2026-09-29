@@ -38,12 +38,12 @@ let out = "";
 try {
   // Literal prefilter, then the real test in JS — a regex over the whole tree is
   // what made lint:ci-sink cost 151s (see scripts/run-lints.mjs BUDGET_MS).
-  out = execFileSync("git", ["grep", "-nF", "actions/tasks", "--", ".", ":!*.lock"], { encoding: "utf8" });
+  out = execFileSync("git", ["grep", "--untracked", "-nF", "actions/tasks", "--", ".", ":!*.lock"], { encoding: "utf8" });
 } catch {
   // git grep exits 1 on no match.
 }
 try {
-  out += execFileSync("git", ["grep", "-nF", "actions/runs", "--", ".", ":!*.lock"], { encoding: "utf8" });
+  out += execFileSync("git", ["grep", "--untracked", "-nF", "actions/runs", "--", ".", ":!*.lock"], { encoding: "utf8" });
 } catch {
   /* no match */
 }

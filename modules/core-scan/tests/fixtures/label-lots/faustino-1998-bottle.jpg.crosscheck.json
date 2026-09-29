@@ -2,19 +2,20 @@
   "fixture": "faustino-1998-bottle.jpg",
   "image_sha256": "07b2272e5850f8a986e2b68b93ccb34aa07ed2f47eceedd9262a77040cae9516",
   "capability": "classify-image",
-  "prompt": "A scanned barcode resolved this item to: \"Faustino I Gran Reserva Rioja\". Look at the photo and decide whether the product visible in it plausibly matches that name/identity — consider the product type, packaging, and any readable label text, and allow for a generic or differently-angled shot. Only answer \"no\" when the photo clearly shows a DIFFERENT kind of product. When (and ONLY when) it's a clear mismatch AND the photo's label makes the real product unambiguous, also return what the item actually IS — a concise retail product name, plus brand if visible. Omit them if you can't read it confidently. Separately, in \"printed\", report what is PRINTED on the item or its cover, verbatim and only when clearly legible: the author, artist or maker as printed (a book's cover author, a record's artist), the brand as printed, the title as printed, and the lot or batch code as printed (a dye lot, a lot number, a batch: the code that changes from one production run to the next, never the barcode digits, a colour number or an article number), and the year this unit was made as printed (a wine's vintage, a coin's year: four digits, never a best-before date, a copyright year or a \"since\" or \"established\" year). Never complete or translate them; null when not shown. Reply with JSON only: {\"match\":\"yes\"|\"no\"|\"unsure\",\"reason\":\"<one short sentence>\",\"correct_name\":\"<the real product name, optional>\",\"correct_brand\":\"<brand, optional>\",\"printed\":{\"creator\":<string|null>,\"brand\":<string|null>,\"title\":<string|null>,\"lot\":<string|null>,\"year_made\":<string|null>}}.",
+  "prompt": "A scanned barcode resolved this item to: \"Faustino I Gran Reserva Rioja\". Look at the photo and decide whether the product visible in it plausibly matches that name/identity — consider the product type, packaging, and any readable label text, and allow for a generic or differently-angled shot. Only answer \"no\" when the photo clearly shows a DIFFERENT kind of product. When the photo shows several different products, the barcode is on one of them: answer \"yes\" when ANY of them plausibly matches, and \"no\" only when none does. Report \"things\": how many different products are in the photo. When (and ONLY when) it's a clear mismatch AND the photo's label makes the real product unambiguous, also return what the item actually IS — a concise retail product name, plus brand if visible. Omit them if you can't read it confidently. Separately, in \"printed\", report what is PRINTED on the item or its cover, verbatim and only when clearly legible: the author, artist or maker as printed (a book's cover author, a record's artist), the brand as printed, the title as printed, and the lot or batch code as printed (a dye lot, a lot number, a batch: the code that changes from one production run to the next, never the barcode digits, a colour number or an article number), and the year this unit was made as printed (a wine's vintage, a coin's year: four digits, never a best-before date, a copyright year or a \"since\" or \"established\" year). Never complete or translate them; null when not shown. Reply with JSON only: {\"match\":\"yes\"|\"no\"|\"unsure\",\"reason\":\"<one short sentence>\",\"things\":<integer>,\"correct_name\":\"<the real product name, optional>\",\"correct_brand\":\"<brand, optional>\",\"printed\":{\"creator\":<string|null>,\"brand\":<string|null>,\"title\":<string|null>,\"lot\":<string|null>,\"year_made\":<string|null>}}.",
   "crosscheck": {
     "result": {
       "role": "assistant",
-      "content": "{\"match\":\"yes\",\"reason\":\"Bottle label clearly reads 'Faustino I Gran Reserva Rioja'.\",\"printed\":{\"creator\":null,\"brand\":\"Faustino I\",\"title\":\"Gran Reserva Rioja\",\"lot\":null,\"year_made\":\"1998\"}}"
+      "content": "```json\n{\"match\":\"yes\",\"reason\":\"The bottle's label clearly reads 'Faustino I Gran Reserva Rioja', matching the barcode identity.\",\"things\":1,\"printed\":{\"creator\":null,\"brand\":\"Faustino I\",\"title\":\"Gran Reserva Rioja\",\"lot\":null,\"year_made\":\"1998\"}}\n```"
     },
     "provider_id": "openai-compat",
-    "model": "default",
+    "model": "sonnet",
     "cached": false,
-    "input_tokens": 57348,
-    "output_tokens": 252,
+    "input_tokens": 57477,
+    "output_tokens": 204,
     "cost_cents": 0,
-    "duration_ms": 4750,
-    "text": "{\"match\":\"yes\",\"reason\":\"Bottle label clearly reads 'Faustino I Gran Reserva Rioja'.\",\"printed\":{\"creator\":null,\"brand\":\"Faustino I\",\"title\":\"Gran Reserva Rioja\",\"lot\":null,\"year_made\":\"1998\"}}"
+    "duration_ms": 4042,
+    "text": "```json\n{\"match\":\"yes\",\"reason\":\"The bottle's label clearly reads 'Faustino I Gran Reserva Rioja', matching the barcode identity.\",\"things\":1,\"printed\":{\"creator\":null,\"brand\":\"Faustino I\",\"title\":\"Gran Reserva Rioja\",\"lot\":null,\"year_made\":\"1998\"}}\n```",
+    "provider_label": "OpenAI-compatible (LM Studio, vLLM, …)"
   }
 }

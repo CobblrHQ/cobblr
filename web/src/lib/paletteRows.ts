@@ -18,6 +18,8 @@ export interface PaletteRow {
   kind: PaletteRowKind;
   label: string;
   hint?: string;
+  /** A record found inside its words: the line the search matched on. */
+  snippet?: string;
   icon: LucideIcon;
   /** A zero-arg thunk closing over navigate / the target, so the merge stays
    *  opaque to how a row acts. */

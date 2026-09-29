@@ -66,3 +66,22 @@ export function refusalDialog(refused: { message: string; settled: boolean }, re
     confirmLabel: "Replace anyway",
   };
 }
+
+/** What the last test said, on one line under the row's name, beside the
+ *  badge that carries the state: when, which model, how long it took and
+ *  whether it read the test picture, or the exact failure. Null when it has
+ *  never been tested. */
+export function verificationLine(
+  v: ConnectionVerification | null | undefined,
+  when: (iso: string) => string = (iso) => new Date(iso).toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" }),
+): { text: string; tone: Tone } | null {
+  if (!v?.at) return null;
+  const at = when(v.at);
+  const took = typeof v.latency_ms !== "number" ? null : v.latency_ms < 1000 ? `${v.latency_ms} ms` : `${(v.latency_ms / 1000).toFixed(1)} s`;
+  if (v.state === "verified") {
+    const photos = v.photos === "read" ? "can read photos ✓" : v.photos === "not-read" ? "can read photos ✗" : null;
+    return { text: [`Tested ${at}`, v.model, took, photos].filter(Boolean).join(" · "), tone: v.photos === "not-read" ? "warn" : "ok" };
+  }
+  const head = [`Tested ${at}`, took].filter(Boolean).join(" · ");
+  return { text: v.message ? `${head}: ${v.message}` : head, tone: v.state === "invalid" ? "bad" : "warn" };
+}

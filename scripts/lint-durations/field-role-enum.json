@@ -1,7 +1,8 @@
 {
   "lint": "lint:field-role-enum",
-  "run": "tsx scripts/lint-field-role-enum.ts",
+  "run": "node scripts/lint-field-role-enum.ts",
   "ms": 816,
   "recorded": "2026-09-14",
-  "source": "split from scripts/lint-durations.json (recorded 2026-09-14)"
+  "source": "split from scripts/lint-durations.json (recorded 2026-09-14)",
+  "readMB": 22.2
 }

@@ -30,6 +30,9 @@ const RULES: Array<[RegExp, string]> = [
   [/(^|[^|])\|&(\s|$)/, "`|&` is bash 4 — write `2>&1 |`"],
   [/&>>/, "`&>>` is bash 4 — write `>>f 2>&1`"],
   [/;;&|;&\s*$/, "`;;&` / `;&` case fall-through is bash 4"],
+  // The other direction: BSD-only, fatal on the Linux boxes. ci-partial-scorecard.sh
+  // died on its first line there ("too few X's in template").
+  [/\bmktemp\b[^|;&)]*\s-t\s+(?!\S*X{3})/, "`mktemp -t <name>` without X's is BSD-only; GNU refuses it. Write `mktemp \"${TMPDIR:-/tmp}/<name>.XXXXXX\"`"],
 ];
 
 function isBash(path: string, text: string): boolean {

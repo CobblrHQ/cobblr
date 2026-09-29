@@ -14,12 +14,14 @@ import { PlanNote } from "./PlanNote";
 import { ProposalValues } from "./ProposalValues";
 import { withoutValue } from "../lib/proposal-values";
 import { PlanSections, sectionsLeft, type SectionRuns } from "./PlanSections";
-import { historyToSend, slimForStore } from "../lib/chat-store";
+import { historyToSend } from "../lib/chat-store";
+import { chatStoreKey, useStoredConversation } from "../lib/use-stored-conversation";
 import { commandOrigin } from "../lib/command-origin";
 import { growToContent } from "../lib/useAutoGrowTextarea";
 import { PlanLines } from "./PlanLines";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { X, Send, Check, Eye, PencilLine, Trash2, Wand2, Cpu, ChevronDown } from "lucide-react";
+import { X, Send, Check, Eye, PencilLine, Trash2, Wand2, Cpu, ChevronDown, Bookmark } from "lucide-react";
+import { SaveAnswerSheet, type SavedAnswer } from "./SaveAnswerSheet";
 import { createPortal } from "react-dom";
 import { api, ApiError, type AiChatProposal, type AiChatResponse, type BasicCommandOffer, type BundleValidationPreview, type ChatModelMenu, type ChatModelOption, type ChatPrefsInput } from "../lib/api";
 import { readSse } from "../lib/sse";
@@ -56,11 +58,8 @@ const BASIC_FALLBACK =
 // wipe the conversation. We store ONLY the plain text turns — never the live
 // interactive state (pending proposals, build-draft polls, undo handles), which
 // would be stale on reload. Capped so it can't grow unbounded.
-const CHAT_STORE_PREFIX = "cobblr.cobbchat.";
+
 const CHAT_STORE_MAX = 100;
-function chatStoreKey(slug: string | null | undefined): string | null {
-  return slug ? `${CHAT_STORE_PREFIX}${slug}` : null;
-}
 
 interface Msg {
   role: "user" | "assistant";
@@ -116,6 +115,16 @@ interface Msg {
   refs?: ChatEntityRef[];
   /** Where the change put things: the card offers to go there. */
   destination?: { kind: string; label: string };
+  /** Where Save put this answer (Patterns, the Knowledge Base). */
+  savedTo?: SavedAnswer;
+}
+
+/** An answer worth offering to save: something Cobb said at length, not a
+ *  card about a change, a question back, or a one-line reply. */
+function saveable(m: Msg): boolean {
+  if (m.role !== "assistant" || m.proposal || m.command || m.choices || m.entityKind || m.ledgerId || m.ledgerIds || m.building) return false;
+  const t = m.content.trim();
+  return t.length >= 120 && !/^[✓✗]/.test(t);
 }
 
 const kindLabel = (id: string) => id.split(":")[1] ?? id;
@@ -482,6 +491,16 @@ export function ChatPanel({ open: railOpen, setOpen }: { open: boolean; setOpen:
   const navigate = useNavigate();
   const detailRoute = useDetailRoute(activeSlug ?? "");
   const listRoute = useListRoute(activeSlug ?? "");
+  // Save on an answer: which message is being saved, and whether this
+  // workspace has a Patterns collection to offer.
+  const [savingIdx, setSavingIdx] = useState<number | null>(null);
+  const projectInstances = useQuery({
+    queryKey: ["instances", activeSlug, "projects"],
+    queryFn: () => api.listInstances(activeSlug ?? "", "projects"),
+    enabled: !!activeSlug && savingIdx !== null,
+    staleTime: 60_000,
+  });
+  const hasPatterns = (projectInstances.data?.items ?? []).some((x) => x.instance_name === "designs");
   // Leaving through a chip closes the panel first; the record's page is the
   // destination, not a page behind the panel.
   const goTo = useCallback(
@@ -535,7 +554,7 @@ export function ChatPanel({ open: railOpen, setOpen }: { open: boolean; setOpen:
   const undoMut = useMutation({
     mutationFn: (writeId: string) => api.aiChatUndo(activeSlug, writeId),
   });
-  const [messages, setMessages] = useState<Msg[]>([]);
+  const [messages, setMessages] = useStoredConversation<Msg>(activeSlug, CHAT_STORE_MAX);
   // Always-current view for code that runs outside the render (the mount
   // effect that resubscribes to an open turn).
   const messagesRef = useRef<Msg[]>([]);
@@ -647,43 +666,7 @@ export function ChatPanel({ open: railOpen, setOpen }: { open: boolean; setOpen:
     setInput(value);
   }
 
-  // ── Per-workspace history cache (survives a page refresh) ──────────────────
-  // Tracks which workspace the in-state `messages` belong to. The PERSIST effect
-  // is intentionally defined BEFORE the LOAD effect: on a workspace switch both
-  // fire in the same flush, and effects run in definition order — so persist
-  // runs first, sees the OLD slug in this ref, and skips, instead of writing the
-  // previous workspace's messages under the new workspace's key.
-  const msgsSlugRef = useRef<string | null>(null);
-  useEffect(() => {
-    if (msgsSlugRef.current !== (activeSlug ?? null)) return; // messages not yet reloaded for this slug
-    const key = chatStoreKey(activeSlug);
-    if (!key) return;
-    try {
-      // Plain data only (web/src/lib/chat-store.ts): the words, the refs (a
-      // chip that opened a book still opens it after a reload), and a plan
-      // card with which of its parts have run. Never a live confirm card.
-      const slim = slimForStore(messages, CHAT_STORE_MAX);
-      if (slim.length) localStorage.setItem(key, JSON.stringify(slim));
-      else localStorage.removeItem(key);
-    } catch {
-      /* quota exceeded / storage disabled — history just won't persist */
-    }
-  }, [messages, activeSlug]);
-  useEffect(() => {
-    const key = chatStoreKey(activeSlug);
-    let loaded: Msg[] = [];
-    if (key) {
-      try {
-        const raw = localStorage.getItem(key);
-        const parsed = raw ? (JSON.parse(raw) as unknown) : [];
-        if (Array.isArray(parsed)) loaded = parsed as Msg[];
-      } catch {
-        loaded = [];
-      }
-    }
-    msgsSlugRef.current = activeSlug ?? null;
-    setMessages(loaded);
-  }, [activeSlug]);
+  // ── Per-workspace history cache (survives a page refresh): useStoredConversation ──
 
   /** Cobb changed the workspace: tell the app, and make the screens behind the
    *  panel actually show it.
@@ -2136,6 +2119,48 @@ export function ChatPanel({ open: railOpen, setOpen }: { open: boolean; setOpen:
                         </button>
                       </div>
                     </div>
+                  )}
+                  {/* Save an answer: where it went, once saved; the offer, until then. */}
+                  {m.savedTo ? (
+                    <div className="mt-1.5 text-[11px] text-muted dark:text-slate-400" data-testid="answer-saved">
+                      Saved to {m.savedTo.label}
+                      {(() => {
+                        const to = detailRoute(m.savedTo.kind, m.savedTo.id);
+                        return to ? (
+                          <>
+                            {" · "}
+                            <button type="button" onClick={() => goTo(to)} className="text-accent hover:underline">
+                              Open
+                            </button>
+                          </>
+                        ) : null;
+                      })()}
+                    </div>
+                  ) : saveable(m) ? (
+                    <div className="mt-1">
+                      <button
+                        type="button"
+                        onClick={() => setSavingIdx(i)}
+                        className="inline-flex items-center gap-1 text-[11px] text-muted hover:text-accent min-h-7"
+                        data-testid="save-answer"
+                      >
+                        <Bookmark size={11} /> Save
+                      </button>
+                    </div>
+                  ) : null}
+                  {savingIdx === i && activeSlug && projectInstances.isFetched && (
+                    <SaveAnswerSheet
+                      slug={activeSlug}
+                      text={m.content}
+                      asked={[...messages.slice(0, i)].reverse().find((x) => x.role === "user")?.content ?? null}
+                      hasPatterns={hasPatterns}
+                      onClose={() => setSavingIdx(null)}
+                      onSaved={(saved) => {
+                        setSavingIdx(null);
+                        setMessages((prev) => prev.map((x, k) => (k === i ? { ...x, savedTo: saved } : x)));
+                        workspaceChanged();
+                      }}
+                    />
                   )}
                   {/* Take-me-there: after a create, offer a jump to the new
                       record instead of leaving the user to go hunt for it. Only

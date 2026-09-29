@@ -45,6 +45,27 @@ export const DRIVER_CATALOG: CatalogEntry[] = [
   entry(homeAssistant, "An ACTUATOR (no fabrication): wire an entity's schedule to a Home Assistant service — run an irrigation zone, flip a relay, call any service.call. `run-zone` fires script.water_zone with {zone}/{seconds}.", "long-lived access token (Profile → Security)"),
 ];
 
+/** x.y.z, numerically; a missing or odd part counts as 0. */
+function versionAbove(a: string, b: string): boolean {
+  const pa = a.split(".").map((n) => parseInt(n, 10) || 0);
+  const pb = b.split(".").map((n) => parseInt(n, 10) || 0);
+  for (let i = 0; i < 3; i++) if ((pa[i] ?? 0) !== (pb[i] ?? 0)) return (pa[i] ?? 0) > (pb[i] ?? 0);
+  return false;
+}
+
+/** The catalog's copy of an installed catalog driver, when the catalog's is
+ *  newer. A workspace keeps its own copy of a manifest from the day it was
+ *  installed, so a fix to the catalog (Klipper's "standby" no longer read as a
+ *  finished print, #4031) reached nobody who already had the driver. The
+ *  driver is now upgraded where it is built, so every workspace gets it on
+ *  first use. A manifest a person wrote themselves keeps its own version and
+ *  is left alone unless the catalog's is higher. */
+export function newerCatalogManifest(installed: DriverManifest): DriverManifest | null {
+  const entry = DRIVER_CATALOG.find((e) => e.id === installed.id);
+  if (!entry) return null;
+  return versionAbove(entry.manifest.version ?? "0.0.0", installed.version ?? "0.0.0") ? entry.manifest : null;
+}
+
 // Bambu is intentionally NOT here: it speaks MQTT + FTPS, not REST, so it
 // can't be a declarative manifest. It ships as an EDGE-ADAPTER bridge the
 // user runs (LAN or cloud mode = the bridge's config, not Cobblr's). See

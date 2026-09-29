@@ -12,6 +12,8 @@
 
 import { useQuery } from "@tanstack/react-query";
 import { Package } from "lucide-react";
+import type { FamilyPayload } from "./api";
+import { countOf } from "@cobblr/platform-contract";
 import {
   DashboardTile,
   registerDashboardWidget,
@@ -92,7 +94,48 @@ function InventoryDashboardWidget({ slug, getToken }: DashboardWidgetProps) {
 // "Inventory" label. The default instance reads the base parts list; a named one
 // reads its /instances/<name>/items. Same per-instance fetch the aggregate did,
 // so low-stock attention is preserved.
-function InventoryInstanceTile({ slug, getToken, instance }: DashboardWidgetProps) {
+function InventoryInstanceTile(props: DashboardWidgetProps) {
+  if (props.instance?.family) return <FamilyTile {...props} />;
+  return <PlainInstanceTile {...props} />;
+}
+
+/** One tile for a type collection and its things (Filament): "3 spools ·
+ *  2 types", and how many types are low, read from the family page's own
+ *  numbers so the tile and the page cannot disagree. */
+function FamilyTile({ slug, getToken, instance }: DashboardWidgetProps) {
+  const name = instance?.instance_name ?? "";
+  const q = useQuery({
+    queryKey: ["dash-inv-family", slug, name],
+    queryFn: () => getJson<FamilyPayload>(`/api/v1/orgs/${slug}/instances/${encodeURIComponent(name)}/items/family/all`, getToken),
+    enabled: !!slug && !!instance,
+    staleTime: 30_000,
+  });
+  if (!instance) return null;
+  const d = q.data;
+  const nouns = (n: number, one: string | null, fallback: string) => countOf(n, one ?? fallback);
+  return (
+    <DashboardTile
+      to={`/instances/${encodeURIComponent(name)}`}
+      icon={Package}
+      label={instance.family!.label || instance.display_name}
+      primary={d ? d.counts.children : 0}
+      empty={!!d && d.counts.children === 0 && d.counts.types === 0}
+      secondary={
+        d ? (
+          <span data-testid="family-tile-counts" className={d.counts.low ? "text-ember-600 dark:text-ember-500" : undefined}>
+            {nouns(d.counts.children, d.child_noun, "item")} · {nouns(d.counts.types, d.parent_noun, "type")}
+            {d.counts.low ? ` · ${d.counts.low} low` : ""}
+          </span>
+        ) : (
+          "…"
+        )
+      }
+      attention={!!d?.counts.low}
+    />
+  );
+}
+
+function PlainInstanceTile({ slug, getToken, instance }: DashboardWidgetProps) {
   const name = instance?.instance_name ?? "";
   const isDefault = instance?.is_default ?? false;
   const url = isDefault

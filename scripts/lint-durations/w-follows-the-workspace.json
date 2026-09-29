@@ -1,10 +1,11 @@
 {
   "lint": "lint:w-follows-the-workspace",
-  "run": "tsx scripts/lint-w-follows-the-workspace.ts",
+  "run": "node scripts/lint-w-follows-the-workspace.ts",
   "rows": [
     "e2e"
   ],
   "ms": 2900,
   "recorded": "2026-09-22",
-  "source": "by hand at twice a dev-box time taken under load (2026-09-22), to be replaced from its first CI run"
+  "source": "by hand at twice a dev-box time taken under load (2026-09-22), to be replaced from its first CI run",
+  "readMB": 1.8
 }

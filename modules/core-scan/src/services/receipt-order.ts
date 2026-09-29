@@ -66,6 +66,13 @@ export async function linkVendor(
 /** Create the order for a parsed receipt. Returns its id, or null when
  *  purchases is disabled or the call failed — both of which are survivable. */
 export async function createReceiptOrder(input: ReceiptOrderInput): Promise<string | null> {
+  return (await tryCreateReceiptOrder(input)).id;
+}
+
+/** The same, saying WHY there is no order when Purchases is off: that one is
+ *  not a failure to swallow but a choice the person can reverse, and the
+ *  receipt offers it (#3869). */
+export async function tryCreateReceiptOrder(input: ReceiptOrderInput): Promise<{ id: string | null; purchasesOff: boolean }> {
   const vendorId = await linkVendor(input);
   try {
     const res = await fetch(`${input.baseUrl}/api/v1/orgs/${input.slug}/modules/purchases/orders`, {
@@ -96,12 +103,14 @@ export async function createReceiptOrder(input: ReceiptOrderInput): Promise<stri
         },
       }),
     });
-    if (res.ok) return ((await res.json()) as { id: string }).id;
-    console.warn(`[core-scan] receipt PO create skipped (${res.status}) — purchases disabled?`);
-    return null;
+    if (res.ok) return { id: ((await res.json()) as { id: string }).id, purchasesOff: false };
+    const body = await res.text().catch(() => "");
+    const purchasesOff = res.status === 409 && /module_not_enabled/.test(body);
+    console.warn(`[core-scan] receipt PO create skipped (${res.status})${purchasesOff ? ": Purchases is off" : ""}`);
+    return { id: null, purchasesOff };
   } catch (err) {
     console.warn("[core-scan] receipt PO create threw:", (err as Error).message);
-    return null;
+    return { id: null, purchasesOff: false };
   }
 }
 

@@ -8,6 +8,7 @@ export {
   READ_TOOLS,
   WRITE_TOOLS,
   getTool,
+  unitsCounted,
   type WorkspaceTool,
   type ToolMode,
 } from "./tools.js";

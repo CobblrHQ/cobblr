@@ -46,16 +46,16 @@ export function check(file: string, src: string): Violation[] {
   return out;
 }
 
-/** The files to open. `git grep` narrows in C over tracked files only, which
- *  is exactly the set that can reach main and skips node_modules, dist and
- *  anything a local run left lying about. Its pattern is deliberately the same
+/** The files to open. `git grep --untracked` narrows in C over the tracked
+ *  files and the new ones not yet committed (never the ignored ones, so it
+ *  skips node_modules and dist), which is the set that can reach main. Its pattern is deliberately the same
  *  two prefixes `check` uses, so the narrowing is a superset of the rule and
  *  cannot hide a violation; `check` remains the one place the rule is written.
  *  Reading all 7,000 tracked files instead took 11 seconds, which is most of
  *  the whole suite's budget for a rule that is almost always a no-op. */
 function candidates(): string[] {
   try {
-    return execFileSync("git", ["grep", "-l", "-I", "-z", "-e", `^${OPEN}`, "-e", `^${CLOSE}`], {
+    return execFileSync("git", ["grep", "--untracked", "-l", "-I", "-z", "-e", `^${OPEN}`, "-e", `^${CLOSE}`], {
       encoding: "utf8",
       maxBuffer: 64 * 1024 * 1024,
     })

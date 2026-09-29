@@ -17,19 +17,11 @@ import { EntityActionsBar, EntityThumb, FieldPack, LabeledField, Modal, fieldNee
 import { ApiError, api, type Location, type PlatformEntityKind } from "../lib/api";
 import { useActiveOrg } from "../auth/ActiveOrgContext";
 import { EntityAttachments } from "../components/EntityAttachments";
+import { ContributedDetailPanels } from "../panels/registry";
 import { FloorPlan } from "../components/FloorPlan";
+import { hasOwnLayout, readRect } from "../lib/floorplanGeometry";
+import { pinnedFirst } from "../lib/placeItems";
 import { recordHref } from "@cobblr/platform-contract/instance-detail";
-
-/** One thing found inside this location, as the placement endpoint returns it:
- *  the entity's resolved identity plus its declared fields. */
-interface PlacedEntity {
-  kind: string;
-  id: string;
-  title: string;
-  /** Where the record lives, from its own collection (the resolver's). */
-  detailUrl?: string;
-  fields?: Record<string, unknown>;
-}
 
 /** Where a kind's detail page lives. The placement endpoint answers WHAT is
  *  here; the registry is still how a kind says where to click through to. */
@@ -109,12 +101,7 @@ export function LocationDetailPage() {
   const contents = useQuery({
     queryKey: ["location-contents", activeSlug, id],
     queryFn: () =>
-      api.request<{ items: PlacedEntity[] }>(
-        "GET",
-        `/orgs/${activeSlug}/modules/core-placement/contents` +
-          `?container_kind=${encodeURIComponent("core-locations:location")}` +
-          `&container_id=${encodeURIComponent(id!)}`,
-      ),
+      api.placementContents(activeSlug, "core-locations:location", id!),
     enabled: !!activeSlug && !!id,
   });
 
@@ -231,7 +218,7 @@ export function LocationDetailPage() {
               onClick={() => setEditing(true)}
               className="text-[11px] font-mono uppercase tracking-widest text-accent hover:text-accent border border-cobble-200 dark:border-cobble-800 rounded px-2 py-1"
             >
-              edit
+              edit details
             </button>
           </div>
         </div>
@@ -251,7 +238,10 @@ export function LocationDetailPage() {
           physically stand (spec: docs/design-decisions/location-floor-plan.md).
           Rooms lay out top-down; containers (a toolbox) lay out as a front
           elevation so drawers show at true scale. */}
-      <FloorPlan room={l} slug={activeSlug} />
+      {/* A drawer drawn on its toolbox's face, with nothing in it, has no
+          layout to show: an empty "Layout" strip on every drawer was noise.
+          A room, a standalone chest, or anything with things in it keeps it. */}
+      {(l.kind === "area" || children.length > 0 || hasOwnLayout(l.metadata) || !readRect(l.metadata)) && <FloorPlan room={l} slug={activeSlug} />}
 
       {/* ALWAYS rendered, even with no children. It used to appear only once a
           location already had something inside it, so a room with none had no
@@ -335,7 +325,7 @@ export function LocationDetailPage() {
         )}
         {contents.data && contents.data.items.length > 0 && (
           <ul className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-2">
-            {contents.data.items.map((item) => {
+            {pinnedFirst(contents.data.items).map((item) => {
               const f = item.fields ?? {};
               const template = routes.get(item.kind);
               const href = recordHref(item, template);
@@ -345,6 +335,9 @@ export function LocationDetailPage() {
                   <EntityThumb src={str(f.image_path)} alt={item.title} size={40} />
                   <div className="min-w-0 flex-1">
                     <div className="text-sm font-medium text-content dark:text-mortar-100 truncate">
+                      {item.position && (
+                        <MapPin size={12} className="inline mr-1 -mt-0.5 text-accent" aria-label="pinned on the plan" />
+                      )}
                       {item.title}
                     </div>
                     {/* The collection, not the kind id: INVENTORY:PART under
@@ -380,7 +373,12 @@ export function LocationDetailPage() {
         )}
       </section>
 
-      <EntityAttachments kind="core-locations:location" entityId={l.id} />
+      {/* Whatever enabled modules contribute to a place (inventory's "Stock
+          here": count against minimum, what is low, what is going off); this
+          page names no contributor. */}
+      <ContributedDetailPanels target="core-locations:location" ctx={{ slug: activeSlug, entityId: l.id, entityTitle: l.name }} />
+
+      <EntityAttachments kind="core-locations:location" entityId={l.id} omit={["tags", "discussion", "pairings"]} />
 
       <div className="text-center pt-4">
         <button

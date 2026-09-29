@@ -95,7 +95,7 @@ export function mayWriteField(
 
 // ── Purchase evidence on a row ───────────────────────────────────────────
 
-export type EvidenceSource = "receipt" | "order" | "import";
+export type EvidenceSource = "receipt" | "order" | "import" | "listing";
 
 export interface PurchaseEvidence {
   /** The marketplace or shop the purchase was made with: the receipt's
@@ -112,6 +112,7 @@ const str = (v: unknown): string | null => (typeof v === "string" && v.trim() ? 
  * What the row's own record says about where it was bought. Reads the keys
  * a receipt parse stamps (receipt_vendor / receipt_seller), the keys an
  * order import stamps (order_marketplace / order_vendor / order_seller), and
+ * a listing screenshot's read (listing.marketplace / listing.seller), and
  * an import provenance that named a shop (import_provenance.vendor or
  * .marketplace; `.source` names the SYSTEM the rows came from and is not a
  * place anything was bought).
@@ -127,6 +128,14 @@ export function purchaseEvidenceOf(meta: unknown): PurchaseEvidence {
   const orderSeller = str(m.order_seller);
   if (orderSource || orderSeller) {
     return { source: orderSource ?? orderSeller, seller: orderSeller && orderSeller !== orderSource ? orderSeller : null, from: "order" };
+  }
+  // A listing screenshot printed where it was sold and by whom (#3853):
+  // core-scan's listing-evidence.ts stamps it under `listing`.
+  const listing = (m.listing ?? null) as Record<string, unknown> | null;
+  const listingSource = str(listing?.marketplace);
+  const listingSeller = str(listing?.seller);
+  if (listingSource || listingSeller) {
+    return { source: listingSource ?? listingSeller, seller: listingSeller && listingSeller !== listingSource ? listingSeller : null, from: "listing" };
   }
   const prov = (m.import_provenance ?? null) as Record<string, unknown> | null;
   const importSource = str(prov?.marketplace) ?? str(prov?.vendor);
@@ -272,7 +281,7 @@ export function acquisitionSourceConflict(field: string, value: unknown, evidenc
 /** The sentence the row shows for a conflict, where Add would be. */
 export function sourceConflictWords(c: SourceConflict, label?: string): string {
   const what = label ?? c.field.replace(/_/g, " ");
-  const said = c.from === "receipt" ? "the receipt says" : c.from === "order" ? "the order says" : "the import says";
+  const said = c.from === "receipt" ? "the receipt says" : c.from === "order" ? "the order says" : c.from === "listing" ? "the listing says" : "the import says";
   const seller = c.seller ? ` (sold by ${c.seller})` : "";
   return `${what} says ${c.value}, but ${said} ${c.evidence}${seller}; check it`;
 }

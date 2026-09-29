@@ -1,7 +1,8 @@
 {
   "lint": "lint:shape-changes-run-through-one-door",
-  "run": "tsx scripts/lint-shape-changes-run-through-one-door.ts",
+  "run": "node scripts/lint-shape-changes-run-through-one-door.ts",
   "ms": 519,
   "recorded": "2026-09-14",
-  "source": "split from scripts/lint-durations.json (recorded 2026-09-14)"
+  "source": "split from scripts/lint-durations.json (recorded 2026-09-14)",
+  "readMB": 13.3
 }

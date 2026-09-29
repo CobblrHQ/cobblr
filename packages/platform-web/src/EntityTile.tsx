@@ -11,6 +11,7 @@
 
 import type { ReactNode } from "react";
 import { EntityPhoto } from "./EntityPhoto";
+import { PICTURE_STATE_TEXT, type PictureState } from "./photoSuggestions";
 import type { SwatchFieldDef } from "./swatch";
 
 /** The grid every wall of tiles sits in: two across on a phone, and above that
@@ -64,10 +65,30 @@ interface Props {
    *  card, on the card's bottom line, so every tile along a row puts it at the
    *  same height; drawn beside the card it hung below the box. */
   status?: ReactNode;
+  /** A picture the platform found for a record that has none (#3818). Shown
+   *  only while the record has no picture of its own, and marked as a
+   *  suggestion, never passed off as the record's own. */
+  suggestedSrc?: string | null;
+  /** With no picture and no suggestion: whether one is still being looked
+   *  for, or was looked for and not found (pictureStateFor). */
+  pictureState?: PictureState;
+  /** How many identical things the record stands for (a record of three
+   *  printers). Drawn as "×3" on the image's top-left, apart from `badge`,
+   *  and only above one: "×1" on every single machine is noise. Stock that
+   *  runs down (a pantry's count) is a `badge`, which shows every value. */
+  count?: number | null;
 }
 
-export function EntityTile({ src, title, subtitle: rawSubtitle, badge, color, values, fieldDefs, attention, status }: Props) {
+/** The "×N" a tile shows for a record standing for N things, or null. */
+export function countBadge(count: number | null | undefined): string | null {
+  return typeof count === "number" && Number.isFinite(count) && count > 1 ? `×${Number.isInteger(count) ? count : parseFloat(count.toFixed(3))}` : null;
+}
+
+export function EntityTile({ src, title, subtitle: rawSubtitle, badge, color, values, fieldDefs, attention, status, suggestedSrc, pictureState, count }: Props) {
+  const suggesting = !src && !!suggestedSrc;
+  const saying = !src && !suggesting ? pictureState : undefined;
   const subtitle = distinctSubtitle(title, rawSubtitle);
+  const times = countBadge(count);
   const borderCls = attention
     ? "border-ember-300 dark:border-ember-700"
     : "border-line dark:border-slate-700";
@@ -78,7 +99,34 @@ export function EntityTile({ src, title, subtitle: rawSubtitle, badge, color, va
     >
       {/* The square comes from the frame, before the picture: a tall photo
           cannot make its tile taller than the one beside it. */}
-      <EntityPhoto src={src} alt={title} aspect="square" color={color} values={values} fieldDefs={fieldDefs}>
+      <EntityPhoto src={suggesting ? suggestedSrc : src} alt={title} aspect="square" color={color} values={values} fieldDefs={fieldDefs}>
+        {suggesting && <span className="pointer-events-none absolute inset-1 rounded-lg border-2 border-dashed border-accent/70" />}
+        {/* One stack on the top-left, so a record of three whose picture is
+            suggested, or still being looked for, says both, one under the
+            other, never one over the other. */}
+        {(suggesting || saying || times) && (
+          <span className="absolute top-1.5 left-1.5 right-1.5 flex flex-col items-start gap-1 pointer-events-none">
+            {suggesting && (
+              <span data-testid="tile-suggested" className="px-1.5 py-0.5 rounded text-[10px] font-medium bg-accent text-white">
+                Suggested
+              </span>
+            )}
+            {saying && (
+              <span
+                data-testid="tile-picture-state"
+                data-state={saying}
+                className={`max-w-full truncate px-1.5 py-0.5 rounded text-[10px] font-medium bg-surface/85 dark:bg-slate-900/85 text-muted dark:text-slate-300${saying === "looking" ? " animate-pulse" : ""}`}
+              >
+                {PICTURE_STATE_TEXT[saying]}
+              </span>
+            )}
+            {times && (
+              <span data-tile-count className="px-1.5 py-0.5 rounded text-[11px] font-mono font-medium bg-surface/85 dark:bg-slate-900/85 backdrop-blur text-content dark:text-mortar-100">
+                {times}
+              </span>
+            )}
+          </span>
+        )}
         {badge && (
           <span className="absolute bottom-1.5 right-1.5 px-1.5 py-0.5 rounded text-[10px] font-mono uppercase tracking-wider bg-surface/85 dark:bg-slate-900/85 backdrop-blur text-content dark:text-mortar-100">
             {badge}
@@ -94,7 +142,25 @@ export function EntityTile({ src, title, subtitle: rawSubtitle, badge, color, va
             {subtitle}
           </div>
         )}
-        {status && <div data-tile-status className="mt-auto pt-1 min-w-0 truncate">{status}</div>}
+        {status && (
+          <div
+            data-tile-status
+            className="mt-auto pt-1 min-w-0 truncate"
+            // A tile is usually wrapped in the link to its record. A control
+            // in the status line (a count's −/+) must act, not open the
+            // record: the tap is kept from the link here, in the capture
+            // phase, since a control may stop its own click from bubbling. A
+            // link in the status line still follows.
+            onClickCapture={(e) => {
+              const t = e.target as HTMLElement;
+              const link = t.closest("a");
+              const ownLink = !!link && e.currentTarget.contains(link);
+              if (t.closest("button, input, select, textarea") && !ownLink) e.preventDefault();
+            }}
+          >
+            {status}
+          </div>
+        )}
       </div>
     </div>
   );

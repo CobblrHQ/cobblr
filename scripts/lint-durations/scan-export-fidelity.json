@@ -1,7 +1,8 @@
 {
   "lint": "lint:scan-export-fidelity",
-  "run": "tsx scripts/lint-scan-export-fidelity.ts",
+  "run": "node scripts/lint-scan-export-fidelity.ts",
   "ms": 321,
   "recorded": "2026-09-14",
-  "source": "split from scripts/lint-durations.json (recorded 2026-09-14)"
+  "source": "split from scripts/lint-durations.json (recorded 2026-09-14)",
+  "readMB": 0.1
 }

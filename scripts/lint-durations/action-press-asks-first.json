@@ -1,6 +1,6 @@
 {
   "lint": "lint:action-press-asks-first",
-  "run": "tsx scripts/lint-action-press-asks-first.ts",
+  "run": "node scripts/lint-action-press-asks-first.ts",
   "rows": [
     "entity-action"
   ],

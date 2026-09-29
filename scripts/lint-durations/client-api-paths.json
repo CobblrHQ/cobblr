@@ -1,10 +1,11 @@
 {
   "lint": "lint:client-api-paths",
-  "run": "tsx scripts/lint-client-api-paths.ts",
+  "run": "node scripts/lint-client-api-paths.ts",
   "rows": [
     "lint"
   ],
   "ms": 4000,
   "recorded": "2026-09-22",
-  "source": "added by hand at twice a quiet dev-box time (2026-09-22), to be replaced from its first CI run"
+  "source": "added by hand at twice a quiet dev-box time (2026-09-22), to be replaced from its first CI run",
+  "readMB": 3.9
 }

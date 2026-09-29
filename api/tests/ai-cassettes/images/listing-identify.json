@@ -1,0 +1,7 @@
+{
+  "_fixture": "e2e/fixtures/scan-crop/voron-listing.jpg",
+  "_why": "#3853: a listing read with no photo box, so the locate call has to find the photo",
+  "image_ahash": "02000000ffffffff",
+  "capability": "identify-image",
+  "reply": "{\"name\": \"Voron 0.1 3D printer, partially built\", \"brand\": \"Voron\", \"color\": \"black\", \"category\": \"3D printer\", \"entity_type\": \"asset\", \"observations\": \"A marketplace listing screenshot of one partially built 3D printer on a table. The listing title reads Voron 0.1 3d printer partially built, priced $150.\", \"distinct_items\": 1, \"items\": [], \"product_photo_box\": null, \"listing\": {\"marketplace\": \"Facebook Marketplace\", \"title\": \"Voron 0.1 3d printer partially built\", \"price\": 150, \"currency\": \"USD\", \"seller\": \"Dominic\", \"location\": null, \"condition\": null, \"sold\": false, \"listed\": \"about an hour ago\"}, \"is_receipt\": \"no\", \"packaging\": \"none\", \"confidence\": 0.85}"
+}

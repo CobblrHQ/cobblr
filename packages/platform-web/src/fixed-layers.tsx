@@ -16,8 +16,23 @@
 // refuses a bare `fixed` outside this package, so an author reaching for one
 // has to say which of these it is.
 
-import { forwardRef, useCallback, useLayoutEffect, useRef, type CSSProperties, type HTMLAttributes, type ReactNode } from "react";
+import { forwardRef, useCallback, useLayoutEffect, useRef, type CSSProperties, type ForwardedRef, type HTMLAttributes, type ReactNode } from "react";
 import { OverlayFlag } from "./overlay-open";
+import { useLayerStack } from "./layer-stack";
+
+/** This layer's own ref, forwarded to the caller's too. */
+function useOwnRef(ref: ForwardedRef<HTMLDivElement>) {
+  const own = useRef<HTMLDivElement | null>(null);
+  const setRef = useCallback(
+    (el: HTMLDivElement | null) => {
+      own.current = el;
+      if (typeof ref === "function") ref(el);
+      else if (ref) ref.current = el;
+    },
+    [ref],
+  );
+  return [own, setRef] as const;
+}
 
 export interface LayerProps extends HTMLAttributes<HTMLDivElement> {
   children?: ReactNode;
@@ -31,10 +46,13 @@ export interface PopoverLayerProps extends LayerProps {
   flipAbove?: number;
 }
 
-/** A surface that covers the page. Raises the overlay flag while mounted. */
+/** A surface that covers the page. Raises the overlay flag while mounted, and
+ *  opens above any layer already open (layer-stack). */
 export const OverlayLayer = forwardRef<HTMLDivElement, LayerProps>(function OverlayLayer({ className = "", children, ...rest }, ref) {
+  const [own, setRef] = useOwnRef(ref);
+  useLayerStack(own);
   return (
-    <div ref={ref} className={"fc-overlay " + className} {...rest}>
+    <div ref={setRef} className={"fc-overlay " + className} {...rest}>
       <OverlayFlag />
       {children}
     </div>
@@ -80,15 +98,9 @@ export function clampToViewport(
  *  File into menu assumed 288px and, in a phone's larger text, ran off the
  *  right edge (#3930); the fix is here, once, for every menu. */
 export const PopoverLayer = forwardRef<HTMLDivElement, PopoverLayerProps>(function PopoverLayer({ className = "", children, flipAbove, ...rest }, ref) {
-  const own = useRef<HTMLDivElement | null>(null);
-  const setRef = useCallback(
-    (el: HTMLDivElement | null) => {
-      own.current = el;
-      if (typeof ref === "function") ref(el);
-      else if (ref) ref.current = el;
-    },
-    [ref],
-  );
+  const [own, setRef] = useOwnRef(ref);
+  // Above the layer it opens from: a menu in a modal over the Ask Cobb panel.
+  useLayerStack(own);
   // What this layer has already moved itself by, so a re-measure reads the
   // position its caller asked for rather than the corrected one.
   const applied = useRef({ dx: 0, dy: 0 });
@@ -127,10 +139,13 @@ export const PopoverLayer = forwardRef<HTMLDivElement, PopoverLayerProps>(functi
   );
 });
 
-/** The click-catcher behind a popover: covers the page, draws nothing. */
+/** The click-catcher behind a popover: covers the page, draws nothing. It
+ *  goes above what is open, and its popover, rendered after it, above it. */
 export const BackdropLayer = forwardRef<HTMLDivElement, LayerProps>(function BackdropLayer({ className = "", children, ...rest }, ref) {
+  const [own, setRef] = useOwnRef(ref);
+  useLayerStack(own);
   return (
-    <div ref={ref} className={"fc-backdrop " + className} {...rest}>
+    <div ref={setRef} className={"fc-backdrop " + className} {...rest}>
       {children}
     </div>
   );

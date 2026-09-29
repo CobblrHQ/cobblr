@@ -1,7 +1,8 @@
 {
   "lint": "lint:public-repo-urls",
-  "run": "tsx scripts/lint-public-repo-urls.ts",
+  "run": "node scripts/lint-public-repo-urls.ts",
   "ms": 481,
   "recorded": "2026-09-14",
-  "source": "split from scripts/lint-durations.json (recorded 2026-09-14)"
+  "source": "split from scripts/lint-durations.json (recorded 2026-09-14)",
+  "readMB": 0.0
 }

@@ -1,7 +1,7 @@
 {
   "id": "prusalink",
   "name": "PrusaLink",
-  "version": "1.0.0",
+  "version": "1.2.0",
   "auth": { "kind": "header", "header": "X-Api-Key", "from": "apiKey" },
   "routing": false,
   "test": { "method": "GET", "path": "/api/version" },
@@ -45,7 +45,13 @@
           "BUSY": "printing"
         }
       },
-      "progress": "$.job.progress"
+      "progress": "$.job.progress",
+      "progressScale": 100
     }
+  },
+  "commands": {
+    "pause": { "method": "PUT", "path": "/api/v1/job/{jobNum}/pause", "resolve": { "method": "GET", "path": "/api/v1/job", "vars": { "jobNum": "$.id" } } },
+    "resume": { "method": "PUT", "path": "/api/v1/job/{jobNum}/resume", "resolve": { "method": "GET", "path": "/api/v1/job", "vars": { "jobNum": "$.id" } } },
+    "cancel": { "method": "DELETE", "path": "/api/v1/job/{jobNum}", "resolve": { "method": "GET", "path": "/api/v1/job", "vars": { "jobNum": "$.id" } } }
   }
 }

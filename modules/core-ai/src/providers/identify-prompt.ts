@@ -108,6 +108,12 @@ export const IDENTIFY_PROMPT =
   'or more, list them in "items" — one entry per DIFFERENT thing, each named as ' +
   "specifically as the photo allows, with how many of that one are visible — " +
   'and let "name" describe the group as a whole. Otherwise "items" is [].\n\n' +
+  // A skein half out of frame behind the one being scanned was counted, and
+  // the card offered to split one ball of yarn into two items (#3884).
+  "Count only what the photo is OF. Something only partly in frame, at an " +
+  "edge, or behind the subject in the background is not one of the things " +
+  'pictured: leave it out of "distinct_items", and if you list it in "items" ' +
+  'mark it "background": true.\n\n' +
   "If the item has an obvious single COLOUR (a garment, a tool body, a phone " +
   "case), name it in plain English (\"black\", \"navy\", \"red\"). Use the " +
   "colour of the ITEM, not its packaging. Omit it for something with no one " +
@@ -123,6 +129,16 @@ export const IDENTIFY_PROMPT =
   "IS the item's photograph with no page around it, or when no photograph of " +
   "the item is visible. Identify the ITEM either way: a listing screenshot is " +
   "still a scan of that item.\n\n" +
+  // A listing is purchase evidence the way a receipt is (#3853): the page
+  // printed where, from whom and for how much, and those words were read and
+  // then thrown away. Asked as data, verbatim, never inferred.
+  'When the screenshot is a LISTING of the item for sale (a marketplace, an ' +
+  'auction, a classified ad, a shop page), also report "listing" with what the ' +
+  "page PRINTS, verbatim: the marketplace or site, the listing title, the " +
+  "price as a number with its currency, the seller's name, the place it is " +
+  'listed in, the condition, whether it is marked sold, and how long ago it was ' +
+  "listed as printed. Null for any part not printed; never a guess. " +
+  '"listing" is null for anything that is not a listing screenshot.\n\n' +
   // A receipt is not an item, and a model asked "what item is this" answers
   // with an item: a receipt with one dominant product line came back as that
   // product, and a sparse one as nothing at all (#2916). So the question is
@@ -158,7 +174,11 @@ export const IDENTIFY_PROMPT =
   '"year_made": <the year this item was made as printed on it (a wine\'s vintage, a coin\'s year), four digits, never a best-before, copyright or "since" year, else null>, ' +
   '"observations": <string>, "distinct_items": <integer>, ' +
   '"product_photo_box": {"x": <0..1>, "y": <0..1>, "w": <0..1>, "h": <0..1>}|null, ' +
-  '"items": [{"name": <string>, "brand": <string|null>, "qty": <integer>}], ' +
+  '"listing": {"marketplace": <string|null>, "title": <string|null>, "price": <number|null>, ' +
+  // VOCAB-ENUMERATION OK: the listing reply's own keys, read by parseListing; not field roles.
+  '"currency": <ISO 4217 code|null>, "seller": <string|null>, "location": <string|null>, ' +
+  '"condition": <string|null>, "sold": <boolean|null>, "listed": <as printed, e.g. "12 weeks ago"|null>}|null, ' +
+  '"items": [{"name": <string>, "brand": <string|null>, "qty": <integer>, "background": <boolean>}], ' +
   '"is_receipt": "yes"|"no"|"unsure", ' +
   '"packaging": "none"|"box"|"sealed"|"opened"|"unknown", ' +
   '"confidence": <0..1, how sure you are>}. If the photo is unclear, empty, or ' +

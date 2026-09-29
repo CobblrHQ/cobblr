@@ -264,7 +264,14 @@ export function SideRail({
         >
           <header className="flex items-center justify-between px-4 py-3 border-b border-line dark:border-slate-700 shrink-0">
             {barVisible ? (
-              <div role="tablist" className="flex items-center gap-1 min-w-0">
+              // The tabs take what the actions leave and never draw under
+              // them: at 320px, with a conversation open, "Pinned" sat under
+              // Clear conversation and Close (#4017), because every tab refused
+              // to shrink. Below 360px an inactive tab drops its icon and keeps
+              // its word, which is what fits three named tabs beside the two
+              // actions; e2e/ask-cobbs-header-never-overlaps-on-a-narrow-phone
+              // holds it at 320, 340, 360 and 390px.
+              <div role="tablist" className="flex items-center gap-1 min-w-0 flex-1 overflow-hidden">
                 {tabs.map((t) => {
                   const on = t.id === activeId;
                   return (
@@ -275,13 +282,13 @@ export function SideRail({
                       onClick={() => setActiveId(t.id)}
                       title={t.label}
                       className={
-                        "inline-flex items-center gap-1.5 rounded-md px-2 py-1 text-sm transition shrink-0 " +
+                        "inline-flex items-center gap-1.5 rounded-md px-2 py-1 text-sm transition min-w-0 " +
                         (on
                           ? "bg-subtle dark:bg-slate-800 text-content dark:text-mortar-100 font-medium"
                           : "text-muted hover:text-content dark:hover:text-mortar-200")
                       }
                     >
-                      <span className="shrink-0">{t.icon}</span>
+                      <span className={"shrink-0" + (on ? "" : " max-[359px]:hidden")}>{t.icon}</span>
                       {/* Every tab keeps its word, on a phone too. This used to
                           drop the INACTIVE labels below `sm` to save room, and
                           three icons in a row read as unnamed controls: "the
@@ -304,7 +311,7 @@ export function SideRail({
                 className="flex items-center gap-2 text-sm font-semibold text-content dark:text-mortar-100 min-w-0"
               />
             )}
-            <div className="flex items-center gap-1 shrink-0">
+            <div className="flex items-center gap-1 shrink-0 ml-2">
               <div ref={setActionsEl} className="flex items-center gap-1" />
               <button
                 type="button"

@@ -12,6 +12,7 @@
 // pybambu uses browser-TLS impersonation. We send the same agent User-Agent and
 // detect a Cloudflare block so the wizard can show a clear error rather than a
 // mystery 403. Whether Node's TLS clears Cloudflare is the key live-verify risk.
+import { requestSignal } from "./timeouts.js";
 
 // ── Regions ──────────────────────────────────────────────────────────────────
 export const BAMBU_REGIONS = ["North America", "Europe", "Asia Pacific", "China", "Other"] as const;
@@ -123,7 +124,7 @@ async function bambuPost(url: string, body: unknown, auth?: string): Promise<Res
   if (auth) headers.Authorization = `Bearer ${auth}`;
   let res: Response;
   try {
-    res = await fetch(url, { method: "POST", headers, body: JSON.stringify(body) });
+    res = await fetch(url, { method: "POST", headers, body: JSON.stringify(body), signal: requestSignal() });
   } catch (e) {
     throw new BambuCloudError(`Bambu Cloud unreachable: ${(e as Error).message}`);
   }
@@ -137,7 +138,7 @@ async function bambuPost(url: string, body: unknown, auth?: string): Promise<Res
 async function bambuGet(url: string, auth: string): Promise<Response> {
   let res: Response;
   try {
-    res = await fetch(url, { method: "GET", headers: { "User-Agent": AGENT_UA, Accept: "application/json", Authorization: `Bearer ${auth}` } });
+    res = await fetch(url, { method: "GET", headers: { "User-Agent": AGENT_UA, Accept: "application/json", Authorization: `Bearer ${auth}` }, signal: requestSignal() });
   } catch (e) {
     throw new BambuCloudError(`Bambu Cloud unreachable: ${(e as Error).message}`);
   }

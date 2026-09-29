@@ -1,10 +1,11 @@
 {
   "lint": "lint:docker-leaves-no-strays",
-  "run": "tsx scripts/lint-docker-leaves-no-strays.ts",
+  "run": "node scripts/lint-docker-leaves-no-strays.ts",
   "rows": [
     "kernel-platform-service"
   ],
   "ms": 5980,
   "recorded": "2026-09-28",
-  "source": "scaffolded by new-lint.sh at twice a local run (a shared box); replaced from its first CI measurement"
+  "source": "scaffolded by new-lint.sh at twice a local run (a shared box); replaced from its first CI measurement",
+  "readMB": 1.8
 }

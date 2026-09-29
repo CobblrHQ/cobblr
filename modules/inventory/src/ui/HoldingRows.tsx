@@ -6,12 +6,13 @@
 // short of gauze says so even when the closet holds plenty.
 // See docs/design-decisions/holdings-and-units.md.
 
+import { useState, type ReactNode } from "react";
 import { Link } from "react-router-dom";
 import { AlertTriangle, MapPin } from "lucide-react";
 import { dayHere } from "@cobblr/platform-contract/day";
 import { expiryPhrase, expiryState } from "@cobblr/platform-contract/expiry-grace";
 import type { CardRollup } from "@cobblr/platform-contract/holdings";
-import type { HoldingRow } from "./api";
+import type { HoldingLot, HoldingRow } from "./api";
 import { QtyStepper } from "./QtyStepper";
 
 function fmt(n: number): string {
@@ -47,17 +48,44 @@ export function RollupLine({ rollup, unit }: { rollup: CardRollup; unit?: string
   );
 }
 
+/** One lot, as a line: "4 · lot A-101 · expires in 3d". */
+export function lotWords(l: HoldingLot): string {
+  return [fmt(l.qty), l.lot ? `lot ${l.lot}` : null, goesOffWords(l.expires_on) ?? "no date"].filter(Boolean).join(" · ");
+}
+
+/** A place with several lots can show them; one lot is already its date. */
+function LotsToggle({ lots }: { lots: HoldingLot[] }) {
+  const [open, setOpen] = useState(false);
+  return (
+    <div className="basis-full">
+      <button type="button" onClick={() => setOpen((o) => !o)} aria-expanded={open} className="text-[11px] text-accent hover:underline">
+        {open ? "Hide" : "Show"} {lots.length} lots
+      </button>
+      {open && (
+        <ul className="mt-1 space-y-0.5 pl-4 text-[11px] font-mono text-muted dark:text-slate-400" data-testid="holding-lots">
+          {lots.map((l, i) => (
+            <li key={`${l.expires_on}-${l.lot ?? ""}-${i}`}>{lotWords(l)}</li>
+          ))}
+        </ul>
+      )}
+    </div>
+  );
+}
+
 /** A row per place. `basePath` links each place's row to its own record. */
 export function HoldingRows({
   rows,
   basePath,
   onSplit,
+  actions,
 }: {
   rows: HoldingRow[];
   basePath: string;
   /** Offered on a holding's row (never the card's own): make it a record of
    *  its own again. */
   onSplit?: (row: HoldingRow) => void;
+  /** Extra controls under a row (the detail's restock and arrival forms). */
+  actions?: (row: HoldingRow) => ReactNode;
 }) {
   return (
     <ul className="mt-1.5 divide-y divide-line dark:divide-slate-800 rounded-md border border-line dark:border-slate-700" data-testid="holding-rows">
@@ -97,6 +125,8 @@ export function HoldingRows({
                 Split into its own
               </button>
             )}
+            {(r.lots?.length ?? 0) > 1 && <LotsToggle lots={r.lots!} />}
+            {actions && <div className="basis-full">{actions(r)}</div>}
           </li>
         );
       })}

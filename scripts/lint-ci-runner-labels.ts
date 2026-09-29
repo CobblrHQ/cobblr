@@ -30,7 +30,9 @@ const DIR = join(ROOT, ".forgejo", "workflows");
  *  this list as a claim about infrastructure, not a formality. */
 // bake-<box> is one label per PHYSICAL machine: the pool image is baked and
 // committed locally, so the nightly bake has to land on each box by name.
-const KNOWN = new Set(["ubuntu-latest", "light", "ci-test", "ci-test-full", "ci-e2e", "bake-a6", "bake-aurora"]);
+// docker-build is the image build's own runner: its queued runs stand down in
+// seconds there instead of waiting behind typecheck for a runner per job.
+const KNOWN = new Set(["ubuntu-latest", "light", "ci-test", "ci-test-full", "ci-e2e", "bake-a6", "bake-aurora", "bake-z87", "docker-build"]);
 
 const errors: string[] = [];
 const seen = new Map<string, string[]>();

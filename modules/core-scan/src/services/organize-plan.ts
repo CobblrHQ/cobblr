@@ -21,7 +21,8 @@
 import { randomUUID } from "node:crypto";
 import { platform } from "@cobblr/platform-contract";
 import { scanTargetsForOrg } from "./scan-target.js";
-import { significantTokens } from "./suggest-location.js";
+import { ambientHome, requirementSpot, significantTokens } from "./suggest-location.js";
+import { resolveRequirement } from "./storage-requirement.js";
 import { bucketForCategory, type CategoryBucket } from "./category-buckets.js";
 import { LengthUnitResolver, entityLongestMm, unitFieldDefsByKind } from "./organize-dims.js";
 import {
@@ -30,6 +31,7 @@ import {
   maxAxisMm,
   routeItem,
   scoreTitles,
+  titlesLike,
   type Census,
   type RouteHit,
 } from "./putaway-route.js";
@@ -54,6 +56,10 @@ export interface OrganizeInputItem {
    *  not propose moving the yoghurt into a cupboard and leave the storage
    *  check to complain about a move the system itself suggested. */
   storage_requirement?: unknown;
+  /** The kind it is being filed as ("groceries:item", "yarn:item"), when
+   *  known. Things of different kinds are never grouped together, and only
+   *  things of its own kind are its "similar" siblings. */
+  kind?: string | null;
 }
 
 export type OrganizeDestination =
@@ -119,10 +125,14 @@ function heuristicPlan(
   const rest: OrganizeInputItem[] = [];
   for (const it of items) {
     const h = hints.get(it.id);
-    if (h) (byBin.get(h.location_id) ?? byBin.set(h.location_id, []).get(h.location_id)!).push(it);
+    // Per kind as well as per bin: a shelf may rightly hold two kinds of
+    // thing, but one group is one kind of thing.
+    const key = `${h?.location_id}\u0000${it.kind ?? ""}`;
+    if (h) (byBin.get(key) ?? byBin.set(key, []).get(key)!).push(it);
     else rest.push(it);
   }
-  for (const [locId, members] of byBin) {
+  for (const [key, members] of byBin) {
+    const locId = key.slice(0, key.indexOf("\u0000"));
     const loc = census.all.get(locId);
     if (!loc) continue;
     const counts = members.map((m) => hints.get(m.id)!.sibling_count);
@@ -136,6 +146,45 @@ function heuristicPlan(
       evidence: { sibling_count: Math.max(...counts), sample_names: sampleNames },
     });
   }
+  // 1b. HOW IT KEEPS. A thing that must stay cold goes in the Fridge or the
+  //     Freezer the workspace already has, and a shelf-stable one in its
+  //     Pantry, before any new bin is proposed: the first shop into a new
+  //     kitchen has no habits yet, and "Start a Groceries bin" beside a
+  //     Pantry is the answer a person would never give (2026-09-29). Only
+  //     containers: a room is never a home without evidence. The same
+  //     rules the scan's own suggestion uses (suggest-location.ts), so
+  //     Put away and the card name the same place.
+  const homes = [...census.all.entries()]
+    .filter(([, l]) => l.kind === "container")
+    .map(([id, l]) => ({ id, title: l.name }));
+  const byHome = new Map<string, { title: string; why: string; members: OrganizeInputItem[] }>();
+  const unhomed: OrganizeInputItem[] = [];
+  for (const it of rest) {
+    const req = resolveRequirement(it.storage_requirement, it.category, it.name);
+    const spot = requirementSpot(req, homes) ?? ambientHome(req, homes);
+    if (!spot) {
+      unhomed.push(it);
+      continue;
+    }
+    const why = req === "frozen" ? "keeps frozen" : req === "refrigerated" ? "keeps cold" : "keeps at room temperature";
+    const key = `${spot.id}\u0000${it.kind ?? ""}`;
+    const g = byHome.get(key) ?? { title: spot.title, why, members: [] };
+    g.members.push(it);
+    byHome.set(key, g);
+  }
+  for (const [key, g] of byHome) {
+    const locId = key.slice(0, key.indexOf("\u0000"));
+    const loc = census.all.get(locId)!;
+    groups.push({
+      id: randomUUID(),
+      label: labelFor(g.members),
+      rationale: g.members.length > 1 ? `These ${g.why.replace("keeps", "keep")}: ${g.title}.` : `This ${g.why}: ${g.title}.`,
+      item_ids: g.members.map((m) => m.id),
+      destination: { kind: "existing", location_id: locId, location_name: loc.name, location_path: loc.path },
+    });
+  }
+  rest.splice(0, rest.length, ...unhomed);
+
   // 2. CATEGORY STARTER BINS. Most captured goods carry a catalog category; on
   //    a workspace with no matching bin yet (the fresh-install common case) the
   //    heuristic used to strand every one of them at "unassigned" — nowhere to
@@ -148,9 +197,10 @@ function heuristicPlan(
   for (const it of rest) {
     const bucket = bucketForCategory(it.category);
     if (bucket) {
-      const g = byBucket.get(bucket.key) ?? { bucket, members: [] };
+      const key = `${bucket.key}\u0000${it.kind ?? ""}`;
+      const g = byBucket.get(key) ?? { bucket, members: [] };
       g.members.push(it);
-      byBucket.set(bucket.key, g);
+      byBucket.set(key, g);
     } else uncategorized.push(it);
   }
   for (const { bucket, members } of byBucket.values()) {
@@ -172,7 +222,7 @@ function heuristicPlan(
   const singles: OrganizeInputItem[] = [];
   for (const it of uncategorized) {
     const toks = significantTokens(it.name).sort((a, b) => b.length - a.length);
-    const key = toks[0] ?? null;
+    const key = toks[0] ? `${toks[0]}\u0000${it.kind ?? ""}` : null;
     if (key) (byToken.get(key) ?? byToken.set(key, []).get(key)!).push(it);
     else singles.push(it);
   }
@@ -231,7 +281,7 @@ Produce a put-away plan as STRICT JSON (no prose, no code fences):
 
 Rules, in priority order:
 1. BLANK BEATS WRONG. If no destination is defensible, use {"kind":"unassigned"}. Never guess.
-2. Group by what items ARE (same family of thing belongs together), not by superficial name overlap. A group is a COHERENT FAMILY — even an "unassigned" group. NEVER merge unrelated items into one group just because they all lack a home: several unrelated orphans are several separate decisions, not one "miscellaneous" pile. Each unrelated orphan is its OWN single-item group (label = the item's name). Only group items that genuinely belong together.
+2. Group by what items ARE (same family of thing belongs together), not by superficial name overlap. A group is a COHERENT FAMILY — even an "unassigned" group. NEVER merge unrelated items into one group just because they all lack a home: several unrelated orphans are several separate decisions, not one "miscellaneous" pile. Each unrelated orphan is its OWN single-item group (label = the item's name). Only group items that genuinely belong together. Items whose "table" differs (yarn, filament, groceries) are different kinds of thing: never in one group, and never sent to a bin because a different kind of thing lives there.
 3. Prefer an existing bin with real sibling evidence over anything else. Prefer an existing EMPTY location over creating a new one. Only propose "new" when a coherent group has no plausible home; give it a short, durable name (the noun of the group, not a date or adjective pile) and parent it under a sensible existing location (parent_id from BINS/EMPTY) or null for top level.
 4. PHYSICAL FIT: when an item carries longest_mm and a bin carries interior_mm, never place the item in a bin whose largest interior axis is smaller than longest_mm. Items/bins without declared dims have NO size constraint — do not invent one.
 5. A coherent group gets ONE destination — never scatter a family across bins.
@@ -274,6 +324,7 @@ async function aiPlan(
       name: i.name,
       maker: i.manufacturer ?? undefined,
       category: i.category ?? undefined,
+      table: i.kind ?? undefined,
       qty: i.quantity !== 1 ? i.quantity : undefined,
       longest_mm: i.longest_mm ?? undefined,
     })),
@@ -351,12 +402,32 @@ export function groundAiGroups(
   const binById = new Map(census.bins.map((b) => [b.location_id, b] as const));
   const claimed = new Set<string>();
   const groups: OrganizeGroup[] = [];
+  // A group is one kind of thing. The model grouped yarn and filament in with
+  // spices once (#4023); whatever it groups, things of different known kinds
+  // are split apart, the biggest kind keeping the group and the rest waiting
+  // for a home of their own rather than being sent where they do not belong.
+  const byKind = (ids: string[]): string[][] => {
+    const parts = new Map<string, string[]>();
+    for (const id of ids) {
+      const k = itemById.get(id)!.kind ?? "";
+      parts.set(k, [...(parts.get(k) ?? []), id]);
+    }
+    const unknown = parts.get("") ?? [];
+    parts.delete("");
+    const known = [...parts.values()].sort((a, b) => b.length - a.length);
+    if (known.length === 0) return [unknown];
+    known[0] = [...known[0]!, ...unknown];
+    return known;
+  };
+  const splitOff: string[][] = [];
   for (const g of raw) {
-    const ids = (Array.isArray(g.item_ids) ? g.item_ids : [])
+    const all = (Array.isArray(g.item_ids) ? g.item_ids : [])
       .filter((x): x is string => typeof x === "string")
       .filter((x) => itemById.has(x) && !claimed.has(x));
-    if (ids.length === 0) continue;
-    for (const id of ids) claimed.add(id);
+    if (all.length === 0) continue;
+    const [ids, ...others] = byKind(all) as [string[], ...string[][]];
+    splitOff.push(...others);
+    for (const id of all) claimed.add(id);
 
     const label =
       typeof g.label === "string" && g.label.trim()
@@ -409,14 +480,24 @@ export function groundAiGroups(
             return [...significantTokens(it.name), ...significantTokens(it.category)];
           }),
         );
-        const scored = bin && want.size > 0 ? scoreTitles(bin.sample_titles, want) : null;
+        // Only what is the same kind of thing as the group counts as similar:
+        // a spice group's words met a yarn's and a filament's in one room and
+        // read as "2 similar already there" (#4023).
+        const kindOf = itemById.get(ids[0]!)!.kind ?? null;
+        const scored = bin && want.size > 0 ? scoreTitles(titlesLike(bin, { kind: kindOf }), want) : null;
         if (scored) {
           evidence = { sibling_count: scored.count, sample_names: scored.samples };
         } else {
           // No evidence at all. Areas hard-convert (rule 8 belt-and-braces);
           // bin-grade picks survive as an honestly-labeled guess.
           const loc = census.all.get(locId)!;
-          if (loc.kind === "area") {
+          const holdsOnlyOthers =
+            !!kindOf && !!bin && bin.sample_titles.length > 0 && titlesLike(bin, { kind: kindOf }).length === 0;
+          if (holdsOnlyOthers) {
+            // Everything already there is some other kind of thing: a yarn
+            // is not sent to the spice shelf on the model's word alone.
+            destination = { kind: "unassigned" };
+          } else if (loc.kind === "area") {
             destination = {
               kind: "new",
               name: label,
@@ -441,6 +522,16 @@ export function groundAiGroups(
       destination,
       ...(evidence ? { evidence } : {}),
       ...(aiGuess ? { ai_guess: true } : {}),
+    });
+  }
+  for (const ids of splitOff) {
+    const members = ids.map((id) => itemById.get(id)!);
+    groups.push({
+      id: randomUUID(),
+      label: labelFor(members),
+      rationale: "Not the same kind of thing as the group it was proposed with. Pick a spot for these.",
+      item_ids: ids,
+      destination: { kind: "unassigned" },
     });
   }
   return groups.length > 0 ? groups : null;
@@ -522,6 +613,7 @@ export async function gatherUnplacedEntities(orgId: string): Promise<UnplacedGat
           : null,
         quantity: 1,
         storage_requirement: storageOf(e.fields),
+        kind: kinds[i]!.kind,
         ...(dims ? { longest_mm: dims.longest_mm, dims_detail: dims.detail } : {}),
       });
       names[ref] = e.title;
@@ -578,6 +670,7 @@ export async function gatherEntitiesByRefs(
           : null,
       quantity: 1,
       storage_requirement: storageOf(e.fields),
+      kind: split.kind,
       ...(dims ? { longest_mm: dims.longest_mm, dims_detail: dims.detail } : {}),
     });
     names[ref] = e.title;

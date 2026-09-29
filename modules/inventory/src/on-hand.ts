@@ -25,35 +25,10 @@ import type { InventoryDB } from "./db.js";
 /** The metadata key an opened unit carries, naming its model (perUnit.ts). */
 export const UNIT_OF_KEY = "unit_of";
 
-/** One open unit of a model: what is left in it, in its own unit. */
-export interface OpenUnit {
-  id: string;
-  qty: number;
-  unit: string | null;
-}
-
-/** What the list and the detail carry for a model with open units. */
-export interface OpenUnitsSummary {
-  count: number;
-  remaining: OpenUnit[];
-}
-
-/** The count on hand: unopened plus every open unit still holding something. */
-export function onHandCount(qty: number, openUnits: readonly { qty: number }[]): number {
-  const base = Number.isFinite(qty) ? Math.max(0, qty) : 0;
-  return base + openUnits.filter((u) => u.qty > 0).length;
-}
-
-/** Is stock low? At or below the minimum, compared on what is available to
- *  use: on hand minus what is reserved. "Re-buy when down to 1" means the
- *  last one, open or not, is the moment. No minimum, nothing is ever low;
- *  an estimate is never low, its count is 0 because nobody counted, not
- *  because the bin is empty. */
-export function isLowStock(input: { onHand: number; assigned?: number; minQty: number | null; approximate?: number | null }): boolean {
-  if (input.minQty == null) return false;
-  if (input.approximate != null) return false;
-  return input.onHand - (input.assigned ?? 0) <= input.minQty;
-}
+// The pure rules live in stock-derived.ts, which the UI imports too (this
+// file reaches the database and must stay out of the browser bundle).
+import { onHandCount, isLowStock, type OpenUnit, type OpenUnitsSummary } from "./stock-derived.js";
+export { onHandCount, isLowStock, type OpenUnit, type OpenUnitsSummary };
 
 /** The model an open unit belongs to, or null for a record that is not a
  *  unit of anything. */

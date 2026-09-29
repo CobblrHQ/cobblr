@@ -1,7 +1,8 @@
 {
   "lint": "lint:test-timeout-floor",
-  "run": "tsx scripts/lint-test-timeout-floor.ts",
+  "run": "node scripts/lint-test-timeout-floor.ts",
   "ms": 467,
   "recorded": "2026-09-14",
-  "source": "split from scripts/lint-durations.json (recorded 2026-09-14)"
+  "source": "split from scripts/lint-durations.json (recorded 2026-09-14)",
+  "readMB": 4.7
 }

@@ -1,7 +1,8 @@
 {
   "lint": "lint:wordmark-casing",
-  "run": "tsx scripts/lint-wordmark-casing.ts",
+  "run": "node scripts/lint-wordmark-casing.ts",
   "ms": 475,
   "recorded": "2026-09-14",
-  "source": "split from scripts/lint-durations.json (recorded 2026-09-14)"
+  "source": "split from scripts/lint-durations.json (recorded 2026-09-14)",
+  "readMB": 8.3
 }

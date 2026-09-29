@@ -131,9 +131,60 @@ export function pictureVerdict(item: ItemLooks, candidate: { title?: string | nu
   const theirs = statedLooks(`${candidate.title ?? ""} ${path}`);
   const clash = (kind: "colour" | "material", a: Set<string>, b: Set<string>): string | null =>
     a.size && b.size && ![...b].some((x) => a.has(x)) ? `says ${[...b].join("/")}, the item is ${[...a].join("/")} (${kind})` : null;
-  const contradicts = clash("colour", mine.colours, theirs.colours) ?? clash("material", mine.materials, theirs.materials);
+  const contradicts =
+    clash("colour", mine.colours, theirs.colours) ??
+    clash("material", mine.materials, theirs.materials) ??
+    modelVariantClash(item.name, `${candidate.title ?? ""} ${path}`);
   const agrees = !contradicts && ([...theirs.colours].some((c) => mine.colours.has(c)) || [...theirs.materials].some((m) => mine.materials.has(m)));
   return { agrees, contradicts };
+}
+
+// ── the model ────────────────────────────────────────────────────────────
+// A listing for a Creality CR-10 was given a product shot of the CR-10 V2
+// (#3853): a different machine (another control box, a cable chain) that the
+// search ranked first because the words overlap. A model code in the item's
+// name is a fact a picture can contradict, like a colour: a picture that names
+// the same code with a variant the item does not carry ("V2", "S", "Pro",
+// "Max", "Mk3") is of another model. A picture that names the bare code, or
+// no code at all, says nothing either way.
+
+/** A model code: letters then digits, a dash or space allowed between
+ *  ("CR-10", "A1", "P1S" reads as code P1 + variant S). */
+const MODEL_CODE = /\b([a-z]{1,5})[\s-]?(\d{1,4})(?![\d.])/g;
+const VARIANT = "v\\d{1,2}|mk\\s?(?:\\d{1,2}|i{1,3}v?)|pro|plus|max|mini|ultra|lite|neo|se|s\\d{0,2}|x";
+
+const norm = (t: string): string => t.toLowerCase().replace(/[_./+]+/g, " ").replace(/\s+/g, " ");
+
+/** What follows each model code in a text: the code ("cr10") to the variant
+ *  written after it ("v2"), or "" when it stands bare. */
+function codesWithVariants(text: string): Map<string, string> {
+  const t = norm(text);
+  const out = new Map<string, string>();
+  for (const m of t.matchAll(MODEL_CODE)) {
+    const code = `${m[1]}${m[2]}`;
+    const rest = t.slice((m.index ?? 0) + m[0].length);
+    const v = rest.match(new RegExp(`^[\\s-]?(${VARIANT})\\b`));
+    const variant = v ? v[1]!.replace(/\s+/g, "") : "";
+    // The first spelling a text gives a code is the one it means.
+    if (!out.has(code)) out.set(code, variant);
+  }
+  return out;
+}
+
+/** "says CR-10 V2, the item is CR-10 (model)" when the picture names one of
+ *  the item's model codes with a variant the item does not carry; null
+ *  otherwise. Pure. */
+export function modelVariantClash(itemName: string | null | undefined, candidateText: string): string | null {
+  const mine = codesWithVariants(itemName ?? "");
+  if (!mine.size) return null;
+  const theirs = codesWithVariants(candidateText);
+  for (const [code, variant] of mine) {
+    const other = theirs.get(code);
+    if (other && other !== variant) {
+      return `says ${code}${other ? ` ${other}` : ""}, the item is ${code}${variant ? ` ${variant}` : ""} (model)`;
+    }
+  }
+  return null;
 }
 
 /** The candidates the automatic pick may choose from, in the order it should

@@ -44,7 +44,10 @@ export const DriverManifest = z.object({
     /** "single" = the response IS one device; "array" = a list at arrayPath. */
     result: z.enum(["single", "array"]).default("array"),
     arrayPath: z.string().optional(),
-    map: z.object({ id: Extract, name: Extract, state: Extract.optional(), enabled: Extract.optional() }),
+    /** `state` is an extract, or `{ from, map }` to translate the manager's
+     *  word into one the fleet reads (Klipper's `print_stats.state`, Duet's
+     *  one-letter status). An unmapped word passes through unchanged. */
+    map: z.object({ id: Extract, name: Extract, state: z.union([Extract, z.object({ from: Extract, map: z.record(z.string()) })]).optional(), enabled: Extract.optional() }),
   }),
   upload: z.object({
     method: Method,
@@ -77,6 +80,13 @@ export const DriverManifest = z.object({
     result: z.object({
       state: z.object({ from: Extract, map: z.record(z.string()) }),
       progress: Extract.optional(),
+      /** What the progress number counts to: 100 (a percent, OctoPrint) or 1
+       *  (a fraction, Moonraker). Omitted, a value above 1 reads as a percent,
+       *  which misreads a percent at exactly 1 as a finished print. */
+      progressScale: z.union([z.literal(1), z.literal(100)]).optional(),
+      /** The printer's own words about an error or a stop, so a failed job
+       *  says why ("Thermal runaway") rather than just "failed". */
+      message: Extract.optional(),
     }),
   }).optional(),
   /** OPTIONAL — the ACTUATOR shape. Maps a command NAME to an outbound HTTP
@@ -90,6 +100,10 @@ export const DriverManifest = z.object({
         method: Method,
         path: z.string(),
         body: z.record(z.unknown()).optional(),
+        /** Read a value from the manager first and template it into `path` and
+         *  `body`: PrusaLink stops a print by its own job number
+         *  (`DELETE /api/v1/job/{jobNum}`), which only `GET /api/v1/job` knows. */
+        resolve: z.object({ method: Method, path: z.string(), vars: z.record(Extract) }).optional(),
       }),
     )
     .optional(),

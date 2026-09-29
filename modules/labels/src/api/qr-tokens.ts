@@ -20,7 +20,7 @@ export const qrTokensRouter = Router({ mergeParams: true });
  *  2. the x-cobblr-base-url header (isolated-stack e2e only),
  *  3. the incoming request's own protocol + Host.
  *  The `/qr/<token>` path is appended by qrScanUrl(). */
-async function effectiveBase(req: Request): Promise<string> {
+export async function effectiveBase(req: Request): Promise<string> {
   const stored = await getQrLabelBaseUrl(qrTenantDb(req));
   if (stored) return stored;
   const header = req.headers["x-cobblr-base-url"] as string | undefined;
@@ -52,7 +52,7 @@ function isDupKey(e: unknown): boolean {
   return err.code === "23505" || /duplicate key|unique constraint/i.test(err.message ?? "");
 }
 
-interface MetaQrToken {
+export interface MetaQrToken {
   id: string;
   token: string;
   org_id: string;
@@ -135,38 +135,17 @@ qrTokensRouter.post(
     const expiresAt = parsed.data.expires_in_days
       ? new Date(Date.now() + parsed.data.expires_in_days * 86_400_000)
       : null;
-    const mkToken = () =>
-      isDescriptive ? `${qrShortcode(entityKind)}/${slug()}` : slug();
-    const insertToken = (token: string) =>
-      (meta.insertInto("core_labels_qr_tokens") as unknown as {
-        values: (v: Record<string, unknown>) => {
-          returningAll: () => { executeTakeFirstOrThrow: () => Promise<MetaQrToken> };
-        };
-      })
-        .values({
-          token,
-          org_id: ctx.org.id,
-          entity_kind: entityKind,
-          entity_id: parsed.data.entity_id,
-          mode: parsed.data.mode,
-          action_id: parsed.data.action_id ?? null,
-          auth: parsed.data.auth,
-          config: sql`${JSON.stringify(parsed.data.config ?? {})}::jsonb` as never,
-          expires_at: expiresAt,
-        })
-        .returningAll()
-        .executeTakeFirstOrThrow();
-    let row: MetaQrToken | undefined;
-    for (let attempt = 0; attempt < 5; attempt++) {
-      try {
-        row = (await insertToken(mkToken())) as MetaQrToken;
-        break;
-      } catch (e) {
-        if (isDupKey(e) && attempt < 4) continue; // slug collided on unique(token) — try a new one
-        throw e;
-      }
-    }
-    if (!row) throw new Error("could not mint a unique QR token");
+    const row = await insertQrToken({
+      orgId: ctx.org.id,
+      entityKind,
+      entityId: parsed.data.entity_id,
+      mode: parsed.data.mode,
+      actionId: parsed.data.action_id ?? null,
+      auth: parsed.data.auth,
+      config: parsed.data.config ?? {},
+      expiresAt,
+      descriptive: isDescriptive,
+    });
     void platform().events.emit("labels.qr.token.created", {
       orgId: ctx.org.id,
       tokenId: row.id,
@@ -291,3 +270,49 @@ qrTokensRouter.get(
     res.send(png);
   }),
 );
+
+/** Mint one token row, retrying a slug that collides on unique(token). The
+ *  one insert every mint goes through: a record's label and an action label
+ *  (#3897) alike. */
+export async function insertQrToken(t: {
+  orgId: string;
+  entityKind: string;
+  entityId: string;
+  mode: "navigate" | "action";
+  actionId: string | null;
+  auth: "public" | "session";
+  config: Record<string, unknown>;
+  expiresAt: Date | null;
+  descriptive?: boolean;
+}): Promise<MetaQrToken> {
+  const meta = platform().db.meta as unknown as { insertInto: (table: string) => unknown };
+  const mkToken = () => (t.descriptive ? `${qrShortcode(t.entityKind)}/${slug()}` : slug());
+  const insert = (token: string) =>
+    (meta.insertInto("core_labels_qr_tokens") as unknown as {
+      values: (v: Record<string, unknown>) => {
+        returningAll: () => { executeTakeFirstOrThrow: () => Promise<MetaQrToken> };
+      };
+    })
+      .values({
+        token,
+        org_id: t.orgId,
+        entity_kind: t.entityKind,
+        entity_id: t.entityId,
+        mode: t.mode,
+        action_id: t.actionId,
+        auth: t.auth,
+        config: sql`${JSON.stringify(t.config)}::jsonb` as never,
+        expires_at: t.expiresAt,
+      })
+      .returningAll()
+      .executeTakeFirstOrThrow();
+  for (let attempt = 0; attempt < 5; attempt++) {
+    try {
+      return await insert(mkToken());
+    } catch (e) {
+      if (isDupKey(e) && attempt < 4) continue; // slug collided on unique(token): try a new one
+      throw e;
+    }
+  }
+  throw new Error("could not mint a unique QR token");
+}

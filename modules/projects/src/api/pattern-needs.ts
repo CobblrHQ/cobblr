@@ -24,6 +24,7 @@ import { platform } from "@cobblr/platform-contract";
 import type { PatternNeedKind, PatternNeedSource, ProjectsDB } from "../db.js";
 import { latestPatternFileId } from "./pattern-photo.js";
 import { NOTIONS, readPatternMaterials, weightFromWords, type NotionNeed, type PatternMaterials, type ToolNeed, type YarnNeed } from "./pattern-materials.js";
+import { storePatternText } from "./pattern-text.js";
 
 export interface PatternNeed {
   id: string;
@@ -329,6 +330,10 @@ export function runPatternRead(
   const p = (async () => {
     const db = await tenant(orgId);
     const got = await patternText(orgId, fileId);
+    // The words are kept for search whatever the materials reading makes of
+    // them (pattern-text.ts); a PDF with none is kept as none, so the heal
+    // does not read it again.
+    await storePatternText(db, projectId, fileId, "error" in got ? null : got.text);
     if ("error" in got) {
       await recordRead(db, projectId, fileId, { status: "failed", method: null, ai_tried: false, reason: got.error });
       return;
@@ -377,7 +382,14 @@ export async function readPatternNeedsState(
   const db = await tenant(orgId);
   const items = await listNeeds(db, projectId);
   const fileId = await latestPatternFileId(orgId, projectId);
-  if (!fileId) return { read: { status: "none", method: null, reason: null, pattern_file_id: null }, items };
+  if (!fileId) {
+    // No PDF, but its text was read (saved from an answer, or pasted): that
+    // reading is the pattern's, not a missing file.
+    const read = items.find((n) => n.source === "pattern" || n.source === "ai");
+    return read
+      ? { read: { status: "ready", method: read.source as "pattern" | "ai", reason: null, pattern_file_id: null }, items }
+      : { read: { status: "none", method: null, reason: null, pattern_file_id: null }, items };
+  }
   const key = `${orgId}:${projectId}:${fileId}`;
   const row = await db
     .selectFrom("projects_pattern_reads")
@@ -410,6 +422,18 @@ export function registerPatternNeedsSubscriber(): void {
       });
     });
   });
+}
+
+/** A pattern made from text (an answer saved from Ask Cobb, a pattern typed
+ *  in) lists what it needs the moment it is made, from its own words and with
+ *  no AI. Only text that names a yarn or a hook or needle counts: notions on
+ *  their own are not a pattern, and a project whose notes list lumber and
+ *  screws must not grow a "what this pattern needs" list. */
+export async function readNeedsFromText(orgId: string, projectId: string, text: string): Promise<boolean> {
+  const m = readPatternMaterials(text);
+  if (!m.yarns.length && !m.tools.length) return false;
+  await writeNeeds(await tenant(orgId), projectId, null, "pattern", m);
+  return true;
 }
 
 /** Read pasted materials text into the pattern's needs (text first, then AI). */

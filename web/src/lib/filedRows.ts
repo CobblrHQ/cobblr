@@ -17,7 +17,7 @@
 // button it was.
 
 import { useEffect, useRef, useState } from "react";
-import { filedIntoOf } from "@cobblr/platform-contract/scan-triage";
+import { filedIntoOf, type FiledInto } from "@cobblr/platform-contract/scan-triage";
 import type { ScanInboxItem } from "./api";
 import { onScanFiled } from "./scanFiled";
 import { pointAtInNav } from "./navPointer";
@@ -35,6 +35,32 @@ export interface FiledRow {
   /** This was the workspace's first filing ever: the row also says where the
    *  table lives in the menu, once. */
   firstEver: boolean;
+  /** What one record of the table is called ("spool"). */
+  noun: string | null;
+  /** The type the record was filed under (a spool under its filament type),
+   *  and whether filing made it. */
+  under: NonNullable<FiledInto["under"]> | null;
+}
+
+/** What a filed row says, in the person's terms. A record filed under a type
+ *  names the thing added and its type, never the table of types: "Added 1
+ *  spool of Royal Blue PLA (new type)" and Go to it (#3930). */
+export function filedWords(row: Pick<FiledRow, "destination" | "noun" | "under">): { headline: string; go: string } {
+  if (row.under) {
+    const of = row.under.name.trim() ? ` of ${row.under.name.trim()}` : "";
+    return { headline: `Added 1 ${row.noun ?? "item"}${of}${row.under.created ? " (new type)" : ""}`, go: "Go to it" };
+  }
+  return { headline: `Filed to ${row.destination}`, go: `Go to ${row.destination}` };
+}
+
+/** What a filed item is called in anything that reports the filing: the
+ *  record as it was filed, which is what the person confirmed. The scan's own
+ *  suggestion is a catalog's listing title as often as not ("... Yarn, 1 Pack
+ *  Of 9 Skein go-upc"), and reporting it named a thing that does not exist
+ *  (#4011). The suggestion stands in only for a row filed before the server
+ *  said, and the code only when nothing named it. */
+export function filedNameOf(item: Pick<ScanInboxItem, "suggested_metadata" | "suggested_name" | "barcode_text">): string {
+  return filedIntoOf(item.suggested_metadata)?.name || item.suggested_name?.trim() || item.barcode_text || "Your item";
 }
 
 /** A filed row from the server's answer, or null when it did not say where it
@@ -42,7 +68,7 @@ export interface FiledRow {
 export function filedRowOf(item: ScanInboxItem, createdId: string | null, firstEver = false): FiledRow | null {
   const into = filedIntoOf(item.suggested_metadata);
   if (!into) return null;
-  return { item, createdId, destination: into.label, kind: into.kind, firstEver };
+  return { item, createdId, destination: into.label, kind: into.kind, firstEver, noun: into.noun ?? null, under: into.under ?? null };
 }
 
 const newestFirst = (a: ScanInboxItem, b: ScanInboxItem) => String(b.created_at ?? "").localeCompare(String(a.created_at ?? ""));

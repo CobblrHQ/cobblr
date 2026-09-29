@@ -5,7 +5,8 @@
 // catalogs, and inventory-aware (uses the inventory api client).
 
 import { useEffect, useRef, useState } from "react";
-import { Search, X } from "lucide-react";
+import { SearchInput } from "@cobblr/platform-web";
+import { X } from "lucide-react";
 import { useInventory } from "./context";
 
 export interface ParentRef {
@@ -88,21 +89,17 @@ export function ParentPicker({
 
   return (
     <div ref={wrapRef} className="relative">
-      <div className="flex items-center gap-2 rounded-md border border-line dark:border-slate-700 bg-surface dark:bg-slate-900 px-2">
-        <Search size={14} className="text-faint shrink-0" />
-        <input
-          type="text"
-          value={q}
-          onChange={(e) => {
-            setQ(e.target.value);
-            setOpen(true);
-          }}
-          onFocus={() => setOpen(true)}
-          placeholder={placeholder}
-          className="flex-1 bg-transparent text-sm py-1.5 focus:outline-none text-content dark:text-mortar-100 placeholder:text-faint"
-        />
-        {loading && <span className="text-[10px] font-mono text-faint">…</span>}
-      </div>
+      <SearchInput
+        value={q}
+        onChange={(v) => {
+          setQ(v);
+          setOpen(true);
+        }}
+        onFocus={() => setOpen(true)}
+        placeholder={placeholder}
+        aria-label={placeholder}
+        busy={loading}
+      />
       {open && q.trim().length >= 2 && (
         <div className="absolute left-0 right-0 top-full mt-1 z-30 rounded-md border border-line dark:border-slate-700 bg-surface dark:bg-slate-900 shadow-lg max-h-72 overflow-y-auto">
           {hits.length === 0 && !loading && (

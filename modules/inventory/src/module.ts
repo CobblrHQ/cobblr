@@ -13,13 +13,15 @@ import { defineModule } from "@cobblr/platform-contract";
 
 export default defineModule({
   name: "inventory",
-  version: "0.11.0",
+  version: "0.15.1",
   displayName: "Inventory",
   description:
     "Parts, locations, categories, stock tracking, polymorphic allocations. The generalised toolkit you'd otherwise Frankenstein from a spreadsheet.",
   icon: "boxes",
   band: "stock",
   instanceability: "multi",
+  // A place's page carries inventory's "Stock here" panel.
+  operatesOn: ["core-locations"],
 
   schema: {
     tablePrefix: "inventory_",
@@ -418,6 +420,54 @@ export default defineModule({
         userInvokable: false,
       },
       {
+        id: "inventory:move-all-stock",
+        examples: ["move all the saline to the van", "everything we have of this goes to the garage"],
+        label: "Move it all to one place",
+        face: "stock",
+        description:
+          "Move everything this item holds, in every place, into one location: every lot keeps its expiry and lot number, each end gets a ledger line, the item is then kept at that location only, and the places it emptied are archived, never deleted. Run it on the item or any of its places. Args: { to_location_id: the location }.",
+        appliesTo: { traits: ["fungible"] },
+        invokeHandler: "inventory.move-all-stock",
+        userInvokable: false,
+        argsSchema: {
+          to_location_id: { label: "To (a location)", type: "text", required: true },
+        },
+      },
+      {
+        id: "inventory:transfer-stock",
+        examples: ["restock ambulance 3 from the closet", "move 5 bags of saline to the van"],
+        label: "Restock from another place",
+        face: "stock",
+        description:
+          "Move stock between two places of the same item. The soonest-expiring lot goes first unless one is named, and every lot keeps its expiry and lot number; both places get a ledger line. A place the item is not kept yet is added. Run it on the place the stock LEAVES. Args: { to_id?: the receiving place's record id, to_location_id?: or the receiving location, qty: number, lot?: a lot number, expires_on?: or a lot's expiry date }.",
+        appliesTo: { traits: ["fungible"] },
+        invokeHandler: "inventory.transfer-stock",
+        userInvokable: false,
+        argsSchema: {
+          to_id: { label: "To (a place of this item)", type: "text", oneOf: "to" },
+          to_location_id: { label: "To (a location)", type: "text", oneOf: "to" },
+          qty: { label: "How many", type: "number", required: true },
+          lot: { label: "Lot number", type: "text" },
+          expires_on: { label: "Or the lot's expiry date", type: "text" },
+        },
+      },
+      {
+        id: "inventory:receive-lot",
+        examples: ["12 bags of saline arrived, expiring 2027-02-25, lot B-220", "we got 20 more, use by March"],
+        label: "Stock arrived",
+        face: "stock",
+        description:
+          "Stock arrived at this place: add it as a lot with the expiry printed on it (or, without one, today plus the item's shelf life) and its lot number when there is one. Args: { qty: number, expires_on?: YYYY-MM-DD, lot?: string }.",
+        appliesTo: { traits: ["fungible"] },
+        invokeHandler: "inventory.receive-lot",
+        userInvokable: false,
+        argsSchema: {
+          qty: { label: "How many arrived", type: "number", required: true },
+          expires_on: { label: "Expiry printed on it", type: "text" },
+          lot: { label: "Lot number", type: "text" },
+        },
+      },
+      {
         id: "inventory:mark-finished",
         examples: ["ate the last one", "that's the end of the jar", "all gone"],
         undoable: true,
@@ -746,6 +796,16 @@ export default defineModule({
   // / replace it. The wire belongs to inventory because inventory
   // owns the action it fires.
   contributes: {
+    // What one place carries, on the place's own page (a vehicle: count
+    // against the minimum kept there, what is low, what is going off).
+    panels: [
+      {
+        id: "inventory:stock-here",
+        surface: "entity-detail-panel" as const,
+        target: "core-locations:location",
+        title: "Stock here",
+      },
+    ],
     wires: [
       {
         source_kind: "purchases:order_item",
@@ -791,6 +851,10 @@ export default defineModule({
       // to ball) has its records still on the old default follow it.
       const { registerDefaultUnitFollows } = await import("./default-unit-follows.js");
       registerDefaultUnitFollows();
+      // A type collection and its things (Filament Types + Spools): a scanned
+      // spool left in the types table, and a spool with no type, put back.
+      const { registerFamiliesHeal } = await import("./heal-families.js");
+      registerFamiliesHeal();
       // Catalog instances the camera sheet latched to the stock face go back to
       // the catalog face. One-shot and idempotent; meta-only for a workspace
       // with nothing to heal. Awaited rather than fired off: it is a few

@@ -1,7 +1,8 @@
 {
   "lint": "lint:api-client-reachable",
-  "run": "tsx scripts/lint-api-client-reachable.ts",
+  "run": "node scripts/lint-api-client-reachable.ts",
   "ms": 3221,
   "recorded": "2026-09-14",
-  "source": "split from scripts/lint-durations.json (recorded 2026-09-14)"
+  "source": "split from scripts/lint-durations.json (recorded 2026-09-14)",
+  "readMB": 13.3
 }

@@ -1,11 +1,11 @@
 // /views — saved view CRUD + the /data passthrough that delegates
 // to platform.entities.list() for the kind the view targets.
 
-import { Router } from "express";
+import { Router, type Response } from "express";
 import { z } from "zod";
-import { sql } from "kysely";
+import { sql, type ExpressionBuilder } from "kysely";
 import { platform, viewQuery } from "@cobblr/platform-contract";
-import { sessionUser, tenantContext, tenantDb } from "../db.js";
+import { sessionUser, tenantContext, tenantDb, type CoreViewsDB } from "../db.js";
 import { asyncHandler, badBody, requireRole } from "./util.js";
 
 export const viewsRouter = Router({ mergeParams: true });
@@ -37,6 +37,19 @@ const DataQuery = z.object({
   today: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
 });
 
+/** A view is someone's to see when it is shared (no owner) or theirs. Every
+ *  route that takes an id reads through this, so another member's private view
+ *  answers 404 exactly like a view that does not exist: never "forbidden", which
+ *  would say it is there. */
+function visibleTo(userId: string | null) {
+  return (eb: ExpressionBuilder<CoreViewsDB, "core_views_views">) =>
+    eb.or([eb("owner_user_id", "is", null), ...(userId ? [eb("owner_user_id", "=", userId)] : [])]);
+}
+
+function notFound(res: Response): void {
+  res.status(404).json({ error: { code: "not_found", message: "view not found" } });
+}
+
 // AI-ACTION: core-views:save-view
 viewsRouter.post(
   "/",
@@ -56,6 +69,7 @@ viewsRouter.post(
         view_type: parsed.data.view_type,
         config: parsed.data.config ?? {},
         is_default: parsed.data.is_default ?? false,
+        pinned: parsed.data.pinned ?? false,
         // shared=true means workspace-shared (owner_user_id NULL).
         // Default is private to the creating user.
         owner_user_id: parsed.data.shared ? null : session?.id ?? null,
@@ -110,11 +124,9 @@ viewsRouter.get(
       .selectFrom("core_views_views")
       .selectAll()
       .where("id", "=", id)
+      .where(visibleTo(sessionUser(req)?.id ?? null))
       .executeTakeFirst();
-    if (!row) {
-      res.status(404).json({ error: { code: "not_found", message: "view not found" } });
-      return;
-    }
+    if (!row) return notFound(res);
     res.json(row);
   }),
 );
@@ -133,6 +145,22 @@ viewsRouter.patch(
     if (!parsed.success) return badBody(res, parsed.error);
     const db = tenantDb(req);
     const ctx = tenantContext(req);
+    const userId = sessionUser(req)?.id ?? null;
+    const current = await db
+      .selectFrom("core_views_views")
+      .select(["id", "owner_user_id"])
+      .where("id", "=", id)
+      .where(visibleTo(userId))
+      .executeTakeFirst();
+    if (!current) return notFound(res);
+    // Taking a shared view private takes it away from everyone else, so it is
+    // an owner or admin's call, the same tier that curates the workspace.
+    if (parsed.data.shared === false && current.owner_user_id === null && !["owner", "admin"].includes(ctx.role)) {
+      res.status(403).json({
+        error: { code: "forbidden", message: "Only an owner or admin can make a shared view private; it would disappear for everyone else." },
+      });
+      return;
+    }
 
     const patch: Record<string, unknown> = { updated_at: new Date() };
     if (parsed.data.entity_kind !== undefined) patch.entity_kind = parsed.data.entity_kind;
@@ -143,20 +171,17 @@ viewsRouter.patch(
     if (parsed.data.pinned !== undefined) patch.pinned = parsed.data.pinned;
     // Flipping `shared` toggles ownership null vs current user.
     if (parsed.data.shared !== undefined) {
-      const session = sessionUser(req);
-      patch.owner_user_id = parsed.data.shared ? null : session?.id ?? null;
+      patch.owner_user_id = parsed.data.shared ? null : userId;
     }
 
     const row = await db
       .updateTable("core_views_views")
       .set(patch)
       .where("id", "=", id)
+      .where(visibleTo(userId))
       .returningAll()
       .executeTakeFirst();
-    if (!row) {
-      res.status(404).json({ error: { code: "not_found", message: "view not found" } });
-      return;
-    }
+    if (!row) return notFound(res);
     await platform().events.emit("core-views.view.updated", {
       orgId: ctx.org.id,
       viewId: row.id,
@@ -180,12 +205,10 @@ viewsRouter.delete(
     const row = await db
       .deleteFrom("core_views_views")
       .where("id", "=", id)
+      .where(visibleTo(sessionUser(req)?.id ?? null))
       .returning("id")
       .executeTakeFirst();
-    if (!row) {
-      res.status(404).json({ error: { code: "not_found", message: "view not found" } });
-      return;
-    }
+    if (!row) return notFound(res);
     await platform().events.emit("core-views.view.deleted", {
       orgId: ctx.org.id,
       viewId: id,
@@ -213,11 +236,9 @@ viewsRouter.get(
       .selectFrom("core_views_views")
       .select(["id", "name", "entity_kind", "view_type", "config"])
       .where("id", "=", id)
+      .where(visibleTo(sessionUser(req)?.id ?? null))
       .executeTakeFirst();
-    if (!view) {
-      res.status(404).json({ error: { code: "not_found", message: "view not found" } });
-      return;
-    }
+    if (!view) return notFound(res);
     const parsedQuery = DataQuery.safeParse(req.query);
     if (!parsedQuery.success) return badBody(res, parsedQuery.error);
     // The day the view's "today" means: the one the client says it is in,

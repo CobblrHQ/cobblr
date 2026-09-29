@@ -96,6 +96,9 @@ export interface CoreScanBatchesTable {
   tracking_added_by_user_id: ColumnType<string | null, string | null | undefined, string | null | undefined>;
   shipment_confirmed_at: ColumnType<Date | null, Date | string | null | undefined, Date | string | null | undefined>;
   expected_arrival: ColumnType<string | null, string | null | undefined, string | null | undefined>;
+  /** A receipt read while Purchases was off: the order it would have made,
+   *  kept until Purchases is turned on and it is recorded (#3869). */
+  pending_purchase: ColumnType<Record<string, unknown> | null, string | null | undefined, string | null | undefined>;
   /** vendor|date|total|line-count fingerprint for receipts with no order
    *  number, so the same paper scanned twice is caught. Null when the parse
    *  established too little to fingerprint. */
@@ -218,6 +221,29 @@ export interface CoreScanQrRulesTable {
 
 /** Always-on AI catalog-photo ranking: the per-workspace opt-in (singleton row).
  *  ABSENT row == off, so a workspace that never opts in spends nothing. */
+/** A picture suggested for a record made without one (#3818). */
+export interface CoreScanRecordPhotoSuggestionsTable {
+  entity_kind: string;
+  entity_id: string;
+  name: string;
+  status: Generated<"queued" | "suggested" | "none" | "applied" | "declined">;
+  file_id: string | null;
+  source_url: string | null;
+  query: string | null;
+  attempts: Generated<number>;
+  user_id: string | null;
+  created_at: Generated<Date>;
+  updated_at: Generated<Date>;
+}
+
+export interface CoreScanPhotoSuggestConfigTable {
+  id: Generated<boolean>;
+  auto_apply: Generated<boolean>;
+  /** When the workspace's existing records were queued once (#3818). */
+  backfilled_at: ColumnType<Date | null, Date | string | null | undefined, Date | string | null | undefined>;
+  updated_at: Generated<Date>;
+}
+
 export interface CoreScanPhotoRankConfigTable {
   id: Generated<boolean>;
   enabled: Generated<boolean>;
@@ -234,6 +260,8 @@ export interface CoreScanIdentifyUsageTable {
 
 export interface CoreScanDB {
   core_scan_photo_rank_config: CoreScanPhotoRankConfigTable;
+  core_scan_record_photo_suggestions: CoreScanRecordPhotoSuggestionsTable;
+  core_scan_photo_suggest_config: CoreScanPhotoSuggestConfigTable;
   core_scan_glance_config: CoreScanPhotoRankConfigTable;
   core_scan_inbox_items: CoreScanInboxItemsTable;
   core_scan_batches: CoreScanBatchesTable;

@@ -1,7 +1,8 @@
 {
   "lint": "lint:view-group-by-bare",
-  "run": "tsx scripts/lint-view-group-by-bare.ts",
+  "run": "node scripts/lint-view-group-by-bare.ts",
   "ms": 3700,
   "recorded": "2026-09-22",
-  "source": "scaffolded by new-lint.sh convention: added by hand at twice a quiet dev-box time (2026-09-22) in the old map; replaced from its first CI measurement"
+  "source": "scaffolded by new-lint.sh convention: added by hand at twice a quiet dev-box time (2026-09-22) in the old map; replaced from its first CI measurement",
+  "readMB": 1.9
 }

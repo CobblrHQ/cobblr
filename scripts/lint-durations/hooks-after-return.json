@@ -1,7 +1,8 @@
 {
   "lint": "lint:hooks-after-return",
-  "run": "tsx scripts/lint-hooks-after-return.ts",
+  "run": "node scripts/lint-hooks-after-return.ts",
   "ms": 3312,
   "recorded": "2026-09-14",
-  "source": "split from scripts/lint-durations.json (recorded 2026-09-14)"
+  "source": "split from scripts/lint-durations.json (recorded 2026-09-14)",
+  "readMB": 17.7
 }

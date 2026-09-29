@@ -16,6 +16,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { CheckCircle2, Circle, GripVertical, Lock } from "lucide-react";
 import { ApiError, api, type OrgModuleListItem } from "../lib/api";
 import { changeWorkspaceShape, Modal, useToast, useConfirm } from "@cobblr/platform-web";
+import { useSayWhereItWent } from "../lib/moreApps";
 import { useActiveOrg } from "../auth/ActiveOrgContext";
 import { applyNavOrder, readNavOrder, writeNavOrder } from "../lib/nav-order";
 
@@ -70,6 +71,7 @@ export function ModulePickerModal({ open, onClose, scopeToParent, inline, chrome
   const { activeSlug } = useActiveOrg();
   const qc = useQueryClient();
   const toast = useToast();
+  const sayWhereItWent = useSayWhereItWent();
   const confirm = useConfirm();
   const [showAll, setShowAll] = useState(false);
 
@@ -161,6 +163,7 @@ export function ModulePickerModal({ open, onClose, scopeToParent, inline, chrome
     mutationFn: (name: string) => changeWorkspaceShape(qc, activeSlug, () => api.disableModule(activeSlug, name)),
     onSuccess: (_r, name) => {
       toast.success(`Disabled ${name}.`);
+      sayWhereItWent();
     },
     onError: (e: unknown) => {
       toast.error(e instanceof ApiError ? e.message : "Couldn't disable.");

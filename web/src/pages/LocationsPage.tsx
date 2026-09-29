@@ -9,12 +9,13 @@
 // navbar entry bounced you into the settings shell.
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Link } from "react-router-dom";
+import { Link, useSearchParams } from "react-router-dom";
 import { readBound } from "../lib/floorplanGeometry";
+import { parseRange } from "../lib/nameRange";
 import { LocationFloorPlanTab } from "../components/LocationFloorPlanTab";
 import { NewBinSheet } from "./NewBinSheet";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Camera, Plus, Printer, Trash2, Pencil, Box as BoxIcon, MapPin as AreaIcon, Upload, Download, GripVertical, CheckSquare, ChevronRight, Search, ChevronsDownUp, ChevronsUpDown, Layers } from "lucide-react";
+import { Camera, Plus, Printer, Trash2, Pencil, Box as BoxIcon, MapPin as AreaIcon, Upload, Download, GripVertical, CheckSquare, ChevronRight, ChevronsDownUp, ChevronsUpDown, Layers, PackageOpen } from "lucide-react";
 import {
   DndContext,
   type DragEndEvent,
@@ -30,7 +31,7 @@ import {
   verticalListSortingStrategy,
 } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
-import { BulkActionBar, Modal, useToast, useConfirm, usePageTitle, useAskCobbAboutSelection, RecordRow, useSelectionResolver, buildLocationForest, type LocationNode as SharedLocationNode, usePublishChatContext } from "@cobblr/platform-web";
+import { BulkActionBar, Modal, useToast, useConfirm, usePageTitle, useAskCobbAboutSelection, RecordRow, useSelectionResolver, buildLocationForest, type LocationNode as SharedLocationNode, usePublishChatContext, SearchInput } from "@cobblr/platform-web";
 import { ApiError, api, fetchAuthBlobUrl, type Location } from "../lib/api";
 import { totalUsage, useLocationUsage, type UsageCounts } from "../lib/useLocationUsage";
 import { queueLabelsBulk } from "../lib/queue-label";
@@ -234,7 +235,10 @@ export function LocationsPage() {
   // workspace lands on the tree rather than an empty canvas. The user's manual
   // tab choice sticks once made.
   const anyPlanDrawn = useMemo(() => items.some((l) => readBound(l.metadata)), [items]);
-  const decidedRef = useRef(false);
+  // ?view=plan (the command palette's "Floor plan", the dashboard's line)
+  // lands on the plan whatever is drawn; ?new=room opens the room form on it.
+  const [params, setParams] = useSearchParams();
+  const decidedRef = useRef(params.get("view") === "plan" || params.get("new") === "room");
   const [tab, setTab] = useState<"plan" | "list">("plan");
   useEffect(() => {
     if (!decidedRef.current && !list.isLoading) {
@@ -382,6 +386,14 @@ export function LocationsPage() {
           ))}
         </div>
         <div className="flex-1 min-w-0" />
+        <Link
+          to="/locations/place"
+          data-testid="place-items-link"
+          title="Drag things onto the floor plan, to the exact place each one lives"
+          className="inline-flex shrink-0 items-center gap-1.5 rounded bg-cobble-600 hover:bg-cobble-700 text-white px-2 sm:px-2.5 py-1.5 text-sm transition"
+        >
+          <PackageOpen size={14} /> <span className="hidden sm:inline">Place items</span>
+        </Link>
         <button
           onClick={exportCsv}
           title="Download all locations as a CSV"
@@ -406,6 +418,12 @@ export function LocationsPage() {
         <LocationFloorPlanTab
           items={items}
           slug={activeSlug}
+          newRoom={params.get("new") === "room"}
+          onNewRoomClosed={() => {
+            const next = new URLSearchParams(params);
+            next.delete("new");
+            setParams(next, { replace: true });
+          }}
           onCreate={() => {
             setCreateParentId(null);
             setCreateOpen(true);
@@ -434,14 +452,6 @@ export function LocationsPage() {
             <Plus size={14} />
             New location
           </button>
-            <button
-              onClick={() => setBinSheetOpen(true)}
-              className="shrink-0 inline-flex items-center gap-1.5 rounded border border-line dark:border-slate-700 px-3 py-1.5 text-sm text-accent hover:border-cobble-300 transition"
-              title="Photograph a bin and name it in one go"
-            >
-              <Camera size={14} />
-              <span className="hidden sm:inline">New bin from a photo</span>
-            </button>
           <button
             onClick={() => setBinSheetOpen(true)}
             className="inline-flex items-center gap-1.5 rounded border border-line dark:border-slate-700 px-3 py-1.5 text-sm text-accent hover:border-cobble-300 transition"
@@ -449,6 +459,13 @@ export function LocationsPage() {
           >
             <Camera size={14} />
             New bin from a photo
+          </button>
+          <button
+            type="button"
+            onClick={() => chooseTab("plan")}
+            className="text-sm text-accent hover:underline"
+          >
+            Or draw your rooms on the floor plan →
           </button>
         </div>
       )}
@@ -462,17 +479,7 @@ export function LocationsPage() {
              row. No wrap - the button is shrink-0 and the field takes the
              rest. */
           <div className="flex items-center gap-2 sm:gap-4">
-            <label className="relative flex-1 min-w-0 sm:max-w-md">
-              <Search size={13} className="absolute left-2 top-1/2 -translate-y-1/2 text-faint pointer-events-none" />
-              <input
-                type="search"
-                value={q}
-                onChange={(e) => setQ(e.target.value)}
-                placeholder="Find a place - Bin 87, shelf, garage…"
-                aria-label="Filter locations"
-                className="w-full pl-7 pr-2 py-1.5 text-sm rounded border border-line dark:border-slate-600 bg-surface dark:bg-slate-900"
-              />
-            </label>
+            <SearchInput value={q} onChange={setQ} placeholder="Find a place - Bin 87, shelf, garage…" aria-label="Filter locations" wrapperClassName="flex-1 min-w-0 sm:max-w-md" />
             <button
               onClick={() => {
                 setCreateParentId(null);
@@ -1489,31 +1496,3 @@ function inferKind(raw: string): "area" | "container" | null {
   return null;
 }
 
-// Parses a name like "Drawer 1-3" → { names: ["Drawer 1","Drawer 2",
-// "Drawer 3"], preview: "…" }. Returns null when the input isn't a
-// numeric range, when start > end, or when the range exceeds the
-// 50-row safety cap. Accepts hyphen and en-dash; tolerates extra
-// whitespace.
-const RANGE_RE = /^(.*?)\s*(\d+)\s*[-–]\s*(\d+)\s*$/;
-const MAX_RANGE = 50;
-
-function parseRange(raw: string): { names: string[]; prefix: string; preview: string } | null {
-  const m = raw.match(RANGE_RE);
-  if (!m) return null;
-  const prefix = (m[1] ?? "").trim();
-  const start = Number(m[2]);
-  const end = Number(m[3]);
-  if (!Number.isFinite(start) || !Number.isFinite(end)) return null;
-  if (start > end) return null;
-  const count = end - start + 1;
-  if (count < 2 || count > MAX_RANGE) return null;
-  const names: string[] = [];
-  for (let n = start; n <= end; n++) {
-    names.push(prefix ? `${prefix} ${n}` : String(n));
-  }
-  const preview =
-    names.length <= 4
-      ? names.join(", ")
-      : `${names[0]}, ${names[1]}, …, ${names[names.length - 1]}`;
-  return { names, prefix, preview };
-}

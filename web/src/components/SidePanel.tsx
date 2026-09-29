@@ -16,9 +16,9 @@
 //
 // It portals to <body> so the header's backdrop-blur can't trap position:fixed
 // (CLAUDE.md modal note).
-import type { ReactNode, Ref } from "react";
+import { useCallback, useRef, type ReactNode, type Ref } from "react";
 import { createPortal } from "react-dom";
-import { HIDE_WHEN_OVERLAY_OPEN, useOverlayOpenFlag } from "@cobblr/platform-web";
+import { HIDE_WHEN_OVERLAY_OPEN, useLayerStack, useOverlayOpenFlag } from "@cobblr/platform-web";
 
 /** Re-exported for the floating chrome that already imports it from here.
  *  The flag itself lives in platform-web now, because MODALS set it too. */
@@ -42,9 +42,20 @@ export function SidePanel({
   children: ReactNode;
 }) {
   useOverlayOpenFlag();
+  // A modal or sheet opened from inside the panel goes above it (#3954).
+  const own = useRef<HTMLDivElement | null>(null);
+  useLayerStack(own);
+  const setRef = useCallback(
+    (el: HTMLDivElement | null) => {
+      own.current = el;
+      if (typeof panelRef === "function") panelRef(el);
+      else if (panelRef) (panelRef as { current: HTMLDivElement | null }).current = el;
+    },
+    [panelRef],
+  );
   return createPortal(
     <div
-      ref={panelRef}
+      ref={setRef}
       {...(escapeExempt ? { "data-modal-escape-exempt": true } : {})}
       {...(cobbPanel ? { "data-cobb-panel": true } : {})}
       className={

@@ -1,7 +1,8 @@
 {
   "lint": "lint:dark-line-reads",
-  "run": "tsx scripts/lint-dark-line-reads.ts",
+  "run": "node scripts/lint-dark-line-reads.ts",
   "ms": 7640,
   "recorded": "2026-09-14",
-  "source": "split from scripts/lint-durations.json (recorded 2026-09-14)"
+  "source": "split from scripts/lint-durations.json (recorded 2026-09-14)",
+  "readMB": 0.0
 }

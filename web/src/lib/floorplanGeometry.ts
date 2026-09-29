@@ -44,11 +44,8 @@ function num(v: unknown): number | null {
   return typeof v === "number" && Number.isFinite(v) && v >= 0 ? Math.round(v) : null;
 }
 
-/** The bound (room dims + walls) off a location's metadata, or null. Reads
- *  defensively — metadata is a free jsonb and may hold anything. */
-export function readBound(metadata: Record<string, unknown> | null | undefined): FpBound | null {
-  const fp = (metadata?.floorplan ?? null) as Record<string, unknown> | null;
-  if (!fp) return null;
+/** A bound read off one blob: the room's floorplan, or a container's face. */
+function boundFrom(fp: Record<string, unknown>): FpBound | null {
   const w = num(fp.w_mm);
   const d = num(fp.d_mm);
   if (!w || !d) return null;
@@ -81,6 +78,121 @@ export function readBound(metadata: Record<string, unknown> | null | undefined):
   };
 }
 
+function blob(metadata: Record<string, unknown> | null | undefined): Record<string, unknown> | null {
+  const fp = metadata?.floorplan;
+  return fp && typeof fp === "object" && !Array.isArray(fp) ? (fp as Record<string, unknown>) : null;
+}
+
+function faceOf(fp: Record<string, unknown> | null): Record<string, unknown> | null {
+  const f = fp?.face;
+  return f && typeof f === "object" && !Array.isArray(f) ? (f as Record<string, unknown>) : null;
+}
+
+/** The bound (room dims + walls) off a location's metadata, or null. Reads
+ *  defensively — metadata is a free jsonb and may hold anything.
+ *
+ *  A container's own layout, its front face with the drawers drawn on it, is
+ *  a different measurement from the footprint it takes on the room's floor,
+ *  so it lives under `floorplan.face`. A record written before the two were
+ *  split carries one shared w × d, read as both until its first write
+ *  (withRect) splits them. */
+export function readBound(metadata: Record<string, unknown> | null | undefined): FpBound | null {
+  const fp = blob(metadata);
+  if (!fp) return null;
+  const face = faceOf(fp);
+  return face ? boundFrom(face) : boundFrom(fp);
+}
+
+/** Does this location own a layout somebody set up (a face, a room's own
+ *  size), and not only the size of its rect on its parent's plan? A drawer
+ *  placed on a toolbox face has a w × d, which reads as a bound, but nothing
+ *  is laid out in it. */
+export function hasOwnLayout(metadata: Record<string, unknown> | null | undefined): boolean {
+  const fp = blob(metadata);
+  if (!fp) return false;
+  const face = faceOf(fp);
+  if (face) return !!boundFrom(face);
+  if (!boundFrom(fp)) return false;
+  if (num(fp.x_mm) === null || num(fp.y_mm) === null) return true;
+  return fp.view !== undefined || fp.unit !== undefined || fp.grid_mm !== undefined || Array.isArray(fp.walls);
+}
+
+const BOUND_KEYS = ["w_mm", "d_mm", "unit", "view", "grid_mm", "walls"] as const;
+const RECT_KEYS = ["x_mm", "y_mm", "w_mm", "d_mm", "wall_mounted"] as const;
+
+function boundKeys(b: FpBound): Record<string, unknown> {
+  const out: Record<string, unknown> = {};
+  for (const k of BOUND_KEYS) if (b[k] !== undefined) out[k] = b[k];
+  return out;
+}
+
+/** What a location is, for where its layout is kept: a room's floor is its
+ *  footprint; a container's face is not. */
+export type LayoutKind = "area" | "container";
+
+/** Metadata with this location's own layout set, everything else kept (a
+ *  location's metadata holds more than the plan, and a placed container keeps
+ *  its spot on the room). A container's goes to its face. */
+export function withBound(
+  metadata: Record<string, unknown> | null | undefined,
+  bound: FpBound,
+  kind: LayoutKind,
+): Record<string, unknown> {
+  const meta = { ...(metadata ?? {}) };
+  const fp = { ...(blob(metadata) ?? {}) };
+  if (kind === "container") {
+    fp.face = boundKeys(bound);
+    if (num(fp.x_mm) === null) for (const k of BOUND_KEYS) delete fp[k];
+  } else {
+    for (const k of BOUND_KEYS) delete fp[k];
+    Object.assign(fp, boundKeys(bound));
+  }
+  meta.floorplan = fp;
+  return meta;
+}
+
+/** Metadata with this record's spot on its parent's plan set (or cleared),
+ *  everything else kept. `keepFace`: a container that has a layout of its
+ *  own, from before the face was split out, has it saved as its face first,
+ *  so moving or resizing it on the floor never stretches its drawers. */
+export function withRect(
+  metadata: Record<string, unknown> | null | undefined,
+  rect: FpRect | null,
+  opts: { keepFace?: boolean } = {},
+): Record<string, unknown> {
+  const meta = { ...(metadata ?? {}) };
+  const fp = { ...(blob(metadata) ?? {}) };
+  if (opts.keepFace && !faceOf(fp)) {
+    const legacy = boundFrom(fp);
+    if (legacy) {
+      fp.face = boundKeys(legacy);
+      for (const k of BOUND_KEYS) if (k !== "w_mm" && k !== "d_mm") delete fp[k];
+    }
+  }
+  if (rect) {
+    Object.assign(fp, { x_mm: rect.x_mm, y_mm: rect.y_mm, w_mm: rect.w_mm, d_mm: rect.d_mm });
+    if (rect.wall_mounted) fp.wall_mounted = true;
+    else delete fp.wall_mounted;
+  } else {
+    for (const k of RECT_KEYS) delete fp[k];
+  }
+  if (Object.keys(fp).length) meta.floorplan = fp;
+  else delete meta.floorplan;
+  return meta;
+}
+
+/** Metadata with decoration keys (fill, outline) patched; null removes one. */
+export function withDecor(
+  metadata: Record<string, unknown> | null | undefined,
+  patch: Record<string, unknown>,
+): Record<string, unknown> {
+  const meta = { ...(metadata ?? {}) };
+  const fp = { ...(blob(metadata) ?? {}), ...patch };
+  for (const k of Object.keys(fp)) if (fp[k] === undefined || fp[k] === null) delete fp[k];
+  meta.floorplan = fp;
+  return meta;
+}
+
 /** A child's placement rect off its metadata, or null (unplaced). A blob that
  *  parses as a bound but not a rect is NOT a placement. */
 export function readRect(metadata: Record<string, unknown> | null | undefined): FpRect | null {
@@ -89,6 +201,40 @@ export function readRect(metadata: Record<string, unknown> | null | undefined): 
   const x = num(fp.x_mm), y = num(fp.y_mm), w = num(fp.w_mm), d = num(fp.d_mm);
   if (x === null || y === null || !w || !d) return null;
   return { x_mm: x, y_mm: y, w_mm: w, d_mm: d, wall_mounted: fp.wall_mounted === true };
+}
+
+/** The first spot, in reading order (top-left first), where a w × d rect sits
+ *  on the bound without covering anything already there: a new thing lands
+ *  where the person is looking, never on top of another. With no room left it
+ *  goes top-left and the collision outline shows it. */
+export function freeSpot(bound: FpBound, taken: FpRect[], w: number, d: number): FpRect {
+  const cell = bound.grid_mm ?? SNAP_MM;
+  const ww = Math.max(cell, Math.min(w, bound.w_mm));
+  const dd = Math.max(cell, Math.min(d, bound.d_mm));
+  const step = Math.max(cell, snap(Math.min(ww, dd) / 4, cell));
+  for (let y = 0; y + dd <= bound.d_mm; y += step) {
+    for (let x = 0; x + ww <= bound.w_mm; x += step) {
+      const c = { x_mm: x, y_mm: y, w_mm: ww, d_mm: dd };
+      if (!taken.some((t) => rectsOverlap(t, c))) return c;
+    }
+  }
+  return clampRect({ x_mm: 0, y_mm: 0, w_mm: ww, d_mm: dd }, bound);
+}
+
+/** The rect a new child gets. On a face (front view) a drawer: the face's full
+ *  width, one row's height (the height the drawers already there share, or a
+ *  quarter of the face), under the ones already there. On a floor: a 4 × 2 ft
+ *  piece of furniture, or a third of a small room, at the first free spot. */
+export function newChildRect(bound: FpBound, taken: FpRect[]): FpRect {
+  const g = bound.grid_mm ?? SNAP_MM;
+  if (bound.view === "front") {
+    const heights = new Map<number, number>();
+    for (const t of taken) heights.set(t.d_mm, (heights.get(t.d_mm) ?? 0) + 1);
+    const common = [...heights.entries()].sort((a, b) => b[1] - a[1])[0]?.[0];
+    const d = common ?? Math.max(g, snap(bound.d_mm / 4, g));
+    return freeSpot(bound, taken, bound.w_mm, d);
+  }
+  return freeSpot(bound, taken, Math.min(1200, snap(bound.w_mm / 3, g) || g), Math.min(600, snap(bound.d_mm / 3, g) || g));
 }
 
 export function snap(v: number, grid: number = SNAP_MM): number {

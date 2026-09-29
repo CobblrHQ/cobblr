@@ -179,6 +179,12 @@ export interface TextReceiptParse {
  * doesn't reconcile — so the caller falls through to AI rather than shipping a
  * wrong answer that looks right.
  */
+/** The weight-and-rate tail of a weighed item's line ("1.24 lb @ 0.95/lb",
+ *  with OCR's "@.95" for "0.95"), dropped when that line lends its name to the
+ *  price printed under it. */
+const WEIGHED_DETAIL = /\s+\d+(?:[.,]\d+)?\s*(?:lb|lbs|kg|g|oz)\b.*$/i;
+const WRAP_LABEL = "wrapped";
+
 export function parseTextReceipt(text: string): TextReceiptParse | null {
   const lines = text
     .split(/\r?\n/)
@@ -201,6 +207,21 @@ export function parseTextReceipt(text: string): TextReceiptParse | null {
     const hit = readTrailingAmount(line);
 
     if (!hit) {
+      // A price the till wrapped onto a line of its own, under the name it
+      // belongs to: a weighed item prints "BANANAS 1.24 lb @ 0.95/lb" and then
+      // "1.18" (#4027: a three-line grocery receipt came out a line short of
+      // its subtotal and was refused). The money reader refuses a bare price
+      // on purpose, so it is asked about the price under a stand-in label.
+      // The weight detail is not the name.
+      const wrapped = pendingDescription && !itemsClosed ? readTrailingAmount(`${WRAP_LABEL} ${line}`) : null;
+      if (wrapped && wrapped.label === WRAP_LABEL && wrapped.amount > 0) {
+        const description = pendingDescription!.replace(WEIGHED_DETAIL, "").trim();
+        if (/[a-z]/i.test(description)) {
+          items.push({ description, qty: 1, unit_price: wrapped.amount, line_total: wrapped.amount, discount: 0 });
+          pendingDescription = null;
+          continue;
+        }
+      }
       // No amount: it may still be the "2.16 lb @ 0.58 /lb" detail line that
       // belongs to the item above it. A receipt puts that BELOW its item.
       const qa = parseQtyAt(line);

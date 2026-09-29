@@ -9,10 +9,11 @@
 import { Eye, EyeOff } from "lucide-react";
 import { useActiveOrg } from "../auth/ActiveOrgContext";
 import { useNavModules, HEADING_PREFIX } from "../components/useNavModules";
-import { toggleNavHidden } from "../lib/nav-order";
+import { useToggleNavHidden } from "../lib/moreApps";
 
 export function AppSettingsPage() {
   const { activeSlug, activeOrg } = useActiveOrg();
+  const toggleHidden = useToggleNavHidden();
   const { allTops, hiddenNames, isLoading } = useNavModules(activeSlug);
   const appLabel = activeOrg?.app_mode?.label ?? "this app";
 
@@ -45,7 +46,7 @@ export function AppSettingsPage() {
                 </span>
                 <button
                   type="button"
-                  onClick={() => toggleNavHidden(activeSlug, t.name)}
+                  onClick={() => toggleHidden(activeSlug, t.name)}
                   aria-pressed={visible}
                   title={visible ? "Hide from the menu" : "Show in the menu"}
                   className={`inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-xs font-medium transition ${

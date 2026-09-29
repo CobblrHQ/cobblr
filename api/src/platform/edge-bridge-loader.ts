@@ -82,6 +82,8 @@ export const BRIDGE_LOADER_JS: string = [
   '}, CHECK_MS);',
   '',
   'console.error("[loader] running bridge " + (current().slice(0, 12) || "unknown"));',
+  '// The bridge reports this at /register, so Cobblr can show which version runs.',
+  'process.env.BRIDGE_RUNNING_VERSION = current();',
   'createRequire(import.meta.url)(BUNDLE);',
   '',
 ].join("\n");

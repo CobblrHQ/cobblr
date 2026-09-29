@@ -2,6 +2,7 @@
 // call so the AuthProvider can update it without rewiring the client.
 // Everything goes through `request<T>` so error shape stays uniform.
 
+import type { CancelResult } from "./digifab-cancel";
 import type { ScanCountReason } from "@cobblr/platform-contract/scan-count";
 import type { AiChainAnswer } from "./ai-chain";
 import type { ProviderReason } from "@cobblr/platform-contract/provider-reason";
@@ -175,8 +176,9 @@ async function request<T>(
   method: string,
   path: string,
   body?: unknown,
+  extraHeaders?: Record<string, string>,
 ): Promise<T> {
-  const headers: Record<string, string> = {};
+  const headers: Record<string, string> = { ...(extraHeaders ?? {}) };
   if (body !== undefined) headers["Content-Type"] = "application/json";
   // Kept for the blocked-action sheet: `body` is shadowed by the response
   // below, and a refusal needs the request as it was sent.
@@ -262,8 +264,13 @@ async function request<T>(
     // only `error.message` turned "a designs:item needs a name" into "HTTP 400"
     // for the person who had just pressed Confirm, and for the assistant that
     // could have corrected it. Take the reason from wherever it actually is.
+    // A blank message is no reason: a server error thrown without one (a
+    // failed connection's AggregateError says "") reached a toast as "" and
+    // the toast showed nothing, so a failed save looked like no save at all.
     const reason =
-      err?.message ?? (typeof body.message === "string" && body.message.trim() ? body.message : null);
+      (err?.message?.trim() ? err.message : null) ??
+      (typeof body.message === "string" && body.message.trim() ? body.message : null) ??
+      (res.status >= 500 ? `Cobblr hit a problem on its side and did not say what (${res.status}). Try again.` : null);
     // The server saying the sandbox's hour is up ends it for the whole app,
     // whichever request heard it first; the workspace shell becomes the ending.
     if (res.status === 410 && err?.code === "sandbox_expired") markSandboxEnded("sandbox");
@@ -536,7 +543,25 @@ export interface Machine {
   metadata: Record<string, unknown>;
   created_at: string;
   updated_at: string;
+  /** The machines named under this record, one of its `quantity` each (the
+   *  list and the detail carry them; a unit never shows on its own). */
+  units?: MachineUnit[];
+  /** How many of `quantity` have no name of their own yet (detail only). */
+  units_not_named?: number;
+  /** On a unit: the record it is one of. */
+  unit_of?: { id: string; name: string } | null;
 }
+
+export interface MachineUnit {
+  id: string;
+  name: string;
+  state: string;
+  location_id: string | null;
+  serial_number: string | null;
+  image_path: string | null;
+}
+
+export type MachineUnitMove = { id: string; parent_id: string; parent_quantity: number };
 
 export interface Vendor {
   id: string;
@@ -1211,6 +1236,23 @@ export const api = {
     body: { entity_kind: string; entity_id: string; query?: string; instance?: string | null; image_url?: string; file_id?: string },
   ) =>
     request<{ image_path: string | null }>("POST", `/orgs/${slug}/modules/core-scan/entity-image`, body),
+  /** Pictures the platform suggested for records made without one (#3818):
+   *  the ones waiting for an answer, still being looked for, or not found. */
+  photoSuggestions: (slug: string, kind: string | null, ids?: string[]) => {
+    const p = new URLSearchParams();
+    if (kind) p.set("kind", kind);
+    if (ids?.length) p.set("ids", ids.join(","));
+    return request<{ items: PhotoSuggestion[] }>("GET", `/orgs/${slug}/modules/core-scan/photo-suggestions?${p.toString()}`);
+  },
+  usePhotoSuggestion: (slug: string, kind: string, id: string) =>
+    request<{ ok: true; image_path: string }>("POST", `/orgs/${slug}/modules/core-scan/photo-suggestions/${encodeURIComponent(kind)}/${encodeURIComponent(id)}/use`),
+  searchPhotoFor: (slug: string, kind: string, id: string) =>
+    request<{ ok: true }>("POST", `/orgs/${slug}/modules/core-scan/photo-suggestions/${encodeURIComponent(kind)}/${encodeURIComponent(id)}/search`),
+  declinePhotoSuggestion: (slug: string, kind: string, id: string) =>
+    request<{ ok: true }>("POST", `/orgs/${slug}/modules/core-scan/photo-suggestions/${encodeURIComponent(kind)}/${encodeURIComponent(id)}/decline`),
+  photoSuggestConfig: (slug: string) => request<{ auto_apply: boolean }>("GET", `/orgs/${slug}/modules/core-scan/photo-suggest-config`),
+  setPhotoSuggestConfig: (slug: string, auto_apply: boolean) =>
+    request<{ auto_apply: boolean }>("PUT", `/orgs/${slug}/modules/core-scan/photo-suggest-config`, { auto_apply }),
   /** Fill in the missing pictures across a whole collection in one press — the
    *  same derived auto-fetch a single record's "Auto" runs, for every record
    *  with no image. Idempotent (a record that has one is never touched) and
@@ -1251,6 +1293,14 @@ export const api = {
   },
   updateMachine: (slug: string, id: string, body: Partial<Machine>, instance?: string) =>
     request<Machine>("PATCH", `${primaryBase(slug, "machines/machines", instance)}/${id}`, body),
+  nameMachineUnit: (slug: string, id: string, body: { name?: string | null; serial_number?: string | null }, instance?: string) =>
+    request<{ id: string; parent_id: string }>("POST", `${primaryBase(slug, "machines/machines", instance)}/${id}/units`, body),
+  splitMachineUnit: (slug: string, id: string, instance?: string) =>
+    request<MachineUnitMove>("POST", `${primaryBase(slug, "machines/machines", instance)}/${id}/split`, {}),
+  splitOneMachine: (slug: string, id: string, instance?: string) =>
+    request<MachineUnitMove>("POST", `${primaryBase(slug, "machines/machines", instance)}/${id}/split-one`, {}),
+  makeMachineUnitOf: (slug: string, id: string, parentId: string, instance?: string) =>
+    request<MachineUnitMove>("POST", `${primaryBase(slug, "machines/machines", instance)}/${id}/unit-of`, { parent_id: parentId }),
   deleteMachine: (slug: string, id: string, instance?: string) =>
     request<void>("DELETE", `${primaryBase(slug, "machines/machines", instance)}/${id}`),
 
@@ -1405,6 +1455,26 @@ export const api = {
       "GET",
       `/orgs/${slug}/members`,
     ),
+  /** The workspace's People list: members and anyone added by name (#3787). */
+  listPeople: (slug: string) => request<{ items: WorkspacePerson[] }>("GET", `/orgs/${slug}/people`),
+  addPerson: (slug: string, body: { name: string; email?: string }) =>
+    request<WorkspacePerson>("POST", `/orgs/${slug}/people`, body),
+  updatePerson: (slug: string, id: string, body: { name?: string; email?: string }) =>
+    request<WorkspacePerson>("PATCH", `/orgs/${slug}/people/${id}`, body),
+  /** Everything one person owns, across every collection: `who` is an id, a
+   *  name, or "me" (My things). */
+  personThings: (slug: string, who: string) =>
+    request<{
+      person: WorkspacePerson;
+      count: number;
+      groups: Array<{ kind: string; label: string; field: string; field_label: string; items: Array<{ id: string; title: string; path: string | null }> }>;
+    }>("GET", `/orgs/${slug}/people/things?person=${encodeURIComponent(who)}`),
+  /** Hand everything one person owns to someone else on the list. */
+  handOffPerson: (slug: string, id: string, to: string) =>
+    request<{ moved: number; kept: Array<{ kind: string; id: string; title: string }> }>("POST", `/orgs/${slug}/people/${id}/hand-off`, { to }),
+  /** Invite someone on the list to become a member; accepting keeps what is theirs. */
+  invitePerson: (slug: string, id: string, body: { email?: string }) =>
+    request<WorkspaceInvite & { emailed: boolean }>("POST", `/orgs/${slug}/people/${id}/invite`, body),
   /** Who each kind of workspace notification is for (owner/admin). */
   listNotificationAudiences: (slug: string) =>
     request<{ items: NotificationAudienceKind[] }>("GET", `/orgs/${slug}/notification-audiences`),
@@ -1420,8 +1490,16 @@ export const api = {
     ),
   updateMemberRole: (slug: string, userId: string, role: OrgMembership["role"]) =>
     request<WorkspaceMember>("PATCH", `/orgs/${slug}/members/${userId}`, { role }),
-  removeMember: (slug: string, userId: string) =>
-    request<void>("DELETE", `/orgs/${slug}/members/${userId}`),
+  /** `handTo`: a People-list entry who gets what the leaving member owns. */
+  removeMember: (slug: string, userId: string, handTo?: string) =>
+    request<{ moved: number; kept: Array<{ kind: string; id: string; title: string }> } | void>(
+      "DELETE",
+      `/orgs/${slug}/members/${userId}${handTo ? `?hand_to=${encodeURIComponent(handTo)}` : ""}`,
+    ),
+  /** Turn a paused join link back on. */
+  resumeJoinLink: (slug: string, id: string) => request<WorkspaceInvite>("POST", `/orgs/${slug}/members/invites/${id}/resume`),
+  /** A new code for a join link: the old QR stops working. */
+  rotateJoinLink: (slug: string, id: string) => request<WorkspaceInvite>("POST", `/orgs/${slug}/members/invites/${id}/rotate`),
   listInvites: (slug: string, includeAll = false) =>
     request<{ items: WorkspaceInvite[] }>(
       "GET",
@@ -1429,7 +1507,16 @@ export const api = {
     ),
   createInvite: (
     slug: string,
-    body: { email?: string; role: OrgMembership["role"]; expires_at?: string; reusable?: boolean; max_uses?: number; offer_on_labels?: boolean },
+    body: {
+      email?: string;
+      role: OrgMembership["role"];
+      expires_at?: string;
+      reusable?: boolean;
+      max_uses?: number;
+      offer_on_labels?: boolean;
+      /** Joins allowed per period before the link pauses; null for none. */
+      pace?: { limit: number; period: "day" | "week" | "month" | "year" } | null;
+    },
   ) =>
     // `emailed` says whether a mail actually went out — false when the
     // instance has no mail sender, which is the default for a self-hosted one.
@@ -1593,7 +1680,7 @@ export const api = {
   // Placement — containment (core-placement). "What's inside this container?"
   // and "what is this thing installed in?"
   placementContents: (slug: string, containerKind: string, containerId: string) =>
-    request<{ items: PlatformResolvedEntity[] }>(
+    request<{ items: PlacedThing[] }>(
       "GET",
       `/orgs/${slug}/modules/core-placement/contents?container_kind=${encodeURIComponent(containerKind)}&container_id=${encodeURIComponent(containerId)}`,
     ),
@@ -1604,10 +1691,31 @@ export const api = {
     ),
   placementPlace: (
     slug: string,
-    body: { containee: { kind: string; id: string }; container: { kind: string; id: string }; slot?: string | null },
+    body: {
+      containee: { kind: string; id: string };
+      container: { kind: string; id: string };
+      slot?: string | null;
+      /** An exact point inside the container, in mm; null clears it. */
+      position?: { x_mm: number; y_mm: number } | null;
+      /** Where the move was made, for the activity ("floor plan"). */
+      via?: string;
+    },
   ) => request<void>("POST", `/orgs/${slug}/modules/core-placement/place`, body),
   placementRemove: (slug: string, containee: { kind: string; id: string }) =>
     request<void>("POST", `/orgs/${slug}/modules/core-placement/remove`, { containee }),
+  // A thing kept in several places (#3798): its places move through the
+  // holdings door, which writes the ledger and the activity. `instance` is the
+  // collection the card lives in ("inventory" for the base one).
+  holdingTransfer: (slug: string, instance: string, holdingId: string, body: { to_location_id: string; qty: number; via?: string }) =>
+    request<{ from_id: string; to_id: string; qty: number }>(
+      "POST",
+      `${primaryBase(slug, "inventory/parts", instance === "inventory" ? undefined : instance)}/${holdingId}/transfer`,
+      body,
+    ),
+  holdingAdd: (slug: string, instance: string, cardId: string, body: { location_id: string; qty: number; via?: string }) =>
+    request<{ id: string }>("POST", `${primaryBase(slug, "inventory/parts", instance === "inventory" ? undefined : instance)}/${cardId}/holdings`, body),
+  holdingsMoveAll: (slug: string, instance: string, cardId: string, body: { to_location_id: string; via?: string }) =>
+    request<{ card_id: string; location_id: string; moved: Array<{ from_id: string; from_location_id: string | null; qty: number }>; retired: string[] }>("POST", `${primaryBase(slug, "inventory/parts", instance === "inventory" ? undefined : instance)}/${cardId}/move-all`, body),
 
   // core-units vocabulary
   listUnits: (slug: string) =>
@@ -1638,7 +1746,7 @@ export const api = {
 
   /** Which faces a collection wears: what a record shows beyond the base. */
   listFaces: (slug: string, kind: string) =>
-    request<{ kind: string; traits: Record<string, string>; faces: string[]; explicit: string[] }>(
+    request<{ kind: string; traits: Record<string, string>; faces: string[]; explicit: string[]; offers?: string[] }>(
       "GET",
       `/orgs/${slug}/faces?kind=${encodeURIComponent(kind)}`,
     ),
@@ -1650,12 +1758,15 @@ export const api = {
     ),
   invokeAction: (
     slug: string,
-    body: {
+    { label, ...body }: {
       actionId: string;
       entityKind: string;
       entityId: string;
       bindingId?: string;
       args?: Record<string, unknown>;
+      /** A scanned action label's code: the door checks it and the history
+       *  says "via label" (#3897). */
+      label?: string;
     },
   ) =>
     // The route's 200 means "the action was invoked"; whether the operation went
@@ -1664,7 +1775,7 @@ export const api = {
     // refusal is raised HERE, once, with the handler's reason. Every existing
     // caller's catch then shows why instead of a false confirmation, and no
     // future caller has to remember to unwrap the envelope.
-    request<{ ok: boolean; result: unknown }>("POST", `/orgs/${slug}/actions/invoke`, body).then(
+    request<{ ok: boolean; result: unknown }>("POST", `/orgs/${slug}/actions/invoke`, body, label ? { "x-cobblr-label": label } : undefined).then(
       (res) => {
         const inner = res.result as { ok?: unknown; error?: unknown; skipped?: unknown } | null;
         if (inner && typeof inner === "object" && inner.ok === false) {
@@ -1679,6 +1790,28 @@ export const api = {
         return res;
       },
     ),
+
+  /** What an action WOULD do, written before anything runs ("Toilet paper:
+   *  12 → 11"), or the reason it can't. Writes nothing. */
+  planAction: (
+    slug: string,
+    body: { actionId: string; entityKind?: string; entityId?: string; bindingId?: string; args?: Record<string, unknown> },
+  ) => request<{ plan: { title: string; lines: string[] } | null; error?: string }>("POST", `/orgs/${slug}/actions/plan`, body),
+
+  // ─── labels: action labels (#3897) ────────────────────────────────
+  listActionLabels: (slug: string) => request<{ items: ActionLabel[] }>("GET", `/orgs/${slug}/modules/labels/action-labels`),
+  actionLabelByCode: (slug: string, code: string) =>
+    request<ActionLabelPreview>(
+      "GET",
+      `/orgs/${slug}/modules/labels/action-labels/by-code/${code.split("/").map(encodeURIComponent).join("/")}`,
+    ),
+  createActionLabel: (slug: string, body: { title: string; hint?: string | null; buttons: ActionLabelButton[] }) =>
+    request<ActionLabel>("POST", `/orgs/${slug}/modules/labels/action-labels`, body),
+  updateActionLabel: (slug: string, id: string, body: { title?: string; hint?: string | null; buttons?: ActionLabelButton[] }) =>
+    request<ActionLabel>("PATCH", `/orgs/${slug}/modules/labels/action-labels/${id}`, body),
+  revokeActionLabel: (slug: string, id: string) => request<ActionLabel>("POST", `/orgs/${slug}/modules/labels/action-labels/${id}/revoke`, {}),
+  printActionLabel: (slug: string, id: string, qty = 1) =>
+    request<{ queued: unknown }>("POST", `/orgs/${slug}/modules/labels/action-labels/${id}/print`, { qty }),
 
   // Pillar B — registered actions + per-org appliesTo overrides
   listRegisteredActions: (slug: string) =>
@@ -1823,14 +1956,21 @@ export const api = {
     manifest: PlatformBundleManifest,
     confirm?: boolean,
     enabledFeatures?: string[],
-    takeTheirs?: Array<{ entity_kind: string; name: string }>,
+    /** One answer per upgrade conflict; a conflict with none keeps yours. */
+    resolutions?: BundleConflictResolution[],
     /** The word picked for each table that offers them, by instance name. */
     nounChoices?: Record<string, string>,
   ) =>
     request<{ bundle: PlatformBundle; applied: { wires: number; field_defs: number }; installed?: BundleInstallSummary }>(
       "POST",
       `/orgs/${slug}/bundles/install`,
-      { manifest, confirm, enabled_features: enabledFeatures, take_theirs: takeTheirs, ...(nounChoices && Object.keys(nounChoices).length ? { noun_choices: nounChoices } : {}) },
+      {
+        manifest,
+        confirm,
+        enabled_features: enabledFeatures,
+        ...(resolutions?.length ? { resolutions } : {}),
+        ...(nounChoices && Object.keys(nounChoices).length ? { noun_choices: nounChoices } : {}),
+      },
     ),
   /** Change the word a table's things are called (#3650). Every label and,
    *  for a counting word, the records on the old word follow. */
@@ -1855,7 +1995,7 @@ export const api = {
    *  confirmation (the one that names what it deletes) sets. A feature change
    *  re-applies the bundle and never passes it (#2889). */
   uninstallBundle: (slug: string, id: string, opts: { deleteData?: boolean } = {}) =>
-    request<void>("DELETE", `/orgs/${slug}/bundles/${id}${opts.deleteData ? "?delete_data=1" : ""}`),
+    request<BundleUninstallResult>("DELETE", `/orgs/${slug}/bundles/${id}${opts.deleteData ? "?delete_data=1" : ""}`),
   /** What uninstalling this bundle would tear down: its instances no other source
    *  still claims (with item counts) + modules that would be turned off. Powers
    *  the uninstall-confirm warning. */
@@ -1863,6 +2003,12 @@ export const api = {
     request<{
       instances: { name: string; display_name: string; item_count: number }[];
       modules: string[];
+      /** The same modules by name ("Cadence", not "core-cadence"). */
+      module_names?: string[];
+      /** Empty places the install made, which the uninstall removes. */
+      places?: { id: string; name: string }[];
+      /** What it leaves because someone has used it since, and why. */
+      kept?: { type: "module" | "place"; name: string; reason: string }[];
     }>("GET", `/orgs/${slug}/bundles/${id}/uninstall-preview`),
 
   // ─── extension registry (the marketplace index — HACS-style) ───────
@@ -2107,8 +2253,10 @@ export const api = {
       "GET",
       "/me/discord",
     ),
+  // The browser's zone rides along, so the morning digest the connection
+  // starts with is at 08:00 where the person is (me.ts oauth-start).
   meDiscordOAuthStart: () =>
-    request<{ url: string }>("POST", "/me/discord/oauth-start"),
+    request<{ url: string }>("POST", "/me/discord/oauth-start", { timezone: browserTimeZone() ?? undefined }),
   meDiscordRetryTest: () =>
     request<{ deliverable: boolean }>("POST", "/me/discord/retry-test"),
   meDiscordConfirm: () =>
@@ -2117,6 +2265,12 @@ export const api = {
     request<void>("DELETE", "/me/discord"),
 
   // ─── Communication Preferences matrix (Feature 1) ─────────────────
+  /** Keeping photos of things you file (#3769 step 3). `available` is false
+   *  until the updated terms ship; then `keep` is the account's choice. */
+  mePhotoConsent: () =>
+    request<{ available: boolean; keep: boolean; accepted_at: string | null; declined_at: string | null }>("GET", "/me/photo-consent"),
+  setMePhotoConsent: (keep: boolean) =>
+    request<{ available: boolean; keep: boolean; accepted_at: string | null; declined_at: string | null; unlinked: boolean }>("PUT", "/me/photo-consent", { keep }),
   meCommunicationPrefs: () =>
     request<CommunicationPrefs>("GET", "/me/communication-prefs"),
   setMeCommunicationPref: (body: { notification_type: string; channel: string; enabled: boolean }) =>
@@ -2206,6 +2360,18 @@ export const api = {
     return request<{ items: FileRecord[]; next_cursor?: string | null; total?: number }>("GET", `/orgs/${slug}/modules/core-files/files${qs ? `?${qs}` : ""}`);
   },
   /** What the workspace keeps in files, and its limit (null: none). */
+  /** What one place carries, across every collection (inventory's view). */
+  /** One tap on a count at a place: the ledgered stock adjust on the record
+   *  kept there (its own row, never its card), in whichever collection. */
+  stockAdjustAt: (slug: string, instance: string, id: string, delta: number, reason?: string) =>
+    request<{ id: string; qty: number | string }>(
+      "POST",
+      `${primaryBase(slug, "inventory/parts", instance === "inventory" ? undefined : instance)}/${id}/stock-adjust`,
+      { delta, ...(reason ? { reason } : {}) },
+    ),
+  stockAt: (slug: string, locationId: string) =>
+    request<StockAtPlace>("GET", `/orgs/${slug}/modules/inventory/stock/at/${locationId}?today=${dayHere()}`),
+  /** Lots going off within `within` days, wherever they are, grouped by place. */
   fileUsage: (slug: string) => request<{ bytes_used: number; quota_bytes: number | null }>("GET", `/orgs/${slug}/modules/core-files/files/usage`),
   listFileFolders: (slug: string) => request<{ items: FileFolder[]; top_level_file_count: number }>("GET", `/orgs/${slug}/modules/core-files/folders`),
   createFileFolder: (slug: string, body: { name: string; parent_id?: string | null }) => request<FileFolder>("POST", `/orgs/${slug}/modules/core-files/folders`, body),
@@ -2740,7 +2906,7 @@ export const api = {
   getDigifabJob: (slug: string, id: string) =>
     request<DigifabJob>("GET", `/orgs/${slug}/modules/digifab/jobs/${id}`),
   cancelDigifabJob: (slug: string, id: string) =>
-    request<{ status: string; remote_cancelled: boolean }>("POST", `/orgs/${slug}/modules/digifab/jobs/${id}/cancel`, {}),
+    request<CancelResult>("POST", `/orgs/${slug}/modules/digifab/jobs/${id}/cancel`, {}),
   // Explicit path back from a failed/cancelled job — re-queues + re-sends.
   retryDigifabJob: (slug: string, id: string) =>
     request<{ status: string; sent?: boolean; pooled?: boolean; remote_job_id?: string | null; reason?: string }>("POST", `/orgs/${slug}/modules/digifab/jobs/${id}/retry`, {}),
@@ -2878,6 +3044,8 @@ export const api = {
     if (params?.due_within_days != null)
       qs.set("due_within_days", String(params.due_within_days));
     if (params?.limit != null) qs.set("limit", String(params.limit));
+    const tz = browserTimeZone();
+    if (tz) qs.set("tz", tz);
     const q = qs.toString();
     return request<{ items: MaintenanceEntry[] }>(
       "GET",
@@ -2913,6 +3081,33 @@ export const api = {
       "DELETE",
       `/orgs/${slug}/modules/core-maintenance/entries/${id}`,
     ),
+  // Recurring schedules on a record ("service every 3 months / 200 print hours").
+  listMaintenanceSchedules: (slug: string, entityId: string) =>
+    request<{ items: MaintenanceSchedule[] }>(
+      "GET",
+      `/orgs/${slug}/modules/core-maintenance/schedules?entity_id=${encodeURIComponent(entityId)}${browserTimeZone() ? `&tz=${encodeURIComponent(browserTimeZone()!)}` : ""}`,
+    ),
+  maintenanceCounters: (slug: string, kind: string, entityId: string) =>
+    request<{ counters: Array<{ key: string; label: string; value: number | null }> }>(
+      "GET",
+      `/orgs/${slug}/modules/core-maintenance/schedules/counters?kind=${encodeURIComponent(kind)}&entity_id=${encodeURIComponent(entityId)}`,
+    ),
+  createMaintenanceSchedule: (
+    slug: string,
+    body: {
+      entity_module: string;
+      entity_type: string;
+      entity_id: string;
+      name: string;
+      every_n?: number | null;
+      every_unit?: MaintenanceIntervalUnit | null;
+      counter_field?: string | null;
+      counter_every?: number | null;
+      last_done_at?: string | null;
+    },
+  ) => request<MaintenanceSchedule>("POST", `/orgs/${slug}/modules/core-maintenance/schedules`, body),
+  deleteMaintenanceSchedule: (slug: string, id: string) =>
+    request<void>("DELETE", `/orgs/${slug}/modules/core-maintenance/schedules/${id}`),
 
   // ─── labels: QR scan tokens (merged from core-labels-qr) ──────────
   listQrTokens: (slug: string) =>
@@ -3001,6 +3196,8 @@ export const api = {
     request<{
       offered: Array<{ kind: string; label: string; to: string[]; reverse: boolean }>;
       words: Record<string, { label: string; inverse: string }>;
+      /** Link kinds a record's Links do not remove (a thing's type). */
+      fixed?: string[];
     }>("GET", `/orgs/${slug}/pairings/link-kinds?record_kind=${encodeURIComponent(kind)}`),
 
   // Instances (workspace_module_instances) — multi-instance modules.
@@ -3176,6 +3373,12 @@ export const api = {
     ),
   // This workspace's connected edge bridges (default + named) — for the shared
   // bridge picker. Served by digifab's relay, which all edge transport rides.
+  createEdgePairingCode: (slug: string, name: string, bridge: string | null) =>
+    request<{ code: string; expires_at: string }>("POST", `/orgs/${slug}/edge/pairing-codes`, { name, bridge }),
+  disconnectEdgeBridge: (slug: string, bridge: string | null) =>
+    request<{ ok: true; also_cut: string[] }>("POST", `/orgs/${slug}/edge/bridges/disconnect`, { bridge }),
+  renameEdgeBridge: (slug: string, bridge: string | null, name: string) =>
+    request<{ ok: true }>("POST", `/orgs/${slug}/edge/bridges/rename`, { bridge, name }),
   listEdgeBridges: (slug: string) =>
     request<{ bridges: EdgeBridge[]; direct?: DirectEdgeBridge[] }>(
       "GET",
@@ -3930,6 +4133,11 @@ export const api = {
             method: "csv" | "pdf-table" | "text-lines" | "ocr-lines" | "ai-chat" | "ai-vision";
           };
           items: ScanInboxItem[];
+          /** The session the lines went into. */
+          batch_id?: string | null;
+          /** Whether the receipt was kept as a purchase; when not, whether
+           *  Purchases being off is why (#3869). Null with no session. */
+          purchase?: { recorded: boolean; purchases_off: boolean } | null;
           duplicate?: undefined;
         }
       | {
@@ -3991,11 +4199,11 @@ export const api = {
    *  (the same route the dedicated upload uses) and the photo row is retired
    *  once its lines land. The intake's identify verdict does this on its own;
    *  this is the one-tap correction when it missed. */
-  readScanItemAsReceipt: (slug: string, id: string) =>
+  readScanItemAsReceipt: (slug: string, id: string, opts: { force?: boolean } = {}) =>
     request<{ ok: true; receipt: true; items: number }>(
       "POST",
       `/orgs/${slug}/modules/core-scan/inbox/${id}/as-receipt`,
-      {},
+      opts.force ? { force: true } : {},
     ),
   rerunScanAi: (
     slug: string,
@@ -4029,10 +4237,14 @@ export const api = {
   // "Already tracked?" — entities the workspace already has matching this scan
   // (exact barcode / name overlap), and attach-to-existing instead of duplicating.
   scanTrackedMatches: (slug: string, id: string) =>
-    request<{ barcode_matches: TrackedMatch[]; name_matches: TrackedMatch[] }>(
+    request<{ barcode_matches: TrackedMatch[]; name_matches: TrackedMatch[]; places?: TrackedPlace[]; place_choice?: string | null }>(
       "GET",
       `/orgs/${slug}/modules/core-scan/inbox/${id}/tracked-matches`,
     ),
+  /** Which place of the matched thing this scan goes to, when it is kept in
+   *  several: stored on the row, and the row's match re-stamped there. */
+  scanPickPlace: (slug: string, id: string, recordId: string) =>
+    request<{ ok: true }>("POST", `/orgs/${slug}/modules/core-scan/inbox/${id}/place`, { record_id: recordId }),
   /** Put back the answer the last re-run overwrote (restores metadata.pre_rerun). */
   scanUndoRerun: (slug: string, id: string) =>
     request<ScanInboxItem>("POST", `/orgs/${slug}/modules/core-scan/inbox/${id}/undo-rerun`),
@@ -4279,6 +4491,10 @@ export const api = {
   /** Undo a combine from either row: the kept one or one it absorbed (#3639). */
   uncombineScanItem: (slug: string, id: string) =>
     request<{ kept: ScanInboxItem; restored: string[] }>("POST", `/orgs/${slug}/modules/core-scan/inbox/${id}/uncombine`),
+  /** Turn Purchases on and keep a receipt read while it was off as the
+   *  purchase it would have been (#3869). */
+  recordReceiptPurchase: (slug: string, batchId: string) =>
+    request<{ order_id: string; already?: boolean }>("POST", `/orgs/${slug}/modules/core-scan/batches/${batchId}/record-purchase`, {}),
   createScanBatch: (slug: string) =>
     request<{ id: string }>(
       "POST",
@@ -4564,7 +4780,8 @@ export const api = {
   /** The URL the widget opens an EventSource on. */
   aiChatTurnEventsUrl: (slug: string, turnId: string, after = 0) =>
     `/api/v1/orgs/${slug}/modules/core-ai/chat/turns/${turnId}/events?after=${after}`,
-  aiChatExecute: (slug: string, proposal: AiChatProposal) =>
+  /** `prompt`: what was asked, the ledger row's label for this write. */
+  aiChatExecute: (slug: string, proposal: AiChatProposal, prompt?: string) =>
     request<{
       ok: boolean;
       message: string;
@@ -4572,7 +4789,7 @@ export const api = {
       /** The AI change-ledger row for this write — undo handle. */
       ledger_id?: string;
       undoable?: boolean;
-    }>("POST", `/orgs/${slug}/modules/core-ai/chat/execute`, { proposal }),
+    }>("POST", `/orgs/${slug}/modules/core-ai/chat/execute`, { proposal, ...(prompt ? { prompt: prompt.slice(0, 2000) } : {}) }),
   /** Ask Cobb tool consent (per-user, per-workspace): may the chat read your
    *  workspace data into prompts, and the write mode (off / ask / auto)?
    *  Enforced server-side; auto still asks for ACTIONS (irreversible). */
@@ -5254,6 +5471,9 @@ export interface ScanBatchMeta {
   date_printed?: string | null;
   /** The session's lines over every row, not the loaded page (#3638). */
   lines?: { pending: number; ever: number };
+  /** A receipt read while Purchases was off, not yet kept as a purchase
+   *  (#3869): the session offers to turn Purchases on and record it. */
+  purchase_pending?: boolean;
 }
 
 export interface AiStatus {
@@ -5696,8 +5916,17 @@ export interface InboundToken {
 // (no-id) bridge; a string = a named bridge.
 export interface EdgeBridge {
   bridge: string | null;
+  /** What a person calls it; null for a bridge installed before names. */
+  name?: string | null;
   connected: boolean;
   last_seen: number | null;
+  version?: string | null;
+  hostname?: string | null;
+  /** The addresses it says it will reach (BRIDGE_ALLOW on the box); null or
+   *  absent: whatever the workspace points it at. */
+  allowlist?: string[] | null;
+  /** Cobblr knows its key and can cut it off. */
+  can_disconnect?: boolean;
 }
 
 /** A bridge Cobblr reaches DIRECTLY (LAN, tailnet, same machine), derived from
@@ -5855,6 +6084,17 @@ export interface EntityKindOverride {
 }
 
 /** One web-image candidate (the universal photo-picker strip). */
+/** A picture suggested for a record made without one (#3818). */
+export interface PhotoSuggestion {
+  entity_kind: string;
+  entity_id: string;
+  /** "queued" while it is still being looked for; "none" when it was looked
+   *  for and nothing was found. */
+  status: "queued" | "suggested" | "none";
+  image_path: string | null;
+  query: string | null;
+}
+
 export interface ImageOption {
   url: string;
   thumb: string;
@@ -6296,6 +6536,16 @@ export interface TrackedMatch {
   matched_by: "barcode" | "name" | "bin" | "identifier";
   /** For an identifier match, the field's label ("ISBN"). */
   matched_label?: string | null;
+  /** The thing this record is a place of (its own id when kept in one place). */
+  card_id?: string;
+}
+
+/** One place the matched thing is kept, for "which one does this go to". */
+export interface TrackedPlace {
+  id: string;
+  location_id: string | null;
+  location_name: string | null;
+  qty: number | null;
 }
 
 /** What installing a bundle changed. See api/src/lib/bundle-install-summary.ts. */
@@ -6806,6 +7056,9 @@ export interface SearchHit {
   detailUrl?: string;
   /** Archived / out of use. Search still finds these, after the live ones. */
   retired?: boolean;
+  /** Found inside the record's words (a pattern's PDF, its notes) rather
+   *  than its name: the line the searched word is on. */
+  snippet?: string;
   fields: Record<string, unknown>;
 }
 
@@ -7350,8 +7603,77 @@ export interface MaintenanceEntry {
   performed_by: string | null;
   notes: string | null;
   recurrence_rule: string | null;
+  /** The schedule this entry is an occurrence of. */
+  schedule_id?: string | null;
+  /** Where an open entry stands, counted by the server in this browser's
+   *  zone with the rule the record's schedule uses. `days` is negative when
+   *  overdue. Absent on history. */
+  due?: { state: "ok" | "due-soon" | "overdue"; reason: string; days: number };
   created_at: string;
   updated_at: string;
+}
+
+/** This browser's IANA zone, for a server that counts the reader's days. */
+function browserTimeZone(): string | null {
+  try {
+    return Intl.DateTimeFormat().resolvedOptions().timeZone || null;
+  } catch {
+    return null;
+  }
+}
+
+export type MaintenanceIntervalUnit = "day" | "week" | "month" | "year";
+
+export interface MaintenanceSchedule {
+  id: string;
+  entity_module: string;
+  entity_type: string;
+  entity_id: string;
+  name: string;
+  every_n: number | null;
+  every_unit: MaintenanceIntervalUnit | null;
+  counter_field: string | null;
+  counter_every: number | null;
+  last_done_at: string | null;
+  last_done_counter: number | null;
+  /** The rule in words: "every 3 months", "every 200 print hours". */
+  rule: string;
+  due: {
+    state: "ok" | "due-soon" | "overdue";
+    reason: string;
+    next_due_at: string | null;
+    next_due_counter: number | null;
+    counter: number | null;
+    counter_label: string;
+  };
+}
+
+export interface ActionLabelButton {
+  entity_kind: string;
+  entity_id: string;
+  action_id: string;
+  binding_id?: string | null;
+  args?: Record<string, unknown>;
+  label?: string | null;
+}
+
+export interface ActionLabel {
+  id: string;
+  code: string;
+  url: string;
+  title: string;
+  hint: string | null;
+  buttons: ActionLabelButton[];
+  created_at: string;
+  revoked_at: string | null;
+}
+
+export interface ActionLabelPreview {
+  id: string;
+  code: string;
+  title: string;
+  hint: string | null;
+  buttons: Array<ActionLabelButton & { index: number; record_title: string | null; action_label: string; available: boolean }>;
 }
 
 export interface QrToken {
@@ -7559,6 +7881,10 @@ export interface WorkspaceInvite {
   use_count?: number;
   /** Item labels offer this join link to someone who scans one signed out. */
   offer_on_labels?: boolean;
+  pace_limit?: number | null;
+  pace_period?: "day" | "week" | "month" | "year" | null;
+  /** Set while the link is paused for going past its pace. */
+  paused_at?: string | null;
   /** Who joined through a join link, newest first. */
   joined?: Array<{ user_id: string; name: string; used_at: string }>;
 }
@@ -7581,6 +7907,27 @@ export interface ApiTokenListItem {
   org_slug?: string | null;
 }
 
+/** What an uninstall put back and what it kept (#3918). `kept_words` is the
+ *  sentence per kept thing: "Kept Pantry: 12 things live there." */
+export interface BundleUninstallResult {
+  removed: Array<{ type: "module" | "place"; key: string; name: string }>;
+  kept: Array<{ type: "module" | "place"; key: string; name: string; reason: string }>;
+  kept_words: string[];
+  /** Reverting this snapshot puts the bundle back as it was; present only
+   *  when its records were kept. */
+  undo_snapshot_id?: string;
+}
+
+/** Someone on the workspace's People list (#3787). */
+export interface WorkspacePerson {
+  id: string;
+  name: string;
+  user_id: string | null;
+  email: string | null;
+  member: boolean;
+  left: boolean;
+}
+
 export interface InvitePreview {
   id: string;
   role: OrgMembership["role"];
@@ -7591,7 +7938,7 @@ export interface InvitePreview {
   org_name: string;
   org_slug: string;
   invited_by_name: string;
-  status: "open" | "consumed" | "revoked" | "expired" | "full";
+  status: "open" | "consumed" | "revoked" | "expired" | "full" | "paused";
   reusable?: boolean;
 }
 
@@ -7603,7 +7950,7 @@ export interface PlatformEntityKind {
   display_name: string;
   display_name_plural: string | null;
   icon: string | null;
-  fields: { name: string; type: string; role?: string }[];
+  fields: { name: string; type: string; role?: string; choices?: string[] }[];
   detail_route: string | null;
   endpoints: { get?: string; list?: string; create?: string; update?: string; delete?: string } | null;
   /** Set on registry records synthesized for a workspace's named instances
@@ -7639,6 +7986,11 @@ export interface BundleValidationError {
   code: string;
   message: string;
 }
+export interface BundleRelease {
+  version: string;
+  released_at?: string;
+  notes: string;
+}
 export interface BundleUpgradeConflict {
   entity_kind: string;
   name: string;
@@ -7646,6 +7998,14 @@ export interface BundleUpgradeConflict {
   attr: "label" | "choices" | "removed";
   yours: string | string[] | null;
   theirs: string | string[] | null;
+}
+/** What the person chose for one conflicting item on an update. "both" is
+ *  for a list of options only: yours, then the update's new ones. */
+export interface BundleConflictResolution {
+  entity_kind: string;
+  name: string;
+  attr: BundleUpgradeConflict["attr"];
+  choice: "mine" | "theirs" | "both";
 }
 export interface BundleValidationPreview {
   fields_added: { entity_kind: string; name: string; type: string; display_label: string }[];
@@ -7679,6 +8039,13 @@ export interface PlatformResolvedEntity {
   image_path?: string;
   detailUrl?: string;
   fields: Record<string, unknown>;
+}
+
+/** A thing inside a container, with where in it: its slot, and the exact spot
+ *  a floor plan pinned it at (in the container's plan's mm), or null. */
+export interface PlacedThing extends PlatformResolvedEntity {
+  slot: string | null;
+  position: { x_mm: number; y_mm: number } | null;
 }
 
 // core-units vocabulary (shapes match @cobblr/platform-web's types).
@@ -7977,6 +8344,9 @@ export interface PlatformBundleManifest {
    *  the user is updating an installed bundle. The technical detail (new
    *  modules / wires / fields) stays in the requires/details accordion. */
   changelog?: string;
+  /** Every version's notes, newest first. An update lists the ones between
+   *  the installed version and this one. */
+  releases?: BundleRelease[];
   /** v1.5: markdown walkthrough rendered on the bundle detail page. */
   readme_md?: string;
   /** v1.5: image URLs displayed as a screenshot strip. */
@@ -8012,6 +8382,9 @@ export interface PlatformBundleManifest {
     /** Plain-language one-line hint shown under the input ("the maker's named
      *  shade — e.g. 'Peacock Heather'") so jargon fields explain themselves. */
     help?: string;
+    /** The heading this field sits under on a record's sheet ("Printing").
+     *  Made on install in the order its first field appears. */
+    section?: string;
     /** The unit a type='number' value is measured in ("mm", "g") — free text,
      *  resolved against the units vocabulary; declares physical semantics. */
     unit?: string;
@@ -8060,6 +8433,13 @@ export interface PlatformBundleManifest {
    *  multi-instance module — e.g. an "inventory" instance named "Yarn"). Each
    *  instance's fields/views/wires apply scoped to `<instance_name>:item`. */
   provides_instances?: PlatformBundleInstance[];
+  /** Sidebar headings this bundle creates on install, each gathering module
+   *  and/or instance nav entries. Attaching a member moves it under the heading. */
+  nav_headings?: {
+    name: string;
+    icon?: string;
+    members: { target_kind: "module" | "instance"; target_id: string }[];
+  }[];
   /** Catalog shells this bundle installs (name + schema config, no rows). Rows
    *  load separately via CSV import or a puller. A feature can carry its own. */
   catalogs?: PlatformBundleCatalog[];
@@ -8308,4 +8688,38 @@ export interface ApprovalRequestView {
    *  list omits it. Anything saying a permission is in place reads this, never
    *  `status` alone. */
   holds_now?: { holds: boolean; missing: string | null; message: string | null } | null;
+}
+
+/** One record at a place, as the place's own view reads it. */
+export interface StockPlaceRow {
+  id: string;
+  card_id: string | null;
+  name: string;
+  instance: string;
+  kind: string;
+  detail_path: string;
+  location_id: string | null;
+  location_name: string | null;
+  qty: number;
+  unit: string;
+  min_qty: number | null;
+  low: boolean;
+  expires_on: string | null;
+  lots: Array<{ received_on: string; expires_on: string; qty: number; lot?: string }>;
+}
+export interface StockAtPlace {
+  location_id: string;
+  today: string;
+  items: StockPlaceRow[];
+  low: number;
+  expiring: number;
+}
+export interface StockExpiring {
+  today: string;
+  within: number;
+  places: Array<{
+    location_id: string | null;
+    location_name: string | null;
+    lots: Array<{ part_id: string; card_id: string | null; name: string; instance: string; kind: string; detail_path: string; qty: number; unit: string; lot: string | null; expires_on: string; days: number }>;
+  }>;
 }

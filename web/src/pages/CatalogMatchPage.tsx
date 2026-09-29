@@ -10,7 +10,7 @@ import { useState, useEffect, useMemo } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Check, Library, ArrowLeft } from "lucide-react";
-import { useToast, usePageTitle } from "@cobblr/platform-web";
+import { useToast, usePageTitle, SearchInput } from "@cobblr/platform-web";
 import { ApiError, api, type CatalogEntry, type Catalog } from "../lib/api";
 import { useActiveOrg } from "../auth/ActiveOrgContext";
 import { recordHref } from "@cobblr/platform-contract/instance-detail";
@@ -174,14 +174,7 @@ export function CatalogMatchPage() {
           </div>
           <div className="col-span-9 space-y-2">
             {selectedCatalog && (
-              <input
-                type="text"
-                value={search}
-                onChange={(e) => setSearch(e.target.value)}
-                placeholder={`Search ${selectedCatalog.name} by ${titleColumn}…`}
-                className="w-full px-2 py-1.5 text-sm border border-line dark:border-slate-600 rounded bg-surface dark:bg-slate-900"
-                autoFocus
-              />
+              <SearchInput value={search} onChange={setSearch} placeholder={`Search ${selectedCatalog.name} by ${titleColumn}…`} aria-label="Search the catalog" autoFocus />
             )}
             {entriesQ.isLoading && (
               <div className="text-sm text-muted">Loading…</div>

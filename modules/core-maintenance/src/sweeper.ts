@@ -18,6 +18,9 @@
 
 import { Kysely, sql } from "kysely";
 import { platform } from "@cobblr/platform-contract";
+import type { CoreMaintenanceDB } from "./db.js";
+import { reconcileSchedules } from "./schedules-store.js";
+import { calendarDue } from "./schedule.js";
 
 const TICK_MS = 60 * 60 * 1000; // 1 hour
 export const MAINTENANCE_PASS = "core-maintenance.sweep";
@@ -48,6 +51,7 @@ interface DueRow {
   entity_id: string;
   name: string;
   scheduled_at: Date;
+  schedule_id: string | null;
 }
 
 /** Single sweep — exported so tests can fire it deterministically.
@@ -82,10 +86,21 @@ async function visitWorkspace(orgId: string, raw: unknown): Promise<{ scanned: n
     {
       {
     const tdb = raw as Kysely<unknown>;
+    // Schedules first (#3876): every schedule gets its open occurrence, dated
+    // by its calendar or brought to now when its counter has passed the mark,
+    // so the due pass below sees it like any other scheduled entry. The
+    // reason is the schedule's own words ("overdue by 3 print hours").
+    let reasons = new Map<string, string>();
+    try {
+      reasons = (await reconcileSchedules(raw as Kysely<CoreMaintenanceDB>, orgId)).reasons;
+    } catch (err) {
+      const msg = (err as Error).message;
+      if (!msg.includes("does not exist")) console.error("[core-maintenance] schedules not reconciled:", msg);
+    }
     let due: DueRow[];
     try {
       const compiled = sql<DueRow>`
-        select id, entity_module, entity_type, entity_id, name, scheduled_at
+        select id, entity_module, entity_type, entity_id, name, scheduled_at, schedule_id
         from core_maintenance_entries
         where scheduled_at is not null
           and performed_at is null
@@ -124,16 +139,11 @@ async function visitWorkspace(orgId: string, raw: unknown): Promise<{ scanned: n
     let only: (typeof due)[number] | null = null;
 
     for (const row of due) {
-      const daysUntil = Math.ceil(
-        (new Date(row.scheduled_at).getTime() - Date.now()) / 86_400_000,
-      );
-      const tone =
-        daysUntil < 0
-          ? `overdue by ${-daysUntil}d`
-          : daysUntil === 0
-            ? "due today"
-            : `due in ${daysUntil}d`;
-      const message = `${row.name} — ${tone}`;
+      // A notification goes to everybody on the workspace, so there is no
+      // one zone to read: the day that has arrived everywhere, the same count
+      // the schedule's own reason uses.
+      const { reason: tone, days: daysUntil } = calendarDue(new Date(row.scheduled_at), new Date(), null);
+      const message = `${row.name} — ${(row.schedule_id && reasons.get(row.schedule_id)) || tone}`;
 
       // Event for user-authored wires.
       void platform().events.emit("core-maintenance.entry.due-soon", {

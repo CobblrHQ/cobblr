@@ -22,7 +22,18 @@ interface MaintenanceEntry {
   cost_cents: number | null;
   notes: string | null;
   recurrence_rule: string | null;
+  /** Where an open entry stands, counted by the server in this browser's
+   *  zone: the same count the record's schedule and the Maintenance page show. */
+  due?: { state: "ok" | "due-soon" | "overdue"; reason: string; days: number };
   created_at: string;
+}
+
+function browserTimeZone(): string | null {
+  try {
+    return Intl.DateTimeFormat().resolvedOptions().timeZone || null;
+  } catch {
+    return null;
+  }
 }
 
 interface Props {
@@ -50,6 +61,7 @@ export function MaintenancePanel({ entityModule, entityType, entityId }: Props) 
     entity_module: entityModule,
     entity_type: entityType,
     entity_id: entityId,
+    ...(browserTimeZone() ? { tz: browserTimeZone()! } : {}),
   });
 
   const list = useQuery({
@@ -194,10 +206,7 @@ function EntryRow({
   onDelete: () => void;
 }) {
   const due = entry.scheduled_at && !entry.performed_at;
-  const ms = entry.scheduled_at
-    ? new Date(entry.scheduled_at).getTime() - Date.now()
-    : null;
-  const days = ms != null ? Math.ceil(ms / 86_400_000) : null;
+  const days = entry.due?.days ?? null;
   const overdue = days != null && days < 0;
 
   return (
@@ -218,7 +227,7 @@ function EntryRow({
               <span className={overdue ? "text-ember-500" : days != null && days <= 30 ? "text-amber-600" : ""}>
                 {overdue
                   ? `overdue ${-days!}d`
-                  : `due ${new Date(entry.scheduled_at).toLocaleDateString()} (${days}d)`}
+                  : `due ${new Date(entry.scheduled_at).toLocaleDateString()}${days != null ? ` (${days}d)` : ""}`}
               </span>
             )}
             {entry.cost_cents != null && (

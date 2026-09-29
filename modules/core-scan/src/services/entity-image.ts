@@ -14,6 +14,7 @@ import { pickImage } from "./barcode-websearch.js";
 import { guardedImageFetch } from "./enrich.js";
 import { curatedImageUrl } from "./curated-images.js";
 import { browserImageHeaders } from "./image-fetch-headers.js";
+import { deriveImageQuery } from "./ddg-images.js";
 
 const INTERNAL_API = `http://127.0.0.1:${process.env.API_PORT ?? 4000}`;
 const MAX_IMAGE_BYTES = 10 * 1024 * 1024;
@@ -23,7 +24,7 @@ const MAX_IMAGE_BYTES = 10 * 1024 * 1024;
  *  Stores via the platform files seam (in-process), NOT the HTTP upload route —
  *  a system-fetched image is not a user upload, so it must bypass any gate on
  *  that route (e.g. the trial tier withholds user uploads). */
-async function fetchAndStoreImage(orgId: string, imageUrl: string): Promise<string | null> {
+export async function fetchAndStoreImage(orgId: string, imageUrl: string): Promise<string | null> {
   try {
     const dl = await guardedImageFetch(imageUrl, { headers: browserImageHeaders(imageUrl), signal: AbortSignal.timeout(8_000) });
     if (!dl.ok) return null;
@@ -122,4 +123,31 @@ export async function setEntityImageFile(opts: {
     console.error("[core-scan] entity-image set failed:", (err as Error).message);
     return null;
   }
+}
+
+/** The image-search phrase for an entity, derived server-side from its own
+ *  name / brand / fields. Shared by the options strip and the auto-fetch so
+ *  they can never search differently for the same thing. */
+export async function derivedQueryFor(
+  orgId: string,
+  kind: string,
+  id: string,
+  override?: string | null,
+): Promise<{ query: string | null; brand: string | null; resolved: boolean }> {
+  const e = await platform().entities.lookup(orgId, kind, id).catch(() => null);
+  // `resolved` separates "this kind has no single-entity resolver" (a wiring
+  // gap) from "resolved fine but there's nothing to search for" (a data gap).
+  if (!e) return { query: (override ?? "").trim() || null, brand: null, resolved: false };
+  const fields = (e.fields ?? {}) as Record<string, unknown>;
+  // The custom-field bag lives under `metadata` for the physical kinds; merge
+  // it so a declared author/director/colour sharpens the phrase just like a
+  // native column does.
+  const meta = (fields.metadata ?? {}) as Record<string, unknown>;
+  const merged = { ...meta, ...fields };
+  const brand = typeof merged.manufacturer === "string" ? (merged.manufacturer as string) : null;
+  return {
+    query: deriveImageQuery({ name: e.title, brand, fields: merged, override: override ?? null }),
+    brand,
+    resolved: true,
+  };
 }

@@ -115,8 +115,8 @@ function ActivityRow({ entry }: { entry: ActivityEntry }) {
         </span>
       </div>
       <div className="flex items-baseline gap-2 mt-1 text-[10px] text-muted dark:text-slate-400">
-        <span className="flex items-center gap-1">
-          <User size={9} /> <ActorVia entry={entry} />
+        <span className="flex items-center gap-1 min-w-0">
+          <User size={9} className="shrink-0" /> <ActorVia entry={entry} />
         </span>
         {entry.token?.prefix && (
           <span className="font-mono">({entry.token.prefix}…)</span>

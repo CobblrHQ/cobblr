@@ -9,7 +9,7 @@ import { defineModule } from "@cobblr/platform-contract";
 
 export default defineModule({
   name: "digifab",
-  version: "0.23.8",
+  version: "0.25.1",
   displayName: "Digital Fabrication",
   description:
     "Send a design file to the software that runs your machine (FDM Monster, OctoPrint, and friends) and track the job to completion. Map a manager's printers to your machines and route files to them. Talks to each manager's REST API; it sends files, it never drives the hardware.",
@@ -40,6 +40,10 @@ export default defineModule({
       registerPollWorker();
       const { registerAssignWorker } = await import("./assign-worker.js");
       registerAssignWorker();
+      // Keeps jobs moving across a restart: revives dead poll/assign chains and
+      // returns a job a stopped send left half way.
+      const { registerFarmWatchdog } = await import("./farm-watchdog.js");
+      registerFarmWatchdog();
       // Background warmer for the printer file cache — a self-perpetuating queue
       // loop that keeps each printer's file list + thumbnails warm in the DB, so
       // the UI reads warm data and the machine is never hit on a modal open.
@@ -67,8 +71,8 @@ export default defineModule({
         id: "digifab:job",
         updateEndpoint: "/jobs/{id}",
         deleteEndpoint: "/jobs/{id}",
-        displayName: "Print job",
-        displayNamePlural: "Print jobs",
+        displayName: "Machine job",
+        displayNamePlural: "Machine jobs",
         icon: "printer",
         // A unit of work that queues → prints → completes: digital,
         // unique, completable, durable. Registering it lets the wire
@@ -100,7 +104,7 @@ export default defineModule({
       { id: "digifab:fleet-tab", surface: "module-page-tab" as const, target: "machines", title: "Fleet" },
       // The per-machine cockpit half: link THIS machine to its manager +
       // live status, inside the machine's own detail modal.
-      { id: "digifab:cockpit", surface: "entity-detail-panel" as const, target: "machines:machine", title: "Print manager" },
+      { id: "digifab:cockpit", surface: "entity-detail-panel" as const, target: "machines:machine", title: "Job manager" },
     ],
   },
 

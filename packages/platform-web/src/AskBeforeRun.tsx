@@ -61,7 +61,16 @@ function AskSheet({ asking }: { asking: Asking }) {
                 {q.label}
                 {q.required ? <span className="text-ember-600 dark:text-ember-400"> *</span> : null}
               </span>
-              {q.kind === "boolean" ? (
+              {q.kind === "choice" ? (
+                <select id={common.id} name={common.name} value={common.value} autoFocus={common.autoFocus} className={common.className} onChange={(e) => setAnswers((a) => ({ ...a, [q.arg]: e.target.value }))}>
+                  <option value="">Choose</option>
+                  {(q.choices ?? []).map((c) => (
+                    <option key={c.value} value={c.value}>
+                      {c.label}
+                    </option>
+                  ))}
+                </select>
+              ) : q.kind === "boolean" ? (
                 <select id={common.id} name={common.name} value={common.value} autoFocus={common.autoFocus} className={common.className} onChange={(e) => setAnswers((a) => ({ ...a, [q.arg]: e.target.value }))}>
                   <option value="">Choose</option>
                   <option value="true">Yes</option>

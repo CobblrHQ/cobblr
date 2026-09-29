@@ -20,11 +20,13 @@
 //   a null overwrite of data the input simply couldn't display.
 // - Escape always cancels without writing.
 
+import { ColourInput } from "./ColourInput";
 import { useRef, useState, type KeyboardEvent } from "react";
 import { Pencil } from "lucide-react";
 import { cellPlan, type CellPlan, type EditableCellDef } from "./cellPlan";
 import { FieldRenderer, boolTruthy, boolLabel } from "./FieldRenderer";
 import { RelationSelect, MemberSelect } from "./CustomFieldsPanel";
+import { PersonSelect, useMemberName, usePersonName } from "./PersonSelect";
 
 export type { EditableCellDef } from "./cellPlan";
 
@@ -88,10 +90,15 @@ export function EditableCell({
   // An id-valued column displays its label, never the raw id. When the options
   // list can't resolve the id (loading / failed / missing row), the host's
   // fallback label keeps the real value visible instead of a lying "—".
+  // A person is shown by name, never by the id that is stored.
+  const personName = usePersonName(value, !options && def.type === "person");
+  const memberName = useMemberName(value, !options && def.type === "member");
   const shown = options
     ? (options.find((o) => o.id === String(value ?? ""))?.label ??
       (isBlank(value) ? null : (fallbackLabel ?? null)))
-    : value;
+    : def.type === "person" || def.type === "member"
+      ? (personName ?? memberName ?? (isBlank(value) ? null : (fallbackLabel ?? "…")))
+      : value;
 
   // The host's own invariant (an audited qty, say) outranks the field's type.
   const plan: CellPlan = lockedReason
@@ -207,6 +214,12 @@ export function EditableCell({
       return (
         <span onClick={(e) => e.stopPropagation()}>
           <MemberSelect value={value} onChange={(v) => commit(v)} className="w-full text-sm py-1" />
+        </span>
+      );
+    case "person":
+      return (
+        <span onClick={(e) => e.stopPropagation()}>
+          <PersonSelect value={value} onChange={(v) => commit(v)} className="w-full text-sm py-1" />
         </span>
       );
     case "choice":
@@ -449,10 +462,9 @@ function TextCell({
 
 /** Colour: the OS swatch picker plus a free-text box, so a named colour
  *  ("Peacock") works as well as a hex — same pair the detail panel uses.
- *  The swatch only updates the draft (the OS picker fires change continuously
- *  while dragging; committing there would save an arbitrary mid-drag hue and
- *  unmount the editor under the open picker). The edit commits when focus
- *  leaves the pair for another element, or on Enter. */
+ *  The swatch only updates the draft, on every tick and on release;
+ *  committing from it would unmount the editor under the open picker. The
+ *  edit commits when focus leaves the pair for another element, or on Enter. */
 function ColorCell({
   value,
   onCommit,
@@ -467,11 +479,9 @@ function ColorCell({
   const initial = value == null ? "" : String(value);
   // DRAFT-OK: mounted when the cell opens for editing and gone when it closes; for its whole life the person is the one changing it.
   const [draft, setDraft] = useState(initial);
-  const t = draft.trim();
-  const swatch = /^#?[0-9a-fA-F]{6}$/.test(t) ? (t[0] === "#" ? t : `#${t}`) : "#cccccc";
   return (
     <span
-      className="inline-flex items-center gap-1"
+      className="inline-flex flex-wrap items-center gap-1"
       onClick={(e) => e.stopPropagation()}
       onBlur={(e) => {
         // Focus moving BETWEEN the two inputs isn't leaving; and when the OS
@@ -482,13 +492,7 @@ function ColorCell({
         }
       }}
     >
-      <input
-        type="color"
-        value={swatch}
-        onChange={(e) => setDraft(e.target.value)}
-        className="h-6 w-8 shrink-0 rounded border border-line dark:border-slate-600 cursor-pointer bg-transparent p-0.5"
-        aria-label={`${label} colour picker`}
-      />
+      <ColourInput value={draft} onPreview={setDraft} onCommit={setDraft} label={label} compact />
       <input
         autoFocus
         type="text"

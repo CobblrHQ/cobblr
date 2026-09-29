@@ -19,7 +19,7 @@ import { searchFeatures } from "../lib/feature-index";
 import { useHostedPanels } from "../lib/useHostedPanels";
 import { isFileHit, mergePaletteRows, paletteSectionHeader, PALETTE_RANK, tablesMatching, type PaletteRow, type PaletteTable } from "../lib/paletteRows";
 import { tableOtherNames, type NounChoiceDecl } from "@cobblr/platform-contract/kind-label";
-import { useLater, OverlayLayer } from "@cobblr/platform-web";
+import { useLater, OverlayLayer, SnippetText, SearchInput } from "@cobblr/platform-web";
 import { SearchIncomplete } from "./SearchIncomplete";
 import { openSheetImport } from "../lib/sheet-import";
 
@@ -247,6 +247,7 @@ export function CommandPalette() {
       kind,
       label: h.title,
       hint: kind === "file" ? undefined : h.subtitle ?? h.kind,
+      ...(h.snippet ? { snippet: h.snippet } : {}),
       icon: kind === "file" ? FileText : Search,
       dedupeKey: `${h.kind}:${h.id}`,
       run: () => { navigate(h.detailUrl ?? `/search?q=${encodeURIComponent(q.trim())}`); close(); },
@@ -300,14 +301,17 @@ export function CommandPalette() {
         className="w-full max-w-lg rounded-xl border border-line dark:border-slate-700 bg-surface dark:bg-slate-900 shadow-2xl overflow-hidden"
         onClick={(e) => e.stopPropagation()}
       >
-        <div className="flex items-center gap-2 border-b border-line dark:border-slate-700 px-3">
-          <Search size={15} className="text-faint shrink-0" />
-          <input
+        <div className="flex items-center gap-2 border-b border-line dark:border-slate-700 pr-3">
+          {/* The palette's own row: no box of its own, the sheet is the box.
+              Esc empties it first, then closes the palette. */}
+          <SearchInput
             ref={inputRef}
             value={q}
-            onChange={(e) => { setQ(e.target.value); setSel(0); }}
+            onChange={(v) => { setQ(v); setSel(0); }}
             placeholder="Do or find anything…"
-            className="w-full bg-transparent py-3 text-sm text-content dark:text-mortar-100 outline-none"
+            aria-label="Do or find anything"
+            wrapperClassName="flex-1 min-w-0"
+            className="!h-12 !rounded-none !border-0 !bg-transparent"
             onKeyDown={(e) => {
               if (e.key === "ArrowDown") { e.preventDefault(); setSel((s) => Math.min(s + 1, total - 1)); }
               if (e.key === "ArrowUp") { e.preventDefault(); setSel((s) => Math.max(s - 1, 0)); }
@@ -341,7 +345,14 @@ export function CommandPalette() {
                     className={"w-full flex items-center gap-2.5 px-3 py-2 text-sm text-left transition " + (sel === i ? "bg-subtle dark:bg-slate-800 text-content dark:text-mortar-100" : "text-content dark:text-mortar-200")}
                   >
                     <Icon size={15} className={(r.kind === "entity" || r.kind === "file" || r.kind === "inbox" ? "text-faint" : "text-accent") + " shrink-0"} />
-                    <span className="flex-1 min-w-0 truncate">{r.label}</span>
+                    <span className="flex-1 min-w-0">
+                      <span className="block truncate">{r.label}</span>
+                      {r.snippet && (
+                        <span className="block truncate text-[11px] text-muted dark:text-slate-400" data-testid="palette-snippet">
+                          <SnippetText text={r.snippet} q={q} />
+                        </span>
+                      )}
+                    </span>
                     {r.hint && <span className="text-[11px] text-faint dark:text-slate-500 shrink-0">{r.hint}</span>}
                     {sel === i && <CornerDownLeft size={13} className="text-faint shrink-0" />}
                   </button>

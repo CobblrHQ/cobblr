@@ -73,6 +73,9 @@ export const IDENTIFY_OWNED_KEYS = [
   "ai_rerun_queued",
   "renamed_from_hint",
   "receipt_shape",
+  // What a listing screenshot printed about the sale (listing-evidence.ts):
+  // a read of THIS picture, so a new read replaces it.
+  "listing",
   "receipt_decided_by",
   // NOT "purchases_order_id" / "receipt_group_id" on an item a person attached
   // paperwork to: which receipt this was bought on is a FACT about the purchase,

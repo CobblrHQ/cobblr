@@ -9,6 +9,7 @@ import { randomBytes } from "node:crypto";
 import { z } from "zod";
 import { sql } from "kysely";
 import { meta } from "../db/meta.js";
+import { PhotoConsentRefused, photoConsentOf, setPhotoConsent } from "../platform/photo-consent.js";
 import { deliveryTick } from "../platform/delivery-sweeper.js";
 import { requireAuth } from "../auth/middleware.js";
 import { mintTokenString } from "../auth/api-tokens.js";
@@ -2034,12 +2035,46 @@ meRouter.get("/me/discord", requireAuth, async (req, res, next) => {
   }
 });
 
+/** 08:00 local: what a connected Discord's "due today" digest starts at. */
+const DISCORD_DIGEST_DEFAULT_MINUTE = 480;
+
 // POST /me/discord/oauth-start — returns the Discord authorize URL.
 meRouter.post("/me/discord/oauth-start", requireAuth, async (req, res, next) => {
   try {
     if (!discordOAuthConfigured()) {
       res.status(503).json({ error: { code: "not_configured", message: "Discord isn't set up on this server yet." } });
       return;
+    }
+    // The morning digest, chosen already: someone connecting Discord for
+    // "tell me before my veggies go off" wants one list at breakfast, not a
+    // ping per carton at midnight. Only when they have not chosen a cadence
+    // for Discord themselves (a row there is their choice and stays), and
+    // only in a zone the browser named, so 08:00 is their 08:00. Said on the
+    // page, and changed there.
+    const tz = typeof req.body?.timezone === "string" ? req.body.timezone.trim() : "";
+    let zoneOk = false;
+    try {
+      if (tz) {
+        new Intl.DateTimeFormat("en-GB", { timeZone: tz });
+        zoneOk = true;
+      }
+    } catch {
+      zoneOk = false;
+    }
+    if (zoneOk) {
+      await meta
+        .insertInto("notification_delivery_windows")
+        .values({
+          user_id: req.session!.id,
+          channel: "discord_dm",
+          mode: "immediate",
+          timezone: tz,
+          schedule_mode: "daily",
+          schedule_deliver_at_minute: DISCORD_DIGEST_DEFAULT_MINUTE,
+        })
+        .onConflict((oc) => oc.columns(["user_id", "channel"]).doNothing())
+        .execute();
+      forgetTimeZone(req.session!.id);
     }
     const state = await signOAuthState(req.session!.id);
     res.json({ url: discordAuthorizeUrl(state) });
@@ -2148,6 +2183,37 @@ meRouter.delete("/me/discord", requireAuth, async (req, res, next) => {
     await meta.deleteFrom("discord_connections").where("user_id", "=", req.session!.id).execute();
     res.status(204).end();
   } catch (err) {
+    next(err);
+  }
+});
+
+// ───────────────── Keeping photos of filed items (#3769 step 3) ─────────────
+// GET /me/photo-consent — whether the setting exists here yet, and the
+// account's choice with its dates.
+meRouter.get("/me/photo-consent", requireAuth, async (req, res, next) => {
+  try {
+    res.json(await photoConsentOf(req.session!.id));
+  } catch (err) {
+    next(err);
+  }
+});
+
+const PhotoConsentBody = z.object({ keep: z.boolean() });
+
+// AI-REACH: exempt a person's own consent about their photos is theirs to give in Your account; an assistant never gives or withdraws it on their behalf
+meRouter.put("/me/photo-consent", requireAuth, async (req, res, next) => {
+  try {
+    const parsed = PhotoConsentBody.safeParse(req.body ?? {});
+    if (!parsed.success) {
+      res.status(400).json({ error: { code: "invalid_body", message: "Say keep: true or keep: false.", details: parsed.error.issues } });
+      return;
+    }
+    res.json(await setPhotoConsent(req.session!.id, parsed.data.keep));
+  } catch (err) {
+    if (err instanceof PhotoConsentRefused) {
+      res.status(err.code === "trial" ? 403 : 409).json({ error: { code: err.code, message: err.message } });
+      return;
+    }
     next(err);
   }
 });

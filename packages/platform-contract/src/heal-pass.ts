@@ -65,9 +65,13 @@ export function registerHealPass(pass: HealPass): void {
     everyMs: HEAL_EVERY_MS,
     firstAfterMs: HEAL_FIRST_AFTER_MS,
     ...(pass.module ? { module: pass.module } : {}),
-    candidates: async (orgIds) => {
+    candidates: async (orgIds, { named }) => {
       report();
-      const todo = orgIds.filter((id) => !settled.has(id));
+      // A workspace asked for by id is visited even when a round found it
+      // clean: rows can arrive after that round (a restore, a test planting
+      // the old shape), and a heal run on request that silently did nothing
+      // reads as a heal that ran.
+      const todo = named ? orgIds : orgIds.filter((id) => !settled.has(id));
       if (!todo.length) {
         void platform().health.noteHealShim(pass.shim, residue(), 0);
         return [];
@@ -82,7 +86,10 @@ export function registerHealPass(pass: HealPass): void {
         const found = typeof out === "number" ? out : out.found;
         if (found === 0) settled.set(orgId, 0);
         else if (typeof out === "object" && out.settled) settled.set(orgId, found);
-        else if (mine) mine.found += found;
+        else {
+          settled.delete(orgId);
+          if (mine) mine.found += found;
+        }
         return { found };
       } catch (err) {
         if (mine) mine.failed++;

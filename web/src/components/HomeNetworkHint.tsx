@@ -7,6 +7,9 @@
 // contract's (`needsBridge`), the same one the hosted egress guard applies.
 
 import { Link } from "react-router-dom";
+import { useQuery } from "@tanstack/react-query";
+import { api } from "../lib/api";
+import { useActiveOrg } from "../auth/ActiveOrgContext";
 import { Router } from "lucide-react";
 import { addressReach, needsBridge } from "@cobblr/platform-contract/address-reach";
 
@@ -24,7 +27,17 @@ export function HomeNetworkHint({
   hosted: boolean;
   throughBridge?: boolean;
 }) {
-  if (!needsBridge(address, { hosted })) return null;
+  const { activeSlug } = useActiveOrg();
+  const home = needsBridge(address, { hosted });
+  // Same query key as BridgePicker, so the two share one fetch.
+  const bridges = useQuery({
+    queryKey: ["edge-bridges", activeSlug],
+    queryFn: () => api.listEdgeBridges(activeSlug),
+    enabled: home && !!activeSlug,
+  });
+  if (!home) return null;
+  // "Through your bridge" is only true once there is one.
+  const noBridgeYet = bridges.isSuccess && (bridges.data?.bridges ?? []).length === 0;
   const r = addressReach(address);
   const where = r.kind === "home" ? r.host : address;
   return (
@@ -36,7 +49,7 @@ export function HomeNetworkHint({
       }
     >
       <Router size={12} className="mt-0.5 shrink-0" />
-      {throughBridge ? (
+      {throughBridge && !noBridgeYet ? (
         <span>
           <span className="font-mono">{where}</span> is on your home network, so Cobblr reaches it through your bridge.
         </span>

@@ -1,7 +1,8 @@
 {
   "lint": "lint:bench-not-shipped",
-  "run": "tsx scripts/lint-bench-not-shipped.ts",
+  "run": "node scripts/lint-bench-not-shipped.ts",
   "ms": 628,
   "recorded": "2026-09-14",
-  "source": "split from scripts/lint-durations.json (recorded 2026-09-14)"
+  "source": "split from scripts/lint-durations.json (recorded 2026-09-14)",
+  "readMB": 13.3
 }

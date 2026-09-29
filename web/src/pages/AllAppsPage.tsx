@@ -2,13 +2,21 @@
 // the sidebar's collections (#3883). In the sidebar, hidden from it on this
 // device, or off in the workspace; each with the one thing it needs.
 import { usePageTitle } from "@cobblr/platform-web";
-import type { AppEntry, AppState } from "@cobblr/platform-contract/app-catalog";
+import type { AppEntry } from "@cobblr/platform-contract/app-catalog";
 import { useAppCatalog, useModuleDoor } from "../lib/appCatalog";
+import { useActiveOrg } from "../auth/ActiveOrgContext";
+import { useNavModules } from "../components/useNavModules";
 
-const SECTIONS: Array<{ state: AppState; title: string; blurb: string }> = [
-  { state: "on", title: "In your sidebar", blurb: "" },
-  { state: "hidden", title: "Hidden from your sidebar", blurb: "On in the workspace; you hid them on this device." },
-  { state: "off", title: "Off in this workspace", blurb: "Turning one on adds it for everyone here." },
+// "In your sidebar" is what the sidebar actually draws (its rows, and the
+// entries under them), read from the same hook it draws with. An app that is
+// on but has no row of its own (files, tags, saved views: search-only by
+// design) is listed on its own, not claimed to be in a sidebar it is not in.
+type Section = "sidebar" | "on" | "hidden" | "off";
+const SECTIONS: Array<{ key: Section; title: string; blurb: string }> = [
+  { key: "sidebar", title: "In your sidebar", blurb: "" },
+  { key: "on", title: "On, not in your sidebar", blurb: "Open them here, or find any of them with ⌘K." },
+  { key: "hidden", title: "Hidden from your sidebar", blurb: "On in the workspace; you hid them on this device." },
+  { key: "off", title: "Off in this workspace", blurb: "Turning one on adds it for everyone here." },
 ];
 
 const btn =
@@ -18,6 +26,13 @@ export function AllAppsPage() {
   usePageTitle("All apps");
   const { apps, loading } = useAppCatalog();
   const door = useModuleDoor();
+  const { activeSlug } = useActiveOrg();
+  const nav = useNavModules(activeSlug);
+  const rows = new Set<string>();
+  for (const t of nav.tops) rows.add(t.name);
+  for (const kids of nav.childrenByParent.values()) for (const k of kids) rows.add(k.name);
+  for (const g of nav.instanceGroups.values()) for (const m of g.members) rows.add(m.name);
+  const sectionOf = (a: AppEntry): Section => (a.state !== "on" ? a.state : rows.has(a.name) || rows.has(a.key) ? "sidebar" : "on");
   const row = (a: AppEntry) => (
     <li key={a.name} data-testid="app-row" data-state={a.state} className="flex flex-wrap items-center gap-3 px-3 py-2.5">
       <div className={`min-w-0 flex-1 ${a.state === "off" ? "opacity-70" : ""}`}>
@@ -54,10 +69,10 @@ export function AllAppsPage() {
       </header>
       {loading && <p className="text-sm text-muted">Loading…</p>}
       {SECTIONS.map((s) => {
-        const list = apps.filter((a) => a.state === s.state);
+        const list = apps.filter((a) => sectionOf(a) === s.key);
         if (!list.length) return null;
         return (
-          <section key={s.state} aria-label={s.title} className="space-y-1.5">
+          <section key={s.key} aria-label={s.title} className="space-y-1.5">
             <h2 className="text-[11px] font-mono uppercase tracking-widest text-faint">
               {s.title} <span className="text-muted">({list.length})</span>
             </h2>

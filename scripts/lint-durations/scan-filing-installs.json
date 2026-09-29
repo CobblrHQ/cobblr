@@ -1,7 +1,8 @@
 {
   "lint": "lint:scan-filing-installs",
-  "run": "tsx scripts/lint-scan-filing-installs.ts",
+  "run": "node scripts/lint-scan-filing-installs.ts",
   "ms": 422,
   "recorded": "2026-09-14",
-  "source": "split from scripts/lint-durations.json (recorded 2026-09-14)"
+  "source": "split from scripts/lint-durations.json (recorded 2026-09-14)",
+  "readMB": 7.6
 }

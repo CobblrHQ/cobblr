@@ -1,7 +1,8 @@
 {
   "lint": "lint:browser-driver-pairs",
-  "run": "tsx scripts/lint-browser-driver-pairs.ts",
+  "run": "node scripts/lint-browser-driver-pairs.ts",
   "ms": 623,
   "recorded": "2026-09-14",
-  "source": "split from scripts/lint-durations.json (recorded 2026-09-14)"
+  "source": "split from scripts/lint-durations.json (recorded 2026-09-14)",
+  "readMB": 14.3
 }

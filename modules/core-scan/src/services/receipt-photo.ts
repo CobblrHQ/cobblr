@@ -203,10 +203,60 @@ export interface ReceiptReadFailed {
   failure: string | null;
   ai: string | null;
   at: string;
+  /** The session this receipt is already in, when that is why it stopped. */
+  duplicate_of?: { batch_id: string; label: string | null; lines: number };
 }
 
-async function leaveAsPhoto(opts: { orgId: string; itemId: string }, note: string, keptBatchId: string | null, why: { failure?: string; ai?: string } = {}): Promise<void> {
-  const state: ReceiptReadFailed = { failure: why.failure ?? null, ai: why.ai ?? null, at: new Date().toISOString() };
+/** What the receipt door answered, read ONE way (#4027). It answers a receipt
+ *  it already holds with `{ duplicate, existing }` and no `receipt`; reading
+ *  `receipt.item_count` off that answer as 0 reported a receipt already in the
+ *  inbox as one with "no line items". Every shape is named here, and one this
+ *  does not know is said to be unknown, never read as empty. */
+export type ReceiptAnswer =
+  | { kind: "read"; items: number }
+  | { kind: "empty" }
+  | { kind: "already-in"; batch_id: string; label: string | null; lines: number }
+  | { kind: "refused"; status: number; failure?: string; ai?: string; message?: string; keptBatchId: string | null }
+  | { kind: "unknown"; status: number };
+
+export function readReceiptAnswer(status: number, body: unknown): ReceiptAnswer {
+  const b = (body ?? {}) as {
+    receipt?: { item_count?: unknown };
+    duplicate?: unknown;
+    existing?: { batch_id?: unknown; label?: unknown; item_count?: unknown };
+    error?: { message?: string; failure?: string; ai?: string };
+    kept_batch_id?: string;
+  };
+  if (status < 200 || status >= 300) {
+    return { kind: "refused", status, failure: b.error?.failure, ai: b.error?.ai, message: b.error?.message, keptBatchId: b.kept_batch_id ?? null };
+  }
+  if (b.duplicate === true && typeof b.existing?.batch_id === "string") {
+    return {
+      kind: "already-in",
+      batch_id: b.existing.batch_id,
+      label: typeof b.existing.label === "string" ? b.existing.label : null,
+      lines: typeof b.existing.item_count === "number" ? b.existing.item_count : 0,
+    };
+  }
+  if (b.receipt && typeof b.receipt === "object") {
+    const n = Number(b.receipt.item_count ?? 0);
+    return n > 0 ? { kind: "read", items: n } : { kind: "empty" };
+  }
+  return { kind: "unknown", status };
+}
+
+async function leaveAsPhoto(
+  opts: { orgId: string; itemId: string },
+  note: string,
+  keptBatchId: string | null,
+  why: { failure?: string; ai?: string; duplicateOf?: ReceiptReadFailed["duplicate_of"] } = {},
+): Promise<void> {
+  const state: ReceiptReadFailed = {
+    failure: why.failure ?? null,
+    ai: why.ai ?? null,
+    at: new Date().toISOString(),
+    ...(why.duplicateOf ? { duplicate_of: why.duplicateOf } : {}),
+  };
   try {
     const db = (await platform().tenants.getDb(opts.orgId)) as unknown as RowDb;
     await db
@@ -242,15 +292,20 @@ export async function routeScannedReceiptPhoto(opts: {
   itemId: string;
   fileId: string;
   userId?: string | null;
+  /** Read it in even when the door recognises it as a receipt already here. */
+  force?: boolean;
 }): Promise<ReceiptRouteResult> {
-  const failed = async (reason: string, door?: { failure?: string; ai?: string; message?: string; keptBatchId?: string | null }): Promise<ReceiptRouteResult> => {
+  const failed = async (
+    reason: string,
+    door?: { failure?: string; ai?: string; message?: string; keptBatchId?: string | null; duplicateOf?: ReceiptReadFailed["duplicate_of"] },
+  ): Promise<ReceiptRouteResult> => {
     // The door's sentence already says what to do ("Couldn't be read: no AI
     // provider is connected. Connect one…, then read it again."); this only
     // says what the photo was taken for.
     const note = door?.message
       ? `That looked like a receipt, but it ${door.message.replace(/^Couldn't/, "couldn't")} Or identify it as an item instead.`
       : `That looked like a receipt, but its line items could not be read (${reason}). Read it as a receipt again, or identify it as an item instead.`;
-    await leaveAsPhoto(opts, note, door?.keptBatchId ?? null, { failure: door?.failure, ai: door?.ai });
+    await leaveAsPhoto(opts, note, door?.keptBatchId ?? null, { failure: door?.failure, ai: door?.ai, duplicateOf: door?.duplicateOf });
     return { routed: false, reason, note, ...(door?.failure ? { failure: door.failure } : {}), ...(door?.ai ? { ai: door.ai } : {}) };
   };
 
@@ -264,31 +319,43 @@ export async function routeScannedReceiptPhoto(opts: {
     return failed(`couldn't mint a capture session: ${(e as Error).message}`);
   }
 
-  let body: { receipt?: { item_count?: number }; error?: { message?: string; failure?: string; ai?: string }; kept_batch_id?: string } = {};
+  let answer: ReceiptAnswer;
   try {
     const r = await fetch(
       `${INTERNAL_API}/api/v1/orgs/${who.slug}/modules/core-scan/scan/receipt`,
       {
         method: "POST",
         headers: { Authorization: `Bearer ${token}`, "content-type": "application/json" },
-        body: JSON.stringify({ file_id: opts.fileId }),
+        body: JSON.stringify({ file_id: opts.fileId, ...(opts.force ? { force: true } : {}) }),
       },
     );
-    body = (await r.json()) as typeof body;
-    if (!r.ok) {
-      return failed(body.error?.failure ? `${body.error.failure}: ${body.error.message ?? ""}`.trim() : `receipt parse returned ${r.status}`, {
-        failure: body.error?.failure,
-        ai: body.error?.ai,
-        message: body.error?.message,
-        keptBatchId: body.kept_batch_id ?? null,
-      });
-    }
+    answer = readReceiptAnswer(r.status, await r.json().catch(() => null));
   } catch (e) {
     return failed((e as Error).message);
   }
 
-  const items = body.receipt?.item_count ?? 0;
-  if (!items) return failed("no line items on it");
+  if (answer.kind === "refused") {
+    return failed(answer.failure ? `${answer.failure}: ${answer.message ?? ""}`.trim() : `receipt parse returned ${answer.status}`, {
+      failure: answer.failure,
+      ai: answer.ai,
+      message: answer.message,
+      keptBatchId: answer.keptBatchId,
+    });
+  }
+  if (answer.kind === "already-in") {
+    // Not a failure to read: the same receipt is in already. The photo stays
+    // as it is, saying where, with "read it anyway" for a real second copy.
+    const where = answer.label?.trim() ? `"${answer.label.trim()}"` : "a session";
+    const lines = answer.lines > 0 ? ` (${answer.lines} line${answer.lines === 1 ? "" : "s"})` : "";
+    return failed("already in the inbox", {
+      failure: "already_imported",
+      message: `is already in your inbox as ${where}${lines}. Read it anyway for a second copy.`,
+      duplicateOf: { batch_id: answer.batch_id, label: answer.label, lines: answer.lines },
+    });
+  }
+  if (answer.kind === "unknown") return failed(`the receipt door answered ${answer.status} in a shape this does not read`, { failure: "unknown_answer" });
+  if (answer.kind === "empty") return failed("no line items on it");
+  const items = answer.items;
 
   // The lines are in, so the single photo row has been superseded. Retire it
   // rather than leaving a nameless duplicate of the receipt beside its own line

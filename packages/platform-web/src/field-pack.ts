@@ -167,6 +167,7 @@ const CONTROL_MIN_PX: Record<FieldSpace["control"], number> = {
   "server-managed": 150,
   relation: 200,
   member: 200,
+  person: 200,
   picker: 200,
   readonly: 150,
   markdown: 320,

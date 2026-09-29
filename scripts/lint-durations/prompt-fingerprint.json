@@ -1,7 +1,8 @@
 {
   "lint": "lint:prompt-fingerprint",
-  "run": "tsx scripts/lint-ai-prompt-fingerprint.ts",
+  "run": "node scripts/lint-ai-prompt-fingerprint.ts",
   "ms": 482,
   "recorded": "2026-09-14",
-  "source": "split from scripts/lint-durations.json (recorded 2026-09-14)"
+  "source": "split from scripts/lint-durations.json (recorded 2026-09-14)",
+  "readMB": 0.2
 }

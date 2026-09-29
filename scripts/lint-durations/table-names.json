@@ -1,7 +1,8 @@
 {
   "lint": "lint:table-names",
-  "run": "tsx scripts/lint-table-names-exist.ts",
+  "run": "node scripts/lint-table-names-exist.ts",
   "ms": 686,
   "recorded": "2026-09-14",
-  "source": "split from scripts/lint-durations.json (recorded 2026-09-14)"
+  "source": "split from scripts/lint-durations.json (recorded 2026-09-14)",
+  "readMB": 6.0
 }

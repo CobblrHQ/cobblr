@@ -11,9 +11,14 @@
 //      settings/system destination (fields, permissions, backup, healthcheck,
 //      OpenAPI…). Folding it in here means the registry can never drift from
 //      search: add a settings page there and it's instantly findable.
+//   3. ACCOUNT_DESTINATIONS — every page under Your account, the same way.
+//      "discord" found nothing while the Discord connection had a page of its
+//      own under Notifications (the owner, 2026-09-29), because account pages
+//      were never folded in.
 // Keywords are the words a person would actually type, including feature names
 // we don't use in the UI copy.
 import { CONFIG_DESTINATIONS } from "./configuration-nav";
+import { ACCOUNT_DESTINATIONS } from "./account-nav";
 
 export interface FeatureHit {
   label: string;
@@ -40,9 +45,11 @@ const CURATED: FeatureHit[] = [
   { label: "Your app (generate)", hint: "a member page from your trackers", route: "/build?mode=app", keywords: "your app generate member page worker app player" },
   { label: "Configuration", hint: "modules, fields, wires, everything", route: "/configuration", keywords: "configuration settings customize workspace modules admin" },
   { label: "Email in", hint: "forward receipts by email; reply-by-email", route: "/configuration/integrations#email-in", keywords: "email forward receipt receipts inbox mail forwarding address reply gmail scan invoice ingest" },
-  { label: "Your connections", hint: "personal AI + edge relays", route: "/me/connections", keywords: "personal connections byo credentials relay ai keys" },
   { label: "Calendar", hint: "everything with a date, one view", route: "/calendar", keywords: "calendar dates ical schedule month" },
   { label: "Locations", hint: "rooms, shelves, bins", route: "/locations", keywords: "locations rooms bins shelves places where" },
+  { label: "Floor plan", hint: "your rooms drawn to scale", route: "/locations?view=plan", keywords: "floor plan map layout room rooms drawing garage workshop drawers where" },
+  { label: "Draw a room", hint: "name it, size it, it is drawn", route: "/locations?view=plan&new=room", keywords: "draw room new room floor plan map layout garage add room" },
+  { label: "Place things on the floor plan", hint: "drag each thing to where it lives", route: "/locations/place", keywords: "place items put away file drag floor plan where things live unplaced homes" },
   { label: "Labels & printing", hint: "QR labels, templates, print queue", route: "/labels", keywords: "labels qr print sticker template queue" },
 ];
 
@@ -65,6 +72,14 @@ const CONFIG_AS_FEATURES: FeatureHit[] = CONFIG_DESTINATIONS.filter((d) => d.to)
   keywords: `${d.label} ${d.description} ${(d.keywords ?? []).join(" ")}`.toLowerCase(),
 }));
 
+/** Every page under Your account, with the words its registry gives it. */
+const ACCOUNT_AS_FEATURES: FeatureHit[] = ACCOUNT_DESTINATIONS.map((d) => ({
+  label: d.label,
+  hint: shortHint(d.description),
+  route: d.to,
+  keywords: `${d.label} ${d.description} ${(d.keywords ?? []).join(" ")} your account`.toLowerCase(),
+}));
+
 /** CURATED first (better hints + task routes; kept in full — its intentional
  *  same-route pairs like /scan and /build?mode=… must all survive), then every
  *  settings destination that doesn't collide with a curated entry by label OR
@@ -75,7 +90,7 @@ export const FEATURE_INDEX: FeatureHit[] = (() => {
   const seenLabel = new Set(CURATED.map((f) => f.label.toLowerCase().trim()));
   const seenRoute = new Set(CURATED.map((f) => f.route.split("?")[0]!));
   const out: FeatureHit[] = [...CURATED];
-  for (const f of CONFIG_AS_FEATURES) {
+  for (const f of [...CONFIG_AS_FEATURES, ...ACCOUNT_AS_FEATURES]) {
     const lk = f.label.toLowerCase().trim();
     const rk = f.route.split("?")[0]!;
     if (seenLabel.has(lk) || seenRoute.has(rk)) continue;

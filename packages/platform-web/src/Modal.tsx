@@ -25,6 +25,7 @@ import { Sparkles, X } from "lucide-react";
 import { useOverlayOpenFlag } from "./overlay-open";
 import { useOverLiveSurface } from "./live-surface";
 import { modalPanelLayout, modalOverlayPadding } from "./modal-layout";
+import { useLayerStack } from "./layer-stack";
 
 interface Props {
   open: boolean;
@@ -259,8 +260,18 @@ export function Modal({ open, onClose, title, subtitle, children, size = "md", d
     );
   }
 
-  return createPortal(
+  return createPortal(<ModalOverlay overLive={overLive} onBackdrop={handleBackdrop}>{panel}</ModalOverlay>, document.body);
+}
+
+/** The modal's backdrop and frame, mounted only while the modal is open, so it
+ *  takes its place in the layer stack at the moment it opens: above the Ask
+ *  Cobb panel it was opened from, not under it (#3954). */
+function ModalOverlay({ overLive, onBackdrop, children }: { overLive: boolean; onBackdrop: () => void; children: ReactNode }) {
+  const ref = useRef<HTMLDivElement | null>(null);
+  useLayerStack(ref);
+  return (
     <div
+      ref={ref}
       // Center within the CONTENT area, not the raw viewport: the app shell
       // publishes its reserved edges (pinned left sidebar, docked right panel)
       // as --modal-inset-left/right on <html>, and the overlay pads by them —
@@ -270,12 +281,11 @@ export function Modal({ open, onClose, title, subtitle, children, size = "md", d
         "fixed inset-0 z-50 bg-slate-900/50 backdrop-blur-sm flex items-start justify-center overflow-y-auto md:pl-[calc(1rem+var(--modal-inset-left,0px))] xl:pr-[calc(1rem+var(--modal-inset-right,0px))] " +
         modalOverlayPadding(overLive)
       }
-      onClick={handleBackdrop}
+      onClick={onBackdrop}
       role="dialog"
       aria-modal="true"
     >
-      {panel}
-    </div>,
-    document.body,
+      {children}
+    </div>
   );
 }

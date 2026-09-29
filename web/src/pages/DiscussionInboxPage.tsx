@@ -16,7 +16,7 @@ import { useMemo, useState } from "react";
 import { Link } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { AtSign, CheckCircle2, RotateCcw } from "lucide-react";
-import { usePageTitle, useToast, relativeTime } from "@cobblr/platform-web";
+import { usePageTitle, useToast, relativeTime, SearchInput } from "@cobblr/platform-web";
 import { api, ApiError, type DiscussionInboxItem } from "../lib/api";
 import { useActiveOrg } from "../auth/ActiveOrgContext";
 import { canResolveConversation } from "../lib/discussionPermissions";
@@ -195,12 +195,7 @@ export function DiscussionInboxPage() {
       </div>
 
       <div className="flex items-center gap-2 flex-wrap">
-        <input
-          value={q}
-          onChange={(e) => setQ(e.target.value)}
-          placeholder="Search what was said…"
-          className="flex-1 min-w-[12rem] px-3 py-1.5 text-sm rounded-md border border-line dark:border-slate-600 bg-surface dark:bg-slate-900 text-content dark:text-mortar-200"
-        />
+        <SearchInput value={q} onChange={setQ} placeholder="Search what was said…" aria-label="Search what was said" wrapperClassName="flex-1 min-w-[12rem]" />
       </div>
 
       <div className="flex items-center gap-1">

@@ -23,18 +23,18 @@
 
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { ChevronDown, MapPin, Package, Plus } from "lucide-react";
+import { ChevronDown, ChevronRight, MapPin, Package, Plus, Sparkles } from "lucide-react";
 import {
   buildLocationForest,
   flattenAreaForest,
   ancestorIds,
   type LocationAccessors,
-  type LocationNode,
-} from "@cobblr/platform-web";
+  type LocationNode, SearchInput } from "@cobblr/platform-web";
 import { api, type Location } from "../lib/api";
 import { useActiveOrg } from "../auth/ActiveOrgContext";
 import { QuickCreateLocation } from "./QuickCreateLocation";
 import { LocationTreePicker } from "./LocationTreePicker";
+import { recentLocations } from "../lib/recentLocations";
 
 interface Props {
   value: string | null;
@@ -45,6 +45,12 @@ interface Props {
   /** Exclude one id (e.g. don't offer a location as its own parent). */
   excludeId?: string;
   className?: string;
+  /** The place this is most likely going, and why ("where your other 3D
+   *  Printers are"): shown first, above everything else (#3902). */
+  suggestion?: { id: string; reason: string | null } | null;
+  /** Show the Recent row (the last places filed into on this device) and a
+   *  search box: for the full picker over a long list of places. */
+  withShortcuts?: boolean;
 }
 
 const ACC: LocationAccessors<Location> = {
@@ -55,9 +61,10 @@ const ACC: LocationAccessors<Location> = {
   isContainer: (l) => l.kind === "container",
 };
 
-export function LocationChipPicker({ value, onChange, kind, excludeId, className }: Props) {
+export function LocationChipPicker({ value, onChange, kind, excludeId, className, suggestion, withShortcuts }: Props) {
   const { activeSlug } = useActiveOrg();
   const [createOpen, setCreateOpen] = useState(false);
+  const [query, setQuery] = useState("");
 
   const list = useQuery({
     queryKey: ["core-locations", activeSlug],
@@ -194,11 +201,15 @@ export function LocationChipPicker({ value, onChange, kind, excludeId, className
             type="button"
             onClick={() => setOpenAreaId(open ? null : node.id)}
             aria-expanded={open}
-            aria-label={`${open ? "Hide" : "Show"} containers in ${nameOf(node)}`}
-            className="pl-1.5 pr-2 inline-flex items-center gap-0.5 border-l border-line/60 dark:border-slate-600/60 text-[11px] font-mono opacity-80 hover:opacity-100"
+            aria-label={`${open ? "Hide" : "Show"} the ${count} ${count === 1 ? "location" : "locations"} inside ${nameOf(node)}`}
+            // Says what it counts, and points the way it opens: "73" beside a
+            // chevron read as a number of things and a dropdown (#3902).
+            title={`${count} ${count === 1 ? "shelf, bin or box" : "shelves, bins and boxes"} inside ${nameOf(node)}. Open to pick one of them.`}
+            className="pl-1.5 pr-2 inline-flex items-center gap-0.5 border-l border-line/60 dark:border-slate-600/60 text-[11px] opacity-80 hover:opacity-100"
+            data-testid="area-drill-in"
           >
-            {count}
-            <ChevronDown size={12} className={`transition ${open ? "rotate-180" : ""}`} />
+            {count} inside
+            <ChevronRight size={12} className={`transition ${open ? "rotate-90" : ""}`} />
           </button>
         )}
       </span>
@@ -294,8 +305,68 @@ export function LocationChipPicker({ value, onChange, kind, excludeId, className
   const openContainers = openNode ? openNode.children.filter((c) => c.kind === "container") : [];
   const looseCount = looseRoots.reduce((sum, r) => sum + 1 + countContainers(r), 0);
 
+  const byId = new Map(all.map((l) => [l.id, l]));
+  const suggested = suggestion ? byId.get(suggestion.id) ?? null : null;
+  const recent = withShortcuts
+    ? recentLocations(activeSlug)
+        .filter((id) => id !== suggested?.id)
+        .map((id) => byId.get(id))
+        .filter((l): l is Location => !!l)
+    : [];
+  const q = query.trim().toLowerCase();
+  const matches = q ? all.filter((l) => nameOf(l).toLowerCase().includes(q) || l.name.toLowerCase().includes(q)) : [];
+  const iconOf = (l: Location): "area" | "bin" => (l.kind === "container" ? "bin" : "area");
+  const shortcuts = (
+    <>
+      {suggested && (
+        <div data-testid="location-suggestion" className="rounded-md border border-accent/40 bg-cobble-50/60 dark:bg-slate-800/60 p-2">
+          <div className="flex flex-wrap items-center gap-2">
+            <span className="inline-flex items-center gap-1 text-xs font-medium text-accent">
+              <Sparkles size={12} /> Suggested
+            </span>
+            <Chip l={suggested} icon={iconOf(suggested)} />
+          </div>
+          {suggestion?.reason && <div className="mt-1 text-xs text-muted dark:text-slate-400">{capitalise(suggestion.reason)}</div>}
+        </div>
+      )}
+      {recent.length > 0 && (
+        <div data-testid="location-recent" className="flex flex-wrap items-center gap-1.5">
+          <span className="text-xs text-muted dark:text-slate-400 mr-1">Recent</span>
+          {recent.map((l) => (
+            <Chip key={l.id} l={l} icon={iconOf(l)} />
+          ))}
+        </div>
+      )}
+      {withShortcuts && all.length > 8 && (
+        <SearchInput value={query} onChange={setQuery} placeholder="Find a location" aria-label="Find a location" data-testid="location-search" />
+      )}
+    </>
+  );
+
+  if (q) {
+    return (
+      <div className={"space-y-2 " + (className ?? "")}>
+        {shortcuts}
+        {matches.length ? (
+          <div className="flex flex-wrap gap-1.5" data-testid="location-matches">
+            {matches.map((l) => (
+              <Chip key={l.id} l={l} icon={iconOf(l)} />
+            ))}
+          </div>
+        ) : (
+          <div className="text-sm text-faint">No location called &ldquo;{query.trim()}&rdquo;.</div>
+        )}
+        {newLocationButton}
+      </div>
+    );
+  }
+
   return (
     <div className={"space-y-2 " + (className ?? "")}>
+      {shortcuts}
+      {(suggested || recent.length > 0) && flatAreas.length > 0 && (
+        <div className="pt-1 text-xs text-muted dark:text-slate-400">All locations</div>
+      )}
       {flatAreas.length === 0 && looseRoots.length === 0 && (
         <div className="text-sm text-faint">No locations yet.</div>
       )}
@@ -345,3 +416,5 @@ export function LocationChipPicker({ value, onChange, kind, excludeId, className
     </div>
   );
 }
+
+const capitalise = (t: string): string => t.charAt(0).toUpperCase() + t.slice(1);

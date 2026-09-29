@@ -1,7 +1,8 @@
 {
   "lint": "lint:reply-no-deploy-claim",
-  "run": "tsx scripts/lint-reply-no-deploy-claim.ts",
+  "run": "node scripts/lint-reply-no-deploy-claim.ts",
   "ms": 602,
   "recorded": "2026-09-14",
-  "source": "split from scripts/lint-durations.json (recorded 2026-09-14)"
+  "source": "split from scripts/lint-durations.json (recorded 2026-09-14)",
+  "readMB": 12.0
 }

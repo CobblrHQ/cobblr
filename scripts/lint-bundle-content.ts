@@ -31,6 +31,7 @@ import { readFileSync, writeFileSync, existsSync } from "node:fs";
 import path from "node:path";
 import { FEATURED_BUNDLES } from "../web/src/lib/featured-bundles.js";
 import { twinScopeWires, type ManifestLike } from "./lib/bundle-wire-scopes.js";
+import { BUNDLE_NON_CONTENT_KEYS } from "./lib/bundle-release-keys.js";
 
 const LOCK = path.join(process.cwd(), "bundles", "bundle-versions.lock.json");
 const WRITE = process.argv.includes("--write");
@@ -41,7 +42,7 @@ const WRITE = process.argv.includes("--write");
 // docs/design-decisions/bundle-catalog-tiers.md) is the same kind of thing:
 // demoting a bundle is curation, not content an installed workspace re-syncs, so
 // it must not demand a version bump (which would show a spurious upgrade prompt).
-const META = new Set(["version", "changelog", "released_at", "catalog"]);
+const META = BUNDLE_NON_CONTENT_KEYS;
 
 /** Deterministic JSON with recursively sorted object keys, so a cosmetic key
  *  reorder in the source doesn't spuriously change the hash. */

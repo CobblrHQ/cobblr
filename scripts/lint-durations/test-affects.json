@@ -1,7 +1,8 @@
 {
   "lint": "lint:test-affects",
-  "run": "tsx scripts/lint-test-affects.ts",
+  "run": "node scripts/lint-test-affects.ts",
   "ms": 571,
   "recorded": "2026-09-14",
-  "source": "split from scripts/lint-durations.json (recorded 2026-09-14)"
+  "source": "split from scripts/lint-durations.json (recorded 2026-09-14)",
+  "readMB": 3.1
 }

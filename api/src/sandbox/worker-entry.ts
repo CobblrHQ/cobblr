@@ -186,6 +186,7 @@ const imports = {
   },
 };
 
+// BOOT-READ-OK: this is a sandbox worker thread's own entry, started per run with its wasm path; it is never loaded at api boot.
 const rawWasmBytes = new Uint8Array(readFileSync(init.wasmPath));
 // Clamp the module's declared linear-memory maximum to the manifest
 // ceiling BEFORE compiling, so `memory.grow` past it traps natively.

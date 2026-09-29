@@ -25,6 +25,7 @@ import { fetchSheetsLink, formatOf, readWorkbook, SheetReadError, MAX_FILE_BYTES
 import { understandWorkbook, type UnderstoodSheet } from "../services/sheet-understand.js";
 import { planSheet, scoreTargets, chooseTarget, type Destination, type SheetOverrides, type SheetPlan } from "../services/sheet-plan.js";
 import { existingRecords, newCollectionTarget, workspacePicture } from "../services/sheet-workspace.js";
+import { nameColumnsWithAi } from "../services/sheet-ai-names.js";
 
 export const sheetsRouter = Router({ mergeParams: true });
 
@@ -45,7 +46,7 @@ const Source = z.union([
 const Body = Source;
 
 const DestinationSchema: z.ZodType<Destination> = z.union([
-  z.object({ to: z.enum(["name", "quantity", "location", "category", "tags", "photo", "skip"]) }), // VOCAB-ENUMERATION OK: the destinations sheet-plan declares
+  z.object({ to: z.enum(["name", "quantity", "location", "category", "tags", "photo", "disposition", "skip"]) }), // VOCAB-ENUMERATION OK: the destinations sheet-plan declares
   z.object({ to: z.literal("field"), field: z.string().min(1).max(80), label: z.string().max(160), native: z.boolean() }),
   z.object({
     to: z.literal("new-field"),
@@ -69,6 +70,8 @@ const OverridesSchema = z
       columns: z.record(z.string().regex(/^\d+$/), DestinationSchema).optional(),
       skip_rows: z.array(z.number().int().positive()).max(20_000).optional(),
       collection_label: z.string().max(80).optional(),
+      only_owned: z.boolean().optional(),
+      keep_identical_apart: z.boolean().optional(),
     }),
   )
   .optional();
@@ -148,7 +151,7 @@ const PLAN_ROWS = 50;
 const PLAN_ATTENTION_ROWS = 300;
 
 /** A plan as the route returns it: `records` holds the rows shown, and
- *  `row_count` how many the sheet has. */
+ *  `row_count` how many rows of the sheet they are. */
 export type ShownPlan = SheetPlan & {
   row_count: number;
   records_shown: "all" | "some";
@@ -163,6 +166,7 @@ export interface SheetsPlan {
 
 interface PlanCtx {
   orgId: string;
+  userId?: string | null;
   slug: string;
   token: string;
   role: string;
@@ -173,6 +177,21 @@ interface PlanCtx {
  *  dry run shows and what an import carries out come from this one call. */
 async function buildPlans(input: z.infer<typeof PlanBody>, ctx: PlanCtx) {
   const { source, filename, sheets } = await readUpload(input, ctx.orgId, ctx.acceptLanguage);
+  // Heuristics first: only a sheet with no header row, and only the columns
+  // its values could not name, are shown to a model (a few rows, one call).
+  for (const sheet of sheets) {
+    if (!sheet.headerless) continue;
+    await nameColumnsWithAi(sheet, async (prompt) => {
+      const r = await platform().ai.invoke({
+        orgId: ctx.orgId,
+        capability: "chat",
+        input: { messages: [{ role: "user", content: prompt }] },
+        source: { kind: "core-import:sheet-columns", id: filename },
+        userId: ctx.userId ?? null,
+      });
+      return r.text ?? null;
+    });
+  }
   const picture = await workspacePicture(ctx.orgId, ctx.token ? { base: INTERNAL_API, slug: ctx.slug, token: ctx.token } : null);
   const plans: SheetPlan[] = [];
   for (const sheet of sheets) {
@@ -183,6 +202,8 @@ async function buildPlans(input: z.infer<typeof PlanBody>, ctx: PlanCtx) {
       ...(raw?.columns ? { columns: Object.fromEntries(Object.entries(raw.columns).map(([k, v]) => [Number(k), v])) } : {}),
       ...(raw?.skip_rows ? { skip_rows: raw.skip_rows } : {}),
       ...(raw?.collection_label ? { collection_label: raw.collection_label } : {}),
+      ...(raw?.only_owned ? { only_owned: true } : {}),
+      ...(raw?.keep_identical_apart ? { keep_identical_apart: true } : {}),
     };
     const fresh = newCollectionTarget(sheet.name, picture.targets);
     const targets = fresh ? [...picture.targets, fresh] : picture.targets;
@@ -204,7 +225,9 @@ export async function planUpload(input: z.infer<typeof PlanBody>, ctx: PlanCtx):
       const firsts = plan.records.slice(0, PLAN_ROWS);
       const attention = plan.records.slice(PLAN_ROWS).filter((r) => r.action === "update" || r.problems.length).slice(0, PLAN_ATTENTION_ROWS);
       const shown = [...firsts, ...attention];
-      return { ...plan, row_count: plan.records.length, records: shown, records_shown: shown.length === plan.records.length ? "all" : "some" };
+      // Rows of the sheet, so a record standing for four identical rows is four.
+      const rowCount = plan.records.reduce((n, r) => n + (r.rows?.length ?? 1), 0);
+      return { ...plan, row_count: rowCount, records: shown, records_shown: shown.length === plan.records.length ? "all" : "some" };
     }),
   };
 }
@@ -251,6 +274,7 @@ sheetsRouter.post("/sheets/plan", (req, res, next) => {
       res.json(
         await planUpload(parsed.data, {
           orgId: orgIdOf(req),
+          userId: userIdOf(req),
           slug: slugOf(req),
           token: bearerOf(req),
           role: roleOf(req),
@@ -268,7 +292,7 @@ sheetsRouter.post("/sheets/plan", (req, res, next) => {
 });
 
 function ctxOf(req: Request): PlanCtx {
-  return { orgId: orgIdOf(req), slug: slugOf(req), token: bearerOf(req), role: roleOf(req), acceptLanguage: req.headers["accept-language"] };
+  return { orgId: orgIdOf(req), userId: userIdOf(req), slug: slugOf(req), token: bearerOf(req), role: roleOf(req), acceptLanguage: req.headers["accept-language"] };
 }
 
 function sheetReadError(res: import("express").Response, err: unknown): boolean {

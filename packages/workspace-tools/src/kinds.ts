@@ -24,6 +24,9 @@ export interface KindRec {
   /** What "the same place" means for this kind when looking for duplicates:
    *  a field name, or "workspace". Absent = this kind is never deduplicated. */
   duplicate_scope?: string | null;
+  /** The field that says how many things one record stands for (a record of
+   *  five identical machines, a part's stock). Absent = one record, one thing. */
+  count_field?: string | null;
   /** This workspace's user-defined fields (module_field_defs). Values live in
    *  the record's metadata blob, and these names are directly settable on
    *  create/update. A name that is neither these nor `fields` is refused. */

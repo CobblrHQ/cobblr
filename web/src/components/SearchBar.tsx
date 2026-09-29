@@ -5,6 +5,7 @@
 // /search results page.
 
 import { useEffect, useMemo, useRef, useState } from "react";
+import { SearchInput } from "@cobblr/platform-web";
 import { useKindLabels } from "../lib/useKindLabels";
 import { useNavigate } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
@@ -14,6 +15,7 @@ import { searchFeatures } from "../lib/feature-index";
 import { useActiveOrg } from "../auth/ActiveOrgContext";
 import { recordHref } from "@cobblr/platform-contract/instance-detail";
 import { SearchIncomplete } from "./SearchIncomplete";
+import { SnippetText } from "@cobblr/platform-web";
 
 export function SearchBar() {
   const { activeSlug } = useActiveOrg();
@@ -92,14 +94,14 @@ export function SearchBar() {
           <Search size={15} />
         </button>
       ) : (
-        <div className="flex items-center gap-1 px-2 py-1 rounded border border-line dark:border-slate-700 bg-surface dark:bg-slate-900 focus-within:border-cobble-500">
-          <Search size={12} className="text-faint" />
-          <input
+        <SearchInput
             ref={inputRef}
-            type="text"
+            size="sm"
+            wrapperClassName="w-60"
+            aria-label="Search"
             value={q}
-            onChange={(e) => {
-              setQ(e.target.value);
+            onChange={(v) => {
+              setQ(v);
               setOpen(true);
             }}
             onFocus={() => setOpen(true)}
@@ -114,9 +116,7 @@ export function SearchBar() {
               }
             }}
             placeholder="Search…"
-            className="bg-transparent text-sm placeholder-slate-400 w-52 outline-none"
           />
-        </div>
       )}
       {open && expanded && (items.length > 0 || featureHits.length > 0 || (hits.data?.kinds_failed?.length ?? 0) > 0) && (
         <div className="absolute right-0 mt-1 w-80 max-h-96 overflow-y-auto bg-surface dark:bg-slate-900 border border-line dark:border-slate-700 rounded shadow-lg z-50 divide-y divide-line dark:divide-slate-800">
@@ -165,6 +165,11 @@ export function SearchBar() {
                 {labels.collection(h.kind)}
                 {h.subtitle ? ` · ${h.subtitle}` : ""}
               </div>
+              {h.snippet && (
+                <div className="text-xs text-muted dark:text-slate-400 truncate">
+                  <SnippetText text={h.snippet} q={q} />
+                </div>
+              )}
             </button>
           ))}
           {q.trim().length > 0 && (

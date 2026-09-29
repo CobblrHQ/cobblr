@@ -13,12 +13,24 @@
 // like Tea because Tea is the table that defines `caffeine`. New bundles get
 // the offer for free by declaring fields, which is the same contract the scan
 // matchmaker already runs on.
+//
+// Only CUSTOM field values count, never a record's own columns. Spools define
+// a custom field `state`, and every inventory row has a built-in `state`
+// column with a value; read together, every soap and screw "looked like" a
+// spool and the dashboard offered to move them all into Spools. A row is
+// built with offerRowFrom, which takes the custom bag alone.
 
 export interface OfferRow {
   id: string;
-  /** The row's field bag - custom fields included (metadata merged in). */
-  fields: Record<string, unknown>;
+  /** The row's CUSTOM field values (its metadata). Never its own columns: a
+   *  built-in column that shares a custom field's name is not that field. */
+  custom: Record<string, unknown>;
   name?: string | null;
+}
+
+/** An offer row from a record as the items list returns it. */
+export function offerRowFrom(r: { id: string; name?: string | null; metadata?: Record<string, unknown> | null }): OfferRow {
+  return { id: r.id, name: r.name ?? null, custom: r.metadata ?? {} };
 }
 
 export interface OfferTable {
@@ -74,7 +86,7 @@ export function offerMoves(
       const defs = defsByInstance.get(t.instance_name)!;
       if (defs.size === 0) continue;
       let hits = 0;
-      for (const name of defs) if (hasValue(row.fields[name])) hits++;
+      for (const name of defs) if (hasValue(row.custom[name])) hits++;
       if (hits === 0) continue;
       if (!best || hits > best.hits) {
         best = { instance: t.instance_name, hits };

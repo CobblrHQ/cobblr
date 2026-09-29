@@ -2,12 +2,24 @@
   "manifest": {
     "id": "cobblr.community.laser-cutters",
     "catalog": "extended",
-    "version": "0.3.1",
+    "version": "0.3.2",
     "name": "Laser Cutters",
     "description": "A Laser Cutters tracker: tube type, wattage, bed size, cooling, focal length. A named view of your machines, so each cutter still drives jobs, fleet status, and maintenance.",
     "author": "Cobblr community",
-    "released_at": "2026-06-19",
-    "changelog": "Your laser cutters now open the full machine page — set every field (tube type, wattage, bed size, cooling, focal length), edit in place, attach files, and link the machine straight to its print manager (FDM Monster / OctoPrint) right from its own page, instead of a name-only stub. Installing now offers a checked-by-default “Connect to your laser cutters” option that brings the Print Manager along — send a file to be made and track the job — which you can uncheck for catalog-only use. Existing installs auto-upgrade: your laser cutters move into the Laser Cutters tab automatically, no reinstall.",
+    "released_at": "2026-09-28",
+    "changelog": "A laser cutter's page now uses its own words: it sends jobs to a job manager (LightBurn, through your bridge), and asks only what fits a laser cutter.",
+    "releases": [
+      {
+        "version": "0.3.2",
+        "released_at": "2026-09-28",
+        "notes": "A laser cutter's page now uses its own words: it sends jobs to a job manager (LightBurn, through your bridge), and asks only what fits a laser cutter."
+      },
+      {
+        "version": "0.3.1",
+        "released_at": "2026-06-19",
+        "notes": "Your laser cutters open the full machine page: set every field (tube type, wattage, bed size, cooling, focal length), edit in place, attach files, and link the machine straight to its job manager right from its own page. Installing offers a checked-by-default “Connect to your laser cutters” option that brings the Job Manager along (send a file to be made and track the job), which you can uncheck for catalog-only use. Existing installs auto-upgrade: your laser cutters move into the Laser Cutters tab automatically, no reinstall."
+      }
+    ],
     "requires": [
       {
         "module": "machines"
@@ -18,7 +30,7 @@
         "key": "digifab",
         "name": "Connect to your laser cutters",
         "question": "Want to send files to your laser cutters and track the job?",
-        "description": "Adds the Print Manager: map each machine to the software that runs it (FDM Monster, OctoPrint, …), send a file to be made, and track the job to completion. Talks to the manager's API; it never drives the hardware. You can link a machine to its manager right from the machine's page.",
+        "description": "Adds the Job Manager: map each machine to the software that runs it (LightBurn, through your bridge), send a file to be made, and track the job to completion. Talks to the manager's API; it never drives the hardware. You can link a machine to its manager right from the machine's page.",
         "default": true,
         "requires": [
           {

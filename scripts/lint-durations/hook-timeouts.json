@@ -1,7 +1,8 @@
 {
   "lint": "lint:hook-timeouts",
-  "run": "tsx scripts/lint-hook-timeouts.ts",
+  "run": "node scripts/lint-hook-timeouts.ts",
   "ms": 2151,
   "recorded": "2026-09-14",
-  "source": "split from scripts/lint-durations.json (recorded 2026-09-14)"
+  "source": "split from scripts/lint-durations.json (recorded 2026-09-14)",
+  "readMB": 3.1
 }

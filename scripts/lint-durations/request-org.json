@@ -1,7 +1,8 @@
 {
   "lint": "lint:request-org",
-  "run": "tsx scripts/lint-request-org.ts",
+  "run": "node scripts/lint-request-org.ts",
   "ms": 608,
   "recorded": "2026-09-14",
-  "source": "split from scripts/lint-durations.json (recorded 2026-09-14)"
+  "source": "split from scripts/lint-durations.json (recorded 2026-09-14)",
+  "readMB": 7.2
 }

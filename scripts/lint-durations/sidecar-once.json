@@ -1,7 +1,8 @@
 {
   "lint": "lint:sidecar-once",
-  "run": "tsx scripts/lint-sidecar-once.ts",
+  "run": "node scripts/lint-sidecar-once.ts",
   "ms": 391,
   "recorded": "2026-09-14",
-  "source": "split from scripts/lint-durations.json (recorded 2026-09-14)"
+  "source": "split from scripts/lint-durations.json (recorded 2026-09-14)",
+  "readMB": 6.3
 }

@@ -1,7 +1,8 @@
 {
   "lint": "lint:driver-hooks-live",
-  "run": "tsx scripts/lint-driver-hooks-live.ts",
+  "run": "node scripts/lint-driver-hooks-live.ts",
   "ms": 2200,
   "recorded": "2026-09-14",
-  "source": "split from scripts/lint-durations.json (recorded 2026-09-14)"
+  "source": "split from scripts/lint-durations.json (recorded 2026-09-14)",
+  "readMB": 16.6
 }

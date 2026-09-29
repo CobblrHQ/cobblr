@@ -1,7 +1,8 @@
 {
   "lint": "lint:root-walk-skips-git",
-  "run": "tsx scripts/lint-root-walk-skips-git.ts",
+  "run": "node scripts/lint-root-walk-skips-git.ts",
   "ms": 417,
   "recorded": "2026-09-14",
-  "source": "split from scripts/lint-durations.json (recorded 2026-09-14)"
+  "source": "split from scripts/lint-durations.json (recorded 2026-09-14)",
+  "readMB": 1.7
 }

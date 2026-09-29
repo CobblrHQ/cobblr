@@ -273,7 +273,7 @@ export function ProjectDetailPage() {
         />
       </div>
 
-      <PatternNeedsPanel designId={project.data.id} api={api} />
+      <PatternNeedsPanel designId={project.data.id} api={api} bodyText={project.data.description} />
 
       <DesignFiles designId={project.data.id} />
 

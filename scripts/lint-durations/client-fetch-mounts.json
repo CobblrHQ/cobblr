@@ -1,7 +1,8 @@
 {
   "lint": "lint:client-fetch-mounts",
-  "run": "tsx scripts/lint-client-fetch-mounts.ts",
+  "run": "node scripts/lint-client-fetch-mounts.ts",
   "ms": 703,
   "recorded": "2026-09-14",
-  "source": "split from scripts/lint-durations.json (recorded 2026-09-14)"
+  "source": "split from scripts/lint-durations.json (recorded 2026-09-14)",
+  "readMB": 9.0
 }

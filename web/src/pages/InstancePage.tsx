@@ -23,12 +23,13 @@ import { RecordsPage } from "./RecordsPage";
 import { BundleFeaturesStrip } from "../components/BundleFeaturesStrip";
 import { api, getToken } from "../lib/api";
 import { useActiveOrg } from "../auth/ActiveOrgContext";
+import { navTargetFor, INSTANCE_PREFIX } from "../components/useNavModules";
 import { initialViewId, rememberView, rememberedView } from "../lib/instance-view";
 import { SavedViewPage } from "./SavedViewPage";
 import { usePageWidth } from "@cobblr/platform-web";
 
 export function InstancePage({ instanceName }: { instanceName?: string } = {}) {
-  const { activeSlug } = useActiveOrg();
+  const { activeSlug, activeOrg } = useActiveOrg();
   // A collection is the same width whichever view it is on. The table asked
   // for the whole screen and the views beside it did not, so Table -> Cards
   // jumped from full width into the centred column and back on every tap.
@@ -123,6 +124,24 @@ export function InstancePage({ instanceName }: { instanceName?: string } = {}) {
     noun?: NounChoiceDecl | null;
     hint?: string | null;
   };
+  // A type collection with a collection of its things (Filament Types →
+  // Spools) opens as one page, titled with their shared nav group ("Filament").
+  const familyChild = (instancesQ.data?.items ?? []).find((i) => {
+    const o = (overridesQ.data?.items ?? []).find((x) => x.target_kind === "instance" && x.target_id === `${i.module_name}:${i.instance_name}`);
+    return (o?.config as { parent?: { instance?: string } } | undefined)?.parent?.instance === inst.instance_name;
+  });
+  const appMode = !!activeOrg?.app_mode;
+  const family = familyChild
+    ? {
+        childPath: navTargetFor(`${INSTANCE_PREFIX}${familyChild.instance_name}`, appMode),
+        tablePath: `${navTargetFor(`${INSTANCE_PREFIX}${inst.instance_name}`, appMode)}?as=table`,
+      }
+    : undefined;
+  const groupLabel = (cfg as { nav_group?: { label?: string } }).nav_group?.label;
+  const pageTitle = family && groupLabel ? groupLabel : displayName;
+  // A family page carries its own views (by material, by colour, low) and its
+  // raw table behind ⋯, so the collection's saved-view strip does not show.
+  const shownView = family ? null : activeView;
   // Every word the table offers for what it counts in, with its declared
   // plural, so "3 hanks" agrees on every row whichever word each record has.
   const countWords = cfg.noun?.of === "unit" ? nounOptions(cfg.noun) : [];
@@ -139,12 +158,13 @@ export function InstancePage({ instanceName }: { instanceName?: string } = {}) {
         orgSlug={activeSlug}
         getToken={getToken}
         instance={inst.instance_name}
-        displayName={displayName}
+        displayName={pageTitle}
         itemNoun={cfg.item_noun}
         itemNounPlural={cfg.item_noun_plural}
         qtyUnit={cfg.qty_unit}
         countWords={countWords}
         parent={cfg.parent}
+        family={family}
         connectorImport={cfg.connector_import ?? undefined}
         hint={cfg.hint}
       />
@@ -259,33 +279,33 @@ export function InstancePage({ instanceName }: { instanceName?: string } = {}) {
           not-yet-enabled features (maintenance, connected-car…) + opens the
           bundle modal to enable them. Renders nothing when there's nothing more. */}
       <BundleFeaturesStrip slug={activeSlug} instance={inst.instance_name} />
-      {activeView && showsOneThing && (
+      {shownView && showsOneThing && (
         <Link
           to={collectionPath || "."}
           data-testid="back-to-view"
           className="inline-flex items-center gap-1 text-sm text-accent hover:underline"
         >
-          ← Back to {activeView.name}
+          ← Back to {shownView.name}
         </Link>
       )}
-      {pinnedViews.length > 0 && !(activeView && showsOneThing) && (
+      {pinnedViews.length > 0 && !family && !(shownView && showsOneThing) && (
         <div className="flex flex-wrap items-center gap-2" data-testid="instance-view-tabs">
-          <button type="button" className={tabCls(!activeView)} onClick={() => pickView(null)}>
+          <button type="button" className={tabCls(!shownView)} onClick={() => pickView(null)}>
             Table
           </button>
           {pinnedViews.map((v) => (
-            <button key={v.id} type="button" className={tabCls(activeView?.id === v.id)} onClick={() => pickView(v.id)}>
+            <button key={v.id} type="button" className={tabCls(shownView?.id === v.id)} onClick={() => pickView(v.id)}>
               {v.name}
             </button>
           ))}
         </div>
       )}
-      {activeView && !showsOneThing ? (
+      {shownView && !showsOneThing ? (
         <div className="space-y-3">
           <h1 className="font-display text-2xl font-extrabold text-content dark:text-mortar-100 page-title">
             {displayName}
           </h1>
-          <SavedViewPage viewId={activeView.id} embedded />
+          <SavedViewPage viewId={shownView.id} embedded />
         </div>
       ) : (
         body

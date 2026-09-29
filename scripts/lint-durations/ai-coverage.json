@@ -1,7 +1,8 @@
 {
   "lint": "lint:ai-coverage",
-  "run": "tsx scripts/lint-ai-coverage.ts",
+  "run": "node scripts/lint-ai-coverage.ts",
   "ms": 497,
   "recorded": "2026-09-14",
-  "source": "split from scripts/lint-durations.json (recorded 2026-09-14)"
+  "source": "split from scripts/lint-durations.json (recorded 2026-09-14)",
+  "readMB": 2.9
 }

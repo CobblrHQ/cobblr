@@ -14,6 +14,8 @@ import { platform } from "@cobblr/platform-contract";
 import { categoriesRouter } from "./categories.js";
 import { partsRouter } from "./parts.js";
 import { holdingsRouter, registerHoldingActions } from "./holdings.js";
+import { familiesRouter } from "./families.js";
+import { stockRouter } from "./stock-views.js";
 import { allocationsRouter } from "./allocations.js";
 import { importRouter } from "./import.js";
 import { spoolmanRouter } from "./spoolman.js";
@@ -115,8 +117,12 @@ router.use("/categories", categoriesRouter);
 partsRouter.use(importRouter);
 // One thing kept in several places: its rows ride the same two doors.
 partsRouter.use(holdingsRouter);
+// A type collection read with its things under each type (Filament).
+partsRouter.use(familiesRouter);
 router.use("/parts", partsRouter);
 router.use("/allocations", allocationsRouter);
+// What one place carries, and what is going off soon, across every collection.
+router.use("/stock", stockRouter);
 router.use("/spoolman", spoolmanRouter);
 
 export default router;

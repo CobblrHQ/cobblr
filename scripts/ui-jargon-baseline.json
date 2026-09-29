@@ -28,10 +28,6 @@
     "why": "A field definition's own page, where the sentence goes on to name the template variable the field is reachable as; the kind is the table the definition is bound to, which is what a person editing templates has to type."
   },
   {
-    "key": "web/src/components/FloorPlan.tsx::<span className=\"font-mono text-[10px] uppercase tracking-widest text-faint\">{loc.kind}</span>",
-    "why": "A location's kind is one of two plain words (area, container) from the locations vocabulary, not a module:kind id; the floor plan shows it small beside the name so a container is not mistaken for a room."
-  },
-  {
     "key": "web/src/components/ImportLocationsDialog.tsx::<td className=\"px-2 py-1 text-faint\">{r.kind}</td>",
     "why": "The locations import preview echoes the kind column the person typed in their CSV (area or container, the dialog's own instructions name both); the word shown is theirs."
   },

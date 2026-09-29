@@ -1,0 +1,169 @@
+{
+  "manifest": {
+    "id": "cobblr.flagship.small-shop",
+    "base_kind_fields_reason": "A shop runs on the modules' own records (orders, parts, products), not a table of its own; the few fields it adds are what a selling business needs on those records.",
+    "version": "0.1.1",
+    "name": "Small shop",
+    "description": "For a small shop, maker business or manufacturer: customer orders, the products you make, stock, production, the print farm, purchase orders and shipments, turned on together and kept in one Shop section of the sidebar, each with a view to start from.",
+    "author": "Cobblr",
+    "released_at": "2026-09-29",
+    "changelog": "New: one install sets up a making business, from order to shipment, instead of seven modules enabled by hand from folded sections.",
+    "requires": [
+      {
+        "module": "sales"
+      },
+      {
+        "module": "builds"
+      },
+      {
+        "module": "inventory"
+      },
+      {
+        "module": "purchases"
+      },
+      {
+        "module": "digifab"
+      },
+      {
+        "module": "core-shipments"
+      }
+    ],
+    "nav_headings": [
+      {
+        "name": "Shop",
+        "icon": "store",
+        "members": [
+          {
+            "target_kind": "module",
+            "target_id": "sales"
+          },
+          {
+            "target_kind": "module",
+            "target_id": "builds"
+          },
+          {
+            "target_kind": "module",
+            "target_id": "inventory"
+          },
+          {
+            "target_kind": "module",
+            "target_id": "digifab"
+          },
+          {
+            "target_kind": "module",
+            "target_id": "purchases"
+          }
+        ]
+      }
+    ],
+    "field_defs": [
+      {
+        "entity_kind": "sales:order",
+        "name": "due_date",
+        "display_label": "Due date",
+        "type": "date",
+        "position": 1,
+        "help": "The day you promised it by."
+      },
+      {
+        "entity_kind": "sales:order",
+        "name": "channel",
+        "display_label": "Came in through",
+        "type": "text",
+        "position": 2,
+        "choices": [
+          "Website",
+          "Etsy",
+          "Email",
+          "In person",
+          "Wholesale",
+          "Other"
+        ]
+      },
+      {
+        "entity_kind": "inventory:part",
+        "name": "sku",
+        "display_label": "SKU",
+        "type": "text",
+        "position": 1,
+        "field_role": "identifier"
+      },
+      {
+        "entity_kind": "inventory:part",
+        "name": "sourcing",
+        "display_label": "Made or bought",
+        "type": "text",
+        "position": 2,
+        "choices": [
+          "Made here",
+          "Bought in"
+        ]
+      },
+      {
+        "entity_kind": "builds:build",
+        "name": "sell_price",
+        "display_label": "Sells for",
+        "type": "number",
+        "position": 1
+      }
+    ],
+    "saved_views": [
+      {
+        "entity_kind": "sales:order",
+        "name": "Orders by status",
+        "view_type": "kanban",
+        "config": {
+          "group_by": "status"
+        },
+        "pinned": true,
+        "is_default": true
+      },
+      {
+        "entity_kind": "inventory:part",
+        "name": "Stock",
+        "view_type": "table",
+        "config": {
+          "visible_fields": [
+            "name",
+            "sku",
+            "qty",
+            "min_qty",
+            "unit",
+            "sourcing"
+          ]
+        },
+        "pinned": true
+      },
+      {
+        "entity_kind": "builds:build",
+        "name": "Products",
+        "view_type": "table",
+        "config": {
+          "visible_fields": [
+            "name",
+            "description",
+            "sell_price"
+          ]
+        },
+        "pinned": true
+      },
+      {
+        "entity_kind": "purchases:order",
+        "name": "Purchase orders by status",
+        "view_type": "kanban",
+        "config": {
+          "group_by": "status"
+        },
+        "pinned": true
+      },
+      {
+        "entity_kind": "digifab:job",
+        "name": "Print queue",
+        "view_type": "kanban",
+        "config": {
+          "group_by": "status"
+        }
+      }
+    ]
+  }
+}

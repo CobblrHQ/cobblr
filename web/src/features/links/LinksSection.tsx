@@ -15,7 +15,7 @@ import { useState } from "react";
 import { Link as RouterLink } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link, Plus, X } from "lucide-react";
-import { Modal, useConfirm, useToast } from "@cobblr/platform-web";
+import { Modal, useConfirm, useToast, SearchInput } from "@cobblr/platform-web";
 import { ApiError, api } from "../../lib/api";
 import { useActiveOrg } from "../../auth/ActiveOrgContext";
 import { useDetailRoute } from "../../lib/useDetailRoute";
@@ -68,6 +68,7 @@ export function LinksSection({
     staleTime: 60_000,
   });
   const words = kinds.data?.words ?? {};
+  const fixed = new Set(kinds.data?.fixed ?? []);
   const rows = links.data?.items ?? [];
   const refresh = () => void qc.invalidateQueries({ queryKey: ["links", activeSlug] });
   const del = useMutation({
@@ -126,6 +127,7 @@ export function LinksSection({
                     {p.notes}
                   </span>
                 )}
+                {!fixed.has(p.relationship_kind) && (
                 <button
                   type="button"
                   onClick={async () => {
@@ -138,6 +140,7 @@ export function LinksSection({
                 >
                   <X size={12} />
                 </button>
+                )}
               </li>
             );
           })}
@@ -256,12 +259,11 @@ function LinkDialog({
             </button>
           </div>
         </div>
-        <input
-          type="text"
+        <SearchInput
           value={query}
-          onChange={(e) => setQuery(e.target.value)}
+          onChange={setQuery}
           placeholder={how ? "Filter…" : "Search for what it is linked to…"}
-          className="w-full px-3 py-2 text-sm border border-line dark:border-slate-600 rounded bg-surface dark:bg-slate-900"
+          aria-label={how ? "Filter" : "Search for what it is linked to"}
         />
         {!how && <SearchIncomplete compact failed={search.data?.kinds_failed} />}
         {refusal && (

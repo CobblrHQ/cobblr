@@ -1,7 +1,8 @@
 {
   "lint": "lint:scanner-sheet",
-  "run": "tsx scripts/lint-scanner-sheet.ts",
+  "run": "node scripts/lint-scanner-sheet.ts",
   "ms": 398,
   "recorded": "2026-09-14",
-  "source": "split from scripts/lint-durations.json (recorded 2026-09-14)"
+  "source": "split from scripts/lint-durations.json (recorded 2026-09-14)",
+  "readMB": 0.0
 }

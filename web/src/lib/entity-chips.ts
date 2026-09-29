@@ -156,7 +156,7 @@ export function recordOfHref(
   href: string | undefined,
   kinds: RoutedKind[] | undefined,
 ): { kind: string; id: string; path: string } | null {
-  if (!href || !kinds?.length) return null;
+  if (!href) return null;
   let path = href;
   if (/^https?:\/\//i.test(path)) {
     try {
@@ -175,7 +175,9 @@ export function recordOfHref(
   // filed in a collection) names the record outright; without this a chip
   // built for one drew as a plain link.
   const door = /^\/open\/([^/]+)\/([^/]+)$/.exec(bare);
+  // It needs no kinds, so it is a chip before they have loaded.
   if (door?.[1] && door[2]) return { kind: decodeURIComponent(door[1]), id: decodeURIComponent(door[2]), path: bare };
+  if (!kinds?.length) return null;
   for (const k of kinds) {
     const tmpl = k.detail_route;
     if (!tmpl || !tmpl.includes("{id}")) continue;

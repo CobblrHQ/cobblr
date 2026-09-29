@@ -10,7 +10,7 @@ import { useQuery } from "@tanstack/react-query";
 import { Copy, Check, KeyRound, Info, Boxes, Terminal, Download } from "lucide-react";
 import { QueryError } from "../components/QueryError";
 import { useActiveOrg } from "../auth/ActiveOrgContext";
-import { useLater, downloadBlob, useToast, usePageTitle } from "@cobblr/platform-web";
+import { useLater, downloadBlob, useToast, usePageTitle, SearchInput } from "@cobblr/platform-web";
 import { api, type PlatformEntityKind } from "../lib/api";
 import { moduleIcon } from "../lib/module-icon";
 
@@ -383,12 +383,7 @@ export function ApiRecipesPage() {
             <p className="text-xs text-muted dark:text-slate-400">Tap the record types your script reads or writes. Pick as many as you need.</p>
 
             {kinds.length > 8 && (
-              <input
-                value={kindFilter}
-                onChange={(e) => setKindFilter(e.target.value)}
-                placeholder="Filter…"
-                className="w-full rounded-md border border-line dark:border-slate-600 bg-subtle dark:bg-slate-800 px-3 py-2 text-sm text-content dark:text-slate-100"
-              />
+              <SearchInput value={kindFilter} onChange={setKindFilter} placeholder="Filter…" aria-label="Filter record types" />
             )}
             <div className="max-h-80 space-y-3 overflow-y-auto pr-1">
               {([["category", "Categories", (k: PlatformEntityKind) => isInstanceKind(k)], ["module", "Modules", (k: PlatformEntityKind) => !isInstanceKind(k)]] as const).map(([famKey, famLabel, pred]) => {

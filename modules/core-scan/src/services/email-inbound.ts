@@ -24,6 +24,7 @@
 //     item — an email never vanishes.
 
 import { platform } from "@cobblr/platform-contract";
+import { readReceiptAnswer, type ReceiptAnswer } from "./receipt-photo.js";
 
 // enrich.ts's INTERNAL_API — these calls carry a minted bearer, so they must
 // target our own API, never a caller-influenced URL.
@@ -142,18 +143,20 @@ async function uploadFile(
   }
 }
 
-/** Run a stored file through /scan/receipt. Returns the created item count, or
- *  null when it wasn't parseable as a receipt (422) / the call failed. */
-async function receiptCapture(slug: string, token: string, fileId: string): Promise<number | null> {
+/** Run a stored file through /scan/receipt, and say what it answered through
+ *  the one reader (readReceiptAnswer): a receipt already in the inbox is not a
+ *  receipt with nothing on it, so it is never handed on to the photo path as
+ *  a product (#4027). Null when the call itself failed. */
+async function receiptCapture(slug: string, token: string, fileId: string): Promise<ReceiptAnswer | null> {
   try {
     const r = await fetch(`${INTERNAL_API}/api/v1/orgs/${slug}/modules/core-scan/scan/receipt`, {
       method: "POST",
       headers: { Authorization: `Bearer ${token}`, "content-type": "application/json" },
-      body: JSON.stringify({ file_id: fileId }),
+      // "email": the session reads "emailed", and its rows are never a kept
+      // example (photo-observation-gate).
+      body: JSON.stringify({ file_id: fileId, origin: "email" }),
     });
-    if (!r.ok) return null;
-    const b = (await r.json()) as { items?: Array<{ id: string }> };
-    return b.items?.length ?? 0;
+    return readReceiptAnswer(r.status, await r.json().catch(() => null));
   } catch {
     return null;
   }
@@ -166,7 +169,7 @@ async function photoCapture(slug: string, token: string, fileId: string): Promis
     const r = await fetch(`${INTERNAL_API}/api/v1/orgs/${slug}/modules/core-scan/scan`, {
       method: "POST",
       headers: { Authorization: `Bearer ${token}`, "content-type": "application/json" },
-      body: JSON.stringify({ source_kind: "photo", image_file_id: fileId }),
+      body: JSON.stringify({ source_kind: "photo", image_file_id: fileId, origin: "email" }),
     });
     return r.ok;
   } catch {
@@ -262,9 +265,11 @@ export function registerEmailInbound(): void {
           skipped.push(`${a.filename ?? "attachment"} (upload failed)`);
           continue;
         }
-        const n = await receiptCapture(who.slug, token, fileId);
-        if (n != null && n > 0) {
-          itemsCreated += n;
+        const answer = await receiptCapture(who.slug, token, fileId);
+        if (answer?.kind === "read") {
+          itemsCreated += answer.items;
+        } else if (answer?.kind === "already-in") {
+          skipped.push(`${a.filename ?? "attachment"} (already in the inbox as ${answer.label ?? "a receipt"})`);
         } else if (kind === "image" && (await photoCapture(who.slug, token, fileId))) {
           // Not a receipt — a product photo / packing-slip shot. Photo path.
           itemsCreated += 1;
@@ -281,10 +286,14 @@ export function registerEmailInbound(): void {
       if (note && looksMultiItem(note)) {
         const fileId = await uploadFile(ctx.orgId, Buffer.from(note, "utf8"), "email-body.txt", "text/plain");
         if (fileId) {
-          const n = await receiptCapture(who.slug, token, fileId);
-          if (n != null && n > 0) {
-            itemsCreated += n;
+          const answer = await receiptCapture(who.slug, token, fileId);
+          if (answer?.kind === "read") {
+            itemsCreated += answer.items;
             bodySplit = true;
+          } else if (answer?.kind === "already-in") {
+            // Already here: not a note to capture again either.
+            bodySplit = true;
+            skipped.push(`the email's list (already in the inbox as ${answer.label ?? "a receipt"})`);
           }
         }
       }

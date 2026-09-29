@@ -2,7 +2,7 @@
 
 import { Router } from "express";
 import { z } from "zod";
-import { platform } from "@cobblr/platform-contract";
+import { platform, textSearchWhere } from "@cobblr/platform-contract";
 import { instanceOf, sessionUser, tenantContext, tenantDb } from "../db.js";
 import { asyncHandler, badBody, requireRole } from "./util.js";
 import { routeUnknownToMetadata, refuseUnknownFields, withMetadataMerged } from "@cobblr/platform-contract/entity-metadata";
@@ -13,8 +13,9 @@ import {
   runPatternPhoto,
   usePatternPhoto,
 } from "./pattern-photo.js";
-import { listNeeds, readPastedMaterials, readPatternNeedsState, runPatternRead, type PatternNeedsState } from "./pattern-needs.js";
+import { listNeeds, readNeedsFromText, readPastedMaterials, readPatternNeedsState, runPatternRead, type PatternNeedsState } from "./pattern-needs.js";
 import { matchNeeds, settlePattern, syncShoppingLine, useYarn } from "./pattern-yarn.js";
+import { patternTextMatches, snippetsFor } from "./pattern-text.js";
 
 export const projectsRouter = Router({ mergeParams: true });
 
@@ -49,13 +50,23 @@ projectsRouter.get(
   "/",
   asyncHandler(async (req, res) => {
     const db = tenantDb(req);
-    const rows = await db
-      .selectFrom("projects_projects")
-      .selectAll()
-      .where("instance", "=", instanceOf(req))
-      .orderBy("created_at", "desc")
-      .execute();
-    res.json({ items: rows });
+    // `q`: the table's own search box. The same match as every other search
+    // (name, notes, custom fields and the pattern's own words), each row that
+    // matched inside its words carrying the line it matched on.
+    const words = typeof req.query.q === "string" ? req.query.q.trim().slice(0, 200) : "";
+    let query = db.selectFrom("projects_projects").selectAll().where("instance", "=", instanceOf(req));
+    if (words) {
+      query = query.where((eb) =>
+        eb.or([textSearchWhere(eb, words, { text: ["name", "description", "status"], json: ["metadata"] }), patternTextMatches(words)]),
+      );
+    }
+    const rows = await query.orderBy("created_at", "desc").execute();
+    if (!words) {
+      res.json({ items: rows });
+      return;
+    }
+    const snippets = await snippetsFor(db, rows, words);
+    res.json({ items: rows.map((r) => (snippets.has(r.id) ? { ...r, snippet: snippets.get(r.id) } : r)) });
   }),
 );
 
@@ -121,6 +132,14 @@ projectsRouter.post(
       orgId: ctx.org.id,
       projectId: inserted.id,
     });
+    // A pattern made from its text (Ask Cobb saving one, or Save on an answer,
+    // both through this route) lists its yarn and hook at once, the way a
+    // PDF does when it lands. Never fails the create.
+    if (inserted.description) {
+      await readNeedsFromText(ctx.org.id, inserted.id, inserted.description).catch((err: unknown) => {
+        console.error(`[projects] reading ${inserted.id}'s text for its needs failed:`, (err as Error)?.message ?? err);
+      });
+    }
 
     res.status(201).json(inserted);
   }),

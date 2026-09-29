@@ -9,7 +9,8 @@
 // resolver is slow we return the bare row immediately and let
 // this finish detached.
 
-import { pictureColour, colourContradiction, colourShows } from "./picture-colour.js";
+import { pictureColour, pictureColours, colourContradiction, colourShows, looksDifferent } from "./picture-colour.js";
+import { ownPhotoColours } from "./withhold-picture.js";
 import { looksOfRow, pictureVerdict, statedColoursOf } from "./picture-agrees.js";
 import net from "node:net";
 import { isBookSource, recordImage, replayImage } from "./catalog-replay.js";
@@ -1712,7 +1713,11 @@ export async function downloadCatalogImage(
         .executeTakeFirst();
       const stated = looksRow ? statedColoursOf(looksOfRow(looksRow)) : new Set<string>();
       if (opts.mustShow && !colourShows(stated, colour)) return false;
-      const why = colourContradiction(stated, colour);
+      // For a row identified from its own photo, the picture has to look like
+      // that photo, not only share a colour word with it: a silver
+      // flashlight's name search stored a yellow-handled lantern (#4037).
+      const own = await ownPhotoColours(ctx.orgId, ctx.db as never, ctx.itemId).catch(() => null);
+      const why = colourContradiction(stated, colour) ?? (own ? looksDifferent(own, await pictureColours(trimmed)) : null);
       if (why) {
         console.warn(`[core-scan] catalog picture ${imageUrl} for ${ctx.itemId}: ${why}; not used`);
         // The writer that chose it may already have put its address on the

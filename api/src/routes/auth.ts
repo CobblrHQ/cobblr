@@ -11,7 +11,8 @@
 // in Phase 0 owns at least one org (their own). Tenant DB provisioning
 // happens in milestone 3 — the org row here just reserves the db_name.
 
-import { Router, type Request, type Response } from "express";
+import { IP_LIMITS_OFF as AUTH_LIMITS_OFF, makeIpLimiter, overLimit, rateLimited } from "../platform/ip-limiter.js";
+import { Router, type Request } from "express";
 import { z } from "zod";
 import { sql } from "kysely";
 import { meta, metaPool } from "../db/meta.js";
@@ -1285,7 +1286,7 @@ authRouter.post("/magic/request", async (req, res, next) => {
       const invite = await meta
         .selectFrom("workspace_invites as i")
         .innerJoin("orgs as o", "o.id", "i.org_id")
-        .select(["i.id", "i.token", "i.invited_email", "i.revoked_at", "i.consumed_at", "i.expires_at", "i.reusable", "i.max_uses", "i.use_count", "o.name as org_name"])
+        .select(["i.id", "i.token", "i.invited_email", "i.revoked_at", "i.consumed_at", "i.expires_at", "i.reusable", "i.max_uses", "i.use_count", "i.paused_at", "o.name as org_name"])
         .where("i.token", "=", parsed.data.invite)
         .executeTakeFirst();
       if (!invite) {
@@ -1839,67 +1840,28 @@ function hashPairCode(plain: string): string {
   return createHash("sha256").update(plain).digest("hex");
 }
 
-// Minimal in-memory sliding-window limiter — this api carries no
-// express-rate-limit dependency. Per-instance + best-effort: brute-forcing a
-// 128-bit, short-lived, single-use code is already infeasible; this just caps
-// accidental floods + abusive bursts. Keyed by client IP.
-function makePairLimiter(windowMs: number, max: number): (key: string) => boolean {
-  const hits = new Map<string, number[]>();
-  return (key: string): boolean => {
-    const now = Date.now();
-    const recent = (hits.get(key) ?? []).filter((t) => now - t < windowMs);
-    if (recent.length >= max) {
-      hits.set(key, recent);
-      return false;
-    }
-    recent.push(now);
-    hits.set(key, recent);
-    // Opportunistic cleanup so the map can't grow without bound.
-    if (hits.size > 5000) {
-      for (const [k, v] of hits) {
-        if (v.every((t) => now - t >= windowMs)) hits.delete(k);
-      }
-    }
-    return true;
-  };
-}
-const pairStartLimiter = makePairLimiter(60_000, 20); // 20 mints / min / IP
-const pairClaimLimiter = makePairLimiter(60_000, 30); // 30 claims / min / IP
+const pairStartLimiter = makeIpLimiter(60_000, 20); // 20 mints / min / IP
+const pairClaimLimiter = makeIpLimiter(60_000, 30); // 30 claims / min / IP
 // Used by POST /identity/exchange (declared here with the other auth limiters; the handler
 // above closes over it and only reads it at request time, so the forward reference is fine).
-const identityExchangeLimiter = makePairLimiter(60_000, 30); // 30 exchanges / min / IP
+const identityExchangeLimiter = makeIpLimiter(60_000, 30); // 30 exchanges / min / IP
 
 // Per-IP limiters for the unauthenticated credential surface. Caps brute-force (login),
 // email floods (magic-request, password-forgot), and token probing. Generous enough that a
 // real human (even behind NAT) never trips them.
-const loginLimiter = makePairLimiter(60_000, 30);
-const signupLimiter = makePairLimiter(60_000, 15);
-const magicRequestLimiter = makePairLimiter(60_000, 10);
-const magicConsumeLimiter = makePairLimiter(60_000, 30);
-const passwordForgotLimiter = makePairLimiter(60_000, 10);
-const passwordResetLimiter = makePairLimiter(60_000, 30);
-const verifyEmailLimiter = makePairLimiter(60_000, 30);
+const loginLimiter = makeIpLimiter(60_000, 30);
+const signupLimiter = makeIpLimiter(60_000, 15);
+const magicRequestLimiter = makeIpLimiter(60_000, 10);
+const magicConsumeLimiter = makeIpLimiter(60_000, 30);
+const passwordForgotLimiter = makeIpLimiter(60_000, 10);
+const passwordResetLimiter = makeIpLimiter(60_000, 30);
+const verifyEmailLimiter = makeIpLimiter(60_000, 30);
 
-// The CI test harness logs in thousands of times from ONE ip (localhost) — the limits
-// protect PROD, not the harness, so bypass them under the test rig. COBBLR_TEST_ORG_POOL is
-// set only in ci.yml / the test rig (env.ts), never in prod.
-const AUTH_LIMITS_OFF = process.env.NODE_ENV === "test" || !!process.env.COBBLR_TEST_ORG_POOL;
-/** True when this request should be rejected as over-limit. No-op under the test rig. */
-function overLimit(limiter: (k: string) => boolean, req: Request): boolean {
-  return !AUTH_LIMITS_OFF && !limiter(req.ip ?? "unknown");
-}
-const RATE_LIMITED = { error: { code: "rate_limited", message: "Too many attempts — wait a moment." } };
-/** Every limiter here is a one-minute window, so a refusal can say how long to
- *  wait; a client that knows counts down instead of retrying into the wall. */
-function rateLimited(res: Response) {
-  res.setHeader("Retry-After", "60");
-  return res.status(429).json(RATE_LIMITED);
-}
 // GET /config is read by every sign-in page load before anyone types, and holds
 // nothing to guess at: a generous bucket of its own (out of the request guard's
 // shared one, see GUARD_EXEMPT_READS), so a busy shared network cannot lock
 // everyone out of even SEEING the form (#3622).
-const configLimiter = makePairLimiter(60_000, 600);
+const configLimiter = makeIpLimiter(60_000, 600);
 
 const PairStartBody = z.object({ org_slug: z.string().min(1).max(120) });
 

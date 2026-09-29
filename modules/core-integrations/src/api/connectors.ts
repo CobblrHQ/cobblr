@@ -10,6 +10,7 @@ import { sql } from "kysely";
 import { platform } from "@cobblr/platform-contract";
 import { tenantDb, tenantContext } from "../db.js";
 import { asyncHandler, badBody, requireRole } from "./util.js";
+import { invokeSavedConnector } from "../invoke-saved.js";
 
 export const connectorsRouter = Router({ mergeParams: true });
 
@@ -279,83 +280,22 @@ connectorsRouter.post(
       res.status(400).json({ error: { code: "missing_id", message: "id required" } });
       return;
     }
-    const db = tenantDb(req);
-    const row = await db
-      .selectFrom("core_integrations_connectors")
-      .select(["connector_id", "credentials_enc", "enabled"])
-      .where("id", "=", id)
-      .executeTakeFirst();
-    if (!row) {
+    const out = await invokeSavedConnector(tenantDb(req), ctx.org.id, id, parsed.data.action_id, parsed.data.args ?? {}, parsed.data.rendered);
+    if (out.kind === "not_found") {
       res.status(404).json({ error: { code: "not_found", message: "connector not found" } });
       return;
     }
-    if (!row.enabled) {
+    if (out.kind === "disabled") {
       res.status(409).json({ error: { code: "disabled", message: "connector is disabled" } });
       return;
     }
-    const def = platform().integrations.getConnector(row.connector_id);
-    if (!def) {
+    if (out.kind === "unknown_connector") {
       res.status(400).json({
-        error: { code: "unknown_connector", message: `Connector ${row.connector_id} not registered` },
+        error: { code: "unknown_connector", message: `Connector ${out.connectorId} not registered` },
       });
       return;
     }
-    const creds = await platform().integrations.decryptCredentials(
-      ctx.org.id,
-      row.credentials_enc,
-    );
-    const start = Date.now();
-    let ok = false;
-    let status: number | null = null;
-    let errorMsg: string | null = null;
-    let result: unknown = null;
-    try {
-      result = await platform().integrations.invokeConnector(
-        row.connector_id,
-        {
-          orgId: ctx.org.id,
-          rowId: id,
-          credentials: creds,
-          args: parsed.data.args ?? {},
-          rendered: parsed.data.rendered,
-        },
-        parsed.data.action_id,
-      );
-      ok = true;
-      const maybeStatus = (result as { status?: number } | null)?.status;
-      if (typeof maybeStatus === "number") status = maybeStatus;
-    } catch (err) {
-      errorMsg = (err as Error).message;
-    }
-    const ms = Date.now() - start;
-    try {
-      await db
-        .insertInto("core_integrations_calls")
-        .values({
-          direction: "outbound",
-          connector_id: row.connector_id,
-          action_or_event: parsed.data.action_id,
-          status,
-          ok,
-          error: errorMsg,
-          request_meta: sql`${JSON.stringify({ args: parsed.data.args ?? {} })}::jsonb` as never,
-          ms,
-        })
-        .execute();
-    } catch (err) {
-      console.error("[core-integrations] audit write failed:", err);
-    }
-    void platform().events.emit(
-      ok ? "core-integrations.connector.invoked" : "core-integrations.connector.failed",
-      {
-        orgId: ctx.org.id,
-        rowId: id,
-        connectorId: row.connector_id,
-        actionId: parsed.data.action_id,
-        ms,
-        error: errorMsg,
-      },
-    );
+    const { ok, ms, result, error: errorMsg } = out;
     if (!ok) {
       res.status(502).json({
         error: { code: "connector_failed", message: errorMsg ?? "connector error" },

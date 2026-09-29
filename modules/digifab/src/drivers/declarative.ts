@@ -140,9 +140,16 @@ export class DeclarativeDriver implements MachineDriver {
       id: this.extract(m.map.id, d),
       name: this.extract(m.map.name, d) || "device",
       enabled: m.map.enabled ? this.extract(m.map.enabled, d) !== "false" : true,
-      state: m.map.state ? this.extract(m.map.state, d) : null,
+      state: this.deviceState(m.map.state, d),
       tags: [],
     }));
+  }
+
+  private deviceState(spec: DriverManifest["listDevices"]["map"]["state"], d: unknown): string | null {
+    if (!spec) return null;
+    if (typeof spec === "string") return this.extract(spec, d);
+    const word = this.extract(spec.from, d);
+    return spec.map[word] ?? word;
   }
 
   private deref(data: unknown, dotPath: string): unknown {
@@ -204,6 +211,7 @@ export class DeclarativeDriver implements MachineDriver {
     const url = this.path(m.path, { jobId });
     let upstream: string;
     let progressStr: string | null = null;
+    let message: string | null = null;
     let raw: unknown;
     if (m.parse === "text") {
       // Plain-text status (GRBL `<Idle|MPos:..>` etc.): `from`/`progress` are
@@ -213,20 +221,23 @@ export class DeclarativeDriver implements MachineDriver {
       raw = text;
       upstream = matchGroup(m.result.state.from, text);
       if (m.result.progress) progressStr = matchGroup(m.result.progress, text);
+      if (m.result.message) message = matchGroup(m.result.message, text) || null;
     } else {
       const data = await this.json(m.method, url);
       raw = data;
       upstream = this.extract(m.result.state.from, data, { jobId });
       if (m.result.progress) progressStr = this.extract(m.result.progress, data, { jobId });
+      if (m.result.message) message = this.extract(m.result.message, data, { jobId }) || null;
     }
     const mapped = m.result.state.map[upstream] ?? "unknown";
     const state = (JOB_STATES.has(mapped as JobState) ? mapped : "unknown") as JobState;
     let progress: number | null = null;
     if (progressStr != null && progressStr !== "") {
       const p = Number(progressStr);
-      if (Number.isFinite(p)) progress = p > 1 ? p / 100 : p;
+      const scale = m.result.progressScale;
+      if (Number.isFinite(p)) progress = scale === 100 ? p / 100 : scale === 1 ? p : p > 1 ? p / 100 : p;
     }
-    return { jobId, state, progress, deviceId: null, raw };
+    return { jobId, state, progress, message, deviceId: null, raw };
   }
 
   // ── ActuatorDriver (the command-and-forget shape) ────────────────────────
@@ -238,6 +249,18 @@ export class DeclarativeDriver implements MachineDriver {
     if (!c) return { ok: false, detail: `unknown command "${command}"` };
     const vars: Record<string, string> = {};
     for (const [k, v] of Object.entries(params)) vars[k] = v == null ? "" : String(v);
+    try {
+      if (c.resolve) {
+        const data = await this.json(c.resolve.method, this.path(c.resolve.path, vars));
+        for (const [k, expr] of Object.entries(c.resolve.vars)) {
+          const v = this.extract(expr, data, vars);
+          if (!v) return { ok: false, detail: `the manager reported no ${k} to ${command}` };
+          vars[k] = v;
+        }
+      }
+    } catch (e) {
+      return { ok: false, detail: (e as Error).message };
+    }
     const url = this.path(c.path, vars);
     try {
       const res = await this.req(c.method, url, {

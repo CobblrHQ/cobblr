@@ -9,7 +9,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { ExternalLink, Pencil, Pin, Plus, Tag as TagIcon, Trash2 } from "lucide-react";
 import { ApiError, api, type TagRecord } from "../lib/api";
 import { useActiveOrg } from "../auth/ActiveOrgContext";
-import { Modal, useToast, useConfirm, usePageTitle } from "@cobblr/platform-web";
+import { DragInput, Modal, useToast, useConfirm, usePageTitle } from "@cobblr/platform-web";
 import { useDetailRoute } from "../lib/useDetailRoute";
 
 interface TagAttachment {
@@ -309,10 +309,11 @@ function EditTagModal({
         </label>
         <label className="flex items-center gap-3 text-sm">
           <span className="text-xs text-muted">Color</span>
-          <input
-            type="color"
+          <DragInput
+            control="color"
             value={color}
-            onChange={(e) => setColor(e.target.value)}
+            onPreview={setColor}
+            onCommit={setColor}
             className="h-8 w-12 border border-line dark:border-slate-600 rounded"
           />
           <span className="font-mono text-xs">{color}</span>
@@ -541,10 +542,11 @@ function CreateTagModal({
         </label>
         <label className="flex items-center gap-3 text-sm">
           <span className="text-xs text-muted">Color</span>
-          <input
-            type="color"
+          <DragInput
+            control="color"
             value={color}
-            onChange={(e) => setColor(e.target.value)}
+            onPreview={setColor}
+            onCommit={setColor}
             className="h-8 w-12 border border-line dark:border-slate-600 rounded"
           />
           <span className="font-mono text-xs">{color}</span>

@@ -16,7 +16,9 @@ import { BundleDetailModal } from "./BundleDetailModal";
 import { useActiveOrg } from "../auth/ActiveOrgContext";
 
 export function BundleFeaturesStrip({ slug, instance }: { slug: string; instance: string }) {
-  const [open, setOpen] = useState(false);
+  // Open, and with which feature ticked: the chip tapped, or none extra for
+  // the general button.
+  const [open, setOpen] = useState<{ turnOn: string[] } | null>(null);
   const { activeOrg } = useActiveOrg();
   const bundlesQ = useQuery({
     queryKey: ["bundles", slug],
@@ -26,7 +28,7 @@ export function BundleFeaturesStrip({ slug, instance }: { slug: string; instance
   });
   // The bundle that created THIS instance = the installed bundle whose manifest
   // declares it in provides_instances. (Owner/admin only ever see this act, but
-  // the query is harmless for anyone; the modal enforces the role.)
+  // the query is harmless for anyone; the server refuses anyone else.)
   const bundle = (bundlesQ.data?.items ?? []).find((b) =>
     (b.manifest?.provides_instances ?? []).some((pi) => pi.instance_name === instance),
   );
@@ -47,18 +49,21 @@ export function BundleFeaturesStrip({ slug, instance }: { slug: string; instance
       </span>
       <div className="flex flex-wrap items-center gap-1.5 min-w-0">
         {off.map((f) => (
-          <span
+          <button
+            type="button"
             key={f.key}
-            title={f.description ?? f.question ?? undefined}
-            className="inline-flex items-center rounded-full border border-accent/30 bg-surface dark:bg-slate-900 px-2.5 py-0.5 text-xs text-muted dark:text-slate-300"
+            onClick={() => setOpen({ turnOn: [f.key] })}
+            title={f.description ?? f.question ?? `Turn on ${f.name}`}
+            data-feature-chip={f.key}
+            className="inline-flex items-center rounded-full border border-accent/30 bg-surface dark:bg-slate-900 px-2.5 py-0.5 text-xs text-muted dark:text-slate-300 hover:border-accent hover:text-accent transition"
           >
             {f.name}
-          </span>
+          </button>
         ))}
       </div>
       <button
         type="button"
-        onClick={() => setOpen(true)}
+        onClick={() => setOpen({ turnOn: [] })}
         className="ml-auto inline-flex items-center gap-1.5 rounded-md bg-cobble-600 hover:bg-cobble-700 text-white px-3 py-1.5 text-xs font-medium transition shrink-0"
       >
         Enable features
@@ -66,7 +71,7 @@ export function BundleFeaturesStrip({ slug, instance }: { slug: string; instance
       {open && (
         // The installed-bundle modal has the feature checkboxes (pre-seeded from
         // enabled_features) + applies the change / offers an update.
-        <BundleDetailModal open onClose={() => setOpen(false)} slug={slug} mode="installed" bundle={bundle} />
+        <BundleDetailModal open onClose={() => setOpen(null)} slug={slug} mode="installed" bundle={bundle} turnOn={open.turnOn} />
       )}
     </section>
   );

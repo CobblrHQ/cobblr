@@ -32,6 +32,17 @@ export interface ScanPhotoItem {
   catalog_image_url?: string | null;
   image_file_id?: string | null;
   suggested_metadata?: unknown;
+  /** How the row came in: a "photo" row's own picture IS the item. */
+  source_kind?: string | null;
+  /** A code read off the capture: its picture is then of the code, not the item. */
+  barcode_text?: string | null;
+}
+
+/** Is the row's own photo a picture of the ITEM (it was identified from it),
+ *  rather than a frame of a barcode? Then nothing found for it automatically
+ *  may take its place (#4037). */
+export function ownPhotoIsTheItem(item: ScanPhotoItem | null | undefined): boolean {
+  return !!item?.image_file_id && item.source_kind === "photo" && !item.barcode_text;
 }
 
 /** Is the catalog art still unverified against the user's photo? Drives the
@@ -52,11 +63,17 @@ export function photoMismatched(item: ScanPhotoItem | null | undefined): boolean
 
 /** Preference order for THIS item, most-preferred first. Only a CONFIRMED
  *  mismatch demotes the catalog art; a pending check shows it optimistically
- *  (with `pending` telling the caller to label it "checking"). */
+ *  (with `pending` telling the caller to label it "checking").
+ *
+ *  Except over a photo of the item itself. A row identified from its own
+ *  photo keeps that photo first, and a picture a lookup found for its name is
+ *  offered beside it, never swapped in: a slim silver flashlight's card showed
+ *  a yellow-handled lantern that shared its brand and a colour word (#4037).
+ *  A picture the person chose there leads, as everywhere. */
 export function photoOrder(item: ScanPhotoItem | null | undefined): PhotoRole[] {
-  return photoMismatched(item)
-    ? ["yours", "frame", "catalog"]
-    : ["catalog", "yours", "frame"];
+  if (photoMismatched(item)) return ["yours", "frame", "catalog"];
+  if (ownPhotoIsTheItem(item) && !catalogChosen(item)) return ["yours", "catalog", "frame"];
+  return ["catalog", "yours", "frame"];
 }
 
 /** Did a person choose this item's catalog picture on the card (a web pick,

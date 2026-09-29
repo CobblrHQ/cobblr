@@ -21,7 +21,11 @@ export function enrichReceiptMeta(receipt: ParsedReceipt, text: string): ParsedR
   const lines = text.split(/\r?\n/).map((l) => l.trim()).filter(Boolean);
   const firstLine = lines[0] && lines[0].length <= 60 ? lines[0] : null;
   const dateMatch = text.match(/\b(\d{4}-\d{2}-\d{2}|\d{1,2}\/\d{1,2}\/\d{2,4})\b/);
-  const totalMatch = text.match(/\b(?:grand\s+)?total\b[^0-9]{0,12}([$€£¥]?\s?[\d,]+\.\d{2})/i);
+  // On its own line, and a real amount: a CSV's header says "Total" and the
+  // row under it began "3,0.25", which this read as a total of 30.25 on a
+  // receipt whose lines add up to 6.74. A thousands comma is followed by
+  // three digits; any other comma is a column break.
+  const totalMatch = text.match(/\b(?:grand\s+)?total\b[^0-9\n,]{0,12}([$€£¥]?\s?\d{1,3}(?:,\d{3})*\.\d{2}|[$€£¥]?\s?\d+\.\d{2})(?![\d,])/i);
   const curMatch = text.match(/[$€£¥]|\b(USD|EUR|GBP|CAD|AUD|JPY)\b/);
   const cur = curMatch ? (SYMBOL_CURRENCY[curMatch[0]] ?? curMatch[0].toUpperCase()) : null;
   return {

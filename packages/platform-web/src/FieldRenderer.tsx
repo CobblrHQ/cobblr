@@ -13,6 +13,8 @@
 // (modules/core-catalogs + api/src/routes/platform.ts + the
 // platform-contract manifest schema) — same renderer id everywhere.
 
+import { parseColour } from "@cobblr/platform-contract/colour";
+import { Swatch } from "./Swatch";
 import { useState } from "react";
 import { Check, ExternalLink, ImageOff, X } from "lucide-react";
 import type { FieldRendererId } from "./types";
@@ -154,36 +156,25 @@ function NumberWithUnit({ value, unit }: { value: number; unit: string }) {
 }
 
 function ColorSwatch({ value, size }: { value: unknown; size: "inline" | "block" }) {
-  // Accept hex with or without leading #, RGB tuples, etc. The
-  // Rebrickable colors dump is uppercase 6-digit hex without #.
-  const raw = String(value).trim().replace(/^#/, "");
-  const isHex = /^[0-9a-fA-F]{6}$/.test(raw) || /^[0-9a-fA-F]{3}$/.test(raw);
-  if (!isHex) return <span>{String(value)}</span>;
-  const css = `#${raw}`;
+  // One swatch for a single colour, a gradient or multi-colour segments
+  // (Swatch.tsx); a value that names no colour shows as text.
+  const spec = parseColour(value);
+  if (!spec) return <span>{String(value)}</span>;
+  const text = spec.style === "solid" ? spec.colours[0]!.toUpperCase() : `${spec.style === "gradient" ? "Gradient" : "Segments"} · ${spec.colours.length} colours`;
   if (size === "block") {
-    // Stack swatch over hex code so it fills the card's image slot
-    // the same way a thumbnail would (~ 128×128 grid cell).
+    // Stacked over its code so it fills the card's image slot the way a
+    // thumbnail would (~128×128 grid cell).
     return (
       <div className="flex flex-col items-center gap-1">
-        <span
-          className="block w-28 h-24 rounded-md border border-line dark:border-slate-700"
-          style={{ background: css }}
-          aria-label={`Color ${css}`}
-        />
-        <code className="font-mono text-[10px] text-muted dark:text-slate-400">
-          {css.toUpperCase()}
-        </code>
+        <Swatch value={value} className="block w-28 h-24 rounded-md" />
+        <code className="font-mono text-[10px] text-muted dark:text-slate-400">{text}</code>
       </div>
     );
   }
   return (
     <span className="inline-flex items-center gap-1.5">
-      <span
-        className="inline-block w-4 h-4 rounded-sm border border-line dark:border-slate-700"
-        style={{ background: css }}
-        aria-label={`Color ${css}`}
-      />
-      <code className="font-mono text-[11px]">{css.toUpperCase()}</code>
+      <Swatch value={value} className="w-4 h-4 rounded-sm" />
+      <code className="font-mono text-[11px]">{text}</code>
     </span>
   );
 }

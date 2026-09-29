@@ -82,6 +82,28 @@ export interface CensusBin {
   /** DECLARED interior size in mm (a container's metadata.interior_mm),
    *  null when the workspace hasn't declared one — no dims, no size logic. */
   interior_mm: InteriorMm | null;
+  /** What each sample title IS: its kind, and its category when it has one.
+   *  Evidence that "similar things live here" may only name things of the
+   *  item's own kind: a room holding spices, a yarn and a filament spool
+   *  once backed a spice group with the yarn and the spool (#4023).
+   *  Optional: a census serialized before it existed reads as "unknown",
+   *  and unknown never counts as similar to a known kind. */
+  title_facts?: Record<string, { kind: string; category: string | null }>;
+}
+
+/** The titles in a bin that are the same kind of thing as the item (and, when
+ *  asked, of its category). An item whose kind is not known is compared with
+ *  everything, as before; a title whose kind is not known never matches a
+ *  known kind. */
+export function titlesLike(bin: CensusBin, item: { kind?: string | null }, category?: string | null): string[] {
+  const facts = bin.title_facts;
+  const cat = category?.trim().toLowerCase() || null;
+  return bin.sample_titles.filter((t) => {
+    const f = facts?.[t];
+    if (item.kind && (!f || f.kind !== item.kind)) return false;
+    if (cat && (!f || (f.category ?? "").toLowerCase() !== cat)) return false;
+    return true;
+  });
 }
 
 export interface Census {
@@ -146,6 +168,7 @@ export async function buildBinCensus(orgId: string): Promise<Census> {
 
   // One sweep per scannable kind, grouped by location_id. Best-effort per kind.
   const occupied = new Map<string, string[]>(); // location_id → titles
+  const facts = new Map<string, Record<string, { kind: string; category: string | null }>>(); // location_id → title → what it is
   const categorized = new Map<string, string[]>(); // location_id → category values
   const catCounts = new Map<string, Map<string, number>>(); // location_id → category(lc) → n
   // Instances included: what a bin holds is counted whatever kind it is under (#3132).
@@ -154,18 +177,21 @@ export async function buildBinCensus(orgId: string): Promise<Census> {
     kinds.map((k) =>
       platform()
         .entities.list(orgId, k.kind, { limit: PER_KIND_SWEEP_LIMIT })
-        .then((r) => r.items)
+        .then((r) => r.items.map((e) => ({ e, kind: k.kind })))
         .catch(() => []),
     ),
   );
   for (const items of sweeps) {
-    for (const e of items) {
+    for (const { e, kind } of items) {
       const loc = typeof e.fields.location_id === "string" ? e.fields.location_id : null;
       if (!loc || !all.has(loc)) continue;
       const titles = occupied.get(loc) ?? [];
       if (titles.length < CENSUS_TITLES_PER_BIN) titles.push(e.title);
       occupied.set(loc, titles);
       const cat = typeof e.fields.category === "string" ? e.fields.category.trim() : "";
+      const known = facts.get(loc) ?? {};
+      if (!known[e.title]) known[e.title] = { kind, category: cat || null };
+      facts.set(loc, known);
       if (cat) {
         const cats = categorized.get(loc) ?? [];
         if (cats.length < CENSUS_TITLES_PER_BIN) cats.push(cat);
@@ -191,6 +217,7 @@ export async function buildBinCensus(orgId: string): Promise<Census> {
         ? { category_counts: Object.fromEntries(catCounts.get(location_id)!) }
         : {}),
       interior_mm: all.get(location_id)!.interior_mm,
+      title_facts: facts.get(location_id) ?? {},
     }))
     .sort((a, b) => b.item_count - a.item_count);
   const bins = binsAll.slice(0, CENSUS_MAX_BINS);
@@ -230,6 +257,9 @@ export interface RoutableItem {
    *  purpose - a bag of carrots knows it wants a fridge and a sack of potatoes
    *  does not, and only the item can tell them apart. */
   storage_requirement?: unknown;
+  /** The kind it is being filed as ("groceries:item"), when known: siblings
+   *  are only ever things of the same kind. */
+  kind?: string | null;
 }
 
 export interface RouteHit {
@@ -285,7 +315,7 @@ export function routeItem(
   // the milk to a cupboard. Same reasoning as the ancestor walk in
   // storage-fit.ts, and the same vocabulary, so the router and the warning
   // cannot disagree.
-  const requirement = resolveRequirement(item.storage_requirement, item.category);
+  const requirement = resolveRequirement(item.storage_requirement, item.category, item.name);
   const mustBeCold = requirement === "frozen" || requirement === "refrigerated";
   const coldOk = (place: { name: string; path: string } | null | undefined): boolean => {
     if (!mustBeCold) return true;
@@ -349,9 +379,12 @@ export function routeItem(
     let bestCount = 0;
     for (const bin of census.bins) {
       if (!fitsBin(item, bin.interior_mm) || !coldOk(bin)) continue;
-      const n =
-        bin.category_counts?.[wantCat] ??
-        (bin.sample_categories.some((c) => c.toLowerCase() === wantCat) ? 1 : 0);
+      // Of the item's own kind: a Spices category on a yarn is not the
+      // spice shelf's category.
+      const n = item.kind
+        ? titlesLike(bin, item, wantCat).length
+        : (bin.category_counts?.[wantCat] ??
+          (bin.sample_categories.some((c) => c.toLowerCase() === wantCat) ? 1 : 0));
       if (n > bestCount) {
         bestCount = n;
         bestBin = bin;
@@ -362,7 +395,9 @@ export function routeItem(
         item_id: item.id,
         location_id: bestBin.location_id,
         sibling_count: bestCount,
-        sample_names: bestBin.sample_titles.slice(0, 3),
+        // The things of that category, never the bin's first few titles
+        // whatever they are (a yarn cited as a spice's sibling, #4023).
+        sample_names: titlesLike(bestBin, item, wantCat).slice(0, 3),
         via: "category",
       };
     }
@@ -375,7 +410,7 @@ export function routeItem(
     // Size veto (declared-only): a bin whose max interior axis is smaller
     // than the item's longest declared dimension is never a candidate.
     if (!fitsBin(item, bin.interior_mm) || !coldOk(bin)) continue;
-    const scored = scoreTitles(bin.sample_titles, want);
+    const scored = scoreTitles(titlesLike(bin, item), want);
     if (!scored) continue;
     if (scored.strength > bestStrength) {
       bestStrength = scored.strength;

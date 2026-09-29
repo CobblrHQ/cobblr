@@ -149,6 +149,26 @@ export interface DetectResult { probability: number; source: "edge" | "llm" | "d
  *  backends (edge/llm) and the external services are all detector PACKAGES
  *  resolved from the registry — nothing about a specific service is hardcoded
  *  here. Null when the chosen backend could produce no reading. */
+/** What an in-process detector needs to take one reading of one printer: its
+ *  edge driver and a way to grab a frame. The failure watch and the
+ *  `inspect.print` built-ins build it the same way. */
+export async function detectorBaseContext(
+  db: Kysely<DigifabDB>,
+  orgId: string,
+  connId: string,
+  deviceId: string,
+): Promise<Omit<DetectorContext, "connection" | "cameraId">> {
+  const driver = await edgeDriverFor(db, orgId, connId, deviceId);
+  return {
+    orgId,
+    connId,
+    deviceId,
+    driver,
+    grabFrame: () => grabFrame(db, driver, connId, deviceId),
+    cameraUrl: null, // filled lazily only when a url-mode detector needs it
+  };
+}
+
 export async function detectOnce(
   db: Kysely<DigifabDB>,
   orgId: string,
@@ -156,15 +176,7 @@ export async function detectOnce(
   deviceId: string,
   cfg: FailureConfig,
 ): Promise<DetectResult | null> {
-  const driver = await edgeDriverFor(db, orgId, connId, deviceId);
-  const base: Omit<DetectorContext, "connection" | "cameraId"> = {
-    orgId,
-    connId,
-    deviceId,
-    driver,
-    grabFrame: () => grabFrame(db, driver, connId, deviceId),
-    cameraUrl: null, // filled lazily below only when a url-mode detector needs it
-  };
+  const base = await detectorBaseContext(db, orgId, connId, deviceId);
 
   // External detector — the whole reading comes from the configured service.
   if (cfg.backend === "detector") {

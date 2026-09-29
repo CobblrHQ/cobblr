@@ -19,6 +19,9 @@
 // obtained from a separate multipart endpoint — keeps the JSON
 // body limits sane.
 
+import { ARRIVED_BY_KEY } from "../services/photo-observation-gate.js";
+import { canonicalColourFields, type ColourFieldDef } from "../services/colour-fields.js";
+import { choicesNamedIn, identifierFromScan, type FactFieldDef } from "../services/scan-field-facts.js";
 import { ocrImageText } from "../services/ocr.js";
 import { pictureHash, recentTwin } from "../services/same-picture.js";
 import { applyLabelFacts } from "../services/label-quantity.js";
@@ -54,7 +57,8 @@ import { Router, type Request } from "express";
 import { sql } from "kysely";
 import { z } from "zod";
 import { fileReceiptAs, type KnownShipment } from "../services/receipt-arrival.js";
-import { addOrderLine, claimOrderLine, orderLines, deleteReceiptOrder, createReceiptOrder, lineUnitCost } from "../services/receipt-order.js";
+import { claimOrderLine, orderLines, deleteReceiptOrder, lineUnitCost } from "../services/receipt-order.js";
+import { pendingPurchaseOf, recordReceiptPurchase } from "../services/receipt-purchase.js";
 import {
   mapRoledFacts,
   planDecodeFill,
@@ -119,7 +123,7 @@ import { rechoosePictureForColour, withholdContradictedPicture } from "../servic
 import { themeFromReply, themeScope, type ThemeItem } from "../services/session-theme.js";
 import { scannerQueue } from "../services/scanner-queue.js";
 import { inboxCounts, type CountRow } from "../services/inbox-counts.js";
-import { matchQuery, restampTrackedMatch, trackedMatchStamp } from "../services/tracked-stamp.js";
+import { matchQuery, restampTrackedMatch, scanPlaceOf, trackedMatchStamp, trackedMatchStampAt } from "../services/tracked-stamp.js";
 import { candidateTableOf, destinationTables, filingDestination, type DestinationRow } from "../services/destination.js";
 import {
   candidateFieldValue,
@@ -155,7 +159,7 @@ import { cleanOrderRef, receiptDedupKey,
 import { reportBarcodeCorrection, reportLabelConfirm, meaningfullyChanged, originOfValue, unitLotsOf } from "../services/barcode-corrections.js";
 import { claimGlanceAnswer, readContextFor, readGlanceEnabled, writeGlanceEnabled } from "../services/glance.js";
 import { normalizeBarcode, barcodeFromHint } from "../services/barcode-correction.js";
-import { findBinContents, findTracked } from "../services/entity-match.js";
+import { findBinContents, findTracked, placesOfCard } from "../services/entity-match.js";
 import { cropRegion, cropRefusalWords, detectSplitItems, rotateImage } from "../services/image-ops.js";
 import { auditSplitSeries, healSplitSeriesWorkspace } from "../services/split-series-heal.js";
 import { auditReroute, rerouteWorkspace } from "../services/reroute-keyword-rows.js";
@@ -176,13 +180,38 @@ import {
 import { applyNameFacts, nameFactWords } from "../services/name-facts.js";
 import { applyPersonName, applyRejectName, withPersonName } from "../services/user-name.js";
 import { headedFor, rowMatchesText } from "../services/inbox-search.js";
-import { displayName, filingName, rejectedNamesOf, USER_NAME_KEY } from "@cobblr/platform-contract/display-identity";
+import { displayName, filingName, isBareCodeName, rejectedNamesOf, USER_NAME_KEY } from "@cobblr/platform-contract/display-identity";
 import { extractLocation, type LocationLite } from "../services/note-location.js";
 import { suggestLocationForItem } from "../services/suggest-location.js";
 import { normaliseCategory } from "@cobblr/platform-contract/category-reconcile";
 import { receiptFacts, type ReceiptMeta } from "../services/receipt-facts.js";
 import { receiptRecord, type ReceiptLineMeta } from "../services/receipt-record.js";
 import { runReceiptBackfill } from "../services/receipt-backfill.js";
+
+/** A table's own category word for a row ("Dairy" on Groceries), which says
+ *  how a thing keeps when the catalog's word is in another language. */
+/** A table's own category word for a row ("Dairy" on Groceries): its
+ *  choice-backed category axis, or a field it names as a category. It says
+ *  how a thing keeps when the catalog's word is in another language
+ *  ("Fromages de vache"). Null when the row has none. */
+async function tableCategoryWord(
+  orgId: string,
+  kind: string | null,
+  instance: string | null,
+  fields: Record<string, unknown> | undefined,
+): Promise<string | null> {
+  if (!kind || !fields) return null;
+  const axis = await platform().categoryAxis.for({ orgId, kind, instance }).catch(() => null);
+  const name = axis?.slot.kind === "extras" ? axis.slot.name : undefined;
+  const v = name ? fields[name] : undefined;
+  if (typeof v === "string" && v.trim()) return v;
+  // A table whose axis is the module's own (hidden) category can still keep
+  // its kind of thing in a field it names as one: Groceries' Food category.
+  for (const [k, val] of Object.entries(fields)) {
+    if (/(^|_)categor/i.test(k) && typeof val === "string" && val.trim()) return val;
+  }
+  return null;
+}
 
 export const inboxRouter = Router({ mergeParams: true });
 
@@ -463,6 +492,10 @@ const ScanBody = z.object({
   image_file_id: z.string().uuid().optional(),
   scan_batch_id: z.string().uuid().optional(),
   scan_area: z.string().max(200).optional(),
+  /** The picture arrived by email (an attachment the mail door filed), not
+   *  from the person's camera or upload. Stamped on the row as `arrived_by`:
+   *  an emailed image is never kept as an example (photo-observation-gate). */
+  origin: z.enum(["email"]).optional(),
   /** The active filing location ("bin") for this scan session — a
    *  core-locations node. Stamped on the item so confirm files the created
    *  entity into that location without re-picking. The active-bin pattern. */
@@ -661,6 +694,7 @@ inboxRouter.post(
     // row's state on the first paint instead of "Identifying..." (#3017).
     const storeStamps = storeCodeInsertStamps(body.barcode);
     const token = bearer(req);
+    const arrivedBy = body.origin === "email" ? { [ARRIVED_BY_KEY]: "email" } : {};
     // The one intake (services/intake.ts, #3049): the insert, the shape's
     // passes in their order (the catalog chain raced inline for a barcode
     // within the budget, the photo wire, the match once a name exists), and
@@ -690,11 +724,13 @@ inboxRouter.post(
               ai_notes: storeStamps.ai_notes,
               ai_confidence: storeStamps.ai_confidence,
               ai_suggested_at: storeStamps.ai_suggested_at,
-              suggested_metadata: JSON.stringify({ code_type: storeStamps.code_type }) as never,
+              suggested_metadata: JSON.stringify({ code_type: storeStamps.code_type, ...arrivedBy }) as never,
             }
           : imageHash
-            ? { suggested_metadata: JSON.stringify({ image_sha256: imageHash }) as never }
-            : {}),
+            ? { suggested_metadata: JSON.stringify({ image_sha256: imageHash, ...arrivedBy }) as never }
+            : body.origin
+              ? { suggested_metadata: JSON.stringify(arrivedBy) as never }
+              : {}),
       },
       // Race inline enrichment against the budget. Whichever lands first
       // wins the response; the other keeps running detached.
@@ -1202,98 +1238,58 @@ inboxRouter.post(
     //
     // Best-effort throughout: a workspace without purchases still uploads,
     // triages and commits its receipts, it simply has no order.
+    // When Purchases is off the order is not lost: the session keeps it and
+    // offers to turn Purchases on (services/receipt-purchase.ts, #3869).
+    let purchase: { recorded: boolean; purchases_off: boolean } | null = null;
     if (batchId) {
-      const headers = { Authorization: `Bearer ${bearer(req)}`, "Content-Type": "application/json" };
-      const orderId = await createReceiptOrder({
-        baseUrl: receiptBaseUrl,
-        slug: ctx.org.slug,
-        headers,
-        vendor: receipt.vendor,
-        orderRef,
-        orderedAt: receipt.date,
-        // Nobody has typed one yet — unless a shipping notice got here first
-        // and left the session awaiting, in which case its parcel (number,
-        // state, promised day) carries into the order it now makes.
-        trackingNumber: awaiting?.tracking_number ?? null,
-        knownShipment: awaiting?.shipment_state
-          ? {
-              state: awaiting.shipment_state,
-              checkedAt: awaiting.shipment_checked_at ?? null,
-              nextPollAt: awaiting.shipment_next_poll_at ?? null,
-              location: awaiting.shipment_location ?? null,
-            }
-          : null,
-        expectedArrival: receipt.expected_arrival ?? awaiting?.expected_arrival ?? null,
-        total: receipt.total,
-        groupId: receiptGroupId,
-        sourceFileId: parsed.data.file_id,
-      });
-      if (orderId) {
-        await db
-          .updateTable("core_scan_batches")
-          .set({ purchases_order_id: orderId })
-          .where("id", "=", batchId)
-          .execute();
-        // One order line per receipt line, in receipt order - the same order
-        // materializeReceiptLines made the inbox rows in, so rows[i] and
-        // lineIds[i] are one line of the receipt. Each row remembers its line,
-        // which is what lets a later confirm CLAIM it rather than add a second
-        // one (order-at-parse.md, phase 2).
-        const lineIds: Array<string | null> = [];
-        for (const line of receipt.items) {
-          lineIds.push(await addOrderLine({
-            baseUrl: receiptBaseUrl,
-            slug: ctx.org.slug,
-            headers,
-            orderId,
+      const outcome = await recordReceiptPurchase(
+        db,
+        batchId,
+        {
+          vendor: receipt.vendor,
+          orderRef,
+          orderedAt: receipt.date,
+          // Nobody has typed one yet — unless a shipping notice got here first
+          // and left the session awaiting, in which case its parcel (number,
+          // state, promised day) carries into the order it now makes.
+          trackingNumber: awaiting?.tracking_number ?? null,
+          knownShipment: awaiting?.shipment_state
+            ? {
+                state: awaiting.shipment_state,
+                checkedAt: awaiting.shipment_checked_at ?? null,
+                nextPollAt: awaiting.shipment_next_poll_at ?? null,
+                location: awaiting.shipment_location ?? null,
+              }
+            : null,
+          expectedArrival: receipt.expected_arrival ?? awaiting?.expected_arrival ?? null,
+          total: receipt.total,
+          groupId: receiptGroupId,
+          sourceFileId: parsed.data.file_id,
+          // NET of the coupon printed under each line: the order records what
+          // was paid, not the shelf price. Without this a receipt's lines sum to
+          // more than its own total and the order silently disagrees with the
+          // paper it came from.
+          lines: receipt.items.map((line) => ({
             description: line.description,
             qty: line.qty,
-            // NET of the coupon printed under it: the order records what was
-            // paid, not the shelf price. Without this a receipt's lines sum to
-            // more than its own total and the order silently disagrees with the
-            // paper it came from.
-            unitCost: lineUnitCost(
-              line.discount ? null : line.unit_price,
-              lineNet(line),
-              line.qty,
-            ),
+            unitCost: lineUnitCost(line.discount ? null : line.unit_price, lineNet(line), line.qty),
             lineAmount: lineNet(line),
-          }));
-        }
-        if (!targetItemId) {
-          for (let i = 0; i < rows.length; i++) {
-            const lineId = lineIds[i] ?? null;
-            if (!lineId) continue;
-            await db
-              .updateTable("core_scan_inbox_items")
-              .set({ suggested_metadata: mergeMeta({ receipt_order_id: orderId, receipt_order_item_id: lineId }) as never })
-              .where("id", "=", rows[i]!.id)
-              .execute();
-          }
-        }
-        // The item this paperwork was attached to now knows its purchase. A
-        // user-owned key, deliberately outside IDENTIFY_OWNED_KEYS: an AI
-        // re-run has no standing to forget which receipt a person filed.
-        if (targetItemId) {
-          await db
-            .updateTable("core_scan_inbox_items")
-            .set({
-              suggested_metadata: mergeMeta({
-                purchases_order_id: orderId,
-                receipt_group_id: receiptGroupId,
-              }) as never,
-              updated_at: new Date(),
-            })
-            .where("id", "=", targetItemId)
-            .execute();
-        }
-      }
+          })),
+          rowIds: targetItemId ? [] : rows.map((r) => r.id),
+          targetItemId,
+        },
+        { baseUrl: receiptBaseUrl, slug: ctx.org.slug, headers: { Authorization: `Bearer ${bearer(req)}`, "Content-Type": "application/json" } },
+      );
+      purchase = outcome.recorded ? { recorded: true, purchases_off: false } : { recorded: false, purchases_off: outcome.purchasesOff };
     }
 
     res.status(201).json({
       // The session the lines went into, so a caller can read the session's
       // own record (how its date was read, its state) without a list scan.
       batch_id: batchId,
+      // Whether the receipt was kept as a purchase, and when not, whether
+      // Purchases being off is why (the card offers to turn it on).
+      purchase,
       receipt: {
         vendor: receipt.vendor,
         date: receipt.date,
@@ -1609,6 +1605,9 @@ interface BatchLabel {
   shipment_state: string | null;
   shipment_description: string | null;
   shipment_location: string | null;
+  /** A receipt read while Purchases was off, not yet kept as a purchase: the
+   *  session offers to turn Purchases on and record it (#3869). */
+  purchase_pending: boolean;
 }
 
 /** Session labels for the batches on a page — the inbox groups items by
@@ -1624,7 +1623,7 @@ async function batchLabelsFor(
   const lines = await sessionLines(db, batchIds);
   for (const b of await db
     .selectFrom("core_scan_batches")
-    .select(["id", "label", "origin", "source_file_id", "order_ref", "tracking_number", "shipment_state", "shipment_description", "shipment_location", "read_state", "read_failure", "read_started_at", "created_at", "date_convention", "date_decided_by", "date_printed"])
+    .select(["id", "label", "origin", "source_file_id", "order_ref", "tracking_number", "shipment_state", "shipment_description", "shipment_location", "read_state", "read_failure", "read_started_at", "created_at", "date_convention", "date_decided_by", "date_printed", "pending_purchase"])
     .where("id", "in", batchIds)
     .execute()) {
     batches[b.id] = batchLabelOf(b, lines.get(b.id));
@@ -1655,9 +1654,11 @@ function batchLabelOf(b: {
   shipment_state: string | null; shipment_description: string | null; shipment_location: string | null;
   read_state: string | null; read_failure: unknown; read_started_at: Date | null; created_at: Date;
   date_convention?: string | null; date_decided_by?: string | null; date_printed?: string | null;
+  pending_purchase?: unknown;
 }, lines: { pending: number; ever: number } = { pending: 0, ever: 0 }): BatchLabel {
   return {
     lines,
+    purchase_pending: !!pendingPurchaseOf(b.pending_purchase),
     date_convention: b.date_convention ?? null,
     date_decided_by: b.date_decided_by ?? null,
     date_printed: b.date_printed ?? null,
@@ -1685,7 +1686,7 @@ async function sessionsWithoutRows(db: ReturnType<typeof tenantDb>, present: Set
   const out: Record<string, BatchLabel> = {};
   const rows = await db
     .selectFrom("core_scan_batches")
-    .select(["id", "label", "origin", "source_file_id", "order_ref", "tracking_number", "shipment_state", "shipment_description", "shipment_location", "read_state", "read_failure", "read_started_at", "created_at", "date_convention", "date_decided_by", "date_printed"])
+    .select(["id", "label", "origin", "source_file_id", "order_ref", "tracking_number", "shipment_state", "shipment_description", "shipment_location", "read_state", "read_failure", "read_started_at", "created_at", "date_convention", "date_decided_by", "date_printed", "pending_purchase"])
     // 'awaiting': a parcel known from its shipping notice, no lines yet. On
     // the page for the same reason a failed read is: the inbox groups by
     // item, and a session with none would otherwise not exist.
@@ -2446,6 +2447,10 @@ inboxRouter.post(
       res.status(409).json({ error: { code: "table_not_installed", message: `This item ${table.reason}.` } });
       return;
     }
+    // An install on the way made a table this request's cached list does not
+    // hold: read the tables again, or the filing is named by the module's
+    // default ("Filed to Inventory" for a spool just filed into Filament).
+    if (installer.installed.length) (req as Request & { __liveTables?: Promise<LiveTable[]> }).__liveTables = undefined;
     const instance = table.instance ?? undefined;
     // The owning module declares its scan target (create endpoint + quantity
     // field) via registerScannable. A caller may pass an INSTANCE kind
@@ -2668,10 +2673,17 @@ inboxRouter.post(
       meta as { serial_number?: unknown; model?: unknown },
       candidateFields,
     );
+    // A record named only by its code reads as a number in every list: it
+    // waits in the inbox for a name instead, whichever door filed it (#3930).
+    const filingAs = parsed.data.name ?? filingName(row) ?? "Untitled";
+    if (isBareCodeName(filingAs, row.barcode_text)) {
+      res.status(422).json({ error: { code: "needs_name", message: "Give it a name first: a barcode number is not a name." } });
+      return;
+    }
     const body: Record<string, unknown> = {
       // Entity names cap at 160 (the modules' own create schemas); a catalog
       // title just gets cut there - a long name must never fail the commit.
-      name: clampEntityName(parsed.data.name ?? filingName(row) ?? "Untitled"),
+      name: clampEntityName(filingAs),
       manufacturer: row.suggested_manufacturer ?? undefined,
       // A serial/service tag (vision-read) OR a decoder-mapped value (a VIN) →
       // the destination table's NATIVE serial_number field (inventory/assets/
@@ -2780,6 +2792,40 @@ inboxRouter.post(
       } catch {
         /* locations unavailable: the item files unplaced, as before */
       }
+      // Then the spot the card shows beside the item ("Pantry - it keeps at
+      // room temperature"), which File all already used and Add did not, so
+      // one tap filed a grocery nowhere and Pantry's label read What's here (0)
+      // (2026-09-29). Worked out here when the match has not stamped one yet,
+      // by the same resolver, so a quick tap is not a different answer.
+      if (body.location_id === undefined) {
+        try {
+          const name = (typeof body.name === "string" && body.name) || row.suggested_name || null;
+          const category = (matchedCandidate as { category?: string } | undefined)?.category ?? null;
+          const spot =
+            row.suggested_location_id ??
+            (
+              await suggestLocationForItem(ctx.org.id, {
+                name,
+                category,
+                excludeId: null,
+                kind: instance ? `${instance}:item` : kindKey,
+                requirement: resolveRequirement(
+                  candidateFields.storage_requirement ?? (typedMetadata as Record<string, unknown>).storage_requirement,
+                  [
+                    category,
+                    (row.suggested_metadata as { category?: string } | null)?.category,
+                    await tableCategoryWord(ctx.org.id, instance ? `${instance}:item` : kindKey, instance ?? null, { ...candidateFields, ...typedMetadata }),
+                  ],
+                  name,
+                ),
+              })
+            )?.location_id ??
+            null;
+          if (spot) body.location_id = spot;
+        } catch {
+          /* no suggestion to be had: the item files unplaced, as before */
+        }
+      }
     }
 
     // Re-issue through the api against the SAME bearer token so
@@ -2816,6 +2862,56 @@ inboxRouter.post(
       (matchedCandidate as { category?: unknown } | undefined)?.category as string | undefined,
       parsed.data.category,
     );
+
+    // A colour is stored the platform's one way: a hex in any spelling a tag
+    // or a catalog gave becomes "#rrggbb", a name is kept (services/colour-fields.ts).
+    // Which fields are colours is the table's to say; a table that cannot be
+    // read is filed as it came.
+    try {
+      const base = (req.headers["x-cobblr-base-url"] as string | undefined) ?? INTERNAL_API;
+      const defsRes = await fetch(`${base}/api/v1/orgs/${ctx.org.slug}/field-defs?kind=${encodeURIComponent(fieldKind)}`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      if (defsRes.ok && body.metadata && typeof body.metadata === "object") {
+        const defs = ((await defsRes.json()) as { items?: Array<ColourFieldDef & FactFieldDef> }).items ?? [];
+        body.metadata = canonicalColourFields(body.metadata as Record<string, unknown>, defs);
+
+        // What the scan itself says, into the fields that are still empty: the
+        // barcode into the identifier field, the name's plain facts ("1.75mm",
+        // "1kg", "PLA") into choice fields (services/scan-field-facts.ts). A
+        // table whose items lift to a parent type is also written the type's
+        // key and copied fields, which the lift carries up, so a scanned
+        // spool's type gets its UPC as well (#3990).
+        const factDefs: FactFieldDef[] = [...defs];
+        const parentCfg = instance
+          ? ((await platform().instances.configOf(ctx.org.id, instance).catch(() => null))?.parent as
+              | { instance?: string; key_fields?: unknown; copy_fields?: unknown }
+              | undefined)
+          : undefined;
+        if (parentCfg?.instance) {
+          const carried = new Set(
+            [parentCfg.key_fields, parentCfg.copy_fields].flatMap((v) => (Array.isArray(v) ? v.filter((x): x is string => typeof x === "string") : [])),
+          );
+          const pRes = await fetch(`${base}/api/v1/orgs/${ctx.org.slug}/field-defs?kind=${encodeURIComponent(`${parentCfg.instance}:item`)}`, {
+            headers: { Authorization: `Bearer ${token}` },
+          });
+          if (pRes.ok) {
+            const own = new Set(defs.map((d) => d.name));
+            for (const d of ((await pRes.json()) as { items?: FactFieldDef[] }).items ?? []) {
+              if (carried.has(d.name) && !own.has(d.name)) factDefs.push(d);
+            }
+          }
+        }
+        const md = body.metadata as Record<string, unknown>;
+        body.metadata = {
+          ...identifierFromScan(row.barcode_text, factDefs, md),
+          ...choicesNamedIn(String(body.name ?? filingName(row) ?? ""), factDefs, md),
+          ...md,
+        };
+      }
+    } catch {
+      /* the colour is filed as it came */
+    }
 
     const doCreate = () =>
       fetch(createUrl, {
@@ -2892,7 +2988,7 @@ inboxRouter.post(
       });
       return;
     }
-    const created = (await createRes.json()) as { id: string };
+    const created = (await createRes.json()) as { id: string; name?: unknown; title?: unknown; under_type?: FiledInto["under"] & { noun?: string } };
     // A receipt line's order line already exists (born at parse). Filing is
     // what CLAIMS it: the part now stands for that line. Best-effort, like
     // every other purchases touch from here - a workspace without purchases
@@ -3084,7 +3180,17 @@ inboxRouter.post(
     }
 
     // Mark the inbox row resolved, recording where it went (#3620).
-    const filedInto = await filedIntoFor(req, target.module, instance ?? null, effectiveKindId);
+    const filedInto = await filedIntoFor(req, target.module, instance ?? null, effectiveKindId, {
+      // The record as filed names the result, never the scan's suggestion:
+      // a catalog's listing title ("... Yarn, 1 Pack Of 9 Skein") was the
+      // toast's name while the record said "Super Saver" (#4011).
+      name: [created.name, created.title, body.name].find((v): v is string => typeof v === "string" && v.trim() !== ""),
+      noun: created.under_type?.noun ?? (matchedCandidate as { noun?: unknown } | undefined)?.noun,
+      under: created.under_type ? { id: created.under_type.id, name: created.under_type.name, created: created.under_type.created, instance: created.under_type.instance } : undefined,
+      // The name the card showed for this table ("Filament" for spools
+      // under their types), so the result names the place the person chose.
+      shownAs: matchedCandidate && (matchedCandidate.instance ?? null) === (instance ?? null) ? (matchedCandidate as { label?: unknown }).label : undefined,
+    });
     const resolvedRow = await db
       .updateTable("core_scan_inbox_items")
       .set({
@@ -3733,6 +3839,18 @@ function withDestination<T>(served: T, raw: DestinationRow, tables: ScanResolver
   };
 }
 
+/** The kind a row will be filed as ("groceries:item"), from the same one
+ *  destination the card shows, spelled as the workspace's tables spell it so
+ *  it compares with the kinds records live under. Null when it has none. */
+export async function filingKindFor(row: DestinationRow, req: Request): Promise<string | null> {
+  const tables = await destinationTablesFor(req);
+  const d = filingDestination(row, tables, await liveTablesFor(req));
+  if (!d) return null;
+  if (typeof d.kind === "string" && d.kind) return d.kind;
+  const table = tables.find((t) => t.module_name === d.module && t.instance_name === (d.instance ?? d.module));
+  return typeof table?.kind === "string" && table.kind ? table.kind : null;
+}
+
 /** A split child's group shot, served on the child as `group_image_file_id`
  *  (services/group-image.ts is the one place that says which file it is). */
 async function withGroupImages<T extends { suggested_metadata?: unknown }>(
@@ -3809,11 +3927,20 @@ const DEST_TABLES_CACHE = new Map<string, { at: number; tables: ScanResolverTabl
 /** Where a row was filed, as the commit records it (#3620): the table by
  *  module and instance and its name at that moment, read from the
  *  workspace's tables. A committed row is shown by this, never re-derived. */
-async function filedIntoFor(req: Request, module: string, instance: string | null, kind: string | null): Promise<FiledInto> {
+async function filedIntoFor(
+  req: Request,
+  module: string,
+  instance: string | null,
+  kind: string | null,
+  extra: { name?: string; noun?: unknown; under?: FiledInto["under"]; shownAs?: unknown } = {},
+): Promise<FiledInto> {
   const live = await liveTablesFor(req);
   const t = live.find((x) => x.module === module && (x.instance ?? null) === instance) ?? (instance ? live.find((x) => x.instance === instance) : undefined);
-  const label = t?.label ?? live.find((x) => x.module === module && x.instance === null)?.label ?? module;
-  return { module, instance, kind, label };
+  const shown = typeof extra.shownAs === "string" && extra.shownAs.trim() ? extra.shownAs.trim() : null;
+  const label = shown ?? t?.label ?? live.find((x) => x.module === module && x.instance === null)?.label ?? module;
+  const noun = typeof extra.noun === "string" && extra.noun.trim() ? extra.noun.trim() : undefined;
+  const name = extra.name?.trim() || undefined;
+  return { module, instance, kind, label, ...(name ? { name } : {}), ...(noun ? { noun } : {}), ...(extra.under ? { under: extra.under } : {}) };
 }
 
 async function liveTablesFor(req: Request): Promise<LiveTable[]> {
@@ -3881,6 +4008,15 @@ function withRetryState<T extends { status?: string | null; suggested_name?: str
 }
 
 /** The requesting person's title format, for withTitle. */
+/** The name a card shows for a row, composed on the way out (the person's
+ *  own name, a titled work in their format, a colour suffix). Anything that
+ *  remembers a row's name to compare against the card later, like a put-away
+ *  plan, stores THIS: storing the raw column read every coloured spool as
+ *  "changed since this plan", through any number of re-plans (#4024). */
+export function servedItemName(row: Parameters<typeof withTitle>[0], req: Request): string | null {
+  return withTitle(row, new Set(), titleFormatFor(req)).suggested_name;
+}
+
 function titleFormatFor(req: Request): TitleFormat | null {
   return asTitleFormat((req as unknown as { session?: { title_pref?: string | null } }).session?.title_pref);
 }
@@ -4055,14 +4191,19 @@ inboxRouter.post(
       res.status(422).json({ error: { code: "no_photo", message: "This item has no photo to read as a receipt." } });
       return;
     }
+    // `force`: the person says this is a second copy of a receipt already in.
+    const force = (req.body as { force?: unknown } | undefined)?.force === true;
     const routed = await routeScannedReceiptPhoto({
       orgId: ctx.org.id,
       itemId: id,
       fileId: row.image_file_id,
       userId: sessionUser(req).id,
+      ...(force ? { force: true } : {}),
     });
     if (!routed.routed) {
-      res.status(422).json({ error: { code: "not_a_receipt", message: routed.note, ...(routed.failure ? { failure: routed.failure } : {}), ...(routed.ai ? { ai: routed.ai } : {}) } });
+      // A receipt already in is not "not a receipt"; the code says which.
+      const code = routed.failure === "already_imported" ? "already_imported" : "not_a_receipt";
+      res.status(422).json({ error: { code, message: routed.note, ...(routed.failure ? { failure: routed.failure } : {}), ...(routed.ai ? { ai: routed.ai } : {}) } });
       return;
     }
     res.json({ ok: true, receipt: true, items: routed.items });
@@ -5496,7 +5637,63 @@ inboxRouter.get(
     // Asked the way the stamp is (the person's name first), so the banner
     // never lists records the row's own match was not derived from (#3726).
     const matches = await findTracked(ctx.org.id, matchQuery(row, topCandidateFields(row.suggested_candidates), topCandidateCategory(row.suggested_candidates)));
-    res.json(matches);
+    // One thing kept in several places: every place, so the banner can ask
+    // which one this scan goes to (and which one it already picked).
+    const tier = matches.barcode_matches.length ? matches.barcode_matches : matches.name_matches;
+    const cards = new Set(tier.map((m) => m.card_id ?? m.id));
+    let places: Array<{ id: string; location_id: string | null; location_name: string | null; qty: number | null }> = [];
+    const best = tier[0];
+    if (best && cards.size === 1) {
+      const raw = await placesOfCard(ctx.org.id, best.kind, best.card_id ?? best.id).catch(() => []);
+      if (raw.length > 1) {
+        const locs = await platform().entities.lookupMany(
+          ctx.org.id,
+          [...new Set(raw.map((p) => p.location_id).filter((x): x is string => !!x))].map((lid) => ({ kind: "core-locations:location", id: lid })),
+        );
+        const name = new Map(locs.map((l) => [l.id, l.title]));
+        places = raw.map((p) => ({ id: p.id, location_id: p.location_id, location_name: p.location_id ? (name.get(p.location_id) ?? null) : null, qty: p.qty }));
+      }
+    }
+    const pick = scanPlaceOf(row).place_choice ?? null;
+    res.json({ ...matches, places, place_choice: pick });
+  }),
+);
+
+// ─────────────────── POST /inbox/:id/place ─────────────────
+// Which place of the matched thing this scan goes to, when it is kept in
+// several: stored on the row (a reload never asks twice) and the row's match
+// re-stamped at that place, so "+1 more" adds there (scanRebuy).
+// AI-REACH: exempt, the answer to a question on a scan card; filing is reached through the inbox's own actions
+inboxRouter.post(
+  "/inbox/:id/place",
+  asyncHandler(async (req, res) => {
+    if (!requireRole(req, res, "owner", "admin", "member")) return;
+    const recordId = typeof req.body?.record_id === "string" ? req.body.record_id : null;
+    if (!recordId) {
+      res.status(400).json({ error: { code: "invalid_body", message: "Say which place (record_id)." } });
+      return;
+    }
+    const id = req.params.id ?? "";
+    const db = tenantDb(req);
+    const ctx = tenantContext(req);
+    await db
+      .updateTable("core_scan_inbox_items")
+      .set({ suggested_metadata: sql`coalesce(suggested_metadata, '{}'::jsonb) || ${JSON.stringify({ place_choice: recordId })}::jsonb` as never })
+      .where("id", "=", id)
+      .execute();
+    const row = await db.selectFrom("core_scan_inbox_items").selectAll().where("id", "=", id).executeTakeFirst();
+    if (!row) {
+      res.status(404).json({ error: { code: "not_found", message: "inbox item not found" } });
+      return;
+    }
+    const tables = await destinationTablesFor(req);
+    const dest = filingDestination(row, tables);
+    const stamp = await restampTrackedMatch(ctx.org.id, db as never, id, row, (dest?.fields as Record<string, unknown> | undefined) ?? null, topCandidateCategory(row.suggested_candidates));
+    if (!stamp || stamp.id !== recordId) {
+      res.status(409).json({ error: { code: "not_a_place", message: "That is not one of the places this is kept." } });
+      return;
+    }
+    res.json({ ok: true, tracked_match: stamp });
   }),
 );
 
@@ -6259,7 +6456,13 @@ inboxRouter.post(
         target_entity_id: parsed.data.entity_id,
         suggested_metadata: mergeMeta({
           // Where it went, as the commit records it (#3620).
-          [FILED_INTO_KEY]: await filedIntoFor(req, module ?? baseKind, instance ?? null, parsed.data.kind),
+          [FILED_INTO_KEY]: await filedIntoFor(req, module ?? baseKind, instance ?? null, parsed.data.kind, {
+            // Filed INTO a record that already existed: its own name.
+            name: await platform()
+              .entities.snapshot(ctx.org.id, parsed.data.kind, parsed.data.entity_id)
+              .then((r) => (typeof r?.name === "string" ? r.name : typeof r?.title === "string" ? r.title : undefined))
+              .catch(() => undefined),
+          }),
           attached_to: {
             kind: parsed.data.kind,
             id: parsed.data.entity_id,
@@ -8181,7 +8384,7 @@ async function matchItem(opts: MatchItemOpts): Promise<unknown[] | null> {
     // Where a thing was bought is not in a picture of it. A purchase field
     // the router filled on a capture with no purchase evidence is invented,
     // and it goes (field-provenance.ts); the router's note stays.
-    const strippedPurchase = stripUnsupportedPurchaseFields(row, candidates);
+    const strippedPurchase = stripUnsupportedPurchaseFields(row, candidates, evidenceStamps);
     if (strippedPurchase.length) console.log(`[core-scan] ${opts.itemId}: purchase fields with no purchase evidence dropped: ${strippedPurchase.join(", ")}`);
     // A fact the name states is not the model's to guess: "4 Ply" on a
     // yarn IS its weight, derived here on every table that offers the
@@ -8297,7 +8500,7 @@ async function matchItem(opts: MatchItemOpts): Promise<unknown[] | null> {
         adoptName ? candName : row.suggested_name,
       ),
     ).catch(() => null);
-    const trackedStamp = trackedMatchStamp(tracked);
+    const trackedStamp = await trackedMatchStampAt(opts.orgId, tracked, scanPlaceOf(row)).catch(() => trackedMatchStamp(tracked));
 
     // A row the lookup could not name stays nameless (adopt-name.ts, guard
     // 0): the route and the fields are stored, the invented name on each
@@ -8444,10 +8647,13 @@ async function matchItem(opts: MatchItemOpts): Promise<unknown[] | null> {
           // this is. A shop is thirty things never scanned before and one
           // obvious home; the per-name sibling signal cannot see that.
           kind: candidates[0]?.kind ?? null,
+          // The collection's own name, from the workspace's menu for that kind.
+          kindLabel: menu.find((e) => e.kind === candidates[0]?.kind)?.label ?? null,
           requirement: resolveRequirement(
             (meta as { storage_requirement?: unknown }).storage_requirement ??
               (candidates[0]?.fields as Record<string, unknown> | undefined)?.storage_requirement,
-            suggestCategory,
+            [suggestCategory, await tableCategoryWord(opts.orgId, candidates[0]?.kind ?? null, null, candidates[0]?.fields as Record<string, unknown> | undefined)],
+            identified,
           ),
         });
         if (sug) {
@@ -8652,6 +8858,60 @@ inboxRouter.post(
       .returningAll()
       .executeTakeFirstOrThrow();
     res.status(201).json(row);
+  }),
+);
+
+// ─────────────── POST /batches/:id/record-purchase ───────────────
+// A receipt read while Purchases was off: turn Purchases on and record the
+// order the read would have made (services/receipt-purchase.ts, #3869).
+// Turning a module on is an admin's call, and the module's own enable route
+// decides that: a refusal comes back in its own words, never swallowed.
+
+// AI-REACH: exempt the receipt session's own button, pressed from the inbox beside the receipt it records; turning a module on is a person's choice there, not a sentence to the assistant
+inboxRouter.post(
+  "/batches/:id/record-purchase",
+  asyncHandler(async (req, res) => {
+    if (!requireRole(req, res, "owner", "admin", "member")) return;
+    const db = tenantDb(req);
+    const ctx = tenantContext(req);
+    const batch = await db
+      .selectFrom("core_scan_batches")
+      .select(["id", "pending_purchase", "purchases_order_id"])
+      .where("id", "=", String(req.params.id))
+      .executeTakeFirst();
+    if (!batch) {
+      res.status(404).json({ error: { code: "not_found", message: "No such session" } });
+      return;
+    }
+    if (batch.purchases_order_id) {
+      res.json({ order_id: batch.purchases_order_id, already: true });
+      return;
+    }
+    const plan = pendingPurchaseOf(batch.pending_purchase);
+    if (!plan) {
+      res.status(409).json({ error: { code: "nothing_pending", message: "This session has no purchase waiting to be kept." } });
+      return;
+    }
+    const baseUrl = (req.headers["x-cobblr-base-url"] as string | undefined) ?? INTERNAL_API;
+    const headers = { Authorization: `Bearer ${bearer(req)}`, "Content-Type": "application/json" };
+    const enabled = await fetch(`${baseUrl}/api/v1/orgs/${ctx.org.slug}/modules/purchases/enable`, { method: "POST", headers, body: "{}" });
+    if (!enabled.ok && enabled.status !== 409) {
+      const text = await enabled.text();
+      let message = "Couldn't turn on Purchases.";
+      try {
+        message = (JSON.parse(text) as { error?: { message?: string } }).error?.message ?? message;
+      } catch {
+        /* non-JSON body */
+      }
+      res.status(enabled.status).json({ error: { code: "enable_failed", message } });
+      return;
+    }
+    const outcome = await recordReceiptPurchase(db, batch.id, plan, { baseUrl, slug: ctx.org.slug, headers });
+    if (!outcome.recorded) {
+      res.status(502).json({ error: { code: "record_failed", message: "Purchases is on, but the purchase could not be recorded. Try again." } });
+      return;
+    }
+    res.json({ order_id: outcome.orderId });
   }),
 );
 

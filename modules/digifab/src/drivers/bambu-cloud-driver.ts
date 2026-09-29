@@ -113,15 +113,15 @@ export class BambuCloudDriver implements MachineDriver {
 
   async getJobStatus(jobId: string): Promise<JobStatus> {
     // jobId is the device serial (links carry remote_device_id = serial).
-    let state: JobState = "unknown";
-    try {
-      const devices = await this.cloud.listDevices(this.token);
-      const me = devices.find((d) => d.dev_id === jobId);
-      if (me) {
-        const s = mapCloudPrintStatus(me.print_status, me.online);
-        state = (["printing", "paused", "completed", "failed"].includes(s) ? s : "unknown") as JobState;
-      }
-    } catch { /* unknown on error */ }
+    // A cloud error or a printer the cloud cannot see is a MISSED poll, not an
+    // "unknown" report: thrown, it counts toward giving the job up, where
+    // "unknown" kept the job printing forever with nothing on it saying why.
+    const devices = await this.cloud.listDevices(this.token);
+    const me = devices.find((d) => d.dev_id === jobId);
+    if (!me) throw new Error("the printer is no longer on this Bambu account");
+    if (!me.online) throw new Error("the printer is offline in Bambu's cloud");
+    const s = mapCloudPrintStatus(me.print_status, me.online);
+    const state = (["printing", "paused", "completed", "failed"].includes(s) ? s : "unknown") as JobState;
     return { jobId, state, deviceId: jobId };
   }
 

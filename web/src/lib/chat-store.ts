@@ -16,6 +16,8 @@ export interface StoredChatMessage {
   command?: unknown;
   sections?: Record<string, unknown>;
   resolved?: boolean;
+  /** Where Save put this answer: the line under it says so, after a reload too. */
+  savedTo?: { label: string; kind: string; id: string };
 }
 
 /** The messages as they are stored: the last `max`, each slimmed. A message
@@ -34,6 +36,7 @@ export function slimForStore<M extends StoredChatMessage>(messages: M[], max: nu
       ...(m.command ? { command: m.command } : {}),
       ...(m.sections && Object.keys(m.sections).length ? { sections: m.sections } : {}),
       ...(m.resolved ? { resolved: true } : {}),
+      ...(m.savedTo ? { savedTo: m.savedTo } : {}),
     }));
 }
 

@@ -22,7 +22,7 @@ import {
   Eye,
 } from "lucide-react";
 import { Link, Navigate, useParams } from "react-router-dom";
-import { useConfirm, usePageTitle, usePageWidth, useToast, Modal } from "@cobblr/platform-web";
+import { useConfirm, usePageTitle, usePageWidth, useToast, Modal, SearchInput } from "@cobblr/platform-web";
 import { setImpersonation } from "../lib/impersonation";
 import { displaySlug } from "../lib/workspaceSlug";
 import {
@@ -276,12 +276,7 @@ function WorkspacesTab() {
   return (
     <div className="space-y-3">
       <div className="flex items-center gap-2">
-        <input
-          value={search}
-          onChange={(e) => setSearch(e.target.value)}
-          placeholder="Search name, slug, or owner…"
-          className="input max-w-sm"
-        />
+        <SearchInput value={search} onChange={setSearch} placeholder="Search name, slug, or owner…" aria-label="Search workspaces" wrapperClassName="w-full max-w-sm" />
         <select
           value={sortBy}
           onChange={(e) => setSortBy(e.target.value as typeof sortBy)}
@@ -424,12 +419,7 @@ function UsersTab() {
   return (
     <div className="space-y-3">
       <div className="flex items-center gap-2">
-        <input
-          value={search}
-          onChange={(e) => setSearch(e.target.value)}
-          placeholder="Search name, email, or workspace…"
-          className="input max-w-sm"
-        />
+        <SearchInput value={search} onChange={setSearch} placeholder="Search name, email, or workspace…" aria-label="Search people" wrapperClassName="w-full max-w-sm" />
         <span className="text-xs text-faint font-mono">
           {items.length}/{q.data?.items.length ?? 0}
         </span>

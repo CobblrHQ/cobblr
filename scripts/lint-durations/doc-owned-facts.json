@@ -1,7 +1,8 @@
 {
   "lint": "lint:doc-owned-facts",
-  "run": "tsx scripts/lint-doc-owned-facts.ts",
+  "run": "node scripts/lint-doc-owned-facts.ts",
   "ms": 512,
   "recorded": "2026-09-14",
-  "source": "split from scripts/lint-durations.json (recorded 2026-09-14)"
+  "source": "split from scripts/lint-durations.json (recorded 2026-09-14)",
+  "readMB": 10.7
 }

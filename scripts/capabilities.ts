@@ -73,6 +73,20 @@ export interface VocabularyCapability extends Base {
 export const CAPABILITIES: Capability[] = [
   {
     kind: "owns",
+    id: "services:who-has-to-say-yes",
+    what: "deciding whether a service job may start without a person, from the capability's declared effect and the door it came in by: serviceConsent / serviceRunsUnconfirmed in packages/platform-contract/src/service-consent.ts",
+    why:
+      "the one standing rule about the physical world (a print never starts without a person's yes) lived only in client dialogs, " +
+      "and a door that decides for itself (the chat, the MCP route, a wire, module code) is where a print starts on Auto (#4034)",
+    owner: "packages/platform-contract/src/service-consent.ts",
+    scope: ["api/src/**/*.ts", "modules/*/src/**/*.ts", "packages/*/src/**/*.ts"],
+    // A comparison against an effect value, the shape every hand-rolled copy
+    // of the rule takes. A declaration (effect: "physical") is not a decision.
+    detect: /(?:effect|\.effect)\s*[!=]==?\s*["'](?:physical|spends|writes)["']|["'](?:physical|spends|writes)["']\s*[!=]==?\s*\w*[eE]ffect\b|case\s+["'](?:physical|spends)["']\s*:/,
+    use: "serviceConsent(effect, door, { writeMode, policy, wireRuns }) from @cobblr/platform-contract/service-consent",
+  },
+  {
+    kind: "owns",
     id: "network:is-this-a-home-address",
     what: "deciding whether an address is on the person's own network (and so needs a bridge from a hosted Cobblr): addressReach / needsBridge in packages/platform-contract/src/address-reach.ts",
     why:
@@ -88,6 +102,42 @@ export const CAPABILITIES: Capability[] = [
     except: {
       "packages/platform-web/src/local-network.test.ts": "the browser gate's own test names the addresses it must refuse",
     },
+  },
+  {
+    kind: "owns",
+    id: "layout:sticky-bottom-bar",
+    what: "a row pinned to the bottom of the screen while a page scrolls: StickyBottomBar in packages/platform-web/src/StickyBottomBar.tsx, which reserves its own height as the page's scroll padding",
+    why:
+      "a bar pinned with sticky bottom-0 sits over whatever scrolls beneath it, so a record's last field, or one focused with the " +
+      "phone's keyboard up, was hidden under Duplicate · Move · Delete (#3990)",
+    owner: "packages/platform-web/src/StickyBottomBar.tsx",
+    scope: ["web/src/**/*.tsx", "packages/platform-web/src/**/*.tsx", "modules/*/src/ui/**/*.tsx"],
+    detect: /\bsticky\s+bottom-0\b|\bbottom-0\s+sticky\b/,
+    use: "<StickyBottomBar className=\"…\">actions</StickyBottomBar>",
+  },
+  {
+    kind: "owns",
+    id: "input:drag-saves-once",
+    what: "a control whose value moves while dragged (a colour swatch, a slider): DragInput in packages/platform-web/src/DragInput.tsx, which previews every tick and commits once on release",
+    why:
+      "the browser fires input on every tick of a drag and React's onChange is that event, so the record's colour field saved about " +
+      "86 times in one minute on one filament, each with its own activity row (#3942); the digifab sensitivity slider did the same",
+    owner: "packages/platform-web/src/DragInput.tsx",
+    scope: ["web/src/**/*.tsx", "packages/platform-web/src/**/*.tsx", "modules/*/src/ui/**/*.tsx"],
+    detect: /(?<!\[)\btype=["'](?:color|range)["']/,
+    use: "<DragInput control=\"color\" | \"range\" value onPreview onCommit />: onPreview for the live look, onCommit for the save",
+  },
+  {
+    kind: "owns",
+    id: "bridge:the-install-command",
+    what: "the copy-ready command that installs a tunnel bridge (docker run and compose): bridgeInstallCommands in packages/platform-contract/src/edge-channel.ts",
+    why:
+      "two setup screens each hand-built the same install, so a line added to one (the host's name, so a bridge is not listed " +
+      "as a container id) would have missed the other (#3904)",
+    owner: "packages/platform-contract/src/edge-channel.ts",
+    scope: ["web/src/**/*.tsx", "web/src/**/*.ts", "packages/platform-web/src/**/*.tsx", "packages/platform-web/src/**/*.ts", "modules/*/src/**/*.ts", "modules/*/src/**/*.tsx", "api/src/**/*.ts"],
+    detect: /BRIDGE_RELAY_TOKEN[=:]/,
+    use: "bridgeInstallCommands({ relayUrl, token, bridgeId }) from @cobblr/platform-contract/edge-channel",
   },
   {
     kind: "owns",
@@ -1316,6 +1366,21 @@ export const CAPABILITIES: Capability[] = [
   },
   {
     kind: "owns",
+    id: "integrations:outbound-connector-is-a-service",
+    what: "registering an outbound connector (Slack, Discord, webhook, HTTP, any new one): registerOutboundConnector registers it for wires AND as one built-in service per action",
+    why:
+      "the connectors were services in everything but name, yet only a wire could reach them: Cobb and MCP could not see a Slack post, and nothing asked a person before one ran. " +
+      "A connector registered straight with the kernel would slip back to that, visible to wires and invisible to everything else (services.md §12)",
+    owner: "modules/core-integrations/src/services.ts",
+    scope: ["modules/*/src/**/*.ts", "api/src/**/*.ts"],
+    detect: /\bintegrations\.registerConnector\(/,
+    except: {
+      "api/src/index.ts": "the kernel wires platform().integrations.registerConnector to its own registry; that is the thing registered through, not a connector",
+    },
+    use: "registerOutboundConnector(def) from modules/core-integrations/src/services.ts",
+  },
+  {
+    kind: "owns",
     id: "dates:days-until-a-date",
     what: "how many days until (or since) a date: daysUntil / daysUntilField / countdownWords in @cobblr/platform-contract/day, fed the reader's day",
     why:
@@ -1328,9 +1393,13 @@ export const CAPABILITIES: Capability[] = [
     // expiry. Measured on the tree: four countdowns (all moved here) and the
     // cadence model's intervals, which are not a countdown.
     detect: /\/\s*(?:86_?400_?000|MS_PER_DAY|DAY_MS|ONE_DAY|DAY)\b/,
-    also: /expir/i,
+    // A countdown lives wherever a date is said to be due, not only where
+    // food expires: the maintenance page divided milliseconds into days as
+    // "overdue", out of this row's sight, and disagreed with the record (#3991).
+    also: /expir|overdue|due (?:in|today|soon)/i,
     except: {
       "modules/core-cadence/src/model.ts": "the gap between two purchases in days (a rate), not a countdown to a date anybody reads",
+      "modules/purchases/src/arrival-sweeper.ts": "two thresholds (how stale a parcel is, how long since it was last asked about) that decide whether to ask; no number reaches a person",
       "packages/platform-contract/src/every-surface-shows-one-countdown.test.ts": "rebuilds the two retired rules on purpose, to prove the grid can tell them from the calendar",
     },
     use: "daysUntilField(value, today) for a stored date, daysUntil(day, today) for a day, countdownWords(day, today, 'short' | 'long') for the words; today is dayHere() in the browser, the person's day (accounts.dayFor / the client's ?today) on the server",
@@ -1430,5 +1499,57 @@ export const CAPABILITIES: Capability[] = [
     // Any setTorch whose "on" argument is not a literal false.
     detect: /\bsetTorch\((?![^,()]*,\s*false\s*\))/,
     use: "Turn the light on through applyLight(track, source, on) in web/src/lib/cameraLight.ts; setTorch(track, false) to put it out stays allowed anywhere.",
+  },
+  {
+    id: "inventory:count-derived-row",
+    kind: "owns",
+    what: "Redrawing a stock row after its count moves: Available, on hand and low, derived the way the list endpoint derives them (withCount), and Available read one way (availableOnHand).",
+    why: "The row stepper moved the count and available_qty by hand and left on_hand behind, so the table's Available (read through on hand) stayed put after −1 until a reload (#4001).",
+    owner: "modules/inventory/src/stock-derived.ts",
+    scope: ["modules/inventory/src/ui/**/*.tsx", "web/src/components/**/*.tsx", "web/src/features/**/*.tsx"],
+    // A cached row's available figure written by hand, or Available re-derived
+    // from on_hand beside the shared reader.
+    detect: /\bavailable_qty:\s*(?:Number\(|[\w.]+\s*[-+])|available_qty\s*\+\s*\(\s*[\w.]*on_hand/,
+    use: "Patch the cached row with withCount(row, newQty) and show Available with availableOnHand(row), both from modules/inventory/src/stock-derived.ts (exported through @cobblr/inventory/ui).",
+  },
+  {
+    id: "locations:name-range",
+    kind: "owns",
+    what: 'Reading a name as a run of places ("Drawer 1-3" is Drawer 1, Drawer 2 and Drawer 3), for every form that makes places.',
+    why: "The list's New location form expanded \"Drawer 1-3\" into three drawers while the floor plan's made one location literally named \"Drawer 1-3\" filling the whole face (#3986).",
+    owner: "web/src/lib/nameRange.ts",
+    scope: ["web/src/pages/**/*.tsx", "web/src/components/**/*.tsx"],
+    // A hand-written range pattern: digits, a dash, digits.
+    detect: /\(\\d\+\)\\s\*\[-–\]/,
+    use: "parseRange(name) from web/src/lib/nameRange.ts.",
+  },
+  {
+    id: "floorplan:metadata-writes",
+    kind: "owns",
+    what: "Writing a location's or a thing's floor plan blob: its spot on a plan (withRect), its own layout (withBound; a container's goes to its face), its decoration (withDecor), each keeping the rest of the metadata.",
+    why: "saveBound replaced the whole metadata with the bound, so setting a placed toolbox's face took it off the garage, and a footprint write stretched the drawer face it shared a w × d with (#3986).",
+    owner: "web/src/lib/floorplanGeometry.ts",
+    scope: [
+      "web/src/components/FloorPlan.tsx",
+      "web/src/components/LocationFloorPlanTab.tsx",
+      "web/src/components/placeItems/PlaceItemsView.tsx",
+      "web/src/pages/PlaceItemsPage.tsx",
+      "web/src/pages/LocationsPage.tsx",
+      "web/src/pages/LocationDetailPage.tsx",
+    ],
+    // A blob written by hand: `floorplan: <value>` in an object, or an
+    // assignment to `.floorplan`.
+    detect: /\bfloorplan\s*:\s*[\w{[]|\.floorplan\s*=[^=]/,
+    use: "withRect(metadata, rect, { keepFace }), withBound(metadata, bound, kind) or withDecor(metadata, patch) from web/src/lib/floorplanGeometry.ts.",
+  },
+  {
+    id: "nav:hide-says-where-it-went",
+    kind: "owns",
+    what: "Hiding an entry from this sidebar (or showing it again), which the first time says the app is in ⊞ More apps.",
+    why: "Hiding an app took it out of the nav with nothing saying where it went; the owner had to be told the way back existed (#3883).",
+    owner: "web/src/lib/moreApps.ts",
+    scope: ["web/src/components/**/*.tsx", "web/src/pages/**/*.tsx"],
+    detect: /\btoggleNavHidden\(/,
+    use: "const toggleHidden = useToggleNavHidden() from web/src/lib/moreApps.ts; toggleHidden(slug, name).",
   },
 ];

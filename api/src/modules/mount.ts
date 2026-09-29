@@ -33,6 +33,7 @@ import { applyCustomFieldValues } from "../platform/custom-field-values.js";
 import { applyComputedFields } from "../platform/computed-fields.js";
 import { withServedTitle } from "../platform/served-title.js";
 import { markModulesMounted } from "./mount-state.js";
+import { observeInstanceSaves, observeModuleSaves } from "../platform/entity-saved.js";
 
 const primaryRouters = new Map<string, Router>();
 let appRef: Application | null = null;
@@ -82,6 +83,7 @@ export function dispatchInstanceItems(
   // every instance of every module gets it, including ones written later.
   // The presentation kind for an instance is "<instance_name>:item" — the same
   // string a bundle's field defs are registered under.
+  if (req.instance && moduleName) observeInstanceSaves(req, res, req.instance, moduleName);
   const kind = req.instance ? `${req.instance}:item` : undefined;
   const orgId = req.tenant?.org.id;
   if (kind && orgId) {
@@ -222,7 +224,9 @@ async function mountSingleEntry(app: Application, entry: ReturnType<typeof listE
     return false;
   }
   const mountPath = `/api/v1/orgs/:slug/modules/${manifest.name}`;
-  app.use(mountPath, requireAuth, withTenant, requireModuleEnabled(manifest.name), router);
+  // observeModuleSaves announces every create and update this module's routes
+  // answer (platform/entity-saved.ts): one signal for a record, whatever door.
+  app.use(mountPath, requireAuth, withTenant, requireModuleEnabled(manifest.name), observeModuleSaves(manifest.name), router);
   // Merge-compat alias (labels 0.6.0): the former core-labels-qr module's
   // paths keep answering, served by labels' QR routers, gated on labels
   // being enabled.

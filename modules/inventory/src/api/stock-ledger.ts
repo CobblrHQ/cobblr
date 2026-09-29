@@ -19,6 +19,7 @@
 //     ledger row, and the allocation status flip commit or roll back together.
 
 import type { Kysely, Transaction } from "kysely";
+import { platform } from "@cobblr/platform-contract";
 import type { InventoryDB } from "../db.js";
 
 /** A Kysely db OR an open transaction — both satisfy the insert we need. */
@@ -35,6 +36,8 @@ export interface ConsumptionEntry {
   /** "correction": the count was set to what is actually there. Not use, not
    *  a purchase, so the burn rate never reads it. */
   kind?: "correction" | null;
+  /** The person who did it; null when nobody did by hand. */
+  byUser?: string | null;
 }
 
 /** Append one row to inventory_consumption. Throws on failure — the caller
@@ -50,6 +53,10 @@ export async function recordConsumption(exec: LedgerExec, e: ConsumptionEntry): 
       source_kind: e.sourceKind ?? null,
       source_id: e.sourceId ?? null,
       kind: e.kind ?? null,
+      // Who, without every caller having to say: the person this request acts
+      // for (null for a wire on a timer, a sync, a job). One writer, so every
+      // stock path names its person the same way.
+      by_user: e.byUser ?? platform().accounts?.currentUserId?.() ?? null,
     })
     .execute();
 }

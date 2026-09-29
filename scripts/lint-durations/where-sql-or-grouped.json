@@ -1,0 +1,10 @@
+{
+  "lint": "lint:where-sql-or-grouped",
+  "run": "node scripts/lint-where-sql-or-grouped.ts",
+  "rows": [
+    "kernel-platform-service"
+  ],
+  "ms": 2204,
+  "recorded": "2026-09-29",
+  "source": "scaffolded by new-lint.sh at twice a local run (a shared box); replaced from its first CI measurement"
+}

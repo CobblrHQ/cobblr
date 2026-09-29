@@ -2,6 +2,8 @@ import { columnSet, platform, parseSort, type EntityListQuery, type ResolvedEnti
 import { sql, type Kysely } from "kysely";
 import type { MachinesDB } from "../db.js";
 import { resolveDetailPath } from "@cobblr/platform-contract/instance-detail";
+import { DISPOSITION_LABELS } from "@cobblr/platform-contract/disposition";
+import { liftUnits, unitIdsIn, unitsSummary } from "./units.js";
 
 // Native columns the list resolver will order by. Anything outside this set
 // (custom metadata fields, unknown keys) is dropped by parseSort rather than
@@ -17,6 +19,10 @@ const SORTABLE = columnSet<MachinesDB["machines_machines"]>()([
   "updated_at",
 ]);
 
+// A machine in one of these states has left the fleet: it keeps its page and
+// its history, and nothing should schedule work for it (ResolvedEntity.retired).
+const GONE_STATES = new Set<string>([...Object.values(DISPOSITION_LABELS), "decommissioned"]);
+
 let registered = false;
 
 export function registerMachinesResolvers(): void {
@@ -31,7 +37,7 @@ export function registerMachinesResolvers(): void {
       .where("id", "=", id)
       .executeTakeFirst();
     if (!row) return null;
-    return toResolvedMachine(row);
+    return toResolvedMachine(await withUnits(orgId, db, row));
   });
 
   // Shared list body — base kind (all instances) AND, with an `instance` arg,
@@ -47,7 +53,16 @@ export function registerMachinesResolvers(): void {
     const limit = Math.min(query.limit ?? 50, 200);
     const offset = query.offset ?? 0;
     let q = db.selectFrom("machines_machines").selectAll();
-    if (instance) q = q.where("instance", "=", instance);
+    if (instance) {
+      q = q.where("instance", "=", instance);
+      const units = await unitIdsIn(db, orgId, instance);
+      if (units.length) q = q.where("id", "not in", units);
+    }
+    // A machine that left the fleet is out of the list, as the contract has
+    // every kind do (EntityListQuery.include_retired), unless the query asks
+    // or names the state itself (a "Sold" view does).
+    const namesState = query.include_retired === true || query.filter?.state !== undefined;
+    if (!namesState) q = q.where((eb) => eb.or([eb("state", "is", null), eb(sql<string>`lower(state)`, "not in", [...GONE_STATES])]));
     if (query.q?.trim()) q = q.where((eb) => textSearchWhere(eb, query.q, { text: ["name", "short_name", "manufacturer", "type", "family", "notes", "state"], json: ["metadata"] })!);
     if (query.filter) {
       const NATIVE = columnSet<MachinesDB["machines_machines"]>()(["state", "family", "type", "manufacturer", "serial_number", "location_id"]);
@@ -104,7 +119,9 @@ export function registerMachinesResolvers(): void {
     for (const { col, dir } of order) q = q.orderBy(col as never, dir);
     if (!order.some((o) => o.col === "name")) q = q.orderBy("name", "asc");
     const rows = await q.limit(limit).offset(offset).execute();
-    return { items: rows.map((r) => toResolvedMachine(r)) };
+    // A unit is one of its parent's N, not a machine of its own: it leaves the
+    // list and rides on its parent, so a count of records never counts it twice.
+    return { items: (await liftUnits(db, orgId, rows)).map((r) => toResolvedMachine(r)) };
   };
 
   // Scoped to the default instance - same leak as inventory's base kind; see
@@ -132,8 +149,15 @@ export function registerMachinesResolvers(): void {
       .where("instance", "=", instance as never)
       .executeTakeFirst();
     if (!row) return null;
-    return toResolvedMachine(row);
+    return toResolvedMachine(await withUnits(orgId, db, row));
   });
+}
+
+/** One record read on its own: the units it names, how many of its quantity
+ *  are not named yet, and, for a unit, which machine it is one of. */
+async function withUnits<T extends { id: string; instance: string }>(orgId: string, db: Kysely<MachinesDB>, row: T) {
+  const s = await unitsSummary({ db, orgId, userId: null, instance: row.instance }, row.id);
+  return { ...row, units: s?.units ?? [], units_not_named: s?.not_named ?? 0, unit_of: s?.unit_of ?? null };
 }
 
 function toResolvedMachine(row: {
@@ -160,6 +184,7 @@ function toResolvedMachine(row: {
     title: row.name,
     subtitle: row.state,
     detailUrl,
+    ...(GONE_STATES.has(String(row.state ?? "").toLowerCase()) ? { retired: true } : {}),
     // Carry the photo so generic surfaces (the labels browser tiles) show it
     // instead of an initial-letter chip. Mirrors inventory's toResolvedPart.
     image_path: (row.image_path as string | null | undefined) ?? undefined,

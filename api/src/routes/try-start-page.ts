@@ -169,7 +169,7 @@ export function startHtml(siteKey: string, nonce = "", intent: StartIntent = NO_
 <p id="lede">${lede}</p>
 ${booth ? `<button type="button" id="go" class="primary big">Try it: scan something</button>
 <p class="hint" id="camhint">Your phone will ask to use the camera. Tap Allow.</p>` : ""}
-<div class="w"><div class="cf-turnstile" data-sitekey="${siteKey}" data-callback="cobblrGo" data-error-callback="cobblrFail" data-expired-callback="cobblrExpired"${booth ? ` data-execution="execute" data-appearance="interaction-only"` : ""}></div></div>
+<div class="w"><div class="cf-turnstile" data-sitekey="${siteKey}" data-callback="cobblrGo" data-error-callback="cobblrFail" data-expired-callback="cobblrExpired" data-before-interactive-callback="cobblrAsk" data-after-interactive-callback="cobblrAsked"${booth ? ` data-execution="execute" data-appearance="interaction-only"` : ""}></div></div>
 <div id="work" hidden>
   <div class="spin"></div>
   <div class="bar"><i id="fill"></i></div>
@@ -236,11 +236,23 @@ ${booth ? `<button type="button" id="go" class="primary big">Try it: scan someth
    failed('That check timed out',
           'The challenge expired before it was used. Try again and it is usually instant.');
  }
- function retry(){
+ function starting(){
    var h = $('h'); if (h) h.textContent = BOOTH ? 'Scan something on the table' : 'Setting up your sandbox';
    var l = $('lede'); if (l) l.textContent = BOOTH
      ? 'One tap opens a sandbox and your camera. It lasts an hour, and you do not need an account.'
      : 'It lasts an hour, and you do not need an account.';
+ }
+ // Most visitors pass without a click, but a private window, a hardened
+ // browser or a conference network is shown the checkbox, and then nothing is
+ // being set up: the page waits for them. So while the widget waits, the page
+ // says what it wants, and goes back to "Setting up" once it has it.
+ function cobblrAsk(){
+   var h = $('h'); if (h) h.textContent = 'Tick the box to start your sandbox';
+   var l = $('lede'); if (l) l.textContent = 'It checks you are a person. Your sandbox lasts an hour, and you do not need an account.';
+ }
+ function cobblrAsked(){ starting(); }
+ function retry(){
+   starting();
    show($('recover'), false);
    show(document.querySelector('.w'), true);
    var box = document.querySelector('.cf-turnstile');
@@ -265,6 +277,7 @@ ${booth ? `<button type="button" id="go" class="primary big">Try it: scan someth
    else { go.disabled = false; go.textContent = 'Try it: scan something'; }
  });
  window.cobblrGo = cobblrGo; window.cobblrFail = cobblrFail; window.cobblrExpired = cobblrExpired;
+ window.cobblrAsk = cobblrAsk; window.cobblrAsked = cobblrAsked;
 </script>
 </body></html>`;
 }

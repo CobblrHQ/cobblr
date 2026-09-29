@@ -1,7 +1,8 @@
 {
   "lint": "lint:edge-url-predicate",
-  "run": "tsx scripts/lint-edge-url-predicate.ts",
+  "run": "node scripts/lint-edge-url-predicate.ts",
   "ms": 893,
   "recorded": "2026-09-14",
-  "source": "split from scripts/lint-durations.json (recorded 2026-09-14)"
+  "source": "split from scripts/lint-durations.json (recorded 2026-09-14)",
+  "readMB": 19.9
 }

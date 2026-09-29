@@ -5,11 +5,11 @@
 // This connector is the lowest common denominator — every other HTTP
 // service can be wired up via this until a dedicated connector exists.
 
-import { platform } from "@cobblr/platform-contract";
+import { registerOutboundConnector } from "../services.js";
 import { assertSafeOutboundUrl } from "./ssrf.js";
 
 export function register(): void {
-  platform().integrations.registerConnector({
+  registerOutboundConnector({
     id: "webhook",
     label: "Generic webhook",
     describeCredentials: () => ({

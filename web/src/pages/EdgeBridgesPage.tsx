@@ -15,13 +15,15 @@
 //                            whose module is off renders greyed with Enable, so
 //                            enabling e.g. digifab later just attaches it to
 //                            the bridge that's already connected.
+import { useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { Link } from "react-router-dom";
 import { Activity, Cable, CheckCircle2, ChevronRight, Plug, User, XCircle } from "lucide-react";
-import { api } from "../lib/api";
+import { api, type EdgeBridge } from "../lib/api";
+import { bridgeDisplayName } from "../lib/bridge-choice";
 import { DriverPackages } from "../features/edge/DriverPackages";
 import { useActiveOrg } from "../auth/ActiveOrgContext";
-import { changeWorkspaceShape, usePageTitle, useToast } from "@cobblr/platform-web";
+import { changeWorkspaceShape, useConfirm, usePageTitle, useToast } from "@cobblr/platform-web";
 import { EdgeBridgeInstall } from "../components/EdgeBridgeInstall";
 import { DesktopAppCard, useDesktopApp } from "../components/DesktopAppCard";
 
@@ -61,10 +63,11 @@ export function EdgeBridgesPage({ embedded = false }: { embedded?: boolean } = {
 
   const agents = status.data?.agents ?? [];
   const direct = directQ.data?.direct ?? [];
+  // Every bridge this workspace has, online or not, by name (#3904).
+  const tunnel = directQ.data?.bridges ?? [];
   const hasDesktopApp = !!useDesktopApp().data;
   const personal = status.data?.personal?.connected ?? false;
   const personalBacks = status.data?.personal?.backs ?? [];
-  const staleMs = status.data?.stale_after_ms ?? 60_000;
 
   return (
     <div className={embedded ? "space-y-6" : "max-w-3xl mx-auto space-y-6"}>
@@ -87,7 +90,7 @@ export function EdgeBridgesPage({ embedded = false }: { embedded?: boolean } = {
           <h2 className="text-sm font-semibold text-content dark:text-mortar-100 flex-1">Connected right now</h2>
           <span className="text-[11px] text-faint dark:text-slate-500">auto-refreshes</span>
         </div>
-        {agents.length === 0 && direct.length === 0 && !hasDesktopApp ? (
+        {tunnel.length === 0 && direct.length === 0 && !hasDesktopApp ? (
           <>
             <p className="text-sm text-faint dark:text-slate-400">
               No bridge is connected in this workspace. Set one up below - the moment it dials in, it appears here.
@@ -102,20 +105,14 @@ export function EdgeBridgesPage({ embedded = false }: { embedded?: boolean } = {
           </>
         ) : (
           <ul className="space-y-1.5">
-            {agents.map((a) => {
-              const fresh = a.last_seen_ms < staleMs;
-              return (
-                <li key={a.bridge ?? "default"} className="flex items-center gap-3 rounded-lg border border-line dark:border-slate-800 px-3 py-2 text-sm">
-                  {fresh ? <CheckCircle2 size={15} className="text-emerald-500 shrink-0" /> : <XCircle size={15} className="text-red-500 shrink-0" />}
-                  <span className="font-medium text-content dark:text-mortar-100">{a.bridge ?? "main edge bridge"}</span>
-                  <span className="text-xs text-faint dark:text-slate-400 flex-1">
-                    polled {Math.round(a.last_seen_ms / 1000)}s ago
-                    {a.parked ? " · idle, waiting for work" : a.in_flight > 0 ? ` · ${a.in_flight} request${a.in_flight === 1 ? "" : "s"} in flight` : ""}
-                    {a.queued > 0 ? ` · ${a.queued} queued` : ""}
-                  </span>
-                </li>
-              );
-            })}
+            {tunnel.map((b) => (
+              <BridgeRow
+                key={b.bridge ?? "first"}
+                slug={slug}
+                bridge={b}
+                agent={agents.find((a) => a.bridge === b.bridge)}
+              />
+            ))}
             {direct.map((d) => {
               // The honest bit: this says whether COBBLR'S SERVER has reached it.
               // Whether this browser can is a different question — the Labels
@@ -234,5 +231,111 @@ export function EdgeBridgesPage({ embedded = false }: { embedded?: boolean } = {
         <DriverPackages slug={slug} hasBridge={agents.length > 0} />
       </section>
     </div>
+  );
+}
+
+/** One bridge, as a person recognises it: its name (renamable), whether it is
+ *  online, and what it runs on. Offline bridges stay listed: a bridge that
+ *  stopped is the one somebody comes here looking for. */
+function BridgeRow({
+  slug,
+  bridge,
+  agent,
+}: {
+  slug: string;
+  bridge: EdgeBridge;
+  agent?: { queued: number; in_flight: number; parked: boolean };
+}) {
+  const qc = useQueryClient();
+  const toast = useToast();
+  const [editing, setEditing] = useState(false);
+  const [name, setName] = useState(bridgeDisplayName(bridge));
+  const rename = useMutation({
+    mutationFn: () => api.renameEdgeBridge(slug, bridge.bridge, name.trim()),
+    onSuccess: () => {
+      setEditing(false);
+      void qc.invalidateQueries({ queryKey: ["edge-bridges", slug] });
+    },
+    onError: (e) => toast.error(e instanceof Error ? e.message : "Couldn't rename it"),
+  });
+  const confirm = useConfirm();
+  const disconnect = useMutation({
+    mutationFn: () => api.disconnectEdgeBridge(slug, bridge.bridge),
+    onSuccess: (r) => {
+      void qc.invalidateQueries({ queryKey: ["edge-bridges", slug] });
+      toast.success(
+        r.also_cut.length
+          ? `Disconnected. ${r.also_cut.join(", ")} used the same key and ${r.also_cut.length === 1 ? "was" : "were"} cut off too.`
+          : "Disconnected. Its key no longer works.",
+      );
+    },
+    onError: (e) => toast.error(e instanceof Error ? e.message : "Couldn't disconnect it"),
+  });
+  const seen = bridge.last_seen ? new Date(bridge.last_seen) : null;
+  const ago = seen ? Math.max(0, Math.round((Date.now() - seen.getTime()) / 1000)) : null;
+  return (
+    <li data-testid="bridge-row" className="flex items-center gap-3 rounded-lg border border-line dark:border-slate-800 px-3 py-2 text-sm">
+      {bridge.connected ? <CheckCircle2 size={15} className="text-emerald-500 shrink-0" /> : <XCircle size={15} className="text-red-500 shrink-0" />}
+      <span className="flex-1 min-w-0">
+        {editing ? (
+          <form
+            className="flex items-center gap-2"
+            onSubmit={(e) => {
+              e.preventDefault();
+              if (name.trim()) rename.mutate();
+            }}
+          >
+            <input value={name} onChange={(e) => setName(e.target.value)} className="input py-0.5 text-sm" autoFocus aria-label="Bridge name" />
+            <button type="submit" disabled={!name.trim() || rename.isPending} className="text-xs text-accent underline">
+              Save
+            </button>
+            <button type="button" onClick={() => setEditing(false)} className="text-xs text-muted">
+              Cancel
+            </button>
+          </form>
+        ) : (
+          <>
+            <span className="font-medium text-content dark:text-mortar-100">{bridgeDisplayName(bridge)}</span>{" "}
+            <button type="button" onClick={() => setEditing(true)} className="text-[11px] text-muted underline hover:text-accent">
+              Rename
+            </button>
+            {bridge.can_disconnect && (
+              <button
+                type="button"
+                disabled={disconnect.isPending}
+                onClick={async () => {
+                  const ok = await confirm({
+                    title: `Disconnect ${bridgeDisplayName(bridge)}?`,
+                    message:
+                      "Its key stops working at once, so it can no longer reach Cobblr or anything through it. To use that machine again, set it up as a new bridge.",
+                    confirmLabel: "Disconnect",
+                    destructive: true,
+                  });
+                  if (ok) disconnect.mutate();
+                }}
+                className="ml-2 text-[11px] text-muted underline hover:text-ember-600"
+              >
+                Disconnect
+              </button>
+            )}
+          </>
+        )}
+        <span className="block text-xs text-faint dark:text-slate-400">
+          {bridge.connected
+            ? `online · heard from ${ago ?? 0}s ago`
+            : seen
+              ? `offline since ${seen.toLocaleString()}`
+              : "offline"}
+          {agent && agent.queued > 0 ? ` · ${agent.queued} queued` : ""}
+          {bridge.hostname ? ` · on ${bridge.hostname}` : ""}
+          {bridge.version ? ` · version ${bridge.version}` : ""}
+        </span>
+        <span data-testid="bridge-reach" className="block text-xs text-faint dark:text-slate-400">
+          {bridge.allowlist?.length
+            ? `Reaches only ${bridge.allowlist.join(", ")} (set on the bridge)`
+            : "Reaches the addresses you add in Cobblr"}
+        </span>
+      </span>
+    </li>
   );
 }

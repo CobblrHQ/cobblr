@@ -51,10 +51,13 @@ export function listMismatch(
   best: NudgeMatch | null | undefined,
   menu: readonly NudgeMenuEntry[],
 ): ListMismatch | null {
-  if (!top || !best || !top.instance) return null;
+  // The default list has two spellings, null and the module's own name
+  // ("inventory"); read as two lists they offered to move a record into the
+  // list it was already in.
+  if (!top || !best || !top.instance || top.instance === top.module) return null;
   const tracked = menu.find((e) => e.kind === best.kind);
   if (!tracked || tracked.module !== top.module) return null;
-  if ((tracked.instance ?? null) === top.instance) return null;
+  if ((tracked.instance ?? tracked.module) === top.instance) return null;
   return {
     module: tracked.module,
     // A module's default instance is named after the module (inventory's is

@@ -19,13 +19,13 @@ import { noneFromOneList } from "./none-from-one-list.js";
 import { answeredNotProposed } from "./answer-dont-propose.js";
 import { askDontRank } from "./ask-dont-rank.js";
 import { misreportedWrites } from "./reported-truthfully.js";
-import { chatModelMenu } from "./chat-model-menu.js";
+import { chatModelMenu, type RoutedConnection } from "./chat-model-menu.js";
 import { describedInsteadOfActing } from "./act-dont-describe.js";
 import { escortCoveredByAction, resolveActionId, ESCORT_COVERAGE } from "./act-dont-escort.js";
 import { buildSystemPrompt, situationalSuffix, type PromptWorkspace, type PromptOptions } from "./system-prompt.js";
 import { GROUNDING_RULES, PLAIN_ANSWER_RULES, TOOL_USE_RULES } from "./prompt-rules.js";
 import { z } from "zod";
-import { CHAT_HISTORY_MESSAGES, platform } from "@cobblr/platform-contract";
+import { CHAT_HISTORY_MESSAGES, platform, type AiChainStep } from "@cobblr/platform-contract";
 import { kindWordsFrom } from "@cobblr/platform-contract/kind-label";
 import { matchCommand } from "./basics.js";
 import { replyDespiteRefusal, withPlanCard } from "./plan-card.js";
@@ -1587,6 +1587,28 @@ chatRouter.put(
 
 // ── GET /chat/models — what the model pill can offer, and what it is set to ──
 //
+/** The personal connections in a chain, once each, in the order asked. */
+export function routedFromChain(steps: AiChainStep[]): RoutedConnection[] {
+  const seen = new Set<string>();
+  const out: RoutedConnection[] = [];
+  for (const st of steps) {
+    if (!st.credential_id || seen.has(st.credential_id)) continue;
+    seen.add(st.credential_id);
+    out.push({ credentialId: st.credential_id, providerId: st.provider_id, label: st.label, ownerUserId: st.owner_user_id ?? "", approved: true, active: false });
+  }
+  return out;
+}
+
+/** The chain's order as the menu's group keys: "ws" for the workspace's own. */
+export function chainOrder(steps: AiChainStep[]): string[] {
+  const out: string[] = [];
+  for (const st of steps) {
+    const key = st.credential_id ?? (st.source === "workspace" ? "ws" : "");
+    if (key && !out.includes(key)) out.push(key);
+  }
+  return out;
+}
+
 // The workspace's own providers plus the personal connections routed in and
 // approved, each with its provider's short list of chat models. The choice is
 // per person and lives on the same prefs row as the other two pills.
@@ -1597,7 +1619,7 @@ chatRouter.get(
     if (!requireRole(req, res, "owner", "admin", "member")) return;
     const userId = sessionUserId(req) ?? "";
     const orgId = tenantContext(req).org.id;
-    const [prefs, rows, routed, chatDefault] = await Promise.all([
+    const [prefs, rows, routed, chain, chatDefault] = await Promise.all([
       chatPrefsOf(req),
       tenantDb(req)
         .selectFrom("core_ai_providers")
@@ -1608,6 +1630,10 @@ chatRouter.get(
       // The module-facing seam for "which personal connections may this
       // workspace name": the same list the AI page's per-job picker uses.
       platform().connections.routedTo("ai-provider", orgId).catch(() => []),
+      // Who can answer this person's chat, in the order the router asks:
+      // their own "Just me" connections are here, which the Share list is
+      // not, so a person could never pick their own bridge (#3842).
+      platform().ai.chainFor(orgId, userId || null, "chat", { limit: 20 }).catch(() => null),
       // What the workspace's own chat default is, so the pill can SAY it at
       // rest ("Flash Lite") instead of "Default". The per-job row when one
       // was set; otherwise the first enabled provider's default, which is
@@ -1641,7 +1667,8 @@ chatRouter.get(
         enabled: !!r.enabled,
         model: typeof (r.config as Record<string, unknown> | null)?.model === "string" ? String((r.config as Record<string, unknown>).model) : null,
       })),
-      routed,
+      routed: chain ? routedFromChain(chain.steps) : routed,
+      ...(chain ? { order: chainOrder(chain.steps) } : {}),
       viewerUserId: userId,
       prefs,
     });

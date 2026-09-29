@@ -1,7 +1,8 @@
 {
   "lint": "lint:tailwind-breakpoints",
-  "run": "tsx scripts/lint-tailwind-breakpoints.ts",
+  "run": "node scripts/lint-tailwind-breakpoints.ts",
   "ms": 694,
   "recorded": "2026-09-14",
-  "source": "split from scripts/lint-durations.json (recorded 2026-09-14)"
+  "source": "split from scripts/lint-durations.json (recorded 2026-09-14)",
+  "readMB": 6.8
 }

@@ -13,11 +13,11 @@ import { MailSourceRow, OAuthConnectPanel } from "../components/MailSourceCard";
 import { CredentialFields } from "../components/CredentialFields";
 import { ProviderSetupSteps } from "../components/ProviderSetupSteps";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { backupOffers } from "../lib/connection-backup";
+import { backupOffers, backupSummary, type BackupOffer } from "../lib/connection-backup";
 import { Pencil, Plug, Plus, Trash2, X } from "lucide-react";
 import { useToast, useConfirm, usePageTitle } from "@cobblr/platform-web";
 import { WorkspaceChainSummaries } from "../components/WorkspaceChainSummaries";
-import { TestConnectionButton, VerificationBadge } from "../components/ConnectionState";
+import { TestConnectionButton, VerificationBadge, VerificationLine } from "../components/ConnectionState";
 import { keyRefusedBy, refusalDialog, verificationToast } from "../lib/connection-state";
 import {
   ApiError,
@@ -135,17 +135,8 @@ export function ConnectionsPage({ startAdding = false }: { startAdding?: boolean
                 <span>{c.label || providerLabel(c.provider_id)}</span>
                 <span className="text-[11px] font-mono text-faint">{c.provider_id}</span>
                 {c.kind === "ai-provider" && <VerificationBadge verification={c.verification} />}
-                {c.kind === "ai-provider" && c.verification?.photos && (
-                  // The test showed it a picture: whether it can stand in for
-                  // scanning is a different question from whether its key works.
-                  <span
-                    className={"text-[11px] " + (c.verification.photos === "read" ? "text-muted" : "text-amber-600 dark:text-amber-500")}
-                    title={c.verification.photos_said ? `It said: ${c.verification.photos_said}` : undefined}
-                  >
-                    {c.verification.photos === "read" ? "reads photos" : "doesn't read photos"}
-                  </span>
-                )}
               </div>
+              {c.kind === "ai-provider" && <VerificationLine verification={c.verification} />}
               <div className="text-[11px] text-muted mt-0.5">
                 {c.routes.length === 0 ? (
                   c.route_scope === "explicit" ? (
@@ -180,27 +171,18 @@ export function ConnectionsPage({ startAdding = false }: { startAdding?: boolean
                   </span>
                 )}
               </div>
-              {(offers.get(c.id) ?? []).map((o) => (
-                <div key={o.org_id} className="text-[11px] text-muted dark:text-slate-400 mt-1 flex flex-wrap items-center gap-x-2">
-                  <span>
-                    Back up {o.behind} in {orgName(o.org_id)}: when it is busy or out of quota, this one answers.
-                  </span>
-                  <button
-                    type="button"
-                    disabled={addBackup.isPending}
-                    onClick={() => addBackup.mutate({ id: c.id, routes: [...c.routes, { org_id: o.org_id, mode: o.mode }] })}
-                    className="text-accent hover:underline disabled:opacity-50"
-                  >
-                    Add to {orgName(o.org_id)}
-                  </button>
-                </div>
-              ))}
+              <BackupOffersRow
+                offers={offers.get(c.id) ?? []}
+                orgName={orgName}
+                pending={addBackup.isPending}
+                onAdd={(picked) => addBackup.mutate({ id: c.id, routes: [...c.routes, ...picked.map((o) => ({ org_id: o.org_id, mode: o.mode }))] })}
+              />
               {c.credential_keys.length > 0 && (
                 <div className="text-[11px] text-faint mt-0.5">
                   set: {c.credential_keys.join(", ")}
                 </div>
               )}
-              {isEdgeBridgeConnection(c) && <EdgeBridgeStatusRow />}
+              {isEdgeBridgeConnection(c) && <EdgeBridgeStatusRow verified={c.verification?.state === "verified"} />}
               {c.kind === "mail-source" && <MailSourceRow connection={c} orgName={orgName} />}
             </div>
             <div className="flex items-center shrink-0">
@@ -706,9 +688,21 @@ function PersonalAgentHint() {
 /** Compact live status for an edge-bridge connection in the list — same
  *  emerald/slate "online/offline" convention as the workspace device bridges
  *  (BridgePicker), so a personal bridge reads the same as a 3D-printer one. */
-function EdgeBridgeStatusRow() {
+function EdgeBridgeStatusRow({ verified }: { verified: boolean }) {
+  const qc = useQueryClient();
   const agent = useQuery({ queryKey: ["me-edge-agent"], queryFn: api.getMyEdgeAgent, refetchInterval: 5000 });
   const on = agent.data?.connected ?? false;
+  // The server re-tests the connection when its bridge comes back; pick up the
+  // verdict while this page is open instead of showing the old one.
+  useEffect(() => {
+    if (!on || verified) return;
+    const t = setInterval(() => void qc.invalidateQueries({ queryKey: aiAvailabilityKeys.connections() }), 5000);
+    const stop = setTimeout(() => clearInterval(t), 120_000);
+    return () => {
+      clearInterval(t);
+      clearTimeout(stop);
+    };
+  }, [on, verified, qc]);
   return (
     <div className="flex items-center gap-1.5 text-[11px] mt-1">
       <span className={"inline-block w-1.5 h-1.5 rounded-full " + (on ? "bg-emerald-500" : "bg-slate-400/60")} />
@@ -716,6 +710,77 @@ function EdgeBridgeStatusRow() {
         Edge bridge {on ? "online" : "offline"}
       </span>
       {!on && <span className="text-faint"> - start your bridge agent to use it</span>}
+    </div>
+  );
+}
+
+/** Where this connection could stand behind another of yours, as one line.
+ *  "Choose…" opens the list of workspaces, all ticked. */
+function BackupOffersRow({
+  offers,
+  orgName,
+  pending,
+  onAdd,
+}: {
+  offers: BackupOffer[];
+  orgName: (id: string) => string;
+  pending: boolean;
+  onAdd: (picked: BackupOffer[]) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const [skip, setSkip] = useState<Set<string>>(new Set());
+  const summary = backupSummary(offers, orgName);
+  if (!summary) return null;
+  const picked = offers.filter((o) => !skip.has(o.org_id));
+  return (
+    <div className="text-[11px] text-muted dark:text-slate-400 mt-1">
+      <div className="flex flex-wrap items-center gap-x-2">
+        <span title="When it is busy or out of quota, this one answers.">{summary}</span>
+        {offers.length === 1 ? (
+          <button type="button" disabled={pending} onClick={() => onAdd(offers)} className="text-accent hover:underline disabled:opacity-50">
+            Add
+          </button>
+        ) : (
+          <button type="button" onClick={() => setOpen((v) => !v)} aria-expanded={open} className="text-accent hover:underline">
+            {open ? "Close" : "Choose…"}
+          </button>
+        )}
+      </div>
+      {open && offers.length > 1 && (
+        <div className="mt-1 rounded border border-line dark:border-slate-700 p-2 space-y-1">
+          <div className="text-faint">When the AI there is busy or out of quota, this one answers.</div>
+          {offers.map((o) => (
+            <label key={o.org_id} className="flex items-center gap-2">
+              <input
+                type="checkbox"
+                checked={!skip.has(o.org_id)}
+                onChange={(e) =>
+                  setSkip((cur) => {
+                    const next = new Set(cur);
+                    if (e.target.checked) next.delete(o.org_id);
+                    else next.add(o.org_id);
+                    return next;
+                  })
+                }
+              />
+              <span>
+                {orgName(o.org_id)} <span className="text-faint">(behind {o.behind})</span>
+              </span>
+            </label>
+          ))}
+          <button
+            type="button"
+            disabled={pending || picked.length === 0}
+            onClick={() => {
+              onAdd(picked);
+              setOpen(false);
+            }}
+            className="mt-1 px-2 py-1 rounded border border-line dark:border-slate-700 text-accent hover:bg-subtle dark:hover:bg-slate-800 disabled:opacity-50"
+          >
+            Add to {picked.length} workspace{picked.length === 1 ? "" : "s"}
+          </button>
+        </div>
+      )}
     </div>
   );
 }

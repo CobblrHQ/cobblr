@@ -110,6 +110,9 @@ services:
       # degrade gracefully. Operator's hard floor, above per-workspace
       # BYO-key config.
       COBBLR_AI_ENABLED: ${COBBLR_AI_ENABLED:-true}
+      # Keeping photos of filed items (#3769 step 3): off until the updated
+      # terms ship and the owner says go.
+      COBBLR_PHOTO_OBSERVATIONS: ${COBBLR_PHOTO_OBSERVATIONS:-}
       # ── settings the schema accepted but compose never carried ──────────
       # env.ts read all of these and none of them arrived: this map is
       # explicit, so a variable it does not list is absent however carefully

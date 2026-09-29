@@ -20,6 +20,8 @@ import type { PlatformBundleManifest, PlatformBundleFeature } from "./api";
 import { OUTFIT_PLANNER_HTML } from "./outfit-planner-app";
 import { CATALOGING_BENCH_HTML } from "./bench-app";
 import { pluralise } from "@cobblr/platform-contract";
+import { machineWordsFor } from "./machine-words";
+import { DISCORD_REMINDER_STEP } from "./discord-connect";
 
 /** A post-install guided step — the "you can now add some yarn" prompt
  *  that shows after a bundle installs, so the user isn't left staring at
@@ -108,6 +110,19 @@ export function deriveNextSteps(
   baseNextSteps: BundleNextStep[] | undefined,
   selected: ReadonlySet<string>,
 ): BundleNextStep[] {
+  const steps = stepsToStart(manifest, baseNextSteps, selected);
+  // A collection whose things go off or come due is what a reminder is for,
+  // so getting started says where reminders come from. Read off the
+  // collection's faces, never its name.
+  const dated = (resolveBundleManifest(manifest, selected).provides_instances ?? []).some((i) => i.faces?.perishable || i.faces?.maintained);
+  return dated && !steps.some((s) => s.path === DISCORD_REMINDER_STEP.path) ? [...steps, { ...DISCORD_REMINDER_STEP }] : steps;
+}
+
+function stepsToStart(
+  manifest: PlatformBundleManifest,
+  baseNextSteps: BundleNextStep[] | undefined,
+  selected: ReadonlySet<string>,
+): BundleNextStep[] {
   const declared = resolveNextSteps(baseNextSteps, manifest.features, selected);
   if (declared.length) return declared;
   const resolved = resolveBundleManifest(manifest, selected);
@@ -132,26 +147,48 @@ export function deriveNextSteps(
  *  bundle (3D Printers / Laser Cutters / CNC Machines) so it's DRY + identical.
  *  Checked by DEFAULT — most people setting up a printer want to send jobs to
  *  it — but a plain checkbox the user can uncheck if they only want to catalog
- *  the machine. Enabling it brings the digifab (Print Manager) module under the
- *  bundle's roof; the machine's detail page then links straight to its manager.
- *  Bundle title stays the noun (3D Printers); the capability lives here. */
-function connectMachinesFeature(noun: string): BundleFeature {
+ *  the machine. Enabling it brings the digifab module under the bundle's roof;
+ *  the machine's detail page then links straight to its manager. The words
+ *  come from the machine's kind (machine-words.ts), so a laser bundle offers
+ *  jobs and a job manager, never prints. */
+function connectMachinesFeature(instance: string): BundleFeature {
+  const w = machineWordsFor(instance);
   return {
     key: "digifab",
-    name: `Connect to your ${pluralise(noun)}`,
-    question: `Want to send files to your ${pluralise(noun)} and track the job?`,
-    description:
-      "Adds the Print Manager: map each machine to the software that runs it (FDM Monster, OctoPrint, …), send a file to be made, and track the job to completion. Talks to the manager's API; it never drives the hardware. You can link a machine to its manager right from the machine's page.",
+    name: `Connect to your ${pluralise(w.device)}`,
+    question: `Want to send files to your ${pluralise(w.device)} and track the job?`,
+    description: `Adds the ${w.Manager}: map each machine to the software that runs it (${w.managerExamples}), send a file to be made, and track the job to completion. Talks to the manager's API; it never drives the hardware. You can link a machine to its manager right from the machine's page.`,
     default: true,
     requires: [{ module: "digifab" }],
   };
 }
 
-/** The v0.3.0 "what's new" line shown in the bundle modal after an update — so a
+/** The "what's new" line shown in the bundle modal after an update, so a
  *  one-click inline update still lets you review what changed. DRY across the
- *  three machine bundles; varies only by noun, tab name, and field examples. */
-function machineBundleChangelog(noun: string, tab: string, fields: string): string {
-  return `Your ${pluralise(noun)} now open the full machine page — set every field (${fields}), edit in place, attach files, and link the machine straight to its print manager (FDM Monster / OctoPrint) right from its own page, instead of a name-only stub. Installing now offers a checked-by-default “Connect to your ${pluralise(noun)}” option that brings the Print Manager along — send a file to be made and track the job — which you can uncheck for catalog-only use. Existing installs auto-upgrade: your ${pluralise(noun)} move into the ${tab} tab automatically, no reinstall.`;
+ *  three machine bundles; varies by kind, tab name, and field examples. */
+function machineBundleChangelog(instance: string, tab: string, fields: string): string {
+  const w = machineWordsFor(instance);
+  return `Your ${pluralise(w.device)} open the full machine page: set every field (${fields}), edit in place, attach files, and link the machine straight to its ${w.manager} right from its own page. Installing offers a checked-by-default “Connect to your ${pluralise(w.device)}” option that brings the ${w.Manager} along (send a file to be made and track the job), which you can uncheck for catalog-only use. Existing installs auto-upgrade: your ${pluralise(w.device)} move into the ${tab} tab automatically, no reinstall.`;
+}
+
+/** Release metadata for the three machine bundles: every version's notes,
+ *  newest first, so an update lists all of them. 0.3.2 is where each kind got
+ *  its own words; 0.3.1 is where the full machine page arrived. */
+function machineBundleRelease(
+  instance: string,
+  tab: string,
+  fields: string,
+): Pick<PlatformBundleManifest, "released_at" | "changelog" | "releases"> {
+  const w = machineWordsFor(instance);
+  const latest =
+    w.kind === "3d-printer"
+      ? `Connecting your 3D printers now names every ${w.manager} it can send to: ${w.managerExamples}.`
+      : `A ${w.device}'s page now uses its own words: it sends ${w.jobs} to a ${w.manager} (${w.managerExamples}), and asks only what fits a ${w.device}.`;
+  const releases = [
+    { version: "0.3.2", released_at: "2026-09-28", notes: latest },
+    { version: "0.3.1", released_at: "2026-06-19", notes: machineBundleChangelog(instance, tab, fields) },
+  ];
+  return { released_at: releases[0]!.released_at, changelog: releases[0]!.notes, releases };
 }
 
 export const FEATURED_BUNDLES: FeaturedBundle[] = [
@@ -1768,6 +1805,62 @@ export const FEATURED_BUNDLES: FeaturedBundle[] = [
     },
   },
   {
+    glyph: "🏭",
+    blurb:
+      "Run a small shop or maker business in one place: customer orders, the products you make and what goes into them, stock, the print farm, purchase orders and shipments, together in one Shop section of the sidebar.",
+    next_steps: [
+      { label: "Add your first customer order", module: "sales", path: "/sales", hint: "Who ordered, what, and how many." },
+      { label: "Describe a product you make", module: "builds", path: "/builds", hint: "The parts one of it takes, so Cobblr knows how many you can make." },
+      { label: "Connect your printers", module: "digifab", path: "/digifab", hint: "Send a job, and the parts count when the print comes out good." },
+    ],
+    manifest: {
+      id: "cobblr.flagship.small-shop",
+      base_kind_fields_reason: "A shop runs on the modules' own records (orders, parts, products), not a table of its own; the few fields it adds are what a selling business needs on those records.",
+      version: "0.1.0",
+      name: "Small shop",
+      description:
+        "For a small shop, maker business or manufacturer: customer orders, the products you make, stock, production, the print farm, purchase orders and shipments, turned on together and kept in one Shop section of the sidebar, each with a view to start from.",
+      author: "Cobblr",
+      released_at: "2026-09-29",
+      changelog: "New: one install sets up a making business, from order to shipment, instead of seven modules enabled by hand from folded sections.",
+      requires: [
+        { module: "sales" },
+        { module: "builds" },
+        { module: "inventory" },
+        { module: "purchases" },
+        { module: "digifab" },
+        { module: "core-shipments" },
+      ],
+      nav_headings: [
+        {
+          name: "Shop",
+          icon: "store",
+          members: [
+            { target_kind: "module", target_id: "sales" },
+            { target_kind: "module", target_id: "builds" },
+            { target_kind: "module", target_id: "inventory" },
+            { target_kind: "module", target_id: "digifab" },
+            { target_kind: "module", target_id: "purchases" },
+          ],
+        },
+      ],
+      field_defs: [
+        { entity_kind: "sales:order", name: "due_date", display_label: "Due date", type: "date", position: 1, help: "The day you promised it by." },
+        { entity_kind: "sales:order", name: "channel", display_label: "Came in through", type: "text", position: 2, choices: ["Website", "Etsy", "Email", "In person", "Wholesale", "Other"] },
+        { entity_kind: "inventory:part", name: "sku", display_label: "SKU", type: "text", position: 1, field_role: "identifier" },
+        { entity_kind: "inventory:part", name: "sourcing", display_label: "Made or bought", type: "text", position: 2, choices: ["Made here", "Bought in"] },
+        { entity_kind: "builds:build", name: "sell_price", display_label: "Sells for", type: "number", position: 1 },
+      ],
+      saved_views: [
+        { entity_kind: "sales:order", name: "Orders by status", view_type: "kanban", config: { group_by: "status" }, pinned: true, is_default: true },
+        { entity_kind: "inventory:part", name: "Stock", view_type: "table", config: { visible_fields: ["name", "sku", "qty", "min_qty", "unit", "sourcing"] }, pinned: true },
+        { entity_kind: "builds:build", name: "Products", view_type: "table", config: { visible_fields: ["name", "description", "sell_price"] }, pinned: true },
+        { entity_kind: "purchases:order", name: "Purchase orders by status", view_type: "kanban", config: { group_by: "status" }, pinned: true },
+        { entity_kind: "digifab:job", name: "Print queue", view_type: "kanban", config: { group_by: "status" } },
+      ],
+    },
+  },
+  {
     glyph: "🔧",
     blurb:
       "Run a workshop: keep parts in inventory, define Builds (bills of materials) of those parts, see how many you can build right now, and auto-add anything that runs low to a parts shopping list you check off to restock.",
@@ -2448,15 +2541,14 @@ export const FEATURED_BUNDLES: FeaturedBundle[] = [
       "Track your 3D printers: hotend, extruder, board, firmware, bed size, local IP. Its own tab; still part of your machines (prints, fleet, maintenance).",
     manifest: {
       id: "cobblr.community.3d-printers",
-      version: "0.3.1",
+      version: "0.3.2",
       name: "3D Printers",
       description:
         "A 3D Printers tracker: your printers with hotend, extruder, board, firmware, bed size, and local IP. It's a named view of your machines, so each printer still drives prints, fleet status, and maintenance.",
       author: "Cobblr community",
-      released_at: "2026-06-19",
-      changelog: machineBundleChangelog("3D printer", "3D Printers", "hotend, extruder, mainboard, firmware, bed size, local IP"),
+      ...machineBundleRelease("3d-printers", "3D Printers", "hotend, extruder, mainboard, firmware, bed size, local IP"),
       requires: [{ module: "machines" }],
-      features: [connectMachinesFeature("3D printer")],
+      features: [connectMachinesFeature("3d-printers")],
       provides_instances: [
         {
           module: "machines",
@@ -2559,15 +2651,14 @@ export const FEATURED_BUNDLES: FeaturedBundle[] = [
     manifest: {
       id: "cobblr.community.laser-cutters",
       catalog: "extended",
-      version: "0.3.1",
+      version: "0.3.2",
       name: "Laser Cutters",
       description:
         "A Laser Cutters tracker: tube type, wattage, bed size, cooling, focal length. A named view of your machines, so each cutter still drives jobs, fleet status, and maintenance.",
       author: "Cobblr community",
-      released_at: "2026-06-19",
-      changelog: machineBundleChangelog("laser cutter", "Laser Cutters", "tube type, wattage, bed size, cooling, focal length"),
+      ...machineBundleRelease("laser-cutters", "Laser Cutters", "tube type, wattage, bed size, cooling, focal length"),
       requires: [{ module: "machines" }],
-      features: [connectMachinesFeature("laser cutter")],
+      features: [connectMachinesFeature("laser-cutters")],
       provides_instances: [
         {
           module: "machines",
@@ -2635,15 +2726,14 @@ export const FEATURED_BUNDLES: FeaturedBundle[] = [
     manifest: {
       id: "cobblr.community.cnc-machines",
       catalog: "extended",
-      version: "0.3.1",
+      version: "0.3.2",
       name: "CNC Machines",
       description:
         "A CNC Machines tracker: spindle, axes, work area, controller, coolant. A named view of your machines, so each mill still drives jobs, fleet status, and maintenance.",
       author: "Cobblr community",
-      released_at: "2026-06-19",
-      changelog: machineBundleChangelog("CNC machine", "CNC Machines", "spindle, axes, work area, controller, coolant"),
+      ...machineBundleRelease("cnc-machines", "CNC Machines", "spindle, axes, work area, controller, coolant"),
       requires: [{ module: "machines" }],
-      features: [connectMachinesFeature("CNC machine")],
+      features: [connectMachinesFeature("cnc-machines")],
       provides_instances: [
         {
           module: "machines",
@@ -2729,14 +2819,27 @@ export const FEATURED_BUNDLES: FeaturedBundle[] = [
     ],
     manifest: {
       id: "cobblr.flagship.yarn",
-      version: "0.9.0",
+      version: "0.9.2",
       name: "Yarn",
       description:
         "Yarn as its own inventory instance: counted in balls, skeins or hanks, yarn-only fields, grouped by weight. Optional Hooks, Supplies and Patterns tables.",
       author: "Cobblr",
-      released_at: "2026-07-15",
+      released_at: "2026-09-29",
       changelog:
-        "Notions is now Supplies: the table for stitch markers, yarn needles, safety eyes, stuffing and buttons says what goes in it under its name, and you can still call it Notions (pick the word in its Settings); searching for notions finds it, and a pattern's notions are still checked against it. Your Notions table is renamed on this update, and everything in it stays. Earlier: a Notions table for stitch markers, yarn needles, safety eyes and stuffing; a pattern's notions are checked against it. Earlier: Import from Ravelry on the Yarn table brings your Ravelry stash in, and your projects into Patterns: connect once, then press it again any time to update. Earlier: A pattern now knows what it needs: its yarns and hooks are read from the PDF, matched against your stash, and what is missing goes on your shopping list in one tap. Finishing a pattern takes each yarn off its own balls. Earlier: The scanner fills Dye lot from the lot printed on a label, and a dye lot is never shared as a fact about the yarn. Earlier: Call your yarn what you call it: ball, skein or hank. Pick the word when you add Yarn, or change it in the Yarn table's settings, and every label, your yarn's counts and Cobb all say it. Earlier: Designs are now Patterns: a pattern keeps its PDF, photos and notes, its designer, where it came from and how hard it is, and the yarn it needs. Import patterns takes a pile of PDFs or a zipped folder: each PDF becomes a pattern with its file, a zip's folders fill in the category, and a PDF you already have is never added twice. Your Designs table is renamed on this update, and everything in it stays.",
+        "Importing patterns with Source: Ribblr now shows how to get them out of Ribblr: what can be downloaded, what cannot, and how to bring the downloads in.",
+      releases: [
+        {
+          version: "0.9.2",
+          released_at: "2026-09-29",
+          notes: "Importing patterns with Source: Ribblr now shows how to get them out of Ribblr: what can be downloaded, what cannot, and how to bring the downloads in.",
+        },
+        {
+          version: "0.9.0",
+          released_at: "2026-07-15",
+          notes:
+            "Notions is now Supplies: the table for stitch markers, yarn needles, safety eyes, stuffing and buttons says what goes in it under its name, and you can still call it Notions (pick the word in its Settings); searching for notions finds it, and a pattern's notions are still checked against it. Your Notions table is renamed on this update, and everything in it stays. Earlier: a Notions table for stitch markers, yarn needles, safety eyes and stuffing; a pattern's notions are checked against it. Earlier: Import from Ravelry on the Yarn table brings your Ravelry stash in, and your projects into Patterns: connect once, then press it again any time to update. Earlier: A pattern now knows what it needs: its yarns and hooks are read from the PDF, matched against your stash, and what is missing goes on your shopping list in one tap. Finishing a pattern takes each yarn off its own balls. Earlier: The scanner fills Dye lot from the lot printed on a label, and a dye lot is never shared as a fact about the yarn. Earlier: Call your yarn what you call it: ball, skein or hank. Pick the word when you add Yarn, or change it in the Yarn table's settings, and every label, your yarn's counts and Cobb all say it. Earlier: Designs are now Patterns: a pattern keeps its PDF, photos and notes, its designer, where it came from and how hard it is, and the yarn it needs. Import patterns takes a pile of PDFs or a zipped folder: each PDF becomes a pattern with its file, a zip's folders fill in the category, and a PDF you already have is never added twice. Your Designs table is renamed on this update, and everything in it stays.",
+        },
+      ],
       requires: [{ module: "inventory" }],
       // The always-on base: a "Yarn" instance of inventory.
       provides_instances: [
@@ -2830,6 +2933,20 @@ export const FEATURED_BUNDLES: FeaturedBundle[] = [
               folder_field: "pattern_category",
               ask: ["pattern_source"],
               label: "Import patterns",
+              // Ribblr has no export and its terms forbid automated
+              // downloading, so the rescue is by hand, then one drop here.
+              guides: [
+                {
+                  when: { field: "pattern_source", equals: "Ribblr" },
+                  title: "Getting your patterns out of Ribblr",
+                  steps: [
+                    "On Ribblr, open your library and download every pattern that shows a download icon: the designer attached a PDF.",
+                    "Download the PDFs you uploaded yourself too. They lock when a Ribblr+ membership lapses, and a month of Ribblr+ opens them again.",
+                    "A Ribblr ePattern cannot be downloaded. Ask its designer for a PDF, which is Ribblr's own advice, or email Ribblr support for a copy of your data.",
+                    "Zip your downloads folder, or pick the PDFs, and import them here. Each PDF becomes a pattern with its file.",
+                  ],
+                },
+              ],
             },
             field_defs: [
               { entity_kind: "projects:project", name: "pattern_url", display_label: "Pattern link", type: "url", position: 1, renderer: "url-link", help: "Where the pattern lives online, if it does (Ravelry, a shop, a blog post). A PDF you import is kept on the pattern itself." },
@@ -2967,13 +3084,18 @@ export const FEATURED_BUNDLES: FeaturedBundle[] = [
     ],
     manifest: {
       id: "cobblr.flagship.filament",
-      version: "0.5.6",
+      version: "0.8.0",
       name: "Filament",
       description: "A filament TYPE (Royal Blue PLA) defines the filament once: material, colour, diameter, nozzle/bed temps, needs-drying. SPOOLS pick a type + add only what's per-spool: size, batch code, remaining, state. Each type rolls up its spool count + total kg.",
       author: "Cobblr",
       released_at: "2026-06-17",
       changelog:
-        "Opens as a catalog of things you own, and stays one: a number typed into one item no longer turns the whole collection into stock tracking with Use one, Used up and a reorder point. Earlier: Types and Spools now sit together in the navbar as one element, a quiet \"Filament\" stem with \"Types │ Spools\" links, so the two related tables read as one thing. (0.5.1: scanning a spool's QR find-or-creates its filament TYPE and links the spool automatically, a scan lands in the type→spool model instead of a flat row. 0.5.0: the TYPE defines the whole filament: colour, diameter, nozzle/bed temps and needs-drying live on the type, not re-entered per spool; a SPOOL just picks its type and carries the per-spool facts: size, batch code, remaining, state. Upgrading carries your existing temps + colour up onto the type automatically.)",
+        "A filament type's fields sit under three headings, Identity, Printing and Spool, and each folds away, so a type's page reads in parts instead of one long list. A field you moved to another section stays where you put it when Filament updates. Earlier: A filament type has ONE colour field. It holds one colour, a blend or several, so a rainbow reads as a rainbow, and the separate colour swatch field is folded into it. Earlier: A scanned spool files as a spool: its type is found or made under it, and a scan never offers the table of types. The spools also know what filament is called (PLA, PETG, 1.75 mm), so a spool is not filed as generic inventory. Earlier: Scanning a spool's QR fills in everything its maker publishes: the exact colour swatch, the UPC, the nozzle and bed temperature ranges, the drying temperature, density, the empty spool weight, and the date the spool was made and its measured length. The UPC is the type's identifier, so scanning the box barcode finds the same type. Earlier: Opens as a catalog of things you own, and stays one: a number typed into one item no longer turns the whole collection into stock tracking with Use one, Used up and a reorder point. Earlier: Types and Spools now sit together in the navbar as one element, a quiet \"Filament\" stem with \"Types │ Spools\" links, so the two related tables read as one thing. (0.5.1: scanning a spool's QR find-or-creates its filament TYPE and links the spool automatically, a scan lands in the type→spool model instead of a flat row. 0.5.0: the TYPE defines the whole filament: colour, diameter, nozzle/bed temps and needs-drying live on the type, not re-entered per spool; a SPOOL just picks its type and carries the per-spool facts: size, batch code, remaining, state. Upgrading carries your existing temps + colour up onto the type automatically.)",
+      releases: [
+        { version: "0.8.0", released_at: "2026-09-29", notes: "A filament type's fields sit under three headings, Identity, Printing and Spool, and each folds away, so a type's page reads in parts instead of one long list. A field you moved to another section stays where you put it when Filament updates." },
+        { version: "0.7.0", released_at: "2026-09-29", notes: "A filament type has ONE colour field. It holds one colour, a blend or several, so a rainbow reads as a rainbow, and the separate colour swatch field is folded into it." },
+        { version: "0.6.1", released_at: "2026-09-28", notes: "A scanned spool files as a spool: its type is found or made under it, and a scan never offers the table of types. The spools also know what filament is called (PLA, PETG, 1.75 mm), so a spool is not filed as generic inventory. Earlier: Scanning a spool's QR fills in everything its maker publishes: the exact colour swatch, the UPC, the nozzle and bed temperature ranges, the drying temperature, density, the empty spool weight, and the date the spool was made and its measured length. The UPC is the type's identifier, so scanning the box barcode finds the same type. Earlier: Opens as a catalog of things you own, and stays one: a number typed into one item no longer turns the whole collection into stock tracking with Use one, Used up and a reorder point. Earlier: Types and Spools now sit together in the navbar as one element, a quiet \\\"Filament\\\" stem with \\\"Types │ Spools\\\" links, so the two related tables read as one thing. (0.5.1: scanning a spool's QR find-or-creates its filament TYPE and links the spool automatically, a scan lands in the type→spool model instead of a flat row. 0.5.0: the TYPE defines the whole filament: colour, diameter, nozzle/bed temps and needs-drying live on the type, not re-entered per spool; a SPOOL just picks its type and carries the per-spool facts: size, batch code, remaining, state. Upgrading carries your existing temps + colour up onto the type automatically.)" },
+      ],
       requires: [{ module: "inventory" }],
       // The bundle OWNS its data migration: on upgrade from any earlier install,
       // lift the flat `filament` spools into `filament-types` (deduped by the type
@@ -3008,15 +3130,23 @@ export const FEATURED_BUNDLES: FeaturedBundle[] = [
           // "Filament" stem (renders "Filament  Types │ Spools").
           nav_group: { key: "filament", label: "Filament" },
           field_defs: [
-            { entity_kind: "inventory:part", name: "material", display_label: "Material", type: "text", position: 1, choices: ["PLA", "PLA+", "PETG", "ABS", "ASA", "TPU", "Nylon", "PC", "PVA", "Other"], help: "The plastic type. PLA is the easy default; PETG/ABS for tougher parts." },
-            { entity_kind: "inventory:part", name: "color", display_label: "Colour", type: "text", position: 2, renderer: "color-hex", help: "Pick a swatch so the table shows the colour at a glance." },
-            { entity_kind: "inventory:part", name: "diameter", display_label: "Diameter", type: "text", position: 3, choices: ["1.75 mm", "2.85 mm"], help: "Filament thickness. 1.75 mm is by far the most common; 2.85 mm for some older/large printers." },
-            { entity_kind: "inventory:part", name: "nozzle_temp", display_label: "Nozzle °C", type: "number", position: 4, help: "The hot-end temperature that prints this filament cleanly, same for every spool of it." },
-            { entity_kind: "inventory:part", name: "bed_temp", display_label: "Bed °C", type: "number", position: 5, help: "The bed temperature that makes the first layer stick." },
-            { entity_kind: "inventory:part", name: "needs_drying", display_label: "Needs drying", type: "boolean", position: 6, choices: ["Stable", "Hygroscopic"], help: "Whether this filament tends to absorb moisture and should be kept dry / dried before use." },
+            { entity_kind: "inventory:part", name: "material", display_label: "Material", type: "text", position: 1, section: "Identity", choices: ["PLA", "PLA+", "PETG", "ABS", "ASA", "TPU", "Nylon", "PC", "PVA", "Other"], help: "The plastic type. PLA is the easy default; PETG/ABS for tougher parts." },
+            { entity_kind: "inventory:part", name: "color", display_label: "Colour", type: "text", position: 2, section: "Identity", renderer: "color-hex", help: "One colour, a blend or several: pick them, or type a colour's name." },
+            { entity_kind: "inventory:part", name: "diameter", display_label: "Diameter", type: "text", position: 3, section: "Identity", choices: ["1.75 mm", "2.85 mm"], help: "Filament thickness. 1.75 mm is by far the most common; 2.85 mm for some older/large printers." },
+            { entity_kind: "inventory:part", name: "nozzle_temp", display_label: "Nozzle °C", type: "number", position: 4, section: "Printing", help: "The hot-end temperature that prints this filament cleanly, same for every spool of it." },
+            { entity_kind: "inventory:part", name: "bed_temp", display_label: "Bed °C", type: "number", position: 5, section: "Printing", help: "The bed temperature that makes the first layer stick." },
+            { entity_kind: "inventory:part", name: "needs_drying", display_label: "Needs drying", type: "boolean", position: 6, section: "Spool", choices: ["Stable", "Hygroscopic"], help: "Whether this filament tends to absorb moisture and should be kept dry / dried before use." },
             // Live rollups over the spools linked to this type (instance-of).
             { entity_kind: "inventory:part", name: "spool_count", display_label: "Spools", type: "computed", position: 7, template: "{{instances.count}}", help: "How many physical spools of this type you own." },
             { entity_kind: "inventory:part", name: "total_remaining", display_label: "In stock", type: "computed", position: 8, template: "{{instances.total_qty}} kg", help: "Total filament remaining across all your spools of this type." },
+            { entity_kind: "inventory:part", name: "upc", display_label: "UPC", type: "text", position: 10, section: "Identity", field_role: "identifier", help: "The barcode on the spool's box, so a scan of it finds this type." },
+            { entity_kind: "inventory:part", name: "nozzle_temp_min", display_label: "Nozzle min °C", type: "number", position: 11, section: "Printing", help: "The coolest nozzle temperature the maker lists." },
+            { entity_kind: "inventory:part", name: "nozzle_temp_max", display_label: "Nozzle max °C", type: "number", position: 12, section: "Printing", help: "The hottest nozzle temperature the maker lists." },
+            { entity_kind: "inventory:part", name: "bed_temp_min", display_label: "Bed min °C", type: "number", position: 13, section: "Printing", help: "The coolest bed temperature the maker lists." },
+            { entity_kind: "inventory:part", name: "bed_temp_max", display_label: "Bed max °C", type: "number", position: 14, section: "Printing", help: "The hottest bed temperature the maker lists." },
+            { entity_kind: "inventory:part", name: "dry_temp", display_label: "Dry °C", type: "number", position: 15, section: "Spool", help: "The highest temperature to dry this filament at." },
+            { entity_kind: "inventory:part", name: "density", display_label: "Density g/cm³", type: "number", position: 16, section: "Spool", help: "Used to turn a weight into a length." },
+            { entity_kind: "inventory:part", name: "empty_spool_g", display_label: "Empty spool g", type: "number", position: 17, section: "Spool", help: "What the empty spool weighs, to weigh what is left." },
           ],
           field_overrides: [
             { entity_kind: "inventory:part", name: "manufacturer", display_label: "Brand" },
@@ -3047,6 +3177,7 @@ export const FEATURED_BUNDLES: FeaturedBundle[] = [
           display_name: "Spools",
           glyph: "🧵",
           item_noun: "spool",
+          scan_keywords: ["filament", "3d printer filament", "pla", "pla+", "petg", "asa", "tpu", "1.75mm", "1.75 mm", "2.85mm", "2.85 mm"],
           qty_unit: "kg",
           nav_group: { key: "filament", label: "Filament" },
           // The parent picker on manual creates — AND the scan auto-lift: a
@@ -3057,12 +3188,14 @@ export const FEATURED_BUNDLES: FeaturedBundle[] = [
             instance: "filament-types",
             label: "Type",
             key_fields: ["manufacturer", "material", "color", "diameter"],
-            copy_fields: ["nozzle_temp", "bed_temp", "needs_drying"],
+            copy_fields: ["nozzle_temp", "bed_temp", "needs_drying", "upc", "nozzle_temp_min", "nozzle_temp_max", "bed_temp_min", "bed_temp_max", "dry_temp", "density", "empty_spool_g"],
           },
           field_defs: [
             { entity_kind: "inventory:part", name: "size", display_label: "Spool size", type: "text", position: 1, choices: ["0.5 kg", "1 kg", "2 kg", "3 kg", "4 kg", "5 kg", "25 kg"], help: "The full-spool size you bought (the label weight), the remaining amount is tracked separately." },
             { entity_kind: "inventory:part", name: "batch_code", display_label: "Batch / lot code", type: "text", position: 2, help: "The batch or lot code from the maker's label (e.g. Polar's spool code), for traceability of this exact spool." },
             { entity_kind: "inventory:part", name: "state", display_label: "State", type: "text", position: 3, choices: ["sealed", "open", "empty"], help: "Sealed = unopened; open = in use; empty = used up (keep it for the record or delete it)." },
+            { entity_kind: "inventory:part", name: "mfg_date", display_label: "Made on", type: "date", position: 4, help: "The date the maker's tag says this spool was made." },
+            { entity_kind: "inventory:part", name: "length_m", display_label: "Length (m)", type: "number", position: 5, help: "The filament length the maker measured on this spool." },
           ],
           field_overrides: [
             { entity_kind: "inventory:part", name: "qty", display_label: "Remaining (kg)" },

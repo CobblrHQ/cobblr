@@ -22,8 +22,8 @@
 import { useMemo, useRef, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { changeWorkspaceShape, useToast } from "@cobblr/platform-web";
-import { FileSpreadsheet, Search, Camera, Sparkles, ArrowRight, Loader2, Boxes, Wand2, Plus, ChevronDown, ChevronUp, ScanLine, X } from "lucide-react";
+import { changeWorkspaceShape, useToast, SearchInput } from "@cobblr/platform-web";
+import { FileSpreadsheet, Camera, Sparkles, ArrowRight, Loader2, Boxes, Wand2, Plus, ChevronDown, ChevronUp, ScanLine, X, Map as MapIcon } from "lucide-react";
 import { api } from "../lib/api";
 import { useBundleCatalog, type CatalogBundle } from "../lib/useBundleCatalog";
 import { fuzzyMatch } from "../lib/fuzzy";
@@ -859,6 +859,17 @@ export function WhatToDoPanel({
             </button>
             , see where everything goes, and undo it whole if it is not right.
           </p>
+          <p className="text-[11px] text-faint dark:text-slate-500 mt-1">
+            Want to see where things live?{" "}
+            <Link
+              data-testid="draw-your-rooms"
+              to="/locations?view=plan&new=room"
+              className="inline-flex items-center gap-1 text-accent hover:underline font-medium"
+            >
+              <MapIcon size={11} /> Draw your rooms
+            </Link>
+            , then drag each thing to its shelf or drawer.
+          </p>
 
           {/* Starter chips — a fresh panel demos the magic in one tap. Only when
               there's nothing captured yet and no funnel selection. */}
@@ -927,23 +938,14 @@ export function WhatToDoPanel({
           </p>
           <div className="flex flex-wrap items-center gap-2">
             <div className="flex-1 min-w-0 text-[10px] font-mono uppercase tracking-widest text-accent">// every way to start</div>
-            <div className="relative w-full sm:w-72">
-              <Search size={14} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-faint dark:text-slate-500" />
-              <input
-                value={browseQ}
-                onChange={(e) => setBrowseQ(e.target.value)}
-                placeholder="Search bundles and modules…"
-                className="input !pl-8 !py-1.5 text-sm"
-                onKeyDown={(e) => {
+            <SearchInput value={browseQ} onChange={setBrowseQ} placeholder="Search bundles and modules…" onKeyDown={(e) => {
                   // Enter takes the first tile in section order, so the top-left
                   // result is always what a blind Enter selects.
                   if (e.key !== "Enter") return;
                   if (skins[0]) pickRecipe(skins[0]);
                   else if (setups[0]) pickRecipe(setups[0]);
                   else if (blankMatches[0]) pickModule(blankMatches[0].module);
-                }}
-              />
-            </div>
+                }} wrapperClassName="w-full sm:w-72" />
           </div>
 
           {registry.isLoading && skins.length === 0 && setups.length === 0 ? (

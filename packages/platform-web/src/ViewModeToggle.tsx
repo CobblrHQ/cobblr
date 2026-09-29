@@ -39,7 +39,7 @@ export function ViewModeToggle({
 }) {
   return (
     <div
-      className="inline-flex items-center rounded border border-line dark:border-slate-700 overflow-hidden shrink-0"
+      className="h-9 inline-flex items-stretch rounded-md border border-line dark:border-slate-700 overflow-hidden shrink-0"
       role="group"
       aria-label="View mode"
     >
@@ -49,7 +49,7 @@ export function ViewModeToggle({
         aria-pressed={mode === "list"}
         title="List view"
         className={
-          "p-1.5 transition " +
+          "w-9 grid place-items-center transition " +
           (mode === "list"
             ? "bg-cobble-600 text-white"
             : "text-muted dark:text-slate-400 hover:bg-subtle dark:hover:bg-slate-800")
@@ -63,7 +63,7 @@ export function ViewModeToggle({
         aria-pressed={mode === "tiles"}
         title="Tile view"
         className={
-          "p-1.5 transition " +
+          "w-9 grid place-items-center transition " +
           (mode === "tiles"
             ? "bg-cobble-600 text-white"
             : "text-muted dark:text-slate-400 hover:bg-subtle dark:hover:bg-slate-800")

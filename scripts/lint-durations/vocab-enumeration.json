@@ -1,7 +1,8 @@
 {
   "lint": "lint:vocab-enumeration",
-  "run": "tsx scripts/lint-vocab-enumeration.ts",
+  "run": "node scripts/lint-vocab-enumeration.ts",
   "ms": 1163,
   "recorded": "2026-09-14",
-  "source": "split from scripts/lint-durations.json (recorded 2026-09-14)"
+  "source": "split from scripts/lint-durations.json (recorded 2026-09-14)",
+  "readMB": 20.2
 }

@@ -1,7 +1,8 @@
 {
   "lint": "lint:feature-defaults",
-  "run": "tsx scripts/lint-feature-defaults.ts",
+  "run": "node scripts/lint-feature-defaults.ts",
   "ms": 788,
   "recorded": "2026-09-14",
-  "source": "split from scripts/lint-durations.json (recorded 2026-09-14)"
+  "source": "split from scripts/lint-durations.json (recorded 2026-09-14)",
+  "readMB": 26.4
 }

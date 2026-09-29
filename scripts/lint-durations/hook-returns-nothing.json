@@ -1,7 +1,8 @@
 {
   "lint": "lint:hook-returns-nothing",
-  "run": "tsx scripts/lint-hook-returns-nothing.ts",
+  "run": "node scripts/lint-hook-returns-nothing.ts",
   "ms": 360,
   "recorded": "2026-09-23",
-  "source": "CI typecheck run 25238 (f1c90ded6, status success)"
+  "source": "CI typecheck run 25238 (f1c90ded6, status success)",
+  "readMB": 7.1
 }

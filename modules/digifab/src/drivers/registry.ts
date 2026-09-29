@@ -14,6 +14,7 @@ import { EdgeAdapterDriver, type EdgeRelay } from "./edge-adapter.js";
 import { BambuCloudDriver } from "./bambu-cloud-driver.js";
 import { ElegooSdcpDriver } from "./elegoo-sdcp.js";
 import { DriverManifest } from "./manifest.js";
+import { newerCatalogManifest } from "./catalog.js";
 
 /** Built-in drivers — always available, ship in code, reference impls. */
 export const BUILTIN_DRIVERS = [
@@ -67,7 +68,19 @@ export async function resolveDriver(
     .executeTakeFirst();
   if (!row) throw new Error(`unknown driver: ${type}`);
   if (row.kind === "declarative") {
-    const manifest = DriverManifest.parse(row.spec);
+    let manifest = DriverManifest.parse(row.spec);
+    const upgraded = newerCatalogManifest(manifest);
+    if (upgraded) {
+      manifest = upgraded;
+      await db
+        .updateTable("digifab_drivers")
+        .set({ spec: JSON.stringify(upgraded) as never, updated_at: new Date() })
+        .where("key", "=", type)
+        .execute()
+        .catch(() => {
+          /* the upgraded copy still drives this request; the write retries next build */
+        });
+    }
     return new DeclarativeDriver(manifest, cfg);
   }
   throw new Error(`driver kind "${row.kind}" is not supported yet`);

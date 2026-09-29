@@ -4,35 +4,109 @@
 // scale). Reuses the same <FloorPlan> editor the detail page mounts.
 
 import { useMemo, useState } from "react";
+import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { Boxes, MapPin, Plus } from "lucide-react";
-import type { Location } from "../lib/api";
-import { readBound } from "../lib/floorplanGeometry";
+import { Modal, useToast } from "@cobblr/platform-web";
+import { ApiError, api, type Location } from "../lib/api";
+import { hasOwnLayout, withBound } from "../lib/floorplanGeometry";
+import { parseLength, type LengthUnit } from "../lib/lengthUnits";
 import { FloorPlan } from "./FloorPlan";
 
 /** Spaces worth a chip: every root AREA (a room/region), plus every CONTAINER
- *  that is either standalone (no parent) or already has a layout drawn — so a
- *  shelving unit or tool chest is reachable up front without listing every nested
- *  bin. Areas first, then containers; each group sorted by the user's sort_order
+ *  that is either standalone (no parent) or has a layout of its own (a tool
+ *  chest's face) — so a shelving unit is reachable up front without a chip per
+ *  drawer: a drawer only placed on a face is reached by opening the face.
+ *  Areas first, then containers; each group sorted by the user's sort_order
  *  then name. */
-function viewableSpaces(items: Location[]): { areas: Location[]; containers: Location[] } {
+export function viewableSpaces(items: Location[]): { areas: Location[]; containers: Location[] } {
   const order = (a: Location, b: Location) =>
     (a.position ?? 0) - (b.position ?? 0) || a.name.localeCompare(b.name);
   const areas = items.filter((l) => l.kind === "area" && !l.parent_id).sort(order);
   const containers = items
-    .filter((l) => l.kind === "container" && (!l.parent_id || !!readBound(l.metadata)))
+    .filter((l) => l.kind === "container" && (!l.parent_id || hasOwnLayout(l.metadata)))
     .sort(order);
   return { areas, containers };
+}
+
+/** A room in one step: what it is called and how big it is, and it is drawn.
+ *  Before, a person made a place in one form, found the plan, and sized it in
+ *  another. */
+function RoomForm({ slug, onMade }: { slug: string; onMade: (loc: Location) => void }) {
+  const qc = useQueryClient();
+  const toast = useToast();
+  const [name, setName] = useState("");
+  const [w, setW] = useState("");
+  const [d, setD] = useState("");
+  const unitOf = (t: string): LengthUnit => {
+    const u = t.trim().toLowerCase().match(/(ft|feet|foot|in|mm|cm|m|'|")\s*$/)?.[1];
+    return u === "in" || u === '"' ? "in" : u === "m" || u === "cm" || u === "mm" ? u : "ft";
+  };
+  const wmm = parseLength(w, "ft");
+  const dmm = parseLength(d, "ft");
+  const ready = !!name.trim() && !!wmm && !!dmm;
+  const make = useMutation({
+    mutationFn: () =>
+      api.createLocation(slug, {
+        name: name.trim(),
+        parent_id: null,
+        kind: "area",
+        metadata: withBound({}, { w_mm: wmm!, d_mm: dmm!, unit: unitOf(w), view: "plan" }, "area"),
+      }),
+    onSuccess: (loc) => {
+      void qc.invalidateQueries({ queryKey: ["core-locations", slug] });
+      toast.success(`${name.trim()} is drawn. Add what stands in it next.`);
+      onMade(loc as Location);
+    },
+    onError: (e) => toast.error(e instanceof ApiError ? e.message : String(e)),
+  });
+  const field = "min-w-0 rounded border border-line dark:border-slate-600 bg-surface dark:bg-slate-900 px-2 py-1.5 text-sm text-content dark:text-slate-200";
+  return (
+    <form
+      data-testid="room-form"
+      className="space-y-2"
+      onSubmit={(e) => {
+        e.preventDefault();
+        if (ready && !make.isPending) make.mutate();
+      }}
+    >
+      <input value={name} onChange={(e) => setName(e.target.value)} placeholder="What room is this? (e.g. Garage)" aria-label="Room name" autoFocus className={`${field} w-full`} />
+      <div className="flex items-center gap-1.5">
+        <input value={w} onChange={(e) => setW(e.target.value)} placeholder="width, e.g. 20ft" aria-label="Width" className={`${field} flex-1`} />
+        <span className="text-faint text-sm">×</span>
+        <input value={d} onChange={(e) => setD(e.target.value)} placeholder="depth, e.g. 12ft" aria-label="Depth" className={`${field} flex-1`} />
+      </div>
+      <p className="text-[11px] text-faint dark:text-slate-500">Roughly is fine: the size only sets the shape, and you can change it later.</p>
+      <button
+        type="submit"
+        disabled={!ready || make.isPending}
+        className="rounded bg-cobble-600 hover:bg-cobble-700 text-white px-3 py-1.5 text-sm transition disabled:opacity-50"
+      >
+        {make.isPending ? "Drawing…" : "Draw it"}
+      </button>
+    </form>
+  );
 }
 
 export function LocationFloorPlanTab({
   items,
   slug,
   onCreate,
+  newRoom = false,
+  onNewRoomClosed,
 }: {
   items: Location[];
   slug: string;
   onCreate?: () => void;
+  /** Open the room form over the plan (the command palette's "Draw a room"). */
+  newRoom?: boolean;
+  onNewRoomClosed?: () => void;
 }) {
+  const [roomOpen, setRoomOpen] = useState(false);
+  const showRoom = roomOpen || newRoom;
+  const closeRoom = () => {
+    setRoomOpen(false);
+    onNewRoomClosed?.();
+  };
   const { areas, containers } = useMemo(() => viewableSpaces(items), [items]);
   const first = areas[0]?.id ?? containers[0]?.id ?? null;
   const [selectedId, setSelectedId] = useState<string | null>(null);
@@ -42,19 +116,12 @@ export function LocationFloorPlanTab({
 
   if (!active) {
     return (
-      <div className="rounded-xl border border-dashed border-line dark:border-slate-700 p-6 text-sm text-muted dark:text-slate-400">
-        <p>
-          No rooms or containers to lay out yet. Add a top-level area (a room, a
-          garage) or a container (a tool chest, a shelving unit), then draw or
-          describe its layout here.
-        </p>
+      <div className="rounded-xl border border-dashed border-line dark:border-slate-700 p-4 sm:p-6 text-sm text-muted dark:text-slate-400 max-w-md space-y-3">
+        <p className="font-medium text-content dark:text-mortar-100">Draw your first room</p>
+        <RoomForm slug={slug} onMade={(loc) => { setSelectedId(loc.id); onNewRoomClosed?.(); }} />
         {onCreate && (
-          <button
-            onClick={onCreate}
-            className="mt-3 inline-flex items-center gap-1.5 rounded bg-cobble-600 hover:bg-cobble-700 text-white px-3 py-1.5 text-sm transition"
-          >
-            <Plus size={14} />
-            New location
+          <button type="button" onClick={onCreate} className="text-xs text-accent hover:underline">
+            Or start with a tool chest or a shelf instead
           </button>
         )}
       </div>
@@ -80,7 +147,18 @@ export function LocationFloorPlanTab({
 
   return (
     <div className="space-y-3">
-      {(areas.length + containers.length > 1) && (
+      {showRoom && (
+        <Modal open onClose={closeRoom} title="A new room" size="sm">
+          <RoomForm
+            slug={slug}
+            onMade={(loc) => {
+              setSelectedId(loc.id);
+              closeRoom();
+            }}
+          />
+        </Modal>
+      )}
+      {(
         <div className="flex flex-wrap items-center gap-2">
           {areas.length > 0 && (
             <>
@@ -94,6 +172,13 @@ export function LocationFloorPlanTab({
               {containers.map(chip)}
             </>
           )}
+          <button
+            type="button"
+            onClick={() => setRoomOpen(true)}
+            className="inline-flex items-center gap-1 rounded-full border border-dashed border-line dark:border-slate-600 px-3 py-1 text-sm text-muted hover:border-accent hover:text-accent transition"
+          >
+            <Plus size={13} /> room
+          </button>
         </div>
       )}
       {/* key resets the editor's per-space state when you switch chips. */}

@@ -1,7 +1,8 @@
 {
   "lint": "lint:field-type-enum",
-  "run": "tsx scripts/lint-field-type-enum.ts",
+  "run": "node scripts/lint-field-type-enum.ts",
   "ms": 958,
   "recorded": "2026-09-14",
-  "source": "split from scripts/lint-durations.json (recorded 2026-09-14)"
+  "source": "split from scripts/lint-durations.json (recorded 2026-09-14)",
+  "readMB": 19.7
 }

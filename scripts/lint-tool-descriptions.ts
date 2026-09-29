@@ -16,7 +16,11 @@
 import { WORKSPACE_TOOLS, jsonSchemaOf } from "../packages/workspace-tools/src/index.js";
 
 const MAX_DESCRIPTION_CHARS = 1000;
-const MAX_TOTAL_SCHEMA_CHARS = 17_000;
+// Raised from 17,000 to 17,300 on 2026-09-28 for things_of_person (300 chars,
+// the smallest description that lets a model pick it), a capability the owner
+// asked for (#3787: "what does Alex own"). The set had 23 chars of room, so any
+// new tool needed this; the next one should first make room by tightening.
+const MAX_TOTAL_SCHEMA_CHARS = 17_300;
 
 let bad = 0;
 let total = 0;

@@ -54,12 +54,13 @@ const RULES: Array<{ match: RegExp; requirement: StorageRequirement }> = [
   // set has "Garlic powder" and "Dried rosemary" as categories), and "milk
   // powder" would have been called refrigerated by the rule below.
   {
-    match: /\bpowder\b|\bdried\b|dehydrated|freeze.?dried|\buht\b|long.?life|shelf.?stable|\bcanned\b|\btinned\b|\bjarred\b|\bpickled\b/,
+    // A nut butter is not butter: "peanut butter" would read as dairy below.
+    match: /\bpowder\b|\bdried\b|dehydrated|freeze.?dried|\buht\b|long.?life|shelf.?stable|\bcanned\b|\btinned\b|\bjarred\b|\bpickled\b|(peanut|nut|almond|cashew|seed) butter/,
     requirement: "ambient",
   },
   // Then the chilled aisle. `\bcream\b` is deliberately after ice cream above.
   {
-    match: /\bdairy\b|\bmilk\b|yogh?urt|\bcheese\b|\bbutter\b|\bcream\b|creme fraiche|\beggs?\b|fresh meat|\bmeat\b|\bpoultry\b|\bchicken\b|\bbeef\b|\bpork\b|\bbacon\b|\bham\b|\bturkey\b|\bfish\b|seafood|\bdeli\b|charcuterie|sausage|fresh pasta|\bhummus\b/,
+    match: /\bdairy\b|\bmilk\b|yogh?urt|\bcheeses?\b|\bbutter\b|\bcream\b|creme fraiche|\beggs?\b|fresh meat|\bmeat\b|\bpoultry\b|\bchicken\b|\bbeef\b|\bpork\b|\bbacon\b|\bham\b|\bturkey\b|\bfish\b|seafood|\bdeli\b|charcuterie|sausage|fresh pasta|\bhummus\b/,
     requirement: "refrigerated",
   },
   // The bakery aisle, after the chilled one so a cream cake stays chilled. A
@@ -74,7 +75,12 @@ const RULES: Array<{ match: RegExp; requirement: StorageRequirement }> = [
   // Shelf-stable things worth asserting positively, so the common case is not
   // left unknown and therefore unusable.
   {
-    match: /\bspice|seasoning|\bherb|\bsalt\b|\bpepper|\bsugar|\bflour\b|\btea\b|teas\b|tea bags|\bcoffee\b|\bcanned\b|\bjarred\b|\bpasta\b|\brice\b|\bcereal|dried|\bhoney\b|\bvinegar\b|baking|\bcocoa\b|\bcacao\b|\bsnacks?\b|\bextracts?\b|\bseeds?\b|\bnuts?\b|infusions?/,
+    // The pasta shapes and the sweet spreads, sodas and biscuits a person types
+    // or a food catalog names ("Confectionary based spreads", "Colas"): the
+    // commonest things in a pantry, which matched no rule, so the first shop
+    // into a new workspace filed none of them (2026-09-29). After the chilled
+    // aisle, so a butter spread stays cold.
+    match: /\bspice|seasoning|\bherb|\bsalt\b|\bpepper|\bsugar|\bflour\b|\btea\b|teas\b|tea bags|\bcoffee\b|\bcanned\b|\bjarred\b|\bpastas?\b|\bspaghetti\b|\bpenne\b|\bmacaroni\b|\bfusilli\b|\blinguine\b|\btagliatelle\b|\blasagn[ae]\b|\bnoodles?\b|\brice\b|\bcereal|dried|\bhoney\b|\bvinegar\b|baking|\bcocoa\b|\bcacao\b|\bsnacks?\b|\bextracts?\b|\bseeds?\b|\bnuts?\b|infusions?|\bspreads?\b|confection|\bchocolate|\bcand(y|ies)\b|\bbiscuits?\b|\bcookies?\b|\bcrackers?\b|\bcrisps\b|\bchips\b|\bjams?\b|\bcolas?\b|\bsodas?\b|soft drinks?|carbonated|sparkling water|\bketchup\b|\bmustard\b|\bolive oil\b|cooking oil/,
     requirement: "ambient",
   },
 ];
@@ -122,13 +128,25 @@ const VALUES = new Set<StorageRequirement>(["frozen", "refrigerated", "ambient"]
  */
 export function resolveRequirement(
   explicit: unknown,
-  category: string | null | undefined,
+  category: string | null | undefined | ReadonlyArray<string | null | undefined>,
+  name?: string | null,
 ): StorageRequirement | null {
   if (typeof explicit === "string") {
     const v = explicit.trim().toLowerCase() as StorageRequirement;
     if (VALUES.has(v)) return v;
   }
-  return storageRequirementFor(category);
+  // Every category word there is, in order: the catalog's own (which can be
+  // in the product's language, "Fromages de vache"), then the collection's
+  // own axis ("Dairy"), which the rules always read.
+  for (const c of typeof category === "string" || category == null ? [category] : category) {
+    const r = storageRequirementFor(c);
+    if (r) return r;
+  }
+  // The thing's own name, when its categories say nothing: a grocery typed
+  // with no AI arrives with no category at all, and "whole milk" or
+  // "spaghetti" says how it keeps as plainly as a catalog would. The same
+  // rules, so a name can never claim more than its category could.
+  return storageRequirementFor(name);
 }
 
 /**

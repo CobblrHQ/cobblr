@@ -1,7 +1,8 @@
 {
   "lint": "lint:action-examples",
-  "run": "tsx scripts/lint-action-examples.ts",
+  "run": "node scripts/lint-action-examples.ts",
   "ms": 394,
   "recorded": "2026-09-14",
-  "source": "split from scripts/lint-durations.json (recorded 2026-09-14)"
+  "source": "split from scripts/lint-durations.json (recorded 2026-09-14)",
+  "readMB": 0.2
 }

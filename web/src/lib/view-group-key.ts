@@ -30,11 +30,20 @@ export interface GroupableRow {
 }
 
 export const NO_GROUP = "(none)";
+/** What a person reads for the NO_GROUP bucket: the rows with no value. */
+export const NO_GROUP_LABEL = "No value";
 
 /** A row's value for `key`: the field itself, then the same name under
- *  `fields.metadata`, where every bundle-added field lives. */
+ *  `fields.metadata`, where every bundle-added field lives.
+ *
+ *  A field that stores an id (a person, a member, a linked record) arrives
+ *  with its name beside it as `<key>_label`, and the name is what a cell shows
+ *  and what a group is called: grouping by Owner must make an "Alex" column,
+ *  not a column headed with Alex's id (#3787). */
 export function fieldVal(fields: Record<string, unknown> | undefined, key: string): unknown {
   if (!fields) return undefined;
+  const label = fields[`${key}_label`];
+  if (typeof label === "string" && label.length > 0) return label;
   const top = fields[key];
   if (top !== undefined && top !== null) return top;
   const meta = fields.metadata;
@@ -80,3 +89,32 @@ export function groupRows<R extends GroupableRow>(
   }
   return byKey;
 }
+
+/** A grouped view's columns, in the order a person reads them. Grouped by a
+ *  field that declares its values (a kind's native `choices`, a custom
+ *  dropdown's), the declared order leads and EVERY declared value is a column,
+ *  empty ones included: "Rebuilding" with nothing in it says no machine is
+ *  being rebuilt, where a missing column says nothing at all. Values nobody
+ *  declared follow, alphabetically, and "(none)" is last. A stored value
+ *  matches its choice whatever its case ("Functional" is `functional`'s
+ *  column). With nothing declared, it is the values present, alphabetically.
+ *  Before this the board sorted what it found with localeCompare, so a fleet's
+ *  states read built, functional, kit, loaned (#3864). */
+export function orderedGroups<R>(buckets: Map<string, R[]>, declared?: readonly string[] | null): Array<[string, R[]]> {
+  const out: Array<[string, R[]]> = [];
+  const choiceOf = new Map<string, string>();
+  for (const c of declared ?? []) if (!choiceOf.has(c.toLowerCase())) choiceOf.set(c.toLowerCase(), c);
+  const inChoice = new Map<string, R[]>([...choiceOf.values()].map((c) => [c, []]));
+  const rest: Array<[string, R[]]> = [];
+  let none: R[] | null = null;
+  for (const [key, rows] of buckets) {
+    if (key === NO_GROUP) none = rows;
+    else if (choiceOf.has(key.toLowerCase())) inChoice.get(choiceOf.get(key.toLowerCase())!)!.push(...rows);
+    else rest.push([key, rows]);
+  }
+  out.push(...inChoice.entries());
+  out.push(...rest.sort(([a], [b]) => a.localeCompare(b)));
+  if (none) out.push([NO_GROUP, none]);
+  return out;
+}
+

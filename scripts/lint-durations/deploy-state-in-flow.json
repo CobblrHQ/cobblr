@@ -1,7 +1,8 @@
 {
   "lint": "lint:deploy-state-in-flow",
-  "run": "tsx scripts/lint-deploy-state-in-flow.ts",
+  "run": "node scripts/lint-deploy-state-in-flow.ts",
   "ms": 461,
   "recorded": "2026-09-14",
-  "source": "split from scripts/lint-durations.json (recorded 2026-09-14)"
+  "source": "split from scripts/lint-durations.json (recorded 2026-09-14)",
+  "readMB": 0.1
 }

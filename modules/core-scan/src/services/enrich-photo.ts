@@ -42,7 +42,8 @@ import { curatedImageUrl } from "./curated-images.js";
 import { pickedImageUrl } from "./picked-images.js";
 import { formFactorFromObservation } from "./form-factor.js";
 import { sql } from "kysely";
-import { cropRegion, parseProductRegion } from "./image-ops.js";
+import { cropRegion, detectSplitItems, parseProductRegion, type SplitBox } from "./image-ops.js";
+import { LISTING_KEY, parseListing, type ListingRead } from "./listing-evidence.js";
 import { seedHistory, pushStep, type CatalogSource } from "./catalog-history.js";
 import { looksLikeReceiptPhoto } from "./receipt-photo.js";
 import { ocrImageText } from "./ocr.js";
@@ -380,6 +381,10 @@ export interface PhotoIdentity {
    *  catalog image instead of a stock photo of some other unit. Null for an
    *  ordinary photo, which is the common case. */
   product_photo_box: { x: number; y: number; w: number; h: number } | null;
+  /** What a listing screenshot printed about the sale (listing-evidence.ts):
+   *  purchase evidence, like a receipt. Null for anything else, and on a
+   *  reply from before the prompt asked. */
+  listing?: ListingRead | null;
   /** How many DISTINCT things are pictured. Several units of the SAME product is
    *  a quantity, not a split (a sealed 10-pack of screws is ONE thing) — only
    *  genuinely different items count. 1 for the overwhelmingly common case. */
@@ -411,7 +416,12 @@ export function normalizeIndividuals(
   rawItems: unknown,
   claimedDistinct: unknown,
 ): { distinct: number; individuals: Individual[] } {
-  const items = Array.isArray(rawItems) ? rawItems : [];
+  const all = Array.isArray(rawItems) ? rawItems : [];
+  // What sits behind the subject or half out of frame is not a thing to
+  // split off: one ball of yarn with another skein at the edge of the shot
+  // was offered as "2 different items" (#3884).
+  const items = all.filter((it) => (it as { background?: unknown } | null)?.background !== true);
+  const droppedBackground = items.length < all.length;
   const individuals = items
     .map((it): Individual | null => {
       const i = (it ?? {}) as { name?: unknown; brand?: unknown; qty?: unknown };
@@ -429,8 +439,9 @@ export function normalizeIndividuals(
   // what it actually saw, and the offer must never promise an item it can't
   // produce. A count with NO names is still honest ("2 items — split?"); the
   // names then come from the segmentation pass the user opted into.
-  const distinct = individuals.length >= 2 ? individuals.length : seenDistinctOf(claimedDistinct);
-  return { distinct, individuals };
+  // A count that included what the list now leaves out is no longer the count.
+  const distinct = individuals.length >= 2 ? individuals.length : droppedBackground ? 1 : seenDistinctOf(claimedDistinct);
+  return { distinct, individuals: distinct >= 2 ? individuals : droppedBackground ? [] : individuals };
 }
 
 /**
@@ -668,6 +679,7 @@ export function parseIdentityReply(parsed: Record<string, unknown> | null): Phot
     // Validated, not trusted: a model that finds no photograph sometimes returns
     // a sliver or a near-full-frame box instead of the null it was asked for.
     product_photo_box: parseProductRegion({ box: p.product_photo_box }),
+    listing: parseListing((p as { listing?: unknown }).listing),
     ...normalizeIndividuals(p.items, p.distinct_items),
     ...(is_receipt ? { is_receipt } : {}),
     packaging: asPackaging((p as { packaging?: unknown }).packaging) ?? packagingFromProse(str(p.observations)),
@@ -730,6 +742,7 @@ export function identityOverlay(
   // this a receipt, and what did it see of the packaging.
   if (identity.is_receipt) set.photo_is_receipt = identity.is_receipt;
   if (identity.packaging) set.packaging = identity.packaging;
+  if (identity.listing) set[LISTING_KEY] = identity.listing;
   if (identity.observations) {
     // The observation rides the SAME vision read as the name, so the split offer
     // lands in this one write instead of trailing a second call by seconds.
@@ -942,6 +955,11 @@ export function crossCheckPhotoPrompt(resolvedName: string): string {
     "matches that name/identity — consider the product type, packaging, and any " +
     "readable label text, and allow for a generic or differently-angled shot. " +
     'Only answer "no" when the photo clearly shows a DIFFERENT kind of product. ' +
+    // Two skeins in one frame: the check read the one WITHOUT the barcode and
+    // renamed the row to it (#3884). The code is on one of the things shown.
+    'When the photo shows several different products, the barcode is on one of ' +
+    'them: answer "yes" when ANY of them plausibly matches, and "no" only when ' +
+    'none does. Report "things": how many different products are in the photo. ' +
     "When (and ONLY when) it's a clear mismatch AND the photo's label makes the " +
     "real product unambiguous, also return what the item actually IS — a concise " +
     "retail product name, plus brand if visible. Omit them if you can't read it " +
@@ -955,10 +973,19 @@ export function crossCheckPhotoPrompt(resolvedName: string): string {
     "this unit was made as printed (a wine's vintage, a coin's year: four digits, " +
     'never a best-before date, a copyright year or a "since" or "established" year). ' +
     "Never complete or translate them; null when not shown. " +
-    'Reply with JSON only: {"match":"yes"|"no"|"unsure","reason":"<one short sentence>",' +
+    'Reply with JSON only: {"match":"yes"|"no"|"unsure","reason":"<one short sentence>","things":<integer>,' +
     '"correct_name":"<the real product name, optional>","correct_brand":"<brand, optional>",' +
     '"printed":{"creator":<string|null>,"brand":<string|null>,"title":<string|null>,"lot":<string|null>,"year_made":<string|null>}}.'
   );
+}
+
+/** Whether a photo holds more than one different thing, by the cross-check's
+ *  own count or the identify pass's: then a barcode's name may be flagged
+ *  against it but never replaced from it, and no vote leaves the workspace.
+ *  Pure. */
+export function photoShowsOtherThings(things: unknown, distinct: unknown): boolean {
+  const n = (v: unknown): number => (typeof v === "number" && Number.isFinite(v) ? v : typeof v === "string" && /^\d+$/.test(v.trim()) ? Number(v) : 0);
+  return n(things) >= 2 || n(distinct) >= 2;
 }
 
 export interface CrossCheckOptions {
@@ -998,6 +1025,7 @@ export async function crossCheckScanPhoto(
   const meta = (row?.suggested_metadata ?? {}) as {
     photo_observations?: string;
     photo_observed_for?: string;
+    photo_distinct?: unknown;
     photo_check_pending?: boolean;
     pending_confidence?: string;
     pending_notes?: string;
@@ -1047,6 +1075,8 @@ export async function crossCheckScanPhoto(
 
   type Verdict = {
     match?: string;
+    /** How many different products the photo holds, by the look itself. */
+    things?: unknown;
     reason?: string;
     correct_name?: string;
     correct_brand?: string;
@@ -1163,6 +1193,10 @@ export async function crossCheckScanPhoto(
     await confirmPending(false);
     return;
   }
+  // A photo of several things cannot overrule the barcode: the code is on one
+  // of them, and a name read off another is someone else's. It may still say
+  // the photo and the code disagree, never rename or vote (#3884).
+  const actOnlyAsFlag = !!opts.flagOnly || photoShowsOtherThings(verdict?.things, meta.photo_distinct);
   const reason = typeof verdict?.reason === "string" ? verdict.reason.trim() : "";
   const correctName = typeof verdict?.correct_name === "string" ? verdict.correct_name.trim() : "";
   const correctBrand = typeof verdict?.correct_brand === "string" ? verdict.correct_brand.trim() : "";
@@ -1182,7 +1216,7 @@ export async function crossCheckScanPhoto(
   // wrong product; fall through to the mismatch flag. This is what let a photo of
   // yellow yarn get "corrected" to the Anchorman action figure the barcode wrongly
   // resolved to: the model said "not an action figure" yet echoed that name back.
-  if (correctName && !isNameEcho(correctName, resolvedName) && !opts.flagOnly) {
+  if (correctName && !isNameEcho(correctName, resolvedName) && !actOnlyAsFlag) {
     // The photo UNAMBIGUOUSLY identifies a different product → the photo wins.
     // The barcode/web-search name is the weakest source (a UPC search can surface a
     // spurious listing), so replace it outright with the photo's identity and treat
@@ -1313,7 +1347,7 @@ export async function crossCheckScanPhoto(
   // Not under flagOnly: voting is acting, just at everyone else's expense. If
   // this check is not confident enough to rename one row, it is not confident
   // enough to push a barcode toward suppression for every workspace.
-  if (existing?.barcode_text && !opts.flagOnly) {
+  if (existing?.barcode_text && !actOnlyAsFlag) {
     void reportBarcodeReject({
       upc: existing.barcode_text,
       reason: reason || "photo doesn't match the barcode",
@@ -1594,7 +1628,12 @@ async function readPhotoItem(ctx: PhotoEnrichContext): Promise<EnrichOutcome> {
   // other unit of the same product: it is the actual thing, it needs no search
   // or fetch, and it cannot 404 or hotlink-block. Falls through to the image
   // search when this is not a screenshot, which is the ordinary case.
-  const cropped = await catalogFromScreenshot(ctx, identity.product_photo_box).catch(() => false);
+  // A model that read the listing but gave no box (a small model often
+  // skips it; the hosted service never sent one) gets one locate call, on
+  // this shape only: the listing's own photo beats a stock shot of another
+  // unit, and a V2 in place of the original was what the search found (#3853).
+  const box = identity.product_photo_box ?? (identity.listing ? await locateListingPhoto(ctx) : null);
+  const cropped = await catalogFromScreenshot(ctx, box).catch(() => false);
   if (cropped) return "identified";
 
   // Auto-suggest a clean CATALOG image for a photographed item — the user's own
@@ -1604,6 +1643,24 @@ async function readPhotoItem(ctx: PhotoEnrichContext): Promise<EnrichOutcome> {
   // honors a user-picked image (refreshCatalogImageByName checks the lock).
   void refreshCatalogImageByName(ctx.orgId, ctx.itemId, named.name, named.brand).catch(() => {});
   return "identified";
+}
+
+/** The item's box inside a listing screenshot, from the segmentation pass:
+ *  the largest thing it found, held to the same size rule as a box the
+ *  identify reply gives (parseProductRegion). Null when nothing usable. */
+async function locateListingPhoto(ctx: PhotoEnrichContext): Promise<SplitBox | null> {
+  const found = await detectSplitItems(ctx.orgId, ctx.imageFileId, ctx.userId ?? null).catch(() => null);
+  return found ? listingPhotoBoxFrom(found.items) : null;
+}
+
+/** Pure: the largest usable box among what segmentation found. */
+export function listingPhotoBoxFrom(items: ReadonlyArray<{ box: SplitBox | null }>): SplitBox | null {
+  let best: SplitBox | null = null;
+  for (const it of items) {
+    const b = parseProductRegion({ box: it.box });
+    if (b && (!best || b.w * b.h > best.w * best.h)) best = b;
+  }
+  return best;
 }
 
 /** Crop the item's photograph out of a screenshot and make it the catalog image.

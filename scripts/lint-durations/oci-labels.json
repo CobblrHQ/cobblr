@@ -1,7 +1,8 @@
 {
   "lint": "lint:oci-labels",
-  "run": "tsx scripts/lint-oci-labels.ts",
+  "run": "node scripts/lint-oci-labels.ts",
   "ms": 473,
   "recorded": "2026-09-14",
-  "source": "split from scripts/lint-durations.json (recorded 2026-09-14)"
+  "source": "split from scripts/lint-durations.json (recorded 2026-09-14)",
+  "readMB": 0.0
 }

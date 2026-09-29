@@ -2,7 +2,7 @@
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { useToast } from "@cobblr/platform-web";
 import { ApiError, type ConnectionVerification } from "../lib/api";
-import { verificationBadge, verificationToast } from "../lib/connection-state";
+import { verificationBadge, verificationLine, verificationToast } from "../lib/connection-state";
 
 const TONE: Record<"ok" | "bad" | "warn" | "muted", string> = {
   ok: "bg-emerald-50 text-emerald-800 border-emerald-200 dark:bg-emerald-950/40 dark:text-emerald-300 dark:border-emerald-900",
@@ -17,6 +17,25 @@ export function VerificationBadge({ verification }: { verification: ConnectionVe
     <span className={`inline-flex items-center rounded px-1.5 py-px text-[11px] font-medium border ${TONE[b.tone]}`} title={b.title} data-verification={verification?.state ?? "none"}>
       {b.text}
     </span>
+  );
+}
+
+const LINE_TONE: Record<"ok" | "bad" | "warn" | "muted", string> = {
+  ok: "text-muted dark:text-slate-400",
+  bad: "text-red-700 dark:text-red-400",
+  warn: "text-amber-700 dark:text-amber-500",
+  muted: "text-faint",
+};
+
+/** The last test's result under the row's name: when, model, time taken,
+ *  whether it read the test picture, or exactly why it failed. */
+export function VerificationLine({ verification }: { verification: ConnectionVerification | null | undefined }) {
+  const line = verificationLine(verification);
+  if (!line) return null;
+  return (
+    <div className={`text-[11px] mt-0.5 ${LINE_TONE[line.tone]}`} data-verification-line={verification?.state}>
+      {line.text}
+    </div>
   );
 }
 

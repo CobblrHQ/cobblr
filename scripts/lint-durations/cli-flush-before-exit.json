@@ -1,7 +1,8 @@
 {
   "lint": "lint:cli-flush-before-exit",
-  "run": "tsx scripts/lint-cli-flush-before-exit.ts",
+  "run": "node scripts/lint-cli-flush-before-exit.ts",
   "ms": 402,
   "recorded": "2026-09-14",
-  "source": "split from scripts/lint-durations.json (recorded 2026-09-14)"
+  "source": "split from scripts/lint-durations.json (recorded 2026-09-14)",
+  "readMB": 3.2
 }

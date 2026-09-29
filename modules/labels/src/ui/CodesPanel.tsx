@@ -5,7 +5,7 @@
 import { useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useNavigate } from "react-router-dom";
-import { useToast } from "@cobblr/platform-web";
+import { useToast, SearchInput } from "@cobblr/platform-web";
 import { useLabels } from "./context";
 import type { CodeGroup } from "./api";
 
@@ -85,12 +85,13 @@ export function CodesPanel() {
         }}
         className="flex items-center gap-2"
       >
-        <input
+        <SearchInput
           value={q}
-          onChange={(e) => setQ(e.target.value)}
+          onChange={setQ}
           // vocab-lint-ok: codes span every kind (parts, machines, locations), so a neutral generic noun is correct here
           placeholder="Find an item by its short code (e.g. m1)"
-          className="input flex-1 !py-1.5 text-sm"
+          aria-label="Find an item by its short code"
+          wrapperClassName="flex-1"
           autoFocus
         />
         <button

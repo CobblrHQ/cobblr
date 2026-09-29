@@ -34,6 +34,7 @@ import {
   BLOCKED_SENTENCE,
   DUPLICATE_SENTENCE,
   AMBIGUOUS_MATCH_SENTENCE,
+  WHICH_PLACE_SENTENCE,
   HELD_GUESS_BECAUSE,
   HELD_GUESS_PROMPT,
   HELD_GUESS_SOURCE,
@@ -54,7 +55,7 @@ import {
   fillSentence,
 } from "@cobblr/platform-contract/scan-copy";
 import { createCapabilityForModule } from "@cobblr/platform-contract/create-capability";
-import { nameIsRejected } from "@cobblr/platform-contract/display-identity";
+import { isBareCodeName, nameIsRejected } from "@cobblr/platform-contract/display-identity";
 import { normaliseTargetKind, type DestinationTable } from "@cobblr/platform-contract/destination-label";
 import { rankFits, type FitItem, type FitTable } from "@cobblr/platform-contract/table-fit";
 import { SCAN_TOOLS, type ScanTool, type ScanToolHints } from "@cobblr/platform-contract/scan-tools";
@@ -163,7 +164,7 @@ function isPending(row: ScanTriageRow): boolean {
 function isNamed(row: ScanTriageRow): boolean {
   // A name the person turned down is no name: it cannot file, and the row
   // waits for theirs (#3724).
-  return !!row.suggested_name?.trim() && !nameIsRejected(row);
+  return !!row.suggested_name?.trim() && !nameIsRejected(row) && !isBareCodeName(row.suggested_name, row.barcode_text);
 }
 
 /**
@@ -181,6 +182,21 @@ export function scanReceiptReadFailed(row: ScanTriageRow): boolean {
   const meta = metaOf(row);
   if (meta.read_as_item || meta.reading_receipt) return false;
   return !!meta.receipt_read_failed || meta.receipt_shape?.verdict === "receipt";
+}
+
+/** The session a photographed receipt is ALREADY in, when that is why its
+ *  read stopped: the receipt door recognised the same receipt (same store and
+ *  order, or the same lines) and did not import it twice. Not a failure to
+ *  read, and never to be reported as "no line items" (#4027). */
+export interface ScanReceiptAlreadyIn {
+  batch_id: string;
+  label: string | null;
+  lines: number;
+}
+export function scanReceiptAlreadyIn(row: ScanTriageRow): ScanReceiptAlreadyIn | null {
+  const d = (metaOf(row).receipt_read_failed as { duplicate_of?: Partial<ScanReceiptAlreadyIn> } | undefined)?.duplicate_of;
+  if (!d || typeof d.batch_id !== "string" || !d.batch_id) return null;
+  return { batch_id: d.batch_id, label: typeof d.label === "string" ? d.label : null, lines: typeof d.lines === "number" ? d.lines : 0 };
 }
 
 /** A route the matchmaker suggested. Only what the readiness rule needs. */
@@ -574,6 +590,14 @@ export interface FiledInto {
   instance: string | null;
   kind: string | null;
   label: string;
+  /** The record's name as it was filed: what the person confirmed, never
+   *  the listing title a catalog suggested (#4011). */
+  name?: string;
+  /** What one record of the table is called ("spool"). */
+  noun?: string;
+  /** The type the record was filed under, when its table has a parent type
+   *  table (a spool under "Royal Blue PLA"), and whether filing made it. */
+  under?: { id: string; name: string; created: boolean; instance: string };
 }
 export function filedIntoOf(meta: unknown): FiledInto | null {
   const f = ((meta ?? {}) as Record<string, unknown>)[FILED_INTO_KEY];
@@ -585,7 +609,17 @@ export function filedIntoOf(meta: unknown): FiledInto | null {
     instance: typeof o.instance === "string" && o.instance ? o.instance : null,
     kind: typeof o.kind === "string" && o.kind ? o.kind : null,
     label: o.label,
+    ...(typeof o.name === "string" && o.name.trim() ? { name: o.name.trim() } : {}),
+    ...(typeof o.noun === "string" && o.noun.trim() ? { noun: o.noun.trim() } : {}),
+    ...(underOf(o.under) ? { under: underOf(o.under)! } : {}),
   };
+}
+
+function underOf(v: unknown): FiledInto["under"] | null {
+  if (!v || typeof v !== "object") return null;
+  const u = v as Record<string, unknown>;
+  if (typeof u.id !== "string" || !u.id || typeof u.name !== "string" || typeof u.instance !== "string" || !u.instance) return null;
+  return { id: u.id, name: u.name, created: u.created === true, instance: u.instance };
 }
 
 /** A workspace's scan menu entry, as both the web and the server hold it. */
@@ -828,14 +862,21 @@ export interface ScanTrackedMatch {
   id: string | null;
   instance: string | null;
   counted: boolean;
-  /** How many records matched as well as this one (the same tier: two on
-   *  one barcode, or two by name with no barcode). Above 1 no machine can
-   *  pick. A stamp from before the count reads 1. */
+  /** How many THINGS matched as well as this one (the same tier: two on
+   *  one barcode, or two by name with no barcode). Places of one item are one
+   *  thing. Above 1 no machine can pick. A stamp from before the count reads 1. */
   of: number;
+  /** How many places the matched thing is kept in (one card, a row per
+   *  place). A stamp from before places reads 1. */
+  places: number;
+  /** Whether the stamp's record is the place this scan belongs to: the one
+   *  somebody picked, or the place being worked in. Only matters when
+   *  `places` is above 1. */
+  placeChosen: boolean;
 }
 export function scanTrackedMatch(row: ScanTriageRow): ScanTrackedMatch | null {
   const m = ((row.suggested_metadata ?? {}) as {
-    tracked_match?: { title?: unknown; matched_by?: unknown; kind?: unknown; id?: unknown; instance?: unknown; qty?: unknown; of?: unknown } | null;
+    tracked_match?: { title?: unknown; matched_by?: unknown; kind?: unknown; id?: unknown; instance?: unknown; qty?: unknown; of?: unknown; places?: unknown; place_chosen?: unknown } | null;
   }).tracked_match;
   if (!m || typeof m !== "object" || typeof m.title !== "string" || !m.title.trim()) return null;
   const str = (v: unknown): string | null => (typeof v === "string" && v.trim() ? v : null);
@@ -847,6 +888,8 @@ export function scanTrackedMatch(row: ScanTriageRow): ScanTrackedMatch | null {
     instance: str(m.instance),
     counted: typeof m.qty === "number" && Number.isFinite(m.qty),
     of: typeof m.of === "number" && Number.isFinite(m.of) && m.of > 1 ? Math.floor(m.of) : 1,
+    places: typeof m.places === "number" && Number.isFinite(m.places) && m.places > 1 ? Math.floor(m.places) : 1,
+    placeChosen: m.place_chosen === true,
   };
 }
 
@@ -945,6 +988,11 @@ export function scanRebuy(row: ScanTriageRow, ctx: ScanDestinationContext = {}):
   // still leaves a choice only a person can make.
   if (matchDeclined(row, t, tables)) return t.of > 1 ? { kind: "hold", sentence: fillSentence(AMBIGUOUS_MATCH_SENTENCE, { n: t.of }) } : { kind: "none" };
   if (t.of > 1) return { kind: "hold", sentence: fillSentence(AMBIGUOUS_MATCH_SENTENCE, { n: t.of }) };
+  // One thing, kept in several places: adding to it means adding to ONE
+  // place, and "+1 more" into a place nobody chose files a vehicle's delivery
+  // in the closet. Asked once; the pick (or the place being worked in) is
+  // what the stamp's record already is.
+  if (t.places > 1 && !t.placeChosen) return { kind: "hold", sentence: fillSentence(WHICH_PLACE_SENTENCE, { n: t.places }) };
   // A record with no count is one unique thing, and "+1" would double it.
   if (!t.counted || !t.kind || !t.id) return { kind: "hold", sentence: DUPLICATE_SENTENCE };
   const home = trackedTable(t, tables);

@@ -1,7 +1,8 @@
 {
   "lint": "lint:changelog-names-ui",
-  "run": "tsx scripts/lint-changelog-names-ui.ts",
+  "run": "node scripts/lint-changelog-names-ui.ts",
   "ms": 495,
   "recorded": "2026-09-14",
-  "source": "split from scripts/lint-durations.json (recorded 2026-09-14)"
+  "source": "split from scripts/lint-durations.json (recorded 2026-09-14)",
+  "readMB": 0.0
 }

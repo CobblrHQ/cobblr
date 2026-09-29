@@ -63,6 +63,13 @@ export function registerInventoryWriter(): void {
       await db.deleteFrom("inventory_parts").where("id", "=", id).execute();
     },
 
+    /** Something that left is archived: out of the lists, still found by
+     *  search, its history kept. How it left is the caller's to note. */
+    async retire(orgId, id) {
+      const db = (await platform().tenants.getDb(orgId)) as Kysely<InventoryDB>;
+      await db.updateTable("inventory_parts").set({ archived: true, updated_at: new Date() } as never).where("id", "=", id).execute();
+    },
+
     /** Put the row back exactly as it was, id and all (EntityWriter.restore).
      *  Not a create: no name-clash rule, no re-derived id, no new row for
      *  everything that pointed at the old one to miss. */

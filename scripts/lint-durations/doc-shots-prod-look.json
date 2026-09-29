@@ -1,7 +1,8 @@
 {
   "lint": "lint:doc-shots-prod-look",
-  "run": "tsx scripts/lint-doc-shots-prod-look.ts",
+  "run": "node scripts/lint-doc-shots-prod-look.ts",
   "ms": 1400,
   "recorded": "2026-09-14",
-  "source": "split from scripts/lint-durations.json (recorded 2026-09-14)"
+  "source": "split from scripts/lint-durations.json (recorded 2026-09-14)",
+  "readMB": 2.3
 }

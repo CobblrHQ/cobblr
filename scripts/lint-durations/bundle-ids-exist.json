@@ -1,10 +1,11 @@
 {
   "lint": "lint:bundle-ids-exist",
-  "run": "tsx scripts/lint-bundle-ids-exist.ts",
+  "run": "node scripts/lint-bundle-ids-exist.ts",
   "rows": [
     "e2e"
   ],
   "ms": 22500,
   "recorded": "2026-09-23",
-  "source": "by hand at twice a dev-box run of 11.25 s under load 64 on 16 cores; a second run under load 199 took 139.54 s and was discarded as measuring the box (2026-09-22)"
+  "source": "by hand at twice a dev-box run of 11.25 s under load 64 on 16 cores; a second run under load 199 took 139.54 s and was discarded as measuring the box (2026-09-22)",
+  "readMB": 25.0
 }

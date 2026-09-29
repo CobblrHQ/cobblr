@@ -10,6 +10,7 @@
 
 import type { ReactNode } from "react";
 import { useDragClickGuard } from "./useDragClickGuard";
+import { MoreAppsDoor } from "./MoreAppsDoor";
 import { NavLink, useLocation } from "react-router-dom";
 import {
   DndContext,
@@ -223,12 +224,12 @@ export function SidebarNav({
     if (next) writeNavOrder(activeSlug, next);
   };
 
-  // The end of the collections: every module, whatever its state, one row
-  // away (#3883). The owner could not find Purchases once it was not a row.
+  // The end of the collections: every app not in this sidebar, with how many
+  // (#3883). A control of its own, not another row nobody reads as a door.
   const allAppsRow = !appMode && (
-    <NavLink to="/apps" data-testid="nav-all-apps" className={linkCls}>
-      <span className="truncate">All apps</span>
-    </NavLink>
+    <div className="px-1 pt-1.5">
+      <MoreAppsDoor />
+    </div>
   );
   const homeRow = !appMode && (
     <NavLink to="/" end className={linkCls}>

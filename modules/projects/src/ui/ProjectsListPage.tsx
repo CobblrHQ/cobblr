@@ -1,9 +1,9 @@
 // Projects index. Status-grouped list + search + new-project form.
 
-import { useMemo, useState, type FormEvent } from "react";
+import { useDeferredValue, useMemo, useState, type FormEvent } from "react";
 import { Link, useSearchParams } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Plus, Search, Trash2 } from "lucide-react";
+import { Plus, Trash2 } from "lucide-react";
 import {
   BulkActionBar,
   CustomFieldsPanel,
@@ -12,12 +12,11 @@ import {
   useToast,
   useConfirm,
   usePageTitle,
-  useAskCobbAboutSelection,
-} from "@cobblr/platform-web";
+  useAskCobbAboutSelection, SearchInput, CollectionHeader } from "@cobblr/platform-web";
 import { useProjects } from "./context";
 import type { Project } from "./api";
 import { pluralise } from "@cobblr/platform-contract";
-import { TableTitle } from "@cobblr/platform-web";
+import { SnippetText } from "@cobblr/platform-web";
 
 type SavedViewLite = {
   id: string;
@@ -132,15 +131,25 @@ export function ProjectsListPage() {
   }
 
   const items = list.data?.items ?? [];
+  // The server reads what the page does not hold: a pattern's own words
+  // (its PDF). Until it answers, the page's own filter shows what it can.
+  const deferred = useDeferredValue(query.trim());
+  const searched = useQuery({
+    queryKey: ["projects-search", entityKind, deferred],
+    queryFn: () => api.searchProjects(deferred),
+    enabled: deferred.length >= 2,
+    staleTime: 30_000,
+  });
   const filtered = useMemo(() => {
     if (!query.trim()) return items;
+    if (searched.data && deferred === query.trim()) return searched.data.items;
     const q = query.toLowerCase();
     return items.filter(
       (p) =>
         p.name.toLowerCase().includes(q) ||
         (p.description ?? "").toLowerCase().includes(q),
     );
-  }, [items, query]);
+  }, [items, query, deferred, searched.data]);
 
   const grouped = useMemo(() => {
     const m = new Map<string, Project[]>();
@@ -186,22 +195,12 @@ export function ProjectsListPage() {
 
   return (
     <div className="space-y-5">
-      <div className="flex items-baseline gap-3 border-b border-line dark:border-slate-700 pb-3">
-        <TableTitle title={heading} hint={hint} />
-        <span className="text-[10px] font-mono text-faint dark:text-slate-500">
-          {query ? `${filtered.length} of ${items.length}` : `${items.length} total`}
-        </span>
-        <div className="flex-1" />
-        <div className="relative">
-          <Search size={12} className="absolute left-2 top-1/2 -translate-y-1/2 text-faint" />
-          <input
-            value={query}
-            onChange={(e) => setQuery(e.target.value)}
-            placeholder="search…"
-            className="input !py-1 !pl-7 !text-xs !w-48"
-          />
-        </div>
-      </div>
+      <CollectionHeader
+        title={heading}
+        count={query ? `${filtered.length} of ${items.length}` : `${items.length} total`}
+        hint={hint}
+        search={<SearchInput value={query} onChange={setQuery} placeholder="search…" aria-label="Search projects" wrapperClassName="w-48 max-sm:w-full max-sm:flex-1" />}
+      />
 
       <div className="flex">
         <button
@@ -360,7 +359,11 @@ export function ProjectsListPage() {
                         </span>
                       )}
                     </div>
-                    {p.description && (
+                    {p.snippet ? (
+                      <p className="mt-0.5 text-xs text-muted dark:text-slate-400 line-clamp-2" data-testid="search-snippet">
+                        <SnippetText text={p.snippet} q={query} />
+                      </p>
+                    ) : p.description && (
                       <p className="mt-0.5 text-xs text-muted dark:text-slate-400 line-clamp-1">
                         {p.description}
                       </p>

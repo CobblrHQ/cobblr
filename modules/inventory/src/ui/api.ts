@@ -149,6 +149,17 @@ export interface HoldingRow {
   min_qty: number | null;
   low: boolean;
   expires_on: string | null;
+  /** The lots held here, soonest first; empty when nothing is dated. */
+  lots?: HoldingLot[];
+}
+
+/** One lot at one place: how many, when it arrived, when it goes off, and the
+ *  lot number printed on it when there is one. */
+export interface HoldingLot {
+  received_on: string;
+  expires_on: string;
+  qty: number;
+  lot?: string;
 }
 
 export interface Part extends HomeBoxFields {
@@ -202,6 +213,10 @@ export interface ConsumptionRow {
   reason: string | null;
   source_kind: string | null;
   source_id: string | null;
+  /** Who did it, by the name they go by now; null when nobody did by hand or
+   *  they have left the workspace. */
+  by_name?: string | null;
+  by_user?: string | null;
   at: string;
 }
 
@@ -611,6 +626,11 @@ export class InventoryApi {
   mintUnit = (id: string, body: { serial_number?: string; name?: string }) =>
     this.partsRequest<{ id: string; name: string; serial_number: string | null }>("POST", `/${id}/units`, body);
 
+  /** Lots going off within `within` days across every collection, grouped by
+   *  place, soonest first (module-level: not scoped to one collection). */
+  /** What of THIS collection goes off soon (never another collection's). */
+  stockExpiring = (within = 30) =>
+    this.request<StockExpiring>("GET", `/stock/expiring?within=${within}&today=${dayHere()}&collection=${encodeURIComponent(this.opts.instance ?? "inventory")}`);
   /** The places this thing is kept, its own first, and the card's top line. */
   listHoldings = (id: string) =>
     this.partsRequest<{ card_id: string; rows: HoldingRow[]; rollup: CardRollup }>("GET", `/${id}/holdings`);
@@ -620,9 +640,41 @@ export class InventoryApi {
   /** These records are the same thing kept elsewhere: rows of this card. */
   combineHoldings = (id: string, ids: string[]) =>
     this.partsRequest<{ card_id: string; combined: string[] }>("POST", `/${id}/holdings/combine`, { ids });
+  /** Move stock from this place to another place of the same item (or a
+   *  location it is not kept at yet): soonest-expiring first unless a lot is
+   *  named, every lot keeping its expiry and number. */
+  transferStock = (fromId: string, body: { to_id?: string; to_location_id?: string; qty: number; lot?: string; expires_on?: string }) =>
+    this.partsRequest<{ from_id: string; to_id: string; qty: number; moved: HoldingLot[] }>("POST", `/${fromId}/transfer`, body);
+  /** Stock arrived here, with the expiry printed on it and its lot number. */
+  receiveLot = (id: string, body: { qty: number; expires_on?: string | null; lot?: string | null }) =>
+    this.partsRequest<Record<string, unknown>>("POST", `/${id}/receive`, body);
+  /** Records that look like one thing kept in several places (the same name
+   *  or barcode, each somewhere else): offered, never combined on their own.
+   *  `forId` narrows to the group holding that record. */
+  combineSuggestions = (forId?: string) =>
+    this.partsRequest<{ items: CombineSuggestion[] }>("GET", `/holdings/suggestions${forId ? `?for=${forId}` : ""}`);
+  /** "These are different things": the suggestion stops asking about them. */
+  notTheSame = (ids: string[]) =>
+    this.partsRequest<{ ok: true }>("POST", `/holdings/suggestions/not-the-same`, { ids });
   /** A place's stock becomes a record of its own again. */
   splitHolding = (cardId: string, holdingId: string) =>
     this.partsRequest<{ id: string }>("POST", `/${cardId}/holdings/${holdingId}/split`, {});
+  /** The type collection read with its things under each type (Filament):
+   *  families.ts GET /family/all. */
+  familyAll = () => this.partsRequest<FamilyPayload>("GET", "/family/all");
+  /** A thing under a type, or under a new type named here. */
+  addToFamily = (body: { type_id?: string; new_type?: { name: string; manufacturer?: string | null; metadata?: Record<string, unknown> }; qty?: number; unit?: string | null; location_id?: string | null }) =>
+    this.partsRequest<{ id: string; type_id: string }>("POST", "/family/children", body);
+  /** One tap on a thing in ANOTHER collection of this family (a spool from
+   *  the Filament page): the ledgered stock adjust on that record's own door. */
+  stockAdjustIn = (instance: string, id: string, delta: number) =>
+    this.requestAbs<{ id: string; name: string; qty: number }>("POST", `/api/v1/orgs/${this.slug}/instances/${encodeURIComponent(instance)}/items/${id}/stock-adjust`, { delta });
+
+  /** Delete a record in ANOTHER collection of this family (a spool from the
+   *  Filament page), through that collection's own door. */
+  deleteIn = (instance: string, id: string) =>
+    this.requestAbs<void>("DELETE", `/api/v1/orgs/${this.slug}/instances/${encodeURIComponent(instance)}/items/${id}`);
+
   stockAdjust = (
     id: string,
     delta: number,
@@ -833,4 +885,57 @@ export interface CatalogSearchHit {
    *  (schema.field_map). Picking this hit prefills those instance fields from
    *  the payload (e.g. Rebrickable set → set_number/theme/year/piece_count). */
   field_map?: Record<string, string>;
+}
+
+export interface FamilyThing {
+  id: string;
+  name: string;
+  qty: number;
+  unit: string | null;
+  min_qty: number | null;
+  low: boolean;
+  location_id: string | null;
+  image_path: string | null;
+  metadata: Record<string, unknown>;
+}
+
+export interface FamilyType {
+  id: string;
+  name: string;
+  manufacturer: string | null;
+  image_path: string | null;
+  metadata: Record<string, unknown>;
+  children: FamilyThing[];
+  count: number;
+  remaining: number;
+  low: boolean;
+}
+
+export interface FamilyPayload {
+  parent: string;
+  child: string;
+  child_noun: string | null;
+  parent_noun: string | null;
+  /** The unit a new thing is counted in ("kg"), when the collection says. */
+  child_unit?: string | null;
+  types: FamilyType[];
+  unclaimed: FamilyThing[];
+  counts: { types: number; children: number; low: number };
+}
+
+/** Lots going off soon, wherever they are. */
+export interface StockExpiring {
+  today: string;
+  within: number;
+  places: Array<{
+    location_id: string | null;
+    location_name: string | null;
+    lots: Array<{ part_id: string; card_id: string | null; name: string; instance: string; kind: string; detail_path: string; qty: number; unit: string; lot: string | null; expires_on: string; days: number }>;
+  }>;
+}
+
+/** Records that look like one thing kept in several places. */
+export interface CombineSuggestion {
+  because: "the same name" | "the same barcode";
+  records: Array<{ id: string; name: string; location_id: string | null; location_name: string | null; qty: number; places: number }>;
 }

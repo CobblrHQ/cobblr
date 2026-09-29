@@ -111,7 +111,7 @@ export function EntityPhoto({
       data-entity-photo={showImg ? "photo" : swatch ? "swatch" : "placeholder"}
       data-testid={testId}
       title={title}
-      style={{ ...box, ...(swatch ? { backgroundColor: swatch } : null) }}
+      style={{ ...box, ...(swatch ? { background: swatch } : null) }}
       className={`relative overflow-hidden ${swatch ? "ring-1 ring-black/10 dark:ring-white/15" : "bg-subtle dark:bg-slate-800"} ${className}`}
     >
       {showImg ? (

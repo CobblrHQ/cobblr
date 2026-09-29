@@ -4,6 +4,7 @@
 // queue. Sending a file to be made is a deliberate action — the Send
 // button is behind an explicit confirm. We send files, never drive hardware.
 
+import { cancelOutcome } from "../lib/digifab-cancel";
 import { useState, useMemo, useEffect, useRef, type ReactNode } from "react";
 import { Link } from "react-router-dom";
 import { useMutation, useQuery, useInfiniteQuery, useQueryClient } from "@tanstack/react-query";
@@ -11,7 +12,7 @@ import { Plus, Trash2, Wifi, Printer, RefreshCw, Send, ListChecks, Boxes, X, Lis
 import { ApiError, api, type DigifabConnection, type DigifabJob, type DigifabFleet, type BambuMode, type DigifabLibraryItem, type DigifabHistory, type DigifabRun, type DigifabFailureConfig, type DigifabDetector, type DigifabDetectorCatalogEntry } from "../lib/api";
 import { useActiveOrg } from "../auth/ActiveOrgContext";
 import { PrintUpdatesPanel } from "./PrintUpdatesPanel";
-import { changeWorkspaceShape, Modal, useToast, useConfirm, usePageTitle, useImageSrc, SecretInput, EntityPhoto, AddressInput } from "@cobblr/platform-web";
+import { changeWorkspaceShape, DragInput, Modal, useToast, useConfirm, usePageTitle, useImageSrc, SecretInput, EntityPhoto, AddressInput, SearchInput } from "@cobblr/platform-web";
 import { Combobox } from "../components/Combobox";
 import { CreateConnectionModal, FleetView, PrintDetailModal, Lightbox, LIBRARY_DRAG_MIME, fetchAllMachines } from "../features/digifab/fleet";
 
@@ -791,6 +792,9 @@ function FailureDetectionPanel({ slug }: { slug: string }) {
     onError: (e) => toast.error(e instanceof ApiError ? e.message : "Couldn't save"),
   });
   const c = cfg.data;
+  // The threshold the slider is on while it is dragged; it saves on release.
+  const [dragged, setDragged] = useState<number | null>(null);
+  const threshold = dragged ?? c?.threshold ?? 0;
   const lbl = "text-[10px] font-mono uppercase tracking-widest text-faint";
   return (
     <div className="pt-2">
@@ -814,8 +818,21 @@ function FailureDetectionPanel({ slug }: { slug: string }) {
               {c.enabled && (
                 <div className="space-y-3 pl-6">
                   <div>
-                    <div className={lbl + " mb-1"}>Sensitivity - trip at score {c.threshold.toFixed(2)}</div>
-                    <input type="range" min={0.3} max={0.9} step={0.05} value={c.threshold} onChange={(e) => save.mutate({ threshold: Number(e.target.value) })} className="w-full max-w-xs accent-cobble-600" />
+                    <div className={lbl + " mb-1"}>Sensitivity - trip at score {threshold.toFixed(2)}</div>
+                    <DragInput
+                      control="range"
+                      min={0.3}
+                      max={0.9}
+                      step={0.05}
+                      value={c.threshold}
+                      onPreview={(v) => setDragged(Number(v))}
+                      onCommit={(v) => {
+                        setDragged(null);
+                        save.mutate({ threshold: Number(v) });
+                      }}
+                      aria-label="Failure sensitivity"
+                      className="w-full max-w-xs accent-cobble-600"
+                    />
                     <div className="flex justify-between max-w-xs text-[9px] text-faint"><span>catches more (0.30)</span><span>fewer false alarms (0.90)</span></div>
                   </div>
                   <label className="flex items-center gap-2">
@@ -1358,9 +1375,8 @@ function PrintQueueSection({ connections }: { connections: DigifabConnection[] }
   const cancel = useMutation({
     mutationFn: (id: string) => api.cancelDigifabJob(activeSlug, id),
     onSuccess: (r) => {
-      toast[r.remote_cancelled ? "success" : "info"](
-        r.remote_cancelled ? "Cancelled — told the printer to stop" : "Marked cancelled (the printer may still be running — stop it at the machine)",
-      );
+      const o = cancelOutcome(r);
+      toast[o.tone](o.text);
       invalidate();
     },
     onError: (e) => toast.error(e instanceof ApiError ? e.message : String(e)),
@@ -1717,7 +1733,7 @@ function JobDetailModal({
   const when = (iso: string | null) => (iso ? new Date(iso).toLocaleString() : "—");
 
   return (
-    <Modal open onClose={onClose} title="Print job" size="md">
+    <Modal open onClose={onClose} title="Job" size="md">
       {!j ? (
         <div className="text-sm text-muted py-6 text-center">{q.isLoading ? "Loading…" : "Job not found."}</div>
       ) : (
@@ -1767,7 +1783,10 @@ function JobDetailModal({
             )}
             {canCancel(j) && (
               <button
-                onClick={async () => { if (await confirm({ title: "Cancel this print?", message: "Marks it cancelled and stops Cobblr tracking it. On a live farm the printer may keep running.", confirmLabel: "Cancel print", destructive: true })) act(() => api.cancelDigifabJob(activeSlug, jobId), "Cancelled"); }}
+                onClick={async () => {
+                  if (!(await confirm({ title: "Cancel this print?", message: "Cobblr asks the printer to stop. It shows as cancelled once the printer confirms; if the printer can't be stopped from here, you'll be told to stop it at the machine.", confirmLabel: "Cancel print", destructive: true }))) return;
+                  api.cancelDigifabJob(activeSlug, jobId).then((r) => { const o = cancelOutcome(r); toast[o.tone](o.text); refresh(); }).catch((e) => toast.error(e instanceof ApiError ? e.message : String(e)));
+                }}
                 className="inline-flex items-center gap-1.5 rounded border border-line dark:border-slate-600 hover:border-ember-500 hover:text-ember-500 px-3 py-1.5 text-sm"
               >
                 <Ban size={13} /> Cancel
@@ -2567,13 +2586,7 @@ function PoolMemberAdder({
       </button>
       {open && (
         <div className="absolute z-30 mt-1 w-64 rounded border border-line dark:border-slate-600 bg-surface dark:bg-slate-900 shadow-lg p-2">
-          <input
-            autoFocus
-            value={q}
-            onChange={(e) => setQ(e.target.value)}
-            placeholder="Search machines…"
-            className="w-full px-2 py-1 text-xs border border-line dark:border-slate-600 rounded bg-surface dark:bg-slate-900 mb-1.5"
-          />
+          <SearchInput autoFocus value={q} onChange={setQ} placeholder="Search machines…" aria-label="Search machines" size="sm" wrapperClassName="mb-1.5" />
           <ul className="max-h-48 overflow-auto space-y-0.5">
             {filtered.length === 0 && <li className="text-[11px] text-faint italic px-1 py-1">No machines</li>}
             {filtered.map((d) => {

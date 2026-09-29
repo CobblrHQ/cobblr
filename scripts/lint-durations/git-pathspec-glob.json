@@ -1,7 +1,8 @@
 {
   "lint": "lint:git-pathspec-glob",
-  "run": "tsx scripts/lint-git-pathspec-glob.ts",
+  "run": "node scripts/lint-git-pathspec-glob.ts",
   "ms": 597,
   "recorded": "2026-09-14",
-  "source": "split from scripts/lint-durations.json (recorded 2026-09-14)"
+  "source": "split from scripts/lint-durations.json (recorded 2026-09-14)",
+  "readMB": 3.2
 }

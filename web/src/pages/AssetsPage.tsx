@@ -6,9 +6,11 @@
 // extra columns automatically (no code change here).
 
 import { useEffect, useState, type FormEvent } from "react";
+import { SuggestedPhoto } from "../components/SuggestedPhoto";
+import { pictureStateFor, suggestedSrcFor, usePhotoSuggestions } from "../lib/photoSuggestions";
 import { useNavigate, useParams, useSearchParams, Link } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { ArrowRightLeft, ChevronRight, Loader2, Plus, Printer, Search, Sprout, Tag as TagIcon, Trash2, Undo2, Wand2 } from "lucide-react";
+import { ArrowRightLeft, ChevronRight, Loader2, Plus, Printer, Sprout, Tag as TagIcon, Trash2, Undo2, Wand2 } from "lucide-react";
 import { ApiError, api, getToken, type Asset, type OrgModuleListItem, type PlatformFieldDef } from "../lib/api";
 import { isShapeValidVin, planVinFill, type VinFill, type VinFillTarget } from "../lib/vin";
 import { ModuleInstanceChooser } from "../components/ModuleInstanceChooser";
@@ -21,7 +23,7 @@ import { CustomFieldsPanel,
   useAskCobbAboutSelection,
   Modal,
   useToast,
-  useConfirm, usePageTitle, usePageWidth, TILE_GRID, InboxWaitingStrip } from "@cobblr/platform-web";
+  useConfirm, usePageTitle, usePageWidth, TILE_GRID, InboxWaitingStrip, SearchInput, CollectionHeader, HEADER_CONTROL, headerButton } from "@cobblr/platform-web";
 import {
   BulkActionBar,
   MoveToInstanceModal,
@@ -36,7 +38,6 @@ import { ContentsPanel, useHoldsContents } from "../components/ContentsPanel";
 import { countOf, itemNounFor, pluralise } from "@cobblr/platform-contract";
 import { resolveDetailPath } from "@cobblr/platform-contract/instance-detail";
 import { PresentationGate, useFaces } from "@cobblr/platform-web";
-import { TableTitle } from "@cobblr/platform-web";
 
 const ENTITY_KIND = "assets:asset";
 
@@ -248,38 +249,31 @@ export function AssetsPage({
 
   return (
     <div className="space-y-4">
-      <div className="flex flex-wrap items-baseline gap-x-3 gap-y-2 border-b border-line dark:border-slate-700 pb-3">
-        <TableTitle title={displayName ?? "assets"} hint={hint} />
-        {lensModule && (
-          <Link
-            to="/assets"
-            className="inline-flex items-center gap-1 px-2 py-0.5 rounded bg-cobble-100 text-accent dark:bg-cobble-700/40 dark:text-cobble-200 text-[10px] font-mono uppercase tracking-widest hover:bg-cobble-200 transition"
-            title="Clear lens"
-          >
-            lens: {lensModule.displayName} ×
-          </Link>
-        )}
-        <span className="text-[10px] font-mono text-faint dark:text-slate-500">
-          {filtered.length} of {allRows.length}
-        </span>
-        <div className="flex-1" />
-        <div className="relative">
-          <Search size={12} className="absolute left-2 top-1/2 -translate-y-1/2 text-faint" />
-          <input
-            value={query}
-            onChange={(e) => setQuery(e.target.value)}
-            placeholder="search…"
-            className="input !py-1 !pl-7 text-xs !w-48"
-          />
-        </div>
-        <ViewModeToggle mode={viewMode} onChange={setViewMode} />
-        <button
-          onClick={() => setNewOpen(true)}
-          className="rounded-md bg-slate-700 hover:bg-slate-600 text-mortar-50 text-sm font-medium px-3 py-2 transition flex items-center gap-1.5"
-        >
-          <Plus size={14} /> New {noun}
-        </button>
-      </div>
+      <CollectionHeader
+        title={displayName ?? "assets"}
+        count={`${filtered.length} of ${allRows.length}`}
+        hint={hint} kind={instance ? `${instance}:item` : ENTITY_KIND}
+        filters={
+          lensModule ? (
+            <Link
+              to="/assets"
+              className={`${HEADER_CONTROL} gap-1 px-2.5 rounded-md bg-cobble-100 text-accent dark:bg-cobble-700/40 dark:text-cobble-200 text-[10px] font-mono uppercase tracking-widest hover:bg-cobble-200 transition`}
+              title="Clear lens"
+            >
+              lens: {lensModule.displayName} ×
+            </Link>
+          ) : undefined
+        }
+        search={<SearchInput value={query} onChange={setQuery} placeholder="search…" aria-label={`Search ${pluralise(noun)}`} wrapperClassName="w-48 max-sm:w-full max-sm:flex-1" />}
+        actions={
+          <>
+            <ViewModeToggle mode={viewMode} onChange={setViewMode} />
+            <button onClick={() => setNewOpen(true)} className={headerButton("primary")}>
+              <Plus size={14} /> New {noun}
+            </button>
+          </>
+        }
+      />
 
       {/* Saved-view chips — bundles ship pinned ones; the wizard lands here. */}
       {views.length > 0 && (
@@ -314,7 +308,7 @@ export function AssetsPage({
           <div key={g.key} className="space-y-2">
             <h3 className="text-xs font-mono uppercase tracking-widest text-accent">{g.key}</h3>
             {viewMode === "tiles" ? (
-              <AssetsTiles rows={g.rows} onOpen={openAsset} />
+              <AssetsTiles rows={g.rows} onOpen={openAsset} kind={instance ? `${instance}:item` : ENTITY_KIND} />
             ) : (
               <AssetsTable
                 instance={instance}
@@ -336,7 +330,7 @@ export function AssetsPage({
           </div>
         ))
       ) : viewMode === "tiles" ? (
-        <AssetsTiles rows={filtered} onOpen={openAsset} />
+        <AssetsTiles rows={filtered} onOpen={openAsset} kind={instance ? `${instance}:item` : ENTITY_KIND} />
       ) : (
         <AssetsTable
                 instance={instance}
@@ -475,16 +469,19 @@ function AssetViewChip({
   );
 }
 
-function AssetsTiles({ rows, onOpen }: { rows: Asset[]; onOpen: (id: string) => void }) {
+function AssetsTiles({ rows, onOpen, kind }: { rows: Asset[]; onOpen: (id: string) => void; kind: string }) {
+  const suggestions = usePhotoSuggestions(kind);
   return (
     <div className={TILE_GRID}>
       {rows.map((a) => (
         <button key={a.id} type="button" onClick={() => onOpen(a.id)} className="text-left">
           <EntityTile
             src={a.image_path}
+            suggestedSrc={suggestedSrcFor(suggestions, a.id, a.image_path)} pictureState={pictureStateFor(suggestions, a.id, a.image_path)}
             title={a.name}
             subtitle={a.manufacturer || a.model || a.short_name || null}
             badge={a.state}
+            count={a.quantity}
           />
         </button>
       ))}
@@ -511,6 +508,7 @@ function AssetsTable({
   onOpen: (id: string) => void;
   instance?: string;
 }) {
+  const suggestions = usePhotoSuggestions(instance ? `${instance}:item` : ENTITY_KIND);
   // The column header must respect a bundle relabel too, or the list says
   // "Manufacturer" while the detail page says "Make".
   const fp = useFieldPresentation(instance ? `${instance}:item` : ENTITY_KIND);
@@ -557,7 +555,7 @@ function AssetsTable({
               </td>
               <td className="px-3 py-2 text-content dark:text-mortar-100 font-medium">
                 <div className="flex items-center gap-3">
-                  <EntityThumb src={a.image_path} alt={a.name} size={56} />
+                  <EntityThumb src={a.image_path} suggestedSrc={suggestedSrcFor(suggestions, a.id, a.image_path)} pictureState={pictureStateFor(suggestions, a.id, a.image_path)} alt={a.name} size={56} />
                   <span className="truncate">
                     {a.name}
                     {a.short_name && (
@@ -758,6 +756,14 @@ export function AssetDetailModal({
                 alt={a.name}
                 size={256}
                 className="w-full h-auto ring-1 ring-line dark:ring-slate-700"
+              />
+              <SuggestedPhoto
+                kind={kind}
+                id={a.id}
+                instance={instance ?? null}
+                hasPicture={!!a.image_path}
+                brand={a.manufacturer}
+                onApplied={() => void qc.invalidateQueries({ queryKey: ["assets", activeSlug] })}
               />
               <EntityActionsBar entityKind={ENTITY_KIND} entityId={a.id} />
             </div>

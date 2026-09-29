@@ -118,6 +118,41 @@ export function modelNumbersDisagree(a: string | null | undefined, b: string | n
   return ma.size > 0 && mb.size > 0 && ![...ma].some((m) => mb.has(m));
 }
 
+/** A measurement after a number: "3.5 oz" is a size, never a version. */
+const UNIT_AFTER = /^\s*(?:oz|ounces?|ml|l|lb|lbs|pounds?|kg|g|grams?|mm|cm|m|in|inch(?:es)?|ft|"|'|v|volts?|a|amps?|w|watts?|ah|mah|gal|qt|%|x)\b/;
+
+/** The VERSION marks a name carries: a decimal version ("0.1", "2.4.1"), a
+ *  v-number ("v2", "V2.1") or a mark ("Mk3", "MK 4", "Mk3S"). The model-number
+ *  rule above cannot see them: it drops punctuation and short words, so a
+ *  Voron 0.2 and a Voron 0.1 read as one printer (#3909), and so did a Prusa
+ *  Mk3 and Mk4. A number followed by a unit ("3.5 oz") is a size, not a
+ *  version. */
+export function versionTokens(s: string | null | undefined): Set<string> {
+  const out = new Set<string>();
+  const t = (s ?? "").toLowerCase();
+  for (const m of t.matchAll(/(?<![\w.])(\d+\.\d+(?:\.\d+)*)(?![\w.])/g)) {
+    if (UNIT_AFTER.test(t.slice((m.index ?? 0) + m[0].length))) continue;
+    out.add(m[1]!);
+  }
+  for (const m of t.matchAll(/\bv(\d+(?:\.\d+)*)\b/g)) out.add(`v${m[1]}`);
+  for (const m of t.matchAll(/\bmk\s?(\d+[a-z]?|i{1,3}v?|iv)\b/g)) out.add(`mk${m[1]}`);
+  return out;
+}
+
+/** Two names that both carry a version and share none. */
+export function versionsDisagree(a: string | null | undefined, b: string | null | undefined): boolean {
+  const va = versionTokens(a);
+  const vb = versionTokens(b);
+  return va.size > 0 && vb.size > 0 && ![...va].some((v) => vb.has(v));
+}
+
+/** Two names that carry the same version: evidence they are one product. */
+export function versionsAgree(a: string | null | undefined, b: string | null | undefined): boolean {
+  const va = versionTokens(a);
+  const vb = versionTokens(b);
+  return [...va].some((v) => vb.has(v));
+}
+
 export interface ProductSide {
   name?: string | null;
   fields?: Record<string, unknown> | null;
@@ -127,7 +162,7 @@ export type SameProductVerdict =
   /** An identifier field agrees: one product, whatever the names say. */
   | { verdict: "same"; by: "identifier" }
   /** An identifier field disagrees, or the names' model numbers do. */
-  | { verdict: "different"; by: "identifier" | "model-number" }
+  | { verdict: "different"; by: "identifier" | "model-number" | "version" }
   /** Nothing decisive: the caller's name rule decides. */
   | { verdict: "unknown" };
 
@@ -141,5 +176,6 @@ export function sameProduct(a: ProductSide, b: ProductSide, roles?: Record<strin
   if (ids === "different") return { verdict: "different", by: "identifier" };
   if (ids === "same") return { verdict: "same", by: "identifier" };
   if (modelNumbersDisagree(a.name, b.name)) return { verdict: "different", by: "model-number" };
+  if (versionsDisagree(a.name, b.name)) return { verdict: "different", by: "version" };
   return { verdict: "unknown" };
 }

@@ -11,11 +11,11 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { useQuery } from "@tanstack/react-query";
-import { Check, ChevronDown, ChevronRight, MapPin, Plus, Search, X } from "lucide-react";
+import { Check, ChevronDown, ChevronRight, MapPin, Plus, X } from "lucide-react";
 import { api, type Location } from "../lib/api";
 import { useActiveOrg } from "../auth/ActiveOrgContext";
 import { QuickCreateLocation } from "./QuickCreateLocation";
-import { OverlayLayer, PopoverLayer } from "@cobblr/platform-web";
+import { OverlayLayer, PopoverLayer, SearchInput } from "@cobblr/platform-web";
 
 interface Props {
   value: string | null;
@@ -204,15 +204,8 @@ export function LocationTreePicker({
             maxHeight: Math.max(200, Math.min(window.innerHeight - rect.bottom - 16, 400)),
           }}
         >
-          <div className="flex items-center gap-2 border-b border-line dark:border-slate-800 px-2.5 py-2">
-            <Search size={14} className="shrink-0 text-faint" />
-            <input
-              autoFocus
-              value={q}
-              onChange={(e) => setQ(e.target.value)}
-              placeholder="Search all locations…"
-              className="w-full bg-transparent text-sm outline-none"
-            />
+          <div className="border-b border-line dark:border-slate-800 p-2">
+            <SearchInput autoFocus value={q} onChange={setQ} placeholder="Search all locations…" aria-label="Search all locations" size="sm" />
           </div>
           {!q.trim() && (
             <div className="flex flex-wrap items-center gap-x-1 gap-y-0.5 border-b border-line dark:border-slate-800 px-2.5 py-1.5 text-xs text-muted">

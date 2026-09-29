@@ -15,6 +15,7 @@ import { buildDriverById, occupiesDevice, sendJob, markJobTerminal, NOT_OCCUPYIN
 import { mintRunJobs, runStatuses } from "./runs-core.js";
 import { enqueuePoll } from "./poll-worker.js";
 import { classify } from "./state.js";
+import { noteFarmActive } from "./farm-active.js";
 import { ownedDeviceRefs } from "./detectors/owned.js";
 import type { RemoteDevice } from "./drivers/types.js";
 
@@ -42,6 +43,7 @@ export function registerAssignWorker(): void {
 
 /** Fire an immediate assignment pass for an org (on pool-job create). */
 export async function kickAssign(orgId: string): Promise<void> {
+  noteFarmActive(orgId);
   await platform().queue.enqueue({ orgId, queue: ASSIGN_QUEUE, payload: {}, runAt: new Date() });
 }
 

@@ -1,7 +1,8 @@
 {
   "lint": "lint:parsed-facts-reach-a-screen",
-  "run": "tsx scripts/lint-parsed-facts-reach-a-screen.ts",
+  "run": "node scripts/lint-parsed-facts-reach-a-screen.ts",
   "ms": 520,
   "recorded": "2026-09-14",
-  "source": "split from scripts/lint-durations.json (recorded 2026-09-14)"
+  "source": "split from scripts/lint-durations.json (recorded 2026-09-14)",
+  "readMB": 6.4
 }

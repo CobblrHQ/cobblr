@@ -1,7 +1,8 @@
 {
   "lint": "lint:contract-sibling-imports",
-  "run": "tsx scripts/lint-contract-sibling-imports.ts",
+  "run": "node scripts/lint-contract-sibling-imports.ts",
   "ms": 537,
   "recorded": "2026-09-14",
-  "source": "split from scripts/lint-durations.json (recorded 2026-09-14)"
+  "source": "split from scripts/lint-durations.json (recorded 2026-09-14)",
+  "readMB": 0.8
 }

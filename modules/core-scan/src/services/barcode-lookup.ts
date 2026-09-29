@@ -182,6 +182,23 @@ const OPEN_FACTS_DBS: ReadonlyArray<{ host: string; source: string }> = [
   { host: "world.openbeautyfacts.org", source: "openbeautyfacts" },
 ];
 
+/** The catalog's most specific ENGLISH category ("en:cow-cheeses" reads
+ *  "Cow cheeses"). `categories` is written in the product's own language, so a
+ *  French cheese said "Fromages de vache", which nothing downstream reads: the
+ *  storage rules, the shelf buckets and routing all speak English. The tags are
+ *  the catalog's normalised taxonomy, general to specific; a tag that is not a
+ *  clean English slug is a contributor's free text and is passed over. */
+export function openFactsCategory(p: Record<string, unknown>): string | null {
+  const tags = Array.isArray(p.categories_tags) ? p.categories_tags.filter((t): t is string => typeof t === "string") : [];
+  const english = tags.filter((t) => /^en:[a-z0-9-]+$/.test(t));
+  const last = english[english.length - 1];
+  if (last) {
+    const words = last.slice(3).replace(/-/g, " ").trim();
+    if (words) return words.charAt(0).toUpperCase() + words.slice(1);
+  }
+  return typeof p.categories === "string" ? p.categories.split(",")[0]?.trim() || null : null;
+}
+
 async function tryOpenFacts(upc: string, host: string, source: string): Promise<ProviderResult> {
   const { status, body } = await fetchJson(
     `https://${host}/api/v2/product/${encodeURIComponent(upc)}.json`,
@@ -207,7 +224,7 @@ async function tryOpenFacts(upc: string, host: string, source: string): Promise<
       brand: typeof p.brands === "string" ? p.brands : null,
       model: null,
       description: typeof p.generic_name === "string" ? p.generic_name : null,
-      category: typeof p.categories === "string" ? p.categories.split(",")[0]?.trim() ?? null : null,
+      category: openFactsCategory(p),
       image_url:
         (typeof p.image_front_url === "string" && p.image_front_url) ||
         (typeof p.image_url === "string" && p.image_url) ||

@@ -28,6 +28,8 @@ import {
 } from "@cobblr/platform-contract/holdings";
 import { instanceOf, partKindOf, sessionUser, tenantContext, tenantDb, type InventoryDB } from "../db.js";
 import { isLowStock } from "../on-hand.js";
+import { batchesFrom, expiryFor, putLots, takeLots, addBatch, type Batch } from "../batches.js";
+import { withBatches } from "./action-handlers.js";
 import { recordConsumption } from "./stock-ledger.js";
 import { asyncHandler, badBody, requireCapability } from "./util.js";
 
@@ -43,6 +45,8 @@ export interface HoldingRow {
   low: boolean;
   /** The soonest date stock here goes off; null when undated. */
   expires_on: string | null;
+  /** The lots held here, soonest first; empty when nothing is dated. */
+  lots: Batch[];
 }
 
 /** Where a holdings call runs. A route's request and an action's context
@@ -147,6 +151,7 @@ export async function readHoldingRows(c: HoldingsCtx, ids: string[]): Promise<Ma
         approximate: r.approximate_qty == null ? null : Number(r.approximate_qty),
       }),
       expires_on: typeof md.expires_on === "string" && md.expires_on ? md.expires_on : null,
+      lots: batchesFrom(md, qty, typeof md.expires_on === "string" ? md.expires_on : null),
     });
   }
   return out;
@@ -283,7 +288,7 @@ async function placesOf(c: HoldingsCtx, cardId: string): Promise<Map<string, str
 export async function addHolding(
   c: HoldingsCtx,
   fromId: string,
-  input: { location_id: string; qty: number; min_qty?: number | null },
+  input: { location_id: string; qty: number; min_qty?: number | null; via?: string },
 ): Promise<{ id: string; card_id: string } | Refusal> {
   const cardId = await cardIdOf(c, fromId);
   const card = await loadCard(c, cardId);
@@ -340,6 +345,7 @@ export async function addHolding(
     action: "holding_added",
     ref: { module: "inventory", entityType: "part", entityId: card.id },
     diff: { holding_id: inserted.id, location_id: input.location_id, qty: input.qty },
+    ...viaOf(input.via),
   });
   platform().events.emit("inventory.part.created", { orgId: c.orgId, partId: inserted.id });
   return { id: inserted.id, card_id: card.id };
@@ -414,7 +420,300 @@ export async function splitHolding(c: HoldingsCtx, holdingId: string): Promise<{
   return { id: holdingId, card_id: cardId };
 }
 
-const isRefusal = (x: object): x is Refusal => "error" in x;
+/** Move stock from one place to another place of the same thing. The
+ *  soonest-expiring lot goes first unless one is named; every lot keeps its
+ *  expiry, arrival date and lot number; both places get a ledger line naming
+ *  the other. A place the thing is not kept yet is added on the way. */
+export async function transferStock(
+  c: HoldingsCtx,
+  fromId: string,
+  input: { to_id?: string; to_location_id?: string; qty: number; lot?: string; expires_on?: string; via?: string },
+): Promise<{ from_id: string; to_id: string; moved: Batch[]; qty: number } | Refusal> {
+  if (!(input.qty > 0)) return { status: 400, error: { code: "nothing_to_move", message: "Say how many to move." } };
+  const cardId = await cardIdOf(c, fromId);
+  const family = new Set([cardId, ...((await holdingsOfCards(c, [cardId])).get(cardId) ?? [])]);
+  if (!family.has(fromId)) return { status: 404, error: { code: "not_found", message: "That item does not exist." } };
+  let toId = input.to_id ?? null;
+  if (!toId && input.to_location_id) {
+    toId = (await placesOf(c, cardId)).get(input.to_location_id) ?? null;
+    if (!toId) {
+      const made = await addHolding(c, cardId, { location_id: input.to_location_id, qty: 0 });
+      if (isRefusal(made)) return made;
+      toId = made.id;
+      family.add(toId);
+    }
+  }
+  if (!toId) return { status: 400, error: { code: "no_destination", message: "Say where it is going." } };
+  if (toId === fromId) return { status: 400, error: { code: "same_place", message: "That is where it already is." } };
+  if (!family.has(toId)) return { status: 409, error: { code: "not_the_same_thing", message: "Stock can only move between places of the same item." } };
+
+  const rows = await readHoldingRows(c, [fromId, toId]);
+  const from = rows.get(fromId);
+  const to = rows.get(toId);
+  if (!from || !to) return { status: 404, error: { code: "not_found", message: "That item does not exist." } };
+  if (from.qty < input.qty) {
+    return { status: 409, error: { code: "not_enough", message: `There ${from.qty === 1 ? "is" : "are"} only ${from.qty} at ${from.location_name ?? "that place"}.` } };
+  }
+  const pick = input.lot || input.expires_on ? { lot: input.lot, expires_on: input.expires_on } : undefined;
+  if (pick) {
+    const probe = takeLots(from.lots, input.qty, pick);
+    if ("refused" in probe) {
+      return probe.refused === "no_such_lot"
+        ? { status: 409, error: { code: "no_such_lot", message: "There is no such lot there." } }
+        : { status: 409, error: { code: "lot_too_small", message: `That lot has only ${probe.have} there.` } };
+    }
+  }
+
+  const moved = await moveLots(c, fromId, toId, input.qty, pick, from.location_name ?? "another place", to.location_name ?? "another place");
+  if (isRefusal(moved)) return moved;
+  await platform().activity.log({
+    orgId: c.orgId,
+    userId: c.userId,
+    action: "stock_moved",
+    ref: { module: "inventory", entityType: "part", entityId: cardId },
+    diff: { from_id: fromId, to_id: toId, qty: input.qty, lots: moved },
+    ...viaOf(input.via),
+  });
+  return { from_id: fromId, to_id: toId, moved, qty: input.qty };
+}
+
+/** `qty` of one place's stock into another place of the same thing, lot by
+ *  lot: the soonest-expiring first unless one is named, every lot keeping its
+ *  expiry, arrival date and lot number, and a ledger line at each end naming
+ *  the other. The one lot move; transfer and move-all both go through it. */
+async function moveLots(
+  c: HoldingsCtx,
+  fromId: string,
+  toId: string,
+  qty: number,
+  pick: { lot?: string; expires_on?: string } | undefined,
+  fromName: string,
+  toName: string,
+): Promise<Batch[] | Refusal> {
+  let moved: Batch[] = [];
+  const out = await withBatches(
+    c.orgId,
+    fromId,
+    `moved to ${toName}`,
+    -qty,
+    (batches) => {
+      const r = takeLots(batches, qty, pick);
+      if ("refused" in r) return batches;
+      moved = r.moved;
+      return r.batches;
+    },
+    { userId: c.userId, sourceKind: c.kind, sourceId: toId },
+  );
+  if (out.ok === false) {
+    return { status: 409, error: { code: String(out.error ?? "not_moved"), message: "Nothing was moved." } };
+  }
+  await withBatches(c.orgId, toId, `moved from ${fromName}`, qty, (batches) => putLots(batches, moved), {
+    userId: c.userId,
+    sourceKind: c.kind,
+    sourceId: fromId,
+  });
+  return moved;
+}
+
+/** A place in the app that is not the record's page ("floor plan") says so on
+ *  the activity row it writes. */
+function viaOf(via: string | undefined): { via?: { kind: "surface"; label: string } } {
+  const label = via?.trim().slice(0, 80);
+  return label ? { via: { kind: "surface", label } } : {};
+}
+
+/** Everything this thing holds, in every place, into ONE place: every lot
+ *  moves with its expiry, arrival date and lot number (a ledger line at each
+ *  end), the record itself goes to that place, and the places it no longer
+ *  keeps anything in are retired: unpaired and archived, never deleted, so
+ *  their ledger still reads back. One activity row says it. From any row of
+ *  the thing (the record or one of its places), in any collection that keeps
+ *  things per place. */
+export async function moveAllTo(
+  c: HoldingsCtx,
+  anyId: string,
+  input: { to_location_id: string; via?: string },
+): Promise<
+  | { card_id: string; location_id: string; moved: Array<{ from_id: string; from_location_id: string | null; qty: number; lots: Batch[] }>; retired: string[]; unchanged: boolean }
+  | Refusal
+> {
+  const cardId = await cardIdOf(c, anyId);
+  const card = await loadCard(c, cardId);
+  if (!card) return { status: 404, error: { code: "not_found", message: "That item does not exist." } };
+  const to = input.to_location_id;
+  const toName = (await locationNames(c, [to])).get(to);
+  if (!toName) return { status: 404, error: { code: "no_such_place", message: "That place does not exist." } };
+  const held = (await holdingsOfCards(c, [cardId])).get(cardId) ?? [];
+  if (!held.length && card.location_id === to) {
+    return { card_id: cardId, location_id: to, moved: [], retired: [], unchanged: true };
+  }
+  const rows = await readHoldingRows(c, [cardId, ...held]);
+  const moved: Array<{ from_id: string; from_location_id: string | null; qty: number; lots: Batch[] }> = [];
+  for (const h of held) {
+    const r = rows.get(h);
+    if (!r || !(r.qty > 0)) continue;
+    const lots = await moveLots(c, h, cardId, r.qty, undefined, r.location_name ?? "another place", toName);
+    if (isRefusal(lots)) return lots;
+    moved.push({ from_id: h, from_location_id: r.location_id, qty: r.qty, lots });
+  }
+  const from = card.location_id;
+  if (from !== to) {
+    try {
+      await platform().placement.place({
+        orgId: c.orgId,
+        containee: { kind: c.kind, id: cardId },
+        container: { kind: "core-locations:location", id: to },
+        placedBy: c.userId,
+      });
+    } catch {
+      await c.db.updateTable("inventory_parts").set({ location_id: to, updated_at: new Date() } as never).where("id", "=", cardId).execute();
+    }
+  }
+  for (const h of held) {
+    await platform().pairings.remove({ orgId: c.orgId, sourceKind: c.kind, sourceId: h, targetKind: c.kind, targetId: cardId, relationshipKind: HOLDING_OF });
+  }
+  if (held.length) {
+    await c.db.updateTable("inventory_parts").set({ archived: true, updated_at: new Date() } as never).where("id", "in", held).where("instance", "=", c.instance).execute();
+  }
+  await platform().activity.log({
+    orgId: c.orgId,
+    userId: c.userId,
+    action: "stock_moved_all",
+    ref: { module: "inventory", entityType: "part", entityId: cardId },
+    diff: { to_location_id: to, from_location_id: from, moved, retired: held },
+    ...viaOf(input.via),
+  });
+  return { card_id: cardId, location_id: to, moved, retired: held, unchanged: false };
+}
+
+/** Stock arrived at one place, with the date printed on it (or, without one,
+ *  today plus the item's shelf life) and its lot number when there is one. */
+export async function receiveLot(
+  c: HoldingsCtx,
+  partId: string,
+  input: { qty: number; expires_on?: string | null; lot?: string | null },
+): Promise<Record<string, unknown> | Refusal> {
+  if (!(input.qty > 0)) return { status: 400, error: { code: "nothing_received", message: "Say how many arrived." } };
+  if (input.expires_on && !/^\d{4}-\d{2}-\d{2}$/.test(input.expires_on)) {
+    return { status: 400, error: { code: "bad_date", message: "Give the date as YYYY-MM-DD." } };
+  }
+  return withBatches(
+    c.orgId,
+    partId,
+    "received",
+    input.qty,
+    (batches, { today, shelfLifeDays }) =>
+      addBatch(batches, {
+        received_on: today,
+        expires_on: input.expires_on || expiryFor(today, shelfLifeDays) || "",
+        qty: input.qty,
+        ...(input.lot?.trim() ? { lot: input.lot.trim() } : {}),
+      }),
+    { userId: c.userId },
+  );
+}
+
+const isRefusal = (x: object): x is Refusal => "error" in x && typeof (x as { status?: unknown }).status === "number";
+
+/** Records that look like one thing kept in several places, never combined
+ *  on their own: the same name, or the same barcode, in one collection, each
+ *  somewhere else. Only offered when every place in the group is distinct
+ *  (combining refuses two rows at one place), and never for a pair somebody
+ *  said were different things. */
+export interface CombineSuggestion {
+  /** Why they look like one thing: the words a person reads. */
+  because: "the same name" | "the same barcode";
+  records: Array<{ id: string; name: string; location_id: string | null; location_name: string | null; qty: number; places: number }>;
+}
+
+const DIFFERENT_KEY = "not_same_as";
+const normName = (n: string) => n.trim().toLowerCase().replace(/\s+/g, " ");
+
+export async function combineSuggestions(c: HoldingsCtx, forId?: string): Promise<CombineSuggestion[]> {
+  const rows = await c.db
+    .selectFrom("inventory_parts")
+    .select(["id", "name", "location_id", "qty", "metadata"])
+    .where("instance", "=", c.instance)
+    .where("archived", "=", false)
+    .limit(5000)
+    .execute();
+  if (rows.length < 2) return [];
+  const ids = rows.map((r) => r.id);
+  const cardOf = await cardOfHoldings(c, ids);
+  const families = await holdingsOfCards(c, ids.filter((id) => !cardOf.has(id)));
+  const byId = new Map(rows.map((r) => [r.id, r]));
+  // A candidate is a card (a record that is not a place of another), with
+  // every place its family covers.
+  const cards = rows.filter((r) => !cardOf.has(r.id));
+  const placesOf = (id: string) => {
+    const fam = [id, ...(families.get(id) ?? [])];
+    return fam.map((x) => byId.get(x)?.location_id).filter((x): x is string => !!x);
+  };
+  const differentFrom = (id: string): Set<string> => {
+    const v = coerceMetadata(byId.get(id)?.metadata)[DIFFERENT_KEY];
+    return new Set(Array.isArray(v) ? v.map(String) : []);
+  };
+  const names = await locationNames(c, rows.map((r) => r.location_id));
+  const groups: CombineSuggestion[] = [];
+  const used = new Set<string>();
+  const consider = (because: CombineSuggestion["because"], keyOf: (r: (typeof cards)[number]) => string | null) => {
+    const by = new Map<string, typeof cards>();
+    for (const r of cards) {
+      const k = keyOf(r);
+      if (!k) continue;
+      by.set(k, [...(by.get(k) ?? []), r]);
+    }
+    for (const members of by.values()) {
+      const fresh = members.filter((m) => !used.has(m.id));
+      if (fresh.length < 2) continue;
+      if (forId && !fresh.some((m) => m.id === forId || (families.get(m.id) ?? []).includes(forId))) continue;
+      // Every place distinct, and no pair somebody called different.
+      const seen = new Set<string>();
+      let clash = false;
+      for (const m of fresh) for (const p of placesOf(m.id)) (seen.has(p) ? (clash = true) : seen.add(p));
+      if (clash) continue;
+      if (fresh.some((a) => fresh.some((b) => a !== b && differentFrom(a.id).has(b.id)))) continue;
+      if (new Set(fresh.flatMap((m) => placesOf(m.id))).size < 2) continue;
+      for (const m of fresh) used.add(m.id);
+      groups.push({
+        because,
+        records: fresh.map((m) => ({
+          id: m.id,
+          name: m.name,
+          location_id: m.location_id,
+          location_name: m.location_id ? (names.get(m.location_id) ?? null) : null,
+          qty: Number(m.qty),
+          places: placesOf(m.id).length,
+        })),
+      });
+    }
+  };
+  consider("the same barcode", (r) => {
+    const b = coerceMetadata(r.metadata).barcode;
+    return typeof b === "string" && b.trim() ? b.trim() : null;
+  });
+  consider("the same name", (r) => normName(r.name) || null);
+  return groups;
+}
+
+/** "These are different things": the suggestion never asks about them again. */
+export async function markDifferent(c: HoldingsCtx, ids: string[]): Promise<void> {
+  for (const id of ids) {
+    const others = ids.filter((x) => x !== id);
+    await c.db
+      .updateTable("inventory_parts")
+      .set({
+        metadata: sql`jsonb_set(coalesce(metadata, '{}'::jsonb), ${sql.lit(`{${DIFFERENT_KEY}}`)}, (
+          select coalesce(jsonb_agg(distinct v), '[]'::jsonb) from jsonb_array_elements_text(
+            coalesce(metadata->${DIFFERENT_KEY}, '[]'::jsonb) || ${JSON.stringify(others)}::jsonb
+          ) as v
+        ))`,
+      } as never)
+      .where("id", "=", id)
+      .where("instance", "=", c.instance)
+      .execute();
+  }
+}
 
 // ── routes ───────────────────────────────────────────────────────────
 
@@ -434,8 +733,11 @@ holdingsRouter.get(
   }),
 );
 
+const Via = z.string().trim().min(1).max(80).optional();
+
 const AddHolding = z.object({
   location_id: z.string().uuid(),
+  via: Via,
   qty: z.coerce.number().min(0).max(1_000_000).default(0),
   min_qty: z.coerce.number().min(0).max(1_000_000).nullable().optional(),
 });
@@ -497,6 +799,103 @@ holdingsRouter.post(
   }),
 );
 
+// AI-REACH: read-only, suggestions a person answers on the list; combining is its own action
+holdingsRouter.get(
+  "/holdings/suggestions",
+  asyncHandler(async (req, res) => {
+    const forId = typeof req.query.for === "string" ? req.query.for : undefined;
+    res.json({ items: await combineSuggestions(holdingsCtx(req), forId) });
+  }),
+);
+
+const Different = z.object({ ids: z.array(z.string().uuid()).min(2).max(100) });
+
+// AI-REACH: exempt, a person's answer to a suggestion on screen; the assistant combines or leaves records apart by not combining
+holdingsRouter.post(
+  "/holdings/suggestions/not-the-same",
+  asyncHandler(async (req, res) => {
+    if (!(await requireCapability(req, res, "inventory:update-part"))) return;
+    const parsed = Different.safeParse(req.body ?? {});
+    if (!parsed.success) return badBody(res, parsed.error);
+    await markDifferent(holdingsCtx(req), parsed.data.ids);
+    res.json({ ok: true });
+  }),
+);
+
+const Transfer = z
+  .object({
+    to_id: z.string().uuid().optional(),
+    to_location_id: z.string().uuid().optional(),
+    qty: z.coerce.number().positive().max(1_000_000),
+    lot: z.string().max(80).optional(),
+    expires_on: z.string().max(10).optional(),
+    via: Via,
+  })
+  .refine((v) => v.to_id || v.to_location_id, { message: "to_id or to_location_id is required" });
+
+// AI-REACH: action inventory:transfer-stock
+// AI-ACTION: inventory:transfer-stock
+holdingsRouter.post(
+  "/:id/transfer",
+  asyncHandler(async (req, res) => {
+    if (!(await requireCapability(req, res, "inventory:update-part"))) return;
+    const parsed = Transfer.safeParse(req.body ?? {});
+    if (!parsed.success) return badBody(res, parsed.error);
+    const out = await transferStock(holdingsCtx(req), req.params.id!, parsed.data);
+    if (isRefusal(out)) {
+      res.status(out.status).json({ error: out.error });
+      return;
+    }
+    res.json(out);
+  }),
+);
+
+const MoveAll = z.object({ to_location_id: z.string().uuid(), via: Via });
+
+// AI-REACH: action inventory:move-all-stock
+// AI-ACTION: inventory:move-all-stock
+holdingsRouter.post(
+  "/:id/move-all",
+  asyncHandler(async (req, res) => {
+    if (!(await requireCapability(req, res, "inventory:update-part"))) return;
+    const parsed = MoveAll.safeParse(req.body ?? {});
+    if (!parsed.success) return badBody(res, parsed.error);
+    const out = await moveAllTo(holdingsCtx(req), req.params.id!, parsed.data);
+    if (isRefusal(out)) {
+      res.status(out.status).json({ error: out.error });
+      return;
+    }
+    res.json(out);
+  }),
+);
+
+const Receive = z.object({
+  qty: z.coerce.number().positive().max(1_000_000),
+  expires_on: z.string().max(10).nullable().optional(),
+  lot: z.string().max(80).nullable().optional(),
+});
+
+// AI-REACH: action inventory:receive-lot
+// AI-ACTION: inventory:receive-lot
+holdingsRouter.post(
+  "/:id/receive",
+  asyncHandler(async (req, res) => {
+    if (!(await requireCapability(req, res, "inventory:update-part"))) return;
+    const parsed = Receive.safeParse(req.body ?? {});
+    if (!parsed.success) return badBody(res, parsed.error);
+    const out = await receiveLot(holdingsCtx(req), req.params.id!, parsed.data);
+    if (isRefusal(out)) {
+      res.status(out.status).json({ error: out.error });
+      return;
+    }
+    if (out.ok === false) {
+      res.status(409).json({ error: { code: String(out.error ?? "not_received"), message: "Nothing was received." } });
+      return;
+    }
+    res.json(out);
+  }),
+);
+
 // ── actions (the assistant's door, and a wire's) ─────────────────────
 
 const refusalResult = (r: Refusal) => ({ ok: false as const, error: r.error.code, message: r.error.message });
@@ -528,6 +927,43 @@ export function registerHoldingActions(): void {
     if (!c) return { ok: false, error: "part_not_found" };
     const out = await combineInto(c, partId, ids);
     return isRefusal(out) ? refusalResult(out) : { ok: true, ...out };
+  });
+
+  platform().actions.registerHandler("inventory.transfer-stock", async (ctx) => {
+    const a = (ctx.args as { partId?: string; to_id?: string; to_location_id?: string; qty?: number; lot?: string; expires_on?: string } | null) ?? {};
+    const partId = a.partId ?? (ctx.entity as { id?: string } | null)?.id;
+    if (!partId) return { ok: false, error: "missing partId" };
+    const c = await holdingsCtxForPart(ctx.orgId, ctx.userId ?? null, partId);
+    if (!c) return { ok: false, error: "part_not_found" };
+    const out = await transferStock(c, partId, {
+      ...(a.to_id ? { to_id: a.to_id } : {}),
+      ...(a.to_location_id ? { to_location_id: a.to_location_id } : {}),
+      qty: Number(a.qty ?? 0),
+      ...(a.lot ? { lot: String(a.lot) } : {}),
+      ...(a.expires_on ? { expires_on: String(a.expires_on) } : {}),
+    });
+    return isRefusal(out) ? refusalResult(out) : { ok: true, ...out };
+  });
+
+  platform().actions.registerHandler("inventory.move-all-stock", async (ctx) => {
+    const a = (ctx.args as { partId?: string; to_location_id?: string } | null) ?? {};
+    const partId = a.partId ?? (ctx.entity as { id?: string } | null)?.id;
+    if (!partId) return { ok: false, error: "missing partId" };
+    if (!a.to_location_id) return { ok: false, error: "missing to_location_id", message: "Say which place it all goes to." };
+    const c = await holdingsCtxForPart(ctx.orgId, ctx.userId ?? null, partId);
+    if (!c) return { ok: false, error: "part_not_found" };
+    const out = await moveAllTo(c, partId, { to_location_id: a.to_location_id });
+    return isRefusal(out) ? refusalResult(out) : { ok: true, ...out };
+  });
+
+  platform().actions.registerHandler("inventory.receive-lot", async (ctx) => {
+    const a = (ctx.args as { partId?: string; qty?: number; expires_on?: string; lot?: string } | null) ?? {};
+    const partId = a.partId ?? (ctx.entity as { id?: string } | null)?.id;
+    if (!partId) return { ok: false, error: "missing partId" };
+    const c = await holdingsCtxForPart(ctx.orgId, ctx.userId ?? null, partId);
+    if (!c) return { ok: false, error: "part_not_found" };
+    const out = await receiveLot(c, partId, { qty: Number(a.qty ?? 0), expires_on: a.expires_on ?? null, lot: a.lot ?? null });
+    return isRefusal(out) ? refusalResult(out) : out;
   });
 
   platform().actions.registerHandler("inventory.split-holding", async (ctx) => {

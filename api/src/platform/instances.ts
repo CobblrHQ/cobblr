@@ -492,3 +492,15 @@ export async function provisionInstance(args: {
   await logInstanceCreated(args.orgId, created, { source: "created" });
   return { ok: true, instance: created };
 }
+
+/** One instance's configuration as its module sees it: the instance row's own
+ *  config under the presentation override a bundle wrote (item noun, qty unit,
+ *  its parent collection). The one merge both the request middleware and a
+ *  module working outside a request (a boot heal) read, so the two cannot
+ *  disagree about what an instance is. Null when there is no such instance. */
+export async function instanceConfig(orgId: string, instanceName: string): Promise<{ module_name: string; config: Record<string, unknown> } | null> {
+  const inst = await getInstance(orgId, instanceName);
+  if (!inst) return null;
+  const overrideCfg = await getOverrideConfig(orgId, "instance", `${inst.module_name}:${inst.instance_name}`);
+  return { module_name: inst.module_name, config: { ...((inst.config as Record<string, unknown> | null) ?? {}), ...(overrideCfg ?? {}) } };
+}

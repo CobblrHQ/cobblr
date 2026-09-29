@@ -20,6 +20,7 @@
 // See docs/design-decisions/field-presets.md.
 
 import type { FieldRole, TraitName } from "@cobblr/platform-contract";
+import { PROVENANCE_FIELDS } from "@cobblr/platform-contract/provenance-fields";
 
 export interface PresetField {
   name: string;
@@ -64,24 +65,24 @@ export const FIELD_PRESETS: FieldPreset[] = [
     traits: ["physical"],
     fields: [
       {
-        name: "acquired_from",
-        display_label: "Acquired from",
+        name: PROVENANCE_FIELDS.from.name,
+        display_label: PROVENANCE_FIELDS.from.label,
         type: "text",
-        field_role: "acquired-from",
+        field_role: PROVENANCE_FIELDS.from.field_role,
         help: "Where it came from - a shop, a marketplace, a person. A receipt fills this from the vendor it names.",
       },
       {
-        name: "acquired_on",
-        display_label: "Acquired on",
+        name: PROVENANCE_FIELDS.on.name,
+        display_label: PROVENANCE_FIELDS.on.label,
         type: "date",
-        field_role: "acquired-on",
+        field_role: PROVENANCE_FIELDS.on.field_role,
         help: "When it became yours. A receipt fills this from the date printed on it, which is not always the day you scanned it.",
       },
       {
-        name: "acquired_for",
-        display_label: "Paid",
+        name: PROVENANCE_FIELDS.for.name,
+        display_label: PROVENANCE_FIELDS.for.label,
         type: "number",
-        field_role: "acquired-for",
+        field_role: PROVENANCE_FIELDS.for.field_role,
         help: "What it cost you. A receipt fills this only when its own numbers reconciled.",
       },
     ],

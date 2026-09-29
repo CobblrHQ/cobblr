@@ -142,9 +142,9 @@ export function rerouteVerdict(row: RerouteRow, menu: readonly ScanMenuEntry[]):
   // same order as matchItem: the receipt's facts, what the group photo
   // established, the purchase fields a picture cannot know, the facts the
   // name states, one storage story, and the list a category names.
-  applyReceiptFacts(meta as Parameters<typeof applyReceiptFacts>[0], next, menu);
+  const evidence = applyReceiptFacts(meta as Parameters<typeof applyReceiptFacts>[0], next, menu);
   applySplitInheritance(meta as Parameters<typeof applySplitInheritance>[0], next, menu);
-  stripUnsupportedPurchaseFields({ source_kind: row.source_kind ?? null, suggested_metadata: meta }, next);
+  stripUnsupportedPurchaseFields({ source_kind: row.source_kind ?? null, suggested_metadata: meta }, next, evidence);
   applyNameFacts(row.suggested_name, next, menu);
   alignStorageFields(next, menu);
   retargetByCategory(next, menu);

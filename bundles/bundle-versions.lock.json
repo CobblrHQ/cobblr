@@ -1,15 +1,15 @@
 {
   "cobblr.community.3d-printers": {
-    "version": "0.3.1",
-    "hash": "99306b2c985b5a8b39c842676b34057600d3e135c799bbe3c51dcd49235f9e63"
+    "version": "0.3.2",
+    "hash": "7c4be57ca4db4e4c3f8b7fd091828def3c46f09d197ec9ad2f9d713c3a57e250"
   },
   "cobblr.community.bookshelf": {
     "version": "0.3.0",
     "hash": "bcb8063ac48754891ed7d382183717350c1071b45165bfc6eb72aa3761813b28"
   },
   "cobblr.community.cnc-machines": {
-    "version": "0.3.1",
-    "hash": "a6307e8a6a9c16202d96ca0082ee80ccb90da28bac982a44fbdcc5a63ef105ce"
+    "version": "0.3.2",
+    "hash": "d9446bef4606b03c4293bc6b65678b71fbf802f74513ad80549e7c258e015e9a"
   },
   "cobblr.community.computers": {
     "version": "0.1.0",
@@ -20,8 +20,8 @@
     "hash": "655d5b060fc62c6adefa58f71fb9a5b770a4b09513f40d0de6f6503c47964ed2"
   },
   "cobblr.community.laser-cutters": {
-    "version": "0.3.1",
-    "hash": "96a601d633487d407e9053e23a8ba83be8cc55eaa43b2e6e58d55bfd8a6edc75"
+    "version": "0.3.2",
+    "hash": "0e970fc83881c1524f295aba3d60e174ff13a9f0dcca71477969fea15a3f9f1d"
   },
   "cobblr.community.lego": {
     "version": "0.6.0",
@@ -68,8 +68,8 @@
     "hash": "c2ade72a9d833206ca0c689006d3765741137a2c0a6f1773c772e316d54c3993"
   },
   "cobblr.flagship.filament": {
-    "version": "0.5.6",
-    "hash": "45a9d4b657067f571e24521bc67490a23d4b4ab1569e18cfad644b6efaeaf100"
+    "version": "0.8.0",
+    "hash": "6afa255019d8412283407a154e550de3895d077f12a4576df5fa1f69f640326e"
   },
   "cobblr.flagship.gifts-occasions": {
     "version": "0.2.2",
@@ -111,6 +111,10 @@
     "version": "0.3.2",
     "hash": "07624338cfbe4a034a7cd8aadc9e88b29635a3dd30d4866243e4dd4fbed92020"
   },
+  "cobblr.flagship.small-shop": {
+    "version": "0.1.0",
+    "hash": "17b37d2cc49ba53f05bde4a782b97d636419b56a8974d94ace6438076863d4f0"
+  },
   "cobblr.flagship.spice-rack": {
     "version": "0.2.4",
     "hash": "5bf36660165496e7b099baf20a1e9ae5c24ce0d8007fcd735369f95e6488462a"
@@ -140,7 +144,7 @@
     "hash": "17aecc03b2cb3838391c7f2db0e55cb7ca41f6a1a2f884868462e3b90a8e9a89"
   },
   "cobblr.flagship.yarn": {
-    "version": "0.9.0",
-    "hash": "39ca3f03fca8ae496143be1dc793da3182735e45e66c559838e67ac614e1673a"
+    "version": "0.9.2",
+    "hash": "57b09fc031d7dd57b775dac76f14bd8dd276be594f022372dd1c72a13a888ce4"
   }
 }

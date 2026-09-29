@@ -84,12 +84,15 @@ chmod +x "$FILE"
 #    is not a quiet CI runner), in its own file — one file per lint, so two
 #    people scaffolding two lints never conflict (#3447). CI's own clock
 #    replaces the number later: node scripts/lint-durations-record-missing.mjs
-if ! npx tsx "$FILE"; then die "the scaffold did not run clean; that is a bug in the template, not in your rule"; fi
-# The SECOND run is the one worth timing: the first pays npx and tsx cold
-# start, which is not what the lint costs in CI, and a 30s estimate would be
-# a hole in the budget rather than a baseline.
+# Run exactly as the runner will (lib/lint-command.mjs): plain node, or tsx on
+# a Node too old to strip types.
+RUN_CMD=$(FILE="$FILE" node --input-type=module -e 'const { lintCommand } = await import("./scripts/lib/lint-command.mjs"); process.stdout.write(lintCommand("node " + process.env.FILE));')
+if ! PATH="$PWD/node_modules/.bin:$PATH" bash -c "$RUN_CMD"; then die "the scaffold did not run clean; that is a bug in the template, not in your rule"; fi
+# The SECOND run is the one worth timing: the first pays a cold start, which
+# is not what the lint costs in CI, and a 30s estimate would be a hole in the
+# budget rather than a baseline.
 START_MS=$(node -e 'process.stdout.write(String(Date.now()))')
-npx tsx "$FILE" >/dev/null 2>&1 || true
+PATH="$PWD/node_modules/.bin:$PATH" bash -c "$RUN_CMD" >/dev/null 2>&1 || true
 END_MS=$(node -e 'process.stdout.write(String(Date.now()))')
 START_MS="$START_MS" END_MS="$END_MS" SLUG="$SLUG" ROW="$ROW" node --input-type=module -e "
   const { registerLint } = await import('./scripts/lib/lint-durations.mjs');
@@ -99,7 +102,7 @@ START_MS="$START_MS" END_MS="$END_MS" SLUG="$SLUG" ROW="$ROW" node --input-type=
   // lint at ten seconds, and doubling that would be a hole rather than a
   // baseline. The first CI measurement replaces it either way.
   const guess = Math.min(CEILING_MS, Math.max(500, took * 2));
-  const p = registerLint('lint:' + process.env.SLUG, { run: 'tsx scripts/lint-' + process.env.SLUG + '.ts', rows: [process.env.ROW] }, guess, 'scaffolded by new-lint.sh at twice a local run (a shared box); replaced from its first CI measurement');
+  const p = registerLint('lint:' + process.env.SLUG, { run: 'node scripts/lint-' + process.env.SLUG + '.ts', rows: [process.env.ROW] }, guess, 'scaffolded by new-lint.sh at twice a local run (a shared box); replaced from its first CI measurement');
   console.log('new-lint: registered ' + p.replace(process.cwd() + '/', ''));
 " || die "could not write the lint's record"
 

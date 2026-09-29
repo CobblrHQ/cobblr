@@ -1,7 +1,8 @@
 {
   "lint": "lint:autoupdate-warns-env-drift",
-  "run": "tsx scripts/lint-autoupdate-warns-env-drift.ts",
+  "run": "node scripts/lint-autoupdate-warns-env-drift.ts",
   "ms": 409,
   "recorded": "2026-09-14",
-  "source": "split from scripts/lint-durations.json (recorded 2026-09-14)"
+  "source": "split from scripts/lint-durations.json (recorded 2026-09-14)",
+  "readMB": 0.0
 }

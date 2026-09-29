@@ -1,7 +1,8 @@
 {
   "lint": "lint:typecheck-not-skippable",
-  "run": "tsx scripts/lint-typecheck-not-skippable.ts",
+  "run": "node scripts/lint-typecheck-not-skippable.ts",
   "ms": 375,
   "recorded": "2026-09-14",
-  "source": "split from scripts/lint-durations.json (recorded 2026-09-14)"
+  "source": "split from scripts/lint-durations.json (recorded 2026-09-14)",
+  "readMB": 0.1
 }

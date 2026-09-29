@@ -12,6 +12,7 @@
 // Sections + leaves live in lib/account-nav.ts, so the hub cannot drift from
 // the routes.
 
+import { useOfferedAccountFeatures } from "../lib/accountFeatures";
 import { useState } from "react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { Link } from "react-router-dom";
@@ -49,7 +50,8 @@ export function MeProfilePage() {
   usePageTitle("Your account");
   const { user } = useAuth();
   const { activeOrg } = useActiveOrg();
-  const sections = accountSections({ appMode: !!activeOrg?.app_mode });
+  const offered = useOfferedAccountFeatures();
+  const sections = accountSections({ appMode: !!activeOrg?.app_mode, offered });
 
   return (
     <div className="space-y-4">

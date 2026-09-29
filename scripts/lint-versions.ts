@@ -7,8 +7,10 @@
 //
 // Scope (high-signal, low false-positive):
 //   • BUNDLES (bundles/*.json) — ANY content change (excluding the release-metadata
-//     keys version/changelog/released_at) requires a version bump. Bundles are the
-//     user-facing upgrade unit.
+//     keys, scripts/lib/bundle-release-keys.ts) requires a version bump. Bundles are
+//     the user-facing upgrade unit. And a bump must add a `releases` entry for the
+//     new version: the update prompt lists those, and a bump without one showed
+//     the previous release's notes as the new one's.
 //   • MODULES (modules/<name>/) — only a MIGRATIONS change (modules/<name>/migrations/**)
 //     requires a module.ts version bump: a schema change = "how the module works"
 //     changed. Routine code edits don't trip this.
@@ -17,6 +19,7 @@
 // Run: npx tsx scripts/lint-versions.ts
 import { execSync } from "node:child_process";
 import { readFileSync, existsSync } from "node:fs";
+import { BUNDLE_NON_CONTENT_KEYS } from "./lib/bundle-release-keys.js";
 
 function git(cmd: string): string {
   return execSync(`git ${cmd}`, { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] }).trim();
@@ -56,7 +59,7 @@ const violations: string[] = [];
 // installed workspace has to re-sync. Changing it must NOT force a version bump:
 // a bump would show every existing install an "update available" for a bundle the
 // operator is DEMOTING, which is backwards.
-const META = new Set(["version", "changelog", "released_at", "catalog"]);
+const META = BUNDLE_NON_CONTENT_KEYS;
 function stripMeta(j: unknown): string {
   const obj = j as { manifest?: Record<string, unknown> } & Record<string, unknown>;
   const m = (obj?.manifest ?? obj) as Record<string, unknown>;
@@ -66,6 +69,13 @@ function stripMeta(j: unknown): string {
     return JSON.stringify(c);
   }
   return JSON.stringify(j);
+}
+// A version bump with no notes of its own is how an update prompt came to
+// show notes from months before the version on offer: the bump was automatic
+// and the old `changelog` string rode along untouched.
+function releaseFor(j: unknown, version: string): boolean {
+  const o = j as { manifest?: { releases?: Array<{ version?: string }> }; releases?: Array<{ version?: string }> };
+  return (o?.manifest?.releases ?? o?.releases ?? []).some((r) => r?.version === version);
 }
 function ver(j: unknown): string | undefined {
   const o = j as { manifest?: { version?: string }; version?: string };
@@ -88,7 +98,15 @@ for (const f of changed.filter((f) => /^bundles\/[^/]+\.json$/.test(f) && f !== 
     continue;
   }
   if (stripMeta(oldJson) !== stripMeta(newJson) && ver(oldJson) === ver(newJson)) {
-    violations.push(`${f}: content changed but version stayed "${ver(newJson)}" — bump it (semver) + add a changelog line.`);
+    violations.push(`${f}: content changed but version stayed "${ver(newJson)}" — bump it (semver) + add a releases entry.`);
+  }
+  const newVer = ver(newJson);
+  if (newVer && newVer !== ver(oldJson) && !releaseFor(newJson, newVer)) {
+    violations.push(
+      `${f}: version moved to "${newVer}" with no releases entry saying what changed in it. Add ` +
+        `{ version: "${newVer}", released_at, notes } at the top of the manifest's \`releases\` ` +
+        `(web/src/lib/featured-bundles.ts for a featured bundle, then scripts/sync-bundles.ts).`,
+    );
   }
 }
 

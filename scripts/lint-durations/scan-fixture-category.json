@@ -1,7 +1,8 @@
 {
   "lint": "lint:scan-fixture-category",
-  "run": "tsx scripts/lint-scan-fixture-category.ts",
+  "run": "node scripts/lint-scan-fixture-category.ts",
   "ms": 4100,
   "recorded": "2026-09-14",
-  "source": "split from scripts/lint-durations.json (recorded 2026-09-14)"
+  "source": "split from scripts/lint-durations.json (recorded 2026-09-14)",
+  "readMB": 5.0
 }

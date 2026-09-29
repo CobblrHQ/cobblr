@@ -25,6 +25,7 @@ import { actionLabelOf, invoke } from "./actions.js";
 import { baseKindOf, lookup, walkPairings } from "./entities.js";
 import { render } from "./templates.js";
 import { templateDataOf } from "@cobblr/platform-contract/entity-metadata";
+import { namePeopleForTemplate } from "./member-fields.js";
 import { log as logActivity } from "./activity.js";
 import { parseWireFilter, passesWireFilter } from "./wire-filter.js";
 import { FiringLedger, firingKey } from "./wire-firing-key.js";
@@ -245,7 +246,7 @@ async function fireBindings(
         // trigger_type) come last so they win on any collision with
         // a payload key of the same name.
         const templateData: Record<string, unknown> = {
-          ...templateDataOf(entityFields),
+          ...(ent ? await namePeopleForTemplate(orgId, t.kind, templateDataOf(entityFields)) : templateDataOf(entityFields)),
           _title: ent?.title ?? "",
           event: {
             ...payload,

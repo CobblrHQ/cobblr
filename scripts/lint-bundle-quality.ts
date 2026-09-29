@@ -12,11 +12,14 @@
 //      choices and no keywords is unreachable without AI)
 //   · a declared field named like an identifier (isbn, vin, serial) carries
 //     the identifier role, so the scan pipeline can see it
+//   · no more pinned saved views than Home shows as cards; the extra ones
+//     drop off Home silently, and it was the orders board that dropped
 //
 // Legacy field_defs-only bundles (no provides_instances) are exempt from the
 // instance checks but still need identity. Run: npx tsx scripts/lint-bundle-quality.ts
 import fs from "node:fs";
 import path from "node:path";
+import { HOME_PINNED_VIEW_CAP } from "../web/src/lib/dashboard-pinned.ts";
 
 const dir = path.join(process.cwd(), "bundles");
 /** Field names that ARE identifiers by any reading. `serial` alone is included
@@ -42,6 +45,13 @@ for (const f of fs.readdirSync(dir).sort()) {
   if (!m.name) where("missing name");
   if (!m.version) where("missing version");
   if (!m.description || String(m.description).length < 20) where("missing/too-short description");
+  const views = Array.isArray(m.saved_views) ? (m.saved_views as Array<Record<string, unknown>>) : [];
+  const pinned = views.filter((v) => v.pinned === true);
+  if (pinned.length > HOME_PINNED_VIEW_CAP)
+    where(
+      `pins ${pinned.length} saved views but Home shows ${HOME_PINNED_VIEW_CAP}; ` +
+        `unpin the least important (pinned: ${pinned.map((v) => `"${String(v.name)}"`).join(", ")})`,
+    );
   const pis = Array.isArray(m.provides_instances) ? (m.provides_instances as Array<Record<string, unknown>>) : [];
   for (const pi of pis) {
     const label = String(pi.instance_name ?? "?");

@@ -20,7 +20,7 @@
 import { useState } from "react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { useNavigate } from "react-router-dom";
-import { Modal, useToast } from "@cobblr/platform-web";
+import { DragInput, Modal, useToast } from "@cobblr/platform-web";
 import { useLabels } from "./context";
 
 const DOTS_PER_MM = 8; // 203 dpi
@@ -117,13 +117,14 @@ export function PrinterConfigModal({
         <label className="flex flex-col gap-1">
           <span className="text-[10px] font-mono uppercase tracking-widest text-faint dark:text-slate-500">darkness</span>
           <div className="flex items-center gap-2">
-            <input
+            <DragInput
               className="w-40"
-              type="range"
+              control="range"
               min={1}
               max={15}
               value={densityN}
-              onChange={(e) => setDensity(e.target.value)}
+              onPreview={setDensity}
+              onCommit={setDensity}
               aria-label="Print density"
             />
             <span className="text-xs text-faint dark:text-slate-500">{densityN} of 15</span>

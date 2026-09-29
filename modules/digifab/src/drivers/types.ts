@@ -69,6 +69,9 @@ export interface JobStatus {
    *  printTimeLeft / printTime). Surfaced in print-update notifications. */
   timeRemainingSec?: number | null;
   elapsedSec?: number | null;
+  /** The printer's own words about an error or a stop ("Thermal runaway"),
+   *  when the manager gives them. Carried onto the job, so a failure says why. */
+  message?: string | null;
   /** The raw upstream payload, for debugging / fields we don't model. */
   raw?: unknown;
 }

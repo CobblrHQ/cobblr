@@ -42,3 +42,14 @@ export function backupOffers(conns: readonly BackupConn[], labelOf: (c: BackupCo
   }
   return out;
 }
+
+/** One line for a connection's offers, however many workspaces there are:
+ *  six sentences that differ only in the workspace name read as noise. */
+export function backupSummary(offers: readonly BackupOffer[], orgName: (id: string) => string): string | null {
+  if (!offers.length) return null;
+  const behind = [...new Set(offers.map((o) => o.behind))];
+  const who = behind.length === 1 ? behind[0]! : "your other AI";
+  return offers.length === 1
+    ? `Can back up ${who} in ${orgName(offers[0]!.org_id)}`
+    : `Can back up ${who} in ${offers.length} workspaces`;
+}

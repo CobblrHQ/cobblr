@@ -1,0 +1,366 @@
+// A record made without a photo is offered one (#3818).
+//
+// A machine record, "Dremel 3D20", was made through the assistant and sat
+// with a letter where its picture should be: only the scan inbox ever looked
+// for pictures. Now every record made or renamed without a picture, by any
+// door (the kernel's platform.entity.saved, which every module route and
+// instance passes), is queued here, and a sweep looks for its picture on the
+// same ladder the inbox climbs (name plus its maker, the heuristics, the
+// stock-preview filter, no AI). What it finds is SUGGESTED: the record shows
+// it with Use it, Show others and No thanks. A workspace may ask for the top
+// match to be applied instead. A picture a person set is never replaced, and
+// No thanks is remembered until the record's name changes.
+//
+// Background and trickled: the request that made the record never waits, and
+// a 500-row import is 500 queued rows, looked at three per workspace per
+// round, never 500 searches at once.
+//
+// BORN WITH: runSweepEnableSteps (its onEnable). A workspace enabled with
+// records gets them queued and the backfill marked done at enable, not at the
+// pass's first round.
+
+import type { Kysely } from "kysely";
+import { platform } from "@cobblr/platform-contract";
+import { ENTITY_SAVED_EVENT, type EntitySavedEvent } from "@cobblr/platform-contract/entity-saved";
+import type { CoreScanDB } from "../db.js";
+import { derivedQueryFor, fetchAndStoreImage, imagePathForFile } from "./entity-image.js";
+import { pictureOptions } from "./picture-options.js";
+import { pickImage } from "./barcode-websearch.js";
+import { scanTargetsForOrg } from "./scan-target.js";
+
+export const RECORD_PHOTO_PASS = "core-scan.record-photo-suggestions";
+/** Records looked at per workspace per round. */
+export const PER_ROUND = 3;
+/** A round with more queued goes again soon; an empty one waits. */
+export const ROUND_MS = 60_000;
+export const IDLE_MS = 10 * 60_000;
+/** Searches a record gets before it is left with none: one. A search that
+ *  found nothing will find nothing on the same name a minute later, and a
+ *  record goes back in the queue when its name changes or a person asks
+ *  (the owner, on a placeholder that never filled: "try once"). */
+export const MAX_ATTEMPTS = 1;
+/** Existing records put in the queue per workspace by the one backfill. */
+export const BACKFILL_LIMIT = 500;
+
+type Db = Kysely<CoreScanDB>;
+
+/** What happens to a saved record. Pure, so the whole queueing rule is one
+ *  function a test can hold. */
+export function queueDecision(
+  event: Pick<EntitySavedEvent, "title" | "hasImage">,
+  existing: { status: string; name: string } | null,
+): "queue" | "forget" | "leave" {
+  if (event.hasImage === null) return "leave"; // the kind has no picture
+  if (event.hasImage) return existing && existing.status !== "applied" ? "forget" : "leave";
+  const name = (event.title ?? "").trim();
+  if (!name) return "leave";
+  if (!existing) return "queue";
+  // The same name as last time: whatever was decided stands, a No thanks
+  // most of all. A new name is a new question.
+  if (existing.name.trim().toLowerCase() === name.toLowerCase()) return "leave";
+  return "queue";
+}
+
+/** Subscribe to the kernel's signal. Called once at module load. */
+export function subscribeRecordPhotos(
+  storeFor: (orgId: string) => Promise<SuggestionStore> = async (orgId) => kyselyStore((await platform().tenants.getDb(orgId)) as unknown as Db),
+): void {
+  platform().events.on(ENTITY_SAVED_EVENT, "core-scan", async (payload: unknown) => {
+    const e = payload as EntitySavedEvent;
+    // The scan's own records are not this pass's: the inbox finds their
+    // pictures itself.
+    if (e.kind.startsWith("core-scan:")) return;
+    if (await noteSaved(await storeFor(e.orgId), e)) nudge(e.orgId);
+  });
+}
+
+/** Look at a workspace's queue soon, not at the next idle round, so a record
+ *  made a moment ago is offered its picture while the person is still
+ *  looking at it. Coalesced: a burst of saves (an import) is one nudge, and
+ *  the round itself takes three, the rest following the drain cadence. */
+const NUDGE_AFTER_MS = 2_000;
+const nudges = new Map<string, ReturnType<typeof setTimeout>>();
+function nudge(orgId: string): void {
+  if (nudges.has(orgId)) return;
+  const t = setTimeout(() => {
+    nudges.delete(orgId);
+    void Promise.resolve()
+      .then(() => platform().sweeps.run(RECORD_PHOTO_PASS, { orgIds: [orgId] }))
+      .catch((err) => console.error(`[core-scan] org ${orgId}: picture suggestions round failed:`, (err as Error).message));
+  }, NUDGE_AFTER_MS);
+  if (typeof t === "object" && t && "unref" in t) (t as { unref: () => void }).unref();
+  nudges.set(orgId, t);
+}
+
+/** Where the queue lives. The Kysely store below in the product; a test
+ *  holds the same rules against an in-memory one. */
+export interface SuggestionStore {
+  get(kind: string, id: string): Promise<{ status: string; name: string } | null>;
+  queue(e: EntitySavedEvent): Promise<void>;
+  forget(kind: string, id: string): Promise<void>;
+  /** The queued rows, newest first. */
+  queued(limit: number): Promise<Array<{ entity_kind: string; entity_id: string; attempts: number }>>;
+  /** Write only a row still queued: a No thanks or a picture set while the
+   *  search was out is never overwritten. */
+  settle(kind: string, id: string, set: { status: "queued" | "suggested" | "none" | "applied"; attempts?: number; file_id?: string; source_url?: string; query?: string }): Promise<void>;
+  autoApply(): Promise<boolean>;
+  /** Whether this workspace's existing records were queued already. */
+  backfilled(): Promise<boolean>;
+  markBackfilled(): Promise<void>;
+  /** Queue a record not seen before; one already known is left as it is. */
+  queueIfAbsent(kind: string, id: string, name: string): Promise<boolean>;
+  /** A person asked: search this record again, whatever it was. */
+  requeue(kind: string, id: string): Promise<boolean>;
+}
+
+export function kyselyStore(db: Db): SuggestionStore {
+  const T = "core_scan_record_photo_suggestions" as const;
+  return {
+    get: async (kind, id) =>
+      (await db.selectFrom(T).select(["status", "name"]).where("entity_kind", "=", kind).where("entity_id", "=", id).executeTakeFirst()) ?? null,
+    queue: async (e) => {
+      const name = (e.title ?? "").trim();
+      await db
+        .insertInto(T)
+        .values({ entity_kind: e.kind, entity_id: e.id, name, user_id: e.userId })
+        .onConflict((oc) =>
+          oc.columns(["entity_kind", "entity_id"]).doUpdateSet({ name, status: "queued", file_id: null, source_url: null, attempts: 0, updated_at: new Date() }),
+        )
+        .execute();
+    },
+    forget: async (kind, id) => {
+      await db.deleteFrom(T).where("entity_kind", "=", kind).where("entity_id", "=", id).execute();
+    },
+    // Newest first: the record someone made a moment ago is the one they are
+    // looking at, and an import's backlog trickles in behind it.
+    queued: (limit) => db.selectFrom(T).select(["entity_kind", "entity_id", "attempts"]).where("status", "=", "queued").orderBy("updated_at", "desc").limit(limit).execute(),
+    settle: async (kind, id, set) => {
+      await db
+        .updateTable(T)
+        .set({ ...set, updated_at: new Date() })
+        .where("entity_kind", "=", kind)
+        .where("entity_id", "=", id)
+        .where("status", "=", "queued")
+        .execute();
+    },
+    autoApply: () => readAutoApply(db),
+    backfilled: async () => {
+      const row = await db.selectFrom("core_scan_photo_suggest_config").select("backfilled_at").executeTakeFirst().catch(() => undefined);
+      return !!row?.backfilled_at;
+    },
+    markBackfilled: async () => {
+      await db
+        .insertInto("core_scan_photo_suggest_config")
+        .values({ id: true, backfilled_at: new Date() })
+        .onConflict((oc) => oc.column("id").doUpdateSet({ backfilled_at: new Date(), updated_at: new Date() }))
+        .execute();
+    },
+    queueIfAbsent: async (kind, id, name) => {
+      // Dated at the epoch: the queue is newest first, and a backlog of old
+      // records must wait behind the record someone made a moment ago.
+      const r = await db
+        .insertInto(T)
+        .values({ entity_kind: kind, entity_id: id, name, updated_at: new Date(0) })
+        .onConflict((oc) => oc.columns(["entity_kind", "entity_id"]).doNothing())
+        .executeTakeFirst();
+      return Number(r.numInsertedOrUpdatedRows ?? 0) > 0;
+    },
+    requeue: async (kind, id) => {
+      const r = await db
+        .updateTable(T)
+        .set({ status: "queued", attempts: 0, file_id: null, source_url: null, updated_at: new Date() })
+        .where("entity_kind", "=", kind)
+        .where("entity_id", "=", id)
+        .executeTakeFirst();
+      return Number(r.numUpdatedRows ?? 0) > 0;
+    },
+  };
+}
+
+/** A person pressed Search on a record whose picture was not found: ask
+ *  once more, soon. The only door back into the queue for a record the
+ *  search already gave up on. */
+export async function searchAgain(orgId: string, store: SuggestionStore, kind: string, id: string): Promise<boolean> {
+  if (!(await store.requeue(kind, id))) return false;
+  nudge(orgId);
+  return true;
+}
+
+/** Queue, forget or leave one saved record; true when it was queued. */
+export async function noteSaved(store: SuggestionStore, e: EntitySavedEvent): Promise<boolean> {
+  const decision = queueDecision(e, await store.get(e.kind, e.id));
+  if (decision === "leave") return false;
+  if (decision === "forget") {
+    await store.forget(e.kind, e.id);
+    return false;
+  }
+  await store.queue(e);
+  return true;
+}
+
+/** Does the record still have no picture? Asked again right before anything
+ *  is written, so a picture set meanwhile is never replaced. */
+export async function recordHasNoPicture(orgId: string, kind: string, id: string): Promise<boolean | null> {
+  const e = await platform().entities.lookup(orgId, kind, id).catch(() => null);
+  if (!e) return null; // gone, or not resolvable
+  return !(typeof e.image_path === "string" && e.image_path.trim());
+}
+
+/** Put a stored picture on the record, through its kind's own writer. False
+ *  when the record has a picture now, or its kind cannot be written here. */
+export async function putPictureOn(orgId: string, orgSlug: string, kind: string, id: string, fileId: string): Promise<boolean> {
+  if ((await recordHasNoPicture(orgId, kind, id)) !== true) return false;
+  const writer = await platform().entities.getWriter(orgId, kind);
+  if (!writer) return false;
+  await writer.update(orgId, id, { image_path: imagePathForFile(orgSlug, fileId) });
+  return true;
+}
+
+export async function readAutoApply(db: Db): Promise<boolean> {
+  const row = await db.selectFrom("core_scan_photo_suggest_config").select("auto_apply").executeTakeFirst().catch(() => undefined);
+  return row?.auto_apply === true;
+}
+
+export async function writeAutoApply(db: Db, on: boolean): Promise<void> {
+  await db
+    .insertInto("core_scan_photo_suggest_config")
+    .values({ id: true, auto_apply: on })
+    .onConflict((oc) => oc.column("id").doUpdateSet({ auto_apply: on, updated_at: new Date() }))
+    .execute();
+}
+
+/** The searches, injectable for the test. */
+export interface SuggestDeps {
+  /** "refused" when the engine turned the ask away: that says nothing about
+   *  the record, so it costs the record no try and ends the round. */
+  find: (orgId: string, kind: string, id: string) => Promise<{ url: string; query: string } | null | "refused">;
+  store: (orgId: string, url: string) => Promise<string | null>;
+  hasNoPicture: (orgId: string, kind: string, id: string) => Promise<boolean | null>;
+  apply: (orgId: string, orgSlug: string, kind: string, id: string, fileId: string) => Promise<boolean>;
+  /** The records that already exist without a picture, for the one backfill. */
+  existingWithoutPicture?: (orgId: string, limit: number) => Promise<Array<{ kind: string; id: string; title: string }>>;
+}
+
+const REAL: SuggestDeps = {
+  find: async (orgId, kind, id) => {
+    const { query } = await derivedQueryFor(orgId, kind, id);
+    if (!query) return null;
+    const { items, throttled } = await pictureOptions({ query, limit: 8 });
+    if (!items.length && throttled) return "refused";
+    const url = pickImage(items, query) ?? items[0]?.url ?? null;
+    return url ? { url, query } : null;
+  },
+  store: fetchAndStoreImage,
+  hasNoPicture: recordHasNoPicture,
+  apply: putPictureOn,
+  existingWithoutPicture: async (orgId, limit) => {
+    const out: Array<{ kind: string; id: string; title: string }> = [];
+    for (const k of await scanTargetsForOrg(orgId).catch(() => [])) {
+      if (out.length >= limit) break;
+      const page = await platform().entities.list(orgId, k.kind, { limit: Math.min(200, limit - out.length) }).catch(() => null);
+      for (const e of page?.items ?? []) {
+        const img = (e as { image_path?: unknown }).image_path;
+        if (typeof img === "string" && img.trim()) continue;
+        if (!e.title?.trim()) continue;
+        out.push({ kind: e.kind, id: e.id, title: e.title });
+      }
+    }
+    return out.slice(0, limit);
+  },
+};
+
+/** The one backfill: every record that already exists without a picture
+ *  goes in the queue once, and the rounds work through it a few a minute.
+ *  A record the queue already knows (searched, declined, applied) is left
+ *  alone. Runs once per workspace. */
+export async function backfillExisting(orgId: string, store: SuggestionStore, deps: SuggestDeps = REAL): Promise<number> {
+  if (await store.backfilled()) return 0;
+  let queued = 0;
+  for (const r of (await deps.existingWithoutPicture?.(orgId, BACKFILL_LIMIT)) ?? []) {
+    if (await store.queueIfAbsent(r.kind, r.id, r.title.trim())) queued++;
+  }
+  await store.markBackfilled();
+  if (queued) console.log(`[core-scan] org ${orgId}: record pictures: ${queued} existing records without one queued, a few a minute`);
+  return queued;
+}
+
+/** One round for one workspace: look at the oldest queued records, up to
+ *  PER_ROUND. Answers whether more are waiting. */
+export async function suggestRound(orgId: string, orgSlug: string, store: SuggestionStore, deps: SuggestDeps = REAL): Promise<boolean> {
+  await backfillExisting(orgId, store, deps).catch((err) =>
+    console.error(`[core-scan] org ${orgId}: queueing existing records for pictures failed:`, (err as Error).message),
+  );
+  const queued = await store.queued(PER_ROUND + 1);
+  const autoApply = queued.length ? await store.autoApply() : false;
+  const tally = { suggested: 0, applied: 0, none: 0, again: 0, gone: 0, refused: false };
+  for (const q of queued.slice(0, PER_ROUND)) {
+    const tried = q.attempts + 1;
+    const giveUp = tried >= MAX_ATTEMPTS;
+    try {
+      const none = await deps.hasNoPicture(orgId, q.entity_kind, q.entity_id);
+      if (none !== true) {
+        // It has a picture now, or it is gone: nothing to suggest.
+        await store.forget(q.entity_kind, q.entity_id);
+        tally.gone++;
+        continue;
+      }
+      const found = await deps.find(orgId, q.entity_kind, q.entity_id);
+      if (found === "refused") {
+        // The engine said no to US; ask again next round, and ask nothing
+        // more now, since the rest of the round would be the burst again.
+        tally.refused = true;
+        break;
+      }
+      const fileId = found ? await deps.store(orgId, found.url) : null;
+      if (!found || !fileId) {
+        await store.settle(q.entity_kind, q.entity_id, { attempts: tried, status: giveUp ? "none" : "queued", ...(found ? { query: found.query } : {}) });
+        if (giveUp) tally.none++;
+        else tally.again++;
+        continue;
+      }
+      const applied = autoApply && (await deps.apply(orgId, orgSlug, q.entity_kind, q.entity_id, fileId));
+      await store.settle(q.entity_kind, q.entity_id, { status: applied ? "applied" : "suggested", file_id: fileId, source_url: found.url, query: found.query });
+      if (applied) tally.applied++;
+      else tally.suggested++;
+    } catch (err) {
+      console.error(`[core-scan] org ${orgId}: suggesting a picture for ${q.entity_kind}/${q.entity_id} failed:`, (err as Error).message);
+      await store.settle(q.entity_kind, q.entity_id, { attempts: tried, status: giveUp ? "none" : "queued" }).catch(() => undefined);
+    }
+  }
+  if (queued.length) {
+    console.log(
+      `[core-scan] org ${orgId}: record pictures: ${tally.suggested} suggested, ${tally.applied} applied, ${tally.none} with none, ${tally.again} to ask again, ${tally.gone} no longer need one${tally.refused ? "; the picture search refused, round ended" : ""}`,
+    );
+  }
+  return queued.length > PER_ROUND || tally.refused;
+}
+
+/** What a workspace gets the moment core-scan is enabled: its existing
+ *  records without a picture queued, and the backfill marked done. Queues
+ *  only; the rounds do the searching, so an enable never waits on the web.
+ *  Answers how many were queued. */
+export async function photosOnEnable(orgId: string, store: SuggestionStore, deps: SuggestDeps = REAL): Promise<number> {
+  return backfillExisting(orgId, store, deps);
+}
+
+/** The kernel's walk. Registered once at boot. */
+export function registerRecordPhotoSweep(): void {
+  platform().sweeps.register({
+    name: RECORD_PHOTO_PASS,
+    everyMs: IDLE_MS,
+    drainMs: ROUND_MS,
+    module: "core-scan",
+    visit: async ({ orgId, db }) => {
+      const slug = (await platform().orgs.get(orgId).catch(() => null))?.slug;
+      if (!slug) return;
+      const more = await suggestRound(orgId, slug, kyselyStore(db as Db));
+      return { backlog: more };
+    },
+    // The backfill, at enable: a workspace enabled with records queues them
+    // at once (the rounds then search a few a minute), and a new one is born
+    // with the "done" marker instead of waiting a round for it (#4091).
+    onEnable: async ({ orgId, db }) => {
+      if (await photosOnEnable(orgId, kyselyStore(db as Db))) nudge(orgId);
+    },
+  });
+}

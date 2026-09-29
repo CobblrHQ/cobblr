@@ -12,9 +12,13 @@
 // Whether the card may offer a one-tap Add is not decided here any more: the
 // platform contract's readiness rule (scan-triage.ts, isScanReadyToFile) is
 // read by the pill, File and File N alike, and a nameless row fails it first.
+import { isBareCodeName } from "@cobblr/platform-contract/display-identity";
+
 export interface NamelessCardInput {
   status: string;
   suggested_name: string | null;
+  /** The scanned code: a name that is only this is no name (#3930). */
+  barcode_text?: string | null;
   /** The lookup has spoken (enrichment finished), whatever it found. */
   ai_suggested_at: string | null | undefined;
   /** A receipt being read is work in progress, never "name it". */
@@ -28,7 +32,7 @@ export interface NamelessCardState {
 
 export function namelessCard(item: NamelessCardInput): NamelessCardState {
   const pending = item.status === "pending";
-  const named = !!item.suggested_name?.trim();
+  const named = !!item.suggested_name?.trim() && !isBareCodeName(item.suggested_name, item.barcode_text);
   const settled = !!item.ai_suggested_at;
   return {
     nameField: pending && !named && settled && !item.readingReceipt,
