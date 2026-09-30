@@ -16,6 +16,8 @@ const SORTABLE = columnSet<AssetsDB["assets_assets"]>()([
   "excitement",
   "quantity",
   "purchased_at",
+  "purchase_price_cents",
+  "vendor",
   "warranty_until",
   "last_service_at",
   "created_at",
@@ -41,6 +43,7 @@ export function registerAssetsResolvers(): void {
     const rows = await db
       .selectFrom("assets_assets")
       .select(["id", "name", "metadata", "created_at"])
+      .where("archived_at", "is", null)
       .execute();
     const out: Array<{ entityId: string; rrule: string; title: string; event: string }> = [];
     for (const r of rows) {
@@ -68,7 +71,8 @@ export function registerAssetsResolvers(): void {
     const db = (await platform().tenants.getDb(orgId)) as Kysely<AssetsDB>;
     const limit = Math.min(query.limit ?? 50, 200);
     const offset = query.offset ?? 0;
-    let q = db.selectFrom("assets_assets").selectAll();
+    // An archived thing is put away: not in a view, search or Needs you.
+    let q = db.selectFrom("assets_assets").selectAll().where("archived_at", "is", null);
     if (instance) q = q.where("instance", "=", instance as never);
     if (query.q?.trim()) q = q.where((eb) => textSearchWhere(eb, query.q, { text: ["name", "short_name", "manufacturer", "model", "serial_number", "type", "notes", "state"], json: ["metadata"] })!);
     if (query.filter) {
@@ -105,6 +109,7 @@ export function registerAssetsResolvers(): void {
     if (query.where) {
       const COMPARABLE = columnSet<AssetsDB["assets_assets"]>()([
         "purchased_at",
+        "purchase_price_cents",
         "warranty_until",
         "last_service_at",
         "excitement",
@@ -194,5 +199,7 @@ function toResolvedAsset(row: {
     // instead of an initial-letter chip. Mirrors inventory's toResolvedPart.
     image_path: (row.image_path as string | null | undefined) ?? undefined,
     fields: row as unknown as Record<string, unknown>,
+    // Put away: it still resolves, and nothing generates work for it.
+    ...(row.archived_at ? { retired: true } : {}),
   };
 }

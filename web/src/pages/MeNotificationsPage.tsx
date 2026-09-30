@@ -9,7 +9,7 @@ import { useState } from "react";
 import { AreaTabs, NOTIFICATION_TABS } from "../components/AreaTabs";
 import { Link, useNavigate } from "react-router-dom";
 import { notificationAction } from "../lib/notification-action";
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useInfiniteQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { Check, CheckCheck } from "lucide-react";
 import { useAuth } from "../auth/AuthContext";
 import { QueryError } from "../components/QueryError";
@@ -18,6 +18,8 @@ import { api, type CrossOrgNotificationEntry } from "../lib/api";
 import { NotificationActionButtons } from "../components/NotificationActionButtons";
 import { useToast, usePageTitle } from "@cobblr/platform-web";
 import { notificationKeys } from "../lib/notification-keys";
+
+const PAGE = 50;
 
 export function MeNotificationsPage() {
   usePageTitle("Notifications");
@@ -32,9 +34,13 @@ export function MeNotificationsPage() {
   const [orgFilter, setOrgFilter] = useState<string>(activeSlug);
   const [unreadOnly, setUnreadOnly] = useState(false);
 
-  const q = useQuery({
-    queryKey: notificationKeys.page(unreadOnly),
-    queryFn: () => api.meNotifications(100),
+  // Filtered and paged on the server: filtering one fetched page here left
+  // every older unread item out of reach, and counted only what was loaded.
+  const q = useInfiniteQuery({
+    queryKey: notificationKeys.page(unreadOnly, orgFilter),
+    queryFn: ({ pageParam }) => api.meNotifications(PAGE, { before: pageParam || undefined, org: orgFilter || undefined, unread: unreadOnly }),
+    initialPageParam: "",
+    getNextPageParam: (last) => last.next_cursor ?? undefined,
     refetchInterval: 30_000,
   });
 
@@ -54,9 +60,7 @@ export function MeNotificationsPage() {
     onError: (e: unknown) => toast.error(`Couldn't mark them read: ${e instanceof Error ? e.message : String(e)}`),
   });
 
-  let items = q.data?.items ?? [];
-  if (orgFilter) items = items.filter((n) => n.org_slug === orgFilter);
-  if (unreadOnly) items = items.filter((n) => !n.read_at);
+  const items = q.data?.pages.flatMap((p) => p.items) ?? [];
 
   function open(n: CrossOrgNotificationEntry) {
     if (!n.read_at) markRead.mutate(n.id);
@@ -87,7 +91,7 @@ export function MeNotificationsPage() {
       <AreaTabs tabs={NOTIFICATION_TABS} area="notifications" />
       <div className="flex items-baseline gap-3 pb-1 flex-wrap">
         <span className="text-sm text-muted dark:text-slate-400">
-          {items.length} {unreadOnly ? "unread" : "total"}
+          {q.hasNextPage ? `The latest ${items.length}` : `${items.length}`} {unreadOnly ? "unread" : "in all"}
         </span>
         <div className="flex-1" />
         <select
@@ -197,6 +201,17 @@ export function MeNotificationsPage() {
           </ul>
         </section>
       ))}
+
+      {q.hasNextPage && (
+        <button
+          type="button"
+          onClick={() => void q.fetchNextPage()}
+          disabled={q.isFetchingNextPage}
+          className="w-full py-2 text-sm rounded border border-line dark:border-slate-700 text-accent hover:bg-subtle dark:hover:bg-slate-800/60 disabled:opacity-50"
+        >
+          {q.isFetchingNextPage ? "Loading…" : "Show older"}
+        </button>
+      )}
 
       <Link
         to="/me/activity"

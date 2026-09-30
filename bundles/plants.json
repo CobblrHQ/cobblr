@@ -1,11 +1,18 @@
 {
   "manifest": {
     "id": "cobblr.flagship.plants",
-    "version": "0.3.2",
+    "version": "0.3.3",
     "name": "Plants",
     "description": "Your houseplants as their own table: species, light, watering interval + pot size, grouped by light.",
     "author": "Cobblr",
-    "released_at": "2026-06-10",
+    "released_at": "2026-09-30",
+    "releases": [
+      {
+        "version": "0.3.3",
+        "released_at": "2026-09-30",
+        "notes": "The Smart irrigation setup step's “Connect your controller” link now opens the machines page, where the controller's connection is added."
+      }
+    ],
     "changelog": "Turn on Smart irrigation to let each plant water itself: its watering interval fires a Home Assistant service (or any controller) for that plant's zone + seconds, hands-free.. Now its OWN table (an assets instance), not generic Assets with extra columns: its own nav entry, a “New plant” button, only plant fields (the make/model/serial cruft is hidden). Plain-language hints + a pinned “By light” view.",
     "requires": [
       {
@@ -137,7 +144,7 @@
           {
             "label": "Connect your controller",
             "module": "digifab",
-            "path": "/configuration/farm",
+            "path": "/configuration/devices?tab=machines",
             "hint": "Install the Home Assistant driver, add a connection labelled “Irrigation”, paste a long-lived token."
           },
           {

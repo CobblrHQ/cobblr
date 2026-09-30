@@ -124,7 +124,7 @@ export async function setBridgeLink(
     return {
       ok: false,
       detail: timedOut
-        ? "the printer did not answer in time — it is usually asleep or out of range"
+        ? "the printer did not answer in time; it is usually asleep or out of range"
         : "could not reach the bridge",
     };
   }

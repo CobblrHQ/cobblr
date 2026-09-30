@@ -10,13 +10,8 @@
 // and simply absent when there is none.
 
 import { platform } from "@cobblr/platform-contract";
+import { columnLabel, isWritableCustomField, isWritableNativeField } from "@cobblr/platform-contract/record-columns";
 import type { ExistingRecord, KnownLocation, Target, TargetField } from "./sheet-plan.js";
-
-/** Handled by a destination of their own, never offered as a field. */
-const NOT_FIELDS = new Set([
-  "id", "name", "metadata", "instance", "location_id", "category_id", "image_path", "qty", "unit",
-  "approximate_qty", "estimated_at", "archived", "state",
-]);
 
 interface KindField {
   name: string;
@@ -47,13 +42,8 @@ interface MenuEntry {
 
 function nativeFields(kind: KindRecordLike | undefined): TargetField[] {
   return (kind?.fields ?? [])
-    .filter((f) => !f.readOnly && !NOT_FIELDS.has(f.name) && f.type !== "object" && f.type !== "image-path")
-    .map((f) => ({ name: f.name, label: humanise(f.name), type: f.type === "url" ? "url" : (f.type ?? "text"), native: true, field_role: f.fieldRole ?? null }));
-}
-
-function humanise(name: string): string {
-  const s = name.replace(/_/g, " ");
-  return s.charAt(0).toUpperCase() + s.slice(1);
+    .filter(isWritableNativeField)
+    .map((f) => ({ name: f.name, label: columnLabel(f.name), type: f.type === "url" ? "url" : (f.type ?? "text"), native: true, field_role: f.fieldRole ?? null }));
 }
 
 export function instanceSlug(label: string): string {
@@ -138,7 +128,7 @@ export async function workspacePicture(orgId: string, auth: LoopbackAuth | null)
       fields: [
         ...natives,
         ...custom
-          .filter((f) => !natives.some((n) => n.name === f.name) && f.type !== "computed" && f.type !== "relation")
+          .filter((f) => !natives.some((n) => n.name === f.name) && isWritableCustomField(f))
           .map((f) => ({ name: f.name, label: f.display_label, type: f.type, native: false, choices: f.choices ?? null, field_role: f.field_role ?? null, unit: f.unit ?? null })),
       ],
       counts: (base.fields ?? []).some((f) => f.name === "qty"),
@@ -161,7 +151,7 @@ export async function workspacePicture(orgId: string, auth: LoopbackAuth | null)
       (k) => !k.instance_name && !on.has(k.module_name) && !k.module_name.startsWith("core-") && k.module_instanceability === "multi" && (k.fields ?? []).some((f) => f.name === "qty"),
     );
     if (candidate) {
-      const label = (await moduleLabel(auth, candidate.module_name)) ?? humanise(candidate.module_name);
+      const label = (await moduleLabel(auth, candidate.module_name)) ?? columnLabel(candidate.module_name);
       targets.push({
         id: `enable:${candidate.module_name}`,
         kind: candidate.id,
@@ -253,9 +243,12 @@ export function newCollectionTarget(sheetName: string, targets: Target[]): Targe
   };
 }
 
-/** The records already in a collection, for matching rows to them. */
-export async function existingRecords(orgId: string, kind: string): Promise<ExistingRecord[]> {
-  const all = await platform().entities.listAll(orgId, kind, { include_retired: true }, undefined, { cap: 50_000 });
+/** The records already in a collection, for matching rows to them, read as
+ *  the person importing: a read with no reader leaves out every field a
+ *  workspace hides from some role, so an owner's re-import of their own export
+ *  saw those fields as empty and planned to "change" every row that had one. */
+export async function existingRecords(orgId: string, kind: string, viewer: { userId?: string; role?: string }): Promise<ExistingRecord[]> {
+  const all = await platform().entities.listAll(orgId, kind, { include_retired: true }, viewer, { cap: 50_000 });
   return (all.items as Array<{ id: string; title: string; fields: Record<string, unknown> }>).map((r) => {
     const f = r.fields ?? {};
     const meta = (f.metadata && typeof f.metadata === "object" ? f.metadata : {}) as Record<string, unknown>;

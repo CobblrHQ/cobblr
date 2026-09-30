@@ -43,6 +43,7 @@ import {
   textStyle,
   themeWrapperStyle,
 } from "../lib/appTheme";
+import { withArticle } from "@cobblr/platform-contract/plural";
 
 interface Caps {
   role: string;
@@ -473,7 +474,7 @@ function FormBlock({
   // place, rather than the block vanishing (#3073).
   if (!canDo(caps, createCap)) {
     return createCap && caps ? (
-      <AskForItButton slug={slug} remedies={[{ kind: "capability", key: createCap }]} doing="Adding here" subject={`Add a ${label}`} label={`Ask to add a ${label}`} />
+      <AskForItButton slug={slug} remedies={[{ kind: "capability", key: createCap }]} doing="Adding here" subject={`Add ${withArticle(label)}`} label={`Ask to add ${withArticle(label)}`} />
     ) : null;
   }
   return (

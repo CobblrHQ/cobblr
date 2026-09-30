@@ -410,6 +410,7 @@ appsRouter.post(
       })
       .returningAll()
       .executeTakeFirstOrThrow()) as unknown as AppRow;
+    void platform().events.emit("core-apps.app.created", { orgId: tenantContext(req).org.id, appSlug: created.slug, name: created.name, userId: user?.id ?? null });
     res.status(201).json(toFull(created));
   }),
 );
@@ -439,6 +440,7 @@ appsRouter.patch(
       res.status(404).json({ error: { code: "not_found", message: "App not found" } });
       return;
     }
+    void platform().events.emit("core-apps.app.updated", { orgId: tenantContext(req).org.id, appSlug: updated.slug, name: updated.name, userId: sessionUser(req)?.id ?? null });
     res.json(toFull(updated));
   }),
 );
@@ -458,6 +460,7 @@ appsRouter.delete(
       res.status(404).json({ error: { code: "not_found", message: "App not found" } });
       return;
     }
+    void platform().events.emit("core-apps.app.deleted", { orgId: tenantContext(req).org.id, appSlug: req.params.slug!, userId: sessionUser(req)?.id ?? null });
     res.status(204).end();
   }),
 );

@@ -15,13 +15,33 @@
 // false: a new action is cautious until someone decides otherwise. An action
 // that registers an inverse and still says false (the move between lists)
 // is asking for its confirm card on purpose, and gets it on both doors.
+//
+// The declared effect sits above the flag. Whether an effect needs a person
+// is the Services rule (service-consent), asked here as the most permissive
+// AI door would ask it: an AI in Changes: auto. What that door would still
+// hold (physical, spends, and any effect it does not know, read as physical)
+// is held on every AI door, whatever `undoable` says: putting a record back
+// does not un-start a machine.
+
+import { serviceWaitsForAPerson } from "@cobblr/platform-contract/service-consent";
+
+/** Whether a declared effect always needs a person's yes: the Services
+ *  answer for an AI on Changes: auto, asked of the one function that gives
+ *  it, so an action and a service job cannot come to disagree. An action
+ *  that declares no effect falls to its `undoable` flag instead. */
+export function effectNeedsAPerson(effect: string | null | undefined): boolean {
+  return effect != null && serviceWaitsForAPerson(effect);
+}
 
 export interface ActionConsent {
   /** The action, so a caller can say which one it asked about. */
   id?: string;
   undoable?: boolean | null;
+  /** The declared effect (`exposes.actions[].effect`). */
+  effect?: string | null;
 }
 
 export function actionRunsUnconfirmed(action: ActionConsent | null | undefined): boolean {
+  if (effectNeedsAPerson(action?.effect)) return false;
   return action?.undoable === true;
 }

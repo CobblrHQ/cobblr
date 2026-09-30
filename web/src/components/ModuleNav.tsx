@@ -21,7 +21,7 @@
 
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
-import { MoreAppsDoor } from "./MoreAppsDoor";
+import { AppsDoorChip } from "./MoreAppsDoor";
 import { NavLink } from "react-router-dom";
 import { ChevronDown, PanelLeft, Settings2, Sliders } from "lucide-react";
 import { useActiveOrg } from "../auth/ActiveOrgContext";
@@ -198,6 +198,7 @@ export function ModuleNav({ quiet = false }: {
             })}
           />
         )}
+        <AppsDoorChip />
         {/* The nav-customize control was moved out of the navbar into
             Configuration → "Customize navigation" (it's settings, not a
             nav heading). */}
@@ -423,15 +424,7 @@ function MoreMenu({
                 </li>
               );
             })}
-            {/* The standing way out of the fold, inside the fold itself: it
-                nags nobody who never opens this menu, and it is the one place
-                someone standing in the pain is already looking. */}
             <li className="mt-1 border-t border-line dark:border-slate-700 pt-1">
-              <div className="px-2 py-1">
-                <MoreAppsDoor onNavigate={() => setOpen(false)} />
-              </div>
-            </li>
-            <li>
               <button
                 type="button"
                 onClick={() => {

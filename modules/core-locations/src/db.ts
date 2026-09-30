@@ -21,8 +21,19 @@ export interface LocationsTable {
   updated_at: Generated<Date>;
 }
 
+/** migrations/0004_deleted_places.sql: what a place delete took with it. */
+export interface DeletedPlacesTable {
+  id: string;
+  name: string;
+  rows: unknown;
+  placements: Generated<unknown>;
+  deleted_by: string | null;
+  deleted_at: Generated<Date>;
+}
+
 export interface CoreLocationsDB {
   core_locations_locations: LocationsTable;
+  core_locations_deleted: DeletedPlacesTable;
 }
 
 /** Re-exported from the contract so this module cannot fall behind the

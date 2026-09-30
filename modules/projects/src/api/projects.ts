@@ -2,6 +2,7 @@
 
 import { Router } from "express";
 import { z } from "zod";
+import { PRIORITIES, PROJECT_STATUSES } from "../vocab.js";
 import { platform, textSearchWhere } from "@cobblr/platform-contract";
 import { instanceOf, sessionUser, tenantContext, tenantDb } from "../db.js";
 import { asyncHandler, badBody, requireRole } from "./util.js";
@@ -33,9 +34,9 @@ const ProjectCreate = z.object({
   name: z.string().min(1).max(160),
   description: z.string().max(8_000).nullable().optional(),
   status: z
-    .enum(["planning", "active", "blocked", "done", "abandoned"])
+    .enum(PROJECT_STATUSES)
     .optional(),
-  priority: z.enum(["low", "med", "high", "urgent"]).nullable().optional(),
+  priority: z.enum(PRIORITIES).nullable().optional(),
   start_date: z.string().nullable().optional(),
   target_date: z.string().nullable().optional(),
   completion_date: z.string().nullable().optional(),

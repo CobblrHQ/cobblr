@@ -40,6 +40,8 @@ import { api, ApiError } from "../lib/api";
 import { useAuth } from "../auth/AuthContext";
 import { sandboxKeptAtTheEnd, type EndingKind } from "../lib/sandbox-session";
 import { AddedLine } from "../components/BuiltHere";
+import { KeepExamples } from "../components/KeepExamples";
+import { lifetimeSentence, type SandboxLifetime } from "@cobblr/platform-contract/sandbox-lifetime";
 import { carryUrl, makeItYours } from "../lib/make-it-yours";
 import { endedCopy, holdPhrase } from "../lib/workspace-state-copy";
 import type { SandboxLedger } from "../lib/api";
@@ -75,6 +77,14 @@ export function SandboxEnded({
   // One address for the page: typed once, used by whichever of the two things
   // that need it the person picks (keep playing, or the file).
   const [email, setEmail] = useState("");
+  // What is true of the sandbox's work right now, in the sentence the take
+  // email also carries (#4217: the page said "saved for 24 hours" while the
+  // email said "already gone").
+  const [lifetime, setLifetime] = useState<SandboxLifetime | null>(null);
+  useEffect(() => {
+    if (preview || kind !== "sandbox") return;
+    void api.sandboxLifetime().then(setLifetime).catch(() => setLifetime(null));
+  }, [preview, kind]);
 
   useEffect(() => {
     if (preview) return;
@@ -100,7 +110,7 @@ export function SandboxEnded({
     <div className="min-h-screen grid place-items-center bg-canvas text-content px-4 py-8" data-testid="sandbox-ended" data-ending={kind}>
       <div className="max-w-md w-full">
         <h1 className="text-2xl font-bold text-slate-700 dark:text-mortar-100">{copy.heading}</h1>
-        <p className="mt-1.5 text-muted">{copy.body}</p>
+        <p className="mt-1.5 text-muted" data-testid="ending-lifetime">{lifetime ? lifetimeSentence(lifetime) : copy.body}</p>
 
         {/* What they made, in one line. The cards below decide what happens to it. */}
         <AddedLine preview={preview ? (ledgerPreview ?? null) : undefined} />
@@ -163,7 +173,7 @@ function KeepPlayingCard({
 }) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [kept, setKept] = useState<{ email: string; emailed: boolean; days: number } | null>(null);
+  const [kept, setKept] = useState<{ email: string; emailed: boolean; days: number; joining?: boolean } | null>(null);
   const length = trialDays ? trialLengthPhrase(trialDays) : null;
   const more = trialDays ? trialLengthMorePhrase(trialDays) : null;
 
@@ -178,6 +188,17 @@ function KeepPlayingCard({
     setError(null);
     try {
       const r = await api.keepSandbox(to);
+      if (r.kind === "join_pending") {
+        // The address keeps a trial here already: this sandbox joins it once
+        // the address says yes. Nothing reopens until then. Unsent, the form
+        // stays so asking again is one tap.
+        if (!r.emailed) {
+          setError("That address already keeps a trial here, and we could not send it the link. Try again in a minute.");
+          return;
+        }
+        setKept({ email: to, emailed: true, days: r.days, joining: true });
+        return;
+      }
       setKept({ email: to, emailed: r.emailed, days: r.days });
       // The latch opens and the shell can draw the workspace again; a full
       // load, so nothing cached from the frozen hour is painted.
@@ -187,7 +208,7 @@ function KeepPlayingCard({
     } catch (err) {
       setError(
         err instanceof ApiError && err.status === 409
-          ? "That email already has an account. Sign in with it instead."
+          ? err.message
           : err instanceof ApiError && err.status === 410
             ? "The hold has run out, and this sandbox is gone. You can start another one below."
             : "We could not keep it. Please try again.",
@@ -209,11 +230,18 @@ function KeepPlayingCard({
       <h2 className={primary ? "font-display text-xl font-bold text-content dark:text-mortar-100" : "text-base font-semibold text-content dark:text-mortar-100"}>{title}</h2>
       {!kept && <p className="mt-1 text-sm text-muted">{line}</p>}
       {kept ? (
+        kept.joining ? (
+          <p className="mt-1.5 text-sm text-muted" data-testid="kept-joining">
+            {kept.email} already keeps a trial here.{" "}
+            {`We sent it a link: open it to add this sandbox beside that one, for ${trialLengthPhrase(kept.days)} of its own. This sandbox waits until then.`}
+          </p>
+        ) : (
         <p className="mt-1.5 text-sm text-muted" data-testid="kept-at-the-end">
           Saved for {trialLengthPhrase(kept.days)}.{" "}
           {kept.emailed ? `We sent a sign-in link to ${kept.email}.` : "We could not send your sign-in link, but this page's address still works."}{" "}
           Opening your workspace…
         </p>
+        )
       ) : (
         <form
           noValidate
@@ -325,6 +353,7 @@ function TakeYourWork({ email, setEmail }: { email: string; setEmail: (v: string
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [taken, setTaken] = useState<{ emailed: boolean; link: string; days: number } | null>(null);
+  const [examples, setExamples] = useState(false);
   async function take() {
     if (busy) return;
     const to = email.trim();
@@ -335,7 +364,7 @@ function TakeYourWork({ email, setEmail }: { email: string; setEmail: (v: string
     setBusy(true);
     setError(null);
     try {
-      const r = await api.takeSandboxWork(to);
+      const r = await api.takeSandboxWork(to, examples);
       setTaken({ emailed: r.emailed, link: r.link, days: r.days });
     } catch {
       setError("We could not build your file. Please try again.");
@@ -381,6 +410,7 @@ function TakeYourWork({ email, setEmail }: { email: string; setEmail: (v: string
             autoComplete="email"
             className="input w-full"
           />
+          <KeepExamples checked={examples} onChange={setExamples} />
           <button type="submit" disabled={busy} className={SECONDARY}>
             {busy ? "Packing it up…" : "Email me the file"}
           </button>

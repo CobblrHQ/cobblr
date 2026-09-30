@@ -18,6 +18,7 @@ import * as connectionProviders from "../platform/connections.js";
 import { notifyAccount } from "../platform/notifications.js";
 import { absoluteAppUrl } from "../platform/public-url.js";
 import { unverifiedRefusal } from "@cobblr/platform-contract/connection-verification";
+import { isCapabilityId } from "@cobblr/platform-contract/connection-capability";
 import { carriesCredentials, probeConnection, testStoredConnection } from "../platform/connection-probe.js";
 import {
   addUserCredential,
@@ -185,6 +186,9 @@ connectionsRouter.get("/me/connections/catalogue", requireAuth, (_req, res) => {
 connectionsRouter.post("/me/connections/test", requireAuth, async (req, res) => {
   const Body = z.object({
     provider_id: z.string().min(1).max(80),
+    /** The kind, for a provider named by something no one registers (a
+     *  service's manifest id). */
+    kind: z.string().min(1).max(40).optional(),
     credentials: z.record(z.unknown()),
   });
   const parsed = Body.safeParse(req.body);
@@ -192,18 +196,10 @@ connectionsRouter.post("/me/connections/test", requireAuth, async (req, res) => 
     res.status(400).json({ error: { code: "invalid_body", message: "provider_id + credentials required" } });
     return;
   }
-  const def = aiImpl.getProvider(parsed.data.provider_id);
-  if (!def?.testConnection) {
-    res.json({ ok: true, note: "provider has no test implementation; assumed ok" });
-    return;
-  }
   // The personal routing context, so a bridge-transit provider resolves to THIS
   // user's edge agent rather than failing for want of an org.
-  const result = await def.testConnection({
-    ...parsed.data.credentials,
-    __connection_user_id: req.session!.id,
-  });
-  res.json(result);
+  const kind = parsed.data.kind ?? connectionProviders.getProvider(parsed.data.provider_id)?.kind ?? null;
+  res.json(await connectionProviders.testConnection(parsed.data.provider_id, kind, parsed.data.credentials, { userId: req.session!.id }));
 });
 
 // Is MY personal edge agent connected right now? Drives the transit hint in
@@ -256,7 +252,7 @@ connectionsRouter.post("/me/connections", requireAuth, async (req, res, next) =>
     // rejected key is not saved unless the person says so, and then it is
     // saved as unverified, not as ready.
     // Always probed, even with no key: a bridge has none and is still testable.
-    let verification = await probeConnection(parsed.data.provider_id, parsed.data.credentials, req.session!.id);
+    let verification = await probeConnection(parsed.data.provider_id, provider.kind, parsed.data.credentials, req.session!.id);
     if (verification?.state === "invalid" && !parsed.data.confirm_unverified) {
       res.status(409).json(unverifiedRefusal(verification));
       return;
@@ -310,7 +306,7 @@ connectionsRouter.patch("/me/connections/:id", requireAuth, async (req, res, nex
     // bridge that is offline while its setting changes must not be refused
     // for it. Its Test button, and its return, re-check it.
     const merged = stored && parsed.data.credentials !== undefined ? { ...stored.credentials, ...parsed.data.credentials } : null;
-    let verification = stored && merged && carriesCredentials(merged) ? await probeConnection(stored.provider_id, merged, req.session!.id) : null;
+    let verification = stored && merged && carriesCredentials(merged) ? await probeConnection(stored.provider_id, stored.kind, merged, req.session!.id, id) : null;
     // A rejected key is always refused until confirmed; an unsettled one only
     // when it would displace a key that VERIFIED. A row never verified takes
     // the new state as it is.
@@ -364,7 +360,7 @@ connectionsRouter.delete("/me/connections/:id", requireAuth, async (req, res, ne
     // A grant is ended at its issuer before it is forgotten here, so a
     // Disconnect is a revoke and not a secret left live on the other side.
     const stored = await storedUserCredentials(req.session!.id, id);
-    const provider = stored ? connectionProviders.getProvider(stored.provider_id) : null;
+    const provider = stored ? connectionProviders.providerFor(stored.provider_id, stored.kind) : null;
     if (stored && provider?.onDelete) {
       try {
         await provider.onDelete(stored.credentials);
@@ -393,7 +389,7 @@ connectionsRouter.post("/me/connections/order", requireAuth, async (req, res, ne
       .object({
         org_id: z.string().uuid(),
         credential_ids: z.array(z.string().uuid()).max(20),
-        capability: z.string().min(1).max(64).nullable().optional(),
+        capability: z.string().min(1).max(260).refine(isCapabilityId, "not a capability id").nullable().optional(),
       })
       .safeParse(req.body);
     if (!body.success) {
@@ -406,6 +402,10 @@ connectionsRouter.post("/me/connections/order", requireAuth, async (req, res, ne
       body.data.credential_ids,
       body.data.capability ?? null,
     );
+    if (ok === "wrong_kind") {
+      res.status(400).json({ error: { code: "wrong_kind", message: "That job is done by a different kind of connection: an AI job ranks AI connections, a service's job ranks services." } });
+      return;
+    }
     if (!ok) {
       res.status(404).json({ error: { code: "not_found", message: "That connection is not yours." } });
       return;

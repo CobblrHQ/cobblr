@@ -43,6 +43,7 @@ import {
   LayoutGrid,
   Link2,
   ListTodo,
+  Mail,
   MousePointerClick,
   Package,
   Plug,
@@ -265,6 +266,16 @@ export const CONFIG_DESTINATIONS: ConfigDestination[] = [
     to: "/configuration/backup",
     keywords: ["restore", "export", "snapshot", "google drive", "s3"],
   },
+  {
+    section: "workspace",
+    icon: Mail,
+    label: "Email",
+    description:
+      "How this workspace emails customers, from your own address through your own provider (SMTP, Mailgun, Resend or Postmark). Nothing is sent until someone presses send.",
+    to: "/configuration/email",
+    minRole: "governance",
+    keywords: ["smtp", "outbound", "customer email", "shipping notice", "mailgun", "resend", "postmark"],
+  },
 
   // ── Build ─────────────────────────────────────────────────────────
   {
@@ -360,6 +371,7 @@ export const CONFIG_DESTINATIONS: ConfigDestination[] = [
     description:
       "Everyone a thing here can belong to: members, and anyone else by name (family, a friend whose things you keep). Invite someone to join and what is theirs stays theirs.",
     to: "/configuration/people",
+    minRole: "member",
     keywords: ["owner", "owners", "whose", "belongs to", "family", "contacts", "person"],
   },
   {
@@ -419,6 +431,7 @@ export const CONFIG_DESTINATIONS: ConfigDestination[] = [
     description:
       "Connect your own Claude (Claude Code, Claude Desktop) or another MCP client to this workspace: the server URL, a one-click token, and a snippet to paste.",
     to: "/configuration/connect-assistant",
+    minRole: "member",
     keywords: [
       "mcp",
       "model context protocol",
@@ -538,6 +551,7 @@ export const CONFIG_DESTINATIONS: ConfigDestination[] = [
     label: "API tokens",
     description: "Long-lived `cbt_*` tokens for CLI / AI / automation, each held to one workspace or all, and to look only, look and make changes, or full access. Mint, list, revoke.",
     to: "/configuration/tokens",
+    minRole: "member",
     keywords: ["cli", "bearer", "automation", "keys"],
   },
 
@@ -549,6 +563,7 @@ export const CONFIG_DESTINATIONS: ConfigDestination[] = [
     description:
       "Every mutation, attributed to who (UI / api token / system) and when. Filterable.",
     to: "/activity",
+    minRole: "member",
     module: "core-activity-log",
     keywords: ["audit", "history", "who changed"],
   },
@@ -579,6 +594,7 @@ export const CONFIG_DESTINATIONS: ConfigDestination[] = [
     description:
       "Ready-to-run curl / Python / Node / TypeScript for creating and reading records from a script, using your own kinds and fields. Mints a scoped token for you.",
     to: "/configuration/api-recipes",
+    minRole: "member",
     keywords: ["api", "script", "curl", "token", "automation", "use from a script", "integrate", "rest", "recipe"],
   },
   {
@@ -588,6 +604,7 @@ export const CONFIG_DESTINATIONS: ConfigDestination[] = [
     description:
       "Auto-generated OpenAPI 3.1 spec: entity-kind schemas + platform paths. Drop into Swagger UI or Insomnia.",
     to: "/configuration/openapi",
+    minRole: "member",
     module: "core-openapi",
     keywords: ["api docs", "swagger", "spec", "rest"],
   },
@@ -662,6 +679,37 @@ export function isConfigurationPath(pathname: string): boolean {
       !d.to.startsWith("/configuration") &&
       (pathname === d.to || pathname.startsWith(`${d.to}/`)),
   );
+}
+
+/** The registry entry a route is, or sits under (the longest `to` it starts
+ *  with, so /configuration/members/invite is Members). Null for the hub, a
+ *  section page, a hosted panel, and anything outside Configuration. */
+export function destinationForPath(pathname: string): ConfigDestination | null {
+  let best: ConfigDestination | null = null;
+  for (const d of CONFIG_DESTINATIONS) {
+    if (pathname !== d.to && !pathname.startsWith(`${d.to}/`)) continue;
+    if (!best || d.to.length > best.to.length) best = d;
+  }
+  return best;
+}
+
+/** May this viewer use the settings page at this route? The nav hides a page
+ *  below its role; this is the same answer for someone who arrives by URL, a
+ *  bookmark or a link, who would otherwise get the page's controls and a
+ *  refusal on every save. Unknown role (still loading) opens it, as the nav
+ *  does; the server is the real gate either way. */
+export function pageOpenTo(pathname: string, role: string | null | undefined): boolean {
+  const d = destinationForPath(pathname);
+  if (!d) return true;
+  return isDestinationVisible(d, { role, enabledModules: null });
+}
+
+/** A section's primary button, when its page is open to this viewer: the
+ *  People section's "+ Invite someone" is for whoever may invite, not for
+ *  everyone who can see the section. */
+export function sectionAction(section: ConfigSection, role: string | null | undefined): ConfigSectionMeta["action"] {
+  const action = CONFIG_SECTIONS[section].action;
+  return action && pageOpenTo(action.to, role) ? action : undefined;
 }
 
 /** The section a route belongs to, for breadcrumbs + sidebar highlighting. */

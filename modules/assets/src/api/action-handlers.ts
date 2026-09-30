@@ -19,6 +19,8 @@
 import { sql, type Kysely } from "kysely";
 import { platform } from "@cobblr/platform-contract";
 import type { AssetsDB } from "../db.js";
+import { registerCustodyHandlers } from "./custody.js";
+import { registerArchiveHandlers } from "./archive.js";
 
 let registered = false;
 
@@ -61,6 +63,8 @@ function coerce(v: unknown): unknown {
 export function registerActionHandlers(): void {
   if (registered) return;
   registered = true;
+  registerCustodyHandlers();
+  registerArchiveHandlers();
 
   // ───────────── field-to-location (bundle-migration engine) ─────────────
   // The assets mirror of inventory:field-to-location. Retire a bundle's bespoke

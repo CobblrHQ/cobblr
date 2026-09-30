@@ -166,6 +166,10 @@ export function BundleDetailModal(props: Props) {
     () => new Set((orgModules.data?.items ?? []).filter((m) => m.enabled).map((m) => m.name)),
     [orgModules.data],
   );
+  const moduleNames = useMemo(
+    () => Object.fromEntries((orgModules.data?.items ?? []).map((m) => [m.name, m.displayName])),
+    [orgModules.data],
+  );
 
   // Audit F3 — the "react" half needs take-backs. Version history: every
   // removed bundle row (update-replace / uninstall / revert) was snapshotted
@@ -192,7 +196,7 @@ export function BundleDetailModal(props: Props) {
     onError: (e) =>
       toast.error(
         e instanceof ApiError && e.status === 409
-          ? "That version no longer fits this workspace (modules or kinds changed) — nothing was altered."
+          ? "That version no longer fits this workspace (modules or kinds changed). Nothing was altered."
           : e instanceof Error
             ? e.message
             : "Restore failed.",
@@ -266,7 +270,7 @@ export function BundleDetailModal(props: Props) {
       toast.success(
         isUpdate
           ? `Updated ${r.bundle.name} to v${r.bundle.version}.`
-          : `Installed ${r.bundle.name} v${r.bundle.version} — ${r.applied.wires} wire(s), ${r.applied.field_defs} field def(s).`,
+          : `Installed ${r.bundle.name} v${r.bundle.version}: ${r.applied.wires} wire(s), ${r.applied.field_defs} field def(s).`,
       );
       // Persist a "where to start" card to the dashboard so it's re-findable
       // after the user navigates away (the author: "I could never find it again").
@@ -506,7 +510,7 @@ export function BundleDetailModal(props: Props) {
       title: `Replace ${plural ? "these bundles" : `"${list}"`}?`,
       message: `${list} already ${plural ? "provide" : "provides"} some of these fields. Replace ${
         plural ? "them" : "it"
-      } with "${name}"? This removes ${plural ? "their" : "its"} fields, views and automations — your items (parts, etc.) stay.`,
+      } with "${name}"? This removes ${plural ? "their" : "its"} fields, views and automations. Your items (parts, etc.) stay.`,
       confirmLabel: `Replace & install`,
       destructive: true,
     });
@@ -674,9 +678,9 @@ export function BundleDetailModal(props: Props) {
                   "Here's where to start:"
                 ) : justInstalled.installed ? (
                   // The shared wording, which says the thing no screen can
-                  // show: a bundle that skins a module adds no nav entry, so
-                  // "nothing appeared" is the correct outcome, not a failure.
-                  <>{installHeadline(justInstalled.installed)} Here's where to start:</>
+                  // show: what the install put in the menu, or that a bundle
+                  // skinning a module adds no nav entry at all.
+                  <>{installHeadline(justInstalled.installed, moduleNames)} Here's where to start:</>
                 ) : (
                   <>
                     Added {justInstalled.field_defs} field{justInstalled.field_defs === 1 ? "" : "s"}
@@ -691,7 +695,7 @@ export function BundleDetailModal(props: Props) {
           </div>
           {justInstalled.installed && !justInstalled.reopened && (
             <ul className="space-y-1.5 rounded-lg border border-line dark:border-slate-700 bg-subtle/40 dark:bg-slate-800/40 p-3">
-              {installChanges(justInstalled.installed).map((c, i) => (
+              {installChanges(justInstalled.installed, moduleNames).map((c, i) => (
                 <li key={i} className="flex items-center gap-2 text-sm text-content dark:text-mortar-200">
                   <span className="flex-1 min-w-0">{c.text}</span>
                   {c.href && (
@@ -974,10 +978,10 @@ export function BundleDetailModal(props: Props) {
           <Section title={props.mode === "installed" ? "features" : featuresLocked ? "your features" : "optional features"}>
             <p className="text-xs text-faint dark:text-slate-400 mb-2">
               {props.mode === "installed"
-                ? "Turn capabilities on or off, then save. Re-applies the bundle with your choice — your entities (parts, designs, …) stay; only the bundle's fields/views/automations change."
+                ? "Turn features on or off, then save. What you have already recorded stays; only the fields, views and automations this bundle adds change."
                 : featuresLocked
                   ? "Updating keeps this setup exactly as it is. Anything marked new is off unless you turn it on here. To change what's already installed, open this bundle from the Bundles page and edit its features there."
-                  : "The basics are always included. Turn on what you want — the fields, views, and modules below update to match. (Changeable anytime after install.)"}
+                  : "The basics are always included. Turn on what you want, and the fields, views and modules below update to match. You can change these after installing, from this bundle's page."}
             </p>
             <ul className="space-y-1.5">
               {features.map((f) => {

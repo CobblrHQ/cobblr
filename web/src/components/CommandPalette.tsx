@@ -6,7 +6,7 @@ import { Fragment, useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { useNavigate } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
-import { Camera, ChevronDown, ChevronRight, CornerDownLeft, FileSpreadsheet, FileText, LayoutGrid, Moon, Plus, ScanLine, Search, Sliders, Sun, Table2, Wand2 } from "lucide-react";
+import { Camera, ChevronDown, ChevronRight, CornerDownLeft, FileSpreadsheet, FileText, Keyboard, LayoutGrid, Moon, Plus, ScanLine, Search, Sliders, Sun, Table2, Wand2 } from "lucide-react";
 import { api } from "../lib/api";
 import { scanInboxKeys } from "../lib/scan-inbox-keys";
 import { useActiveOrg } from "../auth/ActiveOrgContext";
@@ -19,7 +19,7 @@ import { searchFeatures } from "../lib/feature-index";
 import { useHostedPanels } from "../lib/useHostedPanels";
 import { isFileHit, mergePaletteRows, paletteSectionHeader, PALETTE_RANK, tablesMatching, type PaletteRow, type PaletteTable } from "../lib/paletteRows";
 import { tableOtherNames, type NounChoiceDecl } from "@cobblr/platform-contract/kind-label";
-import { useLater, OverlayLayer, SnippetText, SearchInput } from "@cobblr/platform-web";
+import { useLater, OverlayLayer, SnippetText, SearchInput, isShortcut, keyCap, OPEN_SHORTCUTS_EVENT } from "@cobblr/platform-web";
 import { SearchIncomplete } from "./SearchIncomplete";
 import { openSheetImport } from "../lib/sheet-import";
 
@@ -47,7 +47,10 @@ const ACTIONS: ActionRow[] = [
   { id: "import-sheet", label: "Bring your spreadsheet", hint: "Excel, CSV or a Google Sheets link", keywords: "import excel xlsx csv google sheets spreadsheet list migrate", icon: FileSpreadsheet, run: () => openSheetImport() },
   { id: "build", label: "Describe what you have", hint: "AI builds the setup", icon: Wand2, run: (n) => n("/build?mode=workspace") },
   { id: "customize", label: "Customize workspace", hint: "modules · fields · setups", icon: Sliders, run: (n) => n("/configuration") },
+  { id: "shortcuts", label: "Keyboard shortcuts", hint: "?", keywords: "keys keyboard hotkeys help list", icon: Keyboard, run: () => window.dispatchEvent(new CustomEvent(OPEN_SHORTCUTS_EVENT)) },
 ];
+
+const KBD = "rounded border border-line dark:border-slate-700 px-1 font-mono";
 
 export function CommandPalette() {
   const later = useLater();
@@ -62,13 +65,13 @@ export function CommandPalette() {
 
   useEffect(() => {
     function onKey(e: KeyboardEvent) {
-      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "k") {
+      if (isShortcut(e, "palette")) {
         e.preventDefault();
         setOpen((v) => !v);
         setQ("");
         setSel(0);
       }
-      if (e.key === "Escape") setOpen(false);
+      if (isShortcut(e, "close")) setOpen(false);
     }
     window.addEventListener("keydown", onKey);
     const onOpenEvt = () => setOpen(true);
@@ -296,7 +299,7 @@ export function CommandPalette() {
 
   if (!open || !activeSlug) return null;
   return createPortal(
-    <OverlayLayer className="z-[110] bg-black/40 flex items-start justify-center pt-[12vh] px-4" onClick={() => setOpen(false)}>
+    <OverlayLayer className="z-[110] bg-black/40 flex items-start justify-center pt-[12vh] px-4" onClick={() => setOpen(false)} role="dialog" aria-modal="true" aria-label="Search and commands">
       <div
         className="w-full max-w-lg rounded-xl border border-line dark:border-slate-700 bg-surface dark:bg-slate-900 shadow-2xl overflow-hidden"
         onClick={(e) => e.stopPropagation()}
@@ -362,6 +365,22 @@ export function CommandPalette() {
           })}
           {total === 0 && <li className="px-3 py-4 text-sm text-faint dark:text-slate-500">Nothing matches.</li>}
         </ul>
+        {/* The keys that work here, and the door to the rest (#4227). */}
+        <div className="flex flex-wrap items-center gap-x-3 gap-y-1 border-t border-line dark:border-slate-700 px-3 py-1.5 text-[11px] text-faint dark:text-slate-500" data-testid="palette-keys">
+          <span><kbd className={KBD}>↑</kbd> <kbd className={KBD}>↓</kbd> move</span>
+          <span><kbd className={KBD}>↵</kbd> open</span>
+          <span><kbd className={KBD}>{keyCap("Mod")}</kbd> <kbd className={KBD}>K</kbd> close</span>
+          <button
+            type="button"
+            onClick={() => {
+              setOpen(false);
+              window.dispatchEvent(new CustomEvent(OPEN_SHORTCUTS_EVENT));
+            }}
+            className="ml-auto hover:text-accent hover:underline"
+          >
+            All shortcuts <kbd className={KBD}>?</kbd>
+          </button>
+        </div>
       </div>
     </OverlayLayer>,
     document.body,

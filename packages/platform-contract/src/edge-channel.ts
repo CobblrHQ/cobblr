@@ -154,12 +154,54 @@ export function bridgeDisplayName(b: { bridge: string | null; name?: string | nu
 export function parseBridgeReport(
   body: unknown,
   tokenId: string | null,
-): { version: string | null; hostname: string | null; tokenId: string | null; allow?: string[] | null } {
-  const b = (body && typeof body === "object" ? body : {}) as { version?: unknown; hostname?: unknown; allow?: unknown };
+): { version: string | null; hostname: string | null; tokenId: string | null; allow?: string[] | null; features?: string[] | null } {
+  const b = (body && typeof body === "object" ? body : {}) as { version?: unknown; hostname?: unknown; allow?: unknown; features?: unknown };
+  const strings = (v: unknown) => (Array.isArray(v) ? v.filter((e): e is string => typeof e === "string") : null);
   return {
     version: typeof b.version === "string" ? b.version : null,
     hostname: typeof b.hostname === "string" ? b.hostname : null,
     tokenId,
-    ...("allow" in b ? { allow: Array.isArray(b.allow) ? b.allow.filter((e): e is string => typeof e === "string") : null } : {}),
+    ...("allow" in b ? { allow: strings(b.allow) } : {}),
+    // What the bridge can do (abort, headers, lanes, scope, …). A bridge from
+    // before this reports nothing, and is treated as having none of them.
+    ...("features" in b ? { features: strings(b.features)?.slice(0, 32).map((f) => f.slice(0, 40)) ?? null } : {}),
   };
+}
+
+/** Which lane a call runs in on a bridge, when the caller did not say: a
+ *  machine call is device status, a source call is sync, anything else is AI.
+ *  The one rule, for the queue and for anything that reports on it. */
+export function edgeLaneOf(req: { lane?: string | null; instance?: unknown; source?: unknown }): "device" | "control" | "service" | "ai" | "sync" {
+  const l = req.lane;
+  if (l === "device" || l === "control" || l === "service" || l === "ai" || l === "sync") return l;
+  if (req.instance) return "device";
+  if (req.source) return "sync";
+  return "ai";
+}
+
+const LANE_WORDS = ["device", "control", "service", "ai", "sync"] as const;
+
+/** The lanes a polling bridge says have a free slot (`?lanes=device,control`),
+ *  or null when it names none (an older bridge: hand it anything). Every door
+ *  a bridge polls reads it here. */
+export function parsePollLanes(raw: unknown): Array<(typeof LANE_WORDS)[number]> | null {
+  if (typeof raw !== "string" || !raw.trim()) return null;
+  const lanes = raw.split(",").map((l) => l.trim()).filter((l): l is (typeof LANE_WORDS)[number] => (LANE_WORDS as readonly string[]).includes(l));
+  return lanes.length ? [...new Set(lanes)] : null;
+}
+
+/** A bridge's answer to one relayed call, as every /respond door reads it.
+ *  Null when it is not one (no id, no numeric status). Headers are kept only
+ *  as strings, a few, short. */
+export function parseRelayResponse(raw: unknown): { id: string; status: number; body?: unknown; headers?: Record<string, string> } | null {
+  const b = (raw && typeof raw === "object" ? raw : {}) as { id?: unknown; status?: unknown; body?: unknown; headers?: unknown };
+  if (typeof b.id !== "string" || !b.id || typeof b.status !== "number" || !Number.isInteger(b.status)) return null;
+  let headers: Record<string, string> | undefined;
+  if (b.headers && typeof b.headers === "object") {
+    headers = {};
+    for (const [k, v] of Object.entries(b.headers as Record<string, unknown>).slice(0, 16)) {
+      if (typeof v === "string") headers[k.toLowerCase().slice(0, 64)] = v.slice(0, 512);
+    }
+  }
+  return { id: b.id, status: b.status, ...("body" in b ? { body: b.body } : {}), ...(headers ? { headers } : {}) };
 }

@@ -9,7 +9,7 @@
 // navbar entry bounced you into the settings shell.
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Link, useSearchParams } from "react-router-dom";
+import { Link, useNavigate, useSearchParams } from "react-router-dom";
 import { readBound } from "../lib/floorplanGeometry";
 import { parseRange } from "../lib/nameRange";
 import { LocationFloorPlanTab } from "../components/LocationFloorPlanTab";
@@ -33,11 +33,14 @@ import {
 import { CSS } from "@dnd-kit/utilities";
 import { BulkActionBar, Modal, useToast, useConfirm, usePageTitle, useAskCobbAboutSelection, RecordRow, useSelectionResolver, buildLocationForest, type LocationNode as SharedLocationNode, usePublishChatContext, SearchInput } from "@cobblr/platform-web";
 import { ApiError, api, fetchAuthBlobUrl, type Location } from "../lib/api";
+import { deleteDialogMessage, restorePlaces, restoredSentence } from "../lib/placeDelete";
+import { countOf } from "@cobblr/platform-contract/plural";
 import { totalUsage, useLocationUsage, type UsageCounts } from "../lib/useLocationUsage";
 import { queueLabelsBulk } from "../lib/queue-label";
 import { useActiveOrg } from "../auth/ActiveOrgContext";
 import { ImportLocationsDialog } from "../components/ImportLocationsDialog";
 import { LocationTreePicker } from "../components/LocationTreePicker";
+import { DuplicatePlaceNotice, duplicatePlaceOf } from "../components/DuplicatePlaceNotice";
 import {
   filterForest,
   foldAll,
@@ -127,7 +130,7 @@ export function LocationsPage() {
     setPrinting(false);
     if (fail === 0) {
       toast.success(
-        `Queued ${ok} label${ok === 1 ? "" : "s"} — open Labels → Queue to print.`,
+        `Queued ${ok} label${ok === 1 ? "" : "s"}. Open Labels → Queue to print.`,
       );
     } else {
       toast.error(`Queued ${ok}; ${fail} failed.`);
@@ -150,25 +153,57 @@ export function LocationsPage() {
       }
       return true;
     });
+    const goes = { places: 0, things: 0 };
+    try {
+      for (const id of tops) {
+        const g = await api.locationWhatGoes(activeSlug, id);
+        goes.places += g.places;
+        goes.things += g.things;
+      }
+    } catch (e) {
+      toast.error(e instanceof ApiError ? e.message : String(e));
+      return;
+    }
+    const total = tops.length + goes.places;
     const ok = await confirm({
-      title: `Delete ${count} location${count === 1 ? "" : "s"}?`,
-      message: `The selected location${count === 1 ? "" : "s"} (and any child locations under them) will be removed. Items pointing at them become location-less. This can't be undone.`,
-      confirmLabel: `Delete ${count}`,
+      title: `Delete ${countOf(tops.length, "place")}?`,
+      message: deleteDialogMessage(goes, tops.length > 1),
+      confirmLabel: `Delete ${countOf(total, "place")}`,
       destructive: true,
     });
     if (!ok) return;
+    const deleted: string[] = [];
     let failed = 0;
+    let asked = false;
     for (const id of tops) {
       try {
         await api.deleteLocation(activeSlug, id);
-      } catch {
-        failed++;
+        deleted.push(id);
+      } catch (e) {
+        // A refusal that can be asked for opens the blocked-action sheet.
+        if (e instanceof ApiError && e.blocked) asked = true;
+        else failed++;
       }
     }
     setSelected(new Set());
-    void qc.invalidateQueries({ queryKey: ["core-locations", activeSlug] });
-    if (failed === 0) toast.success(`Deleted ${count} location${count === 1 ? "" : "s"}.`);
-    else toast.error(`Deleted some; ${failed} failed — refresh and retry.`);
+    const refresh = () => void qc.invalidateQueries({ queryKey: ["core-locations", activeSlug] });
+    refresh();
+    if (deleted.length > 0) {
+      toast.action(`Deleted ${countOf(deleted.length, "place")}${failed ? `. ${countOf(failed, "place")} could not be deleted` : ""}.`, {
+        actionLabel: "Undo",
+        onAction: async () => {
+          try {
+            const back = await restorePlaces(activeSlug, deleted);
+            refresh();
+            toast.success(back.length === 1 ? restoredSentence(back[0]!) : `Put ${countOf(back.length, "place")} back.`);
+          } catch (e) {
+            toast.error(e instanceof ApiError ? e.message : String(e));
+          }
+        },
+      });
+    } else if (failed > 0 && !asked) {
+      toast.error(`${countOf(failed, "place")} could not be deleted. Refresh and try again.`);
+    }
   }
 
   const list = useQuery({
@@ -1203,7 +1238,7 @@ function RunCard({
   );
 }
 
-function LocationFormModal({
+export function LocationFormModal({
   slug,
   parentId: parentIdInitial,
   target,
@@ -1229,6 +1264,12 @@ function LocationFormModal({
     target?.parent_id ?? parentIdInitial ?? "",
   );
   const toast = useToast();
+  const navigate = useNavigate();
+  // The place already there under this parent with this name, once the
+  // server has said so; the form then offers to open it or keep both.
+  const [dup, setDup] = useState<{ existingId: string } | null>(null);
+  const places = useQuery({ queryKey: ["core-locations", slug], queryFn: () => api.listLocations(slug), enabled: !!slug });
+  const parentName = parentId ? places.data?.items.find((l) => l.id === parentId)?.name ?? null : null;
 
   // Range expansion: "Drawer 1-3" → ["Drawer 1", "Drawer 2", "Drawer 3"].
   // Only active on create — on edit we never want a rename to silently
@@ -1241,63 +1282,73 @@ function LocationFormModal({
   const [bottomUp, setBottomUp] = useState(true);
 
 
+  async function save(allowDuplicate: boolean) {
+    setDup(null);
+    try {
+      if (editing && target) {
+        await api.updateLocation(slug, target.id, {
+          name: name.trim(),
+          short_name: shortName.trim() || null,
+          kind,
+          parent_id: parentId || null,
+          ...(allowDuplicate ? { allow_duplicate: true } : {}),
+        });
+        toast.success("Location updated");
+      } else if (expansion && expansion.names.length > 1) {
+        // Bulk-create N siblings from a "Foo 1-3" range. Sequential
+        // (not Promise.all) so the server's auto-numbering / activity
+        // log stays clean and a single failure stops the rest.
+        // Short_name is intentionally dropped for bulk — it's
+        // per-location and wouldn't make sense duplicated.
+        const created: string[] = [];
+        for (const n of expansion.names) {
+          const loc = await api.createLocation(slug, {
+            name: n,
+            kind,
+            parent_id: parentId || null,
+          });
+          created.push(loc.id);
+        }
+        // Bottom-up numbering means the list must read the OTHER way, so
+        // the group on screen looks like the rack in the room. /reorder is
+        // the same door a drag uses, so this is an opening position, not a
+        // special case the sort has to know about.
+        if (stacked && bottomUp && created.length > 1) {
+          await api.reorderLocations(slug, bottomUpDisplayOrder(created));
+        }
+        toast.success(
+          `Created ${created.length} locations: ${expansion.names.join(", ")}` +
+            (stacked && bottomUp ? ` (${expansion.names[0]} at the bottom)` : ""),
+        );
+      } else {
+        await api.createLocation(slug, {
+          name: name.trim(),
+          short_name: shortName.trim() || null,
+          kind,
+          parent_id: parentId || null,
+          ...(allowDuplicate ? { allow_duplicate: true } : {}),
+        });
+        toast.success("Location created");
+      }
+      onSaved();
+    } catch (err) {
+      const found = duplicatePlaceOf(err);
+      if (found) setDup(found);
+      else toast.error(err instanceof ApiError ? err.message : String(err));
+    }
+  }
+
   return (
     <Modal open onClose={onClose} title={editing ? "Edit location" : "New location"}>
       <form
         onSubmit={async (e) => {
           e.preventDefault();
           if (!name.trim()) return;
-          try {
-            if (editing && target) {
-              await api.updateLocation(slug, target.id, {
-                name: name.trim(),
-                short_name: shortName.trim() || null,
-                kind,
-                parent_id: parentId || null,
-              });
-              toast.success("Location updated");
-            } else if (expansion && expansion.names.length > 1) {
-              // Bulk-create N siblings from a "Foo 1-3" range. Sequential
-              // (not Promise.all) so the server's auto-numbering / activity
-              // log stays clean and a single failure stops the rest.
-              // Short_name is intentionally dropped for bulk — it's
-              // per-location and wouldn't make sense duplicated.
-              const created: string[] = [];
-              for (const n of expansion.names) {
-                const loc = await api.createLocation(slug, {
-                  name: n,
-                  kind,
-                  parent_id: parentId || null,
-                });
-                created.push(loc.id);
-              }
-              // Bottom-up numbering means the list must read the OTHER way, so
-              // the group on screen looks like the rack in the room. /reorder is
-              // the same door a drag uses, so this is an opening position, not a
-              // special case the sort has to know about.
-              if (stacked && bottomUp && created.length > 1) {
-                await api.reorderLocations(slug, bottomUpDisplayOrder(created));
-              }
-              toast.success(
-                `Created ${created.length} locations: ${expansion.names.join(", ")}` +
-                  (stacked && bottomUp ? ` (${expansion.names[0]} at the bottom)` : ""),
-              );
-            } else {
-              await api.createLocation(slug, {
-                name: name.trim(),
-                short_name: shortName.trim() || null,
-                kind,
-                parent_id: parentId || null,
-              });
-              toast.success("Location created");
-            }
-            onSaved();
-          } catch (err) {
-            toast.error(err instanceof ApiError ? err.message : String(err));
-          }
+          await save(false);
         }}
         className="space-y-3"
       >
+
         <label className="block">
           <span className="block text-[10px] font-mono uppercase tracking-widest text-faint dark:text-slate-500 mb-1">
             Name
@@ -1450,7 +1501,20 @@ function LocationFormModal({
           onChange={(id) => setParentId(id ?? "")}
           excludeSubtreeOf={target?.id}
           placeholder="(top-level)"
+          noneLabel="(top-level)"
         />
+        {dup && (
+          <DuplicatePlaceNotice
+            name={name}
+            parentName={parentName}
+            onOpen={() => {
+              onClose();
+              navigate(`/locations/${dup.existingId}`);
+            }}
+            onKeepBoth={() => void save(true)}
+            keepBothLabel={editing ? "Keep this name anyway" : "Make a second one"}
+          />
+        )}
         <div className="flex justify-end gap-2 pt-2">
           <button
             type="button"

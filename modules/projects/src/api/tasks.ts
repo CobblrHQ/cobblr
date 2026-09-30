@@ -4,10 +4,12 @@
 
 import { Router } from "express";
 import { z } from "zod";
+import { ENERGIES, PRIORITIES, TASK_STATUSES } from "../vocab.js";
 import { sql } from "kysely";
 import { platform } from "@cobblr/platform-contract";
 import { sessionUser, tenantContext, tenantDb } from "../db.js";
 import { asyncHandler, badBody, requireRole } from "./util.js";
+import { dependenciesOf, openBlockerCount, refuseNewTaskDependency, releaseDependentsOf } from "./deps.js";
 import { routeUnknownToMetadata, refuseUnknownFields } from "@cobblr/platform-contract/entity-metadata";
 
 export const tasksRouter = Router({ mergeParams: true });
@@ -25,9 +27,9 @@ const TaskCreate = z.object({
   project_id: z.string().uuid().nullable().optional(),
   title: z.string().min(1).max(320),
   description: z.string().max(8_000).nullable().optional(),
-  status: z.enum(["todo", "doing", "done", "blocked", "cancelled"]).optional(),
-  priority: z.enum(["low", "med", "high", "urgent"]).nullable().optional(),
-  energy: z.enum(["small", "medium", "large"]).nullable().optional(),
+  status: z.enum(TASK_STATUSES).optional(),
+  priority: z.enum(PRIORITIES).nullable().optional(),
+  energy: z.enum(ENERGIES).nullable().optional(),
   due_date: z.string().nullable().optional(),
   metadata: z.record(z.unknown()).optional(),
 });
@@ -37,8 +39,8 @@ const TaskUpdate = TaskCreate.partial();
 
 const ListQuery = z.object({
   project_id: z.string().uuid().optional(),
-  status: z.enum(["todo", "doing", "done", "blocked", "cancelled"]).optional(),
-  energy: z.enum(["small", "medium", "large"]).optional(),
+  status: z.enum(TASK_STATUSES).optional(),
+  energy: z.enum(ENERGIES).optional(),
   // ?blocked=1 returns only tasks with at least one unsatisfied dep.
   blocked: z.enum(["0", "1"]).optional(),
   limit: z.coerce.number().int().min(1).max(200).default(100),
@@ -66,14 +68,8 @@ tasksRouter.get(
         "t.status", "t.priority", "t.energy", "t.due_date",
         "t.completed_at", "t.metadata", "t.created_at", "t.updated_at",
         "p.name as project_name",
-        // Count unsatisfied deps so the UI can show "(blocked: 2)".
-        (eb) =>
-          eb
-            .selectFrom("projects_task_dependencies as d")
-            .select(sql<string>`coalesce(count(*), 0)`.as("v"))
-            .whereRef("d.task_id", "=", "t.id")
-            .where("d.satisfied", "=", false)
-            .as("blocked_deps"),
+        // Open blockers, so the UI can show "blocked: 2".
+        openBlockerCount("t.id").as("blocked_deps"),
       ])
       .orderBy("t.created_at", "desc")
       .limit(parsed.data.limit);
@@ -81,15 +77,17 @@ tasksRouter.get(
     if (parsed.data.project_id) q = q.where("t.project_id", "=", parsed.data.project_id);
     if (parsed.data.status) q = q.where("t.status", "=", parsed.data.status);
     if (parsed.data.energy) q = q.where("t.energy", "=", parsed.data.energy);
+    // In SQL, before the limit: filtering the page afterwards dropped blocked
+    // tasks that sat past the first 100.
+    if (parsed.data.blocked === "1") q = q.where(sql<boolean>`${openBlockerCount("t.id")} > 0`);
+    if (parsed.data.blocked === "0") q = q.where(sql<boolean>`${openBlockerCount("t.id")} = 0`);
 
     const rows = await q.execute();
     const items = rows.map((r) => ({
       ...r,
       blocked_deps: Number(r.blocked_deps ?? 0),
     }));
-    const filtered =
-      parsed.data.blocked === "1" ? items.filter((t) => t.blocked_deps > 0) : items;
-    res.json({ items: filtered });
+    res.json({ items });
   }),
 );
 
@@ -111,12 +109,8 @@ tasksRouter.get(
       res.status(404).json({ error: { code: "not_found", message: "task not found" } });
       return;
     }
-    const deps = await db
-      .selectFrom("projects_task_dependencies")
-      .selectAll()
-      .where("task_id", "=", id)
-      .execute();
-    res.json({ ...task, dependencies: deps });
+    const deps = await dependenciesOf(db, id);
+    res.json({ ...task, dependencies: deps, blocked_deps: deps.filter((d) => d.open).length });
   }),
 );
 
@@ -181,6 +175,7 @@ tasksRouter.patch(
     const ctx = tenantContext(req);
     const session = sessionUser(req);
 
+    const before = await db.selectFrom("projects_tasks").select("status").where("id", "=", id).executeTakeFirst();
     const patch: Record<string, unknown> = { updated_at: new Date() };
     let completed = false;
     for (const [k, v] of Object.entries(parsed.data)) {
@@ -219,10 +214,15 @@ tasksRouter.patch(
       ref: { module: "projects", entityType: "task", entityId: updated.id },
       diff: parsed.data,
     });
-    platform().events.emit(`projects.task.${completed ? "completed" : "updated"}`, {
+    platform().events.emit(completed ? "projects.task.completed" : "projects.task.updated", {
       orgId: ctx.org.id,
       taskId: updated.id,
     });
+    // Closing a task (done or cancelled) is what frees the tasks waiting on it.
+    const closed = (st: string | undefined) => st === "done" || st === "cancelled";
+    if (closed(updated.status) && !closed(before?.status)) {
+      await releaseDependentsOf(ctx.org.id, db, updated.id);
+    }
 
     res.json(updated);
   }),
@@ -281,6 +281,16 @@ tasksRouter.post(
     }
 
     const db = tenantDb(req);
+    if (parsed.data.depends_on_task_id) {
+      const refused = await refuseNewTaskDependency(db, id, parsed.data.depends_on_task_id);
+      if (refused) {
+        res.status(400).json({ error: { code: "invalid_dep", message: refused } });
+        return;
+      }
+    } else if (!(await db.selectFrom("projects_tasks").select("id").where("id", "=", id).executeTakeFirst())) {
+      res.status(404).json({ error: { code: "not_found", message: "task not found" } });
+      return;
+    }
     const inserted = await db
       .insertInto("projects_task_dependencies")
       .values({

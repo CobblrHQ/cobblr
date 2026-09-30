@@ -18,7 +18,7 @@
 // in the field keep polling + self-updating without a reinstall.
 
 import { Router } from "express";
-import type { Request } from "express";
+import type { NextFunction, Request, Response } from "express";
 import { z } from "zod";
 import { platform } from "@cobblr/platform-contract";
 import {
@@ -38,7 +38,7 @@ import { meta } from "../db/meta.js";
 import { createPairingCode, redeemPairingCode } from "../platform/edge-pairing.js";
 import { INSTALL_SCRIPT } from "../platform/edge-bridge-install-script.js";
 import { makeIpLimiter, overLimit, rateLimited } from "../platform/ip-limiter.js";
-import { edgeBridgeName, edgeChannelKey, parseBridgeReport } from "@cobblr/platform-contract/edge-channel";
+import { edgeBridgeName, edgeChannelKey, parseBridgeReport, parsePollLanes, parseRelayResponse } from "@cobblr/platform-contract/edge-channel";
 
 export const edgeRouter = Router({ mergeParams: true });
 edgeRouter.use(requireAuth, withTenant);
@@ -82,27 +82,42 @@ edgeRouter.get("/poll", async (req, res) => {
   if (!requireRole(req, res, "owner", "admin", "member")) return;
   const ac = new AbortController();
   req.on("close", () => ac.abort());
-  const item = await platform().edge.relayPoll(channelKeyOf(req), { signal: ac.signal });
+  const item = await platform().edge.relayPoll(channelKeyOf(req), { signal: ac.signal, lanes: parsePollLanes(req.query.lanes) });
   if (item) res.json(item);
   else res.status(204).end();
 });
 
-const Respond = z.object({ id: z.string().min(1), status: z.number().int(), body: z.unknown().optional() });
 edgeRouter.post("/respond", async (req, res, next) => {
   if (!requireRole(req, res, "owner", "admin", "member")) return;
-  const parsed = Respond.safeParse(req.body);
-  if (!parsed.success) {
+  const parsed = parseRelayResponse(req.body);
+  if (!parsed) {
     res.status(400).json({ error: { code: "bad_body", message: "id + numeric status required" } });
     return;
   }
   try {
-    await platform().edge.relayRespond(channelKeyOf(req), parsed.data);
+    await platform().edge.relayRespond(channelKeyOf(req), parsed);
     res.json({ ok: true });
   } catch (e) {
     next(e);
     return;
   }
 });
+
+// AI-REACH: exempt the bridge's own file transport (a devices:edge token moving bytes for a relayed call), never an operation a person or Cobb starts
+// Files through the bridge: GET (with Range) a file Cobblr sends, HEAD how much
+// of a delivery Cobblr holds, PUT (with Content-Range) the delivery itself.
+// Streamed both ways, outside every JSON parser.
+const blobRoute = async (req: Request, res: Response, next: NextFunction) => {
+  if (!requireRole(req, res, "owner", "admin", "member")) return;
+  try {
+    await platform().edge.serveBlob(channelKeyOf(req), String(req.params.id ?? ""), req, res);
+  } catch (e) {
+    next(e);
+  }
+};
+edgeRouter.get("/blobs/:id", blobRoute);
+// UI-REACH: a bridge's own file transport for a relayed call
+edgeRouter.put("/blobs/:id", blobRoute);
 
 // ── Pane of glass ──
 
@@ -387,6 +402,7 @@ edgePairRouter.get("/install.sh", (req, res) => {
 });
 
 // AI-REACH: exempt — spoken by the installer on the bridge's box, never by a person or the assistant.
+// UI-REACH: spoken by the installer on the bridge's box
 edgePairRouter.post("/pair", async (req, res, next) => {
   if (overLimit(pairLimiter, req)) return void rateLimited(res);
   try {

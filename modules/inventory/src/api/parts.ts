@@ -8,6 +8,7 @@
 import { Router, type Request } from "express";
 import { z } from "zod";
 import { sql, type RawBuilder } from "kysely";
+import { csvCell } from "@cobblr/platform-contract/csv";
 import { daysUntilField, platform, stockDisclosureFromConfig, type FilterPredicate } from "@cobblr/platform-contract";
 import { floorDelta } from "../stock-floor.js";
 import { applyPartFilters, applyPartSort } from "./part-query.js";
@@ -19,7 +20,8 @@ import { applyJsonbMerge } from "@cobblr/platform-contract/jsonb-merge";
 import { castFieldValues } from "@cobblr/platform-contract/field-values";
 import { disclosureHandler, fieldsShowStockSignal, latchInstanceStock } from "./disclosure.js";
 import { computeReconcile } from "../reconcile.js";
-import { recordConsumption } from "./stock-ledger.js";
+import { stockMoved } from "./stock-moved.js";
+import { arrivingLots, withBatches } from "./action-handlers.js";
 import { isLowStock, modelIsLow, modelOfUnit, onHandCount, openUnitsFor, openUnitsSummary } from "../on-hand.js";
 import { consumptionUnitOf } from "../consumption-unit.js";
 import { attachHoldings, holdingsCtx, liftHoldingsToCards, releaseForDelete, spreadIdentity } from "./holdings.js";
@@ -721,7 +723,16 @@ partsRouter.get(
       ...ownFields.map((f) => f.name),
     ];
 
-    const lines: string[] = [headers.map(csvCell).join(",")];
+    // A field this reader may not read (a field read scope) is neither a
+    // column nor a value: a download leaves the product and cannot be taken
+    // back. The table and the list already drop it; this writer reads the
+    // rows itself, so it asks the platform which to drop.
+    const hidden = await platform().entities.hiddenFields(exportCtx.org.id, exportKind, { userId: sessionUser(req).id, role: exportCtx.role });
+    const COLUMN_FIELD: Record<string, string> = { category: "category_id", location: "location_id" };
+    const keep = headers.map((h) => !hidden.has(h) && !hidden.has(COLUMN_FIELD[h] ?? h));
+    const kept = <T,>(cells: T[]) => cells.filter((_, i) => keep[i]);
+
+    const lines: string[] = [kept(headers).map(csvCell).join(",")];
     for (const r of labelled) {
       const cells = [
         r.asset_id != null ? String(r.asset_id) : "",
@@ -750,7 +761,7 @@ partsRouter.get(
         new Date(r.created_at).toISOString(),
         ...ownFields.map((f) => ownCell(r as Record<string, unknown>, f)),
       ];
-      lines.push(cells.map(csvCell).join(","));
+      lines.push(kept(cells).map(csvCell).join(","));
     }
     // UTC-DAY OK: the CSV filename's stamp, not a claim about anybody's calendar.
     const date = new Date().toISOString().slice(0, 10);
@@ -762,13 +773,6 @@ partsRouter.get(
     res.send(lines.join("\n") + "\n");
   }),
 );
-
-function csvCell(v: unknown): string {
-  const s = v == null ? "" : String(v);
-  // Quote if contains comma / quote / newline. Double internal quotes.
-  if (/[",\n\r]/.test(s)) return `"${s.replace(/"/g, '""')}"`;
-  return s;
-}
 
 partsRouter.get(
   "/:id",
@@ -1412,6 +1416,23 @@ partsRouter.patch(
       unit: parsed.data.unit,
     });
 
+    // A count typed into the record is a count change like any other: it
+    // leaves a statement line (a correction: the count set to what is there,
+    // never read as use) and says so when it lands the part at its minimum.
+    if (parsed.data.qty != null && Number(updated.qty) !== Number(before.qty)) {
+      await stockMoved(db, ctx.org.id, {
+        partId: updated.id,
+        delta: Number(updated.qty) - Number(before.qty),
+        newQty: Number(updated.qty),
+        minQty: (() => {
+          const m = parsed.data.min_qty !== undefined ? parsed.data.min_qty : before.min_qty;
+          return m == null ? null : Number(m);
+        })(),
+        reason: "count edited",
+        ledger: { kind: "correction" },
+      });
+    }
+
     // The row after a save carries its served title too, so a page that
     // keeps the response does not fall back to the stored name until a
     // refetch (#3061).
@@ -1509,38 +1530,32 @@ partsRouter.post(
     }
     const delta = verdict.applied;
 
-    const updated = await db
-      .updateTable("inventory_parts")
-      .set({
-        qty: sql<string>`greatest(0, qty + ${String(delta)}::numeric)`,
-        updated_at: new Date(),
-      })
-      .where("id", "=", id)
-      .where("instance", "=", instanceOf(req))
-      .returning(["id", "name", "qty", "min_qty"])
-      .executeTakeFirst();
-    if (!updated) {
-      res.status(404).json({ error: { code: "not_found", message: "part not found" } });
+    // Through the lots, the same as the adjust-stock action: + on an empty
+    // record is stock arriving, a lot dated today and good until its shelf
+    // life, where the stepper used to add a bare count with no date at all
+    // (so milk put back from zero never went off). Then the one sequence
+    // every count change runs (stock-moved.ts): the statement line,
+    // stock.changed, low stock on a decrease. Awaited so a wire (a task
+    // waiting on this part) has run before the client re-reads.
+    const applied = await withBatches(ctx.org.id, id, parsed.data.reason ?? "adjusted", delta, arrivingLots(delta, false), {
+      userId: session.id,
+      sourceKind: parsed.data.source_kind ?? null,
+      sourceId: parsed.data.source_id ?? null,
+    });
+    if (applied.ok !== true) {
+      res.status(409).json({ error: { code: "nothing_on_hand", message: String(applied.error ?? "nothing to take") } });
       return;
     }
-
-    // Consumption ledger (append-only): this HTTP path historically skipped it —
-    // the documented "ledgered stock-adjust endpoint" was aspirational, so the
-    // per-unit panel's own Open/Use taps (which route through here) left no
-    // statement line and the running balance had nothing to walk. Fixed via the
-    // ONE shared writer so every qty path leaves a line (consumption-ledger.md
-    // §7.3). Best-effort — a ledger hiccup must not fail the stock change.
-    try {
-      await recordConsumption(db, {
-        partId: updated.id,
-        delta,
-        reason: parsed.data.reason ?? null,
-        sourceKind: parsed.data.source_kind ?? null,
-        sourceId: parsed.data.source_id ?? null,
-      });
-    } catch (e) {
-      console.error("[inventory.stock-adjust] ledger write failed:", (e as Error).message);
+    if (applied.skipped && typeof applied.reason === "string" && applied.reason.startsWith("externally tracked")) {
+      res.status(409).json({ error: { code: "tracked_elsewhere", message: `This count is kept by another tool (${applied.reason.replace("externally tracked by ", "")}); change it there.` } });
+      return;
     }
+    const updated = await db
+      .selectFrom("inventory_parts")
+      .select(["id", "name", "qty", "min_qty"])
+      .where("id", "=", id)
+      .executeTakeFirstOrThrow();
+    const newQty = Number(updated.qty);
 
     await platform().activity.log({
       orgId: ctx.org.id,
@@ -1549,50 +1564,11 @@ partsRouter.post(
       ref: { module: "inventory", entityType: "part", entityId: updated.id },
       diff: { delta, reason: parsed.data.reason ?? null, new_qty: updated.qty },
     });
-    // Await so any wires (e.g. "flip task deps that depended on
-    // this part") have run before the client gets its 200. A client
-    // that immediately re-reads the task sees satisfied=true.
-    await platform().events.emit("inventory.stock.changed", {
-      orgId: ctx.org.id,
-      partId: updated.id,
-      delta,
-      newQty: Number(updated.qty),
-    });
 
     // Deliberately counting copies IS stock signal — a stock-adjust on a lean
     // catalog item ("I have another one") latches the instance like any other
     // stock-shaped write.
     await maybeLatchStock(req, ctx.org.id, { qty: updated.qty });
-
-    // Low-stock signal: on a DECREASE that lands at/below min_qty, fire
-    // inventory.stock.low (manifest-declared; this is its emit point). Wires
-    // like the food-cluster "running low → shopping list" hang off it. Only on
-    // a decrease, so re-stocking doesn't re-alert.
-    const newQty = Number(updated.qty);
-    const minQty = updated.min_qty == null ? null : Number(updated.min_qty);
-    // On what is on hand, open units included (on-hand.ts): opening the last
-    // skein takes the count to 0 and must not put yarn on the shopping list.
-    const onHand = onHandCount(newQty, (await openUnitsFor(db, [updated.id])).get(updated.id) ?? []);
-    if (delta < 0 && minQty != null && minQty > 0 && isLowStock({ onHand, minQty })) {
-      await platform().events.emit("inventory.stock.low", {
-        orgId: ctx.org.id,
-        partId: updated.id,
-        newQty,
-        minQty,
-      });
-    }
-    // Metres taken off an open skein are stock taken off its model: when
-    // that empties the skein, the model may be down to its minimum with no
-    // write of its own to notice. Announce for the model.
-    if (delta < 0) {
-      const model = await modelOfUnit(db, updated.id);
-      if (model && model.minQty != null && model.minQty > 0) {
-        const state = await modelIsLow(db, model);
-        if (state.low) {
-          await platform().events.emit("inventory.stock.low", { orgId: ctx.org.id, partId: model.id, newQty: state.onHand, minQty: model.minQty });
-        }
-      }
-    }
 
     res.json({ ...updated, qty: newQty });
   }),

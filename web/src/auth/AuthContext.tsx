@@ -3,6 +3,7 @@
 // /me to confirm the server still trusts it (handles "user
 // deactivated" / "secret rotated" cleanly).
 
+import { forgetKeptReads } from "../lib/offline";
 import {
   createContext, useCallback, useContext, useEffect, useState,
   type ReactNode,
@@ -16,6 +17,9 @@ interface AuthState {
   user: SessionUser | null;
   orgs: OrgMembership[];
   loading: boolean;
+  /** Signed in, but the session could not be read because the device is
+   *  offline and never kept it: not signed out, so not the sign-in page. */
+  offline?: boolean;
 }
 
 interface AuthCtx extends AuthState {
@@ -77,6 +81,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       })
       .catch((err) => {
         if (cancelled) return;
+        // Offline with nothing kept: still signed in, just not reachable.
+        if (err instanceof ApiError && (err.code === "offline" || err.code === "network_error")) {
+          setState({ user: null, orgs: [], loading: false, offline: true });
+          return;
+        }
         // Stale/forged/expired token — clear it and fall through
         // to the unauthed view.
         if (err instanceof ApiError && err.status === 401) {
@@ -91,6 +100,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   const login = useCallback(async (email: string, password: string, extra?: { app?: string; source?: string }) => {
     const res = await api.login({ email, password, ...extra });
+    await forgetKeptReads();
     setToken(res.token);
     setState({ user: res.user, orgs: res.orgs, loading: false });
   }, []);
@@ -127,6 +137,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   );
 
   const logout = useCallback(() => {
+    void forgetKeptReads();
     setToken(null);
     setState({ user: null, orgs: [], loading: false });
   }, []);

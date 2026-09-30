@@ -29,6 +29,7 @@ import type { MachineDriver } from "./drivers/types.js";
 import { resolveDetector, runDetector } from "./detectors/registry.js";
 import { ownedDeviceRefs } from "./detectors/owned.js";
 import type { DetectorContext } from "./detectors/types.js";
+import { inspectPlan, readThrough } from "./detectors/inspect-plan.js";
 // The vision constants + classify-image parse moved to the `llm` detector
 // package; re-export for back-compat (older imports referenced them here).
 export { FAILURE_LABELS, FAILURE_PROMPT, parseFailureProbability } from "./detectors/vision.js";
@@ -100,7 +101,7 @@ async function grabFrame(db: Kysely<DigifabDB>, driver: MachineDriver | null, co
 
 /** The device's configured camera URL (for a url-mode external frame-scorer that
  *  fetches the frame itself). */
-async function cameraUrlFor(db: Kysely<DigifabDB>, connId: string, deviceId: string): Promise<string | null> {
+export async function cameraUrlFor(db: Kysely<DigifabDB>, connId: string, deviceId: string): Promise<string | null> {
   const row = await db
     .selectFrom("digifab_device_settings")
     .select("camera_url")
@@ -176,11 +177,24 @@ export async function detectOnce(
   deviceId: string,
   cfg: FailureConfig,
 ): Promise<DetectResult | null> {
-  const base = await detectorBaseContext(db, orgId, connId, deviceId);
-
   // External detector — the whole reading comes from the configured service.
   if (cfg.backend === "detector") {
     if (!cfg.detector_id) return null;
+    // Moved to an adapter connection: asked through inspect.print, pinned
+    // to that connection. A detector not moved yet keeps its own path.
+    const moved = await db
+      .selectFrom("digifab_detectors")
+      .select(["service_connection_id"])
+      .where("id", "=", cfg.detector_id)
+      .where("enabled", "=", true)
+      .executeTakeFirst();
+    if (moved?.service_connection_id) {
+      return readThrough(orgId, connId, deviceId, [{ via: { credentialId: moved.service_connection_id }, source: "detector" }], {
+        invoke: (req) => platform().services.invoke(req),
+        output: async (org, jobId) => (await platform().services.job(org, jobId))?.output ?? null,
+      });
+    }
+    const base = await detectorBaseContext(db, orgId, connId, deviceId);
     base.cameraUrl = await cameraUrlFor(db, connId, deviceId);
     const loaded = await loadDetectorCtx(db, orgId, connId, deviceId, cfg.detector_id, base);
     if (!loaded?.pkg) return null;
@@ -192,29 +206,20 @@ export async function detectOnce(
     }
   }
 
-  // EDGE first (when the backend allows + the bridge offers a model).
-  if (cfg.backend === "auto" || cfg.backend === "edge") {
-    const edge = resolveDetector("edge");
-    if (edge) {
-      try {
-        const r = await runDetector(edge, { ...base, connection: null, cameraId: null });
-        if (r) return { probability: r.probability, source: "edge" };
-      } catch {
-        /* bridge unreachable / no model → fall through unless edge-only */
-      }
-    }
-    if (cfg.backend === "edge") return null; // edge-only + no model on the bridge
+  // The bridge's model, the workspace's AI, and any inspection service the
+  // workspace connected, asked through inspect.print in the order the setting
+  // says (detectors/inspect-plan.ts).
+  let first: { source: string; credential_id?: string } | null = null;
+  if (cfg.backend === "auto") {
+    first = await platform()
+      .services.chainFor(orgId, null, "inspect.print")
+      .then((c) => c.steps[0] ?? null)
+      .catch(() => null);
   }
-
-  // LLM fallback (auto + no edge reading, or backend=llm).
-  const llm = resolveDetector("llm");
-  if (!llm) return null;
-  try {
-    const r = await runDetector(llm, { ...base, connection: null, cameraId: null });
-    return r ? { probability: r.probability, source: "llm" } : null;
-  } catch {
-    return null; // no AI provider / not entitled → detection just idles
-  }
+  return readThrough(orgId, connId, deviceId, inspectPlan(cfg.backend, first), {
+    invoke: (req) => platform().services.invoke(req),
+    output: async (org, jobId) => (await platform().services.job(org, jobId))?.output ?? null,
+  });
 }
 
 // ── watch state ──────────────────────────────────────────────────────────────

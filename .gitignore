@@ -32,3 +32,4 @@ kiosk/assets/*.y4m
 # the corpus bench working files (the cache and results live in ai-bench-results)
 bench-cache/
 bench-out/
+_retained/

@@ -121,6 +121,10 @@ export interface SubmitArgs {
   deviceId?: string | null;
   /** A tag name → routed to the tag's printer set (may await assignment). */
   tag?: string | null;
+  /** The send's claim: the same key for a retry of the same send, so a manager
+   *  (or a bridge) that remembers keys starts it once. Most managers ignore it;
+   *  Cobblr's own claim is what guarantees one send. */
+  idempotencyKey?: string;
 }
 
 export interface MachineDriver {

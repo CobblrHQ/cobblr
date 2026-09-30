@@ -78,6 +78,7 @@ export async function appendFeedbackReply(input: {
 // POST /feedback/append-email — a recipient replied to a feedback EMAIL. The
 // Email Worker parses the reply+<token> address + the stripped body and posts
 // here. We verify the shared secret, then hand off to appendFeedbackReply.
+// UI-REACH: the email worker relaying a reply to a feedback email
 feedbackInboundRouter.post("/feedback/append-email", async (req, res, next) => {
   try {
     if (!inboundSecretOk(req.headers["x-inbound-secret"])) {

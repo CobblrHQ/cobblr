@@ -251,7 +251,7 @@ floorplanRouter.post(
         error: {
           code: noAi ? "no_ai_provider" : "seed_failed",
           message: noAi
-            ? "No AI provider resolves for this workspace — draw the plan by hand, or connect AI."
+            ? "No AI provider resolves for this workspace. Draw the plan by hand, or connect AI."
             : msg,
         },
       });

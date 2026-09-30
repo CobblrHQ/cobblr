@@ -117,6 +117,18 @@ async function settingsFor(
   return { enabled, webhook };
 }
 
+/** Whether a post in this category would go anywhere right now: the category
+ *  is on and some webhook (origin route, per-category or the env default)
+ *  would carry it. Never throws; a failed lookup reads as not routed. */
+export async function announceRouted(category: string, originGuildId?: string | null): Promise<boolean> {
+  try {
+    const cfg = await settingsFor(category, originGuildId);
+    return cfg.enabled && !!cfg.webhook;
+  } catch {
+    return false;
+  }
+}
+
 /** Result of a delivery attempt. `messageId`/`channelId` are populated only when
  *  the caller asked to `wait` (a Discord webhook echoes the created message only
  *  with `?wait=true`) — so an event whose post has a lifecycle can remember which

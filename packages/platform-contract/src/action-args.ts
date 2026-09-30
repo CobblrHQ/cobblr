@@ -20,9 +20,10 @@ export interface ArgChoice {
 
 /** Where an argument's choices come from when they depend on the record's
  *  kind rather than the manifest: `counters` is the usage counters the kind
- *  keeps ("print hours"). The server resolves it into `choices` when it
+ *  keeps ("print hours"); `people` is the workspace's People list (a
+ *  "who" argument). The server resolves it into `choices` when it
  *  lists a kind's actions, so a form never has to know. */
-export type ArgChoicesFrom = "counters";
+export type ArgChoicesFrom = "counters" | "people";
 
 export interface ActionArgSpec {
   label?: string;
@@ -35,6 +36,11 @@ export interface ActionArgSpec {
   /** The values this argument may take, in the words a person picks from. */
   choices?: readonly ArgChoice[];
   choicesFrom?: ArgChoicesFrom;
+  /** Offered on the button's sheet although the action runs without it.
+   *  Only what `required` (or a `oneOf` group) names was ever asked, so an
+   *  optional answer a person often has ("due back on", "last done on") had
+   *  no box to go in from a press, only from the assistant. */
+  ask?: boolean;
   /** Asked, and required, together with that argument: either both or
    *  neither. "Every 3" means nothing without "months", and the form let a
    *  person send it alone until the door refused it in a handler's words
@@ -117,7 +123,7 @@ export function requiredArgsRefusal(
 export interface PressAsk {
   arg: string;
   label: string;
-  kind: "text" | "number" | "boolean" | "choice";
+  kind: "text" | "number" | "boolean" | "choice" | "date";
   placeholder?: string;
   required?: boolean;
   oneOf?: string;
@@ -129,7 +135,7 @@ export interface PressAsk {
 
 function askKind(spec: ActionArgSpec | undefined): PressAsk["kind"] {
   if (spec?.choices) return "choice";
-  return spec?.type === "number" ? "number" : spec?.type === "boolean" ? "boolean" : "text";
+  return spec?.type === "number" ? "number" : spec?.type === "boolean" ? "boolean" : spec?.type === "date" ? "date" : "text";
 }
 
 function askOf(name: string, spec: ActionArgSpec | undefined): PressAsk {
@@ -188,6 +194,12 @@ export function askBeforePress(
       else out.push(askOf(name, spec));
       asked.add(name);
     }
+  }
+  // Then the optional ones the action offers on its sheet, in schema order.
+  for (const [name, spec] of Object.entries(schema ?? {})) {
+    if (!spec?.ask || asked.has(name) || unanswerable(schema, name)) continue;
+    out.push(askOf(name, spec));
+    asked.add(name);
   }
   // Every asked argument brings its partner, right after it.
   for (let i = 0; i < out.length; i++) {

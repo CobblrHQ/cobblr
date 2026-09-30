@@ -13,13 +13,45 @@
 // It shares ReorderIds + applyOrder with the HTTP route, so dragging in the
 // tree and asking for an order cannot come to mean different things.
 
-import { platform, readListArg } from "@cobblr/platform-contract";
+import { platform, readListArg, requireActionEntity } from "@cobblr/platform-contract";
 import type { Kysely } from "kysely";
 import { ReorderIds, applyOrder } from "./locations.js";
+import { MoveRefused, moveEverything, putBackEverything, readMoveResult } from "./move-everything.js";
 import type { CoreLocationsDB } from "../db.js";
 
 export function registerLocationsHandlers(): void {
   registerUndos();
+  // Move everything out of one place into another (move-everything.ts): the
+  // assistant's door to what the place page's "Move everything to…" does.
+  platform().actions.registerHandler("core-locations.move-everything", async (ctx) => {
+    const entity = requireActionEntity(ctx);
+    const a = (ctx.args ?? {}) as { to?: unknown; places?: unknown; then_delete?: unknown };
+    const to = typeof a.to === "string" ? a.to.trim() : "";
+    if (!to) return { ok: false, error: "Pass `to`: the id of the place to move everything into." };
+    try {
+      const moved = await moveEverything(ctx.orgId, entity.id, to, {
+        places: a.places === true || a.places === "true",
+        thenDelete: a.then_delete === true || a.then_delete === "true",
+        userId: ctx.userId ?? null,
+      });
+      return { ok: true, result: { ...moved, note: moveSentence(moved) } };
+    } catch (e) {
+      if (e instanceof MoveRefused) return { ok: false, error: e.message };
+      throw e;
+    }
+  });
+  // Exists only as the way back for move-everything.
+  platform().actions.registerHandler("core-locations.put-back-everything", async (ctx) => {
+    const move = readMoveResult((ctx.args as { move?: unknown } | null)?.move);
+    if (!move) return { ok: false, error: "nothing to put back" };
+    try {
+      const back = await putBackEverything(ctx.orgId, move, ctx.userId ?? null);
+      return { ok: true, result: { ...back, move } };
+    } catch (e) {
+      if (e instanceof MoveRefused) return { ok: false, error: e.message };
+      throw e;
+    }
+  });
   platform().actions.registerHandler("core-locations.reorder", async (ctx) => {
     // `ids` is a list arg: a real array from invoke_action, a delimited string
     // from a wire's text field. readListArg makes those the same thing — an
@@ -73,7 +105,32 @@ export function registerLocationsHandlers(): void {
   });
 }
 
+/** What a move did, in words. */
+export function moveSentence(m: { from: { name: string }; to: { name: string }; things: unknown[]; places: unknown[]; deleted: boolean }): string {
+  const what = [
+    m.things.length ? `${m.things.length} ${m.things.length === 1 ? "thing" : "things"}` : null,
+    m.places.length ? `${m.places.length} ${m.places.length === 1 ? "place" : "places"}` : null,
+  ].filter(Boolean);
+  const moved = what.length ? `Moved ${what.join(" and ")} from ${m.from.name} into ${m.to.name}.` : `${m.from.name} had nothing in it to move.`;
+  return m.deleted ? `${moved} Deleted ${m.from.name}.` : moved;
+}
+
 function registerUndos(): void {
+  platform().actions.registerUndo("core-locations.move-everything", (result) => {
+    const move = readMoveResult((result as { result?: unknown } | null)?.result);
+    if (!move || (!move.things.length && !move.places.length && !move.deleted)) return null;
+    return { action_id: "core-locations:put-back-everything", args: { move } };
+  });
+  platform().actions.registerUndo("core-locations.put-back-everything", (result) => {
+    const move = readMoveResult((result as { result?: { move?: unknown } } | null)?.result?.move);
+    if (!move) return null;
+    return {
+      action_id: "core-locations:move-everything",
+      entity_kind: "core-locations:location",
+      entity_id: move.from.id,
+      args: { to: move.to.id, places: move.places.length > 0, then_delete: move.deleted },
+    };
+  });
   platform().actions.registerUndo("core-locations.reorder", (result) => {
     const prev = (result as { result?: { previous?: unknown } } | null)?.result?.previous;
     if (!Array.isArray(prev) || !prev.length) return null;

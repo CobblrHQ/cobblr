@@ -6,7 +6,7 @@
 // surfaces for one book). Shares App's ["instances", slug] cache key, so it
 // costs no extra fetch.
 import { useQuery } from "@tanstack/react-query";
-import { collectionLabelFor, itemNounForKind, itemNounPluralForKind, viewTypeLabel } from "@cobblr/platform-contract/kind-label";
+import { collectionLabelFor, collectionLabelForRecord, itemNounForKind, itemNounPluralForKind, viewTypeLabel } from "@cobblr/platform-contract/kind-label";
 import { pluralise } from "@cobblr/platform-contract";
 import { api } from "./api";
 
@@ -21,6 +21,9 @@ export function useKindLabels(slug: string | null | undefined) {
   return {
     /** "Bookshelf" for bookshelf:item, "Part" for inventory:part. */
     collection: (kind: string | null | undefined) => collectionLabelFor(kind, instances),
+    /** A resolved record's collection: "Grocery" for a part in the groceries
+     *  instance, where `collection(kind)` would say "Part". */
+    record: (record: { kind: string; instance?: string | null }) => collectionLabelForRecord(record, instances),
     /** "book" for bookshelf:item, "part" for inventory:part. */
     noun: (kind: string | null | undefined) => itemNounForKind(kind, instances),
     /** "books"; "people" when the collection chose it in Presentation. */

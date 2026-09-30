@@ -36,7 +36,7 @@ export function evaluateJson(
   try {
     parsed = JSON.parse(t);
   } catch (e) {
-    return { value: undefined, valid: false, errors: [`Invalid JSON — ${(e as Error).message}`] };
+    return { value: undefined, valid: false, errors: [`Invalid JSON: ${(e as Error).message}`] };
   }
   if (opts.schema) {
     let validate;

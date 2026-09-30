@@ -54,13 +54,17 @@ export interface DeleteUserResult {
   workspaces_deleted: SoleOwnedWorkspace[];
 }
 
-/** Workspaces this user owns where no other owner exists. */
+/** Workspaces this user owns where no other owner exists. One already set to
+ *  be deleted does not count: its owner has decided its end, and
+ *  reap-deletions.ts drops it on its day whether or not the account is still
+ *  there. That is the way out of "delete your workspace first". */
 export async function soleOwnedWorkspaces(userId: string): Promise<SoleOwnedWorkspace[]> {
   const rows = await sql<SoleOwnedWorkspace>`
     select o.id, o.slug, o.name
     from org_memberships m
     join orgs o on o.id = m.org_id
     where m.user_id = ${userId} and m.role = 'owner'
+      and o.deletion_due_at is null
       and not exists (
         select 1 from org_memberships x
         where x.org_id = m.org_id and x.role = 'owner' and x.user_id <> ${userId}

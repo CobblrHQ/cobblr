@@ -22,6 +22,7 @@ import { ChevronLeft, Settings2 } from "lucide-react";
 import { iconForName as iconForPanel } from "../lib/panel-icons";
 import { useNavMode } from "../lib/nav-mode";
 import { useConfigVisibility } from "../lib/useConfigVisibility";
+import { ManagedByAdmins } from "./ManagedByAdmins";
 import { useHostedPanels } from "../lib/useHostedPanels";
 import { ConfigHeaderProvider, ConfigPageHeader } from "./ConfigPageHeader";
 import {
@@ -33,6 +34,8 @@ import {
   sectionForPath,
   visibleDestinations,
   CONFIG_DESTINATIONS,
+  destinationForPath,
+  pageOpenTo,
   type ConfigDestination,
 } from "../lib/configuration-nav";
 
@@ -279,6 +282,10 @@ export function ConfigurationLayout() {
   const location = useLocation();
   const navMode = useNavMode();
   const column = useConfigColumn();
+  const { role } = useConfigVisibility();
+  // The nav hides a page below its role; a URL, bookmark or link still lands
+  // here, and the page's controls would fail on every save. Say who runs it.
+  const page = pageOpenTo(location.pathname, role) ? <Outlet /> : <ManagedByAdmins page={destinationForPath(location.pathname)?.label} />;
   // The hub and the section pages ARE navigation; a rail beside them would
   // just repeat the page.
   const onIndex =
@@ -292,7 +299,7 @@ export function ConfigurationLayout() {
           {!onIndex && <ConfigCrumb />}
           {!onIndex && <MobileConfigJump />}
           {!onIndex && <ConfigPageHeader />}
-          <Outlet />
+          {page}
         </div>
       </ConfigHeaderProvider>
     );
@@ -300,7 +307,7 @@ export function ConfigurationLayout() {
   if (onIndex) {
     return (
       <div className={"min-w-0 " + column}>
-        <Outlet />
+        {page}
       </div>
     );
   }
@@ -314,7 +321,7 @@ export function ConfigurationLayout() {
         <ConfigCrumb />
         <MobileConfigJump />
         <ConfigPageHeader />
-        <Outlet />
+        {page}
       </div>
     </div>
     </ConfigHeaderProvider>

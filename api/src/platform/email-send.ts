@@ -81,7 +81,7 @@ export interface EmailExtras {
   references?: string;
 }
 
-async function sendSmtp(cfg: ValidConfig, subject: string, text: string, html?: string, x: EmailExtras = {}): Promise<void> {
+async function sendSmtp(cfg: ValidConfig, subject: string, text: string, html?: string, x: EmailExtras = {}): Promise<string | null> {
   const port = cfg.smtp_port ?? 465;
   // 465 = implicit TLS; 587/other = STARTTLS, unless explicitly overridden.
   const secure = cfg.smtp_secure ?? port === 465;
@@ -94,7 +94,7 @@ async function sendSmtp(cfg: ValidConfig, subject: string, text: string, html?: 
     socketTimeout: 5000,
   });
   try {
-    await transport.sendMail({
+    const info = await transport.sendMail({
       from: x.from || cfg.from,
       to: cfg.to,
       subject,
@@ -104,6 +104,7 @@ async function sendSmtp(cfg: ValidConfig, subject: string, text: string, html?: 
       ...(x.inReplyTo ? { inReplyTo: x.inReplyTo } : {}),
       ...(x.references ? { references: x.references } : {}),
     });
+    return typeof info?.messageId === "string" ? info.messageId : null;
   } finally {
     transport.close();
   }
@@ -113,7 +114,15 @@ async function expectOk(res: Response): Promise<void> {
   if (!res.ok) throw new Error(`${res.status} ${(await res.text().catch(() => "")).slice(0, 200)}`);
 }
 
-async function sendMailgun(cfg: ValidConfig, subject: string, text: string, html?: string, x: EmailExtras = {}): Promise<void> {
+/** The provider's id for the message it accepted, read from its JSON answer
+ *  under the one key that provider uses. Null when it gave none. */
+async function idFrom(res: Response, key: string): Promise<string | null> {
+  const body = (await res.json().catch(() => null)) as Record<string, unknown> | null;
+  const v = body?.[key];
+  return typeof v === "string" && v ? v : null;
+}
+
+async function sendMailgun(cfg: ValidConfig, subject: string, text: string, html?: string, x: EmailExtras = {}): Promise<string | null> {
   const base = cfg.mailgun_eu ? "https://api.eu.mailgun.net" : "https://api.mailgun.net";
   const form = new URLSearchParams({ from: x.from || cfg.from, to: cfg.to, subject, text });
   if (html) form.set("html", html);
@@ -130,9 +139,10 @@ async function sendMailgun(cfg: ValidConfig, subject: string, text: string, html
     signal: AbortSignal.timeout(TIMEOUT_MS),
   });
   await expectOk(res);
+  return idFrom(res, "id");
 }
 
-async function sendResend(cfg: ValidConfig, subject: string, text: string, html?: string, x: EmailExtras = {}): Promise<void> {
+async function sendResend(cfg: ValidConfig, subject: string, text: string, html?: string, x: EmailExtras = {}): Promise<string | null> {
   const headers: Record<string, string> = {};
   if (x.inReplyTo) headers["In-Reply-To"] = x.inReplyTo;
   if (x.references) headers["References"] = x.references;
@@ -151,9 +161,10 @@ async function sendResend(cfg: ValidConfig, subject: string, text: string, html?
     signal: AbortSignal.timeout(TIMEOUT_MS),
   });
   await expectOk(res);
+  return idFrom(res, "id");
 }
 
-async function sendPostmark(cfg: ValidConfig, subject: string, text: string, html?: string, x: EmailExtras = {}): Promise<void> {
+async function sendPostmark(cfg: ValidConfig, subject: string, text: string, html?: string, x: EmailExtras = {}): Promise<string | null> {
   const hdrs: Array<{ Name: string; Value: string }> = [];
   if (x.inReplyTo) hdrs.push({ Name: "In-Reply-To", Value: x.inReplyTo });
   if (x.references) hdrs.push({ Name: "References", Value: x.references });
@@ -172,9 +183,10 @@ async function sendPostmark(cfg: ValidConfig, subject: string, text: string, htm
     signal: AbortSignal.timeout(TIMEOUT_MS),
   });
   await expectOk(res);
+  return idFrom(res, "MessageID");
 }
 
-const SENDERS: Record<EmailProvider, (cfg: ValidConfig, subject: string, text: string, html?: string, x?: EmailExtras) => Promise<void>> = {
+const SENDERS: Record<EmailProvider, (cfg: ValidConfig, subject: string, text: string, html?: string, x?: EmailExtras) => Promise<string | null>> = {
   smtp: sendSmtp,
   mailgun: sendMailgun,
   resend: sendResend,
@@ -194,10 +206,15 @@ export function isUndeliverableTestAddress(email: string): boolean {
   return false;
 }
 
-export async function sendEmailVia(cfg: ValidConfig, subject: string, text: string, html?: string, extras?: EmailExtras): Promise<void> {
+/** What happened to one send: the provider's message id when it gave one, or
+ *  `skipped` for an address that cannot receive mail by definition. Throws on
+ *  a provider failure. */
+export type SendOutcome = { skipped: false; messageId: string | null } | { skipped: true; reason: "test_address" };
+
+export async function sendEmailVia(cfg: ValidConfig, subject: string, text: string, html?: string, extras?: EmailExtras): Promise<SendOutcome> {
   if (cfg.to && isUndeliverableTestAddress(cfg.to)) {
     console.log(`[email] skipping send to reserved/test address ${cfg.to}`);
-    return;
+    return { skipped: true, reason: "test_address" };
   }
-  await SENDERS[cfg.provider](cfg, subject, text, html, extras);
+  return { skipped: false, messageId: await SENDERS[cfg.provider](cfg, subject, text, html, extras) };
 }

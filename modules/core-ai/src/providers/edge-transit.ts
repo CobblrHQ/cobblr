@@ -45,14 +45,10 @@ export function edgeKeyFor(credentials: Record<string, unknown>, orgId?: string)
   });
 }
 
-// The bridge long-polls; between poll cycles the channel can be momentarily
-// unregistered, so send() throws "no edge device connected". Transient — the
-// agent re-polls within seconds (same lesson as the edge-bridge provider).
-const RECONNECTING = /no edge device|edge disconnected|edge channel gone/i;
-const sleep = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms));
-
 /** Fetch-shaped call through the edge relay: the bridge performs
- *  `baseUrl + path` on its LAN and the JSON result rides back up. */
+ *  `baseUrl + path` on its LAN and the result rides back up. The transport is
+ *  the platform's (`platform().edge.fetch`); what is AI-specific is the error
+ *  envelope below. */
 export async function edgeFetch(
   key: string,
   baseUrl: string,
@@ -62,33 +58,19 @@ export async function edgeFetch(
   // Providers pass the same JSON string they'd hand fetch(); the relay carries
   // structured bodies, so parse it back rather than double-encoding.
   const body = typeof init.body === "string" ? safeParse(init.body) : init.body;
-  const req = {
+  const res = await platform().edge.fetch(key, {
+    baseUrl,
     path,
-    method: (init.method ?? "GET") as "GET" | "POST",
+    method: init.method ?? "GET",
+    headers: init.headers ?? {},
     ...(body !== undefined && body !== null ? { body } : {}),
-    source: { baseUrl: baseUrl.replace(/\/+$/, ""), headers: init.headers ?? {} },
     timeoutMs: 120_000, // local models can be slow — same budget as a direct call
-  };
-  let res;
-  try {
-    res = await platform().edge.send(key, req);
-  } catch (err) {
-    if (!RECONNECTING.test((err as Error).message ?? "")) throw err;
-    await sleep(1500);
-    res = await platform().edge.send(key, req);
-  }
-  // Binary responses ride as { __binary, contentType, data_b64 } (the JSON
-  // relay can't carry raw bytes) — reconstruct so res.arrayBuffer() works.
-  const b = res.body as { __binary?: boolean; contentType?: string; data_b64?: string } | null;
-  if (b && b.__binary === true && typeof b.data_b64 === "string") {
-    const bytes = Uint8Array.from(Buffer.from(b.data_b64, "base64"));
-    return new Response(bytes, {
-      status: res.status || 502,
-      headers: { "content-type": b.contentType || "application/octet-stream" },
-    });
-  }
-  const bodyText = typeof res.body === "string" ? res.body : JSON.stringify(res.body ?? null);
-  const status = res.status || 502;
+    lane: "ai",
+  });
+  const ctype = res.headers.get("content-type") ?? "";
+  if (!/json|^text\//.test(ctype) && res.body !== null && ctype) return res; // binary rides through as bytes
+  const bodyText = await res.text();
+  const status = res.status;
   // The edge target's body rides through verbatim, and it is NOT always JSON —
   // a gateway in front of it answers "Bad Gateway" in plain text, and a relay
   // that gave up answers with a bare note. Declaring `application/json` over

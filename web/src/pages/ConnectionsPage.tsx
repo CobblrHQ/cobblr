@@ -679,8 +679,8 @@ function PersonalAgentHint() {
     <div className={"flex items-center gap-2 text-[11px] mt-1 rounded border p-1.5 " + (on ? "border-moss-500/40 bg-moss-50 dark:bg-moss-950/30 text-moss-700 dark:text-moss-300" : "border-amber-500/40 bg-amber-50 dark:bg-amber-950/20 text-amber-700 dark:text-amber-400")}>
       <span className={"w-1.5 h-1.5 rounded-full shrink-0 " + (on ? "bg-moss-500" : "bg-amber-500 animate-pulse")} />
       {on
-        ? "Your personal edge agent is connected — calls to this endpoint will route through it to your LAN."
-        : "No personal edge agent is connected yet. Calls will fail until one dials in — set it up like the Local-AI edge bridge agent (it serves every bridge-transit connection you add)."}
+        ? "Your personal edge agent is connected. Calls to this endpoint will route through it to your LAN."
+        : "No personal edge agent is connected yet. Calls will fail until one dials in. Set it up like the Local-AI edge bridge agent (it serves every bridge-transit connection you add)."}
     </div>
   );
 }

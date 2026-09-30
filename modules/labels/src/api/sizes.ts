@@ -8,6 +8,7 @@ import { z } from "zod";
 import { deriveGrid } from "../label-sizes.js";
 import { tenantDb, sessionUser } from "../db.js";
 import { asyncHandler, badBody, requireRole } from "./util.js";
+import { withArticle } from "@cobblr/platform-contract/plural";
 
 export const sizesRouter = Router({ mergeParams: true });
 
@@ -83,7 +84,7 @@ sizesRouter.post(
     // size that can never print.
     const grid = deriveGrid({ paper_w: d.media_w, paper_h: d.media_h, ...d });
     if (grid.cols < 1 || grid.rows < 1) {
-      res.status(400).json({ error: "does_not_fit", detail: `a ${d.label_w}x${d.label_h}" label does not fit a ${d.media_w}x${d.media_h}" media with those margins` });
+      res.status(400).json({ error: "does_not_fit", detail: `${withArticle(`${d.label_w}x${d.label_h}"`)} label does not fit ${withArticle(`${d.media_w}x${d.media_h}"`)} media with those margins` });
       return;
     }
     const row = await tenantDb(req)

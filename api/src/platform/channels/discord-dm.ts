@@ -43,69 +43,7 @@ export const discordDmChannel: Channel = {
       return false;
     }
 
-    // With a card, the EMBED carries the link (its title is clickable) and the
-    // button carries the answer — a bare URL line under the sentence is the
-    // exact thing the card replaced. Without a card there is nothing else to
-    // click, so the link stays in the text.
-    //
-    // plainForm is the DEGRADED shape: if Discord rejects the rich payload
-    // (malformed embed, component limit change), the bot retries with this, so
-    // a render failure costs the decoration and never the notification.
-    const plainForm = event.link_url
-      ? `${event.message}\n${absoluteAppUrl(event.link_url)}`
-      : event.message;
-    // With a card there is NO text line: the embed's title already says who and
-    // where ("Alex in the Workshop"), so a sentence above it saying "Alex said
-    // something in the Workshop" was the same fact twice. The interactions
-    // endpoint reads the embed back as the message's "original" (the bot
-    // forwards it), and the plain form below is what a failed embed degrades to.
-    const text = event.card ? "" : plainForm;
-    const v2 = event.card?.rows?.length
-      ? componentsV2For(
-          event.notificationId,
-          { heading: event.card.heading, context: event.card.context, rows: event.card.rows },
-          event.actions,
-          event.link_url ? absoluteAppUrl(event.link_url) : null,
-          // The rest of a digest that did not fit is this same notification in
-          // the app's inbox, every row with its buttons.
-          absoluteAppUrl("/me/notifications"),
-        )
-      : undefined;
-
-    // The card becomes ONE embed. Discord renders it with a coloured spine and
-    // its own block, which is what makes a notification readable at a glance
-    // instead of a sentence you have to act on to understand.
-    const embeds = event.card
-      ? [
-          {
-            ...(event.card.heading ? { title: event.card.heading.slice(0, 250) } : {}),
-            ...(event.card.body ? { description: event.card.body.slice(0, 4000) } : {}),
-            ...(event.card.context ? { footer: { text: event.card.context.slice(0, 2000) } } : {}),
-            ...(event.link_url ? { url: absoluteAppUrl(event.link_url) } : {}),
-            color: 0xc98a3f,
-          },
-        ]
-      : undefined;
-
-    const res = await sendDiscordDm({
-      discord_user_id: conn!.discord_user_id!,
-      text,
-      // The push line: the notification's own sentence, which a card otherwise
-      // leaves out of the message entirely.
-      summary: dmSummary(event.message, event.card?.heading),
-      ...(embeds ? { embeds } : {}),
-      // Undefined when the notification offers nothing to do, which is most of
-      // them — the bot then sends exactly what it sent before.
-      components: componentsFor(event.notificationId, event.actions),
-      // A card with ROWS is also offered as Components V2: each line a section
-      // with its button beside it (#3282). Sent ALONGSIDE the classic shape,
-      // not instead of it: a bot that predates V2 ignores the extra keys and
-      // sends the embed and the block of buttons as before, and a bot that
-      // knows V2 prefers it and falls back to the classic shape if Discord
-      // refuses the tree. So the digest never fails to arrive across a deploy.
-      ...(v2 ? { components_v2: v2.components, flags: COMPONENTS_V2_FLAG } : {}),
-      fallback_text: plainForm,
-    });
+    const res = await sendDiscordDm({ discord_user_id: conn!.discord_user_id!, ...discordDmPayload(event) });
     if (dmResultUnverifies(res)) {
       // Durable refusal (privacy settings, no shared server, deleted account):
       // same treatment as the account-pref path (audit B4a), because a
@@ -120,3 +58,74 @@ export const discordDmChannel: Channel = {
     return res.ok;
   },
 };
+
+/** The DM a notification becomes: the sentence, or the card as an embed with
+ *  its rows and buttons. One shape for both doors (a workspace subscription
+ *  here, an account notice in notifyAccount), so a card cannot render in one
+ *  and fall back to a bare sentence in the other. */
+export function discordDmPayload(
+  event: Pick<ChannelEvent, "notificationId" | "message" | "link_url" | "card" | "actions">,
+): Omit<Parameters<typeof sendDiscordDm>[0], "discord_user_id"> {
+  // With a card, the EMBED carries the link (its title is clickable) and the
+  // button carries the answer — a bare URL line under the sentence is the
+  // exact thing the card replaced. Without a card there is nothing else to
+  // click, so the link stays in the text.
+  //
+  // plainForm is the DEGRADED shape: if Discord rejects the rich payload
+  // (malformed embed, component limit change), the bot retries with this, so
+  // a render failure costs the decoration and never the notification.
+  const plainForm = event.link_url
+    ? `${event.message}\n${absoluteAppUrl(event.link_url)}`
+    : event.message;
+  // With a card there is NO text line: the embed's title already says who and
+  // where ("Alex in the Workshop"), so a sentence above it saying "Alex said
+  // something in the Workshop" was the same fact twice. The interactions
+  // endpoint reads the embed back as the message's "original" (the bot
+  // forwards it), and the plain form below is what a failed embed degrades to.
+  const text = event.card ? "" : plainForm;
+  const v2 = event.card?.rows?.length
+    ? componentsV2For(
+        event.notificationId,
+        { heading: event.card.heading, context: event.card.context, rows: event.card.rows },
+        event.actions,
+        event.link_url ? absoluteAppUrl(event.link_url) : null,
+        // The rest of a digest that did not fit is this same notification in
+        // the app's inbox, every row with its buttons.
+        absoluteAppUrl("/me/notifications"),
+      )
+    : undefined;
+
+  // The card becomes ONE embed. Discord renders it with a coloured spine and
+  // its own block, which is what makes a notification readable at a glance
+  // instead of a sentence you have to act on to understand.
+  const embeds = event.card
+    ? [
+        {
+          ...(event.card.heading ? { title: event.card.heading.slice(0, 250) } : {}),
+          ...(event.card.body ? { description: event.card.body.slice(0, 4000) } : {}),
+          ...(event.card.context ? { footer: { text: event.card.context.slice(0, 2000) } } : {}),
+          ...(event.link_url ? { url: absoluteAppUrl(event.link_url) } : {}),
+          color: 0xc98a3f,
+        },
+      ]
+    : undefined;
+
+  return {
+    text,
+    // The push line: the notification's own sentence, which a card otherwise
+    // leaves out of the message entirely.
+    summary: dmSummary(event.message, event.card?.heading),
+    ...(embeds ? { embeds } : {}),
+    // Undefined when the notification offers nothing to do, which is most of
+    // them — the bot then sends exactly what it sent before.
+    components: componentsFor(event.notificationId, event.actions),
+    // A card with ROWS is also offered as Components V2: each line a section
+    // with its button beside it (#3282). Sent ALONGSIDE the classic shape,
+    // not instead of it: a bot that predates V2 ignores the extra keys and
+    // sends the embed and the block of buttons as before, and a bot that
+    // knows V2 prefers it and falls back to the classic shape if Discord
+    // refuses the tree. So the digest never fails to arrive across a deploy.
+    ...(v2 ? { components_v2: v2.components, flags: COMPONENTS_V2_FLAG } : {}),
+    fallback_text: plainForm,
+  };
+}

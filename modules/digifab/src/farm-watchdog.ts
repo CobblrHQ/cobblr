@@ -36,6 +36,8 @@ export interface FarmHeal {
   repolled: number;
   /** An assign chain restarted for queued pool work. */
   assignKicked: boolean;
+  /** Direct sends that stopped part way, released for a person to re-send. */
+  released: number;
 }
 
 /** What to do with a job a send left in `assigning`: nothing yet while the
@@ -47,7 +49,7 @@ export function planStuckSend(j: { remote_job_id: string | null; updated_at: Dat
 }
 
 export async function healFarm(db: Kysely<DigifabDB>, orgId: string, now = new Date()): Promise<FarmHeal> {
-  const out: FarmHeal = { requeued: 0, resumed: 0, repolled: 0, assignKicked: false };
+  const out: FarmHeal = { requeued: 0, resumed: 0, repolled: 0, assignKicked: false, released: 0 };
   const cutoff = new Date(now.getTime() - STUCK_SENDING_MS);
 
   const stuck = await db
@@ -63,7 +65,7 @@ export async function healFarm(db: Kysely<DigifabDB>, orgId: string, now = new D
       // The printer took it; only the status write was lost. Polling decides the rest.
       const r = await db
         .updateTable("digifab_jobs")
-        .set({ status: "sent", sent_at: j.sent_at ?? now, updated_at: now })
+        .set({ status: "sent", sent_at: j.sent_at ?? now, send_token: null, send_claimed_at: null, updated_at: now })
         .where("id", "=", j.id)
         .where("status", "=", "assigning")
         .executeTakeFirst();
@@ -82,6 +84,8 @@ export async function healFarm(db: Kysely<DigifabDB>, orgId: string, now = new D
         status: "queued",
         ...(j.target_pool ? { connection_id: null, target_device: null } : {}),
         error: "Cobblr stopped while sending this job, so it went back to the queue.",
+        send_token: null,
+        send_claimed_at: null,
         updated_at: now,
       })
       .where("id", "=", j.id)
@@ -89,6 +93,26 @@ export async function healFarm(db: Kysely<DigifabDB>, orgId: string, now = new D
       .executeTakeFirst();
     if (Number(r.numUpdatedRows ?? 0n) > 0) out.requeued++;
   }
+
+  // A job sent to one printer (not through a pool) whose send stopped part way
+  // still holds its claim, so nothing can send it again. It is released, but
+  // never re-sent here: the printer may have taken the file before Cobblr
+  // stopped, and a second send would print it twice. A person checks.
+  const held = await db
+    .updateTable("digifab_jobs")
+    .set({
+      send_token: null,
+      send_claimed_at: null,
+      error: "Cobblr stopped while sending this job. Check the printer before sending it again: it may already be printing it.",
+      updated_at: now,
+    })
+    .where("send_token", "is not", null)
+    .where("send_claimed_at", "<", cutoff)
+    .where("remote_job_id", "is", null)
+    .where("status", "!=", "assigning")
+    .where("status", "not in", ["completed", "failed", "cancelled"])
+    .executeTakeFirst();
+  out.released = Number(held.numUpdatedRows ?? 0n);
 
   // A chain is alive when its next run is QUEUED. A "running" row can belong
   // to a process that was killed mid-run and will never finish it; an extra
@@ -131,7 +155,12 @@ export async function healFarm(db: Kysely<DigifabDB>, orgId: string, now = new D
 
   // A send still inside its window is work too: it has to be looked at again
   // once the window passes, so the workspace stays on the watch list.
-  const sending = await db.selectFrom("digifab_jobs").select("id").where("status", "=", "assigning").limit(1).executeTakeFirst();
+  const sending = await db
+    .selectFrom("digifab_jobs")
+    .select("id")
+    .where(({ or, eb }) => or([eb("status", "=", "assigning"), eb("send_token", "is not", null)]))
+    .limit(1)
+    .executeTakeFirst();
   if (live.length || poolWork || activeRun || sending) noteFarmActive(orgId);
   else farmIdle(orgId);
   return out;
@@ -158,8 +187,8 @@ export function registerFarmWatchdog(): void {
     },
     visit: async ({ orgId, db, now }) => {
       const r = await healFarm(db as Kysely<DigifabDB>, orgId, now);
-      if (r.requeued || r.resumed || r.repolled || r.assignKicked) {
-        console.log(`[digifab] farm watchdog org ${orgId}: requeued ${r.requeued}, resumed ${r.resumed}, repolled ${r.repolled}${r.assignKicked ? ", assign restarted" : ""}`);
+      if (r.requeued || r.resumed || r.repolled || r.assignKicked || r.released) {
+        console.log(`[digifab] farm watchdog org ${orgId}: requeued ${r.requeued}, resumed ${r.resumed}, repolled ${r.repolled}, released ${r.released}${r.assignKicked ? ", assign restarted" : ""}`);
       }
     },
   });

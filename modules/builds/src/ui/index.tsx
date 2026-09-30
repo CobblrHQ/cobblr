@@ -5,8 +5,9 @@
 // detail/create; toasts for feedback; destructive deletes confirm. House style.
 
 import { useState } from "react";
+import { Link } from "react-router-dom";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { ContributedDetailPanels, Modal, useToast, useConfirm, usePageTitle, SearchInput } from "@cobblr/platform-web";
+import { CollectionHeader, ContributedDetailPanels, CustomFieldsPanel, useRecordInPath, Modal, headerButton, useToast, useConfirm, usePageTitle, SearchInput } from "@cobblr/platform-web";
 import { Hammer, Plus, Trash2, X, Wrench, AlertTriangle, Layers, ListOrdered, Check, Circle, ChevronUp, ChevronDown, Clock, History, GitBranch, Search, CornerDownRight, CalendarClock } from "lucide-react";
 import { BuildsApi, BuildsApiError, type BuildSummary, type PartOption, type OperationRow, type GenealogyNode } from "./api.js";
 
@@ -23,18 +24,23 @@ export function BuildsUI({ orgSlug, getToken }: Props) {
   const qc = useQueryClient();
   const toast = useToast();
   const confirm = useConfirm();
-  const [open, setOpen] = useState<string | null>(null);
+  // A build's address (/builds/<id>) opens it.
+  const [open, setOpen] = useRecordInPath("builds");
   const [creating, setCreating] = useState(false);
   const [newName, setNewName] = useState("");
+  // What it makes follows the name until the person says otherwise.
+  const [makes, setMakes] = useState<string | null>(null);
+  const makesValue = makes ?? newName;
 
   const builds = useQuery({ queryKey: ["builds", orgSlug], queryFn: () => api.listBuilds() });
 
   const createBuild = useMutation({
-    mutationFn: (name: string) => api.createBuild({ name }),
+    mutationFn: (v: { name: string; makes: string }) => api.createBuild({ name: v.name, ...(v.makes ? { output_part_name: v.makes } : {}) }),
     onSuccess: (b) => {
       toast.success("Build created");
       setCreating(false);
       setNewName("");
+      setMakes(null);
       void qc.invalidateQueries({ queryKey: ["builds", orgSlug] });
       setOpen(b.id); // jump straight into adding components
     },
@@ -52,16 +58,15 @@ export function BuildsUI({ orgSlug, getToken }: Props) {
 
   return (
     <div className="space-y-4 max-w-4xl">
-      <div className="flex items-baseline justify-between border-b border-line dark:border-slate-700 pb-3">
-        <h1 className="font-display text-2xl font-extrabold text-content dark:text-mortar-100 page-title">builds</h1>
-        <button
-          type="button"
-          onClick={() => setCreating(true)}
-          className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs rounded bg-cobble-600 text-white hover:bg-cobble-700"
-        >
-          <Plus size={14} /> New build
-        </button>
-      </div>
+      <CollectionHeader
+        title="builds"
+        kind="builds:build"
+        actions={
+          <button type="button" onClick={() => setCreating(true)} className={headerButton("primary")}>
+            <Plus size={14} /> New build
+          </button>
+        }
+      />
 
       {builds.isLoading && <div className="text-sm text-muted">Loading…</div>}
       {builds.data?.items.length === 0 && (
@@ -103,16 +108,28 @@ export function BuildsUI({ orgSlug, getToken }: Props) {
             className="space-y-3"
             onSubmit={(e) => {
               e.preventDefault();
-              if (newName.trim()) createBuild.mutate(newName.trim());
+              if (newName.trim()) createBuild.mutate({ name: newName.trim(), makes: makesValue.trim() });
             }}
           >
             <input
               autoFocus
+              aria-label="Build name"
               value={newName}
               onChange={(e) => setNewName(e.target.value)}
               placeholder="e.g. Sensor board v2"
               className="w-full rounded border border-line dark:border-slate-600 bg-surface dark:bg-slate-900 px-3 py-2 text-sm"
             />
+            <label className="block text-xs text-muted">
+              Makes (the part each build adds to stock)
+              <input
+                aria-label="Part it makes"
+                value={makesValue}
+                onChange={(e) => setMakes(e.target.value)}
+                placeholder="Leave empty if it adds nothing to stock"
+                className="mt-1 w-full rounded border border-line dark:border-slate-600 bg-surface dark:bg-slate-900 px-3 py-2 text-sm"
+              />
+              <span className="block mt-1">An existing part with this name is used; otherwise it is added to your inventory with none in stock.</span>
+            </label>
             <div className="flex justify-end gap-2">
               <button type="button" onClick={() => setCreating(false)} className="px-3 py-1.5 text-xs rounded bg-subtle dark:bg-slate-800">Cancel</button>
               <button type="submit" disabled={!newName.trim() || createBuild.isPending} className="px-3 py-1.5 text-xs rounded bg-cobble-600 text-white disabled:opacity-50">Create</button>
@@ -172,11 +189,26 @@ function BuildDetailModal({ buildId, api, orgSlug, onClose }: { buildId: string;
   const doBuild = useMutation({
     mutationFn: (v: { n: number; serial?: string }) => api.build(buildId, v.n, v.serial),
     onSuccess: (r) => {
-      toast.success(`Built ${r.run.qty_built} — components consumed from stock`);
+      const out = detail.data?.output;
+      toast.success(
+        out?.name
+          ? `Built ${r.run.qty_built}: ${Number(r.run.qty_built) * (Number(detail.data?.build.output_qty) || 1)} added to ${out.name}, components taken from stock`
+          : `Built ${r.run.qty_built}: components taken from stock, nothing added (this build makes no part)`,
+      );
       setSerial("");
       void qc.invalidateQueries({ queryKey: ["builds-runs", buildId] });
       invalidate();
     },
+    onError: (e) => toast.error(e instanceof BuildsApiError ? e.message : String(e)),
+  });
+  const setField = useMutation({
+    mutationFn: (metadata: Record<string, unknown>) => api.updateBuild(buildId, { metadata }),
+    onSuccess: invalidate,
+    onError: (e) => toast.error(e instanceof BuildsApiError ? e.message : String(e)),
+  });
+  const setOutput = useMutation({
+    mutationFn: (name: string) => api.updateBuild(buildId, { output_part_name: name }),
+    onSuccess: invalidate,
     onError: (e) => toast.error(e instanceof BuildsApiError ? e.message : String(e)),
   });
   const addOperation = useMutation({
@@ -219,8 +251,15 @@ function BuildDetailModal({ buildId, api, orgSlug, onClose }: { buildId: string;
 
         {d && (
           <>
+            <OutputLine
+              output={d.output ?? null}
+              buildName={d.build.name}
+              perBuild={Number(d.build.output_qty) || 1}
+              pending={setOutput.isPending}
+              onSet={(name) => setOutput.mutate(name)}
+            />
             {/* Can-I-build readout */}
-            <div className="rounded-lg border border-line dark:border-slate-700 bg-subtle dark:bg-slate-800/50 p-3 flex items-center justify-between">
+            <div className="rounded-lg border border-line dark:border-slate-700 bg-subtle dark:bg-slate-800/50 p-3 flex flex-wrap items-center justify-between gap-3">
               <div>
                 <div className="text-xs uppercase tracking-wide text-muted">Buildable now</div>
                 <div className="text-2xl font-extrabold text-content dark:text-mortar-100">{max}</div>
@@ -230,7 +269,7 @@ function BuildDetailModal({ buildId, api, orgSlug, onClose }: { buildId: string;
                   </div>
                 )}
               </div>
-              <div className="flex items-center gap-2">
+              <div className="flex flex-wrap items-center gap-2">
                 <input
                   type="text"
                   value={serial}
@@ -252,7 +291,7 @@ function BuildDetailModal({ buildId, api, orgSlug, onClose }: { buildId: string;
                   disabled={d.components.length === 0 || doBuild.isPending}
                   onClick={() => doBuild.mutate({ n: qty, serial: serial.trim() || undefined })}
                   className="inline-flex items-center gap-1.5 px-3 py-2 text-sm rounded bg-cobble-600 text-white hover:bg-cobble-700 disabled:opacity-50"
-                  title={qty > max ? "More than current stock supports — stock can go negative" : undefined}
+                  title={qty > max ? "More than current stock supports. Stock can go negative" : undefined}
                 >
                   <Wrench size={15} /> Build
                 </button>
@@ -309,6 +348,16 @@ function BuildDetailModal({ buildId, api, orgSlug, onClose }: { buildId: string;
               onAddSub={(sub_assembly_build_id, quantity) => addSubAssembly.mutate({ sub_assembly_build_id, quantity })}
             />
 
+            {/* Yield: every good and scrap counted for this build, from hand
+                logs and judged prints alike, so it is one number. */}
+            {d.quality && d.quality.good_qty + d.quality.scrap_qty > 0 && (
+              <div className="text-sm text-content dark:text-mortar-100" data-testid="build-yield">
+                Made <strong>{d.quality.good_qty} good</strong>
+                {d.quality.scrap_qty > 0 && <> · {d.quality.scrap_qty} scrap</>}
+                {d.quality.yield_pct != null && <span className="text-muted"> ({d.quality.yield_pct}% yield)</span>}
+              </div>
+            )}
+
             {/* Routing — the ordered steps to make this build */}
             <OperationsSection
               operations={d.operations}
@@ -326,6 +375,15 @@ function BuildDetailModal({ buildId, api, orgSlug, onClose }: { buildId: string;
               onRemove={(opId) => removeOperation.mutate(opId)}
               onLogTime={(opId, kind, minutes) => logTime.mutate({ opId, kind, minutes })}
               onLogQty={(opId, kind, quantity, reason) => logQuantity.mutate({ opId, kind, quantity, reason })}
+            />
+
+            {/* The build's own fields: whatever a bundle adds to a build
+                ("Sells for"), editable here like any other record's. */}
+            <CustomFieldsPanel
+              entityKind="builds:build"
+              entityId={buildId}
+              values={d.build.metadata ?? {}}
+              onCommit={(name, value) => setField.mutate({ [name]: value })}
             />
 
             {/* Build history + as-built genealogy (rung 8) */}
@@ -346,6 +404,71 @@ function BuildDetailModal({ buildId, api, orgSlug, onClose }: { buildId: string;
 }
 
 const STATUS_ORDER: OperationRow["status"][] = ["todo", "doing", "done"];
+/** What a Build press adds to stock, said before anything is consumed. A
+ *  build that makes no part says so and offers the part named like it. */
+function OutputLine({
+  output,
+  buildName,
+  perBuild,
+  pending,
+  onSet,
+}: {
+  output: { part_id: string; name: string | null; qty: number | null } | null;
+  buildName: string;
+  perBuild: number;
+  pending: boolean;
+  onSet: (name: string) => void;
+}) {
+  const [editing, setEditing] = useState(false);
+  const [name, setName] = useState(output?.name ?? buildName);
+  if (output && !editing) {
+    return (
+      <div data-testid="build-output" className="flex flex-wrap items-center gap-2 text-sm">
+        <span className="text-xs uppercase tracking-wide text-muted">Makes</span>
+        <span className="font-medium text-content dark:text-mortar-100">
+          {perBuild > 1 ? `${perBuild} × ` : ""}
+          {output.name ?? "a part that is no longer in inventory"}
+        </span>
+        {output.qty !== null && <span className="text-xs text-muted">{output.qty} in stock</span>}
+        <button type="button" className="text-xs text-accent hover:underline" onClick={() => setEditing(true)}>
+          Change
+        </button>
+      </div>
+    );
+  }
+  return (
+    <form
+      data-testid="build-output"
+      className={"rounded-lg border p-3 text-sm space-y-2 " + (output ? "border-line dark:border-slate-700" : "border-ember-300 bg-ember-50 dark:bg-ember-900/20 dark:border-ember-800")}
+      onSubmit={(e) => {
+        e.preventDefault();
+        if (!name.trim()) return;
+        onSet(name.trim());
+        setEditing(false);
+      }}
+    >
+      {!output && <div className="text-ember-700 dark:text-ember-300">Building this takes its components from stock and adds nothing: say which part it makes.</div>}
+      <div className="flex flex-wrap items-center gap-2">
+        <input
+          aria-label="Part this build makes"
+          value={name}
+          onChange={(e) => setName(e.target.value)}
+          className="flex-1 min-w-[10rem] rounded border border-line dark:border-slate-600 bg-surface dark:bg-slate-900 px-2 py-1.5 text-sm"
+        />
+        <button type="submit" disabled={pending || !name.trim()} className="px-3 py-1.5 text-xs rounded bg-cobble-600 text-white disabled:opacity-50">
+          {output ? "Save" : "It makes this"}
+        </button>
+        {output && (
+          <button type="button" className="text-xs text-muted" onClick={() => setEditing(false)}>
+            Cancel
+          </button>
+        )}
+      </div>
+      <div className="text-xs text-muted">An existing part with this name is used; otherwise it is added to your inventory with none in stock.</div>
+    </form>
+  );
+}
+
 function nextStatus(s: OperationRow["status"]): OperationRow["status"] {
   if (s === "skipped") return "todo";
   const i = STATUS_ORDER.indexOf(s);
@@ -393,7 +516,7 @@ function OperationsSection({
                   type="button"
                   onClick={() => onCycle(op)}
                   className="shrink-0"
-                  title={`Status: ${op.status} — click to advance`}
+                  title={`Status: ${op.status} (click to advance)`}
                   aria-label={`Step status ${op.status}`}
                 >
                   {op.status === "done" ? (
@@ -553,7 +676,7 @@ function AddComponentRow({
               {!results.isLoading && options.length === 0 && (
                 <div className="px-3 py-2 text-xs text-muted italic">
                   {mode === "part"
-                    ? "No parts. Components come from your inventory — enable Inventory and add parts first."
+                    ? "No parts. Components come from your inventory. Enable Inventory and add parts first."
                     : "No other builds to nest. Create another build first."}
                 </div>
               )}
@@ -830,6 +953,18 @@ function SchedulePanel({ api, builds }: { api: BuildsApi; builds: BuildSummary[]
                     <span className="text-xs text-muted tabular-nums w-5">{i + 1}.</span>
                     <span className="flex-1 text-content dark:text-mortar-100">
                       {it.qty}× {it.build_name}
+                      {(it.good_qty ?? 0) + (it.scrap_qty ?? 0) > 0 && (
+                        <span className="ml-2 text-[11px] text-muted" data-testid="planned-made">
+                          {it.good_qty ?? 0} of {it.qty} made{(it.scrap_qty ?? 0) > 0 ? ` · ${it.scrap_qty} scrap` : ""}
+                        </span>
+                      )}
+                      {it.for_title && (
+                        it.for_url ? (
+                          <Link to={it.for_url} className="ml-2 text-[11px] text-accent hover:underline" data-testid="planned-for">for {it.for_title}</Link>
+                        ) : (
+                          <span className="ml-2 text-[11px] text-muted" data-testid="planned-for">for {it.for_title}</span>
+                        )
+                      )}
                       {it.due_date && <span className={`ml-2 text-[10px] ${it.late ? "text-red-600 font-medium" : "text-muted"}`}>due {it.due_date}</span>}
                     </span>
                     <span className="text-[11px] text-muted tabular-nums">

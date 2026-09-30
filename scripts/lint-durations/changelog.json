@@ -2,7 +2,7 @@
   "lint": "lint:changelog",
   "run": "node scripts/lint-changelog.ts",
   "ms": 1001,
-  "recorded": "2026-09-14",
-  "source": "split from scripts/lint-durations.json (recorded 2026-09-14)",
-  "readMB": 16.4
+  "recorded": "2026-09-30",
+  "source": "split from scripts/lint-durations.json (recorded 2026-09-14); readMB re-recorded 2026-09-30 after the archive checks moved to frontmatter-only reads (32.4 -> 2.7 MB)",
+  "readMB": 2.7
 }

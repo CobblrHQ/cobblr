@@ -53,10 +53,10 @@ const fieldDefsFor = (kind: string) => [
 
 export default defineModule({
   name: "core-mobility",
-  version: "0.1.5",
+  version: "0.1.6",
   displayName: "Mobility",
   description:
-    "Home vs current location with drift detection. Give a tool or bin a home, mark it mobile, and it shows 'away · 3d' when it wanders, with one-tap Return home. Fixtures opt out.",
+    "Give a tool or a bin a home, and see when it has wandered off and for how long, with one tap to send it back.",
   icon: "map-pin",
   band: "stock",
   autoEnable: false, // opt-in — enabling it adds home/mobility/away to your items
@@ -65,7 +65,6 @@ export default defineModule({
 
   api: () => import("./api/index.js"),
 
-  intents: [],
   // Only the location substrate is a hard dependency. The per-kind
   // contributions below are INERT until their host module (inventory, assets)
   // is enabled — a workspace with either one can use mobility.
@@ -90,7 +89,6 @@ export default defineModule({
 
   exposes: {
     events: [],
-    api: [],
     actions: [
       {
         // NO-PHRASING: recomputes a flag from an update delta; it is bookkeeping

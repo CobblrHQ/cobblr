@@ -2,6 +2,8 @@
 // + status + a manual "check now". The watch loop itself lives in
 // ../failure-detect.ts; this is its HTTP surface.
 
+import { detectorAdapterId } from "../detectors/adapters.js";
+import { moveDetectorToConnection } from "../heal-detectors-to-connections.js";
 import { Router } from "express";
 import { z } from "zod";
 import { platform } from "@cobblr/platform-contract";
@@ -119,7 +121,7 @@ failureRouter.get(
     if (!requireRole(req, res, "owner", "admin", "member")) return;
     const rows = await tenantDb(req)
       .selectFrom("digifab_detectors")
-      .select(["id", "key", "label", "base_url", "config", "enabled", "credentials_enc", "created_at", "updated_at"])
+      .select(["id", "key", "label", "base_url", "config", "enabled", "credentials_enc", "service_connection_id", "created_at", "updated_at"])
       .orderBy("created_at", "asc")
       .execute();
     res.json({
@@ -127,10 +129,13 @@ failureRouter.get(
         id: r.id,
         key: r.key,
         label: r.label,
-        base_url: r.base_url,
+        // A moved detector's address and key live on its connection; the
+        // row's old copy is not shown as if it still drove anything.
+        base_url: r.service_connection_id ? null : r.base_url,
+        service_connection_id: r.service_connection_id,
         config: r.config,
         enabled: r.enabled,
-        has_credentials: !!r.credentials_enc,
+        has_credentials: r.service_connection_id ? null : !!r.credentials_enc,
         created_at: r.created_at,
         updated_at: r.updated_at,
       })),
@@ -184,6 +189,17 @@ failureRouter.post(
       })
       .returning(["id", "key", "label", "base_url", "config", "enabled"])
       .executeTakeFirstOrThrow();
+    // Born on a connection: the address and key go where every other outside
+    // program's live, not into a second store (the heal moves older rows).
+    const moved = await moveDetectorToConnection(orgId, tenantDb(req) as never, row.id).catch((e: Error) => {
+      console.warn(`[digifab] new detector ${row.id} stays on its own settings: ${e.message}`);
+      return "not_available" as const;
+    });
+    if (moved === "moved") {
+      const now = await tenantDb(req).selectFrom("digifab_detectors").select(["service_connection_id"]).where("id", "=", row.id).executeTakeFirst();
+      res.status(201).json({ ...row, base_url: null, has_credentials: null, service_connection_id: now?.service_connection_id ?? null });
+      return;
+    }
     res.status(201).json({ ...row, has_credentials: !!credentials_enc });
   }),
 );
@@ -203,6 +219,14 @@ failureRouter.patch(
     if (!requireRole(req, res, "owner", "admin")) return;
     const parsed = DetectorPatch.safeParse(req.body);
     if (!parsed.success) return void res.status(400).json({ error: { code: "bad_body", message: "invalid detector patch" } });
+    if (parsed.data.base_url !== undefined || parsed.data.api_key !== undefined) {
+      const moved = await tenantDb(req).selectFrom("digifab_detectors").select(["service_connection_id"]).where("id", "=", req.params.id!).executeTakeFirst();
+      if (moved?.service_connection_id) {
+        return void res.status(409).json({
+          error: { code: "on_its_connection", message: "This detector's address and key are on its connection now: change them under Connections." },
+        });
+      }
+    }
     if (parsed.data.base_url !== undefined && !(await safeBaseUrl(res, parsed.data.base_url))) return;
     const orgId = tenantContext(req).org.id;
     const patch: Record<string, unknown> = { updated_at: new Date() };
@@ -243,25 +267,11 @@ failureRouter.get(
   "/detectors/:id/cameras",
   asyncHandler(async (req, res) => {
     if (!requireRole(req, res, "owner", "admin", "member")) return;
-    const row = await tenantDb(req)
-      .selectFrom("digifab_detectors")
-      .select(["key", "base_url", "credentials_enc"])
-      .where("id", "=", req.params.id!)
-      .executeTakeFirst();
-    if (!row) return void res.status(404).json({ error: { code: "not_found", message: "detector not found" } });
-    const pkg = resolveDetector(row.key);
-    if (!pkg?.manifest?.listCameras) return void res.status(400).json({ error: { code: "unsupported", message: "this detector can't list cameras" } });
-    let apiKey: string | null = null;
-    if (row.credentials_enc) {
-      try {
-        const creds = await platform().integrations.decryptCredentials(tenantContext(req).org.id, row.credentials_enc);
-        apiKey = (creds.apiKey as string | undefined) ?? null;
-      } catch {
-        /* undecryptable → try without auth */
-      }
-    }
+    const d = await detectorConn(tenantDb(req), tenantContext(req).org.id, req.params.id!);
+    if (!d) return void res.status(404).json({ error: { code: "not_found", message: "detector not found" } });
+    if (!d.manifest.listCameras) return void res.status(400).json({ error: { code: "unsupported", message: "this detector can't list cameras" } });
     try {
-      const cameras = await listDetectorCameras(pkg.manifest, { baseUrl: row.base_url, apiKey });
+      const cameras = await listDetectorCameras(d.manifest, d.conn);
       res.json({ cameras });
     } catch (e) {
       res.status(502).json({ error: { code: "unreachable", message: (e as Error).message } });
@@ -269,12 +279,24 @@ failureRouter.get(
   }),
 );
 
-/** Load a detector row → its package + a live connection (decrypts the token). */
+/** Load a detector row → its package + a live connection (decrypts the token).
+ *  A detector that moved to an adapter connection (service_connection_id)
+ *  takes its address and key from THAT connection, the one place they live
+ *  now; the row's old copies are never read again. */
 async function detectorConn(db: ReturnType<typeof tenantDb>, orgId: string, id: string) {
-  const row = await db.selectFrom("digifab_detectors").select(["key", "base_url", "credentials_enc"]).where("id", "=", id).executeTakeFirst();
+  const row = await db
+    .selectFrom("digifab_detectors")
+    .select(["key", "base_url", "credentials_enc", "service_connection_id"])
+    .where("id", "=", id)
+    .executeTakeFirst();
   if (!row) return null;
   const pkg = resolveDetector(row.key);
   if (!pkg?.manifest) return null;
+  if (row.service_connection_id) {
+    const cfg = await platform().services.adapterConfig(orgId, row.service_connection_id, detectorAdapterId(row.key));
+    if (!cfg?.base_url) return null;
+    return { manifest: pkg.manifest, conn: { baseUrl: cfg.base_url, apiKey: cfg.api_key || null } };
+  }
   let apiKey: string | null = null;
   if (row.credentials_enc) {
     try {
@@ -403,7 +425,7 @@ failureRouter.post(
     const c = await platform().devices.connections().getInternal(orgId, parsed.data.connection_id);
     if (!c) return void res.status(404).json({ error: { code: "not_found", message: "connection not found" } });
     const mapping = d.manifest.connectionMappings?.find((m) => m.from === c.type);
-    if (!mapping) return void res.status(400).json({ error: { code: "unmappable", message: `no mapping for a "${c.type}" connection — use the form` } });
+    if (!mapping) return void res.status(400).json({ error: { code: "unmappable", message: `no mapping for a "${c.type}" connection. Use the form` } });
 
     let creds: Record<string, unknown> = {};
     if (c.credentials_enc) {
@@ -472,23 +494,8 @@ failureRouter.post(
   "/detectors/:id/test",
   asyncHandler(async (req, res) => {
     if (!requireRole(req, res, "owner", "admin")) return;
-    const row = await tenantDb(req)
-      .selectFrom("digifab_detectors")
-      .select(["key", "base_url", "credentials_enc"])
-      .where("id", "=", req.params.id!)
-      .executeTakeFirst();
-    if (!row) return void res.status(404).json({ error: { code: "not_found", message: "detector not found" } });
-    const pkg = resolveDetector(row.key);
-    if (!pkg?.manifest) return void res.status(400).json({ error: { code: "unknown_detector", message: `detector package "${row.key}" is not wired` } });
-    let apiKey: string | null = null;
-    if (row.credentials_enc) {
-      try {
-        const creds = await platform().integrations.decryptCredentials(tenantContext(req).org.id, row.credentials_enc);
-        apiKey = (creds.apiKey as string | undefined) ?? null;
-      } catch {
-        /* undecryptable → test without auth */
-      }
-    }
-    res.json(await testDetectorManifest(pkg.manifest, row.base_url, apiKey));
+    const d = await detectorConn(tenantDb(req), tenantContext(req).org.id, req.params.id!);
+    if (!d) return void res.status(404).json({ error: { code: "not_found", message: "detector not found" } });
+    res.json(await testDetectorManifest(d.manifest, d.conn.baseUrl, d.conn.apiKey));
   }),
 );

@@ -7,6 +7,7 @@
 // imports its UI from "@cobblr/<name>/ui"; the host wires it under
 // /<module>/* and the module's own internal routes take over.
 
+import { OfflineScreen } from "./components/OfflineScreen";
 import { OPEN_RECORD_ROUTE } from "@cobblr/platform-contract/instance-detail";
 import { lazy, Suspense , useEffect, useState } from "react";
 import { ScanFiledRefresh } from "./lib/scanFiled";
@@ -40,9 +41,12 @@ import { AuthPage, MagicConsumePage, IdentityCallbackPage } from "./pages/AuthPa
 import { nextFromQuery } from "./lib/landing-path";
 import { PairPage } from "./pages/PairPage";
 import { SandboxLanding } from "./pages/SandboxLanding";
+import { TryJoinPage } from "./pages/TryJoinPage";
 import { SandboxEnded } from "./pages/SandboxEnded";
 import { CarryPage } from "./pages/CarryPage";
 import { pendingCarry, takeCarryGrant } from "./lib/carry-pending";
+import { pendingBring, takeBringFile } from "./lib/bring-pending";
+import { BringPage } from "./pages/BringPage";
 import { EndingPreview } from "./pages/EndingPreview";
 import { useSandboxEnded } from "./lib/sandbox-session";
 import { StartAppPage } from "./pages/StartAppPage";
@@ -57,14 +61,17 @@ import { QrResolvePage } from "./pages/QrResolvePage";
 import { ActionLabelPage } from "./pages/ActionLabelPage";
 import { ResetPasswordPage } from "./pages/ResetPasswordPage";
 import { VerifyEmailPage } from "./pages/VerifyEmailPage";
+import { EmailChangePage } from "./pages/EmailChangePage";
 // Eager: nav-linked pages users hit from the dashboard frequently.
 import { MachinesPage } from "./pages/MachinesPage";
 import { AssetsPage } from "./pages/AssetsPage";
 import { PurchasesPage } from "./pages/PurchasesPage";
 import { SearchPage } from "./pages/SearchPage";
 import { TagsPage } from "./pages/TagsPage";
+import { TagDetailPage } from "./pages/TagDetailPage";
 import { DiscussionInboxPage } from "./pages/DiscussionInboxPage";
 import { FilesPage } from "./pages/FilesPage";
+import { FileDetailPage } from "./pages/FileDetailPage";
 import { ViewsPage } from "./pages/ViewsPage";
 import { SavedViewPage } from "./pages/SavedViewPage";
 import { ConfigurationPage } from "./pages/ConfigurationPage";
@@ -106,9 +113,12 @@ const ApiTokensPage = lazy(() => import("./pages/ApiTokensPage").then((m) => ({ 
 const ActivityPage = lazy(() => import("./pages/ActivityPage").then((m) => ({ default: m.ActivityPage })));
 const SurfacesPage = lazy(() => import("./pages/SurfacesPage").then((m) => ({ default: m.SurfacesPage })));
 const DigifabPage = lazy(() => import("./pages/DigifabPage").then((m) => ({ default: m.DigifabPage })));
+const MakesPage = lazy(() => import("./pages/MakesPage").then((m) => ({ default: m.MakesPage })));
+const MakePage = lazy(() => import("./pages/MakesPage").then((m) => ({ default: m.MakePage })));
 const MaintenancePage = lazy(() => import("./pages/MaintenancePage").then((m) => ({ default: m.MaintenancePage })));
 const UnitsPage = lazy(() => import("./pages/UnitsPage").then((m) => ({ default: m.UnitsPage })));
 const BackupPage = lazy(() => import("./pages/BackupPage").then((m) => ({ default: m.BackupPage })));
+const OutboundEmailPage = lazy(() => import("./pages/OutboundEmailPage").then((m) => ({ default: m.OutboundEmailPage })));
 const CalendarPage = lazy(() => import("./pages/CalendarPage").then((m) => ({ default: m.CalendarPage })));
 const AllAppsPage = lazy(() => import("./pages/AllAppsPage").then((m) => ({ default: m.AllAppsPage })));
 const QrPage = lazy(() => import("./pages/QrPage").then((m) => ({ default: m.QrPage })));
@@ -153,6 +163,7 @@ import { ForcePasswordResetPage } from "./pages/ForcePasswordResetPage";
 const AdminConsole = lazy(() => import("./pages/AdminConsole").then((m) => ({ default: m.AdminConsole })));
 import { AppLayout } from "./components/AppLayout";
 import { WorkspaceStateBar } from "./components/WorkspaceStateBar";
+import { WorkspaceDeletionBar } from "./components/WorkspaceDeletionBar";
 import { BlockedActionSheet } from "./components/BlockedActionSheet";
 import { ImpersonationBanner } from "./components/ImpersonationBanner";
 import { AdminLayout } from "./components/AdminLayout";
@@ -249,8 +260,9 @@ export function App() {
 }
 
 function Shell() {
-  const { loading } = useAuth();
+  const { loading, offline, user } = useAuth();
   if (loading) return <BootScrim />;
+  if (offline && !user) return <OfflineScreen />;
 
   // The operator console is INSTANCE-wide, not workspace-scoped — it gets
   // its own top-level mount at /admin (no /w/:slug prefix, no tenant
@@ -335,6 +347,8 @@ function PublicRoutes() {
           the token is the secret. */}
       <Route path="/reset/:token" element={<ResetPasswordPage />} />
       <Route path="/verify/:token" element={<VerifyEmailPage />} />
+      <Route path="/email-change/revert/:token" element={<EmailChangePage mode="revert" />} />
+      <Route path="/email-change/:token" element={<EmailChangePage mode="confirm" />} />
       {/* Emailed magic-link landing: consumes ?token= and signs in. Without it
           the link falls to the catch-all and nothing consumes the token. */}
       <Route path="/auth/magic" element={<MagicConsumePage />} />
@@ -346,8 +360,12 @@ function PublicRoutes() {
       <Route path="/pair" element={<PairPage />} />
       {/* The sandbox's ending, to look at: test-door boxes only. */}
       <Route path="/try/ended" element={<EndingPreview />} />
+      {/* A kept trial's address saying yes to keeping another sandbox. */}
+      <Route path="/try/join/:token" element={<TryJoinPage />} />
       {/* Where a trial's "bring what I built" lands, signed out or in. */}
       <Route path="/carry" element={<CarryRoute />} />
+      {/* Where a sandbox's "Continue on Cobblr" lands, signed out or in. */}
+      <Route path="/bring" element={<BringRoute />} />
       {/* /p/:token is the un-auth'd public surface render. Reachable
           signed-in or signed-out — the token is the secret. */}
       <Route path="/p/:token" element={<PublicSurfacePage />} />
@@ -388,6 +406,15 @@ function CarryRoute() {
   const [grant] = useState(() => takeCarryGrant(window.location.search));
   if (grant && !user) return <AuthPage initialMode="signup" carrying />;
   return <CarryPage grant={grant} />;
+}
+
+// /bring: a sandbox's file on its way in, usually signed out. Held before the
+// sign-up form, like /carry's grant.
+function BringRoute() {
+  const { user } = useAuth();
+  const [file] = useState(() => takeBringFile(window.location.search));
+  if (file && !user) return <AuthPage initialMode="signup" carrying />;
+  return <BringPage file={file} />;
 }
 
 // /oauth/authorize: an AI connector's consent screen, usually reached signed
@@ -435,6 +462,11 @@ function LandingRedirect() {
   // the account service: back to the page that brings it.
   if (pendingCarry()) {
     window.location.replace("/carry");
+    return <BootScrim />;
+  }
+  // A sandbox's file waiting to come in, the same way.
+  if (pendingBring()) {
+    window.location.replace("/bring");
     return <BootScrim />;
   }
   // Signed in from a page that asked to come back ("/?next=/invite/…": an
@@ -605,6 +637,7 @@ function ActiveOrgScopedRoutes() {
         listPrinters: (slug) => api.listPrinters(slug),
         postToModulePath: (slug, path, body) => api.postToModulePath(slug, path, body),
         listEntities: (slug, kind, q) => api.listEntities(slug, kind, q),
+        exportEntitiesCsv: (slug, kind, q) => api.exportEntitiesCsv(slug, kind, q),
         // Mapped down to {user_id, display_name}: platform-web has no business
         // knowing roles or join dates to draw a name in a picker.
         listMembers: async (slug) => ({
@@ -623,6 +656,12 @@ function ActiveOrgScopedRoutes() {
         // The resolved read: a record shows its fields as the workspace
         // arranged them (relabelled, hidden, filed under sections).
         listFieldDefs: (slug, kind) => api.listFieldDefs(slug, kind, true),
+        // Wires, through the same door as the Wires page: a module's offer to
+        // make one ("add running-low items to a list") on a person's say-so.
+        listWires: (slug) => api.listBindings(slug),
+        createWire: (slug, wire) => api.createBinding(slug, { ...wire, target: "self", enabled: true }),
+        deleteWire: (slug, id) => api.deleteBinding(slug, id),
+        listWireEvents: (slug) => api.listWireEvents(slug),
         // Contributed panels: what ENABLED modules declare for other modules'
         // detail pages. platform-web renders them; this is the gate that keeps
         // a disabled module's panel off the page.
@@ -663,6 +702,8 @@ function ActiveOrgScopedRoutes() {
           decides is WHETHER it mounts. Here it always does; the server says
           whether there is anything to draw. */}
       <WorkspaceStateBar slug={activeSlug} />
+      {/* The day a workspace set to be deleted goes, for everyone in it. */}
+      <WorkspaceDeletionBar slug={activeSlug} />
       {/* The one sheet a refusal opens, from whichever surface made the call,
           and the one that finishes an approved ask (?resume=<id>). */}
       <BlockedActionSheet />
@@ -758,6 +799,7 @@ function ActiveOrgScopedRoutes() {
           <Route path="/records" element={<RecordsPage />} />
           <Route path="/records/:id" element={<RecordsPage />} />
           <Route path="/purchases" element={<PurchasesPage />} />
+          <Route path="/purchases/vendors/:vendorId" element={<PurchasesPage />} />
           <Route path="/purchases/:id" element={<PurchasesPage />} />
           {/* Every /configuration/* page renders inside ConfigurationLayout.
               2026-07 revamp: /configuration is five section CARDS and
@@ -792,6 +834,12 @@ function ActiveOrgScopedRoutes() {
               path="/configuration/digifab"
               element={<Navigate to="/configuration/devices?tab=machines" replace />}
             />
+            {/* Notifications already sent carry this older link; it lands on
+                the same page. */}
+            <Route
+              path="/configuration/farm"
+              element={<Navigate to="/configuration/devices?tab=machines" replace />}
+            />
             <Route
               path="/configuration/edge"
               element={<Navigate to="/configuration/devices" replace />}
@@ -808,6 +856,7 @@ function ActiveOrgScopedRoutes() {
             />
             <Route path="/configuration/units" element={<UnitsPage />} />
             <Route path="/configuration/backup" element={<BackupPage />} />
+            <Route path="/configuration/email" element={<OutboundEmailPage />} />
             <Route path="/configuration/qr-tokens" element={<QrPage />} />
             {/* Scan rules is its own destination again: it is owned by
                 core-scan (interop with ANOTHER app's labels), not by labels,
@@ -873,8 +922,10 @@ function ActiveOrgScopedRoutes() {
               their module manifest's `nav` block rather than a hardcoded entry.
               See docs/design-decisions/configuration-revamp.md. */}
           <Route path="/files" element={<FilesPage />} />
+          <Route path="/files/:id" element={<FileDetailPage />} />
           <Route path="/views" element={<ViewsPage />} />
           <Route path="/tags" element={<TagsPage />} />
+          <Route path="/tags/:id" element={<TagDetailPage />} />
           <Route path="/discussion" element={<DiscussionInboxPage />} />
           <Route path="/maintenance" element={<MaintenancePage />} />
           {/* A saved view as a full PAGE — outside the configuration shell.
@@ -887,6 +938,8 @@ function ActiveOrgScopedRoutes() {
               top path `/digifab`. Route it there as well as the Configuration
               deep-link, or the nav entry falls through to the home redirect. */}
           <Route path="/digifab" element={<DigifabPage />} />
+          <Route path="/makes" element={<MakesPage />} />
+          <Route path="/makes/:id" element={<MakePage />} />
           <Route path="/calendar" element={<CalendarPage />} />
           <Route path="/apps" element={<AllAppsPage />} />
           <Route path="/people/:who" element={<PersonThingsPage />} />

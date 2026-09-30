@@ -55,7 +55,8 @@ import { ScanPendingPictures } from "./ScanPendingPictures";
 import { ScanTwinsContext, twinsOf } from "./scanTwins";
 import { usePendingPictures } from "../lib/pendingPictures";
 import { } from "./scanNameEdit";
-import { useAiStatus, AiOffNotice } from "../components/AiStatusNotice";
+import { useAiStatus, AiOffNotice, AiNoticeGiven, aiStatusLine } from "../components/AiStatusNotice";
+import { putawayWalkChip } from "@cobblr/platform-contract/scan-copy";
 export { useAiStatus, AiOffNotice } from "../components/AiStatusNotice";
 import { decideLocationScan, filingLabel } from "../lib/scanFiling";
 import { useScanItemLink } from "./scanItemLink";
@@ -786,7 +787,7 @@ export function ScanPage() {
     onSuccess: (fresh) => {
       void qc.invalidateQueries({ queryKey: scanInboxKeys.all(activeSlug) });
       const qty = Number(fresh.quantity) || 1;
-      toast.success(`Combined into one — ${displayName(fresh) ?? "item"}${qty > 1 ? ` ×${qty}` : ""}`);
+      toast.success(`Combined into one: ${displayName(fresh) ?? "item"}${qty > 1 ? ` ×${qty}` : ""}`);
     },
     onError: (e) => toast.error(e instanceof ApiError ? e.message : String(e)),
   });
@@ -1213,7 +1214,7 @@ export function ScanPage() {
     onSuccess: (r) => {
       toast.success(
         r.entity_deleted
-          ? "Sent back to the inbox — the created entry was removed."
+          ? "Sent back to the inbox. The created entry was removed."
           : `Sent back to the inbox.${r.note ? ` ${r.note}` : ""}`,
       );
       setHighlightId(r.item.id);
@@ -1248,7 +1249,7 @@ export function ScanPage() {
     if (ok) toast.success(`Sent ${ok} item${ok === 1 ? "" : "s"} back to the inbox.`);
     if (failed)
       toast.error(
-        `${failed} item${failed === 1 ? "" : "s"} couldn't be sent back — open ${failed === 1 ? "it" : "them"} to see why.`,
+        `${failed} item${failed === 1 ? "" : "s"} couldn't be sent back. Open ${failed === 1 ? "it" : "them"} to see why.`,
       );
   };
   // Send a whole session's committed items back to the inbox at once.
@@ -1392,7 +1393,7 @@ export function ScanPage() {
           const b = byId.get(decision.bin);
           const nm = b ? filingLabel(b) : "location";
           const p = decision.reparent ? byId.get(decision.reparent.parent) : null;
-          toast.success(p ? `Filed ${nm} in ${filingLabel(p)} — filing into ${nm}` : `Filing into ${nm}`);
+          toast.success(p ? `Filed ${nm} in ${filingLabel(p)}. Filing into ${nm}` : `Filing into ${nm}`);
           return;
         }
         wedgeScan.mutate(code);
@@ -1709,7 +1710,7 @@ export function ScanPage() {
   const resumableWalk = (() => {
     const q = putawayQueueQ.data;
     if (!q || q.remaining === 0 || !q.plan_id) return null;
-    return { planId: q.plan_id, remaining: q.remaining, resumed: !!q.session_id };
+    return { planId: q.plan_id, remaining: q.remaining, places: q.groups, resumed: !!q.session_id };
   })();
   // The organize plan's item accordion renders the REAL card inline, in
   // identity-fixer mode (planContext: no confirm form, no chips, no discard).
@@ -2001,7 +2002,7 @@ export function ScanPage() {
     setBulkBusy(false);
     clearSelected();
     void qc.invalidateQueries({ queryKey: scanInboxKeys.all(activeSlug) });
-    toast.success(`Added ${ok} to ${entry.label}${skipped ? ` — ${skipped} skipped (no name / failed)` : ""}`);
+    toast.success(`Added ${ok} to ${entry.label}${skipped ? `, ${skipped} skipped (no name / failed)` : ""}`);
   };
   // Commit each item to its OWN top candidate — the destination the matchmaker
   // already picked ("as-is" routing). Shared by the selection bulk-confirm and
@@ -2919,8 +2920,7 @@ className="rounded px-1 py-0.5 text-[12.5px] hover:bg-subtle dark:hover:bg-slate
           onClick={() => setWalkPlanId(resumableWalk.planId)}
           className="flex items-center gap-2 rounded-lg border border-accent/40 bg-cobble-50 dark:bg-cobble-900/30 px-3 py-2 text-sm text-accent hover:bg-cobble-100 dark:hover:bg-cobble-900/50 transition"
         >
-          ▶ {resumableWalk.resumed ? "Resume put-away walk" : "Put-away walk"} - {resumableWalk.remaining} item
-          {resumableWalk.remaining === 1 ? "" : "s"} left to place
+          ▶ {putawayWalkChip(resumableWalk.remaining, resumableWalk.places, resumableWalk.resumed)}
         </button>
       )}
 
@@ -3029,6 +3029,7 @@ className="rounded px-1 py-0.5 text-[12.5px] hover:bg-subtle dark:hover:bg-slate
       )}
 
       {organizeOpen && (
+        <AiNoticeGiven when={!!aiStatusLine(aiStatus, "identify")}>
         <OrganizePlanSheet
           slug={activeSlug}
           itemIds={[...selected]}
@@ -3047,12 +3048,14 @@ className="rounded px-1 py-0.5 text-[12.5px] hover:bg-subtle dark:hover:bg-slate
           onStartWalk={(planId) => void startWalk(planId)}
           renderItemCard={renderPlanItemCard}
         />
+        </AiNoticeGiven>
       )}
 
       {/* The pending-backlog plan is now the inline "Sorting plan" lens (see the
           header toggle + the list block above), not a modal. */}
 
       {organizeUnplacedOpen && (
+        <AiNoticeGiven when={!!aiStatusLine(aiStatus, "identify")}>
         <OrganizePlanSheet
           slug={activeSlug}
           scope="unplaced"
@@ -3069,6 +3072,7 @@ className="rounded px-1 py-0.5 text-[12.5px] hover:bg-subtle dark:hover:bg-slate
           }}
           renderItemCard={renderPlanItemCard}
         />
+        </AiNoticeGiven>
       )}
 
       {intake.sheet}
@@ -3120,7 +3124,7 @@ className="rounded px-1 py-0.5 text-[12.5px] hover:bg-subtle dark:hover:bg-slate
           <span className="inline-block h-1.5 w-1.5 rounded-full bg-emerald-500 animate-pulse" />
           <span className="text-content dark:text-mortar-100 font-medium">
             Scan session active
-            {activeSession?.count ? ` — ${activeSession.count} item${activeSession.count === 1 ? "" : "s"}` : ""}
+            {activeSession?.count ? ` (${activeSession.count} item${activeSession.count === 1 ? "" : "s"})` : ""}
           </span>
           <span className="hidden sm:inline">· groups until 30 min idle</span>
           <span className="ml-auto inline-flex items-center gap-2 shrink-0">
@@ -3275,6 +3279,7 @@ className="rounded px-1 py-0.5 text-[12.5px] hover:bg-subtle dark:hover:bg-slate
               ‹ Back to items
             </button>
           </div>
+          <AiNoticeGiven when={!!aiStatusLine(aiStatus, "identify")}>
           <SortingPlanView
             slug={activeSlug}
             scope="pending"
@@ -3297,6 +3302,7 @@ className="rounded px-1 py-0.5 text-[12.5px] hover:bg-subtle dark:hover:bg-slate
             }}
             renderItemCard={renderPlanItemCard}
           />
+          </AiNoticeGiven>
           </>
         ) : (
         <>
@@ -4478,7 +4484,7 @@ className="rounded px-1 py-0.5 text-[12.5px] hover:bg-subtle dark:hover:bg-slate
           onClose={() => setWedgeBinAdjust(null)}
           onAddSomethingElse={() => {
             setFileBin(wedgeBinAdjust.locationId);
-            toast.success(`Filing into ${wedgeBinAdjust.locationName} — scan the new item`);
+            toast.success(`Filing into ${wedgeBinAdjust.locationName}. Scan the new item`);
             setWedgeBinAdjust(null);
           }}
         />

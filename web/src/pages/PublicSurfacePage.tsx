@@ -15,6 +15,7 @@
 // Defaults to tile rendering since the public consumer is typically
 // looking AT things; list is available via the ?view=list query.
 
+import { MAIN_ID, SkipToContent } from "../components/a11y/shell-landmarks";
 import { useQuery } from "@tanstack/react-query";
 import { useParams, useSearchParams } from "react-router-dom";
 import { CobblestoneMark } from "../CobblestoneMark";
@@ -132,7 +133,7 @@ export function PublicSurfacePage() {
               ? "this surface doesn't exist or has been revoked."
               : e === "expired"
                 ? "this surface's token has expired."
-                : `${e} — try refreshing.`}
+                : `${e}, try refreshing.`}
           </p>
         </div>
       </PublicShell>
@@ -227,6 +228,7 @@ function PublicShell({
         : "";
   return (
     <div className={`min-h-screen bg-subtle dark:bg-slate-950 text-content dark:text-mortar-100 ${themeClass}`}>
+      <SkipToContent />
       <header className="border-b border-line dark:border-slate-700 bg-surface dark:bg-slate-900 px-6 py-4">
         <div className="max-w-6xl mx-auto flex items-center gap-3">
           <CobblestoneMark size={26} />
@@ -247,7 +249,7 @@ function PublicShell({
           </span>
         </div>
       </header>
-      <main className="max-w-6xl mx-auto px-6 py-8">{children}</main>
+      <main id={MAIN_ID} tabIndex={-1} className="focus:outline-none max-w-6xl mx-auto px-6 py-8">{children}</main>
     </div>
   );
 }

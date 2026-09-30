@@ -45,8 +45,8 @@ function MaturityBadge({ maturity }: { maturity?: OrgModuleListItem["maturity"] 
       }
       title={
         beta
-          ? "Beta — usable, but still changing"
-          : "Experimental — rough, narrow, and may change or be removed"
+          ? "Beta: usable, but still changing"
+          : "Experimental: rough, narrow, and may change or be removed"
       }
     >
       {beta ? "Beta" : "Experimental"}

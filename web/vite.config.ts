@@ -1,8 +1,46 @@
-import { defineConfig } from "vite";
+import { defineConfig, type Plugin } from "vite";
 import react from "@vitejs/plugin-react";
+import { readFileSync } from "node:fs";
+import { createHash } from "node:crypto";
+
+/** Writes dist/sw.js: the service worker (src/sw/service-worker.js) with the
+ *  request rules (src/sw/sw-logic.js) inlined and, in front, this build's id
+ *  and the files an offline launch needs: the shell and every chunk the entry
+ *  loads eagerly, with their CSS. Lazy route chunks are kept as they are first
+ *  loaded. Computed from the bundle itself, so the list cannot drift from what
+ *  was built (#4226). */
+function serviceWorker(): Plugin {
+  return {
+    name: "cobblr-service-worker",
+    apply: "build",
+    generateBundle(_opts, bundle) {
+      const entry = Object.values(bundle).find((f) => f.type === "chunk" && f.isEntry);
+      if (!entry) this.error("no entry chunk to build the service worker's precache from");
+      const eager = new Set<string>();
+      const walk = (name: string) => {
+        const c = bundle[name];
+        if (!c || eager.has(name)) return;
+        eager.add(name);
+        if (c.type !== "chunk") return;
+        c.imports.forEach(walk);
+        for (const css of c.viteMetadata?.importedCss ?? []) eager.add(css);
+      };
+      walk(entry.fileName);
+      const precache = ["/", "/prepaint.js", "/favicon.svg", "/icon-192.png", ...[...eager].sort().map((f) => `/${f}`)];
+      const read = (p: string) => readFileSync(new URL(p, import.meta.url), "utf8");
+      const logic = read("./src/sw/sw-logic.js").replace(/^export /gm, "");
+      const build = createHash("sha256").update(precache.join("\n")).digest("hex").slice(0, 12);
+      this.emitFile({
+        type: "asset",
+        fileName: "sw.js",
+        source: `const BUILD = ${JSON.stringify(build)};\nconst PRECACHE = ${JSON.stringify(precache)};\n${logic}\n${read("./src/sw/service-worker.js")}`,
+      });
+    },
+  };
+}
 
 export default defineConfig({
-  plugins: [react()],
+  plugins: [react(), serviceWorker()],
   // occt-import-js is an Emscripten/WASM module (the STEP-preview CAD kernel).
   // esbuild's dev pre-bundler mangles Emscripten glue + can't see the `?url`
   // wasm import, so exclude it — it's lazy-loaded only when a STEP is opened.

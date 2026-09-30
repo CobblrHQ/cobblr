@@ -94,6 +94,7 @@ actionLabelsRouter.get(
   "/",
   asyncHandler(async (req, res) => {
     const base = await effectiveBase(req);
+    // list-cap-ok: not paged yet, #4134
     const rows = await tenantDb(req).selectFrom("labels_action_labels").selectAll().orderBy("created_at", "desc").limit(200).execute();
     res.json({ items: rows.map((r) => ({ ...r, url: actionUrl(base, r.code) })) });
   }),

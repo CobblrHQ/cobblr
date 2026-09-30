@@ -9,6 +9,8 @@
 // Cobblr knows about the job: whether it has been seen printing, how far it
 // got, and whether someone asked Cobblr to cancel it.
 
+import { EdgeOffline, EdgeTimeout } from "@cobblr/platform-contract";
+
 export type JobStatusName = "queued" | "assigning" | "sent" | "awaiting-assignment" | "printing" | "paused" | "completed" | "failed" | "cancelled";
 
 /** How long a sent print may sit without the printer starting it. */
@@ -108,6 +110,9 @@ export function sentenceIn(body: unknown): string | null {
  *  JSON body or a stack: "OctoPrint refused the upload (HTTP 500)". */
 export function plainDriverError(err: unknown, manager: string, doing: string): string {
   if (err instanceof DriverSaid) return `${manager}: ${/[.!?]$/.test(err.message) ? err.message : `${err.message}.`}`;
+  // The kernel's edge errors already carry the sentence for the person (the
+  // bridge by name, how long it has been gone, what to check).
+  if (err instanceof EdgeOffline || err instanceof EdgeTimeout) return err.message;
   const raw = err instanceof Error ? err.message : String(err ?? "");
   const cause = err instanceof Error && err.cause instanceof Error ? err.cause.message : "";
   const text = `${raw} ${cause}`;

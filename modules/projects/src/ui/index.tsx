@@ -2,6 +2,7 @@
 // router; the navItems metadata drives the top-bar entry.
 
 import { Routes, Route } from "react-router-dom";
+import { TaskAddress } from "./TaskAddress";
 import type { FileIntakeDecl } from "@cobblr/platform-contract";
 import { Layers } from "lucide-react";
 // Side-effect: registers the projects "at a glance" dashboard tile through
@@ -42,6 +43,7 @@ export function ProjectsUI({ orgSlug, getToken, instance, displayName, itemNoun,
             a project with id "items". Map it to the list — and add a splat
             fallback — so a deep-link never dead-ends on a blank page. */}
         <Route path="items" element={<ProjectsListPage />} />
+        <Route path="tasks/:id" element={<TaskAddress />} />
         <Route path=":id" element={<ProjectDetailPage />} />
         <Route path="*" element={<ProjectsListPage />} />
       </Routes>

@@ -13,6 +13,8 @@ export interface TagsTable {
   /** Keeps a tag at the front of every chip row and exempts it from the
    *  relevance collapse (see src/relevance.ts). */
   pinned: Generated<boolean>;
+  /** Custom fields a bundle or a person defines for tags (0005). */
+  metadata: Generated<Record<string, unknown>>;
   created_at: Generated<Date>;
   updated_at: Generated<Date>;
 }

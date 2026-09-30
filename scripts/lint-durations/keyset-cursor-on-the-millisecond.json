@@ -1,0 +1,10 @@
+{
+  "lint": "lint:keyset-cursor-on-the-millisecond",
+  "run": "node scripts/lint-keyset-cursor-on-the-millisecond.ts",
+  "rows": [
+    "api-route"
+  ],
+  "ms": 1652,
+  "recorded": "2026-09-30",
+  "source": "scaffolded by new-lint.sh at twice a local run (a shared box); replaced from its first CI measurement"
+}

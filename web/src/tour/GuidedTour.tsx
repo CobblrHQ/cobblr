@@ -11,7 +11,7 @@ import { useNavLayout } from "../lib/nav-mode";
 import { useTheme } from "../theme/ThemeContext";
 import { LayoutPreview } from "../components/LayoutPreview";
 import { LAYOUT_OPTIONS, tourStepsFor, type StepContext, type TourStep } from "./tour.config";
-import { OverlayLayer } from "@cobblr/platform-web";
+import { OverlayLayer, isShortcut } from "@cobblr/platform-web";
 import { dismissInstall, installRoute, readInstallEnv, shouldOfferInstall } from "../lib/install-app";
 import { InstallWalkBody } from "../components/InstallWalk";
 
@@ -123,9 +123,9 @@ export function GuidedTour({ steps: allSteps, onClose }: { steps: TourStep[]; on
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === "ArrowRight" || e.key === "Enter") { e.preventDefault(); move(1); }
-      else if (e.key === "ArrowLeft") { e.preventDefault(); move(-1); }
-      else if (e.key === "Escape") { e.preventDefault(); onClose(); }
+      if (isShortcut(e, "next") || isShortcut(e, "choose")) { e.preventDefault(); move(1); }
+      else if (isShortcut(e, "previous")) { e.preventDefault(); move(-1); }
+      else if (isShortcut(e, "close")) { e.preventDefault(); onClose(); }
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);

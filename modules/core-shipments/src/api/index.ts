@@ -5,6 +5,7 @@
 // or fail, and it says which of those happened rather than collapsing both to
 // an empty answer.
 
+import { statusCodeFor } from "./status-code.js";
 import { Router } from "express";
 import { platform } from "@cobblr/platform-contract";
 import { z } from "zod";
@@ -57,9 +58,13 @@ router.get("/carrier", (req, res) => {
  *  act on it:
  *
  *    carrier: null                    the number belongs to nobody we know
- *    tracking: null, reason: ...      we know the carrier, we cannot follow it
+ *    status: null, reason: ...        we know the carrier and could not follow
+ *                                     it: not connected, no driver, the service
+ *                                     is full (quota_exhausted), or it did not
+ *                                     answer just now (carrier_error). A 200:
+ *                                     the reason is the answer (status-code.ts)
  *    status: {...}                    an answer from the carrier
- *    502 + retryable                  the carrier failed to answer
+ *    502                              the action itself threw
  */
 router.get("/status", async (req, res) => {
   const parsed = NumberQuery.safeParse(req.query);
@@ -107,8 +112,7 @@ router.get("/status", async (req, res) => {
     }
 
     const reason = out?.reason ?? "carrier_error";
-    const code = reason === "carrier_error" ? 502 : reason === "quota_exhausted" ? 507 : 200;
-    res.status(code).json({ carrier, status: null, reason, message: out?.message });
+    res.status(statusCodeFor(reason)).json({ carrier, status: null, reason, message: out?.message });
   } catch (err) {
     // Only a THROW from invoke lands here. Everything the action itself
     // decided — not connected, not due, quota exhausted — comes back as a

@@ -18,6 +18,7 @@ import { getTool, fetchKinds } from "@cobblr/workspace-tools";
 import { rankFits, type FitTable } from "@cobblr/platform-contract/table-fit";
 import { fitTablesFor } from "./table-fit-menu.js";
 import { pluralise } from "@cobblr/platform-contract";
+import { withArticle } from "@cobblr/platform-contract/plural";
 
 export interface ComputedPlan {
   /** What the confirm card says, in a sentence a person can check. */
@@ -360,7 +361,7 @@ export function moveHeadline(o: {
   // as an answer to a question nobody asked.
   if (o.emptyPage) {
     return o.creating
-      ? `None ${here}. Create a ${o.label} section and move the ${what} elsewhere into it?`
+      ? `None ${here}. Create ${withArticle(o.label)} section and move the ${what} elsewhere into it?`
       : `None ${here}. Move the ${what} elsewhere into ${o.label}?`;
   }
   // Where from, said once: the page when that is what was searched, the one
@@ -376,7 +377,7 @@ export function moveHeadline(o: {
         ? ` from every list`
         : "";
   return o.creating
-    ? `Create a ${o.label} section and move ${what}${from} into it.`
+    ? `Create ${withArticle(o.label)} section and move ${what}${from} into it.`
     : `Move ${what}${from} into ${o.label}.`;
 }
 

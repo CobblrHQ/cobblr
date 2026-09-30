@@ -54,6 +54,7 @@ import { summariseAction, type ActionCopy } from "./action-summary.js";
 import { actionArgValues, writeValues } from "./write-values.js";
 import { actionRunsUnconfirmed, type ActionConsent } from "@cobblr/platform-contract/action-consent";
 import { inferMoveFromToolShape, jsonBlockIn } from "./tool-shaped-move.js";
+import { withArticle } from "@cobblr/platform-contract/plural";
 
 /** ToolCall → the ledgered write request shape (null = not a known write). */
 /** The writes a tool call MEANS — one for a single write, many for a bulk one.
@@ -150,7 +151,10 @@ function appliedSummaries(applied: AppliedWrite[]): Array<{
 export const chatRouter = Router({ mergeParams: true });
 export { resolveCreatePath, type KindRec };
 
-const WRITE_NAMES = new Set(WRITE_TOOLS.map((t) => t.name));
+// A tool whose consent the server's service gate decides is not proposed as
+// a card first: the job waits on its own card when it needs a person, and a
+// proposal before it would ask twice (services.md section 11).
+const WRITE_NAMES = new Set(WRITE_TOOLS.filter((t) => !t.consentBy).map((t) => t.name));
 
 /** The registry's transport seam, bound to this request's workspace + auth —
  *  read tools run with exactly the caller's permissions. */
@@ -217,17 +221,22 @@ async function chatPrefsOf(req: Parameters<typeof tenantDb>[0]): Promise<ChatToo
 /** Neutral tool defs for the providers, FILTERED by the user's consent. Write
  *  tool descriptions match the mode (propose vs apply-with-undo). Read off +
  *  write off → [] → no tools sent, pure conversation. Exported for tests. */
-export function toolDefsFor(prefs: ChatToolPrefs): Array<{ name: string; description: string; parameters: unknown }> {
-  return WORKSPACE_TOOLS.filter((t) => (t.mode === "read" ? prefs.read_tools : prefs.write_mode !== "off")).map(
+export function toolDefsFor(
+  prefs: ChatToolPrefs,
+  opts: { services?: boolean } = {},
+): Array<{ name: string; description: string; parameters: unknown }> {
+  return WORKSPACE_TOOLS.filter((t) => (t.sentWhen === "services" ? !!opts.services : true))
+    .filter((t) => (t.consentBy ? true : t.mode === "read" ? prefs.read_tools : prefs.write_mode !== "off"))
+    .map(
     (t) => ({
       name: t.name,
       description:
-        t.mode === "write"
+        t.mode === "write" && !t.consentBy
           ? prefs.write_mode === "auto"
             ? t.name === "invoke_action"
               ? `${t.description} (An action whose list_actions entry says undoable: true is applied immediately, tracked and undoable. Any other action PROPOSES the change and the user confirms before it runs.)`
-              : `${t.description} (Applied immediately — every change is tracked and undoable.)`
-            : `${t.description} (This PROPOSES the change — the user confirms before anything runs.)`
+              : `${t.description} (Applied immediately. Every change is tracked and undoable.)`
+            : `${t.description} (This PROPOSES the change. The user confirms before anything runs.)`
           : t.description,
       parameters: jsonSchemaOf(t.params),
     }),
@@ -249,6 +258,9 @@ interface Ctx {
    *  The bridge runs claude -p hermetically, so there is no host name to
    *  override; we just state who this is. */
   userName: string | null;
+  /** Says which client is calling: "cobb" on the calls that start service
+   *  jobs, so the api stamps them as Cobb's door. */
+  client?: "cobb";
 }
 export function ctxOf(req: Parameters<typeof tenantContext>[0]): Ctx {
   const org = tenantContext(req).org;
@@ -274,7 +286,7 @@ async function callApi(
 ): Promise<{ status: number; body: Record<string, unknown> }> {
   const r = await fetch(`${c.base}/orgs/${c.slug}${path}`, {
     method,
-    headers: { "content-type": "application/json", authorization: c.auth },
+    headers: { "content-type": "application/json", authorization: c.auth, ...(c.client ? { "x-cobblr-client": c.client } : {}) },
     body: body === undefined ? undefined : JSON.stringify(body),
   });
   const b = (await r.json().catch(() => ({}))) as Record<string, unknown>;
@@ -427,9 +439,9 @@ async function actionPlan(
 async function actionSafety(c: Ctx, actionId: string): Promise<ActionConsent | null> {
   try {
     const reg = await callApi(c, "GET", "/registered-actions");
-    const items = (reg.body.items as Array<{ id: string; undoable?: boolean }> | undefined) ?? [];
+    const items = (reg.body.items as Array<{ id: string; undoable?: boolean; effect?: string | null }> | undefined) ?? [];
     const hit = items.find((a) => a.id === actionId);
-    return hit ? { undoable: hit.undoable === true } : null;
+    return hit ? { undoable: hit.undoable === true, effect: hit.effect ?? null } : null;
   } catch {
     return null;
   }
@@ -528,7 +540,7 @@ async function proposalOf(
       }
       const label = await labelOf(wsApi, kind, id);
       return {
-        summary: `Delete “${label}” — permanent`,
+        summary: `Delete “${label}” (permanent)`,
         proposal: { kind: "delete", entity_kind: kind, entity_id: id, entity_label: label },
       };
     }
@@ -687,7 +699,15 @@ async function answerTurn(
   // The user's tool consent gates everything downstream: which tool defs the
   // model sees, and (below) whether legacy JSON-move writes may propose.
   const prefs = await chatPrefsOf(req);
-  const toolDefs = toolDefsFor(prefs);
+  // The service tools go out only where a service capability is connected.
+  const hasServices = await callApi(c, "GET", "/services/capabilities")
+    .then((r) => r.status < 400 && Array.isArray(r.body.items) && r.body.items.length > 0)
+    .catch(() => false);
+  const toolDefs = toolDefsFor(prefs, { services: hasServices });
+  // Service jobs are started on Cobb's door, not the person's: the header
+  // makes the api stamp them as Cobb's, so they follow Cobb's consent.
+  const cobbApi = chatWorkspaceApi({ ...c, client: "cobb" });
+  const serviceJobs: Array<{ job_id: string; capability?: string; status?: string }> = [];
   // The consent + auto-mode sentences ride in the prompt the caller built
   // (system-prompt.ts consentLine): a prompt assembled in two places is one
   // that differs between callers, and lint:one-system-prompt says so.
@@ -745,6 +765,12 @@ async function answerTurn(
       },
       executeRead: async (name, args) => {
         const tool = getTool(name);
+        if (tool?.consentBy === "service-gate") {
+          const r = await tool.execute(cobbApi, args);
+          const job = r.ok ? (r.data as { job_id?: string; capability?: string; status?: string } | null) : null;
+          if (job?.job_id) serviceJobs.push({ job_id: job.job_id, capability: job.capability, status: job.status });
+          return r;
+        }
         if (!tool || tool.mode !== "read") return { ok: false, error: `no such read tool: ${name}` };
         // An escort to a screen whose job an action already does is the least
         // useful answer available, and saying so in the prompt was not enough:
@@ -919,7 +945,7 @@ async function answerTurn(
         type: "reply",
         text: problems.join(" ") || outcome.text || "I couldn't line that up — can you rephrase?",
         ...(done.length ? { applied: done } : {}),
-        ...(escorts.length ? { escorts } : {}),
+        ...(escorts.length ? { escorts } : {}), ...(serviceJobs.length ? { service_jobs: serviceJobs } : {}),
       };
     }
     if (items.length === 1) {
@@ -929,10 +955,10 @@ async function answerTurn(
         summary: items[0]!.summary,
         proposal: items[0]!.proposal,
         ...(done.length ? { applied: done } : {}),
-        ...(escorts.length ? { escorts } : {}),
+        ...(escorts.length ? { escorts } : {}), ...(serviceJobs.length ? { service_jobs: serviceJobs } : {}),
       };
     }
-    return { type: "proposals", text: outcome.text || undefined, items, ...(done.length ? { applied: done } : {}), ...(escorts.length ? { escorts } : {}) };
+    return { type: "proposals", text: outcome.text || undefined, items, ...(done.length ? { applied: done } : {}), ...(escorts.length ? { escorts } : {}), ...(serviceJobs.length ? { service_jobs: serviceJobs } : {}) };
   }
 
   const text = outcome.text;
@@ -945,7 +971,7 @@ async function answerTurn(
       type: "reply",
       text: move?.text ?? text,
       ...(done.length ? { applied: done } : {}),
-      ...(escorts.length ? { escorts } : {}),
+      ...(escorts.length ? { escorts } : {}), ...(serviceJobs.length ? { service_jobs: serviceJobs } : {}),
       ...(ambiguity.choices ? { choices: ambiguity.choices } : {}),
     };
   }
@@ -962,7 +988,7 @@ async function answerTurn(
     }
     return {
       type: "proposal",
-      summary: move.summary ?? `Create a ${move.entity_kind}`,
+      summary: move.summary ?? `Create ${withArticle(move.entity_kind)}`,
       proposal: { kind: "create", entity_kind: move.entity_kind, fields: move.fields ?? {} },
     };
   }
@@ -1032,7 +1058,7 @@ async function answerTurn(
       (h) => !h.kind || h.kind === move.entity_kind,
     );
     if (hits.length === 0) {
-      return { type: "reply", text: `I couldn't find a ${move.entity_kind} matching "${move.entity_query}".` };
+      return { type: "reply", text: `I couldn't find ${withArticle(move.entity_kind)} matching "${move.entity_query}".` };
     }
     if (hits.length > 1) {
       const names = hits.slice(0, 6).map((h) => `“${h.title ?? h.id}”`).join(", ");
@@ -1303,6 +1329,7 @@ chatRouter.get(
 //
 // AI-REACH: exempt — the door an assistant's write comes THROUGH, not a
 // capability it chooses; the tools it fronts are the reachable ones.
+// UI-REACH: the assistant's own door for a write it makes; the panel lists each write and offers its undo
 chatRouter.post(
   "/writes",
   asyncHandler(async (req, res) => {
@@ -1331,6 +1358,19 @@ chatRouter.post(
           code: "writes_not_auto",
           message:
             'Changes are not set to apply automatically for this chat, and a relayed connection cannot show a confirmation. The user can switch "Changes" to Auto, or make this one in Cobblr directly.',
+        },
+      });
+      return;
+    }
+
+    // The in-app rule at "auto", asked here as well: a delete waits for a
+    // person, and this door cannot show one a confirmation. Actions are
+    // judged per action at the invoke route.
+    if (ws[0]?.tool !== "action" && autoWriteMustHold(ws)) {
+      res.status(403).json({
+        error: {
+          code: "needs_a_person",
+          message: "Deleting needs a person to confirm it, and a relayed connection cannot show a confirmation. Delete it in Cobblr, where the confirm step appears.",
         },
       });
       return;
@@ -1378,6 +1418,7 @@ chatRouter.post(
 // AI-REACH: exempt — this is the assistant TELLING the panel what it is doing,
 // not a capability for it to choose. It writes no workspace data; the whole of
 // it is a progress line on the caller's own open turn.
+// UI-REACH: the assistant telling the open panel what it is doing; nothing for a person to press
 chatRouter.post(
   "/turns/open/steps",
   asyncHandler(async (req, res) => {

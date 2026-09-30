@@ -12,6 +12,7 @@
 import { platform, requireActionEntity } from "@cobblr/platform-contract";
 import type { Kysely } from "kysely";
 import type { ProjectsDB } from "../db.js";
+import { refuseNewTaskDependency } from "./deps.js";
 
 const str = (v: unknown): string =>
   typeof v === "string" && v.trim() ? v.trim() : "";
@@ -36,16 +37,10 @@ export function registerDependencyHandlers(): void {
           "Say what this waits on: either depends_on_task_id (another task) or blocks_kind + blocks_id (a record in any module), not both.",
       };
     }
-    if (dependsOn === task.id) return { ok: false, error: "a task cannot wait on itself" };
-
     const db = (await platform().tenants.getDb(ctx.orgId)) as Kysely<ProjectsDB>;
     if (isTaskDep) {
-      const other = await db
-        .selectFrom("projects_tasks")
-        .select(["id", "title"])
-        .where("id", "=", dependsOn)
-        .executeTakeFirst();
-      if (!other) return { ok: false, error: `no task with id ${dependsOn}` };
+      const refused = await refuseNewTaskDependency(db, task.id, dependsOn);
+      if (refused) return { ok: false, error: refused };
     }
     const [targetModule, targetType] = kind.includes(":")
       ? [kind.split(":")[0]!, kind.split(":")[1]!]
@@ -76,12 +71,14 @@ export function registerDependencyHandlers(): void {
       .returningAll()
       .executeTakeFirst();
     if (!row) return { ok: false, error: `no dependency with id ${depId}` };
-    const r = row as Record<string, unknown>;
+    // What it waited on, so the way back can record the same wait again. A
+    // record dependency is stored as module + type + id; the action takes it
+    // back as blocks_kind "module:type" + blocks_id.
+    const blocksKind = row.target_module && row.target_entity_type ? `${row.target_module}:${row.target_entity_type}` : null;
     return {
       ok: true,
       result: { removed: row.id },
-      // What it waited on, so the way back can record the same wait again.
-      was: { task_id: r.task_id, depends_on_task_id: r.depends_on_task_id ?? null, blocks_kind: r.blocks_kind ?? null, blocks_id: r.blocks_id ?? null },
+      was: { task_id: row.task_id, depends_on_task_id: row.depends_on_task_id ?? null, blocks_kind: blocksKind, blocks_id: row.target_entity_id ?? null },
     };
   });
 }

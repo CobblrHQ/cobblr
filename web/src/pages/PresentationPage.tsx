@@ -913,7 +913,7 @@ function FieldsEditorModal({ entityKind, title, onClose }: { entityKind: string;
   });
   const applyingPreset = essentialsPreset.isPending || showAllNative.isPending;
   return (
-    <Modal open onClose={onClose} title={`Fields — ${title}`} size="md">
+    <Modal open onClose={onClose} title={`Fields: ${title}`} size="md">
       <p className="text-sm text-muted mb-3">
         Rename or hide any field on this thing's form - native or bundle-added - to un-clutter the
         modal and speak your own language. Your edits layer on top and survive bundle updates; reset

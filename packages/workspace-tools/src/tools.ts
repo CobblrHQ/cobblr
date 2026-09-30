@@ -32,6 +32,16 @@ interface WorkspaceToolBase {
   name: string;
   description: string;
   params: z.ZodRawShape;
+  /** Who decides whether this write may go ahead. Absent: the door does (a
+   *  chat proposal, the MCP Changes setting). "service-gate": the server's
+   *  service gate does, from the capability's effect (service-consent.ts),
+   *  and a job that needs a person waits on its own card. The door must not
+   *  also hold it, or a print asks twice. */
+  consentBy?: "service-gate";
+  /** Sent only in a workspace that can use it, not on every turn. Absent:
+   *  always sent. "services": only when at least one service capability is
+   *  connected here, which on most turns in most workspaces it is not. */
+  sentWhen?: "services";
   execute(api: WorkspaceApi, args: Record<string, unknown>): Promise<ToolResult>;
 }
 
@@ -191,7 +201,12 @@ async function walkKind(
   | { ok: false; res: WorkspaceApiResponse }
 > {
   const items: Array<Record<string, unknown>> = [];
-  let total = 0;
+  // The route answers a total only when it knows one: a resolver that does
+  // not count leaves it off every full page. A missing total is NOT "this
+  // page is all there is"; only a short page is the end. Reading it as the
+  // page length stopped every count at the first 200 and called it complete.
+  let known: number | null = null;
+  let ended = false;
   const retired = opts.includeRetired ? "&include_retired=1" : "";
   for (let offset = 0; offset < COUNT_SCAN_MAX; offset += COUNT_PAGE) {
     const res = await api.request("GET", `/entities/${encodeURIComponent(kind)}?limit=${COUNT_PAGE}&offset=${offset}${retired}`);
@@ -199,10 +214,14 @@ async function walkKind(
     const body = res.body as { items?: unknown[]; total?: number };
     const page = Array.isArray(body.items) ? (body.items as Array<Record<string, unknown>>) : [];
     items.push(...page);
-    total = typeof body.total === "number" ? body.total : items.length;
-    if (page.length < COUNT_PAGE || items.length >= total) break;
+    if (typeof body.total === "number") known = body.total;
+    if (page.length < COUNT_PAGE || (known !== null && items.length >= known)) {
+      ended = true;
+      break;
+    }
   }
-  return { ok: true, items, total: Math.max(total, items.length), complete: items.length >= total };
+  const total = Math.max(known ?? items.length, items.length);
+  return { ok: true, items, total, complete: ended && items.length >= total };
 }
 
 /** list_records' fallback when the kind's own search found nothing: the same
@@ -1786,7 +1805,7 @@ export const WORKSPACE_TOOLS: WorkspaceTool[] = [
   {
     name: "delete_record",
     description:
-      "Delete ONE record. Only kinds with can_delete are accepted. Destructive, double-check you have the right record (get_record) before deleting.",
+      "Delete ONE record (kinds with can_delete). Check it is the right one (get_record) first. From outside Cobblr it waits for the person's yes.",
     mode: "write",
     params: {
       kind: z.string().describe("Entity kind id with can_delete true"),
@@ -1799,6 +1818,11 @@ export const WORKSPACE_TOOLS: WorkspaceTool[] = [
       if (!path) return toolFail(`records of "${kind}" can't be deleted this way (no delete route declared)`);
       const res = await api.request("DELETE", `/${path}`);
       if (res.status >= 400) return toolFail(apiErrorMessage(res, "delete failed"));
+      // Over a connection from outside Cobblr the delete waits for the person:
+      // say so, or the assistant reports a deletion that has not happened.
+      if (res.status === 202 && (res.body as { held?: unknown }).held === true) {
+        return toolOk({ deleted: false, waiting_for_person: true, message: (res.body as { message?: string }).message });
+      }
       return toolOk(res.status === 204 ? { deleted: true } : res.body);
     },
   },
@@ -1848,6 +1872,114 @@ export const WORKSPACE_TOOLS: WorkspaceTool[] = [
         );
       }
       return toolOk(res.body);
+    },
+  },
+  {
+    name: "list_services",
+    sentWhen: "services",
+    description:
+      "The outside services usable here, by capability (design.part, slice.model, ...): summary, effect, input schema, files. Pass capability for one service's options too (templates, printer models). Start one with invoke_service.",
+    mode: "read",
+    paging: { by: "one-call", why: "one row per connected capability; a workspace has a handful" },
+    params: { capability: z.string().optional() },
+    execute: async (api, args) => {
+      const one = typeof args.capability === "string" && args.capability.trim() ? args.capability.trim() : null;
+      if (one) {
+        const r = await api.request("GET", `/services/capabilities/${encodeURIComponent(one)}`);
+        if (r.status >= 400) return toolFail(apiErrorMessage(r, `couldn't read ${one}`));
+        const c = r.body as { id?: string; title?: string; summary?: string; effect?: string; input_schema?: unknown; options?: unknown };
+        return toolOk({ capability: c.id, title: c.title, summary: c.summary, effect: c.effect, input_schema: c.input_schema, options: c.options ?? null });
+      }
+      const res = await api.request("GET", "/services/capabilities");
+      if (res.status >= 400) return toolFail(apiErrorMessage(res, "couldn't list services"));
+      const items = ((res.body.items ?? res.body) as Array<{
+        id?: string;
+        title?: string;
+        summary?: string;
+        effect?: string;
+        input_schema?: unknown;
+        files_in?: Array<{ name?: string; types?: string[]; required?: boolean }>;
+        answered_by?: Array<{ label?: string }>;
+      }>) ?? [];
+      return toolOk(
+        items.map((c) => ({
+          capability: c.id,
+          title: c.title,
+          summary: c.summary,
+          effect: c.effect,
+          input_schema: c.input_schema,
+          files: (c.files_in ?? []).map((f) => ({ name: f.name, types: f.types, required: !!f.required })),
+          answered_by: c.answered_by?.[0]?.label ?? null,
+        })),
+      );
+    },
+  },
+  {
+    name: "invoke_service",
+    sentWhen: "services",
+    description:
+      "Start a service job: capability, input per its schema, files by name as file ids. Returns at once. A physical or paid job waits for the person's confirm on its card: say it is waiting, never done. Follow with get_service_job.",
+    mode: "write",
+    consentBy: "service-gate",
+    params: {
+      capability: z.string().describe("e.g. slice.model"),
+      input: z.record(z.unknown()),
+      files: z.record(z.string()).optional().describe("{name: file id}"),
+      attach_kind: z.string().optional().describe("Attach outputs to this record's kind"),
+      attach_id: z.string().optional(),
+    },
+    execute: async (api, args) => {
+      const attach = typeof args.attach_kind === "string" && typeof args.attach_id === "string" ? { kind: args.attach_kind, id: args.attach_id } : undefined;
+      const res = await api.request("POST", "/services/jobs", {
+        capability: String(args.capability ?? ""),
+        input: (args.input as Record<string, unknown> | undefined) ?? {},
+        ...(args.files ? { files: args.files } : {}),
+        ...(attach ? { attach_to: attach } : {}),
+      });
+      if (res.status >= 400) return toolFail(apiErrorMessage(res, "the service job could not be started"));
+      const job = (res.body.job ?? res.body) as { id?: string; status?: string; message?: string | null; capability?: string };
+      return toolOk({
+        job_id: job.id,
+        capability: job.capability,
+        status: job.status,
+        ...(job.status === "awaiting_confirm" ? { waiting_for: "the person to confirm it on its card" } : {}),
+        ...(job.message ? { message: job.message } : {}),
+      });
+    },
+  },
+  {
+    name: "get_service_job",
+    sentWhen: "services",
+    description:
+      "One service job: status, progress, what it asks when needs_input, and when done its output and files.",
+    mode: "read",
+    paging: { by: "one-call", why: "a job is one record, read whole" },
+    params: { job_id: z.string() },
+    execute: async (api, args) => {
+      if (!args.job_id) return toolFail("which job? pass the job_id invoke_service returned");
+      const res = await api.request("GET", `/services/jobs/${encodeURIComponent(String(args.job_id ?? ""))}`);
+      if (res.status >= 400) return toolFail(apiErrorMessage(res, "couldn't read the job"));
+      const j = (res.body.job ?? res.body) as {
+        id?: string;
+        capability?: string;
+        status?: string;
+        progress?: number | null;
+        message?: string | null;
+        needs?: { prompt?: string } | null;
+        output?: unknown;
+        files?: Array<{ name?: string; direction?: string; file_id?: string | null }>;
+        error?: { code?: string; message?: string } | null;
+      };
+      return toolOk({
+        job_id: j.id,
+        capability: j.capability,
+        status: j.status,
+        progress: j.progress ?? null,
+        ...(j.message ? { message: j.message } : {}),
+        ...(j.status === "needs_input" && j.needs?.prompt ? { asking: j.needs.prompt } : {}),
+        ...(j.status === "done" ? { output: j.output, files: (j.files ?? []).filter((f) => f.direction !== "in").map((f) => ({ name: f.name, file_id: f.file_id ?? null })) } : {}),
+        ...(j.error ? { error: j.error.message ?? j.error.code } : {}),
+      });
     },
   },
   {

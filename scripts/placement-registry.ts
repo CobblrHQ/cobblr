@@ -186,7 +186,7 @@ export const PLACEMENT: PlacementRow[] = [
     what: "a self-heal that repairs workspaces created before your change",
     keywords: ["self heal", "selfheal", "reconcile", "backfill", "heal shim", "boot", "existing workspaces", "older workspaces", "one-shot"],
     dir: "api/src/platform/",
-    exemplar: "api/src/platform/heal-approved-ai.ts",
+    exemplar: "api/src/platform/reconcile-contributed-fields.ts",
     why: "Signup only enables and migrates what existed the day a workspace was made, so anything an OLDER workspace also needs is silently missing there and the platform, not the user, has to close that gap.",
     lints: ["lint:heal-shims", "lint:test-support-doors-scoped", "lint:boot-pass-born-with"],
     notes: [

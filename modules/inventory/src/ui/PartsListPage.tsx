@@ -26,6 +26,7 @@ import {
   LOCATION_GROUP_KEY,
   type EditableCellDef, useAskCobbAboutSelection, useUnits, TILE_GRID, InboxWaitingStrip, SearchInput } from "@cobblr/platform-web";
 import { useInventory } from "./context";
+import { AddToListButton } from "./AddToListButton";
 import { QtyStepper } from "./QtyStepper";
 import { availableOnHand } from "../stock-derived";
 import { HoldingRows, RollupLine } from "./HoldingRows";
@@ -42,6 +43,7 @@ import { PartDetailModal } from "./PartDetailPage";
 import type { PartListItem, InvFieldDef } from "./api";
 import { countOf, viewQuery } from "@cobblr/platform-contract";
 import { strayRecords } from "@cobblr/platform-contract/instance-for-category";
+import { withArticle } from "@cobblr/platform-contract/plural";
 
 /** One of this module's lists, as `GET /instances?module=inventory` describes it. */
 interface SiblingList {
@@ -393,7 +395,7 @@ export function PartsListPage() {
           /* skip this one, keep going */
         }
       }
-      toast.success(`Queued ${queued} label${queued === 1 ? "" : "s"} — open Labels → Queue to print.`);
+      toast.success(`Queued ${queued} label${queued === 1 ? "" : "s"}. Open Labels → Queue to print.`);
       setSelected(new Set());
     } finally {
       setBulkLabelBusy(false);
@@ -723,9 +725,9 @@ export function PartsListPage() {
               {activeView
                 ? `Nothing in “${activeView.name}” yet.`
                 : hasFilters
-                  ? "No matches — try widening the filter."
+                  ? "No matches. Try widening the filter."
                   : welcome
-                    ? `Tap below to add a ${noun} by hand, or use Scan in the top bar to add one from a label.`
+                    ? `Tap below to add ${withArticle(noun)} by hand, or use Scan in the top bar to add one from a label.`
                     : `No ${plural} here yet. Add your first ${noun} to get started.`}
             </p>
             {!hasFilters && (
@@ -733,7 +735,7 @@ export function PartsListPage() {
                 onClick={() => setAdding(true)}
                 className="inline-flex items-center gap-1.5 rounded-md bg-cobble-600 hover:bg-cobble-700 text-white text-sm font-medium px-4 py-2 transition"
               >
-                <Plus size={15} /> {welcome ? `Add a ${itemNoun}` : `New ${itemNoun}`}
+                <Plus size={15} /> {welcome ? `Add ${withArticle(itemNoun)}` : `New ${itemNoun}`}
               </button>
             )}
           </div>
@@ -1384,9 +1386,12 @@ function PartsTable({
               <td className="px-3 py-2">
                 <div className="flex flex-wrap gap-1 items-center justify-end">
                   {(p.rollup ? p.rollup.low : p.low_stock) && (
-                    <span className="inline-flex items-center gap-1 text-[10px] text-ember-500 border border-ember-200 dark:border-ember-800 rounded px-1.5 py-0.5">
-                      <AlertTriangle size={10} /> low
-                    </span>
+                    <>
+                      <span className="inline-flex items-center gap-1 text-[10px] text-ember-500 border border-ember-200 dark:border-ember-800 rounded px-1.5 py-0.5">
+                        <AlertTriangle size={10} /> low
+                      </span>
+                      <AddToListButton kind={entityKind} id={p.id} />
+                    </>
                   )}
                   {/* The under-gap, as STATE not a question: this many are
                       counted but have no serial on file yet. Shown the whole
@@ -1557,9 +1562,12 @@ function PartsTable({
                 )}
                 <div className="mt-1 flex flex-wrap gap-1">
                   {!p.rollup && p.low_stock && (
-                    <span className="inline-flex items-center gap-1 text-[10px] text-ember-500 border border-ember-200 dark:border-ember-800 rounded px-1.5 py-0.5">
-                      <AlertTriangle size={10} /> low
-                    </span>
+                    <>
+                      <span className="inline-flex items-center gap-1 text-[10px] text-ember-500 border border-ember-200 dark:border-ember-800 rounded px-1.5 py-0.5">
+                        <AlertTriangle size={10} /> low
+                      </span>
+                      <AddToListButton kind={entityKind} id={p.id} />
+                    </>
                   )}
                   {warrantyChip(p.warranty_days_until, p.lifetime_warranty)}
                   {p.insured && (
@@ -1800,7 +1808,7 @@ function SpoolmanModal({
   const sync = useMutation({
     mutationFn: (id: string) => api.syncSpoolman(id, instance),
     onSuccess: (r) => {
-      toast.success(`Synced ${r.synced} spool${r.synced === 1 ? "" : "s"} — ${r.created} new, ${r.updated} updated`);
+      toast.success(`Synced ${r.synced} spool${r.synced === 1 ? "" : "s"}: ${r.created} new, ${r.updated} updated`);
       onSynced();
       invalidate();
     },

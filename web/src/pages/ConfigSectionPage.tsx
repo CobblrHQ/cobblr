@@ -15,6 +15,7 @@ import {
   HOSTED_SECTION,
   visibleDestinations,
   type ConfigSection,
+  sectionAction,
 } from "../lib/configuration-nav";
 import { useConfigVisibility } from "../lib/useConfigVisibility";
 import { useHostedPanels } from "../lib/useHostedPanels";
@@ -63,7 +64,7 @@ export function ConfigSectionPage() {
   }
 
   const Icon = meta!.icon;
-  const action = !isHosted ? CONFIG_SECTIONS[section as ConfigSection].action : undefined;
+  const action = !isHosted ? sectionAction(section as ConfigSection, ctx.role) : undefined;
 
   return (
     <div className="space-y-5">

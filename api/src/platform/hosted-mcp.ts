@@ -21,14 +21,13 @@
 // credentials and never elevates.
 
 import { platform } from "@cobblr/platform-contract";
-import { actionRunsUnconfirmed } from "@cobblr/platform-contract/action-consent";
 import { WORKSPACE_TOOLS, jsonSchemaOf, mcpToolName, toolFromMcpName, workspaceLinks, type WorkspaceApi } from "@cobblr/workspace-tools";
 import { publicBaseUrl } from "@cobblr/platform-contract/public-url";
 import { signMcpWriteGrant, verifySession } from "../auth/jwt.js";
 import { resolveApiToken } from "../auth/api-tokens.js";
 import { MCP_PATH, originOf, protectedResourceMetadataUrl } from "../auth/oauth.js";
 import { mcpProxyHeaders } from "../auth/mcp-proxy.js";
-import { meta } from "../db/meta.js";
+import { actionRefusal, actionSafety } from "./ai-action-door.js";
 
 const SELF_BASE = `http://127.0.0.1:${process.env.API_PORT || "4000"}/api/v1`;
 const SERVER_INFO = { name: "cobblr", version: "0.1.0" };
@@ -109,22 +108,6 @@ function argString(args: Json, name: string): string {
   return typeof v === "string" ? v.trim() : "";
 }
 
-/** What the registry says about an action's safety. Read straight from
- *  cobblr_meta rather than over REST: the decision must not depend on the
- *  caller's own token, and registry-sync keeps the row current from the
- *  manifest on every boot. */
-async function actionSafety(
-  actionId: string,
-): Promise<{ id: string; label: string | null; undoable: boolean } | null> {
-  if (!actionId) return null;
-  const row = await meta
-    .selectFrom("entity_actions")
-    .select(["id", "label", "undoable"])
-    .where("id", "=", actionId)
-    .executeTakeFirst();
-  return row ? { id: row.id, label: row.label, undoable: row.undoable === true } : null;
-}
-
 /** A held token names its workspace; a call aimed at another is refused in
  *  words the model can repeat, rather than a bare 403 from the route. */
 function heldSlug(slug: string, args: Json): string {
@@ -154,6 +137,11 @@ function workspaceApiFor(token: string, slug: string): WorkspaceApi {
         headers: {
           authorization: `Bearer ${token}`,
           ...mcpProxyHeaders(),
+          // Says an MCP client is calling, so an API-token call is stamped as
+          // the MCP door (a service job then follows MCP's consent), the way
+          // the stdio server already says it. A relay grant is the assistant
+          // whatever this says.
+          "x-cobblr-client": "mcp",
           ...(body !== undefined ? { "content-type": "application/json" } : {}),
         },
         body: body !== undefined ? JSON.stringify(body) : undefined,
@@ -237,51 +225,66 @@ async function writeModeFor(token: string, slug: string): Promise<WriteMode> {
  *  the reasoning that actions always confirm and a relay cannot ask - which
  *  removed the tool from the list entirely, so the assistant reported having no
  *  way to run ANY action rather than a reason (2026-08-19). But the real line
- *  was never actions-vs-records: a relay auto-applies create / update / DELETE
- *  on records because those are tracked and undoable, and reordering locations
+ *  was never actions-vs-records: a relay auto-applies create / update on
+ *  records because those are tracked and undoable, and reordering locations
  *  is undone by reordering them again. So the tool follows the same consent as
- *  every other write, and the per-ACTION judgement moves to actionRefusal
- *  below, where it can name the action and say what to do instead.
+ *  every other write, and the per-ACTION judgement moves to actionRefusal,
+ *  where it can name the action and say what to do instead.
  *
- *  Every write tool now answers the same way, so `_tool` is unused - the
- *  parameter stays because the seam is per tool and a future rule will want it,
- *  and because callers read better naming what they are asking about. */
-export function writeRefusal(_tool: string, mode: WriteMode): string | null {
+ *  The one per-tool rule is the delete, held for a person in every mode, as
+ *  the in-app chat holds it at auto. */
+export function writeRefusal(tool: string, mode: WriteMode): string | null {
+  // A delete is held for a person in the in-app chat at "auto" too: a
+  // record's own text (a name, a scanned note) must never be able to steer
+  // an unconfirmed delete, and an outside assistant reads the same text. So
+  // the relay never offers one, whatever the mode.
+  if (tool === "delete_record") {
+    return "Deleting needs a person to confirm it, and this connection has no way to show a confirmation. Delete it in Cobblr, where the confirm step appears.";
+  }
   if (mode === "auto") return null;
   return mode === "off"
     ? 'Changes are turned off for this chat. The user can allow them in the chat\'s tool settings ("Changes" → Ask or Auto).'
     : 'Changes are set to "Ask" for this chat, and this connection cannot show a confirmation prompt. The user can switch "Changes" to Auto in the chat\'s tool settings (every change stays tracked and undoable), or make this one in Cobblr directly.';
 }
 
-/** Why this caller may not run this PARTICULAR action, or null if they may.
- *
- *  An action that cannot be put right again needs a person in front of it, and
- *  this connection cannot show one a confirmation. Actions declare that for
- *  themselves (`undoable` in the manifest), defaulting to false, so a new
- *  action is cautious until someone decides otherwise. */
-export function actionRefusal(action: { id: string; label?: string | null; undoable?: boolean } | null): string | null {
-  if (!action) return null; // unknown id — let the invoke route give its own error
-  // The one rule both doors read; the in-app auto chat asks the same question.
-  if (actionRunsUnconfirmed(action)) return null;
-  const name = action.label ? `"${action.label}"` : action.id;
-  return `${name} cannot be undone from inside the workspace, so it needs a person to confirm it, and this connection has no way to show a confirmation. Run it from Cobblr, where the confirm step appears. Actions that CAN be undone run from here normally - list_actions marks each one.`;
-}
+export { actionRefusal };
+
+/** Read tools that POST to do their reading (replan_putaway recomputes a
+ *  proposal and files nothing). A caller allowed only to look cannot send a
+ *  POST, so these are not offered to one: a tool on the list that always
+ *  refuses reads to the assistant as a broken tool. The test derives this set
+ *  by running every read tool, so a new one cannot be missed. */
+export const READ_TOOLS_THAT_POST = new Set(["replan_putaway"]);
 
 /** The tool list a relay grant sees at `write_mode`. Exported so the guardrail
  *  test can assert advertise-equals-execute without going over HTTP. */
 export function toolsForWriteMode(mode: WriteMode): typeof HOSTED_MCP_TOOLS {
   return HOSTED_MCP_TOOLS.filter((t) => {
+    // A grant is pinned to the one workspace it was made in; the list of
+    // workspaces is refused to it, and there is nothing to choose between.
+    if (t.name === "cobblr_list_workspaces") return false;
     const reg = toolFromMcpName(t.name);
-    if (!reg || reg.mode === "read") return true;
+    // A service job's consent is the server's gate, not the Changes setting:
+    // work that changes nothing runs even on Ask, and a physical job is
+    // refused there with what to do instead.
+    if (!reg || reg.consentBy) return true;
+    if (reg.mode === "read") return !READ_TOOLS_THAT_POST.has(reg.name);
     return writeRefusal(reg.name, mode) === null;
+  });
+}
+
+/** What a token held to look only is offered: no writes, and no read that has
+ *  to POST. */
+export function toolsForLookOnly(): typeof HOSTED_MCP_TOOLS {
+  return HOSTED_MCP_TOOLS.filter((t) => {
+    const reg = toolFromMcpName(t.name);
+    return !reg || (reg.mode !== "write" && !READ_TOOLS_THAT_POST.has(reg.name));
   });
 }
 
 async function toolsFor(caller: Caller, token: string): Promise<typeof HOSTED_MCP_TOOLS> {
   if (caller.kind === "full") return HOSTED_MCP_TOOLS;
-  if (caller.kind === "held") {
-    return caller.lookOnly ? HOSTED_MCP_TOOLS.filter((t) => toolFromMcpName(t.name)?.mode !== "write") : HOSTED_MCP_TOOLS;
-  }
+  if (caller.kind === "held") return caller.lookOnly ? toolsForLookOnly() : HOSTED_MCP_TOOLS;
   return toolsForWriteMode(await writeModeFor(token, caller.slug));
 }
 
@@ -325,7 +328,7 @@ async function callTool(name: string, args: Json, token: string, defaultSlug: st
   // A grant is pinned to ONE workspace server-side; honour that here too, so a
   // `workspace` argument can never aim the call — or the write grant minted for
   // it — at a different workspace than the one the user is chatting in.
-  if (caller.kind === "held" && caller.lookOnly && tool.mode === "write") {
+  if (caller.kind === "held" && caller.lookOnly && (tool.mode === "write" || READ_TOOLS_THAT_POST.has(tool.name))) {
     throw new Error("This connection's token can look but not change anything. Make changes in Cobblr, or connect with a token that can make changes.");
   }
   const slug =
@@ -340,7 +343,7 @@ async function callTool(name: string, args: Json, token: string, defaultSlug: st
   // handed back to the bridge.
   let execToken = token;
   if (caller.kind === "grant" && tool.mode === "write") {
-    const refusal = writeRefusal(tool.name, await writeModeFor(token, caller.slug));
+    const refusal = tool.consentBy ? null : writeRefusal(tool.name, await writeModeFor(token, caller.slug));
     if (refusal) throw new Error(refusal);
     if (tool.name === "invoke_action") {
       const actionRefused = actionRefusal(await actionSafety(argString(args, "action_id")));

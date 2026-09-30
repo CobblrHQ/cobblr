@@ -51,11 +51,9 @@
 // Escape hatch: none beyond the two markers - they ARE the hatch, and they
 // leave a sentence behind.
 
-import { readdirSync, readFileSync, existsSync, statSync, writeFileSync } from "node:fs";
+import { readdirSync, readFileSync, existsSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-
-const MODULES = "modules";
-const KERNEL = join("api", "src", "routes");
+import { MODULES, WIRE_PATH, kernelRoutes, moduleRoutes, norm, walkTs as walk } from "./lib/mutating-routes.ts";
 const BASELINE_FILE = join("scripts", "ai-reach-kernel-baseline.json");
 const REGISTRY_FILE = join("docs", "architecture", "ai-capability-registry.md");
 const LOOKBACK = 6;
@@ -125,20 +123,7 @@ function noDoorFor(file: string, path: string): string | null {
 
 /** Kernel wire and operator plumbing: never a capability a person asks the
  *  assistant for, so no annotation is demanded. Kept narrow on purpose. */
-const PLUMBING =
-  /\/(edge|poll|respond|register|webhook|hooks?|callback|heartbeat|probe|healthz|sweep|openapi|_internal)(\/|$)/i;
-
-function walk(dir: string, acc: string[] = []): string[] {
-  for (const e of readdirSync(dir)) {
-    const p = join(dir, e);
-    if (statSync(p).isDirectory()) walk(p, acc);
-    else if (p.endsWith(".ts") && !p.endsWith(".d.ts") && !p.endsWith(".test.ts")) acc.push(p);
-  }
-  return acc;
-}
-
-const norm = (p: string): string =>
-  ("/" + p.replace(/^\/+/, "")).replace(/\{[^}]+\}/g, ":x").replace(/:[a-zA-Z_]+/g, ":x").replace(/\/+$/, "") || "/";
+const PLUMBING = WIRE_PATH;
 
 interface Finding {
   where: string;
@@ -166,6 +151,8 @@ function reachReason(above: string): string {
   for (let i = at; i < lines.length; i++) {
     const raw = lines[i]!.replace(/^\s*\/\/\s?/, "");
     if (i > at && !/^\s*\/\//.test(lines[i]!)) break;
+    // A screen's marker (lint-ui-reach) is the next sentence, not this one's.
+    if (i > at && /UI-(REACH|SCREEN):/.test(lines[i]!)) break;
     out.push(raw.replace(/^AI-REACH:\s*/, "").trim());
   }
   return out.join(" ").trim() || "stated at the route";
@@ -186,57 +173,34 @@ for (const mod of readdirSync(MODULES)) {
   );
   const actionIds = new Set([...manSrc.matchAll(/id:\s*["'`]([a-z0-9-]+:[a-z0-9-]+)["'`]/g)].map((m) => m[1]!));
 
-  // Router mount prefixes, from the module's api/index.ts.
-  const idx = join(api, "index.ts");
-  const mounts = new Map<string, string>();
-  if (existsSync(idx)) {
-    for (const m of readFileSync(idx, "utf8").matchAll(/\.use\(\s*(?:["'`]([^"'`]+)["'`]\s*,\s*)?(\w+)\s*\)/g)) {
-      mounts.set(m[2]!, m[1] ? norm(m[1]) : "");
+  for (const r of moduleRoutes(mod, LOOKBACK)) {
+    const f = r.file;
+    const full = r.path;
+    const where = `${f}:${r.line}`;
+    const route = `${r.verb} ${full}`;
+    checked++;
+
+    if (declared.has(full)) {
+      registry.push({ area: mod, file: f, route, status: "crud", detail: "a record kind's own create/update/delete" });
+      continue; // a kind's CRUD endpoint
     }
-  }
+    if (PLUMBING.test(full)) continue; // the wire, operator plumbing
 
-  for (const f of walk(api)) {
-    const lines = readFileSync(f, "utf8").split("\n");
-    for (let i = 0; i < lines.length; i++) {
-      const m = lines[i]!.match(/^\s*(\w+)\s*\.\s*(post|patch|put|delete)\s*\(\s*(?:["'`]([^"'`]*)["'`])?/);
-      if (!m) continue;
-      const [, varName, verb, sub] = m;
-      if (!/[Rr]outer$/.test(varName!)) continue;
-      // The path may sit on the next line: `router.post(\n  "/x",`
-      let path = sub;
-      if (path === undefined) {
-        const nxt = lines[i + 1]?.match(/^\s*["'`]([^"'`]*)["'`]/);
-        path = nxt?.[1];
+    const above = r.above;
+    const act = above.match(ACTION_MARK);
+    if (act) {
+      if (!actionIds.has(act[1]!)) {
+        findings.push({ where, route, problem: `AI-ACTION names "${act[1]}", which ${mod}'s manifest does not declare` });
       }
-      if (path === undefined) continue;
-      const prefix = mounts.get(varName!);
-      const full = prefix === undefined ? norm(path) : norm(prefix + (path === "/" ? "" : path));
-      const where = `${f}:${i + 1}`;
-      const route = `${verb!.toUpperCase()} ${full}`;
-      checked++;
-
-      if (declared.has(full)) {
-        registry.push({ area: mod, file: f, route, status: "crud", detail: "a record kind's own create/update/delete" });
-        continue; // a kind's CRUD endpoint
-      }
-      if (PLUMBING.test(full)) continue; // the wire, operator plumbing
-
-      const above = lines.slice(Math.max(0, i - LOOKBACK), i).join("\n");
-      const act = above.match(ACTION_MARK);
-      if (act) {
-        if (!actionIds.has(act[1]!)) {
-          findings.push({ where, route, problem: `AI-ACTION names "${act[1]}", which ${mod}'s manifest does not declare` });
-        }
-        registry.push({ area: mod, file: f, route, status: "action", detail: act[1]! });
-        continue;
-      }
-      if (REACH_MARK.test(above)) {
-        registry.push({ area: mod, file: f, route, status: "no-door", detail: reachReason(above) });
-        continue;
-      }
-      registry.push({ area: mod, file: f, route, status: "open", detail: "" });
-      findings.push({ where, route, problem: "no AI-ACTION / AI-REACH annotation" });
+      registry.push({ area: mod, file: f, route, status: "action", detail: act[1]! });
+      continue;
     }
+    if (REACH_MARK.test(above)) {
+      registry.push({ area: mod, file: f, route, status: "no-door", detail: reachReason(above) });
+      continue;
+    }
+    registry.push({ area: mod, file: f, route, status: "open", detail: "" });
+    findings.push({ where, route, problem: "no AI-ACTION / AI-REACH annotation" });
   }
 }
 
@@ -283,53 +247,44 @@ const unbaselined: string[] = [];
  *  which it is at the route. */
 const WRITING = process.argv.includes("--write-baseline");
 
-if (existsSync(KERNEL)) {
-  for (const f of walk(KERNEL)) {
-    const lines = readFileSync(f, "utf8").split("\n");
-    for (let i = 0; i < lines.length; i++) {
-      const m = lines[i]!.match(/^\s*(\w+)\s*\.\s*(post|patch|put|delete)\s*\(\s*(?:["'`]([^"'`]*)["'`])?/);
-      if (!m) continue;
-      const [, varName, verb, sub] = m;
-      if (!/[Rr]outer$/.test(varName!)) continue;
-      let path = sub;
-      if (path === undefined) path = lines[i + 1]?.match(/^\s*["'`]([^"'`]*)["'`]/)?.[1];
-      if (path === undefined) continue;
-      const full = norm(path);
-      if (PLUMBING.test(full)) continue;
-      checked++;
+{
+  for (const r of kernelRoutes(LOOKBACK)) {
+    const f = r.file;
+    const full = r.path;
+    if (PLUMBING.test(full)) continue;
+    checked++;
 
-      const route = `${verb!.toUpperCase()} ${full}`;
-      const key = `${f.replace(/^api\/src\/routes\//, "")} ${route}`;
-      const above = lines.slice(Math.max(0, i - LOOKBACK), i).join("\n");
-      const act = above.match(ACTION_MARK);
-      if (act) {
-        if (!allActionIds.has(act[1]!)) {
-          findings.push({ where: `${f}:${i + 1}`, route, problem: `AI-ACTION names "${act[1]}", which no module declares` });
-        }
-        registry.push({ area: "kernel", file: f, route, status: "action", detail: act[1]! });
-        continue;
+    const route = `${r.verb} ${full}`;
+    const key = `${f.replace(/^api\/src\/routes\//, "")} ${route}`;
+    const above = r.above;
+    const act = above.match(ACTION_MARK);
+    if (act) {
+      if (!allActionIds.has(act[1]!)) {
+        findings.push({ where: `${f}:${r.line}`, route, problem: `AI-ACTION names "${act[1]}", which no module declares` });
       }
-      if (REACH_MARK.test(above)) {
-        registry.push({ area: "kernel", file: f, route, status: "no-door", detail: reachReason(above) });
-        continue;
-      }
-      const family = noDoorFor(f, full);
-      if (family) {
-        registry.push({ area: "kernel", file: f, route, status: "no-door", detail: family });
-        continue;
-      }
-      registry.push({ area: "kernel", file: f, route, status: "open", detail: "" });
-      if (baselined.has(key)) {
-        stillUnreachable.add(key);
-        continue;
-      }
-      unbaselined.push(key);
-      findings.push({
-        where: `${f}:${i + 1}`,
-        route,
-        problem: "no AI-ACTION / AI-REACH annotation (kernel route, not in the baseline)",
-      });
+      registry.push({ area: "kernel", file: f, route, status: "action", detail: act[1]! });
+      continue;
     }
+    if (REACH_MARK.test(above)) {
+      registry.push({ area: "kernel", file: f, route, status: "no-door", detail: reachReason(above) });
+      continue;
+    }
+    const family = noDoorFor(f, full);
+    if (family) {
+      registry.push({ area: "kernel", file: f, route, status: "no-door", detail: family });
+      continue;
+    }
+    registry.push({ area: "kernel", file: f, route, status: "open", detail: "" });
+    if (baselined.has(key)) {
+      stillUnreachable.add(key);
+      continue;
+    }
+    unbaselined.push(key);
+    findings.push({
+      where: `${f}:${r.line}`,
+      route,
+      problem: "no AI-ACTION / AI-REACH annotation (kernel route, not in the baseline)",
+    });
   }
 }
 

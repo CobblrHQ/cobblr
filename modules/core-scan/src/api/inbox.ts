@@ -69,6 +69,7 @@ import {
   isActionStep,
   type ActionUndoStep,
 } from "@cobblr/platform-contract";
+import { decodeKeysetCursor, encodeKeysetCursor } from "@cobblr/platform-contract/keyset-cursor";
 import { splitEntityKind, entityKindOf } from "@cobblr/platform-contract/entity-kind";
 import { roleSatisfies } from "@cobblr/platform-contract/org-roles";
 import { createCapabilityForModule } from "@cobblr/platform-contract/create-capability";
@@ -187,6 +188,7 @@ import { normaliseCategory } from "@cobblr/platform-contract/category-reconcile"
 import { receiptFacts, type ReceiptMeta } from "../services/receipt-facts.js";
 import { receiptRecord, type ReceiptLineMeta } from "../services/receipt-record.js";
 import { runReceiptBackfill } from "../services/receipt-backfill.js";
+import { withArticle } from "@cobblr/platform-contract/plural";
 
 /** A table's own category word for a row ("Dairy" on Groceries), which says
  *  how a thing keeps when the catalog's word is in another language. */
@@ -202,7 +204,7 @@ async function tableCategoryWord(
 ): Promise<string | null> {
   if (!kind || !fields) return null;
   const axis = await platform().categoryAxis.for({ orgId, kind, instance }).catch(() => null);
-  const name = axis?.slot.kind === "extras" ? axis.slot.name : undefined;
+  const name = axis?.slot.kind === "extras" ? axis.slot.name : axis?.slot.kind === "field" ? axis.slot.column : undefined;
   const v = name ? fields[name] : undefined;
   if (typeof v === "string" && v.trim()) return v;
   // A table whose axis is the module's own (hidden) category can still keep
@@ -325,6 +327,7 @@ inboxRouter.get(
 );
 
 // AI-REACH: exempt — an operator's explicit heal of routes stored before the rule; the old list is kept under reroute_prior
+// UI-REACH: an operator's one-off heal of rows stored before a rule, run by hand
 inboxRouter.post(
   "/inbox/reroute",
   asyncHandler(async (req, res) => {
@@ -349,6 +352,7 @@ inboxRouter.get(
 );
 
 // AI-REACH: exempt — an operator's explicit heal of rows the split wrote before the rule; non-destructive, the value moves to split_dropped
+// UI-REACH: an operator's one-off heal of rows stored before a rule, run by hand
 inboxRouter.post(
   "/inbox/split-series-heal",
   asyncHandler(async (req, res) => {
@@ -1701,16 +1705,15 @@ async function sessionsWithoutRows(db: ReturnType<typeof tenantDb>, present: Set
 }
 
 // Keyset cursor over (created_at, id) — stable even with duplicate timestamps.
+// The shared keyset cursor (@cobblr/platform-contract/keyset-cursor), to the
+// millisecond, in base64url as this list always handed it out.
 function encodeCursor(ts: Date | string, id: string): string {
-  const iso = typeof ts === "string" ? ts : ts.toISOString();
-  return Buffer.from(`${iso}|${id}`, "utf8").toString("base64url");
+  return Buffer.from(encodeKeysetCursor(ts, id), "utf8").toString("base64url");
 }
 function decodeCursor(c: string): { ts: Date; id: string } | null {
   try {
-    const [iso, id] = Buffer.from(c, "base64url").toString("utf8").split("|");
-    if (!iso || !id) return null;
-    const ts = new Date(iso);
-    return Number.isNaN(ts.getTime()) ? null : { ts, id };
+    const k = decodeKeysetCursor(Buffer.from(c, "base64url").toString("utf8"));
+    return k?.id ? { ts: k.at, id: k.id } : null;
   } catch {
     return null;
   }
@@ -1798,7 +1801,7 @@ inboxRouter.get(
     let query = db
       .selectFrom("core_scan_inbox_items")
       .selectAll()
-      .orderBy("created_at", "desc")
+      .orderBy(sql`date_trunc('milliseconds', created_at)`, "desc")
       .orderBy("id", "desc")
       .limit(limit);
     // Default scope: hide discarded items in the standard list.
@@ -1807,13 +1810,8 @@ inboxRouter.get(
     if (source_kind) query = query.where("source_kind", "=", source_kind);
     if (batch_id) query = query.where("scan_batch_id", "=", batch_id);
     const c = cursor ? decodeCursor(cursor) : null;
-    if (c) {
-      query = query.where((eb) =>
-        eb.or([
-          eb("created_at", "<", c.ts),
-          eb.and([eb("created_at", "=", c.ts), eb("id", "<", c.id)]),
-        ]),
-      );
+    if (c && /^[0-9a-f-]{36}$/i.test(c.id)) {
+      query = query.where(sql<boolean>`(date_trunc('milliseconds', created_at), id) < (${c.ts}, ${c.id}::uuid)`);
     }
     const items = await query.execute();
     const last = items[items.length - 1];
@@ -2031,7 +2029,7 @@ inboxRouter.patch(
           .where("id", "=", id)
           .forUpdate()
           .executeTakeFirst();
-        let meta = ((cur?.suggested_metadata ?? {}) as Record<string, unknown>) ?? {};
+        let meta = (cur?.suggested_metadata ?? {}) as Record<string, unknown>;
         if (parsed.data.fields !== undefined) {
           const kind = parsed.data.fields_kind ?? candidateKind(storedCandidateList(cur?.suggested_candidates)[0]);
           meta = applyUserFieldPatch(meta, parsed.data.fields, kind);
@@ -2467,7 +2465,7 @@ inboxRouter.post(
       res.status(400).json({
         error: {
           code: "unknown_target_kind",
-          message: `${kindKey} is not a scan target — its module marks the kind scannable via platform().entities.registerScannable.`,
+          message: `${kindKey} is not a scan target. Its module marks the kind scannable via platform().entities.registerScannable.`,
         },
       });
       return;
@@ -4096,7 +4094,7 @@ async function stampScanHistoryOutcome(
       .select("suggested_metadata")
       .where("id", "=", id)
       .executeTakeFirst();
-    const meta = ((cur?.suggested_metadata ?? {}) as Record<string, unknown>) ?? {};
+    const meta = (cur?.suggested_metadata ?? {}) as Record<string, unknown>;
     const hist = Array.isArray((meta as { history?: unknown }).history)
       ? ([...(meta as { history: Array<Record<string, unknown>> }).history])
       : [];
@@ -4133,7 +4131,7 @@ async function appendScanHistory(
       .select("suggested_metadata")
       .where("id", "=", id)
       .executeTakeFirst();
-    const meta = ((cur?.suggested_metadata ?? {}) as Record<string, unknown>) ?? {};
+    const meta = (cur?.suggested_metadata ?? {}) as Record<string, unknown>;
     const prev = Array.isArray((meta as { history?: unknown }).history)
       ? ((meta as { history: unknown[] }).history as unknown[])
       : [];
@@ -6605,7 +6603,7 @@ inboxRouter.post(
     const qtyField = scannable.qtyField;
     if (!qtyField) {
       res.status(400).json({
-        error: { code: "no_qty", message: `A ${scannable.noun} has no quantity to adjust.` },
+        error: { code: "no_qty", message: `${withArticle(scannable.noun).replace(/^a/, "A")} has no quantity to adjust.` },
       });
       return;
     }
@@ -7633,7 +7631,7 @@ inboxRouter.post(
     for (const id of touched) {
       const row = await db.selectFrom("core_scan_inbox_items").select(["suggested_metadata"]).where("id", "=", id).where("status", "=", "pending").executeTakeFirst();
       if (!row) continue;
-      const meta = ((row.suggested_metadata ?? {}) as Record<string, unknown>) ?? {};
+      const meta = (row.suggested_metadata ?? {}) as Record<string, unknown>;
       const overlay: Record<string, unknown> = {};
       if (parsed.data.tag && parsed.data.tag_item_ids.includes(id)) {
         const cur = Array.isArray(meta.pending_tags) ? (meta.pending_tags as string[]) : [];

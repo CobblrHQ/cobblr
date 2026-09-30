@@ -21,10 +21,10 @@ import { defineModule } from "@cobblr/platform-contract";
 
 export default defineModule({
   name: "core-templates",
-  version: "0.1.0",
+  version: "0.1.1",
   displayName: "Templates",
   description:
-    "Per-workspace entity templates, pre-fill defaults + tags when stamping out a new part / machine / asset / project.",
+    "Start new things from a template with the usual details already filled in.",
   icon: "copy-plus",
   band: "stock",
   autoEnable: true, // ambient capability — on for every workspace
@@ -36,7 +36,6 @@ export default defineModule({
 
   api: () => import("./api/index.js"),
 
-  intents: [],
   dependencies: [],
 
   // AI-REACH: no kinds by design. Templates are READ through the shared
@@ -55,7 +54,6 @@ export default defineModule({
       "core-templates.template.deleted",
       "core-templates.template.instantiated",
     ],
-    api: [],
     actions: [],
   },
 

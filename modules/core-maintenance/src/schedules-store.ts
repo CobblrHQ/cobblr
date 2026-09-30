@@ -10,8 +10,9 @@
 //   - the sweeper makes an occurrence a counter has just made due, and moves
 //     an open one earlier when the counter passes its mark before its date.
 //
-// A counter is read through the record's own kind (EntityWriter.counters):
-// only the machines module reads machines_machines.
+// A counter is read through the kernel (entities.readCounters): a module's own
+// counters through its writer, and any number field marked `usage` from the
+// record, so only the machines module reads machines_machines.
 
 import { platform } from "@cobblr/platform-contract";
 import type { Kysely, Selectable } from "kysely";
@@ -46,15 +47,12 @@ export function stateOf(s: ScheduleRow): ScheduleState {
 
 /** The counters a kind keeps, for the "every [200] [print hours ▾]" choice. */
 export async function counterDefs(orgId: string, kind: string): Promise<readonly { key: string; label: string }[]> {
-  const w = await platform().entities.getWriter(orgId, kind).catch(() => null);
-  return w?.counters?.defs ?? [];
+  return platform().entities.countersFor(orgId, kind).catch(() => []);
 }
 
 /** One record's current reading of one counter, or null when it has none. */
 export async function readCounter(orgId: string, kind: string, id: string, field: string): Promise<number | null> {
-  const w = await platform().entities.getWriter(orgId, kind).catch(() => null);
-  if (!w?.counters) return null;
-  const values = await w.counters.read(orgId, id).catch(() => ({}) as Record<string, number | null>);
+  const values = await platform().entities.readCounters(orgId, kind, id).catch(() => ({}) as Record<string, number | null>);
   return values[field] ?? null;
 }
 

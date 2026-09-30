@@ -1,5 +1,5 @@
 #!/usr/bin/env tsx
-// A route gated by requireCapability names a capability an admin can grant: a user-invokable action in a manifest, or an entry in ENDPOINT_CAPABILITIES; otherwise a member is refused something no approval can ever give.
+// A route gated by requireCapability names a capability an admin can grant: a user-invokable action or a declared capability in a manifest, or an entry in ENDPOINT_CAPABILITIES; otherwise a member is refused something no approval can ever give.
 //
 // THE BUG THIS PREVENTS. POST /parts/:id/stock-adjust gated on inventory:adjust-stock, whose action is userInvokable:false and so never grantable: a member could be refused and nobody could say yes (#3073, 2026-09-17).
 //
@@ -7,6 +7,8 @@
 // capability that the permissions matrix can grant, which means one of:
 //   • an action declared in a module manifest WITHOUT `userInvokable: false`
 //     (grantableActions reads entity_actions where user_invokable = true);
+//   • a capability a manifest declares under `capabilities` (the same
+//     `id: "<module>:<name>"` shape, read by the same scan);
 //   • an entry in ENDPOINT_CAPABILITIES (platform/capability-grants.ts), the
 //     list for gates that are not actions.
 // Anything else is a door only the admin tier can ever pass and that no

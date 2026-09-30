@@ -9,11 +9,11 @@
 
 import { readableFilename } from "./filename.js";
 import { sameBytes } from "./intake.js";
-import { createHash, randomUUID } from "node:crypto";
+import { randomUUID } from "node:crypto";
 import { sql, type Kysely } from "kysely";
 import { platform, type ResolvedEntity } from "@cobblr/platform-contract";
 import type { CoreFilesDB, FileVariants } from "../db.js";
-import { readVariantBytes, removeStoredFile, storeUpload } from "./storage.js";
+import { eraseWorkspaceFiles, fingerprintOf, listLocalWorkspaceFolders, readVariantBytes, removeStoredFile, storeUpload } from "./storage.js";
 
 let registered = false;
 
@@ -77,10 +77,23 @@ export function registerFileResolvers(): void {
   // The byte-WRITING seam — mirrors POST /files but server-side (no request /
   // session): generate an id, store bytes + variants, insert the DB row, meter.
   // Used by the graduation import to COPY a photo into the new workspace.
-  platform().files.registerWriter(async (orgId, bytes, opts) => {
+  // A workspace being deleted: every file it ever stored, soft-deleted ones
+  // included, before its database (which holds the list) is dropped.
+  platform().files.registerWorkspaceEraser(async (orgId) => {
     const db = (await platform().tenants.getDb(orgId)) as Kysely<CoreFilesDB>;
-    const buffer = Buffer.from(bytes);
-    const sha = createHash("sha256").update(buffer).digest("hex");
+    const rows = await db.selectFrom("core_files_files").select("id").execute();
+    await eraseWorkspaceFiles(
+      orgId,
+      rows.map((r) => r.id),
+    );
+  });
+
+  platform().files.registerWorkspaceFolderLister(listLocalWorkspaceFolders);
+
+  platform().files.registerWriter(async (orgId, source, opts) => {
+    const db = (await platform().tenants.getDb(orgId)) as Kysely<CoreFilesDB>;
+    const fp = await fingerprintOf(source);
+    const sha = fp.sha256;
     // The same bytes already in this workspace are that file, not a second
     // copy: a picture fetched twice (a catalog download that ran twice) was
     // stored twice and listed twice (#3859). The upload route asks the same
@@ -89,12 +102,12 @@ export function registerFileResolvers(): void {
     // the question and the insert hold one lock per content hash.
     return db.transaction().execute(async (tx) => {
       await sql`select pg_advisory_xact_lock(hashtext(${"core-files:" + sha}))`.execute(tx);
-      const same = await sameBytes(tx, buffer);
+      const same = await sameBytes(tx, fp);
       if (same) {
         return { fileId: same.id, mimeType: same.mime_type, sizeBytes: Number(same.size_bytes), kind: same.kind, existed: true };
       }
       const fileId = randomUUID();
-      const stored = await storeUpload(orgId, fileId, buffer, opts.mimeType || "application/octet-stream");
+      const stored = await storeUpload(orgId, fileId, source, opts.mimeType || "application/octet-stream", fp);
       try {
         await tx
           .insertInto("core_files_files")

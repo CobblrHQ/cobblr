@@ -9,7 +9,7 @@
 // to the same asset; an emit here would re-fire the wire. Same reasoning as
 // inventory's writer (see modules/inventory/src/api/sync-writer.ts).
 
-import { findRowIdByKey, mergeRowMetadata, platform, restoreRow, snapshotRow } from "@cobblr/platform-contract";
+import { adoptAxisValuesIntoField, findRowIdByKey, mergeRowMetadata, platform, restoreRow, snapshotRow } from "@cobblr/platform-contract";
 import { sql, type Kysely } from "kysely";
 import type { AssetsDB } from "../db.js";
 
@@ -30,6 +30,9 @@ export function registerAssetsWriter(): void {
         .insertInto("assets_assets")
         .values({
           name: String(fields.name ?? "Untitled"),
+          // The asset's category (its declared categoryField): an import or a
+          // sync that knows it writes it here, the one place the form shows.
+          type: asStr(fields.type),
           location_id: asStr(fields.location_id),
           notes: asStr(fields.notes),
           metadata: sql`${JSON.stringify(fields.metadata ?? {})}::jsonb` as never,
@@ -44,6 +47,7 @@ export function registerAssetsWriter(): void {
       const patch: Record<string, unknown> = { updated_at: new Date() };
       if (fields.name !== undefined) patch.name = String(fields.name);
       if (fields.location_id !== undefined) patch.location_id = asStr(fields.location_id);
+      if (fields.type !== undefined) patch.type = asStr(fields.type);
       if (fields.notes !== undefined) patch.notes = asStr(fields.notes);
       if (fields.metadata !== undefined) {
         patch.metadata = sql`${JSON.stringify(fields.metadata ?? {})}::jsonb`;
@@ -55,6 +59,12 @@ export function registerAssetsWriter(): void {
     async delete(orgId, id) {
       const db = (await platform().tenants.getDb(orgId)) as Kysely<AssetsDB>;
       await db.deleteFrom("assets_assets").where("id", "=", id).execute();
+    },
+
+    /** The scan placeholder's values move into `type`, the asset's own
+     *  category, before the platform removes the placeholder (#4115). */
+    async adoptAxisValues(orgId, args) {
+      return adoptAxisValuesIntoField(await platform().tenants.getDb(orgId), "assets_assets", args);
     },
 
     /** Put the row back exactly as it was, id and all (EntityWriter.restore).

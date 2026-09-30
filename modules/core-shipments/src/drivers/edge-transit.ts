@@ -9,17 +9,12 @@
 // bridge is told what to fetch rather than configured per service. Nothing has
 // to be added to the bridge for shipments to work through it.
 //
-// ⚠️ SECOND COPY. core-ai/src/providers/edge-transit.ts does the same thing for
-// AI providers, and module isolation forbids importing it. If a third module
-// needs this, promote it to the platform rather than copying again.
+// The call itself is the platform's (`platform().edge.fetch`), the one copy
+// every module reaches a LAN service through.
 
 import { platform } from "@cobblr/platform-contract";
 import { parseTransit } from "./connection.js";
 import { edgeRouteKey } from "@cobblr/platform-contract/edge-channel";
-
-/** The bridge long-polls, so between cycles the channel is briefly
- *  unregistered and send() throws. Transient: the agent re-polls in seconds. */
-const RECONNECTING = /no edge device|edge disconnected|edge channel gone/i;
 
 /** How to reach the endpoint.
  *    ""            unset — fetch it directly (a public API)
@@ -54,31 +49,11 @@ export function edgeKeyFor(orgId: string, named: string, ownerUserId?: string | 
 }
 
 /** fetch-shaped, but performed by the bridge on its own network. */
-export async function edgeFetch(
+export function edgeFetch(
   key: string,
   baseUrl: string,
   path: string,
   init: { method?: "GET" | "POST"; headers?: Record<string, string> } = {},
 ): Promise<Response> {
-  const req = {
-    path,
-    method: (init.method ?? "GET") as "GET" | "POST",
-    source: { baseUrl: baseUrl.replace(/\/+$/, ""), headers: init.headers ?? {} },
-    timeoutMs: 60_000,
-  };
-
-  let res;
-  try {
-    res = await platform().edge.send(key, req);
-  } catch (err) {
-    if (!RECONNECTING.test((err as Error).message ?? "")) throw err;
-    await new Promise((r) => setTimeout(r, 1500));
-    res = await platform().edge.send(key, req);
-  }
-
-  const text = typeof res.body === "string" ? res.body : JSON.stringify(res.body ?? null);
-  return new Response(text, {
-    status: res.status || 502,
-    headers: { "content-type": "application/json" },
-  });
+  return platform().edge.fetch(key, { baseUrl, path, method: init.method ?? "GET", headers: init.headers ?? {}, timeoutMs: 60_000, lane: "sync" });
 }

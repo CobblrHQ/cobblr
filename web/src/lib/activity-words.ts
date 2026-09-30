@@ -150,6 +150,9 @@ export function activityVerb(a: string): string {
     wire_failed: "automation failed",
     // A trial brought in from the demo box; the row's title is the trial's name.
     carry_replayed: "brought in their trial:",
+    // One thing added from a scan, its create and follow-up rows folded in
+    // (foldOneThingsRows).
+    added_from_scan: "scanned in",
     // One-tap stock changes (a button, or a scanned action label).
     part_used: "took one of",
     part_restocked: "restocked",
@@ -165,4 +168,52 @@ export function activityVerb(a: string): string {
   if (a.endsWith("_updated")) return "updated";
   if (a.endsWith("_deleted")) return "deleted";
   return a.replace(/_/g, " ");
+}
+
+/** The record a row is about. A scan's commit row is about its inbox item,
+ *  and names the record it made in `diff.entity_id`. */
+function recordOf(e: { action: string; entity_id: string; diff: unknown }): string {
+  if (e.action === "scan_committed" && e.diff && typeof e.diff === "object") {
+    const made = (e.diff as Record<string, unknown>).entity_id;
+    if (typeof made === "string" && made) return made;
+  }
+  return e.entity_id;
+}
+
+/** How close together two rows must be to count as one act. */
+const ONE_ACT_MS = 2 * 60_000;
+
+/** One act, one row. Filing a scan writes three rows (the scan committed, the
+ *  record created, then updated with its place and photo), and the dashboard
+ *  showed all three for one grocery (#4147). Consecutive rows by the same
+ *  person about the same record within two minutes fold into one: the create,
+ *  said as "scanned in" when a scan made it. The full activity log keeps
+ *  every row; this is only what the dashboard shows. */
+export function foldOneThingsRows<T extends { action: string; entity_id: string; entity_type: string; diff: unknown; occurred_at: string; user_id: string | null }>(items: T[]): T[] {
+  const out: T[] = [];
+  let run: T[] = [];
+  const flush = () => {
+    if (run.length === 0) return;
+    if (run.length === 1) {
+      out.push(run[0]!);
+    } else {
+      const scanned = run.some((e) => e.action === "scan_committed");
+      const made = run.find((e) => e.action === "created" || e.action.endsWith("_created"));
+      const rep = made ?? run.find((e) => e.action !== "scan_committed") ?? run[0]!;
+      out.push(scanned && made ? { ...rep, action: "added_from_scan" } : rep);
+    }
+    run = [];
+  };
+  for (const e of items) {
+    const head = run[0];
+    const sameAct =
+      head &&
+      head.user_id === e.user_id &&
+      recordOf(head) === recordOf(e) &&
+      Math.abs(Date.parse(head.occurred_at) - Date.parse(e.occurred_at)) <= ONE_ACT_MS;
+    if (!sameAct) flush();
+    run.push(e);
+  }
+  flush();
+  return out;
 }

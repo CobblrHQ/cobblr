@@ -49,6 +49,25 @@ export function registerListActionHandlers(): void {
     // 2. Resolve the target list — id, or by title (create-on-miss so a fresh
     //    workspace's first low-stock event still has somewhere to go).
     let listId = args.listId;
+    // A person adding a record without naming a list ("Add to list" on a part
+    // running low): the list it last went on, or the question of which. A
+    // wire still makes "Shopping list" on a miss, as it always has; a person
+    // is never handed a list they did not choose.
+    const pressed = !ctx.event?.trigger_type || ctx.event.trigger_type === "user-invoked";
+    if (!listId && !args.listTitle && pressed && ctx.entity) {
+      const last = await db
+        .selectFrom("lists_source_last_list as s")
+        .innerJoin("lists_lists as l", "l.id", "s.list_id")
+        .select("s.list_id")
+        .where("s.source_kind", "=", ctx.entity.kind)
+        .where("s.source_id", "=", ctx.entity.id)
+        .executeTakeFirst();
+      if (!last) {
+        const lists = await db.selectFrom("lists_lists").select(["id", "title"]).orderBy("updated_at", "desc").limit(50).execute();
+        return { ok: false, needs_list: true, lists, error: `which list should "${title}" go on?` };
+      }
+      listId = last.list_id;
+    }
     if (!listId) {
       const wantTitle = (args.listTitle ?? "Shopping list").trim();
       const existing = await db
@@ -85,6 +104,13 @@ export function registerListActionHandlers(): void {
       .values({ list_id: listId, title, qty: args.qty ?? null, note: args.note ?? null, metadata: sql`${JSON.stringify(metadata)}::jsonb` as never })
       .returning(["id", "list_id", "title"])
       .executeTakeFirstOrThrow();
+    if (ctx.entity) {
+      await db
+        .insertInto("lists_source_last_list")
+        .values({ source_kind: ctx.entity.kind, source_id: ctx.entity.id, list_id: listId })
+        .onConflict((oc) => oc.columns(["source_kind", "source_id"]).doUpdateSet({ list_id: listId!, updated_at: new Date() }))
+        .execute();
+    }
     void platform().events.emit("lists.item.added", { orgId: ctx.orgId, listId: row.list_id, itemId: row.id, viaWire: Boolean(ctx.event?.trigger_type && ctx.event.trigger_type !== "user-invoked") });
     await platform().activity.log({
       orgId: ctx.orgId,

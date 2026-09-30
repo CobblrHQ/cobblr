@@ -15,10 +15,14 @@
 // cobblr_meta is more dangerous than an offline api.
 
 import { MEMBER_DEFAULT_CAPABILITIES, memberHoldsByDefault } from "./platform/capability-grants.js";
+import { logUploadRefused, startStaleUploadSweeper, uploadMiddleware, uploadSizeFor } from "./platform/uploads.js";
 import { fileURLToPath } from "node:url";
 import { withFieldLabels } from "./platform/field-labels.js";
 import { dirname, resolve } from "node:path";
-import { createServices } from "./platform/services.js";
+import { createServices, registerServicesRetention, registerServicesWorker, setServiceConfirm } from "./platform/services.js";
+import { confirmServiceJob, registerServiceConfirm } from "./platform/service-confirm.js";
+import { openServicesTestDoors } from "./platform/services-test-doors.js";
+import { testDoorsEnabled } from "./platform/test-doors.js";
 import { setPlatform, canContain, canBeContained } from "@cobblr/platform-contract";
 import { roleHoldsEveryCapability } from "@cobblr/platform-contract/org-roles";
 import { describeBlock, describeCapabilityBlock } from "./platform/approvals.js";
@@ -51,6 +55,7 @@ import * as actions from "./platform/actions.js";
 import * as live from "./platform/live.js";
 import * as devices from "./platform/devices.js";
 import * as entities from "./platform/entities.js";
+import * as counters from "./platform/counters.js";
 import { announceWrites } from "./platform/entity-saved.js";
 import * as files from "./platform/files.js";
 import * as hostedSeams from "./platform/hosted-seams.js";
@@ -84,28 +89,31 @@ import { audienceFor } from "./platform/notification-audience.js";
 import * as integrationsImpl from "./platform/integrations.js";
 import * as aiImpl from "./platform/ai.js";
 import * as edgeImpl from "./platform/edge.js";
+import * as edgeBlobs from "./platform/edge-blobs.js";
 import { reverifyWhenBridgesReturn } from "./platform/connection-probe.js";
 import * as egressImpl from "./platform/egress.js";
 import { syncManifestRegistries } from "./platform/registry-sync.js";
 import { registerPlatformActionHandlers } from "./platform/platform-action-handlers.js";
 import { registerHostedMcp } from "./platform/hosted-mcp.js";
 import { syncInstalledModules } from "./platform/installed-modules.js";
-import { migrateBookshelfToInstance } from "./platform/migrate-bookshelf-to-instance.js";
 import { noteHealShim } from "./platform/heal-shim-log.js";
 import { retireGroceriesBaseKindTwin } from "./platform/migrate-groceries-twin-to-instance.js";
-import { mergeLabelsQr } from "./platform/merge-labels-qr.js";
 import { backfillPlacements } from "./platform/migrate-location-to-placement.js";
+import { registerDanglingPlacesHeal } from "./platform/heal-dangling-places.js";
 import { backfillDefaultBindings } from "./platform/seed-bindings.js";
-import { healApprovedButInactiveAi } from "./platform/heal-approved-ai.js";
+import { reconcileContributedFields } from "./platform/reconcile-contributed-fields.js";
 import { reconcileBundleUpdates, startBundleUpdateSweeper } from "./platform/bundle-updates.js";
 import { reconcileBundleFieldRoles } from "./platform/bundle-field-roles.js";
-import { healMentionEntityRef } from "./platform/heal-mention-entity-ref.js";
 import { repairReplayTruncatedNames } from "./platform/repair-replay-truncated-names.js";
 import { retireReceiptFailurePlaceholders } from "./platform/retire-receipt-failure-placeholders.js";
 import { backfillIdentityLinks } from "./platform/backfill-identity.js";
 import { logAnnounceRouting } from "./platform/announce.js";
+import { postCardlessFeedback } from "./routes/feedback-card-post.js";
 import { logSignupGates } from "./platform/signup-gates.js";
 import { startTrialReaper } from "./platform/reap-trials.js";
+import { startDeletionReaper } from "./platform/reap-deletions.js";
+import { startOrphanFilesAudit } from "./platform/heal-orphan-files.js";
+import { healHalfMadeWorkspaces } from "./platform/heal-half-made-workspaces.js";
 import { startSandboxReaper } from "./platform/reap-sandboxes.js";
 import { startSandboxPool } from "./platform/try-sandbox-pool.js";
 import { seedSandbox } from "./platform/try-sandbox-seed.js";
@@ -117,13 +125,13 @@ import { reconcileScanCategoryFields, retireScanCategoryPlaceholders } from "./p
 import { reconcileAppScanFallback } from "./platform/reconcile-app-scan-fallback.js";
 import { backfillBundleClaims } from "./platform/backfill-bundle-claims.js";
 import { backfillInstallSideEffectClaims } from "./platform/backfill-install-side-effect-claims.js";
-import { healTwinBundleWires } from "./platform/heal-twin-bundle-wires.js";
 import {
   registerDeclarativeScanResolver,
   refreshScanUrlManifests,
 } from "./platform/scan-url-resolvers/register.js";
 import { runOnBoot, runOnShutdown } from "./modules/lifecycle.js";
 import { registerBackupCron, seedBackupSchedules } from "./platform/backup-destinations.js";
+import { outboundEmailLog, outboundEmailStatus, sendFromWorkspace } from "./platform/outbound-email.js";
 import { navSurface } from "./platform/nav-surface.js";
 import { registerGmailProvider } from "./platform/mail-source/provider.js";
 import { registerMailSourceSweep } from "./platform/mail-source/sync.js";
@@ -290,6 +298,8 @@ async function boot() {
           template: (d as { template?: string | null }).template ?? null,
         }));
       },
+      countersFor: counters.countersFor,
+      readCounters: counters.readCounters,
       registerComputedContext: computedFields.registerComputedContext,
       registerCreateDefaults: createDefaults.registerCreateDefaults,
       unregisterCreateDefaults: createDefaults.unregisterCreateDefaults,
@@ -305,6 +315,8 @@ async function boot() {
       lookupMany: entities.lookupMany,
       list: entities.list,
       listAll: entities.listAll,
+      hiddenFields: entities.hiddenFieldsFor,
+      exportCsv: (...args) => import("./platform/entity-export.js").then((m) => m.exportEntitiesCsv(...args)),
       walkPairings: entities.walkPairings,
       walkPath: entities.walkPath,
       listKinds: entities.listKinds,
@@ -458,6 +470,8 @@ async function boot() {
       registerChannel: edgeImpl.registerChannel,
       hasChannel: edgeImpl.hasChannel,
       send: edgeImpl.send,
+      fetch: edgeImpl.fetchViaEdge,
+      serveBlob: edgeBlobs.serveBlob,
       relayTouch: edgeImpl.relayTouch,
       relayPoll: edgeImpl.relayPoll,
       relayRespond: edgeImpl.relayRespond,
@@ -478,6 +492,8 @@ async function boot() {
       getProvider: connectionsImpl.getProvider,
       resolve: connectionsImpl.resolve,
       routedTo: connectionsImpl.routedTo,
+      testConnection: connectionsImpl.testConnection,
+      capabilities: connectionsImpl.capabilities,
     },
     egress: {
       guardedFetch: egressImpl.guardedFetch,
@@ -496,8 +512,15 @@ async function boot() {
       listAttachments: files.listAttachments,
       registerAttachmentsOfFile: files.registerAttachmentsOfFile,
       attachmentsOfFile: files.attachmentsOfFile,
+      registerFolders: files.registerFolders,
+      ensureFolder: files.ensureFolder,
+      fileInto: files.fileInto,
       registerDriver: files.registerDriver,
       getDriver: files.getDriver,
+      registerWorkspaceEraser: files.registerWorkspaceEraser,
+      eraseWorkspace: files.eraseWorkspace,
+      registerWorkspaceFolderLister: files.registerWorkspaceFolderLister,
+      listWorkspaceFolders: files.listWorkspaceFolders,
     },
     instances: {
       registerItemCounter: instancesImpl.registerItemCounter,
@@ -567,6 +590,27 @@ async function boot() {
     http: {
       registerRequestGuard: hostedSeams.registerRequestGuard,
       registerWebhook: hostedSeams.registerWebhook,
+      upload: uploadMiddleware,
+      uploadRefused: logUploadRefused,
+      uploadSizeFor,
+    },
+    outboundEmail: {
+      status: async (orgId) => {
+        const s = await outboundEmailStatus(orgId);
+        return { configured: s.configured, from: s.from };
+      },
+      send: (orgId, message) => sendFromWorkspace(orgId, message),
+      log: async (orgId, source) =>
+        (await outboundEmailLog(orgId, source)).map((r) => ({
+          id: r.id,
+          to: r.to_address,
+          subject: r.subject,
+          sentBy: r.sent_by,
+          status: r.status,
+          messageId: r.message_id,
+          error: r.error,
+          at: r.created_at.toISOString(),
+        })),
     },
     hostedPanels: {
       register: hostedSeams.registerHostedPanel,
@@ -1275,18 +1319,6 @@ async function boot() {
   // (The two lens heal shims — lens modules → bundles, lens bundles →
   // instances — completed on every deployment and were retired 2026-07-17;
   // restoring a pre-2026-06 backup needs a build that still carries them.)
-  // Bookshelf <=0.1.x put its fields on inventory:part — the DEFAULT instance,
-  // which is always stock — so books wore a quantity/warranty and could never
-  // render as the lean catalog they are. 0.2.0 gives Bookshelf its own shelf;
-  // this moves an existing install (fields + the books themselves) onto it, so
-  // the upgrade heals instead of stranding books in Inventory. Idempotent;
-  // opens no tenant pool for a workspace that's already on the new shape.
-  const shelfResult = await T("migrateBookshelfToInstance", migrateBookshelfToInstance());
-  if (shelfResult.orgsTouched > 0) {
-    console.log(
-      `[cobblr-api] bookshelf → instance migration: ${shelfResult.orgsTouched} org(s), ${shelfResult.booksMoved} book(s) moved`,
-    );
-  }
   // The Groceries bundle planted a twin of its food fields on inventory:part;
   // a specialisation is an instance, and the twin cost twice (#2787, #2849).
   // Food rows in plain Inventory move into the Groceries table, announced in
@@ -1313,17 +1345,9 @@ async function boot() {
       `[cobblr-api] location_id → placement backfill: ${placeResult.orgsTouched} org(s), ${placeResult.rowsInserted} placement row(s) seeded`,
     );
   }
-  // core-labels-qr merged into labels (0.6.0): convert each workspace's
-  // enablement (rename when QR was really used, drop the ambient never-used
-  // rows) + rewrite renamed-event wires. Meta-only; runs BEFORE
-  // syncTenantMigrations so a renamed-to-labels org gets labels' migrations
-  // (incl. 0004's table rename) in this same boot.
-  const lqMerge = await T("mergeLabelsQr", mergeLabelsQr());
-  if (lqMerge.renamed + lqMerge.deleted + lqMerge.wiresRewritten > 0) {
-    console.log(
-      `[cobblr-api] labels-qr merge: ${lqMerge.renamed} org(s) renamed to labels, ${lqMerge.deleted} ambient row(s) dropped, ${lqMerge.wiresRewritten} wire(s) rewritten`,
-    );
-  }
+  // Things still naming a place deleted before a delete emptied it: a heal
+  // pass on the kernel's sweep, never a walk of its own here.
+  registerDanglingPlacesHeal();
   // Self-heal: backfill foundational + autoEnable capabilities onto workspaces
   // that predate them. Signup only enables what existed then, so an older
   // workspace is missing newer capabilities' tables (e.g. core-devices owns
@@ -1353,13 +1377,13 @@ async function boot() {
   // Top up default bindings for orgs created before Phase 4 introduced
   // the seed-on-signup path. Idempotent per (org, source_kind, action_id,
   // trigger_event), so repeated boots are safe.
+  // A field a module contributes after a workspace enabled it reaches that
+  // workspace too (reconcile-contributed-fields.ts).
+  const contributed = await T("reconcileContributedFields", reconcileContributedFields());
+  if (contributed.added > 0) console.log(`[cobblr-api] contributed fields reconciled: ${contributed.added} added (${contributed.modules.join(", ")})`);
   const seeded = await T("backfillDefaultBindings", backfillDefaultBindings());
   console.log(`[cobblr-api] default bindings backfilled: ${seeded} added`);
 
-  // A workspace that approved an AI and never switched it on has been running
-  // with none. See heal-approved-ai.ts for how that state was reachable; it
-  // fills a vacuum only, so a live pick is never overridden.
-  const aiHealed = await T("healApprovedButInactiveAi", healApprovedButInactiveAi());
   // Installed bundles catch up to the catalog on their own (patch/minor, with
   // the install route's own gates). Used to happen only when somebody opened
   // the dashboard. Idempotent: a current workspace costs one row in a meta
@@ -1373,15 +1397,6 @@ async function boot() {
   // is filed by role). Fills a missing role only; meta-only.
   const rolesFilled = await T("reconcileBundleFieldRoles", reconcileBundleFieldRoles());
   if (rolesFilled > 0) console.log(`[cobblr-api] bundle field roles: ${rolesFilled} filled from the catalog`);
-  if (aiHealed.length) console.log(`[cobblr-api] approved-but-idle AI switched on in ${aiHealed.length} workspace(s)`);
-
-  // Correct the entity ref on discussion-mention notifications dispatched
-  // before it was fixed at the source. A DM already sitting in somebody's
-  // Discord carries the old ref, so its Reply button keeps posting into an
-  // invisible second conversation until this runs. Costs one indexed query
-  // once every install is clean.
-  const refs = await T("healMentionEntityRef", healMentionEntityRef());
-  if (refs) console.log(`[cobblr-api] mention entity refs corrected: ${refs}`);
 
   // The one sweeper that flushes windowed notification channels. Every module
   // that wants a digest gets it from here rather than growing its own timer:
@@ -1391,6 +1406,8 @@ async function boot() {
   startDeliverySweeper();
   startBridgeOutageWatch();
   startPhotoRetentionSweeper();
+  // Temporary upload files a crashed request left on disk.
+  startStaleUploadSweeper();
   startBundleUpdateSweeper();
   // A pool whose callers are waiting says so in the log while it is
   // happening, once per stretch (#3033).
@@ -1439,12 +1456,6 @@ async function boot() {
   const appFallback = await T("reconcileAppScanFallback", reconcileAppScanFallback());
   if (appFallback.orgsHealed > 0) console.log(`[cobblr-api] app scan-fallback reconcile: ${appFallback.orgsHealed} workspace(s) pointed at their app's table`);
 
-  // A bundle wire installed at both scopes fired twice per event. The bundles
-  // no longer declare the twin; this drops the rows already installed where
-  // the update is held for the prompt. One cobblr_meta query, no tenant pool.
-  const twins = await T("healTwinBundleWires", healTwinBundleWires());
-  if (twins.rowsDropped > 0) console.log(`[cobblr-api] twin bundle wires dropped: ${twins.rowsDropped} row(s) in ${twins.orgsHealed} workspace(s)`);
-
   // Self-heal the bundle-resource-claims ledger for installs that predate it,
   // so a bundle uninstall can refcount correctly. Once per org, idempotent.
   const claimsOrgs = await T("backfillBundleClaims", backfillBundleClaims());
@@ -1468,6 +1479,9 @@ async function boot() {
   // difference between a private report and one posted to a chat server, and that is
   // otherwise invisible until somebody notices a card appear.
   await T("logAnnounceRouting", logAnnounceRouting());
+  // Items filed while Discord was off (or whose post failed) get their cards
+  // now that it is on. Not awaited: a slow webhook never holds up boot.
+  void postCardlessFeedback().catch((err: unknown) => console.error("[feedback] late cards:", err));
   logSignupGates();
 
   console.log(`[bootphase] === pre-createApp total: ${Date.now() - bootT0}ms ===`);
@@ -1501,7 +1515,13 @@ async function boot() {
   // Reap expired trial/demo workspaces (drops the tenant DB past a grace window).
   // No-op unless COBBLR_TRIAL_REAP=dry|live; only ever touches trial_expires_at-stamped
   // orgs, so prod/staging/self-host are untouchable. See platform/reap-trials.ts.
+  // Finish the workspaces an older signup left with no database (one-shot).
+  void healHalfMadeWorkspaces().catch((err) => console.error("[heal] half-made workspaces:", (err as Error).message));
   startTrialReaper();
+  // Workspaces their owners asked to delete, once the grace period is over.
+  startDeletionReaper();
+  // Counts the files deleted workspaces left behind (dry run: erases nothing).
+  startOrphanFilesAudit();
   // Sandboxes live an hour, so they are swept in minutes, not the trial
   // reaper's six hours. No-op unless the box hands them out.
   startSandboxReaper();
@@ -1547,6 +1567,13 @@ async function boot() {
   // Platform-owned background work — the queue worker loop. Started
   // AFTER onBoot so modules have had a chance to register their
   // queue handlers via platform.queue.registerWorker().
+  registerServicesWorker();
+  // The confirm (services.md section 9): a yes is bound to what was shown.
+  // The gate needs no wiring; the kernel calls it directly.
+  setServiceConfirm(confirmServiceJob);
+  registerServiceConfirm();
+  registerServicesRetention();
+  if (testDoorsEnabled(env.COBBLR_ENV || env.NODE_ENV, process.env.COBBLR_TEST_DOORS)) openServicesTestDoors(null);
   queue.startWorker();
 
   void seedBackupSchedules().catch((err) =>

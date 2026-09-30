@@ -3,14 +3,47 @@
 // Driven by the connectivity signal in lib/api: a fetch rejection or a gateway
 // 5xx marks us down; the next successful response clears it. While down we poll
 // /healthz so the bar auto-dismisses on recovery even if the user is idle.
-import { useEffect, useState } from "react";
-import { WifiOff } from "lucide-react";
+//
+// Offline (#4226) it says so, and says how old what is on screen is: the
+// service worker answers with the reads this device kept, each marked with
+// when it was fetched, and the earliest of those is "as of" here, so a kept
+// copy is never taken for live. Back online, everything is fetched again at
+// once rather than waiting for each query's own timer.
+import { useEffect, useRef, useState } from "react";
+import { RefreshCw, WifiOff } from "lucide-react";
+import { useQueryClient } from "@tanstack/react-query";
 import { FloatingChrome } from "@cobblr/platform-web";
-import { subscribeConnectivity, pingHealth } from "../lib/api";
+import { subscribeConnectivity, subscribeOfflineCopies, pingHealth } from "../lib/api";
+import { asOfWords } from "../lib/offline";
 
 export function ConnectivityBanner() {
+  const qc = useQueryClient();
   const [down, setDown] = useState(false);
+  const [asOf, setAsOf] = useState<string | null>(null);
+  const [offline, setOffline] = useState(() => typeof navigator !== "undefined" && navigator.onLine === false);
+  const wasDown = useRef(false);
   useEffect(() => subscribeConnectivity(setDown), []);
+  useEffect(() => subscribeOfflineCopies(setAsOf), []);
+
+  useEffect(() => {
+    const on = () => {
+      setOffline(false);
+      void pingHealth();
+    };
+    const off = () => setOffline(true);
+    window.addEventListener("online", on);
+    window.addEventListener("offline", off);
+    return () => {
+      window.removeEventListener("online", on);
+      window.removeEventListener("offline", off);
+    };
+  }, []);
+
+  // Back: everything on screen was fetched before, or kept; fetch it again.
+  useEffect(() => {
+    if (wasDown.current && !down) void qc.invalidateQueries();
+    wasDown.current = down;
+  }, [down, qc]);
 
   useEffect(() => {
     if (!down) return;
@@ -20,7 +53,8 @@ export function ConnectivityBanner() {
     return () => clearInterval(id);
   }, [down]);
 
-  if (!down) return null;
+  if (!down && !offline) return null;
+  const isOffline = offline || asOf !== null;
   return (
     // A top bar that never yields: losing the server is news over anything.
     <FloatingChrome
@@ -28,10 +62,26 @@ export function ConnectivityBanner() {
       yields={false}
       role="alert"
       aria-live="assertive"
-      className="z-[200] flex items-center justify-center gap-2 bg-ember-600 px-4 py-2 text-center text-sm font-medium text-white shadow-md"
+      data-testid="connectivity-banner"
+      data-offline={isOffline ? "true" : "false"}
+      className="z-[200] flex flex-wrap items-center justify-center gap-x-3 gap-y-1 bg-ember-600 px-4 py-2 text-center text-sm font-medium text-white shadow-md"
     >
       <WifiOff size={15} aria-hidden />
-      <span>Can't reach Cobblr - reconnecting…</span>
+      {isOffline ? (
+        <span>
+          You're offline.{" "}
+          {asOf !== null ? <>Showing what you had as of {asOfWords(asOf)}. Changes wait until you're back.</> : <>Changes wait until you're back.</>}
+        </span>
+      ) : (
+        <span>Can't reach Cobblr - reconnecting…</span>
+      )}
+      <button
+        type="button"
+        onClick={() => void pingHealth()}
+        className="inline-flex items-center gap-1 rounded border border-white/60 px-2 py-0.5 text-xs font-semibold hover:bg-white/10"
+      >
+        <RefreshCw size={12} aria-hidden /> Retry
+      </button>
     </FloatingChrome>
   );
 }

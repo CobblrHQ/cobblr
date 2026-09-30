@@ -53,7 +53,7 @@ export const OUTFIT_PLANNER_HTML = String.raw`
     <button class="op-btn" id="op-remove">Remove</button>
     <span class="op-size">size <input id="op-resize" type="range" min="36" max="200" value="92"></span>
   </div>
-  <div class="op-pal-cat">// your garments — tap or drag onto the figure</div>
+  <div class="op-pal-cat">// your garments: tap or drag onto the figure</div>
   <div class="op-palette" id="op-palette"></div>
   <div class="op-row">
     <input class="op-name" id="op-lookname" placeholder="Name this look (e.g. Friday work)"/>
@@ -205,8 +205,8 @@ export const OUTFIT_PLANNER_HTML = String.raw`
     return {id:row.id,title:row.title||f.name||'Garment',color:meta.color,type:meta.garment_type,image_path:ip};
   }
   function renderGarments(rows){
-    if(!rows.length){status.textContent='Your Wardrobe is empty — add some garments (with photos) first.';return Promise.resolve();}
-    status.textContent=rows.length+' garments — tap (or drag) any onto the figure, arrange, then Save look.';
+    if(!rows.length){status.textContent='Your Wardrobe is empty. Add some garments (with photos) first.';return Promise.resolve();}
+    status.textContent=rows.length+' garments. Tap (or drag) any onto the figure, arrange, then Save look.';
     return Promise.all(rows.map(function(row){
       var g=garmentFromRow(row);
       if(!g.image_path)return Promise.resolve(g);
@@ -221,7 +221,7 @@ export const OUTFIT_PLANNER_HTML = String.raw`
     var views=(r&&(r.items||r))||[];
     var v=views.filter(function(x){return (x.entity_kind||'')==='wardrobe:item';});
     var view=v.filter(function(x){return x.pinned;})[0]||v[0];
-    if(!view){status.textContent='No Wardrobe table found — add a garment to your Wardrobe first.';return;}
+    if(!view){status.textContent='No Wardrobe table found. Add a garment to your Wardrobe first.';return;}
     return window.cobblr.viewData(view.id,{limit:200}).then(renderGarments);
   }).catch(function(err){status.textContent='Could not load wardrobe: '+((err&&err.message)||err);});
 

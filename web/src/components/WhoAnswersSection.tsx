@@ -12,6 +12,7 @@ import { aiAvailabilityKeys } from "../lib/ai-availability-keys";
 import { AI_JOB_GROUPS, chainWarnings, reorderedOwn, sectionWarnings, sourceWords, type AiChainAnswer, type AiJobGroup } from "../lib/ai-chain";
 import { useActiveOrg } from "../auth/ActiveOrgContext";
 import { useToast } from "@cobblr/platform-web";
+import { ServicesInOrder } from "./ServicesInOrder";
 
 export const WHO_ANSWERS_ANCHOR = "who-answers";
 
@@ -27,7 +28,7 @@ export function WhoAnswersSection() {
 
   return (
     <section id={WHO_ANSWERS_ANCHOR} className="scroll-mt-20 rounded-xl border border-line dark:border-slate-700 bg-surface dark:bg-slate-900 p-4">
-      <h2 className="text-sm font-semibold text-content dark:text-mortar-100">Who answers, in order</h2>
+      <h2 className="text-sm font-semibold text-content dark:text-mortar-100">Who does what, in order</h2>
       <p className="text-xs text-faint mt-0.5 mb-3">
         When the first is busy or failing, a call asks the next, up to three. Move your own connections up or down to change the order.
       </p>
@@ -49,6 +50,7 @@ export function WhoAnswersSection() {
           <JobChain key={g.id} group={g} answer={chains[i]?.data ?? null} loading={!!chains[i]?.isLoading} orgId={activeOrg?.id ?? null} />
         ))}
       </div>
+      <ServicesInOrder />
     </section>
   );
 }

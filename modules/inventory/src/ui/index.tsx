@@ -141,7 +141,7 @@ function Header({ title, hint, listLabel: named }: { title: string; hint?: strin
     // there's no findable "config area"). So keep a settings link either way.
     <CollectionHeader
       title={title}
-      hint={hint} kind={entityKind}
+      hint={hint} kind={entityKind} exportCsv={false}
       nav={
         <>
           <NavLink to={base} end className={cls}>{listLabel}</NavLink>

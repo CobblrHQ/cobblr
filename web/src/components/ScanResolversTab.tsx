@@ -204,7 +204,7 @@ function EditModal({
       toast.success("Saved.");
       onSaved();
     },
-    onError: (e) => toast.error(e instanceof Error ? e.message : "Couldn't save — check the manifest."),
+    onError: (e) => toast.error(e instanceof Error ? e.message : "Couldn't save. Check the manifest."),
   });
   return (
     <Modal open onClose={onClose} title={row ? `Edit ${row.label}` : "Add a vendor resolver"} size="lg">

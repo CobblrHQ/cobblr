@@ -4,7 +4,7 @@
 // relay: a local bridge performs the HTTP call against the source on the LAN and
 // returns the result. The cloud never touches the private address.
 
-import { platform, type EdgeRequest } from "@cobblr/platform-contract";
+import { platform } from "@cobblr/platform-contract";
 import type { SyncConnectionRef } from "./engine.js";
 import { edgeChannelKey } from "@cobblr/platform-contract/edge-channel";
 
@@ -35,31 +35,17 @@ export function edgeRelayFetch(ref: SyncConnectionRef): typeof fetch {
           const u = new URL(href);
           return u.pathname + u.search;
         })();
-    const method = (init?.method ?? "GET").toUpperCase() === "POST" ? "POST" : "GET";
-    const req: EdgeRequest = {
+    const m = (init?.method ?? "GET").toUpperCase();
+    const method = (["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD"] as const).find((x) => x === m) ?? "GET";
+    return platform().edge.fetch(key, {
+      baseUrl: ref.baseUrl,
       path,
       method,
+      headers: headersToObject(init?.headers),
       ...(init?.body !== undefined && init?.body !== null
         ? { body: typeof init.body === "string" ? safeParse(init.body) : init.body }
         : {}),
-      source: { baseUrl: ref.baseUrl, headers: headersToObject(init?.headers) },
-    };
-    const res = await platform().edge.send(key, req);
-    // Binary responses (images, files) ride as { __binary, contentType, data_b64 }
-    // because the JSON relay can't carry raw bytes — the bridge base64-encodes any
-    // non-text body. Reconstruct a real binary Response so res.arrayBuffer() works.
-    const b = res.body as { __binary?: boolean; contentType?: string; data_b64?: string } | null;
-    if (b && b.__binary === true && typeof b.data_b64 === "string") {
-      const bytes = Uint8Array.from(Buffer.from(b.data_b64, "base64"));
-      return new Response(bytes, {
-        status: res.status || 502,
-        headers: { "content-type": b.contentType || "application/octet-stream" },
-      });
-    }
-    const bodyText = typeof res.body === "string" ? res.body : JSON.stringify(res.body ?? null);
-    return new Response(bodyText, {
-      status: res.status || 502,
-      headers: { "content-type": "application/json" },
+      lane: "sync",
     });
   }) as typeof fetch;
 }

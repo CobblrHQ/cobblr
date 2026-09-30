@@ -1,6 +1,8 @@
 import { Router } from "express";
 import { z } from "zod";
+import { sql } from "kysely";
 import { platform } from "@cobblr/platform-contract";
+import { pagedAnswer, readListPage, TOTAL_COLUMN } from "@cobblr/platform-contract/list-page";
 import { instanceOf, sessionUser, tenantContext, tenantDb } from "../db.js";
 import { asyncHandler, badBody, requireRole } from "./util.js";
 import { routeUnknownToMetadata, refuseUnknownFields, coerceMetadata, withMetadataMerged } from "@cobblr/platform-contract/entity-metadata";
@@ -32,14 +34,18 @@ recordsRouter.get(
   "/",
   asyncHandler(async (req, res) => {
     const db = tenantDb(req);
-    const items = await db
+    const page = readListPage(req.query);
+    const rows = await db
       .selectFrom("records_records")
       .selectAll()
+      .select(sql<string>`count(*) over()`.as(TOTAL_COLUMN))
       .where("instance", "=", instanceOf(req))
       .orderBy("name")
-      .limit(500)
+      .orderBy("id")
+      .limit(page.limit)
+      .offset(page.offset)
       .execute();
-    res.json({ items });
+    res.json(pagedAnswer(rows, page));
   }),
 );
 

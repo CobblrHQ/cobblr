@@ -7,6 +7,7 @@ import { Router } from "express";
 import { z } from "zod";
 import { sql } from "kysely";
 import { platform } from "@cobblr/platform-contract";
+import { pagedAnswer, readListPage, TOTAL_COLUMN } from "@cobblr/platform-contract/list-page";
 import { instanceOf, sessionUser, tenantContext, tenantDb } from "../db.js";
 import { asyncHandler, badBody, requireRole } from "./util.js";
 import { routeUnknownToMetadata, refuseUnknownFields, withMetadataMerged } from "@cobblr/platform-contract/entity-metadata";
@@ -57,16 +58,21 @@ machinesRouter.get(
   asyncHandler(async (req, res) => {
     const db = tenantDb(req);
     const units = await unitIdsIn(db, tenantContext(req).org.id, instanceOf(req));
-    const items = await db
+    const page = readListPage(req.query);
+    const rows = await db
       .selectFrom("machines_machines")
       .selectAll()
+      .select(sql<string>`count(*) over()`.as(TOTAL_COLUMN))
       .where("instance", "=", instanceOf(req))
       .$if(units.length > 0, (q) => q.where("id", "not in", units))
       .orderBy("name")
-      .limit(500)
+      .orderBy("id")
+      .limit(page.limit)
+      .offset(page.offset)
       .execute();
+    const answer = pagedAnswer(rows, page);
     // A unit is one of its parent's N, never a machine of its own in the list.
-    res.json({ items: await liftUnits(db, tenantContext(req).org.id, items) });
+    res.json({ ...answer, items: await liftUnits(db, tenantContext(req).org.id, answer.items) });
   }),
 );
 

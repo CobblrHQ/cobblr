@@ -39,15 +39,7 @@ export interface PlacementBackfillResult {
   rowsInserted: number;
 }
 
-// The location-bearing tenant tables and the entity-kind each maps to. Kinds are
-// the BASE kinds; instances (3d-printers:item …) are a partition of the same
-// row, so the base kind is the right containee_kind for the row's table.
-const LOCATED_TABLES: Array<{ table: string; kind: string }> = [
-  { table: "inventory_parts", kind: "inventory:part" },
-  { table: "machines_machines", kind: "machines:machine" },
-  { table: "assets_assets", kind: "assets:asset" },
-  { table: "records_records", kind: "records:record" },
-];
+import { LOCATED_TABLES } from "./located-tables.js";
 
 // The transitional sync: one plpgsql function that mirrors a row's location_id
 // into core_placement_placements (a Location is one KIND of container). The

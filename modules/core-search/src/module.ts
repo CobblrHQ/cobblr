@@ -15,19 +15,15 @@ import { defineModule } from "@cobblr/platform-contract";
 
 export default defineModule({
   name: "core-search",
-  version: "0.1.2",
+  version: "0.1.3",
   displayName: "Search",
   description:
-    "One search bar, all entity kinds. Each kind opts in by declaring a list resolver; core-search fans the query out and merges.",
+    "One search across everything you keep.",
   icon: "search",
   band: "stock",
   autoEnable: true, // ambient capability — on for every workspace
 
   api: () => import("./api/index.js"),
-
-  intents: [
-    { name: "search", description: "Find entities across modules by free text" },
-  ],
 
   dependencies: [],
 
@@ -39,7 +35,6 @@ export default defineModule({
 
   exposes: {
     events: [],
-    api: ["search"],
     actions: [],
   },
 

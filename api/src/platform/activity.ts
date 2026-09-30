@@ -107,6 +107,9 @@ export interface ListParams {
   apiTokenId?: string;
   /** Filter by entity type. */
   entityType?: string;
+  /** One record's history: the module, type and id it was logged under (the
+   *  shape of activity_log_entity_idx). */
+  entity?: { module: string; type: string; id: string };
 }
 
 export interface ActivityEntry {
@@ -124,10 +127,26 @@ export interface ActivityEntry {
   occurred_at: Date;
 }
 
+/** The log rows these filters select, before any window. One definition, so
+ *  a page and its count can never select different rows. */
+function selected(p: ListParams) {
+  let q = meta.selectFrom("activity_log").where("org_id", "=", p.orgId);
+  if (!p.includeOperatorOnly) {
+    q = q.where("action", "not in", [...OPERATOR_ONLY_ACTIONS]).where("action", "not like", "impersonation\\_%");
+  }
+  if (p.actions && p.actions.length > 0) q = q.where("action", "in", p.actions);
+  if (p.authMethods && p.authMethods.length > 0) q = q.where("auth_method", "in", p.authMethods);
+  if (p.apiTokenId) q = q.where("api_token_id", "=", p.apiTokenId);
+  if (p.entityType) q = q.where("entity_type", "=", p.entityType);
+  if (p.entity) {
+    q = q.where("module_name", "=", p.entity.module).where("entity_type", "=", p.entity.type).where("entity_id", "=", p.entity.id);
+  }
+  return q;
+}
+
 export async function list(p: ListParams): Promise<ActivityEntry[]> {
   const limit = Math.min(Math.max(p.limit ?? 25, 1), 100);
-  let q = meta
-    .selectFrom("activity_log")
+  let q = selected(p)
     .select([
       "id",
       "user_id",
@@ -142,26 +161,14 @@ export async function list(p: ListParams): Promise<ActivityEntry[]> {
       "via_label",
       "occurred_at",
     ])
-    .where("org_id", "=", p.orgId)
     .orderBy("id", "desc")
     .limit(limit);
-  if (!p.includeOperatorOnly) {
-    q = q.where("action", "not in", [...OPERATOR_ONLY_ACTIONS]).where("action", "not like", "impersonation\\_%");
-  }
-  if (typeof p.cursorBeforeId === "number") {
-    q = q.where("id", "<", p.cursorBeforeId);
-  }
-  if (p.actions && p.actions.length > 0) {
-    q = q.where("action", "in", p.actions);
-  }
-  if (p.authMethods && p.authMethods.length > 0) {
-    q = q.where("auth_method", "in", p.authMethods);
-  }
-  if (p.apiTokenId) {
-    q = q.where("api_token_id", "=", p.apiTokenId);
-  }
-  if (p.entityType) {
-    q = q.where("entity_type", "=", p.entityType);
-  }
+  if (typeof p.cursorBeforeId === "number") q = q.where("id", "<", p.cursorBeforeId);
   return q.execute();
+}
+
+/** How many entries the same filters select in all, whatever page is shown. */
+export async function count(p: ListParams): Promise<number> {
+  const r = await selected(p).select(({ fn }) => fn.countAll<number>().as("n")).executeTakeFirst();
+  return Number(r?.n ?? 0);
 }

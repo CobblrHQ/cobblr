@@ -24,10 +24,10 @@ import { defineModule } from "@cobblr/platform-contract";
 
 export default defineModule({
   name: "core-public-surfaces",
-  version: "0.1.0",
+  version: "0.1.1",
   displayName: "Public Surfaces",
   description:
-    "Token-gated public read URLs. Share a view or an entity over a long-random URL without anyone needing to sign in. Per-surface enable/disable + revoke.",
+    "Share a list or a single thing through a private link, without anyone needing an account.",
   icon: "globe",
   band: "stock",
   autoEnable: true, // ambient capability — on for every workspace
@@ -38,11 +38,6 @@ export default defineModule({
   },
 
   api: () => import("./api/index.js"),
-
-  intents: [
-    { name: "publish_surface", description: "Share a view or entity over a public URL" },
-    { name: "revoke_surface", description: "Kill a previously-published URL" },
-  ],
 
   dependencies: [],
 
@@ -59,7 +54,6 @@ export default defineModule({
       "core-public-surfaces.surface.revoked",
       "core-public-surfaces.surface.viewed",
     ],
-    api: [],
     actions: [],
   },
 

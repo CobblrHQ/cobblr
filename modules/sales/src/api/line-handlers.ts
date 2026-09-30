@@ -8,6 +8,7 @@
 import { platform, requireActionEntity } from "@cobblr/platform-contract";
 import type { Kysely } from "kysely";
 import type { SalesDB } from "../db.js";
+import { addLine, removeLine } from "../order-lines.js";
 
 export function registerSalesLineHandlers(): void {
   registerUndos();
@@ -32,18 +33,7 @@ export function registerSalesLineHandlers(): void {
       .executeTakeFirst();
     if (!exists) return { ok: false, error: "that order no longer exists" };
 
-    const row = await db
-      .insertInto("sales_order_items")
-      .values({
-        order_id: order.id,
-        part_id: partId,
-        description: description || null,
-        qty,
-        unit_price: unitPrice,
-        metadata: {},
-      } as never)
-      .returning(["id", "qty", "description"])
-      .executeTakeFirstOrThrow();
+    const row = await addLine(db, ctx.orgId, ctx.userId, order.id, { part_id: partId, description: description || null, qty, unit_price: unitPrice });
     return { ok: true, result: { line_id: row.id, qty: row.qty, description: row.description } };
   });
 }
@@ -53,7 +43,7 @@ function registerUndos(): void {
     const id = String((ctx.args as { line_id?: unknown } | null)?.line_id ?? "").trim();
     if (!id) return { ok: false, error: "missing line_id" };
     const db = (await platform().tenants.getDb(ctx.orgId)) as Kysely<SalesDB>;
-    const row = await db.deleteFrom("sales_order_items").where("id", "=", id).returning(["id", "description"]).executeTakeFirst();
+    const row = await removeLine(db, ctx.orgId, ctx.userId, id);
     if (!row) return { ok: true, skipped: true, reason: "already gone" };
     return { ok: true, summary: `Removed the line${row.description ? ` for ${row.description}` : ""}.`, removed: row.id };
   });

@@ -14,6 +14,7 @@
 //         'explicit'           → the workspaces in user_credential_orgs
 
 import { meta } from "../db/meta.js";
+import { capabilityFitsKind } from "@cobblr/platform-contract/connection-capability";
 import { planRouteRows } from "./credential-routing.js";
 import { pickCredential } from "./pick-ai-credential.js";
 import { encryptCreds, decryptCreds } from "../db/crypto.js";
@@ -260,20 +261,42 @@ export async function updateUserCredential(
 export async function storedUserCredentials(
   userId: string,
   credentialId: string,
-): Promise<{ provider_id: string; credentials: Record<string, unknown>; verification: ConnectionVerification | null } | null> {
+): Promise<{ provider_id: string; kind: string; credentials: Record<string, unknown>; verification: ConnectionVerification | null } | null> {
   const owned = await meta
     .selectFrom("user_credentials")
-    .select(["provider_id", "credentials_encrypted", "verification"])
+    .select(["provider_id", "kind", "credentials_encrypted", "verification"])
     .where("id", "=", credentialId)
     .where("user_id", "=", userId)
     .executeTakeFirst();
   if (!owned) return null;
   const verification = verificationFrom(owned.verification);
   try {
-    return { provider_id: owned.provider_id, credentials: JSON.parse(decryptCreds(owned.credentials_encrypted)) as Record<string, unknown>, verification };
+    return { provider_id: owned.provider_id, kind: owned.kind, credentials: JSON.parse(decryptCreds(owned.credentials_encrypted)) as Record<string, unknown>, verification };
   } catch {
-    return { provider_id: owned.provider_id, credentials: {}, verification };
+    return { provider_id: owned.provider_id, kind: owned.kind, credentials: {}, verification };
   }
+}
+
+/** A stored connection by id alone, decrypted, with its kind and owner: for
+ *  the platform's own reads (a capability list, a manifest refresh), never a
+ *  route answering a person, which goes through storedUserCredentials and its
+ *  owner check. */
+export async function storedCredentialById(
+  credentialId: string,
+): Promise<{ user_id: string; kind: string; provider_id: string; credentials: Record<string, unknown> } | null> {
+  const row = await meta
+    .selectFrom("user_credentials")
+    .select(["user_id", "kind", "provider_id", "credentials_encrypted"])
+    .where("id", "=", credentialId)
+    .executeTakeFirst();
+  if (!row) return null;
+  let credentials: Record<string, unknown> = {};
+  try {
+    credentials = JSON.parse(decryptCreds(row.credentials_encrypted)) as Record<string, unknown>;
+  } catch {
+    /* an unreadable blob reads as no credentials */
+  }
+  return { user_id: row.user_id, kind: row.kind, provider_id: row.provider_id, credentials };
 }
 
 export async function deleteUserCredential(userId: string, credentialId: string): Promise<boolean> {
@@ -534,15 +557,21 @@ export async function setMyConnectionOrder(
   orgId: string,
   orderedCredentialIds: string[],
   capability: string | null = null,
-): Promise<boolean> {
+): Promise<boolean | "wrong_kind"> {
   const mine = await meta
     .selectFrom("user_credentials")
-    .select(["id"])
+    .select(["id", "kind"])
     .where("user_id", "=", userId)
     .execute();
   const myIds = new Set(mine.map((m) => m.id));
   if (orderedCredentialIds.some((id) => !myIds.has(id))) return false;
   if (myIds.size === 0) return true;
+  // An AI capability ranks AI connections and a service capability ranks
+  // services: the two id spaces share this column and must never mix.
+  if (capability != null) {
+    const kindOf = new Map(mine.map((m) => [m.id, m.kind]));
+    if (orderedCredentialIds.some((id) => !capabilityFitsKind(capability, kindOf.get(id) ?? ""))) return "wrong_kind";
+  }
 
   if (capability == null) {
     // Clear the general order for all of MINE here, then write the new one.

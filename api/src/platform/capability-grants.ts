@@ -13,10 +13,8 @@ import { capabilityModule, scopeToWorkspace } from "./grantable-scope.js";
 import * as activity from "./activity.js";
 
 // Capabilities that requireCapability() gates check but that aren't
-// invokable "actions" in the entity_actions registry yet. Until the
-// manifest gains a first-class capability registry, list the
-// endpoint-gate caps here so they're grantable + validated alongside
-// the registered actions. TODO: fold into a manifest-declared registry.
+// invokable "actions" in the entity_actions registry. A module now declares
+// its own in the manifest (`capabilities`); these three predate that.
 const ENDPOINT_CAPABILITIES = [
   { action_id: "inventory:create-part", label: "Create parts", description: "Add new parts to inventory." },
   { action_id: "inventory:update-part", label: "Edit parts", description: "Edit existing part fields and counts." },
@@ -58,6 +56,15 @@ export async function grantableActions(
   const have = new Set(items.map((a) => a.action_id));
   for (const c of ENDPOINT_CAPABILITIES)
     if (!have.has(c.action_id)) items.push({ ...c, module: capabilityModule(c.action_id) });
+  // Declared by a module's manifest (`capabilities`): a gate on one of its
+  // routes that is not an action anyone runs.
+  for (const e of listEntries()) {
+    for (const c of e.manifest.capabilities ?? []) {
+      if (have.has(c.id)) continue;
+      have.add(c.id);
+      items.push({ action_id: c.id, label: c.label, description: c.description, module: e.manifest.name });
+    }
+  }
   // H2 — per-field read-scope capabilities declared by entity kinds
   // (entity_kinds.field_read_scopes values). Auto-grantable so an admin
   // can assign a "view costs"-style cap from the matrix without any

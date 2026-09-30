@@ -1,6 +1,7 @@
 // Default-exported Router for the purchases module. Mounted at
 // /api/v1/orgs/:slug/modules/purchases/ with requireAuth + withTenant.
 
+import { unconfirmedRouter } from "./unconfirmed.js";
 import { Router } from "express";
 import { sql, type Kysely } from "kysely";
 import { platform } from "@cobblr/platform-contract";
@@ -34,6 +35,7 @@ router.use("/", returnsRouter);
 router.use("/orders", ordersRouter);
 router.use("/items", itemsRouter);
 router.use("/vendors", vendorsRouter);
+router.use("/unconfirmed-receipts", unconfirmedRouter);
 
 export default router;
 

@@ -31,7 +31,7 @@ export interface ListItem {
   /** Set by the add-item wire when a line came from another entity (e.g. an
    *  inventory part that ran low). Drives the "from inventory" provenance badge
    *  and is what closes the buy→restock loop on check-off. */
-  metadata?: { source_ref?: { kind?: string; id?: string } } | null;
+  metadata?: ({ source_ref?: { kind?: string; id?: string } } & Record<string, unknown>) | null;
   /** What checking this line off will do: the wires that fire on its source
    *  record, from the kernel. Absent on a line with no source, or once checked. */
   on_check?: CheckEffect[];
@@ -78,6 +78,7 @@ export interface ListDetail {
   id: string;
   title: string;
   description: string | null;
+  metadata?: Record<string, unknown> | null;
   items: ListItem[];
 }
 
@@ -140,6 +141,17 @@ export class ListsApi {
   }
   claimItem(id: string, claimed: boolean) {
     return this.req<ListItem>("PATCH", `/items/${id}`, { claimed });
+  }
+  /** Save custom fields on a list; merged into what it holds. */
+  setListFields(id: string, metadata: Record<string, unknown>) {
+    return this.req<ListSummary>("PATCH", `/lists/${id}`, { metadata });
+  }
+  /** Save custom fields on a line; merged into what it holds. */
+  setItemFields(id: string, metadata: Record<string, unknown>) {
+    return this.req<ListItem>("PATCH", `/items/${id}`, { metadata });
+  }
+  getItem(id: string) {
+    return this.req<ListItem>("GET", `/items/${id}`);
   }
   removeItem(id: string) {
     return this.req<void>("DELETE", `/items/${id}`);

@@ -48,6 +48,7 @@ import { useDetailRoute, useListRoute } from "../lib/useDetailRoute";
 import { useAiStatus, AiOffNotice, aiStatusLine } from "./AiStatusNotice";
 import { RailTabContent, openRail, useRailActiveTab, useRailTab } from "./SideRail";
 import { PopoverLayer } from "@cobblr/platform-web";
+import { ServiceJobCard } from "./ServiceJobCard";
 
 // Shown only if the basic-mode endpoint itself is unreachable (network error) —
 // the server otherwise always returns a reply (its own no-match nudge).
@@ -70,6 +71,8 @@ interface Msg {
    *  rather than borrowing whatever the composer holds now. */
   sentWith?: { label: string; kind?: string; ids?: string[]; text?: string };
   proposal?: AiChatProposal; // assistant proposed a write — needs confirm
+  /** A service job Cobb started; its card follows it and holds its confirm. */
+  serviceJob?: { id: string; capability?: string };
   buildPreview?: BundleValidationPreview; // build-proposal: what applying enables/adds
   buildSeedCount?: number; // build-proposal: starter records apply will create
   building?: boolean; // a whole-workspace build is running in the background (poll)
@@ -122,7 +125,7 @@ interface Msg {
 /** An answer worth offering to save: something Cobb said at length, not a
  *  card about a change, a question back, or a one-line reply. */
 function saveable(m: Msg): boolean {
-  if (m.role !== "assistant" || m.proposal || m.command || m.choices || m.entityKind || m.ledgerId || m.ledgerIds || m.building) return false;
+  if (m.role !== "assistant" || m.proposal || m.command || m.choices || m.entityKind || m.ledgerId || m.ledgerIds || m.building || m.serviceJob) return false;
   const t = m.content.trim();
   return t.length >= 120 && !/^[✓✗]/.test(t);
 }
@@ -721,6 +724,10 @@ export function ChatPanel({ open: railOpen, setOpen }: { open: boolean; setOpen:
       // prefill.* params, and the page's own submit stays the user's. The
       // chat panel is docked, so the conversation survives the move. If the
       // model asked for several, the last one wins (one screen at a time).
+      // Each service job Cobb started this turn is its own card, after
+      // whatever the turn said.
+      const jobCards: Msg[] = (r.service_jobs ?? []).map((j) => ({ role: "assistant" as const, content: "", serviceJob: { id: j.job_id, capability: j.capability } }));
+      if (jobCards.length) queueMicrotask(() => setMessages((prev) => [...prev, ...jobCards]));
       const escortTo = (r.escorts ?? []).at(-1);
       if (escortTo?.path?.startsWith("/")) navigate(escortTo.path);
       // One card per turn when it changed more than one thing, with a single
@@ -743,7 +750,7 @@ export function ChatPanel({ open: railOpen, setOpen }: { open: boolean; setOpen:
           // that match — want me to add the pattern?"): keep that text.
           ...(r.text ? [named({ role: "assistant" as const, content: r.text })] : []),
           ...planCard,
-          named({ role: "assistant", content: r.summary ?? "I can do that — confirm?", proposal: r.proposal }),
+          named({ role: "assistant", content: r.summary ?? "I can do that. Confirm?", proposal: r.proposal }),
         ]);
       } else if (r.type === "proposals" && r.items?.length) {
         // Several writes from one turn — one confirmable card each, so the user
@@ -1582,7 +1589,7 @@ export function ChatPanel({ open: railOpen, setOpen }: { open: boolean; setOpen:
         const seedCount = (d.seed_plan ?? []).reduce((n, g) => n + (g.records?.length ?? 0), 0);
         patch({
           building: false,
-          content: d.interpretation ?? "Here's what I'll set up — confirm?",
+          content: d.interpretation ?? "Here's what I'll set up. Confirm?",
           ...(adds > 0 ? { proposal: { kind: "build", draft_id: draftId }, buildPreview: p, buildSeedCount: seedCount } : {}),
         });
         return;
@@ -1591,7 +1598,7 @@ export function ChatPanel({ open: railOpen, setOpen }: { open: boolean; setOpen:
         building: false,
         content:
           d.status === "failed"
-            ? "I couldn't set that up just now — mind trying again, or describe the main things you want to track?"
+            ? "I couldn't set that up just now. Mind trying again, or describe the main things you want to track?"
             : (d.interpretation ? d.interpretation + "\n\n" : "") +
               "I couldn't turn that into a clean setup automatically. Try describing the main things you want to track (one per line) and I'll try again.",
       });
@@ -1732,7 +1739,7 @@ export function ChatPanel({ open: railOpen, setOpen }: { open: boolean; setOpen:
                 <button
                   type="button"
                   onClick={() => setDevPose((p) => COBB_POSES[(COBB_POSES.indexOf(p) + 1) % COBB_POSES.length]!)}
-                  title={`Cobb — cycle the full-body pose below: ${devPose} (dev only)`}
+                  title={`Cobb: cycle the full-body pose below: ${devPose} (dev only)`}
                   className="rounded hover:bg-subtle/60 dark:hover:bg-slate-800/60 transition"
                 >
                   <CobbBust size={42} title="Cobb" className="cobb-lift" />
@@ -2066,6 +2073,7 @@ export function ChatPanel({ open: railOpen, setOpen }: { open: boolean; setOpen:
                   {/* Several destinations: one section each, each with its own
                       Do this, Do all at the bottom, and the card stays as the
                       record of what ran (a cancelled one keeps what did). */}
+                  {m.serviceJob && activeSlug && <ServiceJobCard slug={activeSlug} jobId={m.serviceJob.id} capability={m.serviceJob.capability} />}
                   {m.command && (m.command.sections?.length ?? 0) > 1 && (
                     <div className="mt-2">
                       <div className="text-[11px] text-muted dark:text-slate-400">

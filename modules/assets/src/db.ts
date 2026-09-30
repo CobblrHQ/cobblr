@@ -19,6 +19,12 @@ export interface AssetsAssetsTable {
   quantity: Generated<number>;
   serial_number: string | null;
   purchased_at: ColDate;
+  /** What it cost, in cents (0004). */
+  purchase_price_cents: number | null;
+  /** Where it came from (0004). */
+  vendor: string | null;
+  /** Put away (0005): out of the register, search and Needs you until restored. */
+  archived_at: Date | null;
   warranty_until: ColDate;
   last_service_at: ColDate;
   image_path: string | null;

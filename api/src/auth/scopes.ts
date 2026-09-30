@@ -37,6 +37,12 @@ export const TOKEN_SCOPES: TokenScopeDef[] = [
       ["POST", /^\/orgs\/[^/]+\/modules\/digifab\/edge\/(register|respond)$/],
       // poll/status + the self-update endpoints the loader fetches (release + its bundle).
       ["GET", /^\/orgs\/[^/]+\/modules\/digifab\/edge\/(poll|status|release|release\/bundle)$/],
+      // Files through the bridge: fetch one Cobblr is sending (GET, with
+      // Range to resume), ask how much of one Cobblr already holds (HEAD), and
+      // deliver one (PUT). The id is a blob of THIS bridge's channel.
+      ["GET", /^\/orgs\/[^/]+\/(modules\/digifab\/)?edge\/blobs\/[0-9a-f-]{36}$/],
+      ["HEAD", /^\/orgs\/[^/]+\/(modules\/digifab\/)?edge\/blobs\/[0-9a-f-]{36}$/],
+      ["PUT", /^\/orgs\/[^/]+\/(modules\/digifab\/)?edge\/blobs\/[0-9a-f-]{36}$/],
     ],
   },
   {
@@ -47,6 +53,8 @@ export const TOKEN_SCOPES: TokenScopeDef[] = [
     allow: [
       ["GET", /^\/super-admin\/feedback(\/.*)?$/],
       ["PATCH", /^\/super-admin\/feedback\/[^/]+$/],
+      // Post the card of an item filed while Discord was off.
+      ["POST", /^\/super-admin\/feedback\/[^/]+\/announce$/],
       // Close several items at once with ONE combined reporter email/notif.
       ["POST", /^\/super-admin\/feedback\/batch-resolve$/],
     ],

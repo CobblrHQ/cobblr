@@ -18,10 +18,10 @@ import { defineModule } from "@cobblr/platform-contract";
 
 export default defineModule({
   name: "core-units",
-  version: "0.2.4",
+  version: "0.2.5",
   displayName: "Units",
   description:
-    "Canonical unit vocabulary: built-in units (gram/g, meter/m, each/ea) plus your own, with a shorthand-vs-full-word display toggle. Powers the unit picker on quantity fields.",
+    "The units you count and measure in (grams, metres, pieces, your own), shown the way you like.",
   icon: "ruler",
   band: "stock",
   autoEnable: true, // ambient capability — on for every workspace, but disableable
@@ -39,7 +39,6 @@ export default defineModule({
 
   exposes: {
     events: [],
-    api: [],
     actions: [
       {
         // NO-PHRASING: the way back for another action, run only from Undo
@@ -61,6 +60,7 @@ export default defineModule({
         // through the generic invoke_action rail rather than a bespoke AI tool
         // — the labels:set-code pattern. Purely additive: a new code never
         // rewrites a value already stored against a different one.
+        // UI-SCREEN: /configuration/units
         id: "core-units:add-unit",
         examples: ["we measure yarn in balls", "add a fathom unit"],
         undoable: true,

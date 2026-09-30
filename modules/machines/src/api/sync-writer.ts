@@ -7,7 +7,7 @@
 // side stays pure declarative data. Fires the module's own events so views,
 // wires, and the instance counters stay consistent with the HTTP path.
 
-import { findRowIdByKey, mergeRowMetadata, platform, restoreRow, snapshotRow } from "@cobblr/platform-contract";
+import { adoptAxisValuesIntoField, findRowIdByKey, mergeRowMetadata, platform, restoreRow, snapshotRow } from "@cobblr/platform-contract";
 import { DISPOSITION_LABELS } from "@cobblr/platform-contract/disposition";
 import { sql, type Kysely } from "kysely";
 import type { MachinesDB } from "../db.js";
@@ -52,6 +52,12 @@ export function registerMachinesWriter(): void {
         .executeTakeFirstOrThrow();
       void platform().events.emit("machines.machine.created", { orgId, machineId: inserted.id });
       return inserted.id;
+    },
+
+    /** The scan placeholder's values move into `type`, the machine's own
+     *  category, before the platform removes the placeholder (#4115). */
+    async adoptAxisValues(orgId, args) {
+      return adoptAxisValuesIntoField(await platform().tenants.getDb(orgId), "machines_machines", args);
     },
 
     async update(orgId, id, fields) {

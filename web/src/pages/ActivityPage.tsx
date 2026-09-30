@@ -3,7 +3,7 @@
 // type, and by token. Pollable every 10s.
 
 import { useState } from "react";
-import { useQuery } from "@tanstack/react-query";
+import { useInfiniteQuery } from "@tanstack/react-query";
 import { Filter, KeyRound, ShieldCheck, Wrench, User } from "lucide-react";
 import { api, type ActivityEntry } from "../lib/api";
 import { useActiveOrg } from "../auth/ActiveOrgContext";
@@ -21,19 +21,23 @@ export function ActivityPage() {
   const [authFilter, setAuthFilter] = useState<AuthMethod | "all">("all");
   const [entityFilter, setEntityFilter] = useState<string>("");
 
-  const activity = useQuery({
+  const activity = useInfiniteQuery({
     queryKey: ["activity", activeSlug, authFilter, entityFilter],
-    queryFn: () =>
+    initialPageParam: undefined as number | undefined,
+    queryFn: ({ pageParam }) =>
       api.listActivity(activeSlug, {
         limit: 100,
         authMethods: authFilter === "all" ? undefined : [authFilter],
         entityType: entityFilter || undefined,
+        before: pageParam,
       }),
+    getNextPageParam: (last) => last.next_before ?? undefined,
     enabled: !!activeSlug,
     refetchInterval: 10_000,
   });
 
-  const items = activity.data?.items ?? [];
+  const items = activity.data?.pages.flatMap((p) => p.items) ?? [];
+  const total = activity.data?.pages[0]?.total ?? items.length;
 
   return (
     <div className="space-y-4">
@@ -78,11 +82,24 @@ export function ActivityPage() {
         <div className="text-xs text-faint italic">No activity matches these filters.</div>
       )}
 
+      {items.length > 0 && (
+        <div className="text-[10px] font-mono text-faint">{items.length} of {total}</div>
+      )}
       <ul className={"space-y-1.5 " + FEED_SCROLL_PAGE}>
         {items.map((it) => (
           <ActivityRow key={it.id} entry={it} />
         ))}
       </ul>
+      {activity.hasNextPage && (
+        <button
+          type="button"
+          onClick={() => void activity.fetchNextPage()}
+          disabled={activity.isFetchingNextPage}
+          className="text-xs px-3 py-1.5 rounded border border-line dark:border-slate-600 hover:border-cobble-400 disabled:opacity-50"
+        >
+          {activity.isFetchingNextPage ? "Loading…" : "Show older"}
+        </button>
+      )}
     </div>
   );
 }

@@ -8,16 +8,21 @@
 // Archive layout (a zip):
 //   manifest.json          — the blueprint (kind:"cobblr.backup") + data_index
 //   data/<table>.jsonl     — one tenant-DB table per file, JSON-lines (ids kept)
+//   platform/<table>.jsonl — the workspace's rows in the shared platform tables
+//                            (links, people, field sections, label tokens...;
+//                            SHARED_WORKSPACE_TABLES says which and why)
 //   files/<file_id>        — the original bytes of every uploaded file
 //
 // Restore preserves entity ids (so foreign keys just work — no remap) and
-// only re-mints FILE ids (files.write owns the core_files_files row + re-derives
-// image variants); file references in rows are value-swapped old→new.
+// re-mints FILE ids (files.write owns the core_files_files row + re-derives
+// image variants) and the ids of the shared-table rows (the source workspace
+// may still hold them); references to either are value-swapped old→new.
 //
 // Mounted at /api/v1/orgs/:slug/backup. Owner/admin only.
 
+import { uploadMiddleware } from "../platform/uploads.js";
+import { UPLOAD_CEILING_BYTES, uploadedFile } from "@cobblr/platform-contract/upload";
 import { Router } from "express";
-import multer from "multer";
 import { ZipArchive } from "archiver";
 import unzipper from "unzipper";
 import type { Client } from "pg";
@@ -30,6 +35,8 @@ import { requireAuth } from "../auth/middleware.js";
 import { requireRole } from "../auth/capability.js";
 import { withTenant } from "../middleware/tenant.js";
 import { meta } from "../db/meta.js";
+import { acceptedSource } from "../platform/carry-replay.js";
+import { repathFiles } from "../platform/file-paths.js";
 import { getTenantDb } from "../db/tenant.js";
 import { env } from "../env.js";
 import {
@@ -50,6 +57,7 @@ import { randomBytes } from "node:crypto";
 import * as activity from "../platform/activity.js";
 import { captureBlueprint, applyBlueprint, type BlueprintManifestT } from "./blueprint.js";
 import { makeUncompressedBudget, readEntryBounded, BackupTooLargeError } from "./backup-limits.js";
+import { capturePlatformRows, platformIdMap, restorePlatformRows, swapIds, type PlatformRows } from "../platform/backup-platform-rows.js";
 
 // Tables the generic dump/restore must never touch:
 //  - `migrations`  — the tenant migration runner's bookkeeping; the fresh
@@ -70,12 +78,15 @@ import { makeUncompressedBudget, readEntryBounded, BackupTooLargeError } from ".
 const FILES_TABLE = "core_files_files";
 const EXCLUDED_TABLES = new Set(["migrations", FILES_TABLE]);
 
-const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 1024 * 1024 * 1024 } });
+const upload = uploadMiddleware({ maxBytes: UPLOAD_CEILING_BYTES, noun: "backup" });
 
 interface CoreFilesRow {
   id: string;
   filename: string | null;
   mime_type: string | null;
+  /** A deleted file is not carried: a restore writes every file it carries
+   *  back as live, so carrying one would bring back what a person deleted. */
+  deleted_at: Date | null;
 }
 interface BackupTenantDB {
   core_files_files: CoreFilesRow;
@@ -119,13 +130,75 @@ async function listTenantTables(tdb: Kysely<unknown>): Promise<string[]> {
   return r.rows.map((x) => x.table_name).filter((t) => t !== "migrations");
 }
 
+/** Take a sandbox's stock out of the dump. Stock is every row made at or
+ *  before the hand-over (its `created_at`), plus the records the log names
+ *  as made then (`omit`, for a table with no timestamp). A stock row that
+ *  points at stock being left out goes with it (a sample book's lot, its
+ *  stock moves); stock that the person's own rows point at stays (their
+ *  grocery on the example list keeps the list). Returns the ids left out. */
+function leaveOut(
+  dataFiles: Array<{ jsonl: string; index: DataIndexTable }>,
+  opts: { omit?: ReadonlySet<string>; stockUntil?: Date },
+): Set<string> {
+  type Row = { line: string; id: string | null; own: boolean; out: boolean };
+  const until = opts.stockUntil?.getTime();
+  const tables: Row[][] = dataFiles.map((d) =>
+    (d.jsonl ? d.jsonl.split("\n") : []).map((line) => {
+      const r = JSON.parse(line) as { id?: unknown; created_at?: unknown };
+      const id = r.id == null ? null : String(r.id);
+      const made = typeof r.created_at === "string" ? Date.parse(r.created_at) : NaN;
+      const stock = (id !== null && !!opts.omit?.has(id)) || (until !== undefined && Number.isFinite(made) && made <= until);
+      return { line, id, own: until !== undefined && Number.isFinite(made) && made > until, out: stock };
+    }),
+  );
+  const all = tables.flat();
+  for (let round = 0; round < 6; round++) {
+    let changed = false;
+    const outIds = new Set(all.filter((r) => r.out && r.id).map((r) => r.id!));
+    const ownText = all.filter((r) => r.own).map((r) => r.line).join("\n");
+    for (const r of all) {
+      if (r.out && r.id && ownText.includes(r.id)) {
+        r.out = false;
+        changed = true;
+      }
+    }
+    for (const r of all) {
+      if (r.out || r.own) continue;
+      for (const id of outIds) {
+        if (r.line.includes(id)) {
+          r.out = true;
+          changed = true;
+          break;
+        }
+      }
+    }
+    if (!changed) break;
+  }
+  dataFiles.forEach((d, i) => {
+    const keep = tables[i]!.filter((r) => !r.out).map((r) => r.line);
+    d.jsonl = keep.join("\n");
+    d.index = { ...d.index, row_count: keep.length };
+  });
+  return new Set(all.filter((r) => r.out && r.id).map((r) => r.id!));
+}
+
 export const backupRouter = Router({ mergeParams: true });
 
 // ── Build the backup zip (reused by GET /export AND the destinations cron) ──
 /** Snapshot a workspace into a backup zip buffer: manifest.json (the blueprint
  *  + data_index) + data/<table>.jsonl (every row) + files/<id> (original bytes).
  *  Personal-scale: buffered in memory; a streaming dump is a future option. */
-export async function buildBackupZip(orgId: string, slug: string): Promise<{ buffer: Buffer; filename: string }> {
+export async function buildBackupZip(
+  orgId: string,
+  slug: string,
+  opts: {
+    /** A sandbox's examples, left out unless the person asked to keep them:
+     *  the records the log names as made before the hand-over, and every row
+     *  made at or before `stockUntil`. See leaveOut. */
+    omit?: ReadonlySet<string>;
+    stockUntil?: Date;
+  } = {},
+): Promise<{ buffer: Buffer; filename: string }> {
   const blueprint = await captureBlueprint(orgId);
   const tdb = (await getTenantDb(orgId)) as unknown as Kysely<BackupTenantDB>;
   const allTables = await listTenantTables(tdb as unknown as Kysely<unknown>);
@@ -142,9 +215,13 @@ export async function buildBackupZip(orgId: string, slug: string): Promise<{ buf
     });
   }
 
-  const fileRows = hasFiles
-    ? await (tdb as Kysely<BackupTenantDB>).selectFrom(FILES_TABLE).select(["id", "filename", "mime_type"]).execute()
+  let fileRows = hasFiles
+    ? await (tdb as Kysely<BackupTenantDB>).selectFrom(FILES_TABLE).select(["id", "filename", "mime_type"]).where("deleted_at", "is", null).execute()
     : [];
+  if (opts.omit?.size || opts.stockUntil) {
+    const leftOut = leaveOut(dataFiles, opts);
+    fileRows = fileRows.filter((f) => !leftOut.has(f.id));
+  }
   const fileBlobs: Array<{ name: string; bytes: Buffer; index: DataIndexFile }> = [];
   for (const f of fileRows) {
     const got = await platform().files.read(orgId, f.id, "original");
@@ -156,10 +233,29 @@ export async function buildBackupZip(orgId: string, slug: string): Promise<{ buf
     });
   }
 
+  const platformRows = await capturePlatformRows(orgId);
+  const platformFiles = [...platformRows].map(([table, rows]) => ({
+    file: `platform/${table}.jsonl`,
+    jsonl: rows.map((r) => JSON.stringify(r)).join("\n"),
+    index: { table, file: `platform/${table}.jsonl`, row_count: rows.length },
+  }));
+
+  // The blueprint's own name says "blueprint" and its description "No data",
+  // which a backup carrying every record was calling itself (#4217). A
+  // backup says what it is.
+  const orgName = (await meta.selectFrom("orgs").select("name").where("id", "=", orgId).executeTakeFirst())?.name ?? slug;
+  // UTC-DAY OK: the manifest's capture stamp, not a claim about anybody's calendar.
+  const day = new Date().toISOString().slice(0, 10);
   const manifest = {
     ...blueprint,
+    name: `${orgName}: backup ${day}`,
+    description: `Everything in ${orgName} on ${day}: its setup, every record and every file. Restore it into a workspace to get it all back.`,
     kind: "cobblr.backup" as const,
-    data_index: { tables: dataFiles.map((d) => d.index), files: fileBlobs.map((b) => b.index) },
+    data_index: {
+      tables: dataFiles.map((d) => d.index),
+      files: fileBlobs.map((b) => b.index),
+      platform: platformFiles.map((p) => p.index),
+    },
   };
 
   const archive = new ZipArchive({ zlib: { level: 9 } });
@@ -171,6 +267,7 @@ export async function buildBackupZip(orgId: string, slug: string): Promise<{ buf
   });
   archive.append(JSON.stringify(manifest, null, 2), { name: "manifest.json" });
   for (const d of dataFiles) archive.append(d.jsonl, { name: d.file });
+  for (const p of platformFiles) archive.append(p.jsonl, { name: p.file });
   for (const b of fileBlobs) archive.append(b.bytes, { name: b.name });
   await archive.finalize();
   await done;
@@ -196,20 +293,6 @@ backupRouter.get("/export", requireAuth, withTenant, async (req, res, next) => {
 });
 
 // ── Restore ──────────────────────────────────────────────────────────
-
-/** Deep-swap any string value matching an old file id for its new id.
- *  Covers `image_file_id`, ids embedded in `metadata`/`config` jsonb, etc.
- *  in one generic pass — file ids are UUIDs, so value-equality is safe. */
-function remapFileIds(value: unknown, map: Map<string, string>): unknown {
-  if (typeof value === "string") return map.get(value) ?? value;
-  if (Array.isArray(value)) return value.map((v) => remapFileIds(v, map));
-  if (value && typeof value === "object") {
-    const out: Record<string, unknown> = {};
-    for (const [k, v] of Object.entries(value as Record<string, unknown>)) out[k] = remapFileIds(v, map);
-    return out;
-  }
-  return value;
-}
 
 interface ColumnInfo {
   /** Every REAL column of the table (from information_schema). A row key that
@@ -254,15 +337,24 @@ export function safeInsertColumns(
 }
 
 interface ParsedBackup {
-  manifest: BlueprintManifestT & { data_index?: { tables: DataIndexTable[]; files: DataIndexFile[] } };
+  manifest: BlueprintManifestT & {
+    data_index?: { tables: DataIndexTable[]; files: DataIndexFile[]; platform?: DataIndexTable[] };
+  };
   tables: Map<string, Array<Record<string, unknown>>>;
+  /** Null for a backup taken before the shared tables were carried: a restore
+   *  of one leaves the target's shared rows as they are rather than clearing
+   *  them for nothing. */
+  platform: PlatformRows | null;
   files: Map<string, Buffer>;
 }
 
-async function parseBackupZip(buf: Buffer): Promise<ParsedBackup> {
-  const dir = await unzipper.Open.buffer(buf);
+/** Reads the archive where it lies: a path (an upload, streamed to disk by the
+ *  upload door) is opened in place, never read into memory whole. */
+async function parseBackupZip(src: Buffer | string): Promise<ParsedBackup> {
+  const dir = typeof src === "string" ? await unzipper.Open.file(src) : await unzipper.Open.buffer(src);
   let manifest: ParsedBackup["manifest"] | null = null;
   const tables = new Map<string, Array<Record<string, unknown>>>();
+  const shared: PlatformRows = new Map();
   const files = new Map<string, Buffer>();
   // A restore is admin-triggered but the .zip is attacker-supplyable, so a
   // decompression bomb here would OOM the shared host (audit M-BOMB). Read every
@@ -291,20 +383,142 @@ async function parseBackupZip(buf: Buffer): Promise<ParsedBackup> {
         .filter((l) => l.trim())
         .map((l) => JSON.parse(l) as Record<string, unknown>);
       tables.set(table, rows);
+    } else if (entry.path.startsWith("platform/") && entry.path.endsWith(".jsonl")) {
+      const table = entry.path.slice("platform/".length, -".jsonl".length);
+      const text = (await readEntry(entry)).toString("utf8");
+      shared.set(
+        table,
+        text
+          .split("\n")
+          .filter((l) => l.trim())
+          .map((l) => JSON.parse(l) as Record<string, unknown>),
+      );
     } else if (entry.path.startsWith("files/")) {
       files.set(entry.path.slice("files/".length), await readEntry(entry));
     }
   }
   if (!manifest) throw Object.assign(new Error("manifest.json missing from backup"), { code: "bad_archive" });
-  return { manifest, tables, files };
+  const carriesPlatform = Array.isArray(manifest.data_index?.platform);
+  return { manifest, tables, platform: carriesPlatform ? shared : null, files };
 }
 
-backupRouter.post("/restore", requireAuth, withTenant, upload.single("file"), async (req, res, next) => {
+/** Put a parsed backup into a workspace: its blueprint, then every file,
+ *  row and shared row, in one transaction. The caller has already asked for
+ *  consent (the workspace is empty, or the person said replace). One door for
+ *  every way a backup arrives: an upload, a link from another box. */
+export async function restoreBackupInto(
+  orgId: string,
+  sess: Parameters<typeof applyBlueprint>[1],
+  parsed: ParsedBackup,
+) {
+  const { manifest, tables, platform: sharedRows, files } = parsed;
+  const tdb = (await getTenantDb(orgId)) as unknown as Kysely<unknown>;
+  // Where the pictures now live: a path names its workspace (file-paths.ts).
+  const slug = (await meta.selectFrom("orgs").select("slug").where("id", "=", orgId).executeTakeFirstOrThrow()).slug;
+  // 1. Apply the blueprint — enables modules so every module table EXISTS
+  //    (the data tables don't exist in a fresh workspace until now).
+  const blueprintApplied = await applyBlueprint(orgId, sess, manifest);
+
+  // 2. Now that the schema is complete, figure out which dumped tables we can
+  //    load (intersection with the post-apply table set).
+  const targetTables = new Set((await listTenantTables(tdb)).filter((t) => !EXCLUDED_TABLES.has(t)));
+  const restorable = [...tables.keys()].filter((t) => targetTables.has(t) && !EXCLUDED_TABLES.has(t));
+
+  // 3. Restore files → build old→new id map (files.write re-derives image
+  //    variants + owns the core_files_files row). File ids in rows are value-swapped.
+  const fileMap = new Map<string, string>();
+  let filesRestored = 0;
+  const indexByOld = new Map((manifest.data_index?.files ?? []).map((f) => [f.file_id, f]));
+  for (const [oldId, bytes] of files) {
+    const idx = indexByOld.get(oldId);
+    const w = await platform().files.write(orgId, bytes, {
+      filename: idx?.name ?? oldId,
+      mimeType: idx?.mime ?? "application/octet-stream",
+    });
+    if (w?.fileId) {
+      fileMap.set(oldId, w.fileId);
+      filesRestored++;
+    }
+  }
+
+  // Ids the shared-table rows will take, known before any write so the
+  // workspace's own rows can point at them (a person field) in one swap.
+  const platformIds = sharedRows ? platformIdMap(sharedRows) : new Map<string, string>();
+  const idSwap = new Map([...fileMap, ...platformIds]);
+
+  // 4. Bulk-load rows in ONE transaction so SET LOCAL session_replication_role
+  //    pins to this connection: FK triggers off (ids preserved → references
+  //    just work, any order), atomic, and reverts on commit. Requires the
+  //    app's DB role to be superuser (it is — see CLAUDE.md DB setup).
+  const tableMeta = new Map<string, ColumnInfo>();
+  for (const t of restorable) tableMeta.set(t, await columnInfo(tdb, t));
+
+  const dbName = (await meta.selectFrom("orgs").select("db_name").where("id", "=", orgId).executeTakeFirstOrThrow()).db_name;
+  const client = superuserTenantClient(dbName);
+  await client.connect();
+  let rowsRestored = 0;
+  let platformResult: Awaited<ReturnType<typeof restorePlatformRows>> | null = null;
+  try {
+    // session_replication_role=replica turns OFF FK enforcement: ids are
+    // preserved so references just work in ANY insert order, and DELETE
+    // won't trip "referenced by a FK". Requires superuser — hence this
+    // dedicated connection (the per-tenant role can't set it). Atomic.
+    await client.query("SET session_replication_role = replica");
+    await client.query("BEGIN");
+    for (const t of restorable) await client.query(`DELETE FROM "${t}"`);
+    for (const t of restorable) {
+      const rows = tables.get(t) ?? [];
+      const info = tableMeta.get(t) ?? { all: new Set<string>(), jsonb: new Set<string>(), generated: new Set<string>() };
+      for (const raw of rows) {
+        const row = repathFiles(swapIds(raw, idSwap), slug, fileMap) as Record<string, unknown>;
+        // Only real, insertable columns reach the INSERT: drop any key that
+        // isn't a known column (superuser identifier-injection guard) and skip
+        // GENERATED columns (Postgres recomputes them). See safeInsertColumns.
+        const cols = safeInsertColumns(Object.keys(row), info.all, info.generated);
+        if (cols.length === 0) continue;
+        const placeholders = cols.map((c, i) => (info.jsonb.has(c) ? `$${i + 1}::jsonb` : `$${i + 1}`));
+        const params = cols.map((c) => {
+          const v = row[c];
+          if (v === null || v === undefined) return null;
+          return info.jsonb.has(c) ? JSON.stringify(v) : (v as unknown);
+        });
+        const colList = cols.map((c) => `"${c}"`).join(", ");
+        await client.query(`INSERT INTO "${t}" (${colList}) VALUES (${placeholders.join(", ")})`, params);
+        rowsRestored++;
+      }
+    }
+    // The shared rows land in their own transaction just before this one
+    // commits: if they fail, the workspace's own rows roll back with them.
+    if (sharedRows) platformResult = await restorePlatformRows(orgId, sharedRows, platformIds);
+    await client.query("COMMIT");
+  } catch (err) {
+    try {
+      await client.query("ROLLBACK");
+    } catch {
+      /* ignore */
+    }
+    throw err;
+  } finally {
+    await client.end();
+  }
+
+  await activity.log({ orgId, action: "backup_restored", ref: { module: null, entityType: "backup", entityId: manifest.id } });
+  return {
+    blueprint: blueprintApplied,
+    tables: restorable.length,
+    rows: rowsRestored,
+    files: filesRestored,
+    workspace_rows: platformResult?.rows ?? 0,
+    refused: platformResult?.refused ?? [],
+  };
+}
+
+backupRouter.post("/restore", requireAuth, withTenant, upload, async (req, res, next) => {
   try {
     if (!requireRole(req, res, "owner", "admin")) return;
     const orgId = req.tenant!.org.id;
-    const file = (req as unknown as { file?: Express.Multer.File }).file;
-    if (!file?.buffer) {
+    const file = uploadedFile(req);
+    if (!file) {
       res.status(400).json({ error: { code: "missing_file", message: "Multipart field 'file' (the backup .zip) is required." } });
       return;
     }
@@ -312,7 +526,7 @@ backupRouter.post("/restore", requireAuth, withTenant, upload.single("file"), as
 
     let parsed: ParsedBackup;
     try {
-      parsed = await parseBackupZip(file.buffer);
+      parsed = await parseBackupZip(file.path);
     } catch (err) {
       if (err instanceof BackupTooLargeError) {
         res.status(413).json({ error: { code: err.code, message: err.message } });
@@ -321,7 +535,8 @@ backupRouter.post("/restore", requireAuth, withTenant, upload.single("file"), as
       res.status(400).json({ error: { code: "bad_archive", message: (err as Error).message } });
       return;
     }
-    const { manifest, tables, files } = parsed;
+    const { manifest, tables, platform: sharedRows, files } = parsed;
+    const platformRowCount = sharedRows ? [...sharedRows.values()].reduce((n, rows) => n + rows.length, 0) : 0;
 
     const tdb = (await getTenantDb(orgId)) as unknown as Kysely<unknown>;
 
@@ -355,10 +570,12 @@ backupRouter.post("/restore", requireAuth, withTenant, upload.single("file"), as
           restore_rows: totalRows,
           restore_files: files.size,
           restore_tables: tables.size,
+          restore_workspace_rows: platformRowCount,
           install_bundles: (manifest.bundles ?? []).length,
           replace_existing_data: targetHasData,
         },
         tables: [...tables.entries()].map(([name, rows]) => ({ name, rows: rows.length })),
+        workspace_rows: sharedRows ? [...sharedRows.entries()].map(([name, rows]) => ({ name, rows: rows.length })) : [],
       });
       return;
     }
@@ -374,6 +591,7 @@ backupRouter.post("/restore", requireAuth, withTenant, upload.single("file"), as
             restore_rows: totalRows,
             restore_files: files.size,
             restore_tables: tables.size,
+            restore_workspace_rows: platformRowCount,
             install_bundles: (manifest.bundles ?? []).length,
             target_not_empty: targetHasData,
           },
@@ -388,98 +606,87 @@ backupRouter.post("/restore", requireAuth, withTenant, upload.single("file"), as
       auth_method: req.session!.auth_method,
       api_token_id: req.session!.api_token_id ?? null,
     };
-
-    // 1. Apply the blueprint — enables modules so every module table EXISTS
-    //    (the data tables don't exist in a fresh workspace until now).
-    const blueprintApplied = await applyBlueprint(orgId, sess, manifest);
-
-    // 2. Now that the schema is complete, figure out which dumped tables we can
-    //    load (intersection with the post-apply table set).
-    const targetTables = new Set((await listTenantTables(tdb)).filter((t) => !EXCLUDED_TABLES.has(t)));
-    const restorable = [...tables.keys()].filter((t) => targetTables.has(t) && !EXCLUDED_TABLES.has(t));
-
-    // 3. Restore files → build old→new id map (files.write re-derives image
-    //    variants + owns the core_files_files row). File ids in rows are value-swapped.
-    const fileMap = new Map<string, string>();
-    let filesRestored = 0;
-    const indexByOld = new Map((manifest.data_index?.files ?? []).map((f) => [f.file_id, f]));
-    for (const [oldId, bytes] of files) {
-      const idx = indexByOld.get(oldId);
-      const w = await platform().files.write(orgId, bytes, {
-        filename: idx?.name ?? oldId,
-        mimeType: idx?.mime ?? "application/octet-stream",
-      });
-      if (w?.fileId) {
-        fileMap.set(oldId, w.fileId);
-        filesRestored++;
-      }
-    }
-
-    // 4. Bulk-load rows in ONE transaction so SET LOCAL session_replication_role
-    //    pins to this connection: FK triggers off (ids preserved → references
-    //    just work, any order), atomic, and reverts on commit. Requires the
-    //    app's DB role to be superuser (it is — see CLAUDE.md DB setup).
-    const tableMeta = new Map<string, ColumnInfo>();
-    for (const t of restorable) tableMeta.set(t, await columnInfo(tdb, t));
-
-    const dbName = (await meta.selectFrom("orgs").select("db_name").where("id", "=", orgId).executeTakeFirstOrThrow()).db_name;
-    const client = superuserTenantClient(dbName);
-    await client.connect();
-    let rowsRestored = 0;
-    try {
-      // session_replication_role=replica turns OFF FK enforcement: ids are
-      // preserved so references just work in ANY insert order, and DELETE
-      // won't trip "referenced by a FK". Requires superuser — hence this
-      // dedicated connection (the per-tenant role can't set it). Atomic.
-      await client.query("SET session_replication_role = replica");
-      await client.query("BEGIN");
-      for (const t of restorable) await client.query(`DELETE FROM "${t}"`);
-      for (const t of restorable) {
-        const rows = tables.get(t) ?? [];
-        const info = tableMeta.get(t) ?? { all: new Set<string>(), jsonb: new Set<string>(), generated: new Set<string>() };
-        for (const raw of rows) {
-          const row = remapFileIds(raw, fileMap) as Record<string, unknown>;
-          // Only real, insertable columns reach the INSERT: drop any key that
-          // isn't a known column (superuser identifier-injection guard) and skip
-          // GENERATED columns (Postgres recomputes them). See safeInsertColumns.
-          const cols = safeInsertColumns(Object.keys(row), info.all, info.generated);
-          if (cols.length === 0) continue;
-          const placeholders = cols.map((c, i) => (info.jsonb.has(c) ? `$${i + 1}::jsonb` : `$${i + 1}`));
-          const params = cols.map((c) => {
-            const v = row[c];
-            if (v === null || v === undefined) return null;
-            return info.jsonb.has(c) ? JSON.stringify(v) : (v as unknown);
-          });
-          const colList = cols.map((c) => `"${c}"`).join(", ");
-          await client.query(`INSERT INTO "${t}" (${colList}) VALUES (${placeholders.join(", ")})`, params);
-          rowsRestored++;
-        }
-      }
-      await client.query("COMMIT");
-    } catch (err) {
-      try {
-        await client.query("ROLLBACK");
-      } catch {
-        /* ignore */
-      }
-      throw err;
-    } finally {
-      await client.end();
-    }
-
-    await activity.log({ orgId, action: "backup_restored", ref: { module: null, entityType: "backup", entityId: manifest.id } });
-    res.status(201).json({
-      restored: {
-        blueprint: blueprintApplied,
-        tables: restorable.length,
-        rows: rowsRestored,
-        files: filesRestored,
-      },
-    });
+    res.status(201).json({ restored: await restoreBackupInto(orgId, sess, parsed) });
   } catch (err) {
     next(err);
   }
 });
+
+// POST /restore-from-link { url, confirm? } — a backup another Cobblr made
+// for this person, fetched by address: the "Continue on Cobblr" button in a
+// sandbox's email, or a link pasted on a blank workspace's first screen.
+// Only a take link (/api/v1/try/take/<token>) on a source this deployment
+// lists (COBBLR_CARRY_SOURCES, the same list the carry reads from), so the
+// address can never make this server fetch anything else. Plain fetch: the
+// source is operator-configured, not the person's.
+// AI-REACH: exempt (a person bringing their own file in, from a link in their inbox)
+backupRouter.post("/restore-from-link", requireAuth, withTenant, async (req, res, next) => {
+  try {
+    if (!requireRole(req, res, "owner", "admin")) return;
+    const orgId = req.tenant!.org.id;
+    const url = typeof req.body?.url === "string" ? req.body.url.trim() : "";
+    const confirm = String(req.body?.confirm ?? "");
+    let parsedUrl: URL | null = null;
+    try {
+      parsedUrl = new URL(url);
+    } catch {
+      parsedUrl = null;
+    }
+    const source = parsedUrl ? acceptedSource(parsedUrl.origin) : null;
+    if (!parsedUrl || !source || !/^\/api\/v1\/try\/take\/[A-Za-z0-9_-]{16,200}$/.test(parsedUrl.pathname)) {
+      res.status(400).json({ error: { code: "not_a_backup_link", message: "That is not a link to a Cobblr sandbox's file. Paste the link from the email, or upload the file instead." } });
+      return;
+    }
+    const got = await fetch(`${source}${parsedUrl.pathname}`, { redirect: "error" }).catch(() => null);
+    if (!got || !got.ok) {
+      const gone = got?.status === 410;
+      res.status(gone ? 410 : 502).json({
+        error: {
+          code: gone ? "link_expired" : "source_unreachable",
+          message: gone ? "That file's link has run out. Ask for your work again from the sandbox, if it is still there." : "We could not reach the place that file lives. Try again in a minute.",
+        },
+      });
+      return;
+    }
+    let parsed: ParsedBackup;
+    try {
+      parsed = await parseBackupZip(Buffer.from(await got.arrayBuffer()));
+    } catch (err) {
+      if (err instanceof BackupTooLargeError) {
+        res.status(413).json({ error: { code: err.code, message: err.message } });
+        return;
+      }
+      res.status(400).json({ error: { code: "bad_archive", message: (err as Error).message } });
+      return;
+    }
+    const tdb = (await getTenantDb(orgId)) as unknown as Kysely<unknown>;
+    if ((await workspaceHasData(tdb, parsed)) && confirm !== "replace") {
+      res.status(409).json({
+        error: { code: "needs_consent", message: "This workspace already has things in it. Bring the file into a new workspace, or confirm that it replaces what is here." },
+      });
+      return;
+    }
+    const sess = {
+      id: req.session!.id,
+      display_name: req.session!.display_name ?? null,
+      auth_method: req.session!.auth_method,
+      api_token_id: req.session!.api_token_id ?? null,
+    };
+    res.status(201).json({ restored: await restoreBackupInto(orgId, sess, parsed), name: parsed.manifest.name ?? null });
+  } catch (err) {
+    next(err);
+  }
+});
+
+/** Whether the tables the backup would fill already hold rows here. */
+async function workspaceHasData(tdb: Kysely<unknown>, parsed: ParsedBackup): Promise<boolean> {
+  const existingNow = new Set((await listTenantTables(tdb)).filter((t) => !EXCLUDED_TABLES.has(t)));
+  for (const t of [...parsed.tables.keys()].filter((t) => existingNow.has(t))) {
+    const c = await sql<{ n: number }>`select count(*)::int as n from ${sql.ref(t)}`.execute(tdb);
+    if ((c.rows[0]?.n ?? 0) > 0) return true;
+  }
+  return false;
+}
 
 // ── Destinations (Phase C) — where automatic backups go ──────────────
 // A destination = driver + config + (encrypted) credentials + schedule. The
@@ -847,6 +1054,7 @@ export const backupGoogleCallbackRouter = Router();
 // BROKER SERVER: a client asks us to broker a consent. We must have a Google app
 // + a shared secret. We wrap the client's opaque state in OUR broker-signed
 // state and hand back a consent URL pointing at OUR callback.
+// UI-REACH: the backup broker, called by another instance with the shared secret
 backupGoogleCallbackRouter.post("/backup/google/broker/start", async (req, res, next) => {
   try {
     if (!brokerServerEnabled() || !env.GOOGLE_OAUTH_REDIRECT_URL) {
@@ -927,6 +1135,7 @@ backupGoogleCallbackRouter.get("/backup/google/callback", async (req, res, next)
 
 // BROKER SERVER: the client redeems a link code for the refresh token,
 // server-to-server, authenticated by the shared secret. Single-use.
+// UI-REACH: the backup broker, called by another instance with the shared secret
 backupGoogleCallbackRouter.post("/backup/google/broker/redeem", async (req, res, next) => {
   try {
     if (!brokerServerEnabled()) {

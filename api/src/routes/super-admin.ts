@@ -14,7 +14,7 @@ import { Router } from "express";
 import { sql } from "kysely";
 import { appendEffects } from "./feedback-append-effects.js";
 import { feedbackCard, resolutionDelivery } from "./feedback-card.js";
-import { postFeedbackCard } from "./feedback-card-post.js";
+import { postCardForStoredFeedback, postCardlessFeedback, postFeedbackCard } from "./feedback-card-post.js";
 import { z } from "zod";
 import { randomBytes } from "node:crypto";
 import { requireAuth, requirePlatformAdmin, isPlatformAdmin } from "../auth/middleware.js";
@@ -1134,6 +1134,7 @@ const IngestWaitlist = z.object({
 // POST /super-admin/waitlist/ingest — idempotent on the pending row: a repeat
 // signup for an email that's already pending (or already invited) is a 200
 // no-op, so the marketing form can't create duplicates.
+// UI-REACH: the marketing site's waitlist form, server to server
 superAdminRouter.post("/waitlist/ingest", async (req, res, next) => {
   try {
     const parsed = IngestWaitlist.safeParse(req.body);
@@ -1679,6 +1680,23 @@ function feedbackStage(row: { status: string | null; admin_notes: string | null 
   return null;
 }
 
+// POST /super-admin/feedback/:id/announce — "Post to Discord": the card of an
+// item that has none (filed while Discord was off, or its post failed). One
+// card per item: 409 while it has one. The feedback:triage token may call it.
+superAdminRouter.post("/feedback/:id/announce", async (req, res, next) => {
+  try {
+    const r = await postCardForStoredFeedback(String(req.params.id));
+    if (r.posted) {
+      res.json({ ok: true, announce_message_id: r.messageId });
+      return;
+    }
+    const status = r.reason === "not_found" ? 404 : r.reason === "has_card" ? 409 : r.reason === "not_routed" ? 409 : 502;
+    res.status(status).json({ error: { code: r.reason, message: r.message } });
+  } catch (err) {
+    next(err);
+  }
+});
+
 // GET /super-admin/feedback/:id — one item, reporter resolved (name/email from
 // the joined user, else origin_ref.username) + workspace. The support bot reads
 // this to render the autopilot card's identity fields and its admin_notes (the
@@ -1692,7 +1710,9 @@ superAdminRouter.get("/feedback/:id", async (req, res, next) => {
       .leftJoin("users as u", "u.id", "f.user_id")
       .leftJoin("orgs as o", "o.id", "f.org_id")
       .selectAll("f")
-      .select(["u.email as user_email", "u.display_name as user_name", "o.slug as workspace_slug", "o.name as workspace_name"])
+      .select(["u.email as user_email", "u.display_name as user_name", "o.slug as workspace_slug"])
+      // A deleted workspace's report keeps the name it was filed under.
+      .select(sql<string | null>`coalesce(o.name, f.workspace_name)`.as("workspace_name"))
       .where("f.id", "=", req.params.id)
       .executeTakeFirst();
     if (!row) {
@@ -1736,12 +1756,13 @@ superAdminRouter.get("/feedback", async (req, res, next) => {
         "f.origin_ref",
         "f.followups",
         "f.reply_delivery",
+        "f.announce_message_id",
         "f.created_at",
         "f.updated_at",
         "u.email as user_email",
         "u.display_name as user_name",
         "o.slug as workspace_slug",
-        "o.name as workspace_name",
+        sql<string | null>`coalesce(o.name, f.workspace_name)`.as("workspace_name"),
       ])
       .limit(200);
     if (byPriority) {
@@ -1803,6 +1824,7 @@ const IngestFeedback = z.object({
     guild_id: z.string().max(40).optional(),
   }),
 });
+// UI-REACH: the support bot filing a ticket
 superAdminRouter.post("/feedback/ingest", async (req, res, next) => {
   try {
     const parsed = IngestFeedback.safeParse(req.body);
@@ -1916,6 +1938,7 @@ const AppendFeedback = z.object({
     .max(8)
     .default([]),
 });
+// UI-REACH: the support bot adding a reply to a ticket
 superAdminRouter.post("/feedback/append", async (req, res, next) => {
   try {
     const parsed = AppendFeedback.safeParse(req.body);
@@ -2015,6 +2038,7 @@ const AppendDm = z.object({
   // sweep skips it too. See reference_cobblr_feedback_ingest_token.
   skip_triage: z.boolean().optional().default(false),
 });
+// UI-REACH: the support bot adding a DM to a ticket
 superAdminRouter.post("/feedback/append-dm", async (req, res, next) => {
   try {
     const parsed = AppendDm.safeParse(req.body);
@@ -2163,6 +2187,7 @@ superAdminRouter.post("/feedback/append-dm", async (req, res, next) => {
 // bot already archived the thread on the click). Gated by the same feedback:ingest
 // scope the bot already holds.
 const ResolveByThread = z.object({ thread_id: z.string().min(1), by: z.string().max(120).optional() });
+// UI-REACH: the support bot closing a ticket from its thread
 superAdminRouter.post("/feedback/resolve-by-thread", async (req, res, next) => {
   try {
     const parsed = ResolveByThread.safeParse(req.body);
@@ -2886,6 +2911,9 @@ superAdminRouter.patch("/announce-settings/:category", async (req, res, next) =>
       return;
     }
     await setAnnounceSetting(req.params.category, parsed.data);
+    // Turning feedback on is the moment items filed while it was off get their
+    // cards (the boot pass does the same for a webhook set in the env).
+    if (req.params.category === "feedback.new") void postCardlessFeedback();
     res.json({ ok: true });
   } catch (err) {
     if (err instanceof Error && err.message.startsWith("unknown announce category")) {

@@ -3,7 +3,7 @@
 // AssetsPage. Order items live inside the detail modal (they're a
 // child collection, not their own top-level entity).
 
-import { useEffect, useState, type FormEvent } from "react";
+import { useEffect, useState, type FormEvent, type ReactNode } from "react";
 import { useNavigate, useParams, Link } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { ChevronRight, Plus, Receipt, Store, Trash2 } from "lucide-react";
@@ -15,10 +15,12 @@ import { ReceiptSourceViewer } from "../components/ReceiptSourceViewer";
 import { ModuleInstanceChooser } from "../components/ModuleInstanceChooser";
 import { ModulePurposeHint } from "../components/ModulePurposeHint";
 import { usePublishChatContext, useAskCobbAboutSelection } from "../lib/chat-context";
-import { BulkActionBar, EditSelect, EntityActionsBar, EntityThumb, FieldPack, LabeledField, Modal, editFieldItem, fieldNeed, useToast, useConfirm, usePageTitle, usePageWidth, SearchInput } from "@cobblr/platform-web";
+import { BulkActionBar, CustomFieldsPanel, EditSelect, EntityActionsBar, EntityThumb, FieldPack, LabeledField, Modal, editFieldItem, fieldNeed, useToast, useConfirm, usePageTitle, usePageWidth, SearchInput } from "@cobblr/platform-web";
 import { ContributedDetailPanels } from "../panels/registry";
 import { receiptGroupSummary } from "./receiptLabel";
 import { ReceiptAddressChip } from "../components/ReceiptAddressChip";
+import { UnconfirmedReceiptsBanner } from "./UnconfirmedReceipts";
+import { AddOrderLine, AddToStockChoice, OrderLineControls } from "./OrderLines";
 
 function fmtOrderDate(d: string | null): string | null {
   if (!d) return null;
@@ -205,7 +207,7 @@ export function PurchasesPage() {
   usePageWidth("wide");
   const { activeSlug } = useActiveOrg();
   const navigate = useNavigate();
-  const { id } = useParams<{ id?: string }>();
+  const { id, vendorId } = useParams<{ id?: string; vendorId?: string }>();
 
   const orders = useQuery({
     queryKey: ["orders", activeSlug],
@@ -345,12 +347,14 @@ export function PurchasesPage() {
         {receiptAddress && <ReceiptAddressChip address={receiptAddress} />}
         <button
           onClick={() => setVendorsOpen(true)}
+          aria-label="Vendors"
           className="rounded-md border border-line dark:border-slate-600 hover:bg-subtle dark:hover:bg-slate-800 text-content dark:text-mortar-100 text-sm font-medium px-2.5 lg:px-3 py-2 transition flex items-center gap-1.5 shrink-0"
         >
           <Store size={14} /> <span className="hidden lg:inline">Vendors</span>
         </button>
         <button
           onClick={() => setNewOpen(true)}
+          aria-label="New order"
           className="rounded-md bg-slate-700 hover:bg-slate-600 text-mortar-50 text-sm font-medium px-2.5 lg:px-3 py-2 transition flex items-center gap-1.5 shrink-0"
         >
           <Plus size={14} /> <span className="hidden lg:inline">New order</span>
@@ -389,12 +393,20 @@ export function PurchasesPage() {
         </div>
       )}
 
+      <UnconfirmedReceiptsBanner slug={activeSlug} />
       {allRows.length > 0 && <PurchasesInsights orders={allRows} />}
 
       {orders.isSuccess && allRows.length === 0 && <ModulePurposeHint moduleName="purchases" />}
 
       {allRows.length === 0 && (orderInstances.data?.items.length ?? 0) > 0 ? (
         <ModuleInstanceChooser instances={orderInstances.data!.items} icon={Store} noun="order" />
+      ) : (
+      rows.length === 0 ? (
+        // No rows: the sentence on its own, never centred across nine columns
+        // a phone scrolls sideways to read half of.
+        <div className="rounded-xl border border-line dark:border-slate-700 bg-surface dark:bg-slate-900 px-4 py-10 text-center text-sm text-muted">
+          {allRows.length === 0 ? "No orders yet. Log the first with the + above." : "No matches with the current filters."}
+        </div>
       ) : (
       <div className="rounded-xl border border-line dark:border-slate-700 bg-surface dark:bg-slate-900 overflow-x-auto">
         <table className="w-full text-sm">
@@ -471,15 +483,6 @@ export function PurchasesPage() {
                 </td>
               </tr>
             ))}
-            {rows.length === 0 && (
-              <tr>
-                <td colSpan={9} className="px-3 py-10 text-center text-xs text-faint italic">
-                  {allRows.length === 0
-                    ? "No orders yet. Log the first with the + above."
-                    : "No matches with the current filters."}
-                </td>
-              </tr>
-            )}
           </tbody>
           {rows.length > 0 && (
             <tfoot className="border-t-2 border-line dark:border-slate-700">
@@ -495,11 +498,22 @@ export function PurchasesPage() {
           )}
         </table>
       </div>
+      )
       )}
 
       <OrderDetailModal orderId={id ?? null} onClose={() => navigate("/purchases")} />
       <NewOrderModal open={newOpen} onClose={() => setNewOpen(false)} />
-      {vendorsOpen && <VendorsModal onClose={() => setVendorsOpen(false)} />}
+      {/* A vendor's own address (/purchases/vendors/<id>, what search and a
+          link hand out) opens the vendors panel on that vendor. */}
+      {(vendorsOpen || vendorId) && (
+        <VendorsModal
+          initialVendorId={vendorId}
+          onClose={() => {
+            setVendorsOpen(false);
+            if (vendorId) navigate("/purchases");
+          }}
+        />
+      )}
       <BulkActionBar
         onAskCobb={askCobb}
         count={selected.size}
@@ -776,6 +790,25 @@ function OrderDetailModal({ orderId, onClose }: { orderId: string | null; onClos
               editFieldItem("notes", { label: "Notes", value: o.notes ?? "", multiline: true, onCommit: (v) => update.mutate({ notes: v || null }) }),
             ]}
           />
+          {/* Before it arrives the choice is still open; after, the lines have
+              been received one way or the other, and only a line added later
+              reads it. */}
+          {o.status !== "arrived" ? (
+            <AddToStockChoice checked={o.add_to_stock !== false} onChange={(v) => update.mutate({ add_to_stock: v })} disabled={update.isPending} />
+          ) : o.add_to_stock === false ? (
+            <p className="text-xs text-muted" data-testid="logged-past-purchase">
+              Logged as a past purchase: its lines did not add to stock.
+            </p>
+          ) : null}
+
+          {/* The order's own fields: whatever a bundle or a person adds to a
+              purchase order on /fields, editable here. */}
+          <CustomFieldsPanel
+            entityKind="purchases:order"
+            entityId={o.id}
+            values={o.metadata ?? {}}
+            onCommit={(name, value) => update.mutate({ metadata: { [name]: value } })}
+          />
 
           {/* Contributed detail panels (e.g. core-shipments' Shipment) — the
               panel registry renders whatever enabled modules declare for
@@ -802,7 +835,7 @@ function OrderDetailModal({ orderId, onClose }: { orderId: string | null; onClos
               <>
                 <ul className="space-y-1.5">
                   {items.map((it) => (
-                    <OrderLineItem key={it.id} slug={activeSlug} item={it} routeFor={routeFor} />
+                    <OrderLineItem key={it.id} slug={activeSlug} item={it} routeFor={routeFor} controls={<OrderLineControls slug={activeSlug} order={o} item={it} />} />
                   ))}
                 </ul>
                 <div className="mt-3 pt-2.5 border-t border-dashed border-line dark:border-slate-700 space-y-1 text-sm">
@@ -834,6 +867,7 @@ function OrderDetailModal({ orderId, onClose }: { orderId: string | null; onClos
                 </div>
               </>
             )}
+            <AddOrderLine key={o.id} slug={activeSlug} order={o} />
           </div>
 
           <div className="pt-3 border-t border-line dark:border-slate-700 flex items-center justify-between">
@@ -866,10 +900,12 @@ function OrderLineItem({
   slug,
   item,
   routeFor,
+  controls,
 }: {
   slug: string;
   item: OrderItem;
   routeFor: (kind: string, id: string) => string | null;
+  controls?: ReactNode;
 }) {
   const resolved = useQuery({
     queryKey: ["entity", slug, "inventory:part", item.part_id],
@@ -914,14 +950,15 @@ function OrderLineItem({
   const cls =
     "flex items-center gap-3 px-2.5 py-2 rounded-lg border border-line dark:border-slate-700 transition";
   return (
-    <li style={{ listStyle: "none" }}>
+    <li style={{ listStyle: "none" }} className="flex flex-wrap items-center gap-1">
       {href && !partDeleted ? (
-        <Link to={href} className={`${cls} hover:border-accent hover:bg-subtle dark:hover:bg-slate-800/50`}>
+        <Link to={href} className={`${cls} flex-1 min-w-0 hover:border-accent hover:bg-subtle dark:hover:bg-slate-800/50`}>
           {inner}
         </Link>
       ) : (
-        <div className={cls}>{inner}</div>
+        <div className={`${cls} flex-1 min-w-0`}>{inner}</div>
       )}
+      {controls}
     </li>
   );
 }
@@ -935,12 +972,16 @@ function NewOrderModal({ open, onClose }: { open: boolean; onClose: () => void }
   const [vendorName, setVendorName] = useState<string>("");
   const [orderNumber, setOrderNumber] = useState("");
   const [status, setStatus] = useState<Order["status"]>("ordered");
+  // Logging a purchase that already arrived: its lines add their stock unless
+  // this is history being filled in, whose stock was counted long ago.
+  const [addToStock, setAddToStock] = useState(true);
   useEffect(() => {
     if (open) {
       setVendorId(null);
       setVendorName("");
       setOrderNumber("");
       setStatus("ordered");
+      setAddToStock(true);
     }
   }, [open]);
 
@@ -951,6 +992,7 @@ function NewOrderModal({ open, onClose }: { open: boolean; onClose: () => void }
         vendor: vendorName.trim() || null,
         order_number: orderNumber.trim() || null,
         status,
+        add_to_stock: status === "arrived" ? addToStock : true,
       }),
     onSuccess: (o) => {
       toast.success("Order created.");
@@ -990,6 +1032,7 @@ function NewOrderModal({ open, onClose }: { open: boolean; onClose: () => void }
             ))}
           </select>
         </label>
+        {status === "arrived" && <AddToStockChoice checked={addToStock} onChange={setAddToStock} />}
         <div className="flex items-center justify-end gap-2 pt-2 border-t border-line dark:border-slate-700">
           <button type="button" onClick={onClose} className="px-3 py-1.5 rounded-md text-sm font-medium text-content dark:text-slate-300 hover:bg-subtle dark:hover:bg-slate-800 transition">
             Cancel
@@ -1058,7 +1101,7 @@ function VendorPicker({
       }}
       className="input"
     >
-      <option value="">{vendorName && !vendorId ? `(unlinked: ${vendorName})` : "— none —"}</option>
+      <option value="">{vendorName && !vendorId ? `(unlinked: ${vendorName})` : "(none)"}</option>
       {vendors.data?.items.map((v) => (<option key={v.id} value={v.id}>{v.name}</option>))}
       <option value="__new__">+ New vendor…</option>
     </select>
@@ -1067,7 +1110,7 @@ function VendorPicker({
 
 // Vendor management surface: list with order-count + spend rollup, add, edit,
 // delete. Opened from the Purchases header.
-function VendorsModal({ onClose }: { onClose: () => void }) {
+function VendorsModal({ onClose, initialVendorId }: { onClose: () => void; initialVendorId?: string }) {
   const { activeSlug } = useActiveOrg();
   const navigate = useNavigate();
   const qc = useQueryClient();
@@ -1075,7 +1118,7 @@ function VendorsModal({ onClose }: { onClose: () => void }) {
   const confirm = useConfirm();
   const vendors = useQuery({ queryKey: ["vendors", activeSlug], queryFn: () => api.listVendors(activeSlug), enabled: !!activeSlug });
   const [editing, setEditing] = useState<string | "new" | null>(null);
-  const [viewing, setViewing] = useState<string | null>(null);
+  const [viewing, setViewing] = useState<string | null>(initialVendorId ?? null);
   const openOrder = (orderId: string) => {
     onClose();
     navigate(`/purchases/${orderId}`);
@@ -1189,6 +1232,15 @@ function VendorDetailPane({
     enabled: !!vendorId,
   });
   const v = vendor.data;
+  const toast = useToast();
+  const setField = useMutation({
+    mutationFn: (metadata: Record<string, unknown>) => api.updateVendor(slug, vendorId, { metadata }),
+    onSuccess: () => {
+      void vendor.refetch();
+      onChanged();
+    },
+    onError: (e: unknown) => toast.error(`Couldn't save that change: ${e instanceof ApiError ? e.message : String(e)}`),
+  });
   const back = (
     <button onClick={onBack} className="text-xs text-muted hover:text-accent inline-flex items-center gap-1">
       <ChevronRight size={12} className="rotate-180" /> All vendors
@@ -1264,6 +1316,14 @@ function VendorDetailPane({
               )}
             </dl>
           )}
+
+          {/* The vendor's own fields, as a bundle or a person defines them. */}
+          <CustomFieldsPanel
+            entityKind="purchases:vendor"
+            entityId={v.id}
+            values={v.metadata ?? {}}
+            onCommit={(name, value) => setField.mutate({ [name]: value })}
+          />
 
           <div>
             <div className="text-[10px] font-mono uppercase tracking-widest text-accent mb-2">// orders ({v.orders.length})</div>

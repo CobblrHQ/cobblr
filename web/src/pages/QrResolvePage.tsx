@@ -136,25 +136,24 @@ export function QrResolvePage() {
     );
   }
 
+  // A live label whose thing has no page to open here: its kind has no detail
+  // route (the module that shows it is off, or it never had a page). Action
+  // labels never land here; they go to /a/ above.
   if (state === "action" && result) {
-    const open = result.detail_path
-      ? `/w/${result.org_slug}${result.detail_path}`
-      : `/w/${result.org_slug}`;
     return card(
       <>
         <QrCode size={28} className="mx-auto text-accent" />
-        <div className="text-sm font-medium text-content dark:text-mortar-100">
-          This label triggers an action
+        <div className="text-sm font-medium text-content dark:text-mortar-100" data-testid="label-no-page">
+          This label&apos;s {kindNoun(result.entity_kind)} has no page to open
         </div>
         <p className="text-xs text-muted dark:text-slate-400">
-          Action-mode scans aren&apos;t confirmable from the web yet - you can open the
-          item it&apos;s attached to instead.
+          The label still works. The part of your workspace that shows it may be turned off.
         </p>
         <a
-          href={open}
+          href={`/w/${result.org_slug}`}
           className="inline-flex items-center justify-center rounded-md bg-cobble-600 hover:bg-cobble-700 text-white text-sm font-medium px-4 py-2"
         >
-          Open the item
+          Open the workspace
         </a>
       </>,
     );
@@ -181,4 +180,10 @@ export function QrResolvePage() {
       </p>
     </>,
   );
+}
+
+/** "part" from "inventory:part", "thing" when there is no kind. */
+function kindNoun(kind: string | undefined): string {
+  const k = (kind ?? "").split(":").pop()?.replace(/[-_]/g, " ").trim();
+  return k || "thing";
 }

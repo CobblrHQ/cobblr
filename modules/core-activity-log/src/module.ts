@@ -21,14 +21,13 @@ import { defineModule } from "@cobblr/platform-contract";
 
 export default defineModule({
   name: "core-activity-log",
-  version: "0.1.0",
+  version: "0.1.1",
   displayName: "Activity Log",
   description:
-    "Append-only audit trail. Every meaningful write across modules (org changes, module enable/disable, wire firings, invites) lands here for visibility and forensics.",
+    "A record of every change made in your workspace: who did what, and when.",
   icon: "history",
   band: "foundational",
 
-  intents: [],
   dependencies: [],
 
   // AI-REACH: no kinds/actions by design. The log is READ through the shared
@@ -38,8 +37,22 @@ export default defineModule({
 
   exposes: {
     events: [],
-    api: ["log"],
     actions: [],
+  },
+
+  // A record's history on the record: who changed it, how and when, from the
+  // log its module already writes.
+  contributes: {
+    panels: [
+      {
+        // DELIBERATELY universal: every record's module writes to the log, so
+        // every record has a history to show; it belongs to no face or kind.
+        id: "core-activity-log:history",
+        surface: "entity-detail-panel" as const,
+        target: "*",
+        title: "History",
+      },
+    ],
   },
 
   subscribes: [],

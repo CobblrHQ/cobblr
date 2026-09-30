@@ -1,88 +1,166 @@
-// All apps: every module in the workspace, whatever its state, at the end of
-// the sidebar's collections (#3883). In the sidebar, hidden from it on this
-// device, or off in the workspace; each with the one thing it needs.
-import { usePageTitle } from "@cobblr/platform-web";
+// All apps: every app in the workspace, whatever its state, at the end of the
+// sidebar's collections (⊞ More apps, #3883), as a grid of cards that uses a
+// wide screen (#4046). The apps in your sidebar are grouped the way the
+// sidebar groups them (sidebarGroups), then the ones that are on without a
+// row of their own, the ones hidden here, and the ones that are off.
+//
+// A card is the app: the whole card opens it. The one other thing an app
+// needs sits in the card's corner: a pin that takes it out of (or back into)
+// this sidebar, and "Turn on" or "Ask an admin" on an app that is off.
+import { useMemo, useState } from "react";
+import { Link } from "react-router-dom";
+import { Pin, PinOff } from "lucide-react";
+import { SearchInput, usePageTitle } from "@cobblr/platform-web";
 import type { AppEntry } from "@cobblr/platform-contract/app-catalog";
 import { useAppCatalog, useModuleDoor } from "../lib/appCatalog";
 import { useActiveOrg } from "../auth/ActiveOrgContext";
-import { useNavModules } from "../components/useNavModules";
+import { surfaceTops, useNavModules } from "../components/useNavModules";
+import { moduleIcon } from "../lib/module-icon";
+import { sidebarGroups } from "../lib/sidebarGroups";
+import { howToFindAnyApp, navWord, useToggleNavHidden } from "../lib/moreApps";
+import { useNavLayout } from "../lib/nav-mode";
+import { useIsDesktopWidth } from "../lib/useIsDesktopWidth";
+import { QueryError } from "../components/QueryError";
 
-// "In your sidebar" is what the sidebar actually draws (its rows, and the
-// entries under them), read from the same hook it draws with. An app that is
-// on but has no row of its own (files, tags, saved views: search-only by
-// design) is listed on its own, not claimed to be in a sidebar it is not in.
-type Section = "sidebar" | "on" | "hidden" | "off";
-const SECTIONS: Array<{ key: Section; title: string; blurb: string }> = [
-  { key: "sidebar", title: "In your sidebar", blurb: "" },
-  { key: "on", title: "On, not in your sidebar", blurb: "Open them here, or find any of them with ⌘K." },
-  { key: "hidden", title: "Hidden from your sidebar", blurb: "On in the workspace; you hid them on this device." },
-  { key: "off", title: "Off in this workspace", blurb: "Turning one on adds it for everyone here." },
+type Rest = "on" | "hidden" | "off";
+const REST: Array<{ key: Rest; title: (nav: string) => string; blurb: string }> = [
+  { key: "on", title: (nav) => `On, not in your ${nav}`, blurb: "" },
+  { key: "hidden", title: (nav) => `Hidden from your ${nav}`, blurb: "On in the workspace; you hid them on this device." },
+  { key: "off", title: () => "Off in this workspace", blurb: "Turning one on adds it for everyone here." },
 ];
 
-const btn =
-  "inline-flex min-h-9 shrink-0 items-center rounded-md border px-3 py-1 text-sm font-medium transition disabled:opacity-50";
+/** Does an app answer to what was typed: every word, in its name or what it does. */
+function matches(a: AppEntry, q: string): boolean {
+  const words = q.toLowerCase().split(/\s+/).filter(Boolean);
+  const text = `${a.label} ${a.description}`.toLowerCase();
+  return words.every((w) => text.includes(w));
+}
+
+const corner =
+  "absolute right-2 top-2 inline-flex h-8 items-center gap-1 rounded-md px-2 text-xs font-medium transition disabled:opacity-50";
 
 export function AllAppsPage() {
   usePageTitle("All apps");
-  const { apps, loading } = useAppCatalog();
+  const { apps, loading, failed, retry } = useAppCatalog();
   const door = useModuleDoor();
-  const { activeSlug } = useActiveOrg();
+  const { activeSlug, activeOrg } = useActiveOrg();
+  const toggleHidden = useToggleNavHidden();
   const nav = useNavModules(activeSlug);
-  const rows = new Set<string>();
-  for (const t of nav.tops) rows.add(t.name);
-  for (const kids of nav.childrenByParent.values()) for (const k of kids) rows.add(k.name);
-  for (const g of nav.instanceGroups.values()) for (const m of g.members) rows.add(m.name);
-  const sectionOf = (a: AppEntry): Section => (a.state !== "on" ? a.state : rows.has(a.name) || rows.has(a.key) ? "sidebar" : "on");
-  const row = (a: AppEntry) => (
-    <li key={a.name} data-testid="app-row" data-state={a.state} className="flex flex-wrap items-center gap-3 px-3 py-2.5">
-      <div className={`min-w-0 flex-1 ${a.state === "off" ? "opacity-70" : ""}`}>
-        <div className="font-medium text-content dark:text-mortar-100">{a.label}</div>
-        {a.description && <div className="text-xs text-muted dark:text-slate-400 line-clamp-2">{a.description}</div>}
-      </div>
-      {a.state !== "off" && (
-        <button type="button" onClick={() => door.open(a)} className={`${btn} border-line dark:border-slate-600 text-content dark:text-mortar-100 hover:border-accent`}>
-          Open
-        </button>
-      )}
-      {a.state === "hidden" && (
-        <button type="button" onClick={() => door.showInSidebar(a)} className={`${btn} border-line dark:border-slate-600 text-muted hover:text-content`}>
-          Show in sidebar
-        </button>
-      )}
-      {a.state === "off" &&
-        (door.canTurnOn ? (
-          <button type="button" disabled={door.busy} onClick={() => door.turnOn(a)} className={`${btn} border-cobble-600 bg-cobble-600 text-white hover:bg-cobble-700`}>
-            Turn on
-          </button>
+  const [q, setQ] = useState("");
+  const desktop = useIsDesktopWidth();
+  const navNoun = navWord(desktop, useNavLayout());
+
+  // Where each app is in the sidebar, if it is: the group it sits under.
+  const groups = useMemo(() => {
+    const appMode = !!activeOrg?.app_mode;
+    return sidebarGroups(surfaceTops(nav.tops, appMode), nav.childrenByParent, nav.instanceGroups, nav.doorNames, { homeRow: !appMode, flatLabel: `In your ${navNoun}` });
+  }, [nav.tops, nav.childrenByParent, nav.instanceGroups, nav.doorNames, activeOrg?.app_mode, navNoun]);
+  const groupOf = (a: AppEntry): string | null => groups.find((g) => g.names.includes(a.name) || g.names.includes(a.key))?.label ?? null;
+  // The name the sidebar knows the app's row by, which is what hiding writes.
+  const rowName = (a: AppEntry): string => (groups.some((g) => g.names.includes(a.key)) ? a.key : a.name);
+
+  const shown = q.trim() ? apps.filter((a) => matches(a, q)) : apps;
+  const sections: Array<{ title: string; blurb?: string; apps: AppEntry[] }> = [
+    ...groups.map((g) => ({ title: g.label, apps: shown.filter((a) => a.state === "on" && groupOf(a) === g.label) })),
+    ...REST.map((r) => ({
+      title: r.title(navNoun),
+      blurb: r.key === "on" ? howToFindAnyApp(desktop) : r.blurb,
+      apps: shown.filter((a) => (r.key === "on" ? a.state === "on" && groupOf(a) === null : a.state === r.key)),
+    })),
+  ].filter((s) => s.apps.length > 0);
+
+  const card = (a: AppEntry) => {
+    const Icon = moduleIcon(a.icon);
+    const inSidebar = a.state === "on" && groupOf(a) !== null;
+    const body = (
+      <>
+        <span className="grid h-10 w-10 shrink-0 place-items-center rounded-lg bg-subtle dark:bg-slate-800 text-accent">
+          <Icon size={20} />
+        </span>
+        <span className="min-w-0 flex-1 pr-8">
+          <span data-app-name className="block font-medium text-content dark:text-mortar-100">{a.label}</span>
+          {a.description && <span data-app-description className="mt-0.5 text-xs text-muted dark:text-slate-400 line-clamp-2">{a.description}</span>}
+        </span>
+      </>
+    );
+    return (
+      <li key={a.name} data-testid="app-row" data-state={a.state} className="relative">
+        {a.state === "off" ? (
+          <div className="flex h-full items-start gap-3 rounded-xl border border-dashed border-line dark:border-slate-700 bg-surface/60 dark:bg-slate-900/60 p-4 opacity-80">
+            {body}
+          </div>
         ) : (
-          <button type="button" disabled={door.busy} onClick={() => door.ask(a)} className={`${btn} border-amber-500 bg-amber-100 text-amber-900 dark:bg-amber-900/40 dark:text-amber-100`}>
-            Ask an admin
+          <Link
+            to={a.route}
+            aria-label={`Open ${a.label}`}
+            className="flex h-full items-start gap-3 rounded-xl border border-line dark:border-slate-700 bg-surface dark:bg-slate-900 p-4 transition hover:border-accent hover:shadow-sm focus:outline-none focus-visible:ring-2 focus-visible:ring-accent"
+          >
+            {body}
+          </Link>
+        )}
+        {inSidebar && (
+          <button
+            type="button"
+            onClick={() => toggleHidden(activeSlug, rowName(a))}
+            aria-label={`Take ${a.label} out of your ${navNoun}`}
+            title={`In your ${navNoun}: take it out (this device)`}
+            className={`${corner} text-accent hover:bg-subtle dark:hover:bg-slate-800`}
+          >
+            <Pin size={14} />
           </button>
-        ))}
-    </li>
-  );
+        )}
+        {a.state === "hidden" && (
+          <button
+            type="button"
+            onClick={() => door.showInSidebar(a)}
+            aria-label={`Put ${a.label} back in your ${navNoun}`}
+            title={`Hidden from your ${navNoun}: put it back (this device)`}
+            className={`${corner} text-faint hover:text-accent hover:bg-subtle dark:hover:bg-slate-800`}
+          >
+            <PinOff size={14} />
+          </button>
+        )}
+        {a.state === "off" &&
+          (door.canTurnOn ? (
+            <button type="button" disabled={door.busy} onClick={() => door.turnOn(a)} className={`${corner} bg-cobble-600 text-white hover:bg-cobble-700`}>
+              Turn on
+            </button>
+          ) : (
+            <button type="button" disabled={door.busy} onClick={() => door.ask(a)} className={`${corner} bg-amber-100 text-amber-900 dark:bg-amber-900/40 dark:text-amber-100`}>
+              Ask an admin
+            </button>
+          ))}
+      </li>
+    );
+  };
+
   return (
-    <div className="max-w-3xl mx-auto px-4 py-6 space-y-6">
-      <header>
-        <h1 className="text-xl font-semibold text-content dark:text-mortar-100">All apps</h1>
-        <p className="text-sm text-muted dark:text-slate-400">Everything this workspace can do, including what is not in your sidebar. ⌘K finds any of them by name too.</p>
+    <div className="max-w-7xl mx-auto px-4 py-6 space-y-6">
+      <header className="flex flex-wrap items-end justify-between gap-3">
+        <div className="min-w-0">
+          <h1 className="text-xl font-semibold text-content dark:text-mortar-100">All apps</h1>
+          <p className="text-sm text-muted dark:text-slate-400">Everything this workspace can do, grouped the way your {navNoun} is.</p>
+        </div>
+        <SearchInput value={q} onChange={setQ} placeholder="Filter apps" aria-label="Filter apps" wrapperClassName="w-full sm:w-72" />
       </header>
       {loading && <p className="text-sm text-muted">Loading…</p>}
-      {SECTIONS.map((s) => {
-        const list = apps.filter((a) => sectionOf(a) === s.key);
-        if (!list.length) return null;
-        return (
-          <section key={s.key} aria-label={s.title} className="space-y-1.5">
-            <h2 className="text-[11px] font-mono uppercase tracking-widest text-faint">
-              {s.title} <span className="text-muted">({list.length})</span>
-            </h2>
-            {s.blurb && <p className="text-xs text-muted dark:text-slate-400">{s.blurb}</p>}
-            <ul className="divide-y divide-line dark:divide-slate-800 rounded-lg border border-line dark:border-slate-700 bg-surface dark:bg-slate-900">
-              {list.map(row)}
-            </ul>
-          </section>
-        );
-      })}
+      {failed && <QueryError what="your apps" onRetry={retry} />}
+      {!loading && q.trim() && sections.length === 0 && (
+        <p className="rounded-xl border border-dashed border-line dark:border-slate-700 p-6 text-center text-sm text-muted dark:text-slate-400" data-testid="no-app-matches">
+          No app matches “{q.trim()}”. {desktop ? "⌘K" : "Search in the menu"} searches your records too.
+        </p>
+      )}
+      {sections.map((s) => (
+        <section key={s.title} aria-label={s.title} className="space-y-2">
+          <h2 className="text-[11px] font-mono uppercase tracking-widest text-faint">
+            {s.title} <span className="text-muted">({s.apps.length})</span>
+          </h2>
+          {s.blurb && <p className="text-xs text-muted dark:text-slate-400">{s.blurb}</p>}
+          <ul className="grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4" data-testid="app-grid">
+            {s.apps.map(card)}
+          </ul>
+        </section>
+      ))}
     </div>
   );
 }

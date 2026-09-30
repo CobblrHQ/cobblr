@@ -340,7 +340,7 @@ export function CapabilityMatrix({
                             <td
                               key={c.key}
                               className={cellBase}
-                              title={`Inherited from the "${viaRole}" role — edit it in that column.`}
+                              title={`Inherited from the "${viaRole}" role. Edit it in that column.`}
                             >
                               <span className="w-6 h-6 rounded border border-cobble-400 dark:border-cobble-600 text-cobble-500 dark:text-cobble-400 inline-flex items-center justify-center">
                                 <Check size={12} />

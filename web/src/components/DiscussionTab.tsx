@@ -910,7 +910,7 @@ export function DiscussionPreview({
       >
         {latest ? (
           <>
-            <span className="block text-sm text-content dark:text-mortar-200 line-clamp-2 break-words">
+            <span className="text-sm text-content dark:text-mortar-200 line-clamp-2 break-words">
               {latest.body}
             </span>
             <span className="block text-[10px] font-mono uppercase tracking-widest text-faint mt-1">

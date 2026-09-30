@@ -8,10 +8,10 @@ import { DISPOSITIONS, DISPOSITION_LABELS } from "@cobblr/platform-contract/disp
 
 export default defineModule({
   name: "machines",
-  version: "0.4.0",
+  version: "0.4.2",
   displayName: "Machines",
   description:
-    "Physical machines you own. The base layer. Install a specialisation (3D Printers / Laser Cutters / CNC Machines) for type-specific fields.",
+    "The machines you run, with a specialisation for each type (3D printers, laser cutters, CNC machines) that adds the details that type needs.",
   icon: "wrench",
   band: "stock",
   instanceability: "multi",
@@ -28,6 +28,9 @@ export default defineModule({
       {
         id: "machines:machine",
         primary: true,
+        // Its category is its own `type` field ("Type / category" on the
+        // form): the scan category axis answers from it, not a second field.
+        categoryField: "type",
         listEndpoint: "/machines",
         createEndpoint: "/machines",
         updateEndpoint: "/machines/{id}",
@@ -92,10 +95,6 @@ export default defineModule({
     ],
   },
 
-  intents: [
-    { name: "add_machine", description: "Add a new machine" },
-  ],
-
   dependencies: [],
 
   exposes: {
@@ -105,7 +104,6 @@ export default defineModule({
       "machines.machine.state_changed",
       "machines.machine.deleted",
     ],
-    api: [],
     actions: [
       {
         id: "machines:record-usage",

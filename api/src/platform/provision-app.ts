@@ -6,7 +6,7 @@
 // business-models/docs/18-managed-vertical-apps.md.
 
 import { sql } from "kysely";
-import { platform } from "@cobblr/platform-contract";
+import { platform, SYSTEM_VIEWER } from "@cobblr/platform-contract";
 import { meta } from "../db/meta.js";
 import { validateBundle, applyValidatedBundle, cmpVersion } from "../routes/bundles.js";
 import { getOfficialBundleManifest } from "../routes/registry.js";
@@ -258,7 +258,9 @@ export async function importAppData(
 
   // 2. Copy the source instance's items into the target instance.
   const kind = `${app.instanceName}:item`;
-  const { items } = await platform().entities.list(sourceOrgId, kind, { limit: 1000 });
+  // SYSTEM-READ: copying the records into the new workspace copies every
+  // field; a hidden one left behind would be lost.
+  const { items } = await platform().entities.list(sourceOrgId, kind, { limit: 1000 }, SYSTEM_VIEWER);
   let imported = 0;
   for (const it of items) {
     const f = (it.fields ?? {}) as Record<string, unknown>;

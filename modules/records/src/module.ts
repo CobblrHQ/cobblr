@@ -8,10 +8,10 @@ import { defineModule } from "@cobblr/platform-contract";
 
 export default defineModule({
   name: "records",
-  version: "0.1.1",
+  version: "0.1.2",
   displayName: "Records",
   description:
-    "A blank-slate collection of records. No built-in domain columns: each collection declares its own fields, so a bookshelf, a movie list, or a recipe box starts clean.",
+    "A blank collection that you give its own fields: a bookshelf, a movie list, a recipe box.",
   icon: "album",
   band: "stock",
   instanceability: "multi",
@@ -56,8 +56,6 @@ export default defineModule({
     ],
   },
 
-  intents: [{ name: "add_record", description: "Add a record to a collection" }],
-
   dependencies: [],
 
   exposes: {
@@ -68,7 +66,6 @@ export default defineModule({
       "records.record.updated",
       "records.record.deleted",
     ],
-    api: [],
     actions: [],
   },
 

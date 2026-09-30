@@ -79,7 +79,7 @@ export async function notifyPrint(
           userId,
           eventType,
           message: title,
-          link_url: "/configuration/farm",
+          link_url: "/configuration/devices?tab=machines",
           module: "digifab",
           entityType: "digifab:job",
           entityId: o.jobId,

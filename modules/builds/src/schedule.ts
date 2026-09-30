@@ -17,6 +17,15 @@ export interface PlannedItem {
   resource_label: string | null;
   /** Estimated minutes to make ONE (Σ operation est_minutes; 0 if unestimated). */
   est_minutes_each: number;
+  /** Good and scrap counted for this build since the work order was planned
+   *  (hand logs and judged prints alike). Absent in the pure scheduler's tests. */
+  good_qty?: number;
+  scrap_qty?: number;
+  /** The record this is made for, when it is a work order (#4052). */
+  source_kind?: string | null;
+  source_id?: string | null;
+  for_title?: string | null;
+  for_url?: string | null;
 }
 
 export interface ScheduledItem extends PlannedItem {

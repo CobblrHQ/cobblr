@@ -9,6 +9,8 @@
 // → listen. That keeps module wiring out of the app constructor and
 // makes the boot sequence explicit.
 
+import { lastOrphanFilesReport } from "./platform/heal-orphan-files.js";
+import { WorkspaceNotProvisioned, WORKSPACE_NOT_CREATED_MESSAGE } from "./platform/provision-workspace.js";
 import { UnknownFieldError } from "@cobblr/platform-contract/entity-metadata";
 import { failingResolvers } from "./platform/resolver-failures.js";
 import { oauthRouter, wellKnownRouter } from "./auth/oauth.js";
@@ -37,9 +39,12 @@ import { meRouter } from "./routes/me.js";
 import { discordInteractionsRouter } from "./routes/discord-interactions.js";
 import { testSupportRouter } from "./routes/test-support.js";
 import { testDoorsEnabled } from "./platform/test-doors.js";
+import { listRoutes } from "./lib/route-list.js";
 import { connectionsRouter, workspaceAiSharesRouter } from "./routes/connections.js";
 import { modulesRouter } from "./routes/modules.js";
 import { orgsRouter } from "./routes/orgs.js";
+import { servicesRouter } from "./routes/services.js";
+import { servicesTestRouter } from "./platform/services-test-doors.js";
 import { platformOrgRouter } from "./routes/platform.js";
 import { calendarOrgRouter, calendarPublicRouter } from "./routes/calendar.js";
 import { bundlesRouter } from "./routes/bundles.js";
@@ -48,6 +53,8 @@ import { attentionRouter } from "./routes/attention.js";
 import { edgePairRouter, edgeRouter } from "./routes/edge.js";
 import { blueprintRouter } from "./routes/blueprint.js";
 import { backupRouter, backupGoogleCallbackRouter } from "./routes/backup.js";
+import { uploadReportsRouter } from "./routes/upload-reports.js";
+import { outboundEmailRouter } from "./routes/outbound-email.js";
 import { membersRouter, invitesRootRouter } from "./routes/members.js";
 import { peopleRouter } from "./routes/people.js";
 import { notificationAudiencesRouter } from "./routes/notification-audiences.js";
@@ -189,6 +196,15 @@ export function createApp(): AppHandles {
   app.use(wellKnownRouter);
 
   const v1 = express.Router();
+  // An answer is for the session that asked, at that moment. Without a header
+  // a browser may keep a 410 or a 404 and hand it to the next request for the
+  // same address, whoever is signed in: a sandbox kept at its ending reloaded
+  // into the ending again, from the cache, with the owner's own token (#4217).
+  // A route that means to be cached (a file, a picture) sets its own header.
+  v1.use((_req, res, next) => {
+    res.setHeader("Cache-Control", "no-store");
+    next();
+  });
   // The OAuth token and revocation endpoints take form bodies (RFC 6749).
   v1.use("/oauth", express.urlencoded({ extended: false, limit: "16kb" }));
   v1.use(oauthRouter);
@@ -230,6 +246,10 @@ export function createApp(): AppHandles {
       // readers, never a refusal: the canary channel is this state.
       migrations_ahead: ahead,
       errors_5xx_5m: errors5xxRecent(),
+      // The files of workspaces deleted before deletes erased them: counted at
+      // boot, erased by nothing yet (heal-orphan-files.ts). null = not counted
+      // yet in this process.
+      orphan_files: lastOrphanFilesReport(),
       // The cross-tenant passes whose LAST round failed for at least one
       // workspace, with the first few named. A visit that throws every hour
       // used to be failed++ on a result nothing read (#3350); this is read
@@ -359,6 +379,9 @@ export function createApp(): AppHandles {
   // /:slug/actions, /:slug/bindings, /:slug/field-defs, etc. Composed
   // onto /orgs so it inherits the same routing tree.
   v1.use("/orgs", platformOrgRouter);
+  // Services: capabilities, starting a job, reading and answering it.
+  v1.use("/orgs", servicesRouter);
+  if (testDoorsEnabled(env.COBBLR_ENV || env.NODE_ENV, process.env.COBBLR_TEST_DOORS)) v1.use("/orgs", servicesTestRouter);
   // Workspace calendar — aggregated events + iCal feed config (authed).
   v1.use("/orgs", calendarOrgRouter);
   // The caller's per-workspace receipt-forwarding address (authed).
@@ -417,6 +440,9 @@ export function createApp(): AppHandles {
   // docs/architecture/blueprint-backup-export.md.
   v1.use("/orgs/:slug/blueprint", blueprintRouter);
   v1.use("/orgs/:slug/backup", backupRouter);
+  v1.use("/orgs/:slug/uploads", uploadReportsRouter);
+  // The workspace's own outbound email: how it mails a non-member (#4051).
+  v1.use("/orgs/:slug/outbound-email", outboundEmailRouter);
   // Google Drive OAuth callback (the fixed redirect URI — not org-scoped).
   v1.use(backupGoogleCallbackRouter);
   v1.use("/orgs/:slug/members", membersRouter);
@@ -444,6 +470,15 @@ export function createApp(): AppHandles {
   // /invites/:token + accept don't take a tenant slug — auth-only.
   v1.use(invitesRootRouter);
   v1.use("/modules", modulesRouter);
+
+  // A test door: every route this api answers, read at the moment it is asked
+  // (so module routes mounted at boot are in it), for the tests that judge
+  // every route by role. Never on production or canary (test-doors.ts).
+  if (testDoorsEnabled(env.COBBLR_ENV || env.NODE_ENV, process.env.COBBLR_TEST_DOORS)) {
+    app.get("/api/v1/test/routes", (_req, res) => {
+      res.json({ routes: listRoutes(app) });
+    });
+  }
 
   app.use("/api/v1", v1);
 
@@ -473,6 +508,13 @@ export function completeApp(app: Application): void {
       // the caller's mistake, said with the names they could have meant.
       if (err instanceof UnknownFieldError) {
         res.status(err.status).json(err.toJSON());
+        return;
+      }
+      // A workspace that could not be made was removed rather than left half
+      // made (platform/provision-workspace.ts): a plain "try again", from
+      // whichever door asked for it.
+      if (err instanceof WorkspaceNotProvisioned) {
+        res.status(503).json({ error: { code: err.code, message: WORKSPACE_NOT_CREATED_MESSAGE } });
         return;
       }
       console.error("[cobblr-api] unhandled", err);

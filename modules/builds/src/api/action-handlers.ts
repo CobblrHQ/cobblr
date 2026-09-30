@@ -1,13 +1,15 @@
 // builds action handlers. `builds.build-one` is the userInvokable + wire target
 // that records building N of a build: decrement each component from inventory
 // stock (via inventory:adjust-stock), log a run, and — if the build has an
-// output part — increment it. The consume math lives in build-engine.ts (shared
+// output part — increment it, unless a fabrication job defers that to its good
+// verdict (`builds.credit-output`). The consume math lives in build-engine.ts (shared
 // with the route). Reads inventory ONLY through the platform — no joins.
 
 import { sql, type Kysely } from "kysely";
 import { platform } from "@cobblr/platform-contract";
 import type { BuildsDB } from "../db.js";
 import { consumeComponents, explodeLeafComponents } from "../build-engine.js";
+import { closeFilledWorkOrders, madeByWorkOrder } from "../work-orders.js";
 
 let registered = false;
 
@@ -25,7 +27,11 @@ export function registerBuildsActionHandlers(): void {
     const args = (ctx.args as BuildOneArgs | null) ?? {};
     // When fired by a wire (e.g. digifab.job.build_committed on send), the build
     // + qty ride on the event payload — same fallback as machines:record-usage.
-    const ev = (ctx.event?.payload ?? {}) as { buildId?: string; qty?: number };
+    const ev = (ctx.event?.payload ?? {}) as { buildId?: string; qty?: number; outputOnGood?: boolean };
+    // A fabrication job defers the output to its good verdict (#4050): the
+    // components are used now, the parts count as made when they are judged
+    // good (builds.credit-output), so a failed print never adds stock.
+    const deferOutput = ev.outputOnGood === true;
     // Build id: explicit arg, else the wired event, else the entity the action
     // runs on (target='self').
     const buildId =
@@ -74,7 +80,7 @@ export function registerBuildsActionHandlers(): void {
         .execute();
     }
 
-    if (build.output_part_id) {
+    if (build.output_part_id && !deferOutput) {
       const made = (Number(build.output_qty) || 1) * qty;
       await platform()
         .actions.invoke("inventory:adjust-stock", {
@@ -99,7 +105,172 @@ export function registerBuildsActionHandlers(): void {
       qtyBuilt: qty,
       viaWire: ctx.event?.trigger_type === "event",
     });
-    return { ok: true, runId: run.id, buildId, qtyBuilt: qty, consumed };
+    return { ok: true, runId: run.id, buildId, qtyBuilt: qty, consumed, outputDeferred: deferOutput };
+  });
+
+  // The output leg of a deferred build-one: N builds came out good, so their
+  // output counts as made. Fired by the seeded digifab.job.build_output wire
+  // when a plate is judged good; not user-invokable.
+  platform().actions.registerHandler("builds.credit-output", async (ctx) => {
+    const args = (ctx.args as BuildOneArgs | null) ?? {};
+    const ev = (ctx.event?.payload ?? {}) as { buildId?: string; qty?: number };
+    const buildId =
+      args.build_id?.trim() ||
+      ev.buildId?.trim() ||
+      (ctx.entity?.kind === "builds:build" ? ctx.entity.id : undefined);
+    if (!buildId) return { ok: false, skipped: "no build_id" };
+    const qty = Math.max(1, Math.floor(Number(args.qty ?? ev.qty ?? 1)) || 1);
+
+    const db = (await platform().tenants.getDb(ctx.orgId)) as Kysely<BuildsDB>;
+    const build = await db.selectFrom("builds_builds").selectAll().where("id", "=", buildId).executeTakeFirst();
+    if (!build) return { ok: false, skipped: "build not found" };
+    if (!build.output_part_id) return { ok: true, skipped: "the build has no output part" };
+
+    const made = (Number(build.output_qty) || 1) * qty;
+    const res = (await platform().actions.invoke("inventory:adjust-stock", {
+      orgId: ctx.orgId,
+      userId: ctx.userId,
+      entity: { kind: "inventory:part", id: build.output_part_id },
+      event: {
+        name: "builds.build.completed",
+        payload: {},
+        actor: { user_id: ctx.userId, display_name: null, auth_method: "session" },
+        timestamp: ctx.event?.timestamp ?? new Date().toISOString(),
+        trigger_type: "event",
+      },
+      args: { partId: build.output_part_id, delta: made, reason: `build-output:${buildId}` },
+    })) as { ok?: boolean; error?: string } | null;
+    if (!res?.ok) return { ok: false, error: res?.error ?? "the output could not be added to stock" };
+    return { ok: true, buildId, made };
+  });
+
+  // The quality leg (#4053): a judged print writes its good and scrap into the
+  // build's quantity log, so "9 good, 1 scrap" on the plate is the same record
+  // the build's yield and its work orders read. Fired by the seeded
+  // digifab.job.outcome wire for every judged job; a job with no build is
+  // skipped. Counts once per job: the (source_job_id, kind) index refuses a
+  // second row, and ON CONFLICT turns a re-delivered verdict into a no-op.
+  platform().actions.registerHandler("builds.record-yield", async (ctx) => {
+    const ev = (ctx.event?.payload ?? {}) as {
+      jobId?: string;
+      buildId?: string | null;
+      goodQty?: number;
+      scrapQty?: number;
+      source?: string;
+    };
+    const buildId = ev.buildId?.trim();
+    const jobId = ev.jobId?.trim();
+    if (!buildId || !jobId) return { ok: true, skipped: "not a print that makes a build" };
+    const good = Math.max(0, Math.floor(Number(ev.goodQty) || 0));
+    const scrap = Math.max(0, Math.floor(Number(ev.scrapQty) || 0));
+    if (good === 0 && scrap === 0) return { ok: true, skipped: "nothing counted" };
+
+    const db = (await platform().tenants.getDb(ctx.orgId)) as Kysely<BuildsDB>;
+    const build = await db.selectFrom("builds_builds").select(["id"]).where("id", "=", buildId).executeTakeFirst();
+    if (!build) return { ok: false, skipped: "build not found" };
+
+    const reason = ev.source ? `print verdict (${ev.source})` : "print verdict";
+    const rows = [
+      ...(good > 0 ? [{ kind: "good", quantity: String(good) }] : []),
+      ...(scrap > 0 ? [{ kind: "scrap", quantity: String(scrap) }] : []),
+    ].map((r) => ({ ...r, build_id: buildId, operation_id: null, source_job_id: jobId, reason, logged_by: ctx.userId ?? null }));
+    const inserted = await db
+      .insertInto("builds_op_qty")
+      .values(rows)
+      .onConflict((oc) => oc.columns(["source_job_id", "kind"]).where("source_job_id", "is not", null).doNothing())
+      .returning(["kind"])
+      .execute();
+    // Good parts that went in may fill a work order: close each one that has
+    // now been handed its full qty (work-orders.ts, oldest first).
+    if (inserted.some((r) => r.kind === "good")) await closeFilledWorkOrders(db, ctx.orgId, buildId);
+    // Only a row that went in speaks: a re-delivered verdict is silent.
+    if (inserted.some((r) => r.kind === "scrap")) {
+      await platform().events.emit("builds.operation.scrapped", {
+        orgId: ctx.orgId,
+        buildId,
+        operationId: null,
+        operationName: "print",
+        quantity: scrap,
+        reason,
+      });
+    }
+    return { ok: true, buildId, good, scrap };
+  });
+
+  // A work order for a part, made for a record in another module (a sales
+  // order): plan the build that produces the part. The caller names the part,
+  // never a build, because which build makes what is this module's knowledge.
+  // One open work order per (source, build): asking again sets its qty.
+  platform().actions.registerHandler("builds.plan-for", async (ctx) => {
+    const a = (ctx.args ?? {}) as { part_id?: string; qty?: number; source_kind?: string; source_id?: string; due_date?: string | null };
+    const partId = String(a.part_id ?? "").trim();
+    const qty = Math.floor(Number(a.qty));
+    if (!partId || !(qty > 0)) return { ok: false, error: "Name the part and how many to make." };
+    const db = (await platform().tenants.getDb(ctx.orgId)) as Kysely<BuildsDB>;
+    const builds = await db
+      .selectFrom("builds_builds")
+      .select(["id", "name"])
+      .where("output_part_id", "=", partId)
+      .orderBy("updated_at", "desc")
+      .execute();
+    if (builds.length === 0) {
+      const part = await platform().entities.lookup(ctx.orgId, "inventory:part", partId).catch(() => null);
+      return { ok: false, code: "no_build", error: `Nothing is set up to make ${part?.title ?? "this part"} yet. Add a build that makes it, then make it from here.` };
+    }
+    const build = builds[0]!;
+    const sourceKind = a.source_kind?.trim() || null;
+    const sourceId = a.source_id?.trim() || null;
+    const open = sourceKind && sourceId
+      ? await db
+          .selectFrom("builds_planned")
+          .select(["id"])
+          .where("build_id", "=", build.id)
+          .where("source_kind", "=", sourceKind)
+          .where("source_id", "=", sourceId)
+          .where("status", "=", "planned")
+          .executeTakeFirst()
+      : undefined;
+    let plannedId: string;
+    if (open) {
+      await db.updateTable("builds_planned").set({ qty: String(qty), updated_at: new Date() }).where("id", "=", open.id).execute();
+      plannedId = open.id;
+    } else {
+      const row = await db
+        .insertInto("builds_planned")
+        .values({ build_id: build.id, qty: String(qty), due_date: a.due_date ?? null, source_kind: sourceKind, source_id: sourceId })
+        .returning(["id"])
+        .executeTakeFirstOrThrow();
+      plannedId = row.id;
+      void platform().events.emit("builds.planned.created", { orgId: ctx.orgId, plannedId, buildId: build.id, sourceKind, sourceId });
+    }
+    // Parts already counted may cover it: a work order for 3 when 5 spare were
+    // made is done the moment it exists.
+    await closeFilledWorkOrders(db, ctx.orgId, build.id);
+    return { ok: true, plannedId, buildId: build.id, buildName: build.name, reused: !!open };
+  });
+
+  // The work orders made for one record, with how many each has made. What a
+  // sales order reads to say "3 of 5 made" beside its line.
+  platform().actions.registerHandler("builds.work-orders-for", async (ctx) => {
+    const a = (ctx.args ?? {}) as { source_kind?: string; source_id?: string };
+    if (!a.source_kind || !a.source_id) return { ok: true, items: [] };
+    const db = (await platform().tenants.getDb(ctx.orgId)) as Kysely<BuildsDB>;
+    const mine = await db
+      .selectFrom("builds_planned")
+      .innerJoin("builds_builds", "builds_builds.id", "builds_planned.build_id")
+      .select(["builds_planned.id as id", "builds_planned.build_id as build_id", "builds_builds.name as build_name", "builds_builds.output_part_id as output_part_id"])
+      .where("builds_planned.source_kind", "=", a.source_kind)
+      .where("builds_planned.source_id", "=", a.source_id)
+      .where("builds_planned.status", "!=", "cancelled")
+      .execute();
+    const made = await madeByWorkOrder(db, [...new Set(mine.map((m) => m.build_id))]);
+    return {
+      ok: true,
+      items: mine.map((m) => {
+        const w = made.get(m.id);
+        return { id: m.id, build_id: m.build_id, build_name: m.build_name, output_part_id: m.output_part_id, qty: w?.qty ?? 0, made: w?.made ?? 0, status: w?.status ?? "planned" };
+      }),
+    };
   });
 
   // The failure leg of build-one: a recorded build whose fabrication run then
@@ -109,13 +280,16 @@ export function registerBuildsActionHandlers(): void {
   // seeded digifab.job.build_reversed wire; not user-invokable.
   platform().actions.registerHandler("builds.reverse-one", async (ctx) => {
     const args = (ctx.args as BuildOneArgs | null) ?? {};
-    const ev = (ctx.event?.payload ?? {}) as { buildId?: string; qty?: number };
+    const ev = (ctx.event?.payload ?? {}) as { buildId?: string; qty?: number; outputCredited?: boolean };
     const buildId =
       args.build_id?.trim() ||
       ev.buildId?.trim() ||
       (ctx.entity?.kind === "builds:build" ? ctx.entity.id : undefined);
     if (!buildId) return { ok: false, skipped: "no build_id" };
     const qty = Math.max(1, Math.floor(Number(args.qty ?? ev.qty ?? 1)) || 1);
+    // A deferred output that was never credited has nothing to take back:
+    // taking it anyway would remove parts made by some other, good, job.
+    const takeBackOutput = ev.outputCredited !== false;
 
     const db = (await platform().tenants.getDb(ctx.orgId)) as Kysely<BuildsDB>;
     const build = await db
@@ -159,7 +333,7 @@ export function registerBuildsActionHandlers(): void {
       .returning(["id"])
       .executeTakeFirstOrThrow();
 
-    if (build.output_part_id) {
+    if (build.output_part_id && takeBackOutput) {
       const unmade = (Number(build.output_qty) || 1) * qty;
       await platform()
         .actions.invoke("inventory:adjust-stock", {

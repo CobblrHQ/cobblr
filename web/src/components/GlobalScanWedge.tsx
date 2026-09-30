@@ -3,13 +3,14 @@ import { useLocation, useNavigate } from "react-router-dom";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { Modal, useToast } from "@cobblr/platform-web";
 import { MapPin, ScanLine } from "lucide-react";
-import { qrTokenFromUrl } from "@cobblr/platform-contract/qr-token";
+import { wedgeVerdict } from "../lib/scanPayload";
 import { useBarcodeWedge } from "../lib/useBarcodeWedge";
 import { resolveSessionBatch } from "../lib/scanSession";
 import { api, ApiError, type ScanResolveCandidate } from "../lib/api";
 import { ScanAmbiguityModal } from "./ScanAmbiguityModal";
 import { scanResolveActionFor } from "../lib/scanResolveAction";
 import { scanInboxKeys } from "../lib/scan-inbox-keys";
+import { withArticle } from "@cobblr/platform-contract/plural";
 
 /**
  * App-wide hardware-scanner (keyboard-wedge) intake + Cobblr-QR navigation.
@@ -37,10 +38,9 @@ import { scanInboxKeys } from "../lib/scan-inbox-keys";
  * pass through untouched (that's `useBarcodeWedge`'s job).
  */
 
-// A scanned Cobblr QR is the full label URL a scanner reads: `…/qr/<token>`.
-// Parsed by the shared qrTokenFromUrl — a local `{16,}` copy here stopped
-// matching when tokens shortened to 12 chars, so this whole feature was dead for
-// every label printed after 2026-07-11.
+// A scanned payload is classified by the shared rule (lib/scanPayload.ts). A
+// local `{16,}` copy here once stopped matching when tokens shortened to 12
+// chars, and a hand-rolled one sent an action label's link into the inbox.
 
 type QrNavPref = "always" | "off" | null;
 const prefKey = (slug: string) => `cobblr.qrNav.${slug}`;
@@ -109,7 +109,7 @@ export function GlobalScanWedge({ activeSlug }: { activeSlug: string }) {
       });
     },
     onError: (e) =>
-      toast.error(`Scan failed — ${e instanceof ApiError ? e.message : String(e)}`),
+      toast.error(`Scan failed: ${e instanceof ApiError ? e.message : String(e)}`),
   });
 
   function goTo(r: ResolvedQr) {
@@ -165,7 +165,7 @@ export function GlobalScanWedge({ activeSlug }: { activeSlug: string }) {
     } else if (pref === "off") {
       // Respect the opt-out, but never silent: offer to open this one and turn
       // jumping back on (the recovery path from a past "No").
-      toast.action(`Scanned a ${r.noun} label — auto-jump is off.`, {
+      toast.action(`Scanned ${withArticle(r.noun)} label. Auto-jump is off.`, {
         actionLabel: "Open + turn on",
         onAction: () => {
           setQrNavPref(activeSlug, "always");
@@ -180,19 +180,27 @@ export function GlobalScanWedge({ activeSlug }: { activeSlug: string }) {
   useBarcodeWedge({
     enabled: !!activeSlug && !onScanRoute,
     onScan: (code) => {
-      const token = qrTokenFromUrl(code);
-      if (token) {
-        void handleQr(token);
-        return;
+      // The lens's rule (lib/scanPayload.ts), so a scanner and the camera
+      // never disagree about what a payload is. A retail code skips the
+      // resolve round-trip: it cannot be a Cobblr label or a declared
+      // identifier, so it is staged at once.
+      const v = wedgeVerdict(code);
+      switch (v.action) {
+        case "route-qr":
+          void handleQr(v.token);
+          return;
+        case "open":
+          navigate(v.path);
+          return;
+        case "ignore":
+          return;
+        case "stage":
+          scan.mutate(v.code);
+          return;
+        case "resolve":
+          void handleNonToken(v.code);
+          return;
       }
-      // A pure product barcode (UPC/EAN) can't be a Cobblr label or a declared
-      // identifier, so skip the resolve round-trip and stage it directly — keeps
-      // the barcode hot path fast, matching ScanCameraPage's bareProductBarcode.
-      if (/^\d{8,14}$/.test(code.trim())) {
-        scan.mutate(code);
-        return;
-      }
-      void handleNonToken(code);
     },
   });
 

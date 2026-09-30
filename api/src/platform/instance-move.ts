@@ -69,6 +69,9 @@ export const SATELLITE_TABLES: SatelliteRef[] = [
   // Missed by every hand-written draft of the satellite list.
   { table: "entity_pairings", db: "meta", kindCol: "source_kind", idCol: "source_id" },
   { table: "entity_pairings", db: "meta", kindCol: "target_kind", idCol: "target_id" },
+  // The emails a record sent (a shipping notice on an order): the record's
+  // "who was told, when" follows it to its new home.
+  { table: "outbound_email_log", db: "meta", kindCol: "source_kind", idCol: "source_id" },
 
   // ── tenant ──────────────────────────────────────────────────────────────
   // Photos and files on the record. Invisible to the first two lint regexes
@@ -153,6 +156,9 @@ export const SATELLITE_TABLES: SatelliteRef[] = [
   { table: "labels_codes", db: "tenant", kindCol: "entity_kind", idCol: "entity_id" },
   { table: "labels_prints", db: "tenant", kindCol: "entity_type", idCol: "entity_id" },
   { table: "labels_queue", db: "tenant", kindCol: "entity_type", idCol: "entity_id" },
+  // The list a record last went on, so "Add to list" still goes back there
+  // after the record moves.
+  { table: "lists_source_last_list", db: "tenant", kindCol: "source_kind", idCol: "source_id" },
   // Reservations against the record survive the move.
   { table: "inventory_allocations", db: "tenant", kindCol: "target_entity_type", idCol: "target_entity_id", moduleCol: "target_module", splitKind: true },
   { table: "inventory_consumption", db: "tenant", kindCol: "source_kind", idCol: "source_id" },

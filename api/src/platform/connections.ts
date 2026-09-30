@@ -12,9 +12,9 @@
 // AI keeps its own catalogue (it carries capabilities + models this shape has
 // no place for) and is projected in; other kinds register directly.
 
-import type { ConnectionProviderDef, ResolvedConnection } from "@cobblr/platform-contract";
+import type { AiConnectionTest, ConnectionProviderDef, ConnectionTestContext, ResolvedConnection } from "@cobblr/platform-contract";
 import * as aiImpl from "./ai.js";
-import { listRoutedConnections, resolvePersonalProvider } from "./user-credentials.js";
+import { listRoutedConnections, resolvePersonalProvider, storedCredentialById } from "./user-credentials.js";
 
 /** The kind AI credentials have carried since migration 053. Existing rows say
  *  this, so it stays the wire value rather than being tidied to "ai". */
@@ -65,6 +65,57 @@ export function getProvider(id: string): ConnectionProviderDef | null {
   // A registered provider wins a name collision with an AI one. Neither ships
   // with a clashing id today; deciding it here beats an order-dependent answer.
   return registered.get(id) ?? aiProviders().find((p) => p.id === id) ?? null;
+}
+
+/** The definition a STORED connection answers to: its provider by id, else
+ *  the definition that stands for its whole kind (a service is named by its
+ *  own manifest id, which nothing registers ahead of time). Every read of a
+ *  stored row goes through here, so a service's Test, delete and secrecy
+ *  resolve like any other connection's. */
+export function providerFor(providerId: string, kind: string | null | undefined): ConnectionProviderDef | null {
+  const byId = getProvider(providerId);
+  if (byId) return byId;
+  if (!kind) return null;
+  return [...registered.values()].find((p) => p.kind === kind && p.anyProviderOfKind) ?? null;
+}
+
+/** Run a connection's own probe. AI keeps its catalogue's probe (models and
+ *  the photo check ride on it); every other kind uses its definition's. */
+export async function testConnection(
+  providerId: string,
+  kind: string | null,
+  credentials: Record<string, unknown>,
+  ctx: ConnectionTestContext,
+): Promise<AiConnectionTest> {
+  const withOwner = { ...credentials, __connection_user_id: ctx.userId };
+  const ai = !kind || kind === AI_KIND ? aiImpl.getProvider(providerId) : null;
+  if (ai) return ai.testConnection ? await ai.testConnection(withOwner) : { ok: true, note: "provider has no test implementation; assumed ok" };
+  const def = providerFor(providerId, kind);
+  if (!def?.testConnection) return { ok: true, note: "provider has no test implementation; assumed ok" };
+  return await def.testConnection(withOwner, ctx);
+}
+
+/** Whether a connection's provider can be probed at all: a save of one that
+ *  cannot is recorded "unverified", never presented as working. */
+export function canTest(providerId: string, kind: string | null): boolean | null {
+  const ai = !kind || kind === AI_KIND ? aiImpl.getProvider(providerId) : null;
+  if (ai) return !!ai.testConnection;
+  const def = providerFor(providerId, kind);
+  return def ? !!def.testConnection : null;
+}
+
+/** The capability ids a stored connection can be ranked for. AI's are the
+ *  capabilities its provider serves; another kind's come from its definition. */
+export async function capabilities(credentialId: string): Promise<string[]> {
+  const row = await storedCredentialById(credentialId);
+  if (!row) return [];
+  if (row.kind === AI_KIND) {
+    const def = aiImpl.getProvider(row.provider_id);
+    return def ? Object.keys(def.capabilities).filter((c) => def.capabilities[c as keyof typeof def.capabilities]) : [];
+  }
+  const def = providerFor(row.provider_id, row.kind);
+  if (!def?.capabilities) return [];
+  return await def.capabilities({ ...row.credentials, __connection_user_id: row.user_id }, { userId: row.user_id, credentialId });
 }
 
 /** Per-(provider, field) secrecy across BOTH catalogues, so a value can be

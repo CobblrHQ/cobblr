@@ -9,6 +9,7 @@
 // Pure of writes: the caller decides what to cache.
 
 import { answerAgreesWithCode, durableOutcome, lookupBarcode, type BarcodeHit, type BarcodeOutcome } from "./barcode-lookup.js";
+import { lookupBarcodeFor } from "./operator-services.js";
 import { classifyScanCode, resolveIsbn } from "./scan-router.js";
 import { isBookSource } from "./catalog-replay.js";
 import { gtinCases } from "./identifier-equals.js";
@@ -41,9 +42,12 @@ function withinBudget<T>(p: Promise<T>, ms: number): Promise<T | null> {
   return Promise.race([p, late]).finally(() => clearTimeout(timer));
 }
 
-export async function catalogAnswerForCode(code: string): Promise<CatalogAnswer> {
+/** `orgId`: ask this workspace's order first, so a connected barcode
+ *  catalogue answers ahead of the instance's own (lookupBarcodeFor). */
+export async function catalogAnswerForCode(code: string, orgId?: string): Promise<CatalogAnswer> {
   const codeClass = classifyScanCode(code);
-  let result = await lookupBarcode(code);
+  const look = (c: string) => (orgId ? lookupBarcodeFor(orgId, c) : lookupBarcode(c));
+  let result = await look(code);
   // A loose item's own code can be unknown to every catalog while its case
   // is known: a skein's 877503009799 missed and its case 10877503009796 hit.
   // The case names the same product; its pack count is the seller's, never
@@ -53,7 +57,7 @@ export async function catalogAnswerForCode(code: string): Promise<CatalogAnswer>
     // the last, and a case code asked straight after the item's own found the
     // provider's slot taken.
     const cases = gtinCases(code);
-    const probes = await Promise.all(cases.map((c) => withinBudget(lookupBarcode(c), CASE_PROBE_BUDGET_MS)));
+    const probes = await Promise.all(cases.map((c) => withinBudget(look(c), CASE_PROBE_BUDGET_MS)));
     const at = probes.findIndex((p) => p?.outcome === "hit");
     const found = at >= 0 ? probes[at] : undefined;
     if (found?.outcome === "hit") {

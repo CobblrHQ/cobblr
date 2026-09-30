@@ -19,6 +19,9 @@ interface Ctx {
   itemNoun?: string;
   fileIntake?: FileIntakeDecl;
   hint?: string | null;
+  /** This table's records are patterns (a make's written instructions), so the
+   *  pattern panels belong on them. Plain projects never show them. */
+  holdsPatterns: boolean;
 }
 
 const Ctx = createContext<Ctx | null>(null);
@@ -48,7 +51,7 @@ export function ProjectsProvider({
   );
   const entityKind = instance ? `${instance}:item` : "projects:project";
   return (
-    <Ctx.Provider value={{ orgSlug, getToken, api, instance, entityKind, displayName, itemNoun, fileIntake, hint }}>
+    <Ctx.Provider value={{ orgSlug, getToken, api, instance, entityKind, displayName, itemNoun, fileIntake, hint, holdsPatterns: holdsPatterns(fileIntake) }}>
       {children}
     </Ctx.Provider>
   );
@@ -58,4 +61,13 @@ export function useProjects(): Ctx {
   const v = useContext(Ctx);
   if (!v) throw new Error("useProjects called outside ProjectsProvider");
   return v;
+}
+
+/** A table holds patterns when the instance that owns it declares pattern
+ *  files: its file intake's role is "pattern" (the Yarn bundle's Patterns).
+ *  The panels that read a pattern (what it needs, its files and photos, the
+ *  yarn and hooks reserved for it) come from that declaration, never by
+ *  default on every project. */
+export function holdsPatterns(fileIntake: FileIntakeDecl | undefined): boolean {
+  return fileIntake?.role === "pattern";
 }

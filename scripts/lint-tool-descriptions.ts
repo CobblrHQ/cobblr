@@ -21,12 +21,20 @@ const MAX_DESCRIPTION_CHARS = 1000;
 // asked for (#3787: "what does Alex own"). The set had 23 chars of room, so any
 // new tool needed this; the next one should first make room by tightening.
 const MAX_TOTAL_SCHEMA_CHARS = 17_300;
+// Tools sent only when the workspace can use them (`sentWhen`) are not on
+// every turn, so they have their own, smaller budget instead of taking room
+// from the set that is. The service tools (list_services, invoke_service,
+// get_service_job, #4034) go out only where a service capability is
+// connected. A conditional tool still pays when it is sent, so it is capped.
+const MAX_CONDITIONAL_SCHEMA_CHARS = 1_400;
 
 let bad = 0;
 let total = 0;
+let conditional = 0;
 for (const t of WORKSPACE_TOOLS) {
   const schema = JSON.stringify({ name: t.name, description: t.description, parameters: jsonSchemaOf(t.params) });
-  total += schema.length;
+  if (t.sentWhen) conditional += schema.length;
+  else total += schema.length;
   if (t.description.length > MAX_DESCRIPTION_CHARS) {
     bad += 1;
     console.error(
@@ -36,10 +44,14 @@ for (const t of WORKSPACE_TOOLS) {
 }
 if (total > MAX_TOTAL_SCHEMA_CHARS) {
   bad += 1;
-  console.error(`  ✗ the ${WORKSPACE_TOOLS.length} tool schemas total ${total} chars (budget ${MAX_TOTAL_SCHEMA_CHARS}); that is sent on every turn.`);
+  console.error(`  ✗ the tool schemas sent on every turn total ${total} chars (budget ${MAX_TOTAL_SCHEMA_CHARS}).`);
+}
+if (conditional > MAX_CONDITIONAL_SCHEMA_CHARS) {
+  bad += 1;
+  console.error(`  ✗ the tool schemas sent only when they apply total ${conditional} chars (budget ${MAX_CONDITIONAL_SCHEMA_CHARS}).`);
 }
 if (bad) {
   console.error(`lint:tool-descriptions FAILED (${bad})`);
   process.exit(1);
 }
-console.log(`✓ tool-descriptions: ${WORKSPACE_TOOLS.length} tools, ${total} schema chars, longest description ${Math.max(...WORKSPACE_TOOLS.map((t) => t.description.length))}`);
+console.log(`✓ tool-descriptions: ${WORKSPACE_TOOLS.length} tools, ${total} schema chars every turn + ${conditional} when they apply, longest description ${Math.max(...WORKSPACE_TOOLS.map((t) => t.description.length))}`);

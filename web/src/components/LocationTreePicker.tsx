@@ -31,6 +31,8 @@ interface Props {
   kind?: Location["kind"];
   label?: string;
   placeholder?: string;
+  /** What the "no place" row says. A parent picker says "(top-level)". */
+  noneLabel?: string;
   className?: string;
   size?: "sm" | "md";
 }
@@ -47,6 +49,7 @@ export function LocationTreePicker({
   kind,
   label,
   placeholder = "Select a location…",
+  noneLabel = "(no location)",
   className,
   size = "md",
 }: Props) {
@@ -238,7 +241,7 @@ export function LocationTreePicker({
                 className="flex w-full items-center gap-2 px-3 py-2 text-left text-sm text-faint hover:bg-subtle dark:hover:bg-slate-800"
               >
                 {value === null && <Check size={13} className="shrink-0 text-accent" />}
-                (no location)
+                {noneLabel}
               </button>
             )}
             {rows.length === 0 && <div className="px-3 py-3 text-sm text-faint">Nothing here.</div>}

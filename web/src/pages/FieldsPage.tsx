@@ -6,7 +6,7 @@ import { useState, type FormEvent } from "react";
 import { FIELD_TYPE_VALUES } from "@cobblr/platform-contract";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { ChevronRight, Plus } from "lucide-react";
-import { FIELD_ROLE_LABELS, FIELD_ROLE_VALUES } from "@cobblr/platform-contract";
+import { FIELD_ROLE_LABELS, FIELD_ROLE_VALUES, fieldRoleTypeRefusal } from "@cobblr/platform-contract";
 import { ApiError, api, type CatalogFieldRenderer, type FieldScope, type PlatformFieldDef, type FieldPresetState } from "../lib/api";
 import { TraitScopePicker } from "../components/TraitScopePicker";
 import { ChoicesInput } from "../components/ChoicesInput";
@@ -409,7 +409,7 @@ export function FieldsPage({ embedded = false }: { embedded?: boolean } = {}) {
                 group: s.group,
               }))}
               previewVerb="lands on"
-              emptyHint="lands on nothing — pick at least one trait"
+              emptyHint="lands on nothing. Pick at least one trait"
             />
           </div>
         )}
@@ -519,7 +519,7 @@ export function FieldsPage({ embedded = false }: { embedded?: boolean } = {}) {
               className="input"
             >
               <option value="">No particular meaning</option>
-              {FIELD_ROLE_VALUES.filter((r) => FIELD_ROLE_LABELS[r].pickable).map((r) => (
+              {FIELD_ROLE_VALUES.filter((r) => FIELD_ROLE_LABELS[r].pickable && !fieldRoleTypeRefusal(r, type)).map((r) => (
                 <option key={r} value={r}>
                   {FIELD_ROLE_LABELS[r].label}
                 </option>

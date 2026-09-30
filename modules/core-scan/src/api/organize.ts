@@ -247,7 +247,7 @@ organizeRouter.post(
       res.status(422).json({
         error: {
           code: "too_many_items",
-          message: `Organize plans cap at ${PLAN_MAX_ITEMS} items — select fewer.`,
+          message: `Organize plans cap at ${PLAN_MAX_ITEMS} items. Select fewer.`,
         },
       });
       return;
@@ -322,7 +322,7 @@ organizeRouter.post(
           message:
             alreadyFiled.length > 0
               ? "Everything selected already has a location."
-              : "Nothing identified to organize yet — identify items first.",
+              : "Nothing identified to organize yet. Identify items first.",
           details: { needs_review_count: needsReview.length },
         },
       });

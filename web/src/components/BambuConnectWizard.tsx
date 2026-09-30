@@ -91,7 +91,7 @@ export function BambuConnectWizard({
       {step === "code" && (
         <form onSubmit={(e) => { e.preventDefault(); submitCode.mutate(); }} className="space-y-3">
           <p className="text-sm text-content">
-            {codeKind === "need_email_code" ? "Bambu emailed you a verification code — enter it below." : "Enter your two-factor authentication code."}
+            {codeKind === "need_email_code" ? "Bambu emailed you a verification code. Enter it below." : "Enter your two-factor authentication code."}
           </p>
           <label className="block">
             <span className={lbl}>Code</span>

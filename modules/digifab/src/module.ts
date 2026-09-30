@@ -9,10 +9,10 @@ import { defineModule } from "@cobblr/platform-contract";
 
 export default defineModule({
   name: "digifab",
-  version: "0.25.1",
+  version: "0.29.3",
   displayName: "Digital Fabrication",
   description:
-    "Send a design file to the software that runs your machine (FDM Monster, OctoPrint, and friends) and track the job to completion. Map a manager's printers to your machines and route files to them. Talks to each manager's REST API; it sends files, it never drives the hardware.",
+    "Send a design to the software that runs your machine (FDM Monster, OctoPrint and others) and follow the job until it is done.",
   icon: "printer",
   band: "stock",
   // Experimental: the machine-manager drivers are still narrow + moving, so it
@@ -20,9 +20,10 @@ export default defineModule({
   // set COBBLR_DISABLE_EXPERIMENTAL_MODULES (see the module loader).
   maturity: "experimental",
   // An operator, not a trackable kind: digifab acts ON machines (sends
-  // files to their managers). Keeps it out of the funnel's "track a
-  // kind of thing" column — what-to-do-funnel.md option (c).
-  operatesOn: ["machines"],
+  // files to their managers) and on the files it sends (Print this on a
+  // model file's page). Keeps it out of the funnel's "track a kind of
+  // thing" column — what-to-do-funnel.md option (c).
+  operatesOn: ["machines", "core-files"],
 
   schema: {
     tablePrefix: "digifab_",
@@ -38,6 +39,10 @@ export default defineModule({
     onBoot: async () => {
       const { registerPollWorker } = await import("./poll-worker.js");
       registerPollWorker();
+      // One-shot heal: detectors onto adapter connections (see
+      // heal-detectors-to-connections.ts for the retirement condition).
+      const { registerDetectorsToConnectionsHeal } = await import("./heal-detectors-to-connections.js");
+      registerDetectorsToConnectionsHeal();
       const { registerAssignWorker } = await import("./assign-worker.js");
       registerAssignWorker();
       // Keeps jobs moving across a restart: revives dead poll/assign chains and
@@ -60,7 +65,6 @@ export default defineModule({
     },
   },
 
-  intents: [],
   dependencies: [],
 
   provides: {
@@ -86,9 +90,35 @@ export default defineModule({
           { name: "target_device", type: "text" },
           { name: "progress", type: "number" },
           { name: "remote_job_id", type: "text" },
+          { name: "metadata", type: "object" },
         ],
         exposableFields: ["file_ref", "status", "target_device", "progress", "remote_job_id"],
-        detailRoute: "/configuration/farm",
+        detailRoute: "/configuration/devices?tab=machines",
+      },
+      {
+        // A Make: one fabrication run, from the request to the outcome, every
+        // step kept with the files it made (services.md §13). Created by
+        // asking for something to be made, or by bringing a model or G-code;
+        // its steps are recorded by whatever does them.
+        id: "digifab:make",
+        createEndpoint: "/makes",
+        updateEndpoint: "/makes/{id}",
+        deleteEndpoint: "/makes/{id}",
+        displayName: "Make",
+        displayNamePlural: "Makes",
+        icon: "sparkles",
+        profile: "work-item",
+        fields: [
+          { name: "name", type: "text", role: "title", required: true },
+          { name: "prompt", type: "text" },
+          { name: "start_step", type: "text" },
+          { name: "printer_name", type: "text" },
+          { name: "material", type: "text" },
+          { name: "outcome", type: "text" },
+          { name: "metadata", type: "object" },
+        ],
+        exposableFields: ["name", "prompt", "start_step", "printer_name", "material", "outcome"],
+        detailRoute: "/makes/{id}",
       },
     ],
   },
@@ -105,10 +135,23 @@ export default defineModule({
       // The per-machine cockpit half: link THIS machine to its manager +
       // live status, inside the machine's own detail modal.
       { id: "digifab:cockpit", surface: "entity-detail-panel" as const, target: "machines:machine", title: "Job manager" },
+      // What a slicer needs to know about this printer (Services §14.3): its
+      // neutral model id, nozzle, build volume, default quality and a preset
+      // per filament type. One per machine, read by every slicer.
+      { id: "digifab:printing-profile", surface: "entity-detail-panel" as const, target: "machines:machine", title: "Printing profile" },
+      // Print this on a model file's own page (Services §14.3): the door to a
+      // Make, a printer it fits, a slice, and the one yes.
+      { id: "digifab:print-this", surface: "entity-detail-panel" as const, target: "core-files:file", title: "Print this" },
     ],
   },
 
   exposes: {
+    // What the print events carry for the stock wires: partId, delta and
+    // reason only when the job named a material.
+    eventPayloads: {
+      "digifab.print.completed": ["jobId", "connectionId", "linkedMachineId", "linkedTaskId", "partId", "delta", "reason", "sourceKind", "sourceId"],
+      "digifab.print.reversed": ["jobId", "linkedMachineId", "prints", "partId", "delta", "reason"],
+    },
     events: [
       "digifab.connection.created",
       "digifab.connection.tested",
@@ -116,10 +159,17 @@ export default defineModule({
       "digifab.connection.deleted",
       "digifab.job.sent",
       // Fired on send when the job is linked to a build (BoM). Carries
-      // { buildId, qty } so a seeded builds wire consumes the components from
-      // inventory + bumps the output part. Idempotent (once per job) — the
+      // { buildId, qty, outputOnGood } so a seeded builds wire consumes the
+      // components from inventory. Idempotent (once per job) — the
       // "job-in → subtract inventory → queue the machine" path.
       "digifab.job.build_committed",
+      // The plate was judged good: { buildId, qty } is how many builds came out
+      // good. The seeded builds wire credits the output part. Parts count as
+      // made here, never at send (#4050).
+      "digifab.job.build_output",
+      // A job's outcome, once per job: { jobId, runId, buildId, outcome:
+      // good|scrap, goodQty, scrapQty, source }. What a work order's yield reads.
+      "digifab.job.outcome",
       // The reversal twin: a committed build whose job then failed / was
       // cancelled / was scrapped at the bed-clear verdict. Carries the same
       // { buildId, qty } (+ reason) so the seeded builds wire puts the
@@ -145,16 +195,103 @@ export default defineModule({
       // { runId, name, targetQty, completedQty, linkedBuildId } — wire it to
       // notifications ("the 250 brackets are done") or downstream stock moves.
       "digifab.run.completed",
+      // A Make was started (or run again from one of its steps). Carries
+      // { makeId, rerunOf?, fromStep?, source? }.
+      "digifab.make.created",
+      // A Make's outcome is known, by a person or the bed check. Carries
+      // { makeId, outcome: "pass" | "fail", source?: { kind, id } }, so what
+      // it was made for (an order line, a work order) can count it made.
+      "digifab.make.completed",
       "digifab.print.reversed",
       "digifab.driver.installed",
-      // The actuator's canonical event is now core-devices.command.sent (the
-      // inbound ingest + device.* events also moved). digifab.command.sent stays
-      // declared for any pre-existing listeners. digifab now backs
-      // platform().devices.getDriver. See modules/core-devices.
-      "digifab.command.sent",
     ],
-    api: [],
+    // Who hears that a print is waiting for its one yes (Configuration > Who gets told).
+    notifications: [
+      { eventType: "digifab.make.ready", label: "A print is ready to start", description: "Print this has sliced a model for a printer; the print waits on its Make for someone to start it." },
+    ],
     actions: [
+      {
+        // The one door a job reaches a machine by: the page's Send button and
+        // this action run the same send (api/jobs.ts sendAndWatch). It starts
+        // a physical machine, so a person's yes stands in front of it from
+        // every door, not only the page's dialog (Services §9, §14.3).
+        id: "digifab:send",
+        label: "Send a job to its machine",
+        description:
+          "Sends a queued job's file to its machine and starts watching it. This physically starts the machine, so it always asks a person first.",
+        appliesTo: { kinds: ["digifab:job"] },
+        recordOptional: true,
+        userInvokable: false,
+        examples: ["send the bracket job to the printer"],
+        invokeHandler: "digifab.send",
+        effect: "physical",
+        argsSchema: {
+          job_id: { label: "Job", type: "text" },
+        },
+      },
+      {
+        // UI-SCREEN: /makes, whose New make form starts one; this is the same
+        // act for another module (an order line, a work order) and the assistant.
+        id: "digifab:start-make",
+        label: "Start a make",
+        description:
+          "Start a Make (one print's whole history, from the request to the outcome) and say what it is for. Args: { name, prompt?, source_kind?, source_id? }. With a source (an order line, a work order) the Make and the source are linked both ways and digifab.make.completed carries it. Returns { makeId, detailUrl }.",
+        examples: ["start a make for this order line", "make a round spacer"],
+        scope: "workspace",
+        invokeHandler: "digifab.start-make",
+        argsSchema: {
+          name: { label: "What is being made", type: "text", required: true },
+          prompt: { label: "What to make, in words", type: "text" },
+          source_kind: { label: "What it is for: the kind", type: "text", with: "source_id" },
+          source_id: { label: "What it is for: the record", type: "text", with: "source_kind" },
+        },
+        userInvokable: false,
+      },
+      {
+        // Which printer should print this: ranked by fits, then loaded with
+        // enough of the filament, then idle, then pool order (pick-printer.ts).
+        // Sends nothing; the step before the one confirm card in "Print this".
+        // UI-SCREEN: /files/:id, where Print this shows the printer it picked.
+        id: "digifab:pick-printer",
+        label: "Pick a printer for a print",
+        description:
+          "Ranks the linked printers for a print: the part has to fit the build volume, then a printer already loaded with enough of the material and colour, then an idle one, then the pool order. Returns each printer with the loaded spool and slot, its Printing profile (printer model, nozzle, quality, preset hint) and the reason. Sends nothing.",
+        scope: "workspace",
+        userInvokable: false,
+        undoable: true,
+        examples: ["which printer should print a 60 by 60 by 20 mm part in black PETG, about 40 grams?"],
+        invokeHandler: "digifab.pick-printer",
+        argsSchema: {
+          material: { label: "Material", type: "text", required: true },
+          color: { label: "Colour", type: "text" },
+          grams: { label: "Grams of filament", type: "number", required: true },
+          bbox_mm: { label: "Part size x, y, z (mm)", type: "list", required: true },
+          nozzle_mm: { label: "Nozzle (mm)", type: "number" },
+        },
+      },
+      {
+        // Print this (Services §14.3): a model file (or a Make with one) to a
+        // print. Opens a Make, picks the printer by pick-printer's rule,
+        // slices for that printer's Printing profile, and leaves the print
+        // waiting for a person's one yes on the Make. Starts no machine.
+        // UI-SCREEN: /files/:id, the Print this panel on a model file's page.
+        id: "digifab:print-this",
+        label: "Print this",
+        description:
+          "Prints a model: opens a Make for the file (or uses the Make given), picks the printer it fits that is loaded with the material, slices it with the connected slicer for that printer, and leaves the print waiting on the Make for a person to start it. Nothing prints until someone presses Start on the Make.",
+        scope: "workspace",
+        userInvokable: false,
+        undoable: true,
+        examples: ["print the bracket.stl in black PETG", "print this model in PLA"],
+        invokeHandler: "digifab.print-this",
+        argsSchema: {
+          file_id: { label: "Model file", type: "text" },
+          make_id: { label: "Make", type: "text" },
+          material: { label: "Material", type: "text", required: true },
+          color: { label: "Colour", type: "text" },
+          bbox_mm: { label: "Part size x, y, z (mm)", type: "list" },
+        },
+      },
       {
         // DEPRECATED ALIAS. The actuator moved to core-devices (general device
         // I/O, not fabrication). This thin alias delegates to
@@ -172,5 +309,5 @@ export default defineModule({
     ],
   },
 
-  subscribes: [],
+  subscribes: ["services.job.done", "services.job.failed"],
 });

@@ -95,13 +95,16 @@ export function DeleteAccountSection() {
               <ul className="list-disc pl-5">
                 {soleOwner.map((w) => (
                   <li key={w.slug}>
-                    <a href={`/w/${w.slug}/settings`} className="underline text-cobble-700 dark:text-cobble-300">
+                    <a href={`/w/${w.slug}/configuration/general`} className="underline text-cobble-700 dark:text-cobble-300">
                       {w.name}
                     </a>
                   </li>
                 ))}
               </ul>
-              <div className="text-xs text-muted">Delete each one, or make somebody else an owner, then come back.</div>
+              <div className="text-xs text-muted">
+                Open each one and delete it from its General settings (it goes after a grace period), or make somebody
+                else an owner, then come back.
+              </div>
             </div>
           ) : (
             <>

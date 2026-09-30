@@ -32,6 +32,12 @@ import { kindFieldsOf, modulesOf, shapeCandidate } from "../services/shape.js";
 import { listTemplates, getTemplate } from "../services/templates.js";
 import { matchTemplateHosted } from "../services/match-template.js";
 
+/** Tell the workspace a design draft was made or applied, for the wires
+ *  that listen (manifest `exposes.events`). */
+function draftEvent(req: Parameters<typeof tenantContext>[0], name: "core-authoring.draft.created" | "core-authoring.draft.applied", draftId: string): void {
+  void platform().events.emit(name, { orgId: tenantContext(req).org.id, draftId, userId: sessionUser(req)?.id ?? null });
+}
+
 export const draftsRouter = Router({ mergeParams: true });
 
 interface BundlesResponse {
@@ -279,6 +285,7 @@ draftsRouter.post(
       })
       .returning(["id"])
       .executeTakeFirstOrThrow();
+    draftEvent(req, "core-authoring.draft.created", draft.id);
     res.status(201).json({ draft_id: draft.id, prompt, warnings: ctx.warnings });
   }),
 );
@@ -373,7 +380,7 @@ async function runBuild(
       if (candidate === null || typeof candidate !== "object") {
         const wrapperKey = isAppTask(task) ? "app" : "bundle";
         prompt = repairPrompt(basePrompt, text, [
-          { path: "", code: "not_json", message: `Your output was not valid JSON. Return ONLY one JSON object: { "interpretation": "...", "${wrapperKey}": {...} } — no prose, no fences.` },
+          { path: "", code: "not_json", message: `Your output was not valid JSON. Return ONLY one JSON object: { "interpretation": "...", "${wrapperKey}": {...} }. No prose, no fences.` },
         ]);
         continue;
       }
@@ -452,6 +459,7 @@ draftsRouter.post(
       })
       .returning(["id"])
       .executeTakeFirstOrThrow();
+    draftEvent(req, "core-authoring.draft.created", draft.id);
 
     // Fire-and-forget: the loop drives the draft to a terminal status; the
     // client polls GET /drafts/:id. (Single api instance — in-process detach
@@ -538,6 +546,7 @@ draftsRouter.post(
       })
       .returning(["id"])
       .executeTakeFirstOrThrow();
+    draftEvent(req, "core-authoring.draft.created", draft.id);
 
     if (run) {
       void runBuild(req, draft.id, tc.org.id, basePrompt, user?.id ?? null, refineTask, {
@@ -681,6 +690,7 @@ draftsRouter.post(
         .set({ status: "applied", updated_at: new Date() })
         .where("id", "=", req.params.id!)
         .execute();
+      draftEvent(req, "core-authoring.draft.applied", req.params.id!);
       res.json({ applied: true, app: ares });
       return;
     }
@@ -706,6 +716,7 @@ draftsRouter.post(
       .set({ status: "applied", updated_at: new Date() })
       .where("id", "=", req.params.id!)
       .execute();
+    draftEvent(req, "core-authoring.draft.applied", req.params.id!);
     res.json({ applied: true, bundle: ires, seeded });
   }),
 );

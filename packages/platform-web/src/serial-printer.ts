@@ -186,7 +186,7 @@ export async function printOneOverSerial(
     // power-cycled. Saying so beats a second silent failure.
     await releaseHeldSerialPrinter();
     throw new Error(
-      `${e instanceof Error ? e.message : String(e)} — the printer stopped responding. ` +
+      `${e instanceof Error ? e.message : String(e)}. The printer stopped responding. ` +
       `Switch it off and on again before retrying; reconnecting alone usually is not enough.`,
     );
   }

@@ -15,11 +15,11 @@ import { defineModule } from "@cobblr/platform-contract";
 
 export default defineModule({
   name: "core-discussion",
-  version: "0.7.7",
+  version: "0.7.8",
   maturity: "beta",
   displayName: "Discussion",
   description:
-    "Talk about a record with the people you share a workspace with. One conversation per record, flat and chronological, reachable from the record itself.",
+    "Talk about any of your things with the people you share the workspace with, right where the thing is.",
   icon: "message-square",
   band: "stock",
   // Ambient: a record you can't discuss is a record with a missing affordance,
@@ -55,7 +55,6 @@ export default defineModule({
       "core-discussion.comment.posted",
       "core-discussion.conversation.resolved",
     ],
-    api: [],
     actions: [
       {
         id: "core-discussion:post-comment",

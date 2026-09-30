@@ -20,10 +20,10 @@ import { defineModule } from "@cobblr/platform-contract";
 
 export default defineModule({
   name: "core-file-preview",
-  version: "0.2.0",
+  version: "0.2.1",
   displayName: "File preview",
   description:
-    "Read-only previews of model + job files (STL, G-code, SVG, …) wherever a file is shown. Renders, never edits.",
+    "See 3D models, print files and drawings wherever a file appears, without downloading them.",
   icon: "eye",
   band: "stock",
   autoEnable: true, // ambient capability — on for every workspace
@@ -41,7 +41,6 @@ export default defineModule({
   },
   api: () => import("./api/index.js"),
 
-  intents: [],
   // AI-REACH: none needed — pure rendering plumbing (it turns a stored file into a
   // preview). Nothing here is a thing a person asks about; the FILES themselves
   // are reachable as core-files:file.

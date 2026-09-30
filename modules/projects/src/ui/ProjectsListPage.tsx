@@ -199,6 +199,8 @@ export function ProjectsListPage() {
         title={heading}
         count={query ? `${filtered.length} of ${items.length}` : `${items.length} total`}
         hint={hint}
+        kind={entityKind}
+        exportQuery={query}
         search={<SearchInput value={query} onChange={setQuery} placeholder="search…" aria-label="Search projects" wrapperClassName="w-48 max-sm:w-full max-sm:flex-1" />}
       />
 

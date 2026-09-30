@@ -17,6 +17,7 @@ import { QueryError } from "../components/QueryError";
 import { useActiveOrg } from "../auth/ActiveOrgContext";
 import { useDetailRoute } from "../lib/useDetailRoute";
 import { SearchIncomplete } from "../components/SearchIncomplete";
+import { countOf } from "@cobblr/platform-contract/plural";
 
 export function SearchPage() {
   usePageTitle("Search");
@@ -91,7 +92,7 @@ export function SearchPage() {
           Search
         </h1>
         <span className="text-sm text-muted dark:text-slate-400">
-          {results.data ? `${results.data.items.length} results` : ""}
+          {results.data ? countOf(results.data.items.length, "result") : ""}
         </span>
         <div className="flex-1" />
         <SearchInput value={q} onChange={(v) => setParam("q", v || null)} placeholder="search…" autoFocus wrapperClassName="w-56" />

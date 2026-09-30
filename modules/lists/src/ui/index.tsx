@@ -4,10 +4,12 @@
 // destructive deletes confirm via useConfirm. Matches house conventions.
 
 import { useState } from "react";
+import { useLocation, useNavigate } from "react-router-dom";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { ContributedDetailPanels, Modal, useToast, useConfirm, usePageTitle } from "@cobblr/platform-web";
-import { ListChecks, Plus, Trash2, X, RotateCcw, Hand, Minus } from "lucide-react";
+import { ContributedDetailPanels, CustomFieldsPanel, Modal, useToast, useConfirm, usePageTitle, usePlatformWeb } from "@cobblr/platform-web";
+import { ListChecks, Plus, Trash2, X, RotateCcw, Hand, Minus, ChevronDown } from "lucide-react";
 import { ListsApi, type ListSummary, type ListItem, ListsApiError, lineQuantity, restockAmount, willDatePhrase } from "./api.js";
+import { RunningLowOffer } from "./RunningLowOffer.js";
 
 export const navItems = [{ label: "Lists", path: "/lists", icon: ListChecks }];
 
@@ -22,7 +24,23 @@ export function ListsUI({ orgSlug, getToken }: Props) {
   const qc = useQueryClient();
   const toast = useToast();
   const confirm = useConfirm();
-  const [open, setOpen] = useState<string | null>(null); // open list id
+  // A list's own address opens it: /lists/<id>, and /lists/items/<id> opens
+  // the list that line is on. Search, a tag, a link Cobb gives and a shared
+  // URL all arrive this way; the grid used to ignore the address and open
+  // nothing. Opening a card writes the address, so it can be shared.
+  const location = useLocation();
+  const navigate = useNavigate();
+  const itemInPath = /\/lists\/items\/([^/?#]+)/.exec(location.pathname)?.[1] ?? null;
+  const listInPath = itemInPath ? null : (/\/lists\/([^/?#]+)/.exec(location.pathname)?.[1] ?? null);
+  const lineHome = useQuery({
+    queryKey: ["lists-item-home", orgSlug, itemInPath],
+    queryFn: () => api.getItem(itemInPath!),
+    enabled: !!itemInPath,
+    retry: false,
+  });
+  const open = listInPath ?? lineHome.data?.list_id ?? null;
+  const listsHome = location.pathname.replace(/\/lists(\/.*)?$/, "/lists");
+  const setOpen = (id: string | null) => navigate(id ? `${listsHome}/${id}` : listsHome);
   const [creating, setCreating] = useState(false);
   const [newTitle, setNewTitle] = useState("");
 
@@ -64,6 +82,7 @@ export function ListsUI({ orgSlug, getToken }: Props) {
         </button>
       </div>
 
+      {lists.data && <RunningLowOffer lists={lists.data.items} />}
       {lists.isLoading && <div className="text-sm text-muted">Loading…</div>}
       {lists.data?.items.length === 0 && (
         <div className="text-sm text-muted italic">No lists yet. Create one - a shopping list, a to-do, a packing list.</div>
@@ -103,7 +122,7 @@ export function ListsUI({ orgSlug, getToken }: Props) {
         </Modal>
       )}
 
-      {open && <ListDetailModal orgSlug={orgSlug} listId={open} api={api} onClose={() => setOpen(null)} />}
+      {open && <ListDetailModal orgSlug={orgSlug} listId={open} focusItemId={itemInPath} api={api} onClose={() => setOpen(null)} />}
     </div>
   );
 }
@@ -126,10 +145,21 @@ function ListCard({ list, onOpen, onDelete }: { list: ListSummary; onOpen: () =>
   );
 }
 
-function ListDetailModal({ listId, api, orgSlug, onClose }: { listId: string; api: ListsApi; orgSlug: string; onClose: () => void }) {
+function ListDetailModal({ listId, focusItemId, api, orgSlug, onClose }: { listId: string; focusItemId?: string | null; api: ListsApi; orgSlug: string; onClose: () => void }) {
   const qc = useQueryClient();
   const toast = useToast();
   const [draft, setDraft] = useState("");
+  // A line's own fields (whatever a bundle or a person adds to list lines)
+  // open under it; the line a link pointed at starts open. Offered only when
+  // the kind has any, so a plain list stays one line per thing.
+  const { api: platformApi } = usePlatformWeb();
+  const itemFieldDefs = useQuery({
+    queryKey: ["platform-field-defs", orgSlug, "lists:item"],
+    queryFn: () => platformApi.listFieldDefs(orgSlug, "lists:item"),
+    staleTime: 60_000,
+  });
+  const lineHasFields = (itemFieldDefs.data?.items.length ?? 0) > 0;
+  const [expanded, setExpanded] = useState<string | null>(focusItemId ?? null);
   // A shared list is read by more than one person at once — someone claiming a
   // line in the store is only useful if the other phone sees it without a
   // manual reload. Polling only while the modal is open keeps that cheap.
@@ -173,6 +203,16 @@ function ListDetailModal({ listId, api, orgSlug, onClose }: { listId: string; ap
     onSuccess: invalidate,
     onError: (e) => toast.error(e instanceof ListsApiError ? e.message : String(e)),
   });
+  const setListField = useMutation({
+    mutationFn: (m: Record<string, unknown>) => api.setListFields(listId, m),
+    onSuccess: invalidate,
+    onError: (e) => toast.error(e instanceof ListsApiError ? e.message : String(e)),
+  });
+  const setItemField = useMutation({
+    mutationFn: ({ id, m }: { id: string; m: Record<string, unknown> }) => api.setItemFields(id, m),
+    onSuccess: invalidate,
+    onError: (e) => toast.error(e instanceof ListsApiError ? e.message : String(e)),
+  });
   const clearDone = useMutation({
     mutationFn: () => api.clearDone(listId),
     onSuccess: (r) => { toast.success(`Cleared ${r.cleared} done`); invalidate(); },
@@ -204,7 +244,8 @@ function ListDetailModal({ listId, api, orgSlug, onClose }: { listId: string; ap
 
         <ul className="divide-y divide-slate-100 dark:divide-slate-800 border border-line dark:border-slate-700 rounded">
           {items.map((it: ListItem) => (
-            <li key={it.id} className="flex items-center gap-3 px-3 py-2 text-sm group">
+            <li key={it.id} className="px-3 py-2 text-sm group">
+              <div className="flex items-center gap-3">
               <input
                 type="checkbox"
                 checked={it.checked}
@@ -275,9 +316,30 @@ function ListDetailModal({ listId, api, orgSlug, onClose }: { listId: string; ap
                   {it.claimed_by ? "Never mind" : "I'll get it"}
                 </button>
               )}
+              {lineHasFields && (
+                <button
+                  type="button"
+                  onClick={() => setExpanded((x) => (x === it.id ? null : it.id))}
+                  className="shrink-0 text-muted hover:text-accent"
+                  aria-label={expanded === it.id ? "Hide this line's fields" : "Show this line's fields"}
+                  aria-expanded={expanded === it.id}
+                >
+                  <ChevronDown size={14} className={expanded === it.id ? "rotate-180" : ""} />
+                </button>
+              )}
               <button type="button" onClick={() => remove.mutate(it.id)} className="text-slate-300 hover:text-red-500 hover-reveal" aria-label="Remove item">
                 <X size={14} />
               </button>
+              </div>
+              {expanded === it.id && (
+                <CustomFieldsPanel
+                  className="mt-2 pl-7"
+                  entityKind="lists:item"
+                  entityId={it.id}
+                  values={it.metadata ?? {}}
+                  onCommit={(name, value) => setItemField.mutate({ id: it.id, m: { [name]: value } })}
+                />
+              )}
             </li>
           ))}
         </ul>
@@ -289,6 +351,14 @@ function ListDetailModal({ listId, api, orgSlug, onClose }: { listId: string; ap
             </button>
           </div>
         )}
+
+        {/* The list's own fields, as a bundle or a person defines them. */}
+        <CustomFieldsPanel
+          entityKind="lists:list"
+          entityId={listId}
+          values={detail.data?.metadata ?? {}}
+          onCommit={(name, value) => setListField.mutate({ [name]: value })}
+        />
 
         {/* Tags and discussion, contributed at every kind. A shared list is
             read by several people, so it is exactly the sort of record that

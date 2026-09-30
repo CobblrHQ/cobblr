@@ -94,13 +94,17 @@ export interface NavModules {
   overflowNames: Set<string>;
   /** parentModuleName → its enabled specialisation children
    *  (either real Pillar-E modules OR installed lens bundles
-   *  rendered as synthetic module items). */
+   *  rendered as synthetic module items), hidden ones removed. */
   childrenByParent: Map<string, OrgModuleListItem[]>;
+  /** The same, INCLUDING hidden children: what a show/hide list offers. */
+  allChildrenByParent: Map<string, OrgModuleListItem[]>;
   /** `__navgroup__<key>` → the joined sibling instances (and their shared
    *  stem label) that render as one connected navbar element. The members are
    *  pulled OUT of `tops`/`allTops` and replaced by the group entry, so the
    *  renderer special-cases the group name and reads its members here. */
   instanceGroups: Map<string, { label: string; members: OrgModuleListItem[] }>;
+  /** The same, INCLUDING hidden members. */
+  allInstanceGroups: Map<string, { label: string; members: OrgModuleListItem[] }>;
   /** Every enabled module name (including `core-*`). Lets the nav gate
    *  hardcoded affordances like the scan link on their module being on
    *  — a blank slate shows only what the user has turned on. */
@@ -486,7 +490,7 @@ export function useNavModules(activeSlug: string): NavModules {
       name: key,
       version: "0.1.0",
       displayName: renamed ?? o?.display_label ?? door.label,
-      description: door.fromModule ? `${door.label} — from ${displayNameOf.get(door.fromModule) ?? door.fromModule}` : door.label,
+      description: door.fromModule ? `${door.label}, from ${displayNameOf.get(door.fromModule) ?? door.fromModule}` : door.label,
       icon: o?.icon ?? door.icon ?? null,
       headerAction: null,
       dependencies: [],
@@ -715,20 +719,47 @@ export function useNavModules(activeSlug: string): NavModules {
   );
   const hiddenNames = new Set(navHidden);
   const overflowNames = new Set(navOverflow);
-  const tops = allTops.filter((t) => !hiddenNames.has(t.name));
+  const shown = withoutHidden(allTops, childrenByParent, instanceGroups, hiddenNames);
   const doorNames = new Set(navDoorsOf(enabled).map((d) => d.key));
 
   return {
-    tops,
+    tops: shown.tops,
     allTops,
     hiddenNames,
     overflowNames,
-    childrenByParent,
-    instanceGroups,
+    childrenByParent: shown.childrenByParent,
+    allChildrenByParent: childrenByParent,
+    instanceGroups: shown.instanceGroups,
+    allInstanceGroups: instanceGroups,
     enabledNames,
     doorNames,
     isLoading: modules.isLoading || bundles.isLoading,
   };
+}
+
+/** What the navs draw once the per-device hidden set is applied, at EVERY
+ *  level: a hidden top goes, and so does a hidden app under a heading, under
+ *  its module, or inside a bundle's group. A heading or group left with no
+ *  member goes too, rather than drawing an empty label. Hiding used to reach
+ *  the top row only, so an app under a bundle's heading could never be hidden
+ *  (#4143). Pure, so the rule is tested without rendering the hook. */
+export function withoutHidden<T extends { name: string }>(
+  allTops: T[],
+  childrenByParent: Map<string, T[]>,
+  instanceGroups: Map<string, { label: string; members: T[] }>,
+  hidden: Set<string>,
+): { tops: T[]; childrenByParent: Map<string, T[]>; instanceGroups: Map<string, { label: string; members: T[] }> } {
+  const kids = new Map<string, T[]>();
+  for (const [parent, arr] of childrenByParent) kids.set(parent, arr.filter((c) => !hidden.has(c.name)));
+  const groups = new Map<string, { label: string; members: T[] }>();
+  for (const [key, g] of instanceGroups) groups.set(key, { ...g, members: g.members.filter((m) => !hidden.has(m.name)) });
+  const tops = allTops.filter((t) => {
+    if (hidden.has(t.name)) return false;
+    if (t.name.startsWith(HEADING_PREFIX)) return (kids.get(t.name)?.length ?? 0) > 0;
+    if (t.name.startsWith(NAVGROUP_PREFIX)) return (groups.get(t.name)?.members.length ?? 0) > 0;
+    return true;
+  });
+  return { tops, childrenByParent: kids, instanceGroups: groups };
 }
 
 /** A saved nav order reaches a bundle nav-group's members, in place.

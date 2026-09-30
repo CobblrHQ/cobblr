@@ -16,7 +16,7 @@ export const notificationKeys = {
   /** The bell's list, across the person's workspaces. */
   bell: () => ["notifications", "me", "bell"] as const,
   /** The full notifications page. */
-  page: (unreadOnly: boolean) => ["notifications", "me", "page", unreadOnly] as const,
+  page: (unreadOnly: boolean, org: string) => ["notifications", "me", "page", unreadOnly, org] as const,
   /** The person's unread count, across workspaces. */
   unread: () => ["notifications", "me", "unread"] as const,
   /** One workspace's unread count. */

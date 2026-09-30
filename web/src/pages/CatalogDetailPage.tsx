@@ -5,9 +5,10 @@
 import { useEffect, useMemo, useRef, useState, type ChangeEvent } from "react";
 import { Link, useParams } from "react-router-dom";
 import { EntityAttachments } from "../components/EntityAttachments";
+import { ContributedDetailPanels } from "../panels/registry";
 import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { ArrowLeft, Download, Library, Upload } from "lucide-react";
-import { BackToTop, Modal, useToast, usePageTitle, SearchInput } from "@cobblr/platform-web";
+import { BackToTop, CustomFieldsPanel, Modal, useToast, usePageTitle, SearchInput } from "@cobblr/platform-web";
 import { ApiError, api, type CatalogEntry, type CatalogSchema } from "../lib/api";
 import { useActiveOrg } from "../auth/ActiveOrgContext";
 import { CatalogFieldValue, NoImage } from "../components/CatalogFieldValue";
@@ -43,6 +44,11 @@ export function CatalogDetailPage() {
     },
     onError: () =>
       toast.error("Couldn't pull from the source - check the catalog's source URL (large datasets like the BOM use the bulk seeder)."),
+  });
+  const setField = useMutation({
+    mutationFn: (metadata: Record<string, unknown>) => api.updateCatalog(activeSlug, id!, { metadata }),
+    onSuccess: () => void qc.invalidateQueries({ queryKey: ["core-catalog", activeSlug, id] }),
+    onError: (e) => toast.error(`Couldn't save that change: ${e instanceof Error ? e.message : String(e)}`),
   });
   const PAGE_SIZE = 60;
   const entriesQ = useInfiniteQuery({
@@ -221,9 +227,16 @@ export function CatalogDetailPage() {
         />
       )}
 
+      {/* The catalog's own fields, as a bundle or a person defines them. */}
+      {catalog && <CustomFieldsPanel entityKind="core-catalogs:catalog" entityId={id!} values={catalog.metadata ?? {}} onCommit={(name, value) => setField.mutate({ [name]: value })} />}
+
       {/* A catalog is a record you open, so it is a record somebody may want to
           tag or ask a question about. */}
-      <EntityAttachments kind="core-catalogs:catalog" entityId={id!} />
+      <ContributedDetailPanels
+        target="core-catalogs:catalog"
+        ctx={{ slug: activeSlug, entityId: id!, entityTitle: catalog?.name ?? "Catalog" }}
+      />
+      <EntityAttachments kind="core-catalogs:catalog" entityId={id!} omit={["tags", "discussion", "pairings"]} />
     </div>
   );
 }

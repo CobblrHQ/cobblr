@@ -15,8 +15,10 @@ import { Router } from "express";
 import { z } from "zod";
 import { sql } from "kysely";
 import { platform } from "@cobblr/platform-contract";
+import { csvCell } from "@cobblr/platform-contract/csv";
 import { sessionUser, tenantContext, tenantDb } from "../db.js";
 import { asyncHandler, badBody, requireRole } from "./util.js";
+import { planByKey, planByName, PATH_SEPARATOR } from "./import-plan.js";
 
 export const locationsImportRouter = Router({ mergeParams: true });
 
@@ -97,15 +99,6 @@ const ImportBody = z.object({
 });
 
 // Build the existing-location lookup keyed by the chosen match column.
-async function existingByKey(db: ReturnType<typeof tenantDb>, matchOn: string) {
-  const locs = await db.selectFrom("core_locations_locations").select(["id", "name", "metadata"]).execute();
-  const byKey = new Map<string, string>(); // match value (lower) → id
-  for (const l of locs) {
-    const key = matchOn.toLowerCase() === "name" ? l.name : ((l.metadata as Record<string, unknown>)?.[matchOn] as string | undefined);
-    if (key) byKey.set(String(key).toLowerCase(), l.id);
-  }
-  return byKey;
-}
 
 // AI-REACH: takes or produces a file (multipart or binary), which an action cannot carry
 locationsImportRouter.post(
@@ -118,73 +111,81 @@ locationsImportRouter.post(
     const db = tenantDb(req);
 
     const { headers, rows, errors } = parseLocations(csv, match_on);
-    const existing = await existingByKey(db, match_on);
-    // In-batch match keys (so a parent defined later in the file still resolves,
-    // and a row that matches an existing one is an update).
-    const batchKeys = new Set<string>();
-    for (const r of rows) if (r.match_value) batchKeys.add(r.match_value.toLowerCase());
-
-    // Classify each row + resolve parent (against existing OR in-batch keys).
-    const preview = rows.map((r) => {
-      const mk = r.match_value?.toLowerCase();
-      const action: "create" | "update" = mk && existing.has(mk) ? "update" : "create";
-      let parent: { key: string; resolved: boolean } | null = null;
-      if (r.parent_key) {
-        const pk = r.parent_key.toLowerCase();
-        parent = { key: r.parent_key, resolved: existing.has(pk) || batchKeys.has(pk) };
-      }
-      return { row_number: r.row_number, name: r.name, short_name: r.short_name, kind: r.kind, match_value: r.match_value, action, parent, metadata: r.metadata };
-    });
+    const existing = (await db.selectFrom("core_locations_locations").select(["id", "name", "parent_id", "metadata"]).execute()).map((l) => ({
+      ...l,
+      metadata: (l.metadata as Record<string, unknown> | null) ?? null,
+    }));
+    // ONE plan for the preview and the commit, so the preview can never
+    // promise what the commit does differently (import-plan.ts).
+    const plan = match_on.toLowerCase() === "name" ? planByName(rows, existing) : planByKey(rows, existing, match_on);
+    const preview = plan.rows.map((p) => ({
+      row_number: p.row_number,
+      name: p.name,
+      short_name: p.short_name,
+      kind: p.kind,
+      match_value: p.match_value,
+      action: p.action,
+      parent: p.parent,
+      path: p.path,
+      metadata: p.metadata,
+      error: p.error,
+    }));
+    const summary = {
+      create: preview.filter((p) => p.action === "create" && !p.error).length,
+      update: preview.filter((p) => p.action === "update" && !p.error).length,
+      unresolved_parents: preview.filter((p) => p.parent && !p.parent.resolved).length,
+      blocked: plan.blocking.length,
+    };
 
     if (parsed.data.dry_run || rows.length === 0) {
-      res.json({
-        match_on,
-        detected_headers: headers,
-        rows: preview,
-        errors,
-        summary: { create: preview.filter((p) => p.action === "create").length, update: preview.filter((p) => p.action === "update").length, unresolved_parents: preview.filter((p) => p.parent && !p.parent.resolved).length },
-        committed: 0,
+      res.json({ match_on, detected_headers: headers, rows: preview, errors, blocking: plan.blocking, summary, committed: 0 });
+      return;
+    }
+    if (plan.blocking.length > 0) {
+      res.status(409).json({
+        error: {
+          code: "import_rows_blocked",
+          message: `${plan.blocking.length} row${plan.blocking.length === 1 ? "" : "s"} cannot be imported as written: ${plan.blocking
+            .slice(0, 3)
+            .map((b) => `row ${b.row_number}, ${b.message}`)
+            .join("; ")}`,
+          blocking: plan.blocking,
+        },
       });
       return;
     }
 
-    // SIBLING-DUP-OK: an import matches on the user's OWN key (match_value),
-    // chosen on the mapping screen, and parents are linked in pass 2 — so at
-    // insert time a row has no parent to be a sibling under yet. Refusing on
-    // name here would drop rows the user can see in their own file and expects
-    // to arrive. Rows that collide by name are the import's business, and it
-    // reports created/updated counts for exactly that reason.
-    //
-    // ── Commit. Pass 1: upsert every row (parent linked in pass 2 once all ids
-    //    exist). Match key → id map grows as we go.
+    // SIBLING-DUP-OK: an import writes the places the person's own file
+    // names, under the parents the plan resolved; two places may share a name
+    // when their paths differ, which is the case the plan exists for.
     const ctx = tenantContext(req);
     const session = sessionUser(req);
-    const keyToId = new Map(existing); // seed with existing
     let created = 0;
     let updated = 0;
 
     await db.transaction().execute(async (trx) => {
-      for (const r of rows) {
-        const mk = r.match_value?.toLowerCase();
-        const metaWithKey = { ...r.metadata }; // metadata columns include the match key already
-        if (mk && existing.has(mk)) {
-          const id = existing.get(mk)!;
-          await trx.updateTable("core_locations_locations").set({ name: r.name, short_name: r.short_name, kind: r.kind, metadata: sql`metadata || ${JSON.stringify(metaWithKey)}::jsonb` }).where("id", "=", id).execute();
-          keyToId.set(mk, id);
+      const idOfRow = new Map<number, string>();
+      for (const i of plan.order) {
+        const p = plan.rows[i]!;
+        const ref = p.parentRef;
+        const parentId = ref ? ("existing" in ref ? ref.existing : idOfRow.get(ref.row) ?? null) : null;
+        const setParent = p.parent ? { parent_id: parentId } : {};
+        if (p.action === "update" && p.id) {
+          await trx
+            .updateTable("core_locations_locations")
+            .set({ name: p.name, short_name: p.short_name, kind: p.kind, ...setParent, metadata: sql`metadata || ${JSON.stringify(p.metadata)}::jsonb` })
+            .where("id", "=", p.id)
+            .execute();
+          idOfRow.set(i, p.id);
           updated++;
         } else {
-          const ins = await trx.insertInto("core_locations_locations").values({ name: r.name, short_name: r.short_name, kind: r.kind, metadata: sql`${JSON.stringify(metaWithKey)}::jsonb` }).returning("id").executeTakeFirstOrThrow();
-          if (mk) keyToId.set(mk, ins.id);
+          const ins = await trx
+            .insertInto("core_locations_locations")
+            .values({ name: p.name, short_name: p.short_name, kind: p.kind, parent_id: parentId, metadata: sql`${JSON.stringify(p.metadata)}::jsonb` })
+            .returning("id")
+            .executeTakeFirstOrThrow();
+          idOfRow.set(i, ins.id);
           created++;
-        }
-      }
-      // Pass 2: link parents now that every key has an id.
-      for (const r of rows) {
-        if (!r.parent_key || !r.match_value) continue;
-        const myId = keyToId.get(r.match_value.toLowerCase());
-        const parentId = keyToId.get(r.parent_key.toLowerCase());
-        if (myId && parentId && myId !== parentId) {
-          await trx.updateTable("core_locations_locations").set({ parent_id: parentId }).where("id", "=", myId).execute();
         }
       }
     });
@@ -214,16 +215,30 @@ locationsImportRouter.get(
     // Gather all metadata keys present, so they each get a column.
     const metaKeys = new Set<string>();
     for (const l of locs) for (const k of Object.keys((l.metadata as Record<string, unknown>) ?? {})) metaKeys.add(k);
+    // A field this reader may not read is neither a column nor a value.
+    const ctx = tenantContext(req);
+    const hidden = await platform().entities.hiddenFields(ctx.org.id, "core-locations:location", { userId: sessionUser(req)?.id, role: ctx.role });
+    for (const k of hidden) metaKeys.delete(k);
     const headers = ["name", "short_name", "kind", "parent", ...metaKeys];
-    const esc = (v: unknown) => {
-      const s = v == null ? "" : String(v);
-      return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
+    const lines = [headers.map(csvCell).join(",")];
+    // A parent is written by name, or by its path when its name is not unique,
+    // so the file imports back into the same tree (import-plan.ts).
+    const nameCount = new Map<string, number>();
+    for (const l of locs) nameCount.set(l.name.toLowerCase(), (nameCount.get(l.name.toLowerCase()) ?? 0) + 1);
+    const pathOf = (id: string): string => {
+      const names: string[] = [];
+      const seen = new Set<string>();
+      for (let cur = byId.get(id); cur && !seen.has(cur.id); cur = cur.parent_id ? byId.get(cur.parent_id) : undefined) {
+        seen.add(cur.id);
+        names.unshift(cur.name);
+      }
+      return names.join(PATH_SEPARATOR);
     };
-    const lines = [headers.join(",")];
     for (const l of locs) {
-      const parent = l.parent_id ? byId.get(l.parent_id)?.name ?? "" : "";
+      const p = l.parent_id ? byId.get(l.parent_id) : undefined;
+      const parent = !p ? "" : (nameCount.get(p.name.toLowerCase()) ?? 0) > 1 ? pathOf(p.id) : p.name;
       const meta = (l.metadata as Record<string, unknown>) ?? {};
-      lines.push([l.name, l.short_name ?? "", l.kind, parent, ...[...metaKeys].map((k) => meta[k])].map(esc).join(","));
+      lines.push([l.name, l.short_name ?? "", l.kind, parent, ...[...metaKeys].map((k) => meta[k])].map(csvCell).join(","));
     }
     res.setHeader("content-type", "text/csv");
     res.setHeader("content-disposition", 'attachment; filename="locations.csv"');

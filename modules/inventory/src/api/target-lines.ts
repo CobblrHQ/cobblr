@@ -31,6 +31,7 @@ import { capacitySourceField, consumptionUnitOf } from "../consumption-unit.js";
 import { UNIT_OF_KEY } from "../on-hand.js";
 import { applyStockDelta } from "./action-handlers.js";
 import { reserveAllocation, settleAllocation } from "./allocations.js";
+import { withArticle } from "@cobblr/platform-contract/plural";
 
 export interface LineRef {
   targetModule: string;
@@ -202,7 +203,7 @@ async function openUnitForLine(
       createdBy: userId || null,
     })
     .catch(() => undefined);
-  const took = await applyStockDelta(orgId, { partId: model.id, delta: -1, reason: `Opened a ${noun} for ${reason}` });
+  const took = await applyStockDelta(orgId, { partId: model.id, delta: -1, reason: `Opened ${withArticle(noun)} for ${reason}` });
   if (!took.ok) return null;
   const r = await reserveForLine(orgId, userId, ref, child.id, capacity, reason);
   if (!r.ok) return null;

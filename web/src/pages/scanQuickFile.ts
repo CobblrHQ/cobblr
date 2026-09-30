@@ -36,11 +36,31 @@ export function stillRouting(item: Pick<ScanInboxItem, "suggested_name" | "sugge
  *  else the top one. Null when there is nothing to file into. */
 export function oneTapDestination(
   item: Pick<ScanInboxItem, "suggested_candidates">,
-  resolved: { module: string; instance: string | null } | null | undefined,
+  resolved:
+    | { module: string; instance: string | null; kind?: string | null; label?: string; bundle_external_id?: string | null }
+    | null
+    | undefined,
 ): ScanCandidate | null {
   const cands = cleanCandidates(item);
-  const key = resolved ? entryKey(resolved.module, resolved.instance) : null;
-  return (key ? cands.find((c) => entryKey(c.module, c.instance) === key) : undefined) ?? cands[0] ?? null;
+  if (!resolved) return cands[0] ?? null;
+  // The resolved destination is where the inbox files this row and what it
+  // names, so the one tap files there under the same name. The first
+  // candidate stood in when the destination was not among them, and the
+  // camera said "Add to Inventory" (and filed there) for a grocery the inbox
+  // would put in Groceries (#4146).
+  const key = entryKey(resolved.module, resolved.instance);
+  const match = cands.find((c) => entryKey(c.module, c.instance) === key);
+  if (match) return resolved.label ? { ...match, label: resolved.label } : match;
+  return {
+    module: resolved.module,
+    instance: resolved.instance,
+    kind: resolved.kind ?? baseKind(resolved.module),
+    label: resolved.label ?? resolved.module,
+    confidence: 0,
+    name: cands[0]?.name ?? "",
+    fields: {},
+    ...(resolved.bundle_external_id ? { bundle_external_id: resolved.bundle_external_id } : {}),
+  } as ScanCandidate;
 }
 
 /** Install the destination's table if it is not there yet, then file the row

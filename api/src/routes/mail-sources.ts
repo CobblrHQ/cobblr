@@ -31,6 +31,7 @@ const StartBody = z.object({ org_id: z.string().uuid() });
 
 // AI-REACH: a consent screen the person has to click through themselves; an
 // assistant cannot grant access to somebody's mailbox.
+// UI-SCREEN: /me/connections
 mailSourcesRouter.post("/me/mail-sources/gmail/start", requireAuth, async (req, res, next) => {
   try {
     if (!googleOAuthConfigured()) {

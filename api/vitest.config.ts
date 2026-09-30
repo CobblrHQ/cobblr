@@ -3,6 +3,16 @@ import { defineConfig } from "vitest/config";
 import { BaseSequencer, type TestSpecification } from "vitest/node";
 import fileDurations from "./tests/file-durations.json";
 import { loadFactor, loadPerCore } from "../scripts/lib/load-factor.mjs";
+import { suiteForks } from "../scripts/lib/job-budget.mjs";
+
+// Six at most, fewer on a box with less memory free, and a refusal by name when
+// the job's limit leaves one: the suite then went serial without a word and
+// timed out 40 minutes later (scripts/lib/job-budget.mjs, suiteForks).
+const budget = suiteForks({ max: 6 });
+if (!budget.ok) throw new Error(budget.message);
+const VITEST_FORKS = budget.forks;
+// check-test-balance.mjs reads this line for the packing floor.
+console.log(`[vitest] forks: ${VITEST_FORKS}`);
 
 // Longest-first (LPT) file scheduling. With 8 forks the wall-clock is set by
 // whatever's still running at the end — and by default the 30-45s
@@ -91,7 +101,10 @@ export default defineConfig({
     // module mocks + process.env never bleed across files.
     pool: "forks",
     poolOptions: {
-      forks: { singleFork: false, maxForks: 6, minForks: 2 },
+      // Six at most, fewer when the box it landed on has less memory free
+      // (scripts/lib/job-budget.mjs): a shared runner box went to its cap
+      // with seven jobs each sized for the box to itself (2026-09-29).
+      forks: { singleFork: false, maxForks: VITEST_FORKS, minForks: Math.min(2, VITEST_FORKS) },
     },
     sequence: { sequencer: LongestFirstSequencer },
   },

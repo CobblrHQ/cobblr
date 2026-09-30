@@ -335,20 +335,34 @@ export class LabelsApi {
    *  happens to read. Leaving `base_url` out cost a typecheck and a round trip
    *  the moment the toolbar needed to tell a bridged printer from a network
    *  one, for no benefit: the server already sends it. */
-  listPrinters = () =>
-    this.requestAbs<{
-      items: Array<{
-        id: string;
-        name: string;
-        is_default: boolean;
-        driver: string;
-        base_url?: string | null;
-        settings?: Record<string, unknown>;
-      }>;
-    }>(
-      "GET",
-      `/api/v1/orgs/${this.slug}/modules/core-print/printers`,
-    );
+  listPrinters = async (): Promise<{
+    items: Array<{
+      id: string;
+      name: string;
+      is_default: boolean;
+      driver: string;
+      base_url?: string | null;
+      settings?: Record<string, unknown>;
+    }>;
+  }> => {
+    // Print is opt-in, and its routes answer 409 while it is off. A workspace
+    // without it has no saved printers, so it is not asked: every page that
+    // lists printers otherwise carried a failed request on each load.
+    if (!(await this.printIsOn())) return { items: [] };
+    return this.requestAbs("GET", `/api/v1/orgs/${this.slug}/modules/core-print/printers`);
+  };
+  private printOn: { at: number; on: Promise<boolean> } | null = null;
+  private printIsOn(): Promise<boolean> {
+    if (this.printOn && Date.now() - this.printOn.at < 30_000) return this.printOn.on;
+    const on = this.requestAbs<{ items: Array<{ name: string; enabled?: boolean }> }>("GET", `/api/v1/orgs/${this.slug}/modules`)
+      .then((r) => r.items.some((m) => m.name === "core-print" && m.enabled === true))
+      .catch(() => {
+        this.printOn = null;
+        return true;
+      });
+    this.printOn = { at: Date.now(), on };
+    return on;
+  }
   /** Create a printer from the labels page, so a user connects one without leaving
    *  to Configuration. Used by the inline "Pair a Bluetooth printer" flow with
    *  profile-derived settings; the server validates them. core-print owns the
@@ -357,6 +371,7 @@ export class LabelsApi {
    *  when it is needed, not preemptively on every workspace. */
   createPrinter = async (b: { name: string; driver: string; base_url?: string; settings?: Record<string, unknown>; is_default?: boolean }) => {
     await this.requestAbs("POST", `/api/v1/orgs/${this.slug}/modules/core-print/enable`, {});
+    this.printOn = null;
     return this.requestAbs<{ id: string }>("POST", `/api/v1/orgs/${this.slug}/modules/core-print/printers`, b);
   };
   /** Edit a printer's name / media / layout from the labels page, so a user tunes

@@ -21,7 +21,7 @@ export function PortalPlanPage() {
   const items = useMemo(() => locs.data?.items ?? [], [locs.data]);
   const byId = useMemo(() => new Map(items.map((l) => [l.id, l] as const)), [items]);
   const root = id ? byId.get(id) : undefined;
-  usePageTitle(root ? `${root.name} — plan` : "Plan");
+  usePageTitle(root ? `${root.name}: plan` : "Plan");
 
   if (locs.isLoading) return <div className="p-6 text-sm text-muted">Loading…</div>;
   if (!root) return <div className="p-6 text-sm text-muted">Location not found.</div>;

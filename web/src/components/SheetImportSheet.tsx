@@ -7,7 +7,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link } from "react-router-dom";
 import { Upload, Link2, Loader2, CheckCircle2, AlertTriangle, ArrowRight, Undo2, FileSpreadsheet, EyeOff, Eye } from "lucide-react";
-import { Modal, useToast } from "@cobblr/platform-web";
+import { Modal, downloadBlob, useToast } from "@cobblr/platform-web";
 import { api, ApiError } from "../lib/api";
 import { useActiveOrg } from "../auth/ActiveOrgContext";
 import {
@@ -33,6 +33,8 @@ import {
   type SheetsSource,
   type SummaryCheck,
   type UndoReport,
+  type ImportRunSheet,
+  issuesCsv,
 } from "../lib/sheet-import";
 import { DISPOSITION_LABELS } from "@cobblr/platform-contract/disposition";
 
@@ -680,7 +682,7 @@ function RunView({
                 Open {s.label} <ArrowRight size={12} />
               </Link>
             )}
-            {(s.problems ?? []).slice(0, 5).map((p) => (
+            {s.issues ? <RowsNotAsWritten sheet={s} /> : (s.problems ?? []).slice(0, 5).map((p) => (
               <div key={p} className="text-xs text-ember-600 dark:text-ember-400">
                 {p}
               </div>
@@ -771,3 +773,35 @@ function runStatusWord(r: ImportRun): string {
       return "Running";
   }
 }
+
+/** The rows of a sheet that did not go in exactly as written: how many, the
+ *  first few, and every one of them as a file to fix the spreadsheet from.
+ *  The import used to say "60 added" and nothing about the 55 dates it could
+ *  not read (the 2026-09 fundamentals audit). */
+function RowsNotAsWritten({ sheet }: { sheet: ImportRunSheet }) {
+  const count = sheet.issue_count ?? sheet.issues?.length ?? 0;
+  if (count === 0) return null;
+  const shown = sheet.issues ?? [];
+  return (
+    <div className="mt-2 rounded-md border border-amber-300/60 dark:border-amber-800/60 bg-amber-50/50 dark:bg-amber-950/20 p-2 space-y-1" data-testid="rows-not-as-written">
+      <div className="text-xs font-medium text-content dark:text-mortar-100">
+        {count === 1 ? "1 line of your sheet did not go in exactly as written" : `${count} lines of your sheet did not go in exactly as written`}
+      </div>
+      <ul className="text-xs text-muted dark:text-slate-400 space-y-0.5">
+        {shown.slice(0, 3).map((i, n) => (
+          <li key={n}>
+            Row {i.row} ({i.name}): {i.problem}
+          </li>
+        ))}
+      </ul>
+      <button
+        type="button"
+        onClick={() => downloadBlob(new Blob([issuesCsv(sheet)], { type: "text/csv" }), `${sheet.sheet} - rows to check.csv`)}
+        className="text-xs font-medium text-accent hover:underline"
+      >
+        Download the list{shown.length < count ? ` (the first ${shown.length})` : ""}
+      </button>
+    </div>
+  );
+}
+

@@ -36,7 +36,20 @@ if (!new RegExp(`export\\s+async\\s+function\\s+${FN}\\b`).test(enable)) {
 //    it can't be narrowed to silently drop capabilities from healing.
 const body = enable.slice(enable.indexOf(`function ${FN}`));
 const fnBody = body.slice(0, body.indexOf("\n}\n") + 1);
-if (!/foundational/.test(fnBody) || !/autoEnable/.test(fnBody)) {
+// The filter may be the shared predicate every door uses (signup, enable,
+// uninstall); then that predicate is what must cover both.
+const fnOf = (name: string) => {
+  const at = enable.indexOf(`function ${name}(`);
+  if (at < 0) return "";
+  const rest = enable.slice(at);
+  const whole = rest.slice(0, rest.indexOf("\n}\n") + 1);
+  // The body only: the parameter's type names `autoEnable` whatever it tests.
+  return whole.slice(whole.indexOf("): boolean {"));
+};
+const viaPredicate = /\bisDefaultModule\b/.test(fnBody);
+const coverage = viaPredicate ? fnOf("isDefaultModule") + fnOf("isFoundational") : fnBody;
+const foundationalRe = viaPredicate ? /band\s*[!=]==\s*["']foundational["']/ : /foundational/;
+if (!foundationalRe.test(coverage) || !/autoEnable/.test(coverage)) {
   errors.push(`${ENABLE}: ${FN} must heal both \`band: "foundational"\` and \`autoEnable: true\` modules — its filter looks narrowed.`);
 }
 

@@ -10,6 +10,7 @@
 // It deliberately mirrors the member AppPlayerPage's look (themed,
 // full-bleed) but shares none of its auth/data plumbing.
 
+import { MAIN_ID, SkipToContent } from "./a11y/shell-landmarks";
 import { useEffect, useState } from "react";
 import ReactMarkdown from "react-markdown";
 import { EntityTile, TILE_GRID } from "@cobblr/platform-web";
@@ -202,6 +203,7 @@ export function PublicAppPlayer({
   const rest = (page.blocks ?? []).filter((b) => b.type !== "stat");
   return (
     <div className="min-h-screen" style={themeWrapperStyle(theme) ?? { background: "#f4f2ee" }}>
+      <SkipToContent />
       <header className="px-6 py-4 flex items-center gap-3 border-b" style={{ borderColor: "var(--app-border, #e2e8f0)" }}>
         {theme?.logo ? (
           // EXTERNAL-IMAGE-OK: an app theme assetRef (data: URL or hosted URL, capped at 500KB),
@@ -213,7 +215,7 @@ export function PublicAppPlayer({
         <div className="flex-1" />
         <span className="text-[10px] font-mono uppercase tracking-widest" style={mutedStyle(theme)}>public · read-only</span>
       </header>
-      <main className="max-w-5xl mx-auto px-6 py-8 space-y-5">
+      <main id={MAIN_ID} tabIndex={-1} className="focus:outline-none max-w-5xl mx-auto px-6 py-8 space-y-5">
         {stats.length > 0 && (
           <div className="flex flex-wrap gap-3">
             {stats.map((b, i) => (

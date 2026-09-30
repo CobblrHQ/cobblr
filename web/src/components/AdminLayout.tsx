@@ -11,6 +11,7 @@
 // The section content area (the Outlet) renders in the normal theme so the
 // tables stay readable. See docs/modules/member-portal-and-permissions.md.
 
+import { MAIN_ID, RouteAnnouncer, SkipToContent } from "./a11y/shell-landmarks";
 import { NavLink, Outlet, useLocation } from "react-router-dom";
 import { ArrowLeft, LogOut, Moon, ShieldCheck, Sun } from "lucide-react";
 import { useAuth } from "../auth/AuthContext";
@@ -82,6 +83,8 @@ export function AdminLayout() {
 
   return (
     <div className="min-h-screen flex bg-canvas dark:bg-slate-950">
+      <SkipToContent />
+      <RouteAnnouncer />
       {/* The rail. 18 sections in 5 clusters were wrapping into two rows of tiny
           tabs that pushed the page content below the fold and re-flowed as the
           window resized. A vertical rail gives every cluster its heading, keeps
@@ -203,7 +206,7 @@ export function AdminLayout() {
           </nav>
         </header>
 
-        <main className="flex-1 min-w-0">
+        <main id={MAIN_ID} tabIndex={-1} className="focus:outline-none flex-1 min-w-0">
           {/* page-shell, not a literal max-w: AdminConsole declares
               usePageWidth("wide") and the hook targets .page-shell — with the
               hardcoded 6xl every wide table (AI 9-col, Barcodes 9-col, View-as

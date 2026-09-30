@@ -8,18 +8,31 @@
 
 import { Eye, EyeOff } from "lucide-react";
 import { useActiveOrg } from "../auth/ActiveOrgContext";
-import { useNavModules, HEADING_PREFIX } from "../components/useNavModules";
+import { useNavModules, HEADING_PREFIX, NAVGROUP_PREFIX } from "../components/useNavModules";
 import { useToggleNavHidden } from "../lib/moreApps";
 
 export function AppSettingsPage() {
   const { activeSlug, activeOrg } = useActiveOrg();
   const toggleHidden = useToggleNavHidden();
-  const { allTops, hiddenNames, isLoading } = useNavModules(activeSlug);
+  const { allTops, allChildrenByParent, allInstanceGroups, hiddenNames, isLoading } = useNavModules(activeSlug);
   const appLabel = activeOrg?.app_mode?.label ?? "this app";
 
-  // Real nav surfaces only — drop user-defined heading groups (they're
-  // containers, not toggleable destinations).
-  const surfaces = allTops.filter((t) => !t.name.startsWith(HEADING_PREFIX));
+  // Every destination, grouped the way the menu groups them: a heading or a
+  // bundle's group is a label over its members (each one hideable on its own),
+  // and a module's specialisations sit under it. Listing the top row alone
+  // left every app under a heading with no way to hide it (#4143).
+  const surfaces: Array<{ name: string; displayName: string; under?: string }> = [];
+  for (const t of allTops) {
+    if (t.name.startsWith(HEADING_PREFIX)) {
+      for (const k of allChildrenByParent.get(t.name) ?? []) surfaces.push({ name: k.name, displayName: k.displayName, under: t.displayName });
+    } else if (t.name.startsWith(NAVGROUP_PREFIX)) {
+      const g = allInstanceGroups.get(t.name);
+      for (const m of g?.members ?? []) surfaces.push({ name: m.name, displayName: m.displayName, under: g?.label ?? t.displayName });
+    } else {
+      surfaces.push({ name: t.name, displayName: t.displayName });
+      for (const k of allChildrenByParent.get(t.name) ?? []) surfaces.push({ name: k.name, displayName: k.displayName, under: t.displayName });
+    }
+  }
 
   return (
     <div className="space-y-6">
@@ -34,7 +47,7 @@ export function AppSettingsPage() {
         <ul className="divide-y divide-line dark:divide-slate-800 rounded-lg border border-line dark:border-slate-700 bg-surface dark:bg-slate-900">
           {surfaces.length === 0 && (
             <li className="px-4 py-3 text-sm text-faint dark:text-slate-500">
-              {isLoading ? "Loading…" : "Nothing to show yet — your tables will appear here."}
+              {isLoading ? "Loading…" : "Nothing to show yet. Your tables will appear here."}
             </li>
           )}
           {surfaces.map((t) => {
@@ -42,12 +55,14 @@ export function AppSettingsPage() {
             return (
               <li key={t.name} className="flex items-center gap-3 px-4 py-3">
                 <span className="flex-1 min-w-0 truncate text-sm text-content dark:text-mortar-100">
+                  {t.under && <span className="text-faint dark:text-slate-500">{t.under} › </span>}
                   {t.displayName}
                 </span>
                 <button
                   type="button"
                   onClick={() => toggleHidden(activeSlug, t.name)}
                   aria-pressed={visible}
+                  aria-label={`${visible ? "Hide" : "Show"} ${t.displayName}`}
                   title={visible ? "Hide from the menu" : "Show in the menu"}
                   className={`inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-xs font-medium transition ${
                     visible

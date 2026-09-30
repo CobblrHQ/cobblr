@@ -102,7 +102,7 @@ export function TraitScopePicker({
   kinds,
   presets,
   previewVerb = "matches",
-  emptyHint = "matches nothing — pick at least one trait",
+  emptyHint = "matches nothing, pick at least one trait",
 }: Props) {
   const selected = useMemo(() => new Set(value), [value]);
 

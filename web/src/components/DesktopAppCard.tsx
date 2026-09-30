@@ -258,7 +258,7 @@ export function DesktopAppCard() {
         <p className="text-xs pl-6 text-faint dark:text-slate-400">
           {res.ok
             ? res.replyBytes
-              ? `Connected on channel ${res.channel} — the printer answered with ${res.replyBytes} bytes.`
+              ? `Connected on channel ${res.channel}. The printer answered with ${res.replyBytes} bytes.`
               : `Connected on channel ${res.channel}, but the printer sent nothing back. A bridge already holding this printer will do that.`
             : res.error}
         </p>

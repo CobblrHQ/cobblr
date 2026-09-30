@@ -1,0 +1,10 @@
+{
+  "lint": "lint:permanent-reconcile-runs",
+  "run": "node scripts/lint-permanent-reconcile-runs.ts",
+  "rows": [
+    "boot-reconcile"
+  ],
+  "ms": 500,
+  "recorded": "2026-09-29",
+  "source": "scaffolded by new-lint.sh at twice a local run (a shared box); replaced from its first CI measurement"
+}

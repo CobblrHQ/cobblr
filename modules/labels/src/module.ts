@@ -9,10 +9,10 @@ import { defineModule } from "@cobblr/platform-contract";
 
 export default defineModule({
   name: "labels",
-  version: "0.26.1",
+  version: "0.26.3",
   displayName: "Labels",
   description:
-    "QR codes, label templates, per-user print queue, scan-to-navigate/scan-to-action tokens. Polymorphic, any module's entity can have a label.",
+    "Make QR labels for your things and shelves, print them, and scan one to open or act on what it names.",
   icon: "tag",
   band: "stock",
   // An operator, not a trackable kind: labels are printed FOR things
@@ -28,11 +28,6 @@ export default defineModule({
 
   api: () => import("./api/index.js"),
 
-  intents: [
-    { name: "queue_label", description: "Add a label for an entity to the print queue" },
-    { name: "print_queue", description: "Snapshot the current queue into a printed batch" },
-  ],
-
   dependencies: [],
 
   exposes: {
@@ -45,9 +40,7 @@ export default defineModule({
       "labels.qr.token.created",
       "labels.qr.token.revoked",
       "labels.qr.scan.received",
-      "labels.qr.scan.action_invoked",
     ],
-    api: ["queue", "listQueue", "clearQueue", "printBatch"],
     // ──────────── Live box — the accumulate-then-print policy ─────────────
     // Applicable only when the workspace has a printer connected; a per-user
     // switch (the auto-flush policy) with a "configure" deep-link. See

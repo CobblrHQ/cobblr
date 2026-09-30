@@ -16,6 +16,7 @@ import { usePrefill } from "../lib/prefill";
 import { printJoinSheet } from "../lib/joinSheet";
 import { useActiveOrg } from "../auth/ActiveOrgContext";
 import { ORG_ROLES, INVITABLE_ORG_ROLES } from "@cobblr/platform-contract/org-roles";
+import { withArticle } from "@cobblr/platform-contract/plural";
 
 interface Props {
   /** Render in-flow (settings page mode) instead of as an overlay. */
@@ -167,7 +168,7 @@ export function MembersModal({ open, onClose, slug, inline, chromeless, focus }:
           ? `Invite sent to ${sentTo}. The link is copied too.`
           : sentTo
             ? `No email was sent from this instance. The link is copied, send it to ${sentTo}.`
-            : "Invite link copied — share it however you like.",
+            : "Invite link copied. Share it however you like.",
       );
     },
     onError: (e: unknown) => {
@@ -186,8 +187,8 @@ export function MembersModal({ open, onClose, slug, inline, chromeless, focus }:
       void navigator.clipboard?.writeText(url).catch(() => {});
       toast.success(
         sentTo && inv.emailed
-          ? `Invite to start their own Cobblr sent to ${sentTo} — link copied too.`
-          : "“Start their own Cobblr” link copied — share it however you like.",
+          ? `Invite to start their own Cobblr sent to ${sentTo}. Link copied too.`
+          : "“Start their own Cobblr” link copied. Share it however you like.",
       );
     },
     onError: (e: unknown) => {
@@ -390,7 +391,7 @@ export function MembersModal({ open, onClose, slug, inline, chromeless, focus }:
                           <span className="text-content dark:text-mortar-200" data-testid="join-link-count">
                             join link · {inv.use_count ?? 0}
                             {inv.max_uses ? ` of ${inv.max_uses}` : ""} joined
-                            {inv.pace_limit && inv.pace_period ? ` · at most ${inv.pace_limit} a ${inv.pace_period}` : ""}
+{inv.pace_limit && inv.pace_period ? ` · at most ${inv.pace_limit} ${withArticle(inv.pace_period)}` : ""}
                             {inv.offer_on_labels ? " · labels offer it" : ""}
                           </span>
                         )}

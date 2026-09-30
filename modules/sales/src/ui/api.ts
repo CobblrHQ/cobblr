@@ -12,6 +12,7 @@ export interface Customer {
   phone: string | null;
   address: string | null;
   notes: string | null;
+  metadata?: Record<string, unknown>;
   created_at: string;
 }
 export interface CustomerSummary extends Customer {
@@ -26,8 +27,13 @@ export interface SalesOrder {
   status: SalesOrderStatus;
   order_date: string | null;
   fulfilled_at: string | null;
+  carrier: string | null;
+  tracking_number: string | null;
+  shipped_at: string | null;
   shipping_address: string | null;
   notes: string | null;
+  /** A bundle's custom fields on the order, by field name. */
+  metadata?: Record<string, unknown>;
   created_at: string;
 }
 
@@ -37,12 +43,28 @@ export interface SalesOrderItem {
   part_id: string | null;
   description: string | null;
   qty: string;
+  /** How many have left stock so far. */
+  qty_fulfilled: string;
   unit_price: string | null;
+}
+
+/** A work order made for this order (a planned build in Builds). */
+export interface WorkOrderView {
+  id: string;
+  build_id: string;
+  build_name: string;
+  output_part_id: string | null;
+  qty: number;
+  made: number;
+  status: string;
+  /** The Make started for it in digifab, when there is one. */
+  make_id?: string | null;
 }
 
 export interface SalesOrderDetail extends SalesOrder {
   items: SalesOrderItem[];
   total: number;
+  work_orders?: WorkOrderView[];
 }
 
 export interface PartOption {
@@ -51,8 +73,64 @@ export interface PartOption {
   subtitle?: string;
 }
 
+/** A way on from a refused fulfilment: make the missing parts, or ship what
+ *  is on hand now. */
+export type FulfilDoor =
+  | { kind: "make"; label: string; part_id: string; qty: number; href: string | null; line_id: string }
+  | { kind: "ship_available"; label: string; qty: number }
+  | { kind: "add_build"; label: string; href: string };
+
+export interface ShipLookup {
+  url: string;
+  via: string;
+  isCarrier: boolean;
+}
+
+/** What Ship will send the customer, and whether it can be emailed. */
+export interface ShipPreview {
+  notice: { to: string | null; subject: string; text: string };
+  email: { available: boolean; from: string | null; reason: string | null };
+  carrier: string | null;
+  lookup: ShipLookup | null;
+}
+
+export interface ShipResult {
+  order: SalesOrder;
+  carrier: string | null;
+  tracking_number: string | null;
+  lookup: ShipLookup | null;
+  notice: { to: string | null; subject: string; text: string };
+  email: { asked: false } | { asked: true; sent: true; to: string; status: "sent" | "skipped" } | { asked: true; sent: false; reason: string };
+}
+
+export interface HistoryRow {
+  id: string;
+  kind: "status" | "stock" | "shipped" | "email" | "work_order";
+  from_status: string | null;
+  to_status: string | null;
+  detail: Record<string, unknown>;
+  by_user: string | null;
+  by_name: string | null;
+  created_at: string;
+}
+
+/** A list route's answer: this page, and how many there are in all. */
+export interface Paged<T> {
+  items: T[];
+  total: number | null;
+  complete: boolean;
+}
+
+export type OrderSort = "newest" | "oldest" | "customer" | "number";
+
 export class SalesApiError extends Error {
-  constructor(public status: number, public code: string, message: string) {
+  constructor(
+    public status: number,
+    public code: string,
+    message: string,
+    /** What a refusal offers instead, when it offers anything. */
+    public doors: FulfilDoor[] = [],
+  ) {
     super(message);
   }
 }
@@ -80,8 +158,9 @@ export class SalesApi {
       throw new SalesApiError(res.status, "non_json", describeUnreadableBody(res.status, raw));
     }
     if (!res.ok) {
-      const e = (parsed as { error?: { code?: string; message?: string } }).error;
-      throw new SalesApiError(res.status, e?.code ?? "error", e?.message ?? `Request failed (${res.status})`);
+      const body = parsed as { error?: { code?: string; message?: string }; doors?: FulfilDoor[] };
+      const e = body.error;
+      throw new SalesApiError(res.status, e?.code ?? "error", e?.message ?? `Request failed (${res.status})`, Array.isArray(body.doors) ? body.doors : []);
     }
     return parsed as T;
   }
@@ -95,19 +174,48 @@ export class SalesApi {
   }
 
   // orders
-  listOrders() { return this.req<{ items: SalesOrder[] }>("GET", "/orders"); }
+  /** One page of orders and how many match. */
+  listOrders(f: { q?: string; status?: SalesOrderStatus | ""; sort?: OrderSort; offset?: number; limit?: number } = {}) {
+    const qs = new URLSearchParams();
+    if (f.q) qs.set("q", f.q);
+    if (f.status) qs.set("status", f.status);
+    if (f.sort) qs.set("sort", f.sort);
+    qs.set("offset", String(f.offset ?? 0));
+    qs.set("limit", String(f.limit ?? 50));
+    return this.req<Paged<SalesOrder>>("GET", `/orders?${qs}`);
+  }
   getOrder(id: string) { return this.req<SalesOrderDetail>("GET", `/orders/${id}`); }
   createOrder(body: Partial<SalesOrder>) { return this.req<SalesOrder>("POST", "/orders", body); }
   updateOrder(id: string, body: Partial<SalesOrder>) { return this.req<SalesOrder>("PATCH", `/orders/${id}`, body); }
   deleteOrder(id: string) { return this.req<void>("DELETE", `/orders/${id}`); }
-  fulfillOrder(id: string) { return this.req<{ order: SalesOrder; decremented: Array<{ part_id: string; qty: number }> }>("POST", `/orders/${id}/fulfill`, {}); }
+  fulfillOrder(id: string, ship: "all" | "available" = "all") {
+    return this.req<{ order: SalesOrder; decremented: Array<{ part_id: string; qty: number }>; complete: boolean }>("POST", `/orders/${id}/fulfill`, { ship });
+  }
+  shipPreview(id: string, trackingNumber: string) {
+    return this.req<ShipPreview>("GET", `/orders/${id}/ship-preview?tracking_number=${encodeURIComponent(trackingNumber)}`);
+  }
+  shipOrder(id: string, body: { tracking_number: string | null; carrier: string | null; email_customer: boolean }) {
+    return this.req<ShipResult>("POST", `/orders/${id}/ship`, body);
+  }
+  makeLine(orderId: string, lineId: string, qty: number) {
+    return this.req<{ ok: true; plannedId: string; buildName: string; qty: number; reused: boolean; makeId: string | null }>("POST", `/orders/${orderId}/items/${lineId}/make`, { qty });
+  }
+  orderHistory(id: string) { return this.req<{ items: HistoryRow[] }>("GET", `/orders/${id}/history`); }
   addItem(orderId: string, body: { part_id?: string | null; description?: string | null; qty: number; unit_price?: number | null }) {
     return this.req<SalesOrderItem>("POST", `/orders/${orderId}/items`, body);
   }
   removeItem(orderId: string, itemId: string) { return this.req<void>("DELETE", `/orders/${orderId}/items/${itemId}`); }
 
   // customers
-  listCustomers() { return this.req<{ items: CustomerSummary[] }>("GET", "/customers"); }
+  /** One page of customers and how many match. */
+  listCustomers(f: { q?: string; offset?: number; limit?: number } = {}) {
+    const qs = new URLSearchParams();
+    if (f.q) qs.set("q", f.q);
+    qs.set("offset", String(f.offset ?? 0));
+    qs.set("limit", String(f.limit ?? 50));
+    return this.req<Paged<CustomerSummary>>("GET", `/customers?${qs}`);
+  }
+  getCustomer(id: string) { return this.req<CustomerSummary>("GET", `/customers/${id}`); }
   createCustomer(body: Partial<Customer>) { return this.req<Customer>("POST", "/customers", body); }
   updateCustomer(id: string, body: Partial<Customer>) { return this.req<Customer>("PATCH", `/customers/${id}`, body); }
   deleteCustomer(id: string) { return this.req<void>("DELETE", `/customers/${id}`); }

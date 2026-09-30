@@ -39,8 +39,9 @@ export interface DigifabJobsTable {
   material_grams: string | null;
   material_type: string | null;
   /** A build (bill-of-materials) this job produces. On send, a seeded wire fires
-   *  builds:build-one to consume the build's components from inventory (and bump
-   *  its output part). build_consumed_at gates it to once per job (resend-safe). */
+   *  builds:build-one to consume the build's components from inventory; the
+   *  output part is credited only when the plate is judged good (#4050).
+   *  build_consumed_at gates the consumption to once per job (resend-safe). */
   linked_build_id: string | null;
   build_qty: Generated<number>;
   build_consumed_at: Date | null;
@@ -68,6 +69,13 @@ export interface DigifabJobsTable {
   /** When someone asked Cobblr to cancel it. The cancel is final only when the
    *  printer's own state confirms it; a poll finishes it. */
   cancel_requested_at: Date | null;
+  /** A send in progress holds this; a second send of the job is refused. */
+  send_token: string | null;
+  send_claimed_at: Date | null;
+  /** The last reprint of this job and who asked: a second one from the same
+   *  person within seconds is asked about, not printed. */
+  last_reprint_at: Date | null;
+  last_reprint_by: string | null;
   unreachable_since: Date | null;
   /** A stored core-files file whose bytes are uploaded at send. */
   file_id: string | null;
@@ -78,6 +86,20 @@ export interface DigifabJobsTable {
   /** Verdict-aware ceiling flag: null = pending/covering, 'counted' (good
    *  verdict incremented the run), 'scrapped' (doesn't cover — replaced). */
   run_outcome: string | null;
+  /** The plate's outcome (0039): 'good' when any came out good, else 'scrap';
+   *  null until judged. Written once by recordJobOutcome. */
+  outcome: "good" | "scrap" | null;
+  outcome_good_qty: number | null;
+  outcome_scrap_qty: number | null;
+  /** Custom fields a bundle or a person defines for jobs (0047). */
+  metadata: Generated<Record<string, unknown>>;
+  outcome_at: Date | null;
+  outcome_source: string | null;
+  /** True when the commit at send left the output for the good verdict. False
+   *  on a job committed before #4050, which credited its output at send. */
+  build_output_deferred: Generated<boolean>;
+  /** When the good verdict credited the build's output (null→now, once). */
+  build_output_at: Date | null;
   created_at: Generated<Date>;
   updated_at: Generated<Date>;
   last_polled_at: Date | null;
@@ -232,7 +254,56 @@ export interface DigifabPrintRuleStateTable {
   fired: ColumnType<unknown[], string | undefined, string>;
 }
 
+/** A Make: one fabrication run, request to outcome (0035, makes-core.ts). */
+export interface DigifabMakesTable {
+  id: Generated<string>;
+  name: string;
+  prompt: string | null;
+  start_step: Generated<string>;
+  rerun_of: string | null;
+  rerun_from_step: string | null;
+  folder_id: string | null;
+  printer_name: string | null;
+  material: string | null;
+  outcome: string | null;
+  source_kind: string | null;
+  source_id: string | null;
+  /** Custom fields a bundle or a person defines for Makes (0047). */
+  metadata: Generated<Record<string, unknown>>;
+  created_by: string | null;
+  created_at: Generated<Date>;
+  updated_at: Generated<Date>;
+}
+
+/** One step a Make reached. `data` and `produced_by` are jsonb. */
+export interface DigifabMakeStepsTable {
+  id: Generated<string>;
+  make_id: string;
+  step: string;
+  status: Generated<string>;
+  data: ColumnType<Record<string, unknown>, string | undefined, string>;
+  produced_by: ColumnType<Record<string, unknown>, string | undefined, string>;
+  service_job_id: string | null;
+  job_id: string | null;
+  error: string | null;
+  copied_from: string | null;
+  created_at: Generated<Date>;
+  updated_at: Generated<Date>;
+}
+
+/** A machine's Printing profile (Services §14.3), one per machine. */
+export interface DigifabPrintingProfilesTable {
+  machine_id: string;
+  printer_model: string | null;
+  nozzle_mm: string | number | null;
+  build_volume_mm: unknown;
+  default_quality: string | null;
+  preset_hints: Generated<Record<string, string>>;
+  updated_at: Generated<Date>;
+}
+
 export interface DigifabDB {
+  digifab_printing_profiles: DigifabPrintingProfilesTable;
   digifab_channels: DigifabChannelsTable;
   digifab_print_rules: DigifabPrintRulesTable;
   digifab_print_rule_state: DigifabPrintRuleStateTable;
@@ -257,6 +328,8 @@ export interface DigifabDB {
   digifab_failure_config: DigifabFailureConfigTable;
   digifab_failure_watch: DigifabFailureWatchTable;
   digifab_detectors: DigifabDetectorsTable;
+  digifab_makes: DigifabMakesTable;
+  digifab_make_steps: DigifabMakeStepsTable;
 }
 
 /** An external print-failure detection service (Obico ML API, PrintGuard, a
@@ -271,6 +344,9 @@ export interface DigifabDetectorsTable {
   credentials_enc: string | null;
   config: Generated<Record<string, unknown>>;
   enabled: Generated<boolean>;
+  /** The adapter service connection this detector moved to (migration 0048):
+   *  its address and key live there; this row keeps the camera map. */
+  service_connection_id: string | null;
   created_at: Generated<Date>;
   updated_at: Generated<Date>;
 }

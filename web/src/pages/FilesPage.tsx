@@ -4,33 +4,22 @@
 // and a folder that still holds anything cannot be deleted (it says what is
 // inside), so tidying can never lose a file. Upload lands in the folder you
 // are looking at; the same bytes uploaded again keep the one copy and say
-// where it already is. Search finds a file by name wherever it lives.
+// where it already is. Search finds a file by name wherever it lives. A
+// deleted file waits in Recently deleted for 30 days, where it can be restored
+// or deleted forever at once; after that its bytes are removed for good.
 
 import { useMemo, useRef, useState } from "react";
+import { useSearchParams } from "react-router-dom";
 import { openAuthedFile } from "../lib/authed-file";
 import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { ChevronRight, File as FileIcon, Folder, FolderPlus, Pencil, Trash2, Upload } from "lucide-react";
-import { api, ApiError, type FileFolder, type FileRecord } from "../lib/api";
+import { Link } from "react-router-dom";
+import { ChevronRight, File as FileIcon, Folder, FolderPlus, Info, Pencil, RotateCcw, Trash2, Upload } from "lucide-react";
+import { api, ApiError, type FileRecord } from "../lib/api";
+import { folderPaths, formatBytes } from "../features/core-files/fileFormat";
 import { useActiveOrg } from "../auth/ActiveOrgContext";
 import { canPreviewFile, FilePreview, FileIntakePanels, Modal, useFileIntake, useFilePreviewRegistry, useToast, useConfirm, usePageTitle, EntityPhoto, SearchInput } from "@cobblr/platform-web";
 
 const TOP = "top";
-
-/** Each folder's path from the top, for breadcrumbs and "Move to…". */
-export function folderPaths(folders: readonly FileFolder[]): Map<string, FileFolder[]> {
-  const byId = new Map(folders.map((f) => [f.id, f]));
-  const out = new Map<string, FileFolder[]>();
-  for (const f of folders) {
-    const path: FileFolder[] = [];
-    let cur: FileFolder | undefined = f;
-    for (let guard = 0; cur && guard < 64; guard++) {
-      path.unshift(cur);
-      cur = cur.parent_id ? byId.get(cur.parent_id) : undefined;
-    }
-    out.set(f.id, path);
-  }
-  return out;
-}
 
 export function FilesPage() {
   usePageTitle("Files");
@@ -39,7 +28,12 @@ export function FilesPage() {
   const toast = useToast();
   const confirm = useConfirm();
   const fileInput = useRef<HTMLInputElement>(null);
-  const [folder, setFolder] = useState<string>(TOP);
+  // A link can open a folder directly (a Make's page links to its folder).
+  const [params] = useSearchParams();
+  const [folder, setFolder] = useState<string>(() => {
+    const asked = params.get("folder");
+    return asked && /^[0-9a-f-]{36}$/i.test(asked) ? asked : TOP;
+  });
   const [search, setSearch] = useState("");
   const [renaming, setRenaming] = useState<{ kind: "file" | "folder"; id: string; value: string } | null>(null);
   const [newFolder, setNewFolder] = useState<string | null>(null);
@@ -80,10 +74,35 @@ export function FilesPage() {
     onResults: () => refresh(),
   });
 
-  const deleteFile = useMutation({
-    mutationFn: (id: string) => api.deleteFile(activeSlug, id),
+  const [showDeleted, setShowDeleted] = useState(false);
+  const deleted = useQuery({
+    queryKey: ["files", activeSlug, "deleted"],
+    queryFn: () => api.listDeletedFiles(activeSlug),
+    enabled: !!activeSlug,
+  });
+  const restoreFile = useMutation({
+    mutationFn: (f: { id: string; filename: string }) => api.restoreFile(activeSlug, f.id),
+    onSuccess: (_r, f) => {
+      toast.success(`Restored ${f.filename}`);
+      refresh();
+    },
+    onError: fail,
+  });
+  const purgeFile = useMutation({
+    mutationFn: (id: string) => api.deleteFileForever(activeSlug, id),
     onSuccess: () => {
-      toast.success("File deleted");
+      toast.success("Deleted forever");
+      refresh();
+    },
+    onError: fail,
+  });
+  const deleteFile = useMutation({
+    mutationFn: (f: { id: string; filename: string }) => api.deleteFile(activeSlug, f.id),
+    onSuccess: (_r, f) => {
+      toast.action(`${f.filename} moved to Recently deleted.`, {
+        actionLabel: "Undo",
+        onAction: () => restoreFile.mutate(f),
+      });
       refresh();
     },
     onError: fail,
@@ -140,8 +159,8 @@ export function FilesPage() {
   const images = items.filter((f) => f.kind === "image");
   const others = items.filter((f) => f.kind !== "image");
   const askDelete = async (f: FileRecord) => {
-    const ok = await confirm({ title: "Delete this file?", message: `${f.filename} goes to Recently deleted; things it is attached to keep it.`, confirmLabel: "Delete", destructive: true });
-    if (ok) deleteFile.mutate(f.id);
+    const ok = await confirm({ title: "Delete this file?", message: `${f.filename} goes to Recently deleted for 30 days, where you can restore it.`, confirmLabel: "Delete", destructive: true });
+    if (ok) deleteFile.mutate({ id: f.id, filename: f.filename });
   };
   const moveMenu = (f: FileRecord) => (
     <select
@@ -293,6 +312,9 @@ export function FilesPage() {
                       {f.filename}
                     </button>
                   )}
+                  <Link to={`/files/${f.id}`} title="Details" aria-label={`Details of ${f.filename}`} className="shrink-0 text-faint hover:text-accent p-1">
+                    <Info size={13} />
+                  </Link>
                   {moveMenu(f)}
                 </div>
               </div>
@@ -323,6 +345,9 @@ export function FilesPage() {
                   </button>
                 )}
                 <span className="text-xs text-muted dark:text-slate-400 tabular-nums">{formatBytes(f.size_bytes)}</span>
+                <Link to={`/files/${f.id}`} title="Details" aria-label={`Details of ${f.filename}`} className="text-faint hover:text-accent p-1">
+                  <Info size={13} />
+                </Link>
                 <button type="button" title="Rename" aria-label={`Rename ${f.filename}`} onClick={() => setRenaming({ kind: "file", id: f.id, value: f.filename })} className="text-faint hover:text-accent p-1">
                   <Pencil size={13} />
                 </button>
@@ -344,6 +369,55 @@ export function FilesPage() {
             {list.isFetchingNextPage ? "Loading…" : "Load more"}
           </button>
         </div>
+      )}
+      {(deleted.data?.items.length ?? 0) > 0 && (
+        <section aria-label="Recently deleted" className="border-t border-line dark:border-slate-700 pt-3">
+          <button
+            type="button"
+            onClick={() => setShowDeleted((v) => !v)}
+            aria-expanded={showDeleted}
+            className="inline-flex items-center gap-1.5 text-sm text-muted hover:text-accent"
+          >
+            <ChevronRight size={13} className={showDeleted ? "rotate-90 transition" : "transition"} />
+            Recently deleted ({deleted.data!.items.length})
+          </button>
+          {showDeleted && (
+            <div className="mt-2 space-y-2">
+              <p className="text-xs text-muted">Deleted files stay here for {deleted.data!.days} days, then they are removed for good.</p>
+              <div className="border border-line dark:border-slate-700 rounded divide-y divide-line dark:divide-slate-800">
+                {deleted.data!.items.map((f) => (
+                  <div key={f.id} className="flex flex-wrap items-center gap-2 px-3 py-2 text-sm" data-testid="deleted-file">
+                    <FileIcon size={16} className="text-faint shrink-0" />
+                    <span className="flex-1 min-w-0 basis-40 truncate">{f.filename}</span>
+                    <span className="text-xs text-muted tabular-nums">{daysLeft(f.purge_after)}</span>
+                    <button
+                      type="button"
+                      onClick={() => restoreFile.mutate({ id: f.id, filename: f.filename })}
+                      className="inline-flex items-center gap-1 rounded border border-line dark:border-slate-700 px-2 py-1 text-xs hover:text-accent"
+                    >
+                      <RotateCcw size={12} /> Restore
+                    </button>
+                    <button
+                      type="button"
+                      onClick={async () => {
+                        const ok = await confirm({
+                          title: "Delete forever?",
+                          message: `${f.filename} will be removed now and cannot be brought back.`,
+                          confirmLabel: "Delete forever",
+                          destructive: true,
+                        });
+                        if (ok) purgeFile.mutate(f.id);
+                      }}
+                      className="inline-flex items-center gap-1 rounded border border-line dark:border-slate-700 px-2 py-1 text-xs text-muted hover:text-ember-500"
+                    >
+                      <Trash2 size={12} /> Delete forever
+                    </button>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+        </section>
       )}
       {reading && (
         <Modal open onClose={() => setReading(null)} title={reading.filename} size="lg" fillHeight>
@@ -377,11 +451,11 @@ function ImageTile({ file, slug, onDelete }: { file: FileRecord; slug: string; o
   );
 }
 
-function formatBytes(n: number): string {
-  if (n < 1024) return `${n} B`;
-  if (n < 1024 * 1024) return `${(n / 1024).toFixed(1)} KB`;
-  if (n < 1024 * 1024 * 1024) return `${(n / (1024 * 1024)).toFixed(1)} MB`;
-  return `${(n / (1024 * 1024 * 1024)).toFixed(1)} GB`;
+/** "Gone in 12 days", from when the file is removed for good. */
+function daysLeft(purgeAfter: string): string {
+  const days = Math.ceil((new Date(purgeAfter).getTime() - Date.now()) / 86_400_000);
+  if (days <= 0) return "Removed soon";
+  return days === 1 ? "Gone in 1 day" : `Gone in ${days} days`;
 }
 
 /** Image-grid thumbnail via useImageSrc (token-authenticated blob). */

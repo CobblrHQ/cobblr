@@ -11,6 +11,7 @@
 // its own purchases_order_items.part_id for history) — it never touches
 // inventory's tables or imports its code.
 
+import { receiveOrderLines } from "../receive.js";
 import { arrivedEverywhere } from "@cobblr/platform-contract";
 import { sql, type Kysely } from "kysely";
 import { platform } from "@cobblr/platform-contract";
@@ -169,7 +170,7 @@ export function registerPurchasesActionHandlers(): void {
   // plus a date picker, because it is asked of people who were interrupted to
   // answer it.
   platform().actions.registerHandler("purchases.mark-arrived", async (ctx) => {
-    const args = (ctx.args as { orderId?: string; arrivedOn?: string } | null) ?? {};
+    const args = (ctx.args as { orderId?: string; arrivedOn?: string; add_to_stock?: unknown } | null) ?? {};
     const orderId = args.orderId ?? (ctx.entity?.id || undefined);
     if (!orderId) return { ok: true, skipped: "no order in scope" };
 
@@ -189,7 +190,12 @@ export function registerPurchasesActionHandlers(): void {
     const arrivedOn = args.arrivedOn ?? arrivedEverywhere(new Date());
     await db
       .updateTable("purchases_orders")
-      .set({ status: "arrived" as OrderStatus, arrived_at: arrivedOn, updated_at: new Date() } as never)
+      .set({
+        status: "arrived" as OrderStatus,
+        arrived_at: arrivedOn,
+        ...(typeof args.add_to_stock === "boolean" ? { add_to_stock: args.add_to_stock } : {}),
+        updated_at: new Date(),
+      } as never)
       .where("id", "=", orderId)
       .execute();
 
@@ -201,28 +207,11 @@ export function registerPurchasesActionHandlers(): void {
     });
     await platform().events.emit("purchases.order.arrived", { orgId: ctx.orgId, orderId });
 
-    // Same fan-out as the PATCH path: one event per line mapped to a part, so
-    // the stock-bump wire has something to bind to.
-    const items = await db
-      .selectFrom("purchases_order_items")
-      .select(["id", "part_id", "qty", "unit_cost", "description"])
-      .where("order_id", "=", orderId)
-      .where("part_id", "is not", null)
-      .execute();
-    for (const it of items) {
-      if (!it.part_id) continue;
-      await platform().events.emit("purchases.order_item.received", {
-        orgId: ctx.orgId,
-        orderId,
-        orderItemId: it.id,
-        partId: it.part_id,
-        qty: Number(it.qty),
-        unitCost: it.unit_cost == null ? null : Number(it.unit_cost),
-        description: it.description,
-      });
-    }
+    // The lines not yet received are received now, the same way the status
+    // dropdown receives them (receive.ts).
+    const received = await receiveOrderLines(db, ctx.orgId, orderId, arrivedOn);
 
-    return { ok: true, order_id: orderId, arrived_at: arrivedOn, lines_received: items.length };
+    return { ok: true, order_id: orderId, arrived_at: arrivedOn, lines_received: received };
   });
 }
 

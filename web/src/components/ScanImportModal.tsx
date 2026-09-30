@@ -208,7 +208,7 @@ export function ScanImportModal({ slug, open, onClose, onImported }: {
             <div className="flex items-center gap-2 rounded border border-moss-500/40 bg-moss-50 dark:bg-moss-950/30 p-3">
               <CheckCircle2 size={18} className="text-moss-600 dark:text-moss-300 shrink-0" />
               <div className="text-sm text-moss-800 dark:text-moss-200">
-                {summary.dry_run ? "Dry run — nothing written. " : ""}
+                {summary.dry_run ? "Dry run: nothing written. " : ""}
                 <strong>{summary.imported_count}</strong> imported · <strong>{summary.skipped_count}</strong> skipped
                 {summary.photos_fetched + summary.photos_failed > 0 && (
                   <> · photos: {summary.photos_fetched} fetched{summary.photos_failed > 0 ? `, ${summary.photos_failed} failed` : ""}</>

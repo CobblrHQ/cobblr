@@ -1,0 +1,10 @@
+{
+  "lint": "lint:coverage-surfaces",
+  "run": "node scripts/lint-coverage-surfaces.ts",
+  "rows": [
+    "e2e"
+  ],
+  "ms": 642,
+  "recorded": "2026-09-30",
+  "source": "scaffolded by new-lint.sh at twice a local run (a shared box); replaced from its first CI measurement"
+}

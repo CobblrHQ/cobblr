@@ -17,9 +17,11 @@
 // /projects/tasks?blocked=1 and 404. Each query stays cached for
 // 30s so navigating away + back doesn't refire everything.
 
+import { isSandboxSession } from "../lib/sandbox-session";
+import { BringInBackup } from "../components/BringInBackup";
 import { Fragment, useCallback, useEffect, useMemo, useState } from "react";
 import { activityKind } from "../lib/activityKind";
-import { AUTOMATION_ACTIONS, activityVerb, actorWords, automationWords, hiddenFromDashboard, updatedFieldsWords } from "../lib/activity-words";
+import { AUTOMATION_ACTIONS, activityVerb, actorWords, automationWords, foldOneThingsRows, hiddenFromDashboard, updatedFieldsWords } from "../lib/activity-words";
 import { openSheetImport } from "../lib/sheet-import";
 import { ACTIVITY_ROW, ACTOR_CELL, ActorVia, GroupActorVia, ITEM_CELL } from "../components/ActorVia";
 import { useKindLabels } from "../lib/useKindLabels";
@@ -78,6 +80,10 @@ import { useWorkspaceContentProbe } from "../lib/workspaceContent";
 import { ParcelsInFlight } from "../components/ParcelsInFlight";
 import { AddPhotosTile } from "../components/AddPhotosTile";
 import { scanInboxKeys } from "../lib/scan-inbox-keys";
+import { TipLine, pickTip, registeredTips } from "@cobblr/platform-web";
+import { useTipState } from "../tips/useTipState";
+import "../tips/install-tip";
+import { withArticle } from "@cobblr/platform-contract/plural";
 
 /** Homepage quick-links: big tap targets for the destinations this workspace
  *  actually uses (Scan Inbox, each instance like "Yarn", the domain modules),
@@ -159,6 +165,9 @@ export function Dashboard() {
 
   return (
     <div className="space-y-6">
+      {/* The page's name for a screen reader's heading list; the workspace is
+          already named in the header, so it is not drawn twice. */}
+      <h1 className="sr-only">{activeOrg.name}</h1>
       <WorkspaceHeader
         orgName={activeOrg.name}
         slug={activeSlug}
@@ -636,7 +645,7 @@ function AttentionRow({ slug, item: it, tone, glyph }: { slug: string; item: Att
   const verdict = useMutation({
     mutationFn: (v: { conn: string; dev: string; outcome: "good" | "scrapped" }) =>
       api.markDigifabDeviceReady(slug, v.conn, v.dev, v.outcome),
-    onSuccess: (_r, v) => { toast.success(v.outcome === "good" ? "Marked good — printer freed." : "Scrapped — effects reversed."); refresh(); },
+    onSuccess: (_r, v) => { toast.success(v.outcome === "good" ? "Marked good. Printer freed." : "Scrapped. Effects reversed."); refresh(); },
     onError: (e) => toast.error(e instanceof Error ? e.message : "Couldn't record the verdict"),
   });
   const entries = it.entries ?? [];
@@ -676,7 +685,7 @@ function AttentionRow({ slug, item: it, tone, glyph }: { slug: string; item: Att
             disabled={!expandable}
             onClick={() => setOpen((o) => !o)}
             className={"min-w-0 flex items-center gap-3 text-left disabled:cursor-default shrink-0" + (inlineActs && !open ? "" : " flex-1")}
-            title={expandable ? (open ? "Collapse" : "Show the items — act on them right here") : undefined}
+            title={expandable ? (open ? "Collapse" : "Show the items and act on them right here") : undefined}
           >
             <span className="shrink-0">{glyph}</span>
             <span className="min-w-0 truncate text-content dark:text-mortar-100">
@@ -896,6 +905,9 @@ function GettingStartedPanel({
   // show their OWN add flows, so suppress the platform onboarding here.
   const focused = isFocused(activeOrg);
   const contentProbe = useWorkspaceContentProbe(slug);
+  // Restoring fills the workspace, which only its owner or an admin may do.
+  // Not in a sandbox: that is where the file comes from, not where it goes.
+  const canBringIn = roleSatisfies(activeOrg?.role ?? "member", ["owner", "admin"]) && !isSandboxSession();
 
   // Render once we know the workspace is empty. A brand-new workspace
   // with NO modules enabled (enabled.size === 0) leaves the probe
@@ -926,7 +938,12 @@ function GettingStartedPanel({
   if (collapsedOnly)
     return established ? <WhatToDoPanel slug={slug} startCollapsed /> : null;
   if (established) return null;
-  return <WhatToDoPanel slug={slug} startCollapsed={false} />;
+  return (
+    <>
+      <WhatToDoPanel slug={slug} startCollapsed={false} />
+      {canBringIn && <BringInBackup slug={slug} />}
+    </>
+  );
 }
 
 // ──────────────────────── workspace header ─────────────────────────
@@ -938,7 +955,7 @@ function GettingStartedPanel({
 // nudges), rendered only when there IS a message, plus a slim "you're a
 // {role} here" note on shared workspaces — the one identity fact with signal.
 // "Customize workspace" now lives in the workspace switcher's footer.
-function WorkspaceHeader({
+export function WorkspaceHeader({
   slug,
   role,
 }: {
@@ -963,7 +980,11 @@ function WorkspaceHeader({
   const pending = updates.filter((u) => !completed[u.externalId]);
   const completedList = Object.entries(completed);
   const guest = role !== "owner";
-  if (pending.length === 0 && completedList.length === 0 && !guest) return null;
+  // One tip at a time, where the person already is (the tips seam decides
+  // which, and whether today is a day for a new one).
+  const tips = useTipState();
+  const tipNow = tips.loaded && pickTip(registeredTips(), tips.state) !== null;
+  if (pending.length === 0 && completedList.length === 0 && !guest && !tipNow) return null;
   return (
     <header className="rounded-xl border border-line dark:border-slate-700 bg-surface dark:bg-slate-900/40 px-4 py-2.5">
       {guest && (
@@ -971,11 +992,11 @@ function WorkspaceHeader({
           you're a <span className="font-mono uppercase text-accent">{role}</span> in this workspace
         </div>
       )}
-      {/* Compact message strip — one line + action per message. Bundle-update
-          nudges live here now (the standalone banner was too noisy). Room for
-          other one-line messages later. */}
-      {(pending.length > 0 || completedList.length > 0) && (
+      {/* Compact message strip — one line + action per message: bundle-update
+          nudges (the standalone banner was too noisy) and the one tip. */}
+      {(pending.length > 0 || completedList.length > 0 || tipNow) && (
         <div className={"space-y-1" + (guest ? " mt-2 border-t border-line/60 dark:border-slate-800 pt-2" : "")}>
+          {tipNow && <TipLine state={tips.state} onShown={tips.onShown} onDismiss={tips.onDismiss} />}
           {pending.map((u) => (
             <BundleUpdateRow
               key={u.externalId}
@@ -2063,7 +2084,7 @@ function RecentActivity({ slug, editing = false }: { slug: string; editing?: boo
   const items = (q.data?.items ?? []).filter(
     (e) => !ACTIVITY_NOISE.has(e.entity_type ?? "") && !hiddenFromDashboard(e),
   );
-  const groups = groupActivity(items);
+  const groups = groupActivity(foldOneThingsRows(items));
   // A workspace with no content has no activity by definition: hide the whole
   // section rather than open the first dashboard with "no activity yet"
   // (new-user-flow.md F3). Arrange mode still shows it so it stays orderable.
@@ -2296,7 +2317,7 @@ function activityTitle(e: ActivityEntry, labels: KindLabels): React.ReactNode {
   const changed = /_updated$|^updated$/.test(e.action) ? updatedFieldsWords(diff) : null;
   const noun = labels.noun(activityKind(e));
   return changed ? (
-    <span className="text-xs text-faint">a {noun}: {changed}</span>
+    <span className="text-xs text-faint">{withArticle(noun)}: {changed}</span>
   ) : (
     <span className="text-xs text-faint">{noun}</span>
   );

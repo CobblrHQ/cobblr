@@ -139,6 +139,9 @@ export function ImpersonationBanner() {
         <OverlayLayer
           className="z-[2002] flex items-center justify-center bg-black/50 p-4"
           onClick={() => setConfirmWrite(false)}
+          role="dialog"
+          aria-modal="true"
+          aria-label="Enable editing?"
         >
           <div
             className="w-full max-w-sm rounded-xl bg-white dark:bg-slate-900 p-5 shadow-xl"

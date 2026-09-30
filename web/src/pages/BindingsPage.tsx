@@ -114,6 +114,11 @@ export function BindingsPage() {
                   </label>
                   <ChevronRight size={14} className="text-faint dark:text-slate-600 group-hover:text-accent transition" />
                 </div>
+                {b.trigger_silent && (
+                  <div className="mt-2 text-xs text-ember-600 dark:text-ember-400">
+                    Nothing sends {b.trigger_event} any more, so this wire never runs. Open it and pick another trigger.
+                  </div>
+                )}
                 {b.template && (
                   <div className="mt-2 font-mono text-xs text-content dark:text-mortar-200 bg-subtle dark:bg-slate-800/70 rounded px-2 py-1 break-all">
                     {b.template}

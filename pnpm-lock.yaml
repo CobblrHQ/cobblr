@@ -41,6 +41,9 @@ importers:
       '@types/nodemailer':
         specifier: ^8.0.0
         version: 8.0.0
+      ajv:
+        specifier: ^8.20.0
+        version: 8.20.0
       archiver:
         specifier: ^8.0.0
         version: 8.0.0
@@ -71,6 +74,9 @@ importers:
       morgan:
         specifier: ^1.10.0
         version: 1.10.1
+      multer:
+        specifier: ^2.0.0
+        version: 2.1.1
       node-pg-migrate:
         specifier: ^7.9.1
         version: 7.9.1(@types/pg@8.20.0)(pg@8.20.0)
@@ -447,18 +453,15 @@ importers:
       express:
         specifier: ^4.21.2
         version: 4.22.2
-      fflate:
-        specifier: ^0.8.3
-        version: 0.8.3
       kysely:
         specifier: ^0.27.5
         version: 0.27.6
-      multer:
-        specifier: ^2.0.0
-        version: 2.1.1
       sharp:
         specifier: ^0.33.5
         version: 0.33.5
+      unzipper:
+        specifier: ^0.12.3
+        version: 0.12.3
       zod:
         specifier: ^3.24.1
         version: 3.25.76
@@ -469,6 +472,9 @@ importers:
       '@types/multer':
         specifier: ^1.4.12
         version: 1.4.13
+      '@types/unzipper':
+        specifier: ^0.10.11
+        version: 0.10.11
       typescript:
         specifier: ^5.7.2
         version: 5.9.3
@@ -753,9 +759,6 @@ importers:
       kysely:
         specifier: ^0.27.5
         version: 0.27.6
-      multer:
-        specifier: ^2.0.0
-        version: 2.1.1
       pdf-parse:
         specifier: ^2.4.5
         version: 2.4.5
@@ -791,6 +794,16 @@ importers:
       '@types/express':
         specifier: ^4.17.21
         version: 4.17.25
+      typescript:
+        specifier: ^5.7.2
+        version: 5.9.3
+
+  modules/core-services:
+    dependencies:
+      '@cobblr/platform-contract':
+        specifier: workspace:*
+        version: link:../../packages/platform-contract
+    devDependencies:
       typescript:
         specifier: ^5.7.2
         version: 5.9.3
@@ -913,15 +926,18 @@ importers:
       express:
         specifier: ^4.21.2
         version: 4.22.2
+      fflate:
+        specifier: ^0.8.3
+        version: 0.8.3
       kysely:
         specifier: ^0.27.5
         version: 0.27.6
       mqtt:
         specifier: ^5.10.1
         version: 5.15.1
-      multer:
-        specifier: ^2.0.0
-        version: 2.1.1
+      unzipper:
+        specifier: ^0.12.3
+        version: 0.12.3
       zod:
         specifier: ^3.24.1
         version: 3.25.76
@@ -932,6 +948,9 @@ importers:
       '@types/multer':
         specifier: ^1.4.12
         version: 1.4.13
+      '@types/unzipper':
+        specifier: ^0.10.11
+        version: 0.10.11
       typescript:
         specifier: ^5.7.2
         version: 5.9.3
@@ -984,9 +1003,6 @@ importers:
       kysely:
         specifier: ^0.27.5
         version: 0.27.6
-      multer:
-        specifier: ^2.0.0
-        version: 2.1.1
       zod:
         specifier: ^3.24.1
         version: 3.25.76

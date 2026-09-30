@@ -348,7 +348,7 @@ export function QueuePage() {
     if (reportedRoll) return null;
     if (!isLocalBridgePrinter(defaultPrinter?.settings)) return null;
     const paper = rememberedPaperKey ? PAPER_SIZES.find((v) => v.key === rememberedPaperKey) : undefined;
-    return paper ? `no roll reported — last loaded ${paper.label.replace(/^Label roll — /, "")}` : null;
+    return paper ? `no roll reported, last loaded ${paper.label.replace(/^Label roll(:| —) /, "")}` : null;
   })();
 
   const [codesOpen, setCodesOpen] = useState(false);
@@ -722,7 +722,7 @@ export function QueuePage() {
     mutationFn: async () => {
       const { items: printers } = await api.listPrinters();
       if (!printers.length) {
-        throw new Error("No printer configured — add one at Configuration → Printers.");
+        throw new Error("No printer configured. Add one at Configuration → Printers.");
       }
       // The ACTIVE target (the toolbar selector), not blindly the saved default —
       // so "Print to X" prints to whichever printer the selector shows.
@@ -750,7 +750,7 @@ export function QueuePage() {
         // media if no size resolves.
         const settings = paper && faceDims ? bleSettingsForSize(stored, paper, faceDims) : stored;
         if (!settings.widthDots) {
-          throw new Error(`${printer.name} has no media set — pick a label size, or set one in Configuration → Printers.`);
+          throw new Error(`${printer.name} has no media set. Pick a label size, or set one in Configuration → Printers.`);
         }
         const batch = items.map((it) => ({
           id: it.id,
@@ -951,7 +951,7 @@ export function QueuePage() {
               {isBleDefault && (
                 <span
                   className={`w-1.5 h-1.5 rounded-full ${bleLive ? "bg-emerald-500" : "bg-slate-400 dark:bg-slate-600"}`}
-                  title={bleLive ? "Connected in this tab" : "Not connected — printing will pair it"}
+                  title={bleLive ? "Connected in this tab" : "Not connected (printing will pair it)"}
                 />
               )}
               <ChevronDown size={13} className="text-faint" />
@@ -1025,7 +1025,7 @@ export function QueuePage() {
             onClick={() => sendToPrinter.mutate()}
             disabled={sendToPrinter.isPending || items.length === 0 || (!isBleDefault && !size)}
             className="rounded-md border border-line dark:border-slate-600 hover:border-accent text-content dark:text-mortar-200 text-sm font-medium px-3 py-2 transition flex items-center gap-1.5 disabled:opacity-50"
-            title={isBleDefault ? `Print the queue to ${defaultPrinter!.name} over Bluetooth` : "Render + send straight to the printer (CUPS) — no print dialog"}
+            title={isBleDefault ? `Print the queue to ${defaultPrinter!.name} over Bluetooth` : "Render + send straight to the printer (CUPS), no print dialog"}
           >
             {isBleDefault ? <Bluetooth size={14} /> : <Send size={14} />}
             {btProgress
@@ -1407,7 +1407,7 @@ export function QueuePage() {
           return (created as { id?: string } | undefined)?.id;
         }}
         onNeedsManualSetup={() => navigate("/configuration/print")}
-        onConnected={(name) => toast.success(`${name} connected — you're ready to print.`)}
+        onConnected={(name) => toast.success(`${name} connected. You're ready to print.`)}
       />
       <Modal
         open={!!confirmForget}
@@ -1662,7 +1662,7 @@ function SheetPreview({
         {scan && (
           <span
             className="normal-case tracking-normal text-faint dark:text-slate-500"
-            title={`QR prints about ${scan.moduleMm.toFixed(2)} mm per module — ${scan.label}. Under ~0.2 mm a phone can't read it; 0.3 mm and up is comfortable. This is the physical printed size, independent of screen zoom.`}
+            title={`QR prints about ${scan.moduleMm.toFixed(2)} mm per module (${scan.label}). Under ~0.2 mm a phone can't read it; 0.3 mm and up is comfortable. This is the physical printed size, independent of screen zoom.`}
           >
             {" · "}
             <span

@@ -30,7 +30,44 @@ import { ALL_ENTRY_TYPES, AUDIENCE_TYPES, isInternalChangelogEntry } from "./pub
 // plain .mjs module, shared with docs-flush so this gate and the
 // release-time splice can never disagree about what "the heading exists" means
 import { findHeadingLine, listHeadings, parseDocsTarget } from "./docs-target.mjs";
-import { existsSync, readFileSync, readdirSync } from "node:fs";
+import { closeSync, existsSync, openSync, readFileSync, readSync, readdirSync } from "node:fs";
+
+// The archive is ~2,000 entries and grows with every change, so reading all of
+// it three times put this lint at 33 MB a run (2026-09-29) and at the edge of
+// its read budget on every PR that added an entry. The whole-archive checks
+// below need only an entry's frontmatter, so they read that and stop; a docs
+// target file is read once however many entries point at it.
+/** An entry's frontmatter (between the opening and closing ---), read in
+ *  small chunks and no further than its closing fence. */
+function frontmatterOf(path: string): string {
+  const fd = openSync(path, "r");
+  try {
+    let text = "";
+    const buf = Buffer.alloc(1024);
+    for (let pos = 0; ; ) {
+      const n = readSync(fd, buf, 0, buf.length, pos);
+      if (n <= 0) break;
+      pos += n;
+      text += buf.toString("utf8", 0, n);
+      const m = text.match(/^---\r?\n([\s\S]*?)\r?\n---/);
+      if (m) return m[1] ?? "";
+      if (!text.startsWith("---")) return "";
+    }
+    return "";
+  } finally {
+    closeSync(fd);
+  }
+}
+const fileCache = new Map<string, string>();
+/** A docs target file, read once however many entries point at it. */
+function readOnce(path: string): string {
+  let t = fileCache.get(path);
+  if (t === undefined) {
+    t = readFileSync(path, "utf8");
+    fileCache.set(path, t);
+  }
+  return t;
+}
 
 function git(cmd: string): string {
   return execSync(`git ${cmd}`, { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] }).trim();
@@ -63,7 +100,7 @@ function findBase(): string | null {
   const bad: string[] = [];
   for (const f of readdirSync("changelog.d")) {
     if (!f.endsWith(".md") || f === "README.md") continue;
-    const fm = readFileSync(`changelog.d/${f}`, "utf8").match(/^---\r?\n([\s\S]*?)\r?\n---/)?.[1] ?? "";
+    const fm = frontmatterOf(`changelog.d/${f}`);
     const all = [...fm.matchAll(/^type:\s*(\S+)\s*$/gm)].map((m) => m[1]);
     const t = all[0] ?? "";
     if (!ALL_ENTRY_TYPES.includes(t)) bad.push(`  changelog.d/${f}: type: ${t || "(missing)"}`);
@@ -97,8 +134,7 @@ function findBase(): string | null {
   const bad: string[] = [];
   for (const f of readdirSync("changelog.d")) {
     if (!f.endsWith(".md") || f === "README.md") continue;
-    const raw = readFileSync(`changelog.d/${f}`, "utf8");
-    const fm = raw.match(/^---\r?\n([\s\S]*?)\r?\n---/)?.[1] ?? "";
+    const fm = frontmatterOf(`changelog.d/${f}`);
     if (!/^type:\s*feature\s*$/m.test(fm)) continue;
     if (/^docs_published:/m.test(fm)) continue;
     const target = fm.match(/^docs_target:\s*(.+)$/m)?.[1]?.trim();
@@ -112,7 +148,7 @@ function findBase(): string | null {
       bad.push(`  changelog.d/${f}: docs_target file not found (${file})`);
       continue;
     }
-    if (findHeadingLine(readFileSync(file, "utf8"), heading) < 0) {
+    if (findHeadingLine(readOnce(file), heading) < 0) {
       bad.push(`  changelog.d/${f}: docs_target heading "${heading}" not found in ${file}`);
     }
   }
@@ -124,7 +160,7 @@ function findBase(): string | null {
         .filter((x): x is string => Boolean(x)),
     );
     const menus = [...files]
-      .map((file) => `  headings in ${file}:\n${listHeadings(readFileSync(file, "utf8")).map((h) => `    ${h}`).join("\n")}`)
+      .map((file) => `  headings in ${file}:\n${listHeadings(readOnce(file)).map((h) => `    ${h}`).join("\n")}`)
       .join("\n");
     console.error(
       `[lint:changelog] ✗ ${bad.length} entr${bad.length === 1 ? "y has a" : "ies have a"} docs_target whose heading does not exist ` +
@@ -363,13 +399,14 @@ if (touchedScopes.size > 0) {
   for (const name of readdirSync("changelog.d")) {
     const p = `changelog.d/${name}`;
     if (!name.endsWith(".md") || name === "README.md" || touchedEntries.includes(p)) continue;
-    const raw = readFileSync(p, "utf8");
-    const fm = raw.match(/^---\r?\n([\s\S]*?)\r?\n---/)?.[1] ?? "";
+    const fm = frontmatterOf(p);
     if (!/^type:\s*feature\s*$/m.test(fm)) continue;
     if (/^docs_published:/m.test(fm)) continue;
-    if (!/^## docs\s*$/m.test(raw)) continue;
     const scope = fm.match(/^scope:\s*(.+)$/m)?.[1]?.trim();
-    if (scope && touchedScopes.has(scope)) staged.push(`${p} (scope: ${scope})`);
+    if (!scope || !touchedScopes.has(scope)) continue;
+    // Only now the body: whether this same-scope entry carries staged docs.
+    if (!/^## docs\s*$/m.test(readFileSync(p, "utf8"))) continue;
+    if (scope) staged.push(`${p} (scope: ${scope})`);
   }
   if (staged.length) {
     console.log(

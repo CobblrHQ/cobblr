@@ -369,8 +369,8 @@ export function BuildPage() {
       const created = r.seeded?.created ?? 0;
       toast.success(
         created > 0
-          ? `Applied — your fields/wires are live, plus ${created} starter record${created === 1 ? "" : "s"} created.`
-          : "Applied — your fields/wires are live.",
+          ? `Applied: your fields/wires are live, plus ${created} starter record${created === 1 ? "" : "s"} created.`
+          : "Applied: your fields/wires are live.",
       );
       // reset for another build
       setValidation(null);
@@ -552,7 +552,7 @@ export function BuildPage() {
           onClick={() =>
             void generateYourApp(slug)
               .then((r) => {
-                toast.success(`${r.created ? "Generated" : "Regenerated"} "Your app" — ${r.pages} pages from your trackers.`);
+                toast.success(`${r.created ? "Generated" : "Regenerated"} "Your app" (${r.pages} pages from your trackers).`);
                 navigate(`/app/${r.app.slug}`);
               })
               .catch((e) => toast.error(e instanceof Error ? e.message : "Couldn't generate the app"))
@@ -585,7 +585,7 @@ export function BuildPage() {
               mode === "workspace"
                 ? "e.g. A yarn & crochet tracker. I design patterns (wearables, toys, blankets), each links to a PDF or URL and lists the yarn and hook sizes it needs. Track yarn by colour, weight and metres left, and a hooks section with sizes 1–10mm and how many I own."
                 : mode === "app-custom"
-                  ? "e.g. a colour-coded wall board of my parts grouped by location, with a search box and a low-stock highlight — reading my live inventory."
+                  ? "e.g. a colour-coded wall board of my parts grouped by location, with a search box and a low-stock highlight, reading my live inventory."
                   : mode === "app"
                     ? "e.g. a quick intake page for the front desk: a short intro, a form to add a new part, a 'print label' button, and the barcode scanner."
                     : "e.g. add a 'warranty expires' date to parts, and when one is low on stock, print a reorder label"
@@ -738,8 +738,8 @@ export function BuildPage() {
         {busy === "building" && (
           <CobbAtWork>
             {mode === "workspace"
-              ? "On the bench — turning on the modules you need, building your fields + automations, then verifying it. A minute or two…"
-              : "On the bench — running it, then checking the result against the validator (auto-retrying if needed). A few seconds…"}
+              ? "On the bench: turning on the modules you need, building your fields + automations, then verifying it. A minute or two…"
+              : "On the bench: running it, then checking the result against the validator (auto-retrying if needed). A few seconds…"}
           </CobbAtWork>
         )}
         {busy === "compile" && (
@@ -983,8 +983,8 @@ export function BuildPage() {
               </div>
               <p className="text-sm text-content dark:text-mortar-200">
                 {interpretation
-                  ? "No changes were generated — see why above. If that's not what you meant, try describing it more specifically (name the field, the kind it's on, and any automation)."
-                  : "The AI didn't produce any concrete changes. Try describing it more specifically — e.g. \"add a 'warranty expires' date to parts, and print a reorder label when stock drops below the minimum.\""}
+                  ? "No changes were generated. See why above. If that's not what you meant, try describing it more specifically (name the field, the kind it's on, and any automation)."
+                  : "The AI didn't produce any concrete changes. Try describing it more specifically, e.g. \"add a 'warranty expires' date to parts, and print a reorder label when stock drops below the minimum.\""}
               </p>
               <BundleDetails candidate={candidate} label="Show what the AI returned" />
             </>

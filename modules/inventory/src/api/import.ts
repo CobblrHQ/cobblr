@@ -10,6 +10,7 @@
 import { Router } from "express";
 import { z } from "zod";
 import { platform, type DefinedField } from "@cobblr/platform-contract";
+import { unguardCsvText } from "@cobblr/platform-contract/csv";
 import { instanceOf, sessionUser, tenantContext, tenantDb } from "../db.js";
 import { asyncHandler, badBody, requireCapability } from "./util.js";
 
@@ -103,7 +104,9 @@ function parseCsvLine(line: string): string[] {
     }
   }
   out.push(cur);
-  return out.map((s) => s.trim());
+  // An export guards a cell that starts like a formula with an apostrophe;
+  // reading it back takes the apostrophe off, so the name matches itself.
+  return out.map((s) => unguardCsvText(s.trim()));
 }
 
 function splitLines(text: string): string[] {

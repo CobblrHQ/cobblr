@@ -11,6 +11,7 @@
 
 import { useCallback, useRef, useState, type ReactNode } from "react";
 import { useToast } from "./ToastContext";
+import { sendUpload, uploadErrorOf } from "./upload-client";
 
 const TOKEN_KEY = "cobblr.token";
 
@@ -59,7 +60,9 @@ export function describeLine(l: IntakeLine): string | null {
       return `${l.path}: already here${as}${where}. Kept the one copy.`;
     }
     case "too_big":
-      return `${l.path}: ${mb(l.bytes ?? 0)}, over the 25 MB a file can be. Not imported.`;
+      // The server's own sentence names this file's size and its limit, for a
+      // single upload and a zip's entry alike.
+      return l.reason ? `${l.path}: ${l.reason} Not imported.` : `${l.path}: ${mb(l.bytes ?? 0)}, over the most a file can be. Not imported.`;
     case "failed":
       return `${l.path}: not imported. ${l.reason ?? ""}`.trim();
   }
@@ -82,13 +85,9 @@ export function useFileIntake(opts: FileIntakeOptions) {
     if (path === "") form.set("on_duplicate", "skip");
     form.set("file", file);
     const token = o.getToken ? o.getToken() : typeof window !== "undefined" ? window.localStorage.getItem(TOKEN_KEY) : null;
-    return fetch(`/api/v1/orgs/${o.orgSlug}/modules/core-files/files${path}`, { method: "POST", headers: token ? { Authorization: `Bearer ${token}` } : {}, body: form });
+    return sendUpload(`/api/v1/orgs/${o.orgSlug}/modules/core-files/files${path}`, form, { token, file });
   }, []);
 
-  const errorOf = async (res: Response) => {
-    const body = (await res.json().catch(() => null)) as { error?: { code?: string; message?: string } } | null;
-    return { code: body?.error?.code ?? null, message: body?.error?.message ?? `failed (${res.status})` };
-  };
 
   const finish = useCallback(
     (title: string, lines: IntakeLine[], quietSingle: boolean) => {
@@ -120,8 +119,8 @@ export function useFileIntake(opts: FileIntakeOptions) {
           if (!res.ok) {
             // A full workspace is a 413 too, and says so in its own words;
             // only the per-file ceiling is "too big".
-            const e = await errorOf(res);
-            const tooBig = res.status === 413 && e.code !== "storage_full";
+            const e = await uploadErrorOf(res, f);
+            const tooBig = e.code === "file_too_large" || (res.status === 413 && e.code !== "storage_full");
             lines.push({ path: f.name, filename: f.name, status: tooBig ? "too_big" : "failed", bytes: f.size, reason: e.message });
             continue;
           }
@@ -148,7 +147,7 @@ export function useFileIntake(opts: FileIntakeOptions) {
         try {
           const res = await post("/import-zip", z);
           if (!res.ok) {
-            lines.push({ path: z.name, filename: z.name, status: "failed", reason: (await errorOf(res)).message });
+            lines.push({ path: z.name, filename: z.name, status: "failed", reason: (await uploadErrorOf(res, z)).message });
             continue;
           }
           lines.push(...((await res.json()) as { lines: IntakeLine[] }).lines);

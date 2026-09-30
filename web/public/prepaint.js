@@ -55,3 +55,31 @@
     }
   } catch (e) {}
 })();
+
+// Light or dark, before the first paint. The class used to be set by React
+// once the bundle had loaded, so a dark-mode user saw a white page on every
+// load first. Same keys and the same precedence as resolveTheme
+// (web/src/theme/resolve-theme.ts): this device's lock, else the account's
+// default (the legacy combined key counts as that), else the OS. A test runs
+// this file against every combination and compares.
+(function () {
+  try {
+    var ls = window.localStorage;
+    var device = ls.getItem("cobblr.theme.device");
+    var account = ls.getItem("cobblr.theme.account") || ls.getItem("cobblr.theme");
+    var os = window.matchMedia && window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
+    var theme =
+      device === "light" || device === "dark"
+        ? device
+        : device === "os"
+          ? os
+          : account === "light" || account === "dark"
+            ? account
+            : os;
+    if (theme === "dark") document.documentElement.classList.add("dark");
+    // Until the stylesheet has arrived nothing paints the page's background,
+    // so the browser's own canvas shows: this makes that canvas dark too.
+    // ThemeContext removes it once the app is up and index.css governs.
+    document.documentElement.style.colorScheme = theme;
+  } catch (e) {}
+})();

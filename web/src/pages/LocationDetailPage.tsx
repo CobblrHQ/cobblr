@@ -11,17 +11,22 @@ import { Link, Navigate, useNavigate, useParams } from "react-router-dom";
 import { BinAdjustModal } from "../components/BinAdjustModal";
 import { QuickCreateLocation } from "../components/QuickCreateLocation";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { ArrowLeft, ChevronRight, MapPin, Plus, Save, Trash2 } from "lucide-react";
+import { ArrowLeft, ArrowRightLeft, ChevronRight, MapPin, Plus, Save, Trash2 } from "lucide-react";
+import { MoveEverythingModal, movedSentence, putBackSentence } from "../components/MoveEverythingModal";
 
-import { EntityActionsBar, EntityThumb, FieldPack, LabeledField, Modal, fieldNeed, useConfirm, useToast, usePageTitle } from "@cobblr/platform-web";
+import { CustomFieldsPanel, EntityActionsBar, EntityThumb, FieldPack, LabeledField, Modal, fieldNeed, useConfirm, useToast, usePageTitle } from "@cobblr/platform-web";
 import { ApiError, api, type Location, type PlatformEntityKind } from "../lib/api";
 import { useActiveOrg } from "../auth/ActiveOrgContext";
 import { EntityAttachments } from "../components/EntityAttachments";
 import { ContributedDetailPanels } from "../panels/registry";
 import { FloorPlan } from "../components/FloorPlan";
+import { LocationTreePicker } from "../components/LocationTreePicker";
+import { DuplicatePlaceNotice, duplicatePlaceOf } from "../components/DuplicatePlaceNotice";
 import { hasOwnLayout, readRect } from "../lib/floorplanGeometry";
 import { pinnedFirst } from "../lib/placeItems";
 import { recordHref } from "@cobblr/platform-contract/instance-detail";
+import { countOf } from "@cobblr/platform-contract/plural";
+import { deleteDialogMessage, deletedSentence, restoredSentence } from "../lib/placeDelete";
 
 /** Where a kind's detail page lives. The placement endpoint answers WHAT is
  *  here; the registry is still how a kind says where to click through to. */
@@ -43,6 +48,7 @@ export function LocationDetailPage() {
   const qc = useQueryClient();
   const toast = useToast();
   const confirm = useConfirm();
+  const [moving, setMoving] = useState(false);
   const [editing, setEditing] = useState(false);
   const [addingChild, setAddingChild] = useState(false);
 
@@ -105,14 +111,46 @@ export function LocationDetailPage() {
     enabled: !!activeSlug && !!id,
   });
 
+  // A field a bundle or a person adds to places, saved on its own and merged
+  // into the place's metadata server-side (the floor-plan keys beside it stay).
+  const setField = useMutation({
+    mutationFn: (metadata: Record<string, unknown>) => api.updateLocation(activeSlug, id!, { metadata }),
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: ["location", activeSlug, id] });
+      void qc.invalidateQueries({ queryKey: ["locations", activeSlug] });
+    },
+    onError: (e: unknown) => toast.error(`Couldn't save that change: ${e instanceof ApiError ? e.message : String(e)}`),
+  });
+
   const remove = useMutation({
     mutationFn: () => api.deleteLocation(activeSlug, id!),
-    onSuccess: () => {
-      toast.success("Location deleted.");
-      void qc.invalidateQueries({ queryKey: ["locations", activeSlug] });
+    onSuccess: (gone) => {
+      const refresh = () => {
+        void qc.invalidateQueries({ queryKey: ["locations", activeSlug] });
+        void qc.invalidateQueries({ queryKey: ["core-locations", activeSlug] });
+      };
+      refresh();
+      toast.action(deletedSentence(gone.name, gone), {
+        actionLabel: "Undo",
+        onAction: async () => {
+          try {
+            const back = await api.restoreDeletedLocation(activeSlug, id!);
+            refresh();
+            toast.success(restoredSentence(back));
+            navigate(`/locations/${id}`);
+          } catch (e) {
+            toast.error(e instanceof ApiError ? e.message : String(e));
+          }
+        },
+      });
       navigate("/locations");
     },
-    onError: (e: unknown) => toast.error(e instanceof ApiError ? e.message : String(e)),
+    // A refusal that can be asked for opens the blocked-action sheet by
+    // itself (api.ts); a toast on top would say the same thing twice.
+    onError: (e: unknown) => {
+      if (e instanceof ApiError && e.blocked) return;
+      toast.error(e instanceof ApiError ? e.message : String(e));
+    },
   });
 
   if (!id) return <Navigate to="/locations" replace />;
@@ -343,7 +381,7 @@ export function LocationDetailPage() {
                     {/* The collection, not the kind id: INVENTORY:PART under
                         a book was the review's example (2026-09-12). */}
                     <div className="text-[10px] font-mono uppercase tracking-widest text-faint truncate">
-                      {labels.collection(item.kind)}
+                      {labels.record(item)}
                       {maker ? ` · ${maker}` : ""}
                     </div>
                   </div>
@@ -373,6 +411,10 @@ export function LocationDetailPage() {
         )}
       </section>
 
+      {/* The place's own fields: whatever a bundle or a person defines for
+          places on /fields. */}
+      <CustomFieldsPanel entityKind="core-locations:location" entityId={l.id} values={l.metadata ?? {}} onCommit={(name, value) => setField.mutate({ [name]: value })} />
+
       {/* Whatever enabled modules contribute to a place (inventory's "Stock
           here": count against minimum, what is low, what is going off); this
           page names no contributor. */}
@@ -380,16 +422,27 @@ export function LocationDetailPage() {
 
       <EntityAttachments kind="core-locations:location" entityId={l.id} omit={["tags", "discussion", "pairings"]} />
 
-      <div className="text-center pt-4">
+      <div className="flex justify-center gap-6 pt-4">
+        <button
+          type="button"
+          onClick={() => setMoving(true)}
+          className="text-xs text-faint hover:text-accent inline-flex items-center gap-1.5"
+        >
+          <ArrowRightLeft size={12} /> Move everything to…
+        </button>
         <button
           onClick={async () => {
+            let goes;
+            try {
+              goes = await api.locationWhatGoes(activeSlug, l.id);
+            } catch (e) {
+              toast.error(e instanceof ApiError ? e.message : String(e));
+              return;
+            }
             const ok = await confirm({
               title: `Delete "${l.name}"?`,
-              message:
-                children.length > 0
-                  ? `${children.length} sub-location${children.length === 1 ? "" : "s"} will also be deleted (cascade). Items stored here will be orphaned (location_id → null).`
-                  : "Items stored here will be orphaned (location_id → null).",
-              confirmLabel: "Delete location",
+              message: deleteDialogMessage(goes),
+              confirmLabel: goes.places > 0 ? `Delete ${countOf(goes.places + 1, "place")}` : "Delete location",
               destructive: true,
             });
             if (ok) remove.mutate();
@@ -402,6 +455,37 @@ export function LocationDetailPage() {
 
       {editing && (
         <EditLocationModal location={l} onClose={() => setEditing(false)} />
+      )}
+      {moving && (
+        <MoveEverythingModal
+          slug={activeSlug}
+          place={l}
+          placesInside={children.length}
+          onClose={() => setMoving(false)}
+          onMoved={(move) => {
+            setMoving(false);
+            const refresh = () => {
+              void qc.invalidateQueries({ queryKey: ["core-locations", activeSlug] });
+              void qc.invalidateQueries({ queryKey: ["location-contents", activeSlug] });
+              void qc.invalidateQueries({ queryKey: ["location", activeSlug] });
+            };
+            refresh();
+            toast.action(movedSentence(move), {
+              actionLabel: "Undo",
+              onAction: async () => {
+                try {
+                  const back = await api.putBackEverything(activeSlug, move);
+                  refresh();
+                  toast.success(putBackSentence(move, back));
+                  if (move.deleted) navigate(`/locations/${move.from.id}`);
+                } catch (e) {
+                  toast.error(e instanceof ApiError ? e.message : String(e));
+                }
+              },
+            });
+            if (move.deleted) navigate(`/locations/${move.to.id}`);
+          }}
+        />
       )}
     </div>
   );
@@ -422,6 +506,13 @@ function EditLocationModal({
   const [kind, setKind] = useState<"area" | "container">(location.kind);
   const [description, setDescription] = useState(location.description ?? "");
   const [notes, setNotes] = useState(location.notes ?? "");
+  // Moving a place is editing where it is: the same parent field the list's
+  // form has, so a place can move from its own page too.
+  const [parentId, setParentId] = useState<string | null>(location.parent_id ?? null);
+  const [dup, setDup] = useState<{ existingId: string } | null>(null);
+  const navigate = useNavigate();
+  const places = useQuery({ queryKey: ["core-locations", activeSlug], queryFn: () => api.listLocations(activeSlug), enabled: !!activeSlug });
+  const parentName = parentId ? places.data?.items.find((p) => p.id === parentId)?.name ?? null : null;
   // Declared interior size, {x,y,z} in mm (metadata.interior_mm) — what the
   // organize planner's fit checks read. Blank = undeclared (never guessed).
   const dims0 = (location.metadata?.interior_mm ?? {}) as { x?: number; y?: number; z?: number };
@@ -430,8 +521,10 @@ function EditLocationModal({
   const [dimZ, setDimZ] = useState(dims0.z != null ? String(dims0.z) : "");
 
   const save = useMutation({
-    mutationFn: () =>
+    mutationFn: (allowDuplicate: boolean) =>
       api.updateLocation(activeSlug, location.id, {
+        ...(allowDuplicate ? { allow_duplicate: true } : {}),
+        parent_id: parentId,
         name: name.trim(),
         short_name: shortName.trim() || null,
         kind,
@@ -458,9 +551,14 @@ function EditLocationModal({
       toast.success("Location updated.");
       void qc.invalidateQueries({ queryKey: ["location", activeSlug, location.id] });
       void qc.invalidateQueries({ queryKey: ["locations", activeSlug] });
+      void qc.invalidateQueries({ queryKey: ["core-locations", activeSlug] });
       onClose();
     },
-    onError: (e) => toast.error(e instanceof ApiError ? e.message : String(e)),
+    onError: (e) => {
+      const found = duplicatePlaceOf(e);
+      if (found) setDup(found);
+      else toast.error(e instanceof ApiError ? e.message : String(e));
+    },
   });
 
   return (
@@ -468,7 +566,8 @@ function EditLocationModal({
       <form
         onSubmit={(e) => {
           e.preventDefault();
-          save.mutate();
+          setDup(null);
+          save.mutate(false);
         }}
         className="space-y-3"
       >
@@ -519,6 +618,29 @@ function EditLocationModal({
             },
           ]}
         />
+        <LocationTreePicker
+          label="Inside"
+          value={parentId}
+          onChange={setParentId}
+          excludeSubtreeOf={location.id}
+          placeholder="(top-level)"
+          noneLabel="(top-level)"
+        />
+        {dup && (
+          <DuplicatePlaceNotice
+            name={name}
+            parentName={parentName}
+            onOpen={() => {
+              onClose();
+              navigate(`/locations/${dup.existingId}`);
+            }}
+            onKeepBoth={() => {
+              setDup(null);
+              save.mutate(true);
+            }}
+            keepBothLabel="Keep this name anyway"
+          />
+        )}
         {kind === "container" && (
           <Field label="Interior size (mm) - optional">
             <div className="flex items-center gap-2">

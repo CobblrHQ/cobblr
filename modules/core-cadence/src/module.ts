@@ -4,11 +4,11 @@ import type { CoreCadenceDB } from "./db.js";
 
 export default defineModule({
   name: "core-cadence",
-  version: "0.2.8",
+  version: "0.2.10",
   maturity: "beta",
   displayName: "Cadence",
   description:
-    "Learns how fast you go through a consumable and predicts when you'll run out, so a reorder can be suggested before you notice. Generic: it reads a kind's quantity field role, so the same engine serves groceries, filament, coffee and medications. Exposes signals other modules surface; it has no page of its own.",
+    "Learns how fast you use something up and tells you before it runs out, so you can reorder in time.",
   icon: "repeat",
   band: "stock",
   // Opt-in, not ambient: a workspace that doesn't track consumables shouldn't
@@ -22,7 +22,6 @@ export default defineModule({
 
   api: () => import("./api/index.js"),
 
-  intents: [],
   dependencies: [],
 
   exposes: {
@@ -34,10 +33,8 @@ export default defineModule({
     // Consumers wire off these rather than importing the module (isolation).
     events: [
       "core-cadence.reorder.due",
-      "core-cadence.overbuy.detected",
       "core-cadence.buy-less.suggested",
     ],
-    api: ["record", "state"],
     actions: [
       {
         // NO-PHRASING: the way back for another action, run only from Undo

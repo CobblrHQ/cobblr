@@ -296,7 +296,7 @@ export function ApiRecipesPage() {
         meta: { targets, action: wizDo, org: activeSlug },
       });
       setToken(res.token);
-      toast.success(`Scoped token "${name}" created — copy it now, it won't be shown again.`);
+      toast.success(`Scoped token "${name}" created. Copy it now, it won't be shown again.`);
     } catch (e) {
       toast.error(e instanceof Error ? e.message : "Couldn't mint the token.");
     } finally {
@@ -547,9 +547,9 @@ export function ApiRecipesPage() {
                         {kindLabel(k)}
                         <span className="font-mono text-[11px] font-normal text-faint dark:text-slate-500">{routeHint(k)}</span>
                       </div>
-                      {createUrl && codeBlock(`create:${k.id}`, "Create a record", buildCreate(k, lang, createUrl, envToken), "201 Created — returns the new record with its id.")}
-                      {listUrl && codeBlock(`list:${k.id}`, "Find / list records", buildList(lang, listUrl, envToken), "200 OK — { items: [ … ] }, newest first.")}
-                      {updateUrl && codeBlock(`update:${k.id}`, "Update a record", buildUpdate(k, lang, updateUrl, envToken), "200 OK — the updated record. Replace {id} with a real record id.")}
+                      {createUrl && codeBlock(`create:${k.id}`, "Create a record", buildCreate(k, lang, createUrl, envToken), "201 Created: returns the new record with its id.")}
+                      {listUrl && codeBlock(`list:${k.id}`, "Find / list records", buildList(lang, listUrl, envToken), "200 OK: { items: [ … ] }, newest first.")}
+                      {updateUrl && codeBlock(`update:${k.id}`, "Update a record", buildUpdate(k, lang, updateUrl, envToken), "200 OK: the updated record. Replace {id} with a real record id.")}
                     </div>
                   );
                 })}

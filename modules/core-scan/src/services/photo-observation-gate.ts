@@ -6,6 +6,8 @@
 // Every condition must hold. The answer names the first one that does not, so
 // the reason is visible wherever the gate is used.
 
+import { withArticle } from "@cobblr/platform-contract/plural";
+
 export type IdentifyKind = "item" | "barcode_only" | "receipt" | "document" | "person" | "scene" | "unidentifiable";
 
 export type PhotoGate = { keep: true } | { keep: false; why: string };
@@ -45,7 +47,7 @@ export function photoObservationGate(opts: {
   if (!opts.termsAcceptedAt) return { keep: false, why: "the account has not accepted the terms that allow keeping photos" };
   if (opts.fromEmail) return { keep: false, why: "a picture that arrived by email is never kept" };
   if (!opts.filed) return { keep: false, why: "only a photo of an item the person filed is kept" };
-  if (opts.kind !== "item") return { keep: false, why: `a ${opts.kind ?? "unclassified"} photo is never kept; only items` };
+  if (opts.kind !== "item") return { keep: false, why: `${withArticle(opts.kind ?? "unclassified")} photo is never kept; only items` };
   if (opts.personInFrame) return { keep: false, why: "a photo with a person in it is never kept" };
   return { keep: true };
 }

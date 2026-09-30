@@ -48,7 +48,13 @@ export const SCAN_CATEGORY_SOURCE = "@scan-category";
 
 /** The tables a scan lands in, per module, and which of them keep their own
  *  categories: from the loaded manifests, which are eager. */
-export function scanFallbackKinds(): { scanByModule: Map<string, string>; ownCategoryKinds: Set<string> } {
+export function scanFallbackKinds(): {
+  scanByModule: Map<string, string>;
+  ownCategoryKinds: Set<string>;
+  /** Where each such kind keeps its category: its taxonomy's id column, or
+   *  the native field it declares as its category. */
+  ownCategoryColumn: Map<string, string>;
+} {
   // Each domain module's PRIMARY entity kind is the table a scan lands in
   // (inventory:part, machines:machine, assets:asset). Derive it from the loaded
   // MANIFESTS — which are eager — NOT from the runtime scan registry.
@@ -62,6 +68,7 @@ export function scanFallbackKinds(): { scanByModule: Map<string, string>; ownCat
   // rule: a boot reconcile reads eager manifest data, not a lazy runtime registry).
   const scanByModule = new Map<string, string>();
   const ownCategoryKinds = new Set<string>();
+  const ownCategoryColumn = new Map<string, string>();
   for (const e of listEntries()) {
     const primary = e.manifest.provides?.entityKinds?.find((k) => k.primary);
     // PHYSICAL kinds only — a scan is of a physical thing. inventory:part /
@@ -73,10 +80,19 @@ export function scanFallbackKinds(): { scanByModule: Map<string, string>; ownCat
     const physical = profile ? TRAIT_PRESETS[profile]?.tangibility === "physical" : false;
     if (primary && physical) {
       scanByModule.set(e.manifest.name, primary.id);
-      if (primary.categoryAxis) ownCategoryKinds.add(primary.id);
+      if (primary.categoryAxis) {
+        ownCategoryKinds.add(primary.id);
+        ownCategoryColumn.set(primary.id, "category_id");
+      } else if (primary.categoryField) {
+        // Its category is a field it already has (an asset's `type`): a second
+        // "Category" beside it split one question in two, the typed one in
+        // `type` and the scanned one in the placeholder (#4115).
+        ownCategoryKinds.add(primary.id);
+        ownCategoryColumn.set(primary.id, primary.categoryField);
+      }
     }
   }
-  return { scanByModule, ownCategoryKinds };
+  return { scanByModule, ownCategoryKinds, ownCategoryColumn };
 }
 
 /** Whether enabling this module gives a workspace a table a scan lands in,
@@ -204,8 +220,9 @@ export async function reconcileScanCategoryFields(opts: { onlyOrgId?: string } =
  * taxonomy (#3223): move its values into that taxonomy, then remove it.
  *
  * DONE WHEN: no org has a `module_field_defs` row with source_module
- * '@scan-category' on a kind that declares `categoryAxis` (today only
- * inventory:part), on prod, staging and dev; checkable with one query per box.
+ * '@scan-category' on a kind that declares `categoryAxis` or `categoryField`
+ * (inventory:part, assets:asset, machines:machine), on prod, staging and dev;
+ * checkable with one query per box.
  * Then this function, its boot call, its test-support call and `plan.retire`
  * go.
  *
@@ -226,7 +243,7 @@ export async function reconcileScanCategoryFields(opts: { onlyOrgId?: string } =
  * next boot finishes it.
  */
 export async function retireScanCategoryPlaceholders(opts: { onlyOrgId?: string } = {}): Promise<void> {
-  const { ownCategoryKinds } = scanFallbackKinds();
+  const { ownCategoryKinds, ownCategoryColumn } = scanFallbackKinds();
   if (ownCategoryKinds.size === 0) return;
   let placeholdersQ = meta
     .selectFrom("module_field_defs")
@@ -249,7 +266,7 @@ export async function retireScanCategoryPlaceholders(opts: { onlyOrgId?: string 
         );
         continue;
       }
-      const { moved, remaining } = await writer.adoptAxisValues(org_id, { field: CATEGORY_FIELD, column: "category_id" });
+      const { moved, remaining } = await writer.adoptAxisValues(org_id, { field: CATEGORY_FIELD, column: ownCategoryColumn.get(kind) ?? "category_id" });
       if (remaining > 0) {
         console.error(`[reconcile] scan category axis NOT retired for ${org_id}::${kind}: ${remaining} record(s) still hold a value; left in place for the next pass`);
         continue;

@@ -26,17 +26,23 @@
 import { randomUUID } from "node:crypto";
 import { sql } from "kysely";
 import { meta } from "../db/meta.js";
+import { EdgeOffline, EdgeTimeout, EdgeUnsupported } from "@cobblr/platform-contract";
 import type {
   EdgeAgentInfo,
   EdgeBridgeRecord,
   EdgeChannelSender,
   EdgeConsumer,
+  EdgeFetchInit,
+  EdgeLane,
+  EdgeMethod,
   EdgeRelayItem,
   EdgeRequest,
   EdgeResponse,
 } from "@cobblr/platform-contract";
-import { bridgeDisplayName, bridgeNameFromToken, edgeChannelKey } from "@cobblr/platform-contract/edge-channel";
+import { bridgeDisplayName, bridgeNameFromToken, edgeChannelKey, edgeLaneOf } from "@cobblr/platform-contract/edge-channel";
 import { BRIDGE_BUNDLE_VERSION, BRIDGE_BUNDLE_SHA256, bridgeBundleJs } from "./edge-bridge-bundle.js";
+import { blobExpect, blobOffer, blobReceived, blobRelease } from "./edge-blobs.js";
+import { createReadStream } from "node:fs";
 import { BRIDGE_LOADER_JS } from "./edge-bridge-loader.js";
 
 const channels = new Map<string, EdgeChannelSender>();
@@ -109,6 +115,21 @@ export async function hasChannel(key: string): Promise<boolean> {
 }
 
 export async function send(key: string, req: EdgeRequest): Promise<EdgeResponse> {
+  if (req.bodyFile) {
+    // The file goes on the blob channel; the relayed call carries only its id.
+    const { bodyFile, ...rest } = req;
+    await requireFeature(key, "blobs");
+    const id = await blobOffer(key, bodyFile);
+    try {
+      return await sendOne(key, { ...rest, blob: { id, direction: "down", sha256: bodyFile.sha256.toLowerCase(), size: bodyFile.size } });
+    } finally {
+      await blobRelease(id).catch(() => {});
+    }
+  }
+  return sendOne(key, req);
+}
+
+async function sendOne(key: string, req: EdgeRequest): Promise<EdgeResponse> {
   // A locally-registered sender owns a transport this process holds open, so
   // it is both faster and the only one that can serve it.
   const ch = channels.get(key);
@@ -118,7 +139,147 @@ export async function send(key: string, req: EdgeRequest): Promise<EdgeResponse>
   // The operator's diagnosis goes to the log; the person gets a sentence about
   // their bridge, by its name, and what to do.
   console.warn(`[edge] send on ${key.slice(0, 8)}… found no bridge; ${connectedChannels()}`);
-  throw new Error(await offlineReason(key));
+  throw new EdgeOffline(key, await offlineReason(key));
+}
+
+const EDGE_METHODS: readonly EdgeMethod[] = ["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD"];
+/** A bridge answers a poll gap within about this long. */
+const RECONNECT_GRACE_MS = 1_500;
+
+/** Fetch-shaped call performed by a bridge on its network. One copy for every
+ *  module (it used to be private in the AI and the shipments transits, each
+ *  retrying on a text match of an error message). */
+export async function fetchViaEdge(key: string, init: EdgeFetchInit): Promise<Response> {
+  const moving = !!init.bodyFile || !!init.download;
+  if (init.download) await requireFeature(key, "blobs");
+  // A body file is offered by send(); only a download is set up here.
+  const blob = init.download ? { id: await blobExpect(key), direction: "up" as const } : undefined;
+  const req: EdgeRequest = {
+    path: init.path,
+    method: init.method ?? (init.bodyFile ? "PUT" : "GET"),
+    ...(init.body !== undefined && init.body !== null && !init.bodyFile ? { body: init.body } : {}),
+    source: { baseUrl: init.baseUrl.replace(/\/+$/, ""), headers: init.headers ?? {} },
+    // A file hop's budget is the transfer's, not a status read's.
+    ...(init.timeoutMs || moving ? { timeoutMs: init.timeoutMs ?? FILE_HOP_MS } : {}),
+    lane: init.lane ?? "service",
+    scope: originOf(init.baseUrl),
+    ...(blob ? { blob } : {}),
+    ...(init.bodyFile ? { bodyFile: init.bodyFile } : {}),
+  };
+  let res: EdgeResponse;
+  try {
+    try {
+      res = await send(key, req);
+    } catch (err) {
+      // Between two long-polls a bridge holds no poll for a moment; the one
+      // retry covers that gap. Anything else is the answer.
+      if (!(err instanceof EdgeOffline)) throw err;
+      await sleep(RECONNECT_GRACE_MS);
+      res = await send(key, req);
+    }
+  } catch (err) {
+    if (blob) await blobRelease(blob.id).catch(() => {});
+    throw err;
+  }
+  if (blob?.direction === "up") {
+    const said = (res.body as { __blob?: { id?: string; sha256?: string; size?: number } } | null)?.__blob;
+    if (!said) {
+      // The service answered with an error, not a file: that answer is the result.
+      await blobRelease(blob.id).catch(() => {});
+      return toResponse(res, req.method === "HEAD");
+    }
+    const got = await blobReceived(key, blob.id);
+    if (!got || said.id !== blob.id || said.sha256?.toLowerCase() !== got.sha256) {
+      await blobRelease(blob.id).catch(() => {});
+      return toResponse({ status: 502, body: { error: { code: "edge_blob", message: "The file the bridge reported is not the file Cobblr received, so it was not used." } } });
+    }
+    const headers = new Headers(res.headers ?? {});
+    headers.set("content-length", String(got.size));
+    headers.set("x-cobblr-sha256", got.sha256);
+    if (!headers.has("content-type")) headers.set("content-type", "application/octet-stream");
+    return new Response(pulledFrom(got.path, () => void blobRelease(blob.id).catch(() => {})), { status: res.status || 200, headers });
+  }
+  return toResponse(res, req.method === "HEAD");
+}
+
+/** A file as a Response body, read only as fast as the caller reads it.
+ *  Readable.toWeb reads a Node stream ahead with no backpressure (a 100 MB file
+ *  held whole, measured on the bridge side), so this pulls one chunk per read. */
+function pulledFrom(path: string, done: () => void): ReadableStream<Uint8Array> {
+  const it = createReadStream(path)[Symbol.asyncIterator]();
+  let finished = false;
+  const finish = () => {
+    if (!finished) {
+      finished = true;
+      done();
+    }
+  };
+  return new ReadableStream<Uint8Array>({
+    async pull(ctrl) {
+      const r = await it.next();
+      if (r.done) {
+        ctrl.close();
+        finish();
+      } else ctrl.enqueue(new Uint8Array(r.value as Buffer));
+    },
+    async cancel() {
+      await it.return?.();
+      finish();
+    },
+  });
+}
+
+/** How long one file hop may take by default. */
+const FILE_HOP_MS = 30 * 60_000;
+
+/** Refuse a call the bridge on `key` has not said it can make, in words and by
+ *  type, so a caller with an older way to do it can fall back. */
+async function requireFeature(key: string, feature: string): Promise<void> {
+  const row = await meta.selectFrom("edge_bridges").select(["features"]).where("channel_key", "=", key).executeTakeFirst();
+  const has = Array.isArray(row?.features) && (row!.features as string[]).includes(feature);
+  if (!has) {
+    const w = await workspaceBridge(key).catch(() => null);
+    const who = w?.last_seen ? `Your bridge “${bridgeDisplayName(w)}”` : "Your edge bridge";
+    throw new EdgeUnsupported(key, feature, `${who} is too old to carry files. Bridges update themselves within about half an hour; try again after that.`);
+  }
+}
+
+function originOf(url: string): string | undefined {
+  try {
+    return new URL(url).origin;
+  } catch {
+    return undefined;
+  }
+}
+
+/** An EdgeResponse as a fetch Response. A binary body rides the JSON relay as
+ *  { __binary, contentType, data_b64 }; a string is text; anything else JSON. */
+export function toResponse(res: EdgeResponse, head = false): Response {
+  const status = res.status && res.status >= 200 && res.status <= 599 ? res.status : 502;
+  const headers = new Headers(res.headers ?? {});
+  const empty = head || status === 204 || status === 304;
+  const b = res.body as { __binary?: boolean; contentType?: string; data_b64?: string } | null;
+  if (empty) return new Response(null, { status, headers });
+  if (b && typeof b === "object" && b.__binary === true && typeof b.data_b64 === "string") {
+    headers.set("content-type", b.contentType || headers.get("content-type") || "application/octet-stream");
+    headers.delete("content-length");
+    return new Response(Uint8Array.from(Buffer.from(b.data_b64, "base64")), { status, headers });
+  }
+  // The relay re-encodes the body, so the service's own length no longer holds.
+  headers.delete("content-length");
+  if (typeof res.body === "string") {
+    if (!headers.has("content-type")) headers.set("content-type", "text/plain; charset=utf-8");
+    return new Response(res.body, { status, headers });
+  }
+  // Every relay caller used to read an empty answer as JSON null; a service
+  // that named its type keeps it.
+  if (res.body === null || res.body === undefined) {
+    if (headers.has("content-type")) return new Response(null, { status, headers });
+    headers.set("content-type", "application/json");
+    return new Response("null", { status, headers });
+  }
+  headers.set("content-type", "application/json");
+  return new Response(JSON.stringify(res.body), { status, headers });
 }
 
 /** How long ago, in words a person reads: "4 minutes", "3 hours", "2 days". */
@@ -131,7 +292,17 @@ export function howLongAgo(then: Date, now: Date = new Date()): string {
   return `${d} day${d === 1 ? "" : "s"}`;
 }
 
-async function workspaceBridge(key: string): Promise<{ bridge: string | null; name: string | null; last_seen: Date | null } | null> {
+/** Who a channel key belongs to. A key is `<orgId>::<bridge>` (a named
+ *  workspace bridge), `<orgId>` (the workspace's default) or `<userId>` (a
+ *  person's own bridge). A key whose workspace is gone belongs to nobody:
+ *  it is never read as a person's, which is what a deleted workspace's key
+ *  used to be told ("your personal edge bridge", #4331). */
+type BridgeOwner =
+  | { kind: "workspace"; bridge: string | null; name: string | null; last_seen: Date | null }
+  | { kind: "person" }
+  | { kind: "gone" };
+
+async function bridgeOwner(key: string): Promise<BridgeOwner> {
   const i = key.indexOf("::");
   const orgId = i < 0 ? key : key.slice(0, i);
   const org = await meta
@@ -139,30 +310,50 @@ async function workspaceBridge(key: string): Promise<{ bridge: string | null; na
     .select("id")
     .where(sql<string>`id::text`, "=", orgId)
     .executeTakeFirst();
-  if (!org) return null;
-  const row = await meta
-    .selectFrom("edge_bridges")
-    .select(["name", "last_seen"])
-    .where("channel_key", "=", key)
+  if (org) {
+    const row = await meta
+      .selectFrom("edge_bridges")
+      .select(["name", "last_seen"])
+      .where("channel_key", "=", key)
+      .executeTakeFirst();
+    return { kind: "workspace", bridge: i < 0 ? null : key.slice(i + 2), name: row?.name ?? null, last_seen: row ? new Date(row.last_seen) : null };
+  }
+  if (i >= 0) return { kind: "gone" };
+  const user = await meta
+    .selectFrom("users")
+    .select("id")
+    .where(sql<string>`id::text`, "=", key)
     .executeTakeFirst();
-  return { bridge: i < 0 ? null : key.slice(i + 2), name: row?.name ?? null, last_seen: row ? new Date(row.last_seen) : null };
+  return user ? { kind: "person" } : { kind: "gone" };
+}
+
+async function workspaceBridge(key: string): Promise<{ bridge: string | null; name: string | null; last_seen: Date | null } | null> {
+  const o = await bridgeOwner(key);
+  return o.kind === "workspace" ? o : null;
 }
 
 /** Why a send found nobody, said to the person who pressed the button. */
 export async function offlineReason(key: string): Promise<string> {
-  const w = await workspaceBridge(key).catch(() => null);
-  if (!w) {
-    // A personal bridge is keyed by the owner's user id, not a workspace, so
-    // it is never "this workspace's" bridge.
+  let o: BridgeOwner;
+  try {
+    o = await bridgeOwner(key);
+  } catch {
+    // Could not ask. Saying whose bridge it is would be a guess.
+    return "Your edge bridge did not answer, and Cobblr could not check why just now. Try again in a minute.";
+  }
+  if (o.kind === "person") {
     return "Your personal edge bridge is not connected. Check that the Cobblr edge bridge on your computer is running and signed in as you, then try again.";
   }
-  const name = bridgeDisplayName(w);
-  if (!w.last_seen) {
-    return w.bridge === null
-      ? "This workspace has no bridge yet. Set one up under Configuration → Devices, then try again."
-      : `This workspace has no bridge called “${w.bridge}”. Check the name, or set it up under Configuration → Devices.`;
+  if (o.kind === "gone") {
+    return "There is no bridge to send to: the workspace or person it belonged to no longer exists.";
   }
-  return `Your bridge “${name}” is offline. It was last heard from ${howLongAgo(w.last_seen)} ago. Check that the box it runs on has power and a network connection, then try again.`;
+  const name = bridgeDisplayName(o);
+  if (!o.last_seen) {
+    return o.bridge === null
+      ? "This workspace has no bridge yet. Set one up under Configuration → Devices, then try again."
+      : `This workspace has no bridge called “${o.bridge}”. Check the name, or set it up under Configuration → Devices.`;
+  }
+  return `Your bridge “${name}” is offline. It was last heard from ${howLongAgo(o.last_seen)} ago. Check that the box it runs on has power and a network connection, then try again.`;
 }
 
 /** Hand a request to whichever process is holding this bridge's poll, and wait
@@ -171,9 +362,11 @@ async function relaySend(key: string, req: EdgeRequest): Promise<EdgeResponse> {
   const id = randomUUID();
   const timeoutMs = req.timeoutMs ?? DEFAULT_REQ_TIMEOUT_MS;
   const expires = new Date(Date.now() + timeoutMs);
+  const lane = edgeLaneOf(req);
+  const scope = req.scope ?? (req.source ? originOf(req.source.baseUrl) : undefined);
   await meta
     .insertInto("edge_relay_jobs")
-    .values({ id, channel_key: key, request: JSON.stringify(req), expires_at: expires })
+    .values({ id, channel_key: key, request: JSON.stringify({ ...req, lane, ...(scope ? { scope } : {}) }), expires_at: expires, lane })
     .execute();
 
   const deadline = Date.now() + timeoutMs;
@@ -184,14 +377,15 @@ async function relaySend(key: string, req: EdgeRequest): Promise<EdgeResponse> {
       .where("id", "=", id)
       .executeTakeFirst();
     if (row?.status === "done") {
-      const r = row.response as { status?: number; body?: unknown } | null;
-      return { status: r?.status ?? 502, body: r?.body ?? null };
+      const r = row.response as { status?: number; body?: unknown; headers?: Record<string, string> } | null;
+      return { status: r?.status ?? 502, body: r?.body ?? null, ...(r?.headers ? { headers: r.headers } : {}) };
     }
     if (Date.now() >= deadline) {
       await meta.deleteFrom("edge_relay_jobs").where("id", "=", id).execute().catch(() => {});
       const w = await workspaceBridge(key).catch(() => null);
       const who = w ? `Your bridge “${bridgeDisplayName(w)}”` : "Your edge bridge";
-      throw new Error(
+      throw new EdgeTimeout(
+        key,
         `${who} is online but did not answer within ${Math.round(timeoutMs / 1000)} seconds. The device behind it may be off or busy.`,
       );
     }
@@ -248,10 +442,20 @@ export async function relayTouch(key: string, report?: BridgeReport): Promise<vo
   const allow = Array.isArray(report?.allow)
     ? report!.allow.filter((e): e is string => typeof e === "string" && !!e.trim()).slice(0, 50).map((e) => e.trim().slice(0, 100))
     : null;
+  const saysFeatures = report !== undefined && "features" in report;
+  const features = Array.isArray(report?.features) ? report!.features.filter((f): f is string => typeof f === "string").slice(0, 32) : null;
   const before = await meta.selectFrom("edge_bridges").select("last_seen").where("channel_key", "=", key).executeTakeFirst();
   await meta
     .insertInto("edge_bridges")
-    .values({ channel_key: key, name, version, hostname, token_id: report?.tokenId ?? null, allowlist: saysAllow && allow?.length ? (JSON.stringify(allow) as never) : null })
+    .values({
+      channel_key: key,
+      name,
+      version,
+      hostname,
+      token_id: report?.tokenId ?? null,
+      allowlist: saysAllow && allow?.length ? (JSON.stringify(allow) as never) : null,
+      features: saysFeatures && features ? (JSON.stringify(features) as never) : null,
+    })
     .onConflict((oc) =>
       oc.column("channel_key").doUpdateSet({
         last_seen: new Date(),
@@ -261,6 +465,9 @@ export async function relayTouch(key: string, report?: BridgeReport): Promise<vo
         hostname: sql`coalesce(excluded.hostname, edge_bridges.hostname)`,
         token_id: sql`coalesce(excluded.token_id, edge_bridges.token_id)`,
         ...(saysAllow ? { allowlist: sql`excluded.allowlist` } : {}),
+        // A register says what the running bridge can do now; an update may
+        // have added or dropped something, so it replaces, never merges.
+        ...(saysFeatures ? { features: sql`excluded.features` } : {}),
       }),
     )
     .execute();
@@ -275,6 +482,7 @@ export interface BridgeReport {
   hostname?: string | null;
   tokenId?: string | null;
   allow?: string[] | null;
+  features?: string[] | null;
 }
 
 /** Cut a bridge off: revoke the key it registers with, so its next check-in is
@@ -360,36 +568,48 @@ async function bridgeIsFresh(key: string): Promise<boolean> {
 /** Claim the oldest queued job for this channel, or null.
  *  SKIP LOCKED so two processes polling the same channel cannot take the same
  *  row — the pattern platform/queue.ts already relies on. */
-async function claimNext(key: string): Promise<EdgeRelayItem | null> {
-  const rows = await sql<{ id: string; request: EdgeRequest }>`
+async function claimNext(key: string, lanes: EdgeLane[] | null): Promise<EdgeRelayItem | null> {
+  // A bridge that names its lanes is handed only work it can start now; one
+  // that names none (an older bridge) is handed anything, as before.
+  const laneFilter = lanes && lanes.length ? sql`AND (lane IS NULL OR lane IN (${sql.join(lanes)}))` : sql``;
+  const rows = await sql<{ id: string; request: EdgeRequest; expires_at: Date }>`
     UPDATE edge_relay_jobs SET status = 'claimed', claimed_at = now()
      WHERE id = (
        SELECT id FROM edge_relay_jobs
-        WHERE channel_key = ${key} AND status = 'queued' AND expires_at > now()
+        WHERE channel_key = ${key} AND status = 'queued' AND expires_at > now() ${laneFilter}
         ORDER BY created_at
         FOR UPDATE SKIP LOCKED
         LIMIT 1
      )
-    RETURNING id, request
+    RETURNING id, request, expires_at
   `.execute(meta);
   const row = rows.rows[0];
   if (!row) return null;
   const req = row.request;
+  // The bridge stops a little before Cobblr stops waiting, so its answer
+  // (a 504 that says why) arrives instead of Cobblr's own timeout.
+  const left = new Date(row.expires_at).getTime() - Date.now();
+  const bridgeMs = Math.max(1_000, left - Math.min(5_000, Math.round(left * 0.1)));
+  const method = EDGE_METHODS.includes(req.method as EdgeMethod) ? (req.method as EdgeMethod) : "GET";
   return {
     id: row.id,
     path: req.path,
-    method: req.method === "POST" ? "POST" : "GET",
+    method,
     body: req.body,
     ...(req.instance ? { instance: req.instance } : {}),
     ...(req.source ? { source: req.source } : {}),
+    timeoutMs: bridgeMs,
+    lane: edgeLaneOf(req),
+    ...(req.scope ? { scope: req.scope } : {}),
+    ...(req.blob ? { blob: req.blob } : {}),
   };
 }
 
-export async function relayPoll(key: string, opts?: { signal?: AbortSignal }): Promise<EdgeRelayItem | null> {
+export async function relayPoll(key: string, opts?: { signal?: AbortSignal; lanes?: EdgeLane[] | null }): Promise<EdgeRelayItem | null> {
   await relayTouch(key);
   const deadline = Date.now() + POLL_WAIT_MS;
   for (;;) {
-    const item = await claimNext(key);
+    const item = await claimNext(key, opts?.lanes ?? null);
     if (item) return item;
     if (opts?.signal?.aborted || Date.now() >= deadline) return null;
     await sleep(CLAIM_POLL_MS);
@@ -407,7 +627,7 @@ const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/
 
 export async function relayRespond(
   key: string,
-  r: { id: string; status: number; body?: unknown },
+  r: { id: string; status: number; body?: unknown; headers?: Record<string, string> },
 ): Promise<boolean> {
   // A bridge that retried late answers an id that is gone, and a confused one
   // answers something that was never an id at all. The column is uuid, so
@@ -417,7 +637,7 @@ export async function relayRespond(
   if (!UUID_RE.test(r.id)) return false;
   const res = await meta
     .updateTable("edge_relay_jobs")
-    .set({ status: "done", done_at: new Date(), response: JSON.stringify({ status: r.status, body: r.body ?? null }) })
+    .set({ status: "done", done_at: new Date(), response: JSON.stringify({ status: r.status, body: r.body ?? null, ...(r.headers ? { headers: r.headers } : {}) }) })
     .where("id", "=", r.id)
     .where("channel_key", "=", key)
     .where("status", "=", "claimed")

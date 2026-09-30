@@ -44,16 +44,15 @@ import { defineModule } from "@cobblr/platform-contract";
 
 export default defineModule({
   name: "bricklink-connector",
-  version: "0.2.1",
+  version: "0.2.3",
   displayName: "BrickLink",
   description:
-    "Import BrickLink wanted-list XML + order CSVs; diff a wanted list against your Lego inventory. Built for the Lego workspace use case.",
+    "Bring in BrickLink wanted lists and orders, and see which pieces from a wanted list you already have.",
   icon: "package",
   band: "marketplace",
 
   api: () => import("./api/index.js"),
 
-  intents: [],
   dependencies: [],
 
   provides: {
@@ -61,11 +60,7 @@ export default defineModule({
   },
 
   exposes: {
-    events: [
-      "bricklink.wanted-list.parsed",
-      "bricklink.order.parsed",
-    ],
-    api: [],
+    events: [],
     actions: [
       {
         id: "bricklink:disassemble-kit",

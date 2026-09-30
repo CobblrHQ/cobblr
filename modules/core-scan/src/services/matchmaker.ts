@@ -522,7 +522,7 @@ export async function assembleScanMenu(
             // axis. A native-backed kind has no such key and nothing writes one
             // at draft time; that is step 3's to carry, and it is named in the
             // seam's doc rather than guessed at here.
-            ...(axis.slot.kind === "extras" ? { name: axis.slot.name } : {}),
+            ...(axis.slot.kind === "extras" ? { name: axis.slot.name } : axis.slot.kind === "field" ? { name: axis.slot.column } : {}),
           };
         }
         // The PACK-COUNT axis, declared — filled deterministically from the

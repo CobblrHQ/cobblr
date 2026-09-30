@@ -18,6 +18,7 @@
 // need wildcard DNS, wildcard tunnel ingress, host→tenant resolution that does
 // not exist, and per-host CORS — to buy cookie isolation that auth does not
 // use.
+import type { SandboxLifetime } from "@cobblr/platform-contract/sandbox-lifetime";
 import { randomBytes } from "node:crypto";
 import { sql } from "kysely";
 import { meta } from "../db/meta.js";
@@ -316,7 +317,9 @@ export const KEEP_GRACE_MS = 7 * 24 * 3600_000;
 
 export type KeepResult =
   | { ok: true; kind: "trial"; expiresAt: Date; emailed: boolean }
-  | { ok: false; reason: "not_sandbox" | "email_taken" };
+  | { ok: false; reason: "not_sandbox" }
+  /** The address already has an account here: the caller offers to join it. */
+  | { ok: false; reason: "email_taken"; accountUserId: string };
 
 /** What a person is called once they have given an email and nothing else:
  *  the part before the @, which is what most mail clients show anyway. */
@@ -349,7 +352,7 @@ export async function keepSandbox(
     .where("email", "=", email)
     .where("id", "!=", userId)
     .executeTakeFirst();
-  if (taken) return { ok: false, reason: "email_taken" };
+  if (taken) return { ok: false, reason: "email_taken", accountUserId: taken.id };
 
   // The configured length (TRY_SANDBOX_TRIAL_DAYS): the trial on the demo box
   // is short on purpose, and it is ours to set, not the visitor's.
@@ -526,4 +529,17 @@ export async function revokeSandboxLinksForUser(userId: string): Promise<number>
     .where("revoked_at", "is", null)
     .executeTakeFirst();
   return Number(res.numUpdatedRows ?? 0);
+}
+
+/** What is true of a sandbox's work right now, for every place that says it
+ *  (the ending page, the take email): open for its hour, held after it, kept
+ *  as a trial, or gone. @cobblr/platform-contract/sandbox-lifetime words it. */
+export async function sandboxLifetime(orgId: string, now: number = Date.now()): Promise<SandboxLifetime> {
+  const org = await meta.selectFrom("orgs").select(["sandbox", "trial_expires_at"]).where("id", "=", orgId).executeTakeFirst();
+  if (!org?.trial_expires_at) return { state: "gone", until: null };
+  const ends = org.trial_expires_at.getTime();
+  if (!org.sandbox) return ends > now ? { state: "kept", until: new Date(ends).toISOString() } : { state: "gone", until: null };
+  if (ends > now) return { state: "live", until: new Date(ends).toISOString() };
+  const held = ends + sandboxDecisionMs();
+  return held > now ? { state: "held", until: new Date(held).toISOString() } : { state: "gone", until: null };
 }

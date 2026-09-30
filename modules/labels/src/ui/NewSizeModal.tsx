@@ -9,6 +9,7 @@ import { Modal, useToast } from "@cobblr/platform-web";
 import { deriveGrid } from "../label-sizes";
 import type { CustomLabelSize } from "./api";
 import { useLabels } from "./context";
+import { articleFor } from "@cobblr/platform-contract/plural";
 
 /** Cap a dimension at 2 decimals for display (1.96, not 1.9685039370078740). */
 const round2 = (n: number) => Number(n.toFixed(2));
@@ -161,7 +162,7 @@ export function NewSizeModal({
             </>
           ) : (
             <div className="text-sm text-amber-700 dark:text-amber-400">
-              A {num(labelW)}×{num(labelH)} {u === "mm" ? "mm" : "in"} label does not fit a {num(mediaW)}×{num(mediaH)} {u === "mm" ? "mm" : "in"} media with those margins.
+              {articleFor(String(num(labelW))) === "an" ? "An" : "A"} {num(labelW)}×{num(labelH)} {u === "mm" ? "mm" : "in"} label does not fit {articleFor(String(num(mediaW)))} {num(mediaW)}×{num(mediaH)} {u === "mm" ? "mm" : "in"} media with those margins.
             </div>
           )}
         </div>

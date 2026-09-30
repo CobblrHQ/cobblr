@@ -67,7 +67,7 @@ export function ImportDialog({ onClose }: { onClose: (importedCount: number) => 
       open
       onClose={() => onClose(0)}
       title={`Import ${itemNounPlural.toLowerCase()} from CSV`}
-      subtitle="paste a CSV — common headers auto-detected; at minimum a name column"
+      subtitle="paste a CSV (common headers auto-detected; at minimum a name column)"
       size="lg"
     >
       <div className="space-y-4">

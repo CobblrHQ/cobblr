@@ -35,7 +35,8 @@ const SearchQuery = z.object({
 });
 
 interface TenantReq {
-  tenant: { org: { id: string } };
+  tenant: { org: { id: string }; role?: string };
+  session?: { id: string };
 }
 
 router.get("/search", (req, res, next) => {
@@ -48,6 +49,9 @@ router.get("/search", (req, res, next) => {
       return;
     }
     const orgId = (req as unknown as TenantReq).tenant.org.id;
+    // The reader, so a field they may not read is neither shown nor matched.
+    const tr = req as unknown as TenantReq;
+    const viewer = { userId: tr.session?.id, role: tr.tenant.role };
     const { q, per_kind, tag, offset } = parsed.data;
     if (!q && !tag) {
       res.status(400).json({
@@ -90,7 +94,7 @@ router.get("/search", (req, res, next) => {
           offset,
           filter: tag ? { _tag: tag } : undefined,
           include_retired: true,
-        });
+        }, viewer);
         return { items: result.items.map((item) => ({ ...item, kind })), failed: result.failed === true };
       }),
     );

@@ -2,6 +2,8 @@
 // A 'status' transition to 'arrived' emits purchases.order.arrived
 // so downstream wires (e.g. bump inventory stock) can react.
 
+import { arrivedEverywhere } from "@cobblr/platform-contract";
+import { receiveIfArrived, receiveOrderLines } from "../receive.js";
 import { Router } from "express";
 import { sql } from "kysely";
 import { z } from "zod";
@@ -10,6 +12,7 @@ import { instanceOf, sessionUser, tenantContext, tenantDb } from "../db.js";
 import { asyncHandler, badBody, requireRole } from "./util.js";
 import { routeUnknownToMetadata, refuseUnknownFields, withMetadataMerged } from "@cobblr/platform-contract/entity-metadata";
 import { claimLine, stampLine } from "./line-subject.js";
+import { editOrderLine } from "../line-edit.js";
 
 export const ordersRouter = Router({ mergeParams: true });
 
@@ -39,6 +42,9 @@ const OrderCreate = z.object({
   tracking_number: z.string().max(160).nullable().optional(),
   notes: z.string().max(8_000).nullable().optional(),
   metadata: z.record(z.unknown()).optional(),
+  /** Whether the lines add their stock when the order arrives. Default on;
+   *  off for a past purchase being logged, and what an importer sends. */
+  add_to_stock: z.boolean().optional(),
   // Normally the arrival sweep's to write. Accepted here so a caller that has
   // ALREADY been following this parcel can hand the watch over rather than
   // restart it — core-scan files a receipt it tracked in the inbox, and without
@@ -70,6 +76,9 @@ const ItemCreate = z.object({
   consumed_by_entity_id: z.string().uuid().nullable().optional(),
   received_at: z.string().nullable().optional(),
   metadata: z.record(z.unknown()).optional(),
+  /** On an order that already arrived: whether this line adds its stock.
+   *  Defaults to the order's add_to_stock. Never stored on the line. */
+  add_to_stock: z.boolean().optional(),
 });
 
 // D6: top-level keys the schemas know about. Anything else the caller
@@ -132,6 +141,7 @@ ordersRouter.get(
     const items = await q
       .orderBy("o.ordered_at", "desc")
       .orderBy("o.created_at", "desc")
+      // list-cap-ok: not paged yet, #4134
       .limit(500)
       .execute();
     res.json({ items });
@@ -278,34 +288,11 @@ ordersRouter.patch(
           orgId: ctx.org.id,
           orderId: id,
         });
-        // Fan one event per order_item that's mapped to an
-        // inventory part. Lets a wire bind purchases.order_item
-        // .received → inventory.adjust-stock for auto-bump-on-
-        // arrival without needing the wire engine to iterate
-        // collections itself (D9 from BACKLOG).
-        const items = await db
-          .selectFrom("purchases_order_items")
-          .select(["id", "part_id", "qty", "unit_cost", "description"])
-          .where("order_id", "=", id)
-          .where("part_id", "is not", null)
-          .execute();
-        for (const it of items) {
-          if (!it.part_id) continue;
-          const qty = Number(it.qty);
-          const unitCost = it.unit_cost == null ? null : Number(it.unit_cost);
-          await platform().events.emit("purchases.order_item.received", {
-            orgId: ctx.org.id,
-            orderId: id,
-            orderItemId: it.id,
-            partId: it.part_id,
-            delta: qty,
-            // Cost fields let a bundle wire log spend into a metric (e.g. a
-            // "Grocery spend" trend) without coupling purchases to anything.
-            unitCost,
-            lineCost: unitCost == null ? null : Number((unitCost * qty).toFixed(2)),
-            reason: `Order arrived (${it.description ?? "item"})`,
-          });
-        }
+        // The lines not yet received are received now: stamped once, then
+        // told to the stock and spend wires (receive.ts, the one door).
+        const at = updated.arrived_at as Date | string | null;
+        const on = at instanceof Date ? at.toISOString().slice(0, 10) : at ? String(at).slice(0, 10) : arrivedEverywhere(new Date());
+        await receiveOrderLines(db, ctx.org.id, id, on);
       }
     }
     res.json(updated);
@@ -359,7 +346,7 @@ ordersRouter.post(
     const db = tenantDb(req);
     const ctx = tenantContext(req);
     const session = sessionUser(req);
-    const { subject_kind, subject_id, ...lineFields } = parsed.data;
+    const { subject_kind, subject_id, add_to_stock, ...lineFields } = parsed.data;
     let inserted = await db
       .insertInto("purchases_order_items")
       .values({
@@ -374,6 +361,8 @@ ordersRouter.post(
     if (subject) {
       inserted = ((await claimLine({ db, orgId: ctx.org.id, userId: session.id, orderId, itemId: inserted.id, subject })) ?? inserted) as typeof inserted;
     }
+    // Added to an order that already arrived: it arrived with it.
+    await receiveIfArrived(db, ctx.org.id, orderId, add_to_stock);
     await platform().activity.log({
       orgId: ctx.org.id,
       userId: session.id,
@@ -408,6 +397,16 @@ ordersRouter.get(
   }),
 );
 
+/** A line's own figures, as a person corrects them on the order. */
+const ItemEdit = z
+  .object({
+    description: z.string().max(500).nullable().optional(),
+    qty: z.number().positive().optional(),
+    unit_cost: z.number().min(0).nullable().optional(),
+  })
+  .strict();
+const CLAIM_KEYS = new Set(["part_id", "subject_kind", "subject_id"]);
+
 const ItemClaim = z.union([
   z.object({ part_id: z.string().uuid().nullable() }),
   z.object({ subject_kind: z.string().min(1).max(80), subject_id: z.string().min(1).max(120) }),
@@ -437,11 +436,30 @@ ordersRouter.patch(
       res.status(400).json({ error: { code: "missing_id", message: "order id and item id required" } });
       return;
     }
-    const parsed = ItemClaim.safeParse(req.body);
-    if (!parsed.success) return badBody(res, parsed.error);
+    // Two things this edit may carry: the line's own figures (what it is, how
+    // many, the price), and what it bought (the claim). Either or both; a
+    // figure-only edit never touches the link.
+    const body = (req.body ?? {}) as Record<string, unknown>;
+    const claimBody = Object.fromEntries(Object.entries(body).filter(([k]) => CLAIM_KEYS.has(k)));
+    const edit = ItemEdit.safeParse(Object.fromEntries(Object.entries(body).filter(([k]) => !CLAIM_KEYS.has(k))));
+    if (!edit.success) return badBody(res, edit.error);
     const db = tenantDb(req);
     const ctx = tenantContext(req);
     const session = sessionUser(req);
+    if (Object.keys(edit.data).length > 0) {
+      const r = await editOrderLine(db, { orgId: ctx.org.id, userId: session.id }, itemId, edit.data, orderId);
+      if (!r.ok) {
+        res.status(r.code === "not_found" ? 404 : 409).json({ error: { code: r.code, message: r.message } });
+        return;
+      }
+      const edited = r.line;
+      if (Object.keys(claimBody).length === 0) {
+        res.json(edited);
+        return;
+      }
+    }
+    const parsed = ItemClaim.safeParse(claimBody);
+    if (!parsed.success) return badBody(res, parsed.error);
     // Any record, not only a part: a printer bought on a marketplace is a
     // machine. `part_id` alone still means a part.
     const d = parsed.data as { part_id?: string | null; subject_kind?: string | null; subject_id?: string | null };
@@ -467,8 +485,11 @@ ordersRouter.patch(
 // order is left with a row pointing at a now-deleted part (part_id has no FK
 // cascade). Returns whether the order still has any items left, so the caller
 // can drop a now-empty order in the same flow.
-// AI-REACH: exempt — internal reconciliation surface for scan-undo, not a user
-// or Cobb action (a person edits an order via the order UI, not this endpoint).
+// Also the order's own Remove on a line. A line already received leaves its
+// stock where it is: the order is a record of the purchase, the item's count
+// is the shelf.
+// AI-REACH: exempt — Cobb removes a line through purchases:remove-line; this
+// route is the order page's and scan-undo's.
 ordersRouter.delete(
   "/:id/items/:itemId",
   asyncHandler(async (req, res) => {

@@ -76,21 +76,47 @@ export interface EnqueueParams {
   runAt?: Date;
   /** Retry budget. Default 3. */
   maxAttempts?: number;
+  /** What this job is. While a job with the same key on the same queue is
+   *  still queued or running, enqueueing again returns that job instead of
+   *  adding a second. */
+  idempotencyKey?: string;
 }
 
 export async function enqueue(p: EnqueueParams): Promise<string> {
+  const values = {
+    org_id: p.orgId,
+    queue: p.queue,
+    payload: p.payload ?? {},
+    run_at: (p.runAt ?? new Date()) as never,
+    max_attempts: p.maxAttempts ?? 3,
+    ...(p.idempotencyKey ? { idempotency_key: p.idempotencyKey } : {}),
+  };
+  if (!p.idempotencyKey) {
+    const row = await meta.insertInto("core_queue_jobs").values(values as never).returning("id").executeTakeFirstOrThrow();
+    return row.id;
+  }
   const row = await meta
     .insertInto("core_queue_jobs")
-    .values({
-      org_id: p.orgId,
-      queue: p.queue,
-      payload: p.payload ?? {},
-      run_at: (p.runAt ?? new Date()) as never,
-      max_attempts: p.maxAttempts ?? 3,
-    } as never)
+    .values(values as never)
+    .onConflict((oc) =>
+      oc
+        .columns(["org_id", "queue", "idempotency_key"])
+        .where(sql<boolean>`idempotency_key is not null and status in ('queued', 'running')`)
+        .doNothing(),
+    )
     .returning("id")
-    .executeTakeFirstOrThrow();
-  return row.id;
+    .executeTakeFirst();
+  if (row) return row.id;
+  const existing = await meta
+    .selectFrom("core_queue_jobs")
+    .select("id")
+    .where("org_id", "=", p.orgId)
+    .where("queue", "=", p.queue)
+    .where("idempotency_key", "=", p.idempotencyKey)
+    .where("status", "in", ["queued", "running"])
+    .executeTakeFirst();
+  // The one it collided with finished between the two statements: enqueue anew.
+  return existing?.id ?? enqueue(p);
 }
 
 export function registerWorker(queue: string, handler: QueueHandler): void {

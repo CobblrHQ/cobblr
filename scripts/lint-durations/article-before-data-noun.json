@@ -1,0 +1,10 @@
+{
+  "lint": "lint:article-before-data-noun",
+  "run": "node scripts/lint-article-before-data-noun.ts",
+  "rows": [
+    "generic-web-component"
+  ],
+  "ms": 718,
+  "recorded": "2026-09-30",
+  "source": "scaffolded by new-lint.sh at twice a local run (a shared box); replaced from its first CI measurement"
+}

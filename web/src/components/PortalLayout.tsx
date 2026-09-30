@@ -15,9 +15,12 @@
 // See docs/modules/member-portal-and-permissions.md +
 // worker-navigation-and-identity.md.
 
+import { MAIN_ID, RouteAnnouncer, SkipToContent } from "./a11y/shell-landmarks";
 import { Link, Outlet, useNavigate, useParams } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
-import { LogOut, Moon, Settings, Sun } from "lucide-react";
+import { DoorOpen, LogOut, Moon, Settings, Sun } from "lucide-react";
+import { useState } from "react";
+import { LeaveWorkspaceModal } from "./LeaveWorkspaceModal";
 import { api, type AppTheme, type PortalConfig } from "../lib/api";
 import { shellForRole } from "@cobblr/platform-contract/org-roles";
 import { useAuth } from "../auth/AuthContext";
@@ -27,6 +30,7 @@ import { fontFaceCss, mutedStyle, textStyle, themeWrapperStyle } from "../lib/ap
 export function PortalLayout() {
   const { slug } = useParams<{ slug: string }>();
   const { user, logout } = useAuth();
+  const [leaving, setLeaving] = useState(false);
   const { theme, toggle } = useTheme();
   const navigate = useNavigate();
 
@@ -81,6 +85,8 @@ export function PortalLayout() {
       className="min-h-screen grid grid-rows-[auto_1fr] grid-cols-1"
       style={themeWrapperStyle(skin)}
     >
+      <SkipToContent />
+      <RouteAnnouncer />
       {fontFace && <style dangerouslySetInnerHTML={{ __html: fontFace }} />}
       <header
         className="border-b border-line dark:border-slate-700 bg-surface dark:bg-slate-900/80 backdrop-blur"
@@ -138,6 +144,20 @@ export function PortalLayout() {
                 {theme === "dark" ? <Sun size={14} /> : <Moon size={14} />}
               </button>
             )}
+            {/* A guest lands here and nowhere else, so leaving has to be here:
+                the switcher that offers it in the workspace is not. The api
+                refuses the last owner in words. */}
+            {slug && (
+              <button
+                onClick={() => setLeaving(true)}
+                className="text-faint dark:text-slate-500 hover:text-ember-500 transition p-1.5"
+                style={mutedStyle(skin)}
+                title={`Leave ${headerName}`}
+                aria-label={`Leave ${headerName}`}
+              >
+                <DoorOpen size={14} />
+              </button>
+            )}
             <button
               onClick={logout}
               className="text-faint dark:text-slate-500 hover:text-ember-500 transition p-1.5"
@@ -150,7 +170,12 @@ export function PortalLayout() {
         </div>
       </header>
 
-      <main className="min-w-0">
+      <LeaveWorkspaceModal
+        workspace={leaving && slug ? { slug, name: config.data?.org_name ?? headerName } : null}
+        isActive
+        onClose={() => setLeaving(false)}
+      />
+      <main id={MAIN_ID} tabIndex={-1} className="focus:outline-none min-w-0">
         <div className="max-w-5xl mx-auto w-full px-5 py-6">
           <Outlet context={{ portalConfig, activeSlug: slug ?? null, skin }} />
         </div>

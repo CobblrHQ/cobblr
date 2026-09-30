@@ -51,6 +51,7 @@ const CURATED: FeatureHit[] = [
   { label: "Draw a room", hint: "name it, size it, it is drawn", route: "/locations?view=plan&new=room", keywords: "draw room new room floor plan map layout garage add room" },
   { label: "Place things on the floor plan", hint: "drag each thing to where it lives", route: "/locations/place", keywords: "place items put away file drag floor plan where things live unplaced homes" },
   { label: "Labels & printing", hint: "QR labels, templates, print queue", route: "/labels", keywords: "labels qr print sticker template queue" },
+  { label: "Makes", hint: "every print, prompt to outcome", route: "/makes", keywords: "makes make print history prompt design model stl step slice gcode slicer settings reprint again traceability fabrication" },
 ];
 
 /** A short right-hand hint from a registry destination's full description:

@@ -55,7 +55,7 @@ export function explainPairingFailure(e: unknown): PairingFailure {
       remedy: "bridge",
       message:
         "Your browser could not open this printer's serial port. On macOS that fails for every " +
-        "Bluetooth Classic device — it is a known browser bug, not something wrong with your " +
+        "Bluetooth Classic device. It is a known browser bug, not something wrong with your " +
         "printer or your setup. An edge bridge talks to it directly and does work.",
     };
   }
@@ -74,7 +74,7 @@ export function explainPairingFailure(e: unknown): PairingFailure {
       remedy: "serial",
       message:
         "Paired, but the printer exposed nothing to print to. That usually means it is a Bluetooth " +
-        "Classic printer — connect it as a serial port instead.",
+        "Classic printer. Connect it as a serial port instead.",
     };
   }
 

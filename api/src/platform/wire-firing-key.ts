@@ -24,8 +24,8 @@ export interface FiringShape {
  *
  *  FROZEN. The key it builds is stored, so any change here, even a better
  *  canonical form, gives every past firing a new key and fires it again. The
- *  copies in twin-wires-rule.ts and lint-bundle-content.ts are not stored and
- *  may change freely; do not "share" this one with them. */
+ *  copy in lint-bundle-content.ts is not stored and may change freely; do not
+ *  "share" this one with it. */
 function canonical(v: unknown): unknown {
   if (Array.isArray(v)) return v.map(canonical);
   if (v && typeof v === "object") {

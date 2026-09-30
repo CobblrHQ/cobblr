@@ -271,7 +271,7 @@ function FieldRow({ def }: { def: InvFieldDef }) {
               // DRAFT-OK: a field definition's setting on the settings page, not a record's value; no action moves it.
               defaultValue={def.choices?.[0] ?? ""}
               placeholder="No"
-              aria-label={`${def.display_label} — label when off`}
+              aria-label={`${def.display_label}: label when off`}
               onBlur={(e) => save.mutate([e.target.value.trim() || "No", (def.choices?.[1] ?? "").trim() || "Yes"])}
               className="input text-sm w-28"
             />
@@ -280,7 +280,7 @@ function FieldRow({ def }: { def: InvFieldDef }) {
               // DRAFT-OK: a field definition's setting on the settings page, not a record's value; no action moves it.
               defaultValue={def.choices?.[1] ?? ""}
               placeholder="Yes"
-              aria-label={`${def.display_label} — label when on`}
+              aria-label={`${def.display_label}: label when on`}
               onBlur={(e) => save.mutate([(def.choices?.[0] ?? "").trim() || "No", e.target.value.trim() || "Yes"])}
               className="input text-sm w-28"
             />

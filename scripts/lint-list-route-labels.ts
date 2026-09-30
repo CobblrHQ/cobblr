@@ -44,7 +44,6 @@ const MODULES = join(ROOT, "modules");
  *  grow it. Each entry is a module whose list route still shows raw ids for a
  *  relation/member field the workspace has added to that kind. */
 const BASELINE = new Set<string>([
-  "assets",
   "machines",
   "projects",
   "purchases",
@@ -54,7 +53,6 @@ const BASELINE = new Set<string>([
   "builds",
   "knowledge",
   "lists",
-  "digifab",
   "core-locations",
   "core-catalogs",
 ]);
@@ -64,7 +62,6 @@ const BASELINE = new Set<string>([
  *  list and the generic door read the person's format. Shrink this; never
  *  grow it. */
 const DETAIL_BASELINE = new Set<string>([
-  "assets",
   "machines",
   "projects",
   "purchases",

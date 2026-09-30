@@ -37,6 +37,8 @@ import { listInstances } from "./instances.js";
 import { provisionInstance } from "./instances.js";
 import { setWireEnabled } from "./wires.js";
 import { decideApprovalRequest } from "./approvals.js";
+import { confirmHeldChange, keepHeldChange } from "./ai-held-changes.js";
+import { confirmServiceJob } from "./service-confirm.js";
 
 /** A storage name from a label: "Purchase Date" → purchase_date. The def
  *  schema requires a leading letter, so a label like "3D printer count" gets a
@@ -1380,6 +1382,37 @@ export function registerPlatformActionHandlers(): void {
     const d = (result as { data?: { id?: unknown; enabled?: unknown; before?: unknown } } | null)?.data;
     if (typeof d?.id !== "string" || typeof d.enabled !== "boolean" || typeof d.before !== "boolean" || d.before === d.enabled) return null;
     return { action_id: "platform:set-wire-enabled", args: { wire_id: d.id, enabled: d.before } };
+  });
+
+  // ── An assistant's held delete: the two buttons on its person's card ──
+  registerHandler("platform.confirm-held-change", async (ctx: ActionInvokeContext) => {
+    const changeId = str((ctx.args ?? {}).change_id);
+    if (!changeId) return { ok: false, error: "change_id is required" };
+    if (!ctx.userId) return { ok: false, error: "a person has to press this" };
+    const r = await confirmHeldChange(changeId, ctx.userId);
+    return r.ok ? { ok: true, summary: r.message } : { ok: false, error: r.message };
+  });
+  registerHandler("platform.keep-held-change", async (ctx: ActionInvokeContext) => {
+    const changeId = str((ctx.args ?? {}).change_id);
+    if (!changeId) return { ok: false, error: "change_id is required" };
+    if (!ctx.userId) return { ok: false, error: "a person has to press this" };
+    const r = await keepHeldChange(changeId, ctx.userId);
+    return r.ok ? { ok: true, summary: r.message } : { ok: false, error: r.message };
+  });
+
+  // ── Services: the yes on a waiting job's card (service-confirm.ts) ──
+  // The same function the job card's route calls, so who may say yes and
+  // what the yes is bound to cannot drift between the doors.
+  registerHandler("platform.confirm-service-job", async (ctx: ActionInvokeContext) => {
+    const jobId = str((ctx.args ?? {}).job_id);
+    if (!jobId) return { ok: false, error: "job_id is required" };
+    if (!ctx.userId) return { ok: false, error: "a person has to press this" };
+    try {
+      await confirmServiceJob(ctx.orgId, jobId, ctx.userId);
+      return { ok: true, message: "Started." };
+    } catch (err) {
+      return { ok: false, error: (err as Error).message };
+    }
   });
 
   // ── Approvals: the two buttons on an approver's card (approvals.ts) ──

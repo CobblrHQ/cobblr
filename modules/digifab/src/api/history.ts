@@ -86,6 +86,7 @@ historyRouter.get(
       .where("updated_at", ">", since)
       .select(["id", "file_ref", "connection_id", "target_device", "status", "material_grams", "created_at", "updated_at"])
       .orderBy("updated_at", "desc")
+      // list-cap-ok: the latest 50 finished jobs are the feed; the rollups beside it count every job
       .limit(50)
       .execute();
 

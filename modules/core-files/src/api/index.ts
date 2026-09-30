@@ -12,10 +12,13 @@ import { foldersRouter } from "./folders.js";
 import { importZipRouter } from "./import-zip.js";
 import { registerFileResolvers } from "./resolvers.js";
 import { registerAttachmentsOfFile } from "./attachments-of-file.js";
+import { registerFolders } from "./folders-seam.js";
 
 registerFileResolvers();
 
 registerAttachmentsOfFile();
+
+registerFolders();
 
 const router = Router({ mergeParams: true });
 

@@ -135,7 +135,7 @@ export function SurfacesPage() {
                 onClick={async () => {
                   const ok = await confirm({
                     title: "Revoke this surface?",
-                    message: `${s.name} — the public URL will 404 immediately.`,
+                    message: `${s.name}: the public URL will 404 immediately.`,
                     confirmLabel: "Revoke",
                     destructive: true,
                   });
@@ -272,7 +272,7 @@ function EditSurfaceModal({
   });
 
   return (
-    <Modal open onClose={onClose} title={`Edit — ${surface.name}`}>
+    <Modal open onClose={onClose} title={`Edit ${surface.name}`}>
       <form
         onSubmit={(e) => {
           e.preventDefault();
@@ -450,7 +450,7 @@ function SurfaceStatsModal({
   });
   const s = stats.data;
   return (
-    <Modal open onClose={onClose} title={`Stats — ${surface.name}`} size="lg">
+    <Modal open onClose={onClose} title={`Stats for ${surface.name}`} size="lg">
       {stats.isLoading && (
         <div className="text-sm text-muted">Loading…</div>
       )}

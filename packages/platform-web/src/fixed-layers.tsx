@@ -19,6 +19,7 @@
 import { forwardRef, useCallback, useLayoutEffect, useRef, type CSSProperties, type ForwardedRef, type HTMLAttributes, type ReactNode } from "react";
 import { OverlayFlag } from "./overlay-open";
 import { useLayerStack } from "./layer-stack";
+import { useDialogFocus } from "./useDialogFocus";
 
 /** This layer's own ref, forwarded to the caller's too. */
 function useOwnRef(ref: ForwardedRef<HTMLDivElement>) {
@@ -47,10 +48,13 @@ export interface PopoverLayerProps extends LayerProps {
 }
 
 /** A surface that covers the page. Raises the overlay flag while mounted, and
- *  opens above any layer already open (layer-stack). */
+ *  opens above any layer already open (layer-stack). Declared `aria-modal`, it
+ *  is a dialog and holds the keyboard while it is up (useDialogFocus). */
 export const OverlayLayer = forwardRef<HTMLDivElement, LayerProps>(function OverlayLayer({ className = "", children, ...rest }, ref) {
   const [own, setRef] = useOwnRef(ref);
   useLayerStack(own);
+  const modal = rest["aria-modal"] === true || rest["aria-modal"] === "true";
+  useDialogFocus(modal, own);
   return (
     <div ref={setRef} className={"fc-overlay " + className} {...rest}>
       <OverlayFlag />

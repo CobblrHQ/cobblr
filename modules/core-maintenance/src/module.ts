@@ -13,11 +13,11 @@ import { defineModule } from "@cobblr/platform-contract";
 
 export default defineModule({
   name: "core-maintenance",
-  version: "0.2.1",
+  version: "0.2.5",
   displayName: "Maintenance",
   description:
-    "Service history + scheduled maintenance for any entity. Oil changes, firmware flashes, warranty renewals: log what's done, get pinged when something's due.",
-  icon: "wrench-screwdriver",
+    "Remember when things need servicing: log what was done and get a reminder when the next one is due.",
+  icon: "calendar-check",
   // Capability, not foundational: the platform runs fine without it (nothing
   // depends on it — it just surfaces an opt-in Maintenance panel on entities).
   // `autoEnable` keeps it on for every workspace as before, but `stock` means a
@@ -40,7 +40,6 @@ export default defineModule({
 
   api: () => import("./api/index.js"),
 
-  intents: [],
   dependencies: [],
 
   // AI-REACH: no kinds by design (entries hang off the entity they service
@@ -67,7 +66,6 @@ export default defineModule({
       // (removed core-maintenance.entry.overdue — declared but never emitted;
       //  the sweeper only emits due-soon. Audit 2026-06-26 follow-up.)
     ],
-    api: ["sweep"],
     actions: [
       {
         id: "core-maintenance:log",
@@ -127,7 +125,7 @@ export default defineModule({
           },
           counter_every: { label: "Or by use: every", type: "number", oneOf: "interval", with: "counter_field" },
           counter_field: { label: "Of what", type: "text", with: "counter_every", choicesFrom: "counters" },
-          last_done_at: { label: "When it was last done (a date, optional)", type: "text" },
+          last_done_at: { label: "When it was last done", type: "date", ask: true },
         },
       },
       {
@@ -176,6 +174,7 @@ export default defineModule({
         },
       },
       {
+        // UI-SCREEN: /maintenance
         id: "core-maintenance:complete",
         examples: ["that service is done"],
         undoable: true,

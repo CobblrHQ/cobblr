@@ -29,7 +29,7 @@ const CatalogCreate = z.object({
   schema: SchemaConfig.optional(),
 });
 
-const CatalogUpdate = CatalogCreate.partial();
+const CatalogUpdate = CatalogCreate.partial().extend({ metadata: z.record(z.unknown()).optional() });
 
 const ListQuery = z.object({
   q: z.string().optional(),
@@ -365,6 +365,9 @@ catalogsRouter.patch(
       patch.puller_id = parsed.data.puller_id;
     if (parsed.data.schema !== undefined)
       patch.schema = sql`${JSON.stringify(parsed.data.schema)}::jsonb`;
+    // A custom field saved on its own merges into what the catalog holds.
+    if (parsed.data.metadata !== undefined)
+      patch.metadata = platform().db.mergeJsonb("metadata", parsed.data.metadata);
     const updated = await db
       .updateTable("core_catalogs_catalogs")
       .set(patch as never)

@@ -4,18 +4,59 @@
 // parts from stock. Customers are managed from a header button. Modals for
 // detail/create; toasts for feedback; destructive deletes confirm.
 
-import { useState } from "react";
-import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { ContributedDetailPanels, Modal, useToast, useConfirm, usePageTitle, SearchInput } from "@cobblr/platform-web";
-import { ShoppingCart, Plus, Trash2, X, Users, PackageCheck } from "lucide-react";
+import { useEffect, useState } from "react";
+import { useQuery, useInfiniteQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import { CollectionHeader, ContributedDetailPanels, useRecordInPath, CustomFieldsPanel, Modal, headerButton, useFieldDraft, useToast, useConfirm, usePageTitle, SearchInput } from "@cobblr/platform-web";
+import { ShoppingCart, Plus, Trash2, X, Users, PackageCheck, Truck, Copy, ExternalLink, Hammer } from "lucide-react";
 import {
   SalesApi, SalesApiError,
-  type SalesOrder, type SalesOrderStatus, type CustomerSummary, type PartOption,
+  type SalesOrder, type SalesOrderStatus, type CustomerSummary, type PartOption, type FulfilDoor, type HistoryRow, type OrderSort, type Paged,
 } from "./api.js";
+import { Link } from "react-router-dom";
 
 export const navItems = [{ label: "Sales", path: "/sales", icon: ShoppingCart }];
 
 const STATUSES: SalesOrderStatus[] = ["draft", "confirmed", "fulfilled", "shipped", "closed", "cancelled"];
+const SORTS: Array<[OrderSort, string]> = [["newest", "Newest first"], ["oldest", "Oldest first"], ["customer", "Customer A to Z"], ["number", "Order number"]];
+const PAGE = 50;
+
+/** The value, once it has stopped changing for a moment: a search box asks
+ *  the server once per pause, not once per key. */
+function useSettled<T>(value: T, ms = 250): T {
+  // DRAFT-OK: not a record's value; the effect below follows every change
+  const [settled, setSettled] = useState(value);
+  useEffect(() => {
+    const t = setTimeout(() => setSettled(value), ms);
+    return () => clearTimeout(t);
+  }, [value, ms]);
+  return settled;
+}
+
+/** Pages of a list route, fetched as the person asks for more, with the
+ *  server's count of the whole. */
+function usePagedList<T>(key: unknown[], fetchPage: (offset: number) => Promise<Paged<T>>) {
+  const q = useInfiniteQuery({
+    queryKey: key,
+    initialPageParam: 0,
+    queryFn: ({ pageParam }) => fetchPage(pageParam),
+    getNextPageParam: (last, all) => (last.complete ? undefined : all.reduce((n, p) => n + p.items.length, 0)),
+  });
+  const items = q.data?.pages.flatMap((p) => p.items) ?? [];
+  const total = q.data?.pages[0]?.total ?? items.length;
+  return { ...q, items, total };
+}
+
+function ShowMore({ shown, total, more, loading, noun }: { shown: number; total: number; more: () => void; loading: boolean; noun: string }) {
+  if (shown >= total) return null;
+  return (
+    <div className="flex items-center justify-center gap-3 pt-1 text-xs text-muted">
+      <span>{shown} of {total} {noun}</span>
+      <button type="button" onClick={more} disabled={loading} className="px-3 py-1.5 rounded border border-line dark:border-slate-600 hover:border-cobble-400 disabled:opacity-50">
+        {loading ? "Loading…" : "Show more"}
+      </button>
+    </div>
+  );
+}
 
 interface Props {
   orgSlug: string;
@@ -28,11 +69,24 @@ export function SalesUI({ orgSlug, getToken }: Props) {
   const qc = useQueryClient();
   const toast = useToast();
   const confirm = useConfirm();
-  const [open, setOpen] = useState<string | null>(null);
+  // An order's address (/sales/<id>) opens it, and a customer's
+  // (/sales/customers/<id>) opens the customers list at that customer.
+  const [open, setOpen] = useRecordInPath("sales", { reserved: ["customers"] });
+  const [customerInPath, setCustomerInPath] = useRecordInPath("sales", { sub: "customers" });
   const [creating, setCreating] = useState(false);
-  const [customersOpen, setCustomersOpen] = useState(false);
+  const [customersList, setCustomersList] = useState(false);
+  const customersOpen = customersList || !!customerInPath;
+  const setCustomersOpen = (v: boolean) => {
+    setCustomersList(v);
+    if (!v && customerInPath) setCustomerInPath(null);
+  };
 
-  const orders = useQuery({ queryKey: ["sales-orders", orgSlug], queryFn: () => api.listOrders() });
+  const [search, setSearch] = useState("");
+  const [status, setStatus] = useState<SalesOrderStatus | "">("");
+  const [sort, setSort] = useState<OrderSort>("newest");
+  const q = useSettled(search.trim());
+  const orders = usePagedList(["sales-orders", orgSlug, q, status, sort], (offset) => api.listOrders({ q, status, sort, offset, limit: PAGE }));
+  const narrowed = Boolean(q || status);
 
   const del = useMutation({
     mutationFn: (id: string) => api.deleteOrder(id),
@@ -42,25 +96,45 @@ export function SalesUI({ orgSlug, getToken }: Props) {
 
   return (
     <div className="space-y-4 max-w-4xl">
-      <div className="flex items-baseline justify-between border-b border-line dark:border-slate-700 pb-3">
-        <h1 className="font-display text-2xl font-extrabold text-content dark:text-mortar-100 page-title">sales</h1>
-        <div className="flex items-center gap-2">
-          <button type="button" onClick={() => setCustomersOpen(true)} className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs rounded border border-line dark:border-slate-600 hover:bg-subtle dark:hover:bg-slate-800 text-content dark:text-mortar-100">
-            <Users size={14} /> Customers
-          </button>
-          <button type="button" onClick={() => setCreating(true)} className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs rounded bg-cobble-600 text-white hover:bg-cobble-700">
-            <Plus size={14} /> New order
-          </button>
-        </div>
-      </div>
+      <CollectionHeader
+        title="sales"
+        kind="sales:order"
+        count={orders.data ? `${orders.items.length} of ${orders.total}` : undefined}
+        search={<SearchInput value={search} onChange={setSearch} placeholder="search…" aria-label="Search orders" wrapperClassName="w-48 max-sm:w-full max-sm:flex-1" />}
+        filters={
+          <>
+            <select value={status} onChange={(e) => setStatus(e.target.value as SalesOrderStatus | "")} aria-label="Status" className="rounded border border-line dark:border-slate-600 bg-surface dark:bg-slate-900 px-2 py-1 text-xs">
+              <option value="">Any status</option>
+              {STATUSES.map((st) => <option key={st} value={st}>{st}</option>)}
+            </select>
+            <select value={sort} onChange={(e) => setSort(e.target.value as OrderSort)} aria-label="Sort" className="rounded border border-line dark:border-slate-600 bg-surface dark:bg-slate-900 px-2 py-1 text-xs">
+              {SORTS.map(([v, label]) => <option key={v} value={v}>{label}</option>)}
+            </select>
+          </>
+        }
+        actions={
+          <>
+            <button type="button" onClick={() => setCustomersOpen(true)} className={headerButton()}>
+              <Users size={14} /> Customers
+            </button>
+            <button type="button" onClick={() => setCreating(true)} className={headerButton("primary")}>
+              <Plus size={14} /> New order
+            </button>
+          </>
+        }
+      />
 
       {orders.isLoading && <div className="text-sm text-muted">Loading…</div>}
-      {orders.data?.items.length === 0 && (
+      {orders.isError && <div className="text-sm text-red-600 dark:text-red-400">The orders could not be loaded: {orders.error instanceof Error ? orders.error.message : String(orders.error)}</div>}
+      {orders.data && orders.items.length === 0 && !narrowed && (
         <div className="text-sm text-muted italic">No sales orders yet. Create one - add what you sold, then Fulfill to draw it down from stock.</div>
+      )}
+      {orders.data && orders.items.length === 0 && narrowed && (
+        <div className="text-sm text-muted italic">No orders match{q ? ` "${q}"` : ""}{status ? ` with status ${status}` : ""}.</div>
       )}
 
       <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
-        {orders.data?.items.map((o) => (
+        {orders.items.map((o) => (
           <OrderCard
             key={o.id}
             order={o}
@@ -73,10 +147,11 @@ export function SalesUI({ orgSlug, getToken }: Props) {
           />
         ))}
       </div>
+      <ShowMore shown={orders.items.length} total={orders.total} more={() => void orders.fetchNextPage()} loading={orders.isFetchingNextPage} noun="orders" />
 
       {creating && <NewOrderModal api={api} orgSlug={orgSlug} onClose={() => setCreating(false)} onCreated={(id) => { setCreating(false); setOpen(id); }} />}
       {open && <OrderDetailModal api={api} orgSlug={orgSlug} orderId={open} onClose={() => setOpen(null)} />}
-      {customersOpen && <CustomersModal api={api} onClose={() => setCustomersOpen(false)} />}
+      {customersOpen && <CustomersModal api={api} initialEditing={customerInPath} onClose={() => setCustomersOpen(false)} />}
     </div>
   );
 }
@@ -150,6 +225,7 @@ function OrderDetailModal({ api, orgSlug, orderId, onClose }: { api: SalesApi; o
   const invalidate = () => {
     void qc.invalidateQueries({ queryKey: ["sales-order", orderId] });
     void qc.invalidateQueries({ queryKey: ["sales-orders", orgSlug] });
+    void qc.invalidateQueries({ queryKey: ["sales-order-history", orderId] });
   };
   const update = useMutation({
     mutationFn: (patch: Partial<SalesOrder>) => api.updateOrder(orderId, patch),
@@ -166,17 +242,47 @@ function OrderDetailModal({ api, orgSlug, orderId, onClose }: { api: SalesApi; o
     onSuccess: invalidate,
     onError: (e) => toast.error(e instanceof SalesApiError ? e.message : String(e)),
   });
+  // A short order is refused with a sentence and its doors (make more, ship
+  // what you have). They stay on the order, where the decision is made,
+  // rather than in a toast that leaves with them.
+  const [short, setShort] = useState<{ message: string; doors: FulfilDoor[] } | null>(null);
   const fulfill = useMutation({
-    mutationFn: () => api.fulfillOrder(orderId),
-    onSuccess: (r) => { toast.success(`Fulfilled — ${r.decremented.length} part${r.decremented.length === 1 ? "" : "s"} drawn from stock`); invalidate(); },
-    onError: (e) => toast.error(e instanceof SalesApiError ? e.message : String(e)),
+    mutationFn: (ship: "all" | "available") => api.fulfillOrder(orderId, ship),
+    onSuccess: (r) => {
+      setShort(null);
+      const n = r.decremented.reduce((a, d) => a + d.qty, 0);
+      toast.success(r.complete ? `Fulfilled: ${n} taken from stock` : `Shipped ${n} from stock. The rest of the order is still open.`);
+      invalidate();
+    },
+    onError: (e) => {
+      if (e instanceof SalesApiError && e.doors.length > 0) setShort({ message: e.message, doors: e.doors });
+      else toast.error(e instanceof SalesApiError ? e.message : String(e));
+    },
   });
 
+  const [shipping, setShipping] = useState(false);
+  // "Make this": a work order for the line's part, made for this order.
+  const [making, setMaking] = useState<{ lineId: string; name: string; qty: number } | null>(null);
+  const [makeRefusal, setMakeRefusal] = useState<{ message: string; doors: FulfilDoor[] } | null>(null);
+  const make = useMutation({
+    mutationFn: (m: { lineId: string; qty: number }) => api.makeLine(orderId, m.lineId, m.qty),
+    onSuccess: (r) => {
+      setMaking(null);
+      setMakeRefusal(null);
+      toast.success(r.reused ? `Now making ${r.qty} with ${r.buildName}` : `Put in to make: ${r.qty} with ${r.buildName}`);
+      invalidate();
+    },
+    onError: (e) => {
+      if (e instanceof SalesApiError) setMakeRefusal({ message: e.message, doors: e.doors });
+      else toast.error(String(e));
+    },
+  });
   const d = detail.data;
   const fulfilled = d ? ["fulfilled", "shipped", "closed"].includes(d.status) : false;
+  const shippable = d ? !["shipped", "closed", "cancelled"].includes(d.status) && d.items.length > 0 : false;
 
   return (
-    <Modal open onClose={onClose} title={d?.customer_name || d?.order_number || "Sales order"} size="lg">
+    <Modal open onClose={onClose} title={[d?.customer_name, d?.order_number].filter(Boolean).join(" · ") || "Sales order"} size="lg">
       <div className="space-y-4">
         {detail.isLoading && <div className="text-sm text-muted">Loading…</div>}
         {d && (
@@ -192,7 +298,17 @@ function OrderDetailModal({ api, orgSlug, orderId, onClose }: { api: SalesApi; o
                   {STATUSES.map((s) => <option key={s} value={s}>{s}</option>)}
                 </select>
               </div>
+              <OrderNumberField value={d.order_number ?? ""} onSave={(order_number) => update.mutate({ order_number })} />
             </div>
+
+            {/* The order's own fields: whatever a bundle adds to an order
+                ("Due date", "Came in through"), editable here. */}
+            <CustomFieldsPanel
+              entityKind="sales:order"
+              entityId={orderId}
+              values={d.metadata ?? {}}
+              onCommit={(name, value) => update.mutate({ metadata: { [name]: value } })}
+            />
 
             {/* line items */}
             <div>
@@ -208,6 +324,35 @@ function OrderDetailModal({ api, orgSlug, orderId, onClose }: { api: SalesApi; o
                     <span className="text-xs text-muted tabular-nums">
                       {Number(it.qty)}{it.unit_price ? ` × $${Number(it.unit_price).toFixed(2)}` : ""}
                     </span>
+                    {!fulfilled && it.part_id && Number(it.qty_fulfilled) > 0 && (
+                      <span className="text-xs text-moss-700 dark:text-moss-300 tabular-nums">{Number(it.qty_fulfilled)} shipped</span>
+                    )}
+                    {it.part_id && (() => {
+                      const wo = (d.work_orders ?? []).find((w) => w.output_part_id === it.part_id && w.status !== "cancelled");
+                      if (wo) {
+                        return (
+                          <>
+                            <span className={"text-xs tabular-nums " + (wo.status === "done" ? "text-moss-700 dark:text-moss-300" : "text-muted")} data-testid="line-made">
+                              {wo.status === "done" ? `${wo.made} made` : `${wo.made} of ${wo.qty} made`}
+                            </span>
+                            {wo.make_id && (
+                              <Link to={`/makes/${wo.make_id}`} className="text-xs text-accent hover:underline" data-testid="line-make-link">
+                                Make
+                              </Link>
+                            )}
+                          </>
+                        );
+                      }
+                      return !fulfilled && d.status !== "cancelled" ? (
+                        <button
+                          type="button"
+                          onClick={() => setMaking({ lineId: it.id, name: it.description || "this part", qty: Math.max(1, Number(it.qty) - Number(it.qty_fulfilled || 0)) })}
+                          className="inline-flex items-center gap-1 text-xs text-accent hover:underline"
+                        >
+                          <Hammer size={12} aria-hidden /> Make this
+                        </button>
+                      ) : null;
+                    })()}
                     {!fulfilled && (
                       <button type="button" onClick={() => removeItem.mutate(it.id)} className="text-slate-300 hover:text-red-500 hover-reveal" aria-label="Remove line item">
                         <X size={14} />
@@ -222,17 +367,61 @@ function OrderDetailModal({ api, orgSlug, orderId, onClose }: { api: SalesApi; o
 
             <div className="flex items-center justify-between pt-2 border-t border-line dark:border-slate-700">
               <span className="text-xs text-muted">
-                {fulfilled ? `Fulfilled${d.fulfilled_at ? " " + new Date(d.fulfilled_at).toLocaleDateString() : ""} — stock already drawn down.` : "Fulfilling draws each line's part out of inventory stock."}
+                {fulfilled ? `Fulfilled${d.fulfilled_at ? " " + new Date(d.fulfilled_at).toLocaleDateString() : ""}, stock already drawn down.` : "Fulfilling draws each line's part out of inventory stock."}
               </span>
               <button
                 type="button"
                 disabled={fulfilled || d.items.length === 0 || fulfill.isPending}
-                onClick={() => fulfill.mutate()}
+                onClick={() => fulfill.mutate("all")}
                 className="inline-flex items-center gap-1.5 px-3 py-2 text-sm rounded bg-cobble-600 text-white hover:bg-cobble-700 disabled:opacity-50"
               >
                 <PackageCheck size={15} /> Fulfill
               </button>
+              {shippable && (
+                <button
+                  type="button"
+                  onClick={() => setShipping(true)}
+                  className="inline-flex items-center gap-1.5 px-3 py-2 text-sm rounded border border-line dark:border-slate-600 text-content dark:text-mortar-100 hover:bg-subtle dark:hover:bg-slate-800"
+                >
+                  <Truck size={15} /> Ship
+                </button>
+              )}
             </div>
+            {d.tracking_number && (
+              <div className="text-xs text-muted">
+                Shipped{d.carrier ? ` with ${d.carrier}` : ""}{d.shipped_at ? ` on ${new Date(d.shipped_at).toLocaleDateString()}` : ""}. Tracking number <span className="font-mono text-content dark:text-mortar-100">{d.tracking_number}</span>
+              </div>
+            )}
+            {short && !fulfilled && (
+              <div role="alert" className="rounded border border-ember-200 dark:border-ember-700 bg-ember-50 dark:bg-ember-900/30 px-3 py-2.5 space-y-2">
+                <p className="text-sm text-content dark:text-mortar-100">{short.message}</p>
+                <div className="flex flex-wrap gap-2">
+                  {short.doors.map((door) =>
+                    door.kind === "ship_available" ? (
+                      <button
+                        key="ship"
+                        type="button"
+                        disabled={fulfill.isPending}
+                        onClick={() => fulfill.mutate("available")}
+                        className="px-3 py-1.5 text-sm rounded bg-cobble-600 text-white hover:bg-cobble-700 disabled:opacity-50"
+                      >
+                        {door.label}
+                      </button>
+                    ) : door.kind === "make" ? (
+                      <button
+                        key={door.part_id}
+                        type="button"
+                        disabled={make.isPending}
+                        onClick={() => make.mutate({ lineId: door.line_id, qty: door.qty })}
+                        className="px-3 py-1.5 text-sm rounded border border-line dark:border-slate-600 text-content dark:text-mortar-100 hover:bg-subtle dark:hover:bg-slate-800 disabled:opacity-50"
+                      >
+                        {door.label}
+                      </button>
+                    ) : null,
+                  )}
+                </div>
+              </div>
+            )}
           </>
         )}
 
@@ -240,10 +429,267 @@ function OrderDetailModal({ api, orgSlug, orderId, onClose }: { api: SalesApi; o
             open is a record somebody may want to say something about. */}
         <ContributedDetailPanels
           target="sales:order"
-          ctx={{ slug: orgSlug, entityId: orderId, entityTitle: d?.customer_name || d?.order_number || "Sales order" }}
+          ctx={{
+            slug: orgSlug,
+            entityId: orderId,
+            entityTitle: d?.customer_name || d?.order_number || "Sales order",
+            hints: { tracking_number: d?.tracking_number ?? undefined },
+          }}
         />
+        {d && <OrderHistory api={api} orderId={orderId} />}
+      </div>
+      {makeRefusal && (
+        <Modal open onClose={() => setMakeRefusal(null)} title="Nothing to make it with" size="sm">
+          <div className="space-y-3">
+            <p className="text-sm text-content dark:text-mortar-100">{makeRefusal.message}</p>
+            <div className="flex flex-wrap gap-2">
+              {makeRefusal.doors.map((door) =>
+                door.kind === "add_build" ? (
+                  <Link key="add" to={door.href} className="px-3 py-1.5 text-sm rounded bg-cobble-600 text-white hover:bg-cobble-700">{door.label}</Link>
+                ) : null,
+              )}
+            </div>
+          </div>
+        </Modal>
+      )}
+      {making && (
+        <Modal open onClose={() => setMaking(null)} title={`Make ${making.name}`} size="sm">
+          <form
+            className="space-y-3"
+            onSubmit={(e) => { e.preventDefault(); make.mutate({ lineId: making.lineId, qty: making.qty }); }}
+          >
+            <label className="block">
+              <span className="block text-[10px] font-mono uppercase tracking-widest text-faint dark:text-slate-500 mb-1">How many</span>
+              <input
+                type="number"
+                min={1}
+                value={making.qty}
+                onChange={(e) => setMaking({ ...making, qty: Math.max(1, Math.floor(Number(e.target.value) || 1)) })}
+                className="w-full rounded border border-line dark:border-slate-600 bg-surface dark:bg-slate-900 px-3 py-2 text-sm"
+              />
+            </label>
+            <p className="text-xs text-muted">A work order goes on the Builds schedule, made for this order. It closes by itself when that many good ones are made.</p>
+            <div className="flex justify-end gap-2">
+              <button type="button" onClick={() => setMaking(null)} className="px-3 py-2 text-sm rounded text-muted hover:bg-subtle dark:hover:bg-slate-800">Cancel</button>
+              <button type="submit" disabled={make.isPending} className="inline-flex items-center gap-1.5 px-3 py-2 text-sm rounded bg-cobble-600 text-white hover:bg-cobble-700 disabled:opacity-50">
+                <Hammer size={15} /> Make
+              </button>
+            </div>
+          </form>
+        </Modal>
+      )}
+      {shipping && d && (
+        <ShipDialog
+          api={api}
+          orderId={orderId}
+          onClose={() => setShipping(false)}
+          onShipped={() => { setShipping(false); invalidate(); }}
+        />
+      )}
+    </Modal>
+  );
+}
+
+/** The order's number, editable in place. Drafts through useFieldDraft so a
+ *  number that changes under the open sheet (another tab, the assistant)
+ *  replaces an untouched field rather than being shadowed by it. */
+function OrderNumberField({ value, onSave }: { value: string; onSave: (v: string) => void }) {
+  const f = useFieldDraft(value);
+  const save = () => {
+    const next = f.draft.trim();
+    if (!next || next === value) return f.reset();
+    f.committed(next);
+    onSave(next);
+  };
+  return (
+    <label className="block">
+      <span className="block text-[10px] font-mono uppercase tracking-widest text-faint dark:text-slate-500 mb-1">Order number</span>
+      <input
+        value={f.draft}
+        onChange={(e) => f.setDraft(e.target.value)}
+        onBlur={save}
+        onKeyDown={(e) => {
+          if (e.key === "Enter") (e.target as HTMLInputElement).blur();
+          if (e.key === "Escape") f.reset();
+        }}
+        className="w-full rounded border border-line dark:border-slate-600 bg-surface dark:bg-slate-900 px-3 py-2 text-sm font-mono"
+      />
+    </label>
+  );
+}
+
+/** Ship: the tracking number, the words the customer will read shown first,
+ *  Copy, and "Email the customer" only when this workspace can send it (its own
+ *  outbound email is set up and the customer has an address). Nothing is
+ *  emailed unless the box is ticked when Ship is pressed. */
+function ShipDialog({ api, orderId, onClose, onShipped }: { api: SalesApi; orderId: string; onClose: () => void; onShipped: () => void }) {
+  const toast = useToast();
+  const [tracking, setTracking] = useState("");
+  const [typed, setTyped] = useState("");
+  const [emailIt, setEmailIt] = useState(false);
+  const [short, setShort] = useState<{ message: string; doors: FulfilDoor[] } | null>(null);
+  // The preview follows the number a beat after typing stops, so the carrier
+  // and link in the words are the ones the number implies.
+  useEffect(() => {
+    const t = setTimeout(() => setTracking(typed.trim()), 400);
+    return () => clearTimeout(t);
+  }, [typed]);
+  const preview = useQuery({ queryKey: ["sales-ship-preview", orderId, tracking], queryFn: () => api.shipPreview(orderId, tracking) });
+  const p = preview.data;
+  const ship = useMutation({
+    mutationFn: () => api.shipOrder(orderId, { tracking_number: tracking || null, carrier: null, email_customer: emailIt && !!p?.email.available }),
+    onSuccess: (r) => {
+      if (r.email.asked && r.email.sent && r.email.status === "sent") toast.success(`Shipped. ${r.email.to} was emailed.`);
+      else if (r.email.asked && r.email.sent) toast.error(`Shipped, but ${r.email.to} cannot receive mail, so no email went.`);
+      else if (r.email.asked && !r.email.sent) toast.error(`Shipped, but the email did not go: ${r.email.reason}`);
+      else toast.success("Shipped");
+      onShipped();
+    },
+    onError: (e) => {
+      if (e instanceof SalesApiError && e.doors.length > 0) setShort({ message: e.message, doors: e.doors });
+      else toast.error(e instanceof SalesApiError ? e.message : String(e));
+    },
+  });
+  const copy = async () => {
+    if (!p) return;
+    try {
+      await navigator.clipboard.writeText(`${p.notice.subject}\n\n${p.notice.text}`);
+      toast.success("Copied the message");
+    } catch {
+      toast.error("Could not copy. Select the text and copy it instead.");
+    }
+  };
+
+  return (
+    <Modal open onClose={onClose} title="Ship this order" size="md">
+      <div className="space-y-4">
+        <label className="block">
+          <span className="block text-[10px] font-mono uppercase tracking-widest text-faint dark:text-slate-500 mb-1">Tracking number</span>
+          <input
+            autoFocus
+            value={typed}
+            onChange={(e) => setTyped(e.target.value)}
+            placeholder="Paste the tracking number (optional)"
+            className="w-full rounded border border-line dark:border-slate-600 bg-surface dark:bg-slate-900 px-3 py-2 text-sm font-mono"
+          />
+        </label>
+        {p?.carrier && (
+          <div className="text-xs text-muted flex flex-wrap items-center gap-2">
+            <span>Carrier: <span className="text-content dark:text-mortar-100">{p.carrier}</span></span>
+            {p.lookup && (
+              <a href={p.lookup.url} target="_blank" rel="noopener noreferrer" className="inline-flex items-center gap-1 text-accent hover:underline">
+                {p.lookup.isCarrier ? `Track on ${p.lookup.via}` : `Look it up on ${p.lookup.via}`} <ExternalLink size={12} aria-hidden />
+              </a>
+            )}
+          </div>
+        )}
+
+        <div>
+          <div className="flex items-baseline justify-between mb-1">
+            <span className="text-[10px] font-mono uppercase tracking-widest text-faint dark:text-slate-500">
+              What the customer reads{p?.notice.to ? `, to ${p.notice.to}` : ""}
+            </span>
+            <button type="button" onClick={copy} disabled={!p} className="inline-flex items-center gap-1 text-xs text-accent hover:underline disabled:opacity-50">
+              <Copy size={12} aria-hidden /> Copy
+            </button>
+          </div>
+          <div className="rounded border border-line dark:border-slate-700 bg-subtle dark:bg-slate-800/60 px-3 py-2 text-sm">
+            {preview.isLoading && <div className="text-faint">Writing the message…</div>}
+            {p && (
+              <>
+                <div className="font-semibold text-content dark:text-mortar-100">{p.notice.subject}</div>
+                <pre className="mt-1 whitespace-pre-wrap break-words font-sans text-content dark:text-mortar-100">{p.notice.text}</pre>
+              </>
+            )}
+          </div>
+        </div>
+
+        {p && (p.email.available ? (
+          <label className="flex items-start gap-2 text-sm">
+            <input type="checkbox" className="mt-0.5" checked={emailIt} onChange={(e) => setEmailIt(e.target.checked)} />
+            <span>
+              Email the customer
+              <span className="block text-xs text-muted">From {p.email.from}. Only when you press Ship with this ticked.</span>
+            </span>
+          </label>
+        ) : (
+          <p className="text-xs text-muted">{p.email.reason} Copy the message to send it yourself.</p>
+        ))}
+
+        {short && (
+          <div role="alert" className="rounded border border-ember-200 dark:border-ember-700 bg-ember-50 dark:bg-ember-900/30 px-3 py-2.5 space-y-2">
+            <p className="text-sm text-content dark:text-mortar-100">{short.message}</p>
+            <div className="flex flex-wrap gap-2">
+              {short.doors.filter((door) => door.kind === "make" && door.href).map((door) => (
+                <Link key={door.kind === "make" ? door.part_id : "x"} to={door.kind === "make" ? door.href! : "#"} className="px-3 py-1.5 text-sm rounded border border-line dark:border-slate-600 text-content dark:text-mortar-100 hover:bg-subtle dark:hover:bg-slate-800">
+                  {door.label}
+                </Link>
+              ))}
+            </div>
+            <p className="text-xs text-muted">An order ships once everything on it has come out of stock. To send part of it, use Fulfill's "Ship the ones you have" first.</p>
+          </div>
+        )}
+
+        <div className="flex items-center justify-end gap-2 pt-2 border-t border-line dark:border-slate-700">
+          <button type="button" onClick={onClose} className="px-3 py-2 text-sm rounded text-muted hover:bg-subtle dark:hover:bg-slate-800">Cancel</button>
+          <button
+            type="button"
+            onClick={() => ship.mutate()}
+            disabled={ship.isPending || !p}
+            className="inline-flex items-center gap-1.5 px-3 py-2 text-sm rounded bg-cobble-600 text-white hover:bg-cobble-700 disabled:opacity-50"
+          >
+            <Truck size={15} /> {emailIt && p?.email.available ? "Ship and email" : "Ship"}
+          </button>
+        </div>
       </div>
     </Modal>
+  );
+}
+
+const STATUS_WORD: Record<string, string> = {
+  draft: "draft",
+  confirmed: "confirmed",
+  fulfilled: "fulfilled",
+  shipped: "shipped",
+  closed: "closed",
+  cancelled: "cancelled",
+};
+
+/** One line per thing that happened, in words. */
+function historyLine(h: HistoryRow): string {
+  const d = h.detail ?? {};
+  if (h.kind === "status") return h.from_status ? `Moved from ${STATUS_WORD[h.from_status] ?? h.from_status} to ${STATUS_WORD[h.to_status ?? ""] ?? h.to_status}` : `Created as ${STATUS_WORD[h.to_status ?? ""] ?? h.to_status}`;
+  if (h.kind === "stock") {
+    const taken = Array.isArray(d.taken) ? (d.taken as Array<{ qty: number }>).reduce((a, t) => a + Number(t.qty || 0), 0) : 0;
+    return `${taken} taken from stock${d.complete ? "" : ", the rest still owed"}`;
+  }
+  if (h.kind === "work_order") return `Put in to make: ${String(d.qty ?? "")} with ${String(d.build_name ?? "a build")}`;
+  if (h.kind === "shipped") return `Shipped${d.carrier ? ` with ${String(d.carrier)}` : ""}${d.tracking_number ? `, tracking ${String(d.tracking_number)}` : ""}`;
+  if (h.kind === "email") {
+    const to = String(d.to ?? "the customer");
+    if (d.status === "sent") return `Emailed ${to}`;
+    if (d.status === "skipped") return `Email to ${to} skipped: the address cannot receive mail`;
+    return `Email to ${to} failed${d.error ? `: ${String(d.error)}` : ""}`;
+  }
+  return h.kind;
+}
+
+function OrderHistory({ api, orderId }: { api: SalesApi; orderId: string }) {
+  const history = useQuery({ queryKey: ["sales-order-history", orderId], queryFn: () => api.orderHistory(orderId) });
+  const rows = history.data?.items ?? [];
+  if (rows.length === 0) return null;
+  return (
+    <div>
+      <span className="block text-[10px] font-mono uppercase tracking-widest text-muted mb-1.5">History</span>
+      <ol className="space-y-1">
+        {rows.map((h) => (
+          <li key={h.id} className="flex flex-wrap items-baseline gap-x-2 text-xs">
+            <span className="text-content dark:text-mortar-100">{historyLine(h)}</span>
+            <span className="text-faint">{h.by_name ? `${h.by_name} · ` : ""}{new Date(h.created_at).toLocaleString()}</span>
+          </li>
+        ))}
+      </ol>
+    </div>
   );
 }
 
@@ -308,7 +754,9 @@ function AddLineRow({ api, onAdd }: { api: SalesApi; onAdd: (b: { part_id: strin
 function CustomerPicker({ api, customerId, customerName, onChange }: { api: SalesApi; customerId: string | null; customerName: string; onChange: (id: string | null, name: string) => void }) {
   const qc = useQueryClient();
   const toast = useToast();
-  const customers = useQuery({ queryKey: ["sales-customers"], queryFn: () => api.listCustomers() });
+  const [find, setFind] = useState("");
+  const q = useSettled(find.trim());
+  const customers = useQuery({ queryKey: ["sales-customers", "pick", q], queryFn: () => api.listCustomers({ q, limit: PAGE }) });
   const [creating, setCreating] = useState(false);
   const [newName, setNewName] = useState("");
   const create = useMutation({
@@ -326,7 +774,13 @@ function CustomerPicker({ api, customerId, customerName, onChange }: { api: Sale
       </div>
     );
   }
+  const shown = customers.data?.items ?? [];
+  const more = (customers.data?.total ?? 0) - shown.length;
   return (
+    <div className="space-y-1.5">
+    {(find || more > 0) && (
+      <SearchInput value={find} onChange={setFind} placeholder="find a customer…" aria-label="Find a customer" />
+    )}
     <select
       value={customerId ?? ""}
       onChange={(e) => {
@@ -338,19 +792,33 @@ function CustomerPicker({ api, customerId, customerName, onChange }: { api: Sale
       }}
       className="w-full rounded border border-line dark:border-slate-600 bg-surface dark:bg-slate-900 px-3 py-2 text-sm"
     >
-      <option value="">{customerName && !customerId ? `(unlinked: ${customerName})` : "— none —"}</option>
-      {customers.data?.items.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
+      <option value="">{customerName && !customerId ? `(unlinked: ${customerName})` : "(none)"}</option>
+      {customerId && !shown.some((c) => c.id === customerId) && <option value={customerId}>{customerName}</option>}
+      {shown.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
+      {more > 0 && <option disabled value="__more__">{more} more: type above to find one</option>}
       <option value="__new__">+ New customer…</option>
     </select>
+    </div>
   );
 }
 
-function CustomersModal({ api, onClose }: { api: SalesApi; onClose: () => void }) {
+function CustomersModal({ api, initialEditing, onClose }: { api: SalesApi; initialEditing?: string | null; onClose: () => void }) {
   const qc = useQueryClient();
   const toast = useToast();
   const confirm = useConfirm();
-  const customers = useQuery({ queryKey: ["sales-customers"], queryFn: () => api.listCustomers() });
-  const [editing, setEditing] = useState<string | "new" | null>(null);
+  const [find, setFind] = useState("");
+  const q = useSettled(find.trim());
+  const customers = usePagedList(["sales-customers", "all", q], (offset) => api.listCustomers({ q, offset, limit: PAGE }));
+  const [editing, setEditing] = useState<string | "new" | null>(initialEditing ?? null);
+  // The customer an address named, read on its own when the page does not
+  // hold it, so a link always opens that customer.
+  const listed = customers.items;
+  const addressed = useQuery({
+    queryKey: ["sales-customer", initialEditing],
+    queryFn: () => api.getCustomer(initialEditing!),
+    enabled: !!initialEditing && !!customers.data && !listed.some((c) => c.id === initialEditing),
+  });
+  const shown = addressed.data && !listed.some((c) => c.id === addressed.data!.id) ? [addressed.data, ...listed] : listed;
   const invalidate = () => {
     void qc.invalidateQueries({ queryKey: ["sales-customers"] });
     void qc.invalidateQueries({ queryKey: ["sales-orders"] });
@@ -365,9 +833,11 @@ function CustomersModal({ api, onClose }: { api: SalesApi; onClose: () => void }
     <Modal open onClose={onClose} title="Customers" size="md">
       <div className="space-y-3">
         {customers.isLoading && <div className="text-sm text-muted">Loading…</div>}
-        {customers.data?.items.length === 0 && editing !== "new" && <div className="text-sm text-muted italic">No customers yet. Add the people you sell to.</div>}
+        {(q || customers.total > PAGE) && <SearchInput value={find} onChange={setFind} placeholder="search customers…" aria-label="Search customers" />}
+        {customers.data && shown.length === 0 && !q && editing !== "new" && <div className="text-sm text-muted italic">No customers yet. Add the people you sell to.</div>}
+        {customers.data && shown.length === 0 && q && <div className="text-sm text-muted italic">No customer matches "{q}".</div>}
         <ul className="space-y-2">
-          {customers.data?.items.map((c) => (
+          {shown.map((c) => (
             <li key={c.id}>
               {editing === c.id ? (
                 <CustomerForm api={api} customer={c} onDone={() => { setEditing(null); invalidate(); }} onCancel={() => setEditing(null)} />
@@ -390,6 +860,7 @@ function CustomersModal({ api, onClose }: { api: SalesApi; onClose: () => void }
             </li>
           ))}
         </ul>
+        <ShowMore shown={customers.items.length} total={customers.total} more={() => void customers.fetchNextPage()} loading={customers.isFetchingNextPage} noun="customers" />
         {editing === "new" ? (
           <CustomerForm api={api} onDone={() => { setEditing(null); invalidate(); }} onCancel={() => setEditing(null)} />
         ) : (
@@ -402,6 +873,7 @@ function CustomersModal({ api, onClose }: { api: SalesApi; onClose: () => void }
 
 function CustomerForm({ api, customer, onDone, onCancel }: { api: SalesApi; customer?: CustomerSummary; onDone: () => void; onCancel: () => void }) {
   const toast = useToast();
+  const qc = useQueryClient();
   const [name, setName] = useState(customer?.name ?? "");
   const [email, setEmail] = useState(customer?.email ?? "");
   const [phone, setPhone] = useState(customer?.phone ?? "");
@@ -414,6 +886,14 @@ function CustomerForm({ api, customer, onDone, onCancel }: { api: SalesApi; cust
     onSuccess: () => { toast.success(customer ? "Customer updated" : "Customer added"); onDone(); },
     onError: (e) => toast.error(e instanceof SalesApiError ? e.message : String(e)),
   });
+  // A field a bundle or a person adds to customers saves on its own, as it is
+  // edited, like every other sheet's; the form's Save is for the fields above.
+  const [fields, setFields] = useState<Record<string, unknown>>(customer?.metadata ?? {});
+  const setField = useMutation({
+    mutationFn: (m: { name: string; value: unknown }) => api.updateCustomer(customer!.id, { metadata: { [m.name]: m.value } }),
+    onSuccess: (c) => { setFields(c.metadata ?? {}); void qc.invalidateQueries({ queryKey: ["sales-customers"] }); },
+    onError: (e) => toast.error(e instanceof SalesApiError ? e.message : String(e)),
+  });
   return (
     <form className="rounded-lg border border-line dark:border-slate-700 p-3 space-y-2" onSubmit={(e) => { e.preventDefault(); if (name.trim()) save.mutate(); }}>
       <input autoFocus value={name} onChange={(e) => setName(e.target.value)} placeholder="Name *" className="w-full rounded border border-line dark:border-slate-600 bg-surface dark:bg-slate-900 px-3 py-2 text-sm" />
@@ -422,6 +902,9 @@ function CustomerForm({ api, customer, onDone, onCancel }: { api: SalesApi; cust
         <input value={phone} onChange={(e) => setPhone(e.target.value)} placeholder="Phone" className="rounded border border-line dark:border-slate-600 bg-surface dark:bg-slate-900 px-3 py-2 text-sm" />
       </div>
       <input value={address} onChange={(e) => setAddress(e.target.value)} placeholder="Address" className="w-full rounded border border-line dark:border-slate-600 bg-surface dark:bg-slate-900 px-3 py-2 text-sm" />
+      {customer && (
+        <CustomFieldsPanel entityKind="sales:customer" entityId={customer.id} values={fields} onCommit={(name, value) => setField.mutate({ name, value })} />
+      )}
       <div className="flex justify-end gap-2">
         <button type="button" onClick={onCancel} className="px-2.5 py-1.5 rounded text-xs bg-subtle dark:bg-slate-800">Cancel</button>
         <button type="submit" disabled={!name.trim() || save.isPending} className="px-2.5 py-1.5 rounded text-xs bg-cobble-600 text-white disabled:opacity-50">{customer ? "Save" : "Add"}</button>

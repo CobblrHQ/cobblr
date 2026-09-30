@@ -1,0 +1,10 @@
+{
+  "lint": "lint:system-viewer-stays-internal",
+  "run": "node scripts/lint-system-viewer-stays-internal.ts",
+  "rows": [
+    "contract-resolver"
+  ],
+  "ms": 514,
+  "recorded": "2026-09-30",
+  "source": "scaffolded by new-lint.sh at twice a local run (a shared box); replaced from its first CI measurement"
+}

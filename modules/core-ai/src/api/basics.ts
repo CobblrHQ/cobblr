@@ -211,7 +211,7 @@ basicsRouter.post(
       const code = (e as { code?: string }).code;
       const msg = String((e as Error)?.message ?? "");
       if (code === "23505" || /unique|duplicate key/i.test(msg)) {
-        res.status(409).json({ error: { code: "already_overridden", message: `"${builtin_key}" already has an override — edit it instead` } });
+        res.status(409).json({ error: { code: "already_overridden", message: `"${builtin_key}" already has an override. Edit it instead` } });
         return;
       }
       throw e;

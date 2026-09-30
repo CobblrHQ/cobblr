@@ -12,9 +12,10 @@ import { Plus, Trash2, Wifi, Printer, RefreshCw, Send, ListChecks, Boxes, X, Lis
 import { ApiError, api, type DigifabConnection, type DigifabJob, type DigifabFleet, type BambuMode, type DigifabLibraryItem, type DigifabHistory, type DigifabRun, type DigifabFailureConfig, type DigifabDetector, type DigifabDetectorCatalogEntry } from "../lib/api";
 import { useActiveOrg } from "../auth/ActiveOrgContext";
 import { PrintUpdatesPanel } from "./PrintUpdatesPanel";
-import { changeWorkspaceShape, DragInput, Modal, useToast, useConfirm, usePageTitle, useImageSrc, SecretInput, EntityPhoto, AddressInput, SearchInput } from "@cobblr/platform-web";
+import { changeWorkspaceShape, CustomFieldsPanel, DragInput, Modal, useToast, useConfirm, usePageTitle, useImageSrc, SecretInput, EntityPhoto, AddressInput, SearchInput } from "@cobblr/platform-web";
 import { Combobox } from "../components/Combobox";
 import { CreateConnectionModal, FleetView, PrintDetailModal, Lightbox, LIBRARY_DRAG_MIME, fetchAllMachines } from "../features/digifab/fleet";
+import { useReprint } from "../features/digifab/useReprint";
 
 export function DigifabPage({
   setupOnly = false,
@@ -140,6 +141,11 @@ export function DigifabPage({
         )}
         <span className="text-sm text-muted dark:text-slate-400">{items.length} connection{items.length === 1 ? "" : "s"}</span>
         <div className="flex-1" />
+        {!setupOnly && (
+          <Link to="/makes" className="text-sm text-accent hover:underline">
+            Makes
+          </Link>
+        )}
         {setupOnly ? (
           <Link to="/digifab" className="text-sm text-accent hover:underline">
             Open the shop floor →
@@ -679,7 +685,7 @@ function ReassignControl({ job, slug, onDone }: { job: DigifabJob; slug: string;
     mutationFn: () => api.assignDigifabJob(slug, job.id, deviceId),
     onSuccess: (r) => {
       toast[r.status === "sent" ? "success" : "info"](
-        r.status === "sent" ? "Assigned — sent to the printer" : "That printer didn't take it — still unassigned",
+        r.status === "sent" ? "Assigned and sent to the printer" : "That printer didn't take it, so it is still unassigned",
       );
       setOpen(false);
       onDone();
@@ -757,7 +763,7 @@ function PrintTrendChart({ series }: { series: NonNullable<DigifabHistory["serie
               key={d.date}
               className="flex-1 min-w-[2px] h-full flex flex-col justify-end cursor-default"
               onMouseEnter={() => setHover(i)}
-              title={`${fmtDay(d.date)} — ${d.completed} completed${d.failed ? `, ${d.failed} failed` : ""}${d.filament_g ? `, ${d.filament_g}g` : ""}`}
+              title={`${fmtDay(d.date)}: ${d.completed} completed${d.failed ? `, ${d.failed} failed` : ""}${d.filament_g ? `, ${d.filament_g}g` : ""}`}
             >
               {failH > 0 && <div className="rounded-t-[3px] bg-ember-500" style={{ height: failH, opacity: hover == null || hover === i ? 1 : 0.4 }} />}
               {okH > 0 && (
@@ -968,7 +974,9 @@ function DetectorCard({ slug, det, cat, onChanged }: { slug: string; det: Digifa
   const confirm = useConfirm();
   const [editing, setEditing] = useState(false);
   const [label, setLabel] = useState(det.label);
-  const [baseUrl, setBaseUrl] = useState(det.base_url);
+  const [baseUrl, setBaseUrl] = useState(det.base_url ?? "");
+  // Moved to its connection: the address and key are edited under Connections.
+  const onConnection = !!det.service_connection_id;
   const [apiKey, setApiKey] = useState("");
   const [rows, setRows] = useState<Array<{ ref: string; cam: string }>>(
     Object.entries((det.config?.camera_map ?? {}) as Record<string, string>).map(([ref, cam]) => ({ ref, cam })),
@@ -990,8 +998,9 @@ function DetectorCard({ slug, det, cat, onChanged }: { slug: string; det: Digifa
       const camera_map: Record<string, string> = {};
       for (const r of rows) if (r.ref.trim() && r.cam.trim()) camera_map[r.ref.trim()] = r.cam.trim();
       return api.updateDigifabDetector(slug, det.id, {
-        label, base_url: baseUrl,
-        ...(apiKey ? { api_key: apiKey } : {}),
+        label,
+        ...(onConnection ? {} : { base_url: baseUrl }),
+        ...(!onConnection && apiKey ? { api_key: apiKey } : {}),
         ...(isWatcher ? { config: { camera_map, owns } } : {}),
       });
     },
@@ -1005,7 +1014,7 @@ function DetectorCard({ slug, det, cat, onChanged }: { slug: string; det: Digifa
   });
   const test = useMutation({
     mutationFn: () => api.testDigifabDetector(slug, det.id),
-    onSuccess: (r) => r.ok ? toast.success("Reachable ✓" + (r.version ? ` · v${r.version}` : "")) : toast.error(r.detail ?? "Unreachable — no response"),
+    onSuccess: (r) => r.ok ? toast.success("Reachable ✓" + (r.version ? ` · v${r.version}` : "")) : toast.error(r.detail ?? "Unreachable: no response"),
     onError: (e) => toast.error(e instanceof ApiError ? e.message : "Test failed"),
   });
   const del = useMutation({
@@ -1027,15 +1036,31 @@ function DetectorCard({ slug, det, cat, onChanged }: { slug: string; det: Digifa
           <button type="button" onClick={async () => { if (await confirm({ title: `Remove "${det.label}"?`, message: "The failure watch will stop using it.", confirmLabel: "Remove", destructive: true })) del.mutate(); }} className="text-ember-600 dark:text-ember-500 hover:underline">Remove</button>
         </div>
       </div>
-      <div className="mt-1 text-[10px] text-faint break-all">{det.base_url}{det.has_credentials ? " · token set" : ""}</div>
+      <div className="mt-1 text-[10px] text-faint break-all">
+        {onConnection ? (
+          <>
+            Address and key on its connection ·{" "}
+            <Link to="/me/connections" className="text-cobble-600 dark:text-cobble-400 hover:underline">Connections</Link>
+          </>
+        ) : (
+          <>
+            {det.base_url}
+            {det.has_credentials ? " · token set" : ""}
+          </>
+        )}
+      </div>
       <label className="mt-1.5 flex items-center gap-1.5 text-[10px]">
         <input type="checkbox" checked={det.enabled} onChange={(e) => toggle.mutate(e.target.checked)} /> Enabled
       </label>
       {editing && (
         <div className="mt-2 space-y-2 border-t border-line/60 dark:border-mortar-700 pt-2">
           <input value={label} onChange={(e) => setLabel(e.target.value)} placeholder="Label" className={input} />
-          <AddressInput value={baseUrl} onChange={(e) => setBaseUrl(e.target.value)} placeholder="Base URL - http://nas.lan:3333" className={input} />
-          <SecretInput secret what="API key" value={apiKey} onChange={(e) => setApiKey(e.target.value)} placeholder={det.has_credentials ? "API token (leave blank to keep)" : "API token (optional)"} className={input} />
+          {!onConnection && (
+            <>
+              <AddressInput value={baseUrl} onChange={(e) => setBaseUrl(e.target.value)} placeholder="Base URL - http://nas.lan:3333" className={input} />
+              <SecretInput secret what="API key" value={apiKey} onChange={(e) => setApiKey(e.target.value)} placeholder={det.has_credentials ? "API token (leave blank to keep)" : "API token (optional)"} className={input} />
+            </>
+          )}
           {isWatcher && (
             <div className="space-y-1">
               <div className="flex items-center gap-2">
@@ -1198,30 +1223,9 @@ function PrintHistorySection({ slug }: { slug: string }) {
   const [days, setDays] = useState(30);
   const [printOpen, setPrintOpen] = useState<DigifabHistory["recent"][number] | null>(null);
   const [lightbox, setLightbox] = useState<string | null>(null);
-  const qc = useQueryClient();
-  const toast = useToast();
-  const confirm = useConfirm();
   const hist = useQuery({ queryKey: ["digifab-history", slug, days], queryFn: () => api.getDigifabHistory(slug, days), enabled: open });
   // "Print again" from a history row — same clone-and-send as the cockpit.
-  const reprint = useMutation({
-    mutationFn: (jobId: string) => api.reprintDigifabJob(slug, jobId),
-    onSuccess: (r) => {
-      toast[r.sent === false && !r.pooled ? "info" : "success"](
-        r.pooled ? "Queued to the pool — auto-assigns to a free printer" : r.sent ? "Sent — printing again" : `Queued — send it from the print queue${r.reason ? ` (${r.reason})` : ""}`,
-      );
-      void qc.invalidateQueries({ queryKey: ["digifab-jobs", slug] });
-    },
-    onError: (e) => toast.error(e instanceof ApiError ? e.message : "Couldn't reprint"),
-  });
-  const askReprint = async (r: DigifabHistory["recent"][number]) => {
-    const ok = await confirm({
-      title: `Print "${r.file_ref}" again?`,
-      message: "Clones the original job (same file, routing, material and build) and sends it to the printer. On a live farm this physically starts the print.",
-      confirmLabel: "Print again",
-      destructive: true,
-    });
-    if (ok) reprint.mutate(r.id);
-  };
+  const askReprint = useReprint(slug, [["digifab-jobs", slug]]);
   const s = hist.data?.summary;
   const rate = s && s.total ? Math.round((s.completed / s.total) * 100) : null;
   const stat = (label: string, value: string) => (
@@ -1360,8 +1364,8 @@ function PrintQueueSection({ connections }: { connections: DigifabConnection[] }
       const kb = r.uploaded_bytes ? ` (${(r.uploaded_bytes / 1024).toFixed(1)} KB uploaded)` : "";
       toast[r.status === "awaiting-assignment" ? "info" : "success"](
         r.status === "awaiting-assignment"
-          ? "Uploaded — needs a printer assignment (target matched 0 or many)"
-          : `Sent to the farm — tracking to completion${kb}`,
+          ? "Uploaded, but it needs a printer assignment (target matched 0 or many)"
+          : `Sent to the farm, tracking to completion${kb}`,
       );
       invalidate();
     },
@@ -1390,7 +1394,7 @@ function PrintQueueSection({ connections }: { connections: DigifabConnection[] }
     mutationFn: (id: string) => api.retryDigifabJob(activeSlug, id),
     onSuccess: (r) => {
       toast[r.sent === false && !r.pooled ? "info" : "success"](
-        r.pooled ? "Re-queued to the pool" : r.sent ? "Re-sent to the printer" : `Re-queued — send it when ready${r.reason ? ` (${r.reason})` : ""}`,
+        r.pooled ? "Re-queued to the pool" : r.sent ? "Re-sent to the printer" : `Re-queued. Send it when ready${r.reason ? ` (${r.reason})` : ""}`,
       );
       invalidate();
     },
@@ -1403,8 +1407,8 @@ function PrintQueueSection({ connections }: { connections: DigifabConnection[] }
     const ok = await confirm({
       title: "Start this print?",
       message: isMock
-        ? `Mock connection "${conn?.label}" — no hardware is touched. Uploads + places the job through the mock driver.`
-        : `This uploads the file and queues it on "${conn?.label ?? "the farm"}" — on a live farm it physically starts the print. It can't be stopped from here.`,
+        ? `Mock connection "${conn?.label}": no hardware is touched. Uploads + places the job through the mock driver.`
+        : `This uploads the file and queues it on "${conn?.label ?? "the farm"}". On a live farm it physically starts the print. It can't be stopped from here.`,
       confirmLabel: isMock ? "Send (mock)" : "Start print",
       destructive: !isMock,
     });
@@ -1416,7 +1420,7 @@ function PrintQueueSection({ connections }: { connections: DigifabConnection[] }
       message:
         j.status === "queued" || j.status === "awaiting-assignment"
           ? "Removes it from the queue before it starts."
-          : "Marks it cancelled and stops Cobblr tracking it. On a live farm the printer may keep running — stop it at the machine.",
+          : "Marks it cancelled and stops Cobblr tracking it. On a live farm the printer may keep running, so stop it at the machine.",
       confirmLabel: "Cancel print",
       destructive: true,
     });
@@ -1544,7 +1548,7 @@ function PrintQueueSection({ connections }: { connections: DigifabConnection[] }
       {view === "list" && items.length === 0 && !jobs.isLoading && (
         <div className="text-[13px] text-muted dark:text-slate-400 italic">
           {filter === "active"
-            ? "No active jobs. Create one — then Send it to the farm when you're ready."
+            ? "No active jobs. Create one, then Send it to the farm when you're ready."
             : filter === "failed"
               ? "No failed jobs. 🎉"
               : filter === "completed"
@@ -1559,7 +1563,7 @@ function PrintQueueSection({ connections }: { connections: DigifabConnection[] }
           const conn = jb.connection_id ? connById.get(jb.connection_id) : undefined;
           const target =
             jb.target_pool && !jb.target_device
-              ? "⟳ pool — waiting for a free printer"
+              ? "⟳ pool: waiting for a free printer"
               : jb.target_device
                 ? `printer ${jb.target_device}`
                 : jb.target_tag
@@ -1718,6 +1722,11 @@ function JobDetailModal({
   const act = (fn: () => Promise<unknown>, ok: string) =>
     fn().then(() => { toast.success(ok); refresh(); }).catch((e) => toast.error(e instanceof ApiError ? e.message : String(e)));
   const send = useMutation({ mutationFn: () => api.sendDigifabJob(activeSlug, jobId), onSuccess: () => { toast.success("Sent"); refresh(); }, onError: (e) => toast.error(e instanceof ApiError ? e.message : String(e)) });
+  const setField = useMutation({
+    mutationFn: (metadata: Record<string, unknown>) => api.updateDigifabJob(activeSlug, jobId, { metadata }),
+    onSuccess: refresh,
+    onError: (e) => toast.error(e instanceof ApiError ? e.message : String(e)),
+  });
   const setPriority = useMutation({
     mutationFn: (p: number) => api.updateDigifabJob(activeSlug, jobId, { priority: p }),
     onSuccess: () => { toast.success("Priority updated"); refresh(); },
@@ -1751,7 +1760,15 @@ function JobDetailModal({
           <div>
             {row("Connection", conn?.label ?? (j.connection_id ? j.connection_id : "—"))}
             {row("Target", j.target_device ? `printer ${j.target_device}` : j.target_pool ? "pool (auto-assign)" : j.target_tag ? `#${j.target_tag}` : j.linked_machine_id ? "linked machine" : "file routing")}
-            {j.linked_build_id ? row("Produces build", <span className={j.build_reversed_at ? "line-through text-faint" : ""}>{`×${j.build_qty}${j.build_reversed_at ? " (reversed)" : j.build_consumed_at ? " (consumed)" : " (on send)"}`}</span>) : null}
+            {j.linked_build_id ? row("Produces build", <span className={j.build_reversed_at ? "line-through text-faint" : ""}>{`×${j.build_qty}${j.build_reversed_at ? " (reversed)" : j.outcome ? "" : j.build_consumed_at ? " (materials used, counts when judged good)" : " (on send)"}`}</span>) : null}
+            {j.outcome ? row("Came out", (
+              <span className={j.outcome === "good" ? "text-moss-700 dark:text-moss-300" : "text-ember-700 dark:text-ember-300"}>
+                {[
+                  j.outcome_good_qty ? `${j.outcome_good_qty} good` : null,
+                  j.outcome_scrap_qty ? `${j.outcome_scrap_qty} scrap` : null,
+                ].filter(Boolean).join(" · ") || j.outcome}
+              </span>
+            )) : null}
             {j.material_part_id ? row("Filament", `${j.material_grams ?? "?"} g`) : null}
             {row("Priority", (
               <select
@@ -1770,6 +1787,8 @@ function JobDetailModal({
             {row("Updated", when(j.updated_at))}
             {row("Last polled", when(j.last_polled_at))}
           </div>
+          {/* The job's own fields, as a bundle or a person defines them. */}
+          <CustomFieldsPanel entityKind="digifab:job" entityId={j.id} values={j.metadata ?? {}} onCommit={(name, value) => setField.mutate({ [name]: value })} />
           <div className="flex justify-end gap-2 pt-1">
             {canSend(j) && (
               <button onClick={() => send.mutate()} disabled={send.isPending} className="inline-flex items-center gap-1.5 rounded bg-cobble-600 hover:bg-cobble-700 text-white px-3 py-1.5 text-sm disabled:opacity-50">
@@ -2077,7 +2096,7 @@ function NewJobModal({
         max_attempts: maxAttempts,
       }),
     onSuccess: () => {
-      toast.success(routeBy === "pool" ? "Queued to the pool — auto-assigns to a free printer" : "Job queued");
+      toast.success(routeBy === "pool" ? "Queued to the pool. It auto-assigns to a free printer" : "Job queued");
       onCreated();
     },
     onError: (e) => toast.error(e instanceof ApiError ? e.message : String(e)),
@@ -2490,7 +2509,7 @@ function LibrarySendModal({ item, slug, onClose }: { item: DigifabLibraryItem; s
   const devices = useQuery({ queryKey: ["digifab-printers", slug, connectionId], queryFn: () => api.listDigifabDevices(slug, connectionId), enabled: !!connectionId && mode === "printer" });
   const send = useMutation({
     mutationFn: () => api.sendDigifabLibrary(slug, item.id, mode === "pool" ? { target_pool: poolId } : { connection_id: connectionId, target_device: deviceId || null }),
-    onSuccess: (r) => { toast.success(mode === "pool" ? "Queued to the pool — auto-assigns to a free printer" : `Sent — ${r.status}`); onClose(); },
+    onSuccess: (r) => { toast.success(mode === "pool" ? "Queued to the pool. It auto-assigns to a free printer" : `Sent: ${r.status}`); onClose(); },
     onError: (e) => toast.error(e instanceof ApiError ? e.message : "Send failed"),
   });
   const connList = conns.data?.items ?? [];
@@ -2518,7 +2537,7 @@ function LibrarySendModal({ item, slug, onClose }: { item: DigifabLibraryItem; s
             <label className="block">
               <span className={lbl}>Printer</span>
               <select value={deviceId} onChange={(e) => setDeviceId(e.target.value)} disabled={!connectionId} className={field + " disabled:opacity-50"}>
-                <option value="">{devices.isLoading ? "Loading…" : "— pick —"}</option>
+                <option value="">{devices.isLoading ? "Loading…" : "Pick one"}</option>
                 {deviceList.map((d) => <option key={d.id} value={d.id}>{d.name || d.id}</option>)}
               </select>
             </label>
@@ -2913,7 +2932,7 @@ function BulkAddModal({ slug, onClose, onDone }: { slug: string; onClose: () => 
     setDetected(next);
     setDetecting(false);
     const hits = Object.values(next).filter(Boolean).length;
-    toast[hits ? "success" : "info"](hits ? `Detected ${hits} of ${rows.length}` : "Couldn't detect any — using the default type");
+    toast[hits ? "success" : "info"](hits ? `Detected ${hits} of ${rows.length}` : "Couldn't detect any, so using the default type");
   };
 
   const run = useMutation({
@@ -3007,7 +3026,7 @@ function BulkAddModal({ slug, onClose, onDone }: { slug: string; onClose: () => 
                       value={effectiveType(r, i)}
                       onChange={(e) => setRowTypes((m) => ({ ...m, [i]: e.target.value }))}
                       className="text-[11px] py-0.5 pl-1.5 pr-5 rounded border border-line dark:border-slate-600 bg-surface dark:bg-slate-900 shrink-0 max-w-[200px]"
-                      title={det ? "detected by probe — change to override" : rowTypes[i] ? "your choice" : "guessed from the name/URL — change if wrong"}
+                      title={det ? "detected by probe (change to override)" : rowTypes[i] ? "your choice" : "guessed from the name/URL (change if wrong)"}
                     >
                       {FIRMWARE_TYPES.map((t) => (
                         <option key={t.id} value={t.id}>{firmwareLabel(t.id)}</option>

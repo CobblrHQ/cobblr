@@ -139,7 +139,7 @@ export function CameraCaptureSheet({
 
   if (!open) return null;
   return createPortal(
-    <OverlayLayer className="z-[70] bg-black flex flex-col" data-testid="camera-capture-sheet">
+    <OverlayLayer className="z-[70] bg-black flex flex-col" data-testid="camera-capture-sheet" role="dialog" aria-modal="true" aria-label="Camera">
       <div className="relative flex-1 min-h-0">
         {mode === "preview" && preview ? (
           <img src={preview.url} alt="preview" className="absolute inset-0 w-full h-full object-contain" />

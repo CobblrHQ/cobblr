@@ -1,0 +1,10 @@
+{
+  "lint": "lint:test-paths-from-file",
+  "run": "node scripts/lint-test-paths-from-file.ts",
+  "rows": [
+    "unit-test"
+  ],
+  "ms": 528,
+  "recorded": "2026-09-29",
+  "source": "scaffolded by new-lint.sh at twice a local run (a shared box); replaced from its first CI measurement"
+}

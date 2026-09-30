@@ -18,10 +18,10 @@ import { defineModule } from "@cobblr/platform-contract";
 
 export default defineModule({
   name: "core-views",
-  version: "0.2.9",
+  version: "0.3.0",
   displayName: "Views",
   description:
-    "Saved filtered/sorted views per entity kind. List today; kanban, calendar, table land as renderers ship. Removes the need for every module to invent its own list page.",
+    "Save the ways you like to see a list (filtered, sorted, as a board or a calendar) and come back to them.",
   icon: "layout-list",
   band: "stock",
   autoEnable: true, // ambient capability — on for every workspace
@@ -41,11 +41,6 @@ export default defineModule({
 
   api: () => import("./api/index.js"),
 
-  intents: [
-    { name: "save_view", description: "Save a filtered/sorted view for later" },
-    { name: "render_view", description: "Fetch the rows a saved view should display" },
-  ],
-
   dependencies: [],
 
   // No entityKinds — views are an infrastructure concept, not a
@@ -62,7 +57,6 @@ export default defineModule({
       "core-views.view.updated",
       "core-views.view.deleted",
     ],
-    api: [],
     actions: [
       {
         // NO-PHRASING: the way back for another action, run only from Undo
@@ -82,6 +76,7 @@ export default defineModule({
         // WORKSPACE-scoped: it configures the workspace, it does not run on a
         // record. Rides invoke_action, so it inherits the confirm gate, the
         // permission check and the change ledger (labels:set-code precedent).
+        // UI-SCREEN: /views
         id: "core-views:save-view",
         examples: ["save this as a board", "make me a kanban of tasks"],
         undoable: true,

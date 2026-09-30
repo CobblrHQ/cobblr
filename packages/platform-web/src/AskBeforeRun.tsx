@@ -13,6 +13,7 @@
 import { useState } from "react";
 import { pressStillNeeds, type PressAsk } from "@cobblr/platform-contract/action-args";
 import { Modal } from "./Modal";
+import { isShortcut } from "./shortcuts";
 
 export interface Asking {
   /** The button's label, which is also what the sheet's run button says. */
@@ -76,6 +77,8 @@ function AskSheet({ asking }: { asking: Asking }) {
                   <option value="true">Yes</option>
                   <option value="false">No</option>
                 </select>
+              ) : q.kind === "date" ? (
+                <input {...common} type="date" onChange={(e) => setAnswers((a) => ({ ...a, [q.arg]: e.target.value }))} />
               ) : q.kind === "number" ? (
                 <input {...common} type="number" inputMode="decimal" onChange={(e) => setAnswers((a) => ({ ...a, [q.arg]: e.target.value }))} />
               ) : (
@@ -84,7 +87,7 @@ function AskSheet({ asking }: { asking: Asking }) {
                   rows={3}
                   onChange={(e) => setAnswers((a) => ({ ...a, [q.arg]: e.target.value }))}
                   onKeyDown={(e) => {
-                    if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) {
+                    if (isShortcut(e, "run")) {
                       e.preventDefault();
                       submit();
                     }

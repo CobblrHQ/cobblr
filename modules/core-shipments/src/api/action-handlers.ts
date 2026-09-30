@@ -1,7 +1,7 @@
 // core-shipments action handlers.
 //
 // `core-shipments:track` is the whole cross-module surface. A module that owns
-// records carrying tracking numbers (purchases, today) calls it through
+// records carrying tracking numbers (purchases, core-scan's receipts) calls it through
 // platform().actions.invoke and stores what comes back; it never imports this
 // module and this module never reads its tables.
 //
@@ -12,7 +12,7 @@
 // re-implement them would drift from this one the first time either changed.
 
 import { platform } from "@cobblr/platform-contract";
-import { detectCarrier } from "../carriers.js";
+import { detectCarrier, trackingLookup } from "../carriers.js";
 import { driverForRoute } from "../drivers/index.js";
 import { isPollDue, nextPollAt } from "../cadence.js";
 import { etaSourceOfState, mergeEta, type EtaSource } from "../eta-confidence.js";
@@ -44,6 +44,20 @@ interface TrackArgs {
 export function registerShipmentsActionHandlers(): void {
   if (registered) return;
   registered = true;
+
+  // Which carrier a number belongs to and where a person looks it up: the
+  // pure half of track, with no carrier call. A record about to tell somebody
+  // "it has shipped" asks this for the name and the link to put in the words.
+  platform().actions.registerHandler("core-shipments.identify", async (ctx) => {
+    const number = String((ctx.args as { number?: unknown } | null)?.number ?? "").trim();
+    if (!number) return { ok: true, skipped: "no tracking number" };
+    const carrier = detectCarrier(number);
+    return {
+      ok: true,
+      carrier: carrier ? { code: carrier.code, name: carrier.name } : null,
+      lookup: trackingLookup(number, carrier),
+    };
+  });
 
   platform().actions.registerHandler("core-shipments.track", async (ctx) => {
     const args = (ctx.args as TrackArgs | null) ?? {};
@@ -107,13 +121,14 @@ export function registerShipmentsActionHandlers(): void {
       status = await driver.track(carrier.number, carrier.code, route);
     } catch (err) {
       const retryable = err instanceof CarrierError ? err.retryable : true;
+      const full = err instanceof CarrierError && err.quotaExhausted;
       // A carrier that did not answer has told us nothing. The caller keeps its
       // estimate and its previous state; nothing here is allowed to look like
       // progress. A permanent failure stops the schedule so we do not hammer it.
       return {
         ok: false,
         followed: false,
-        reason: "carrier_error",
+        reason: full ? "quota_exhausted" : "carrier_error",
         retryable,
         message: err instanceof Error ? err.message : "the carrier did not answer",
         eta: current,

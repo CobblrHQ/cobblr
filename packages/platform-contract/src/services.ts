@@ -260,6 +260,9 @@ export interface ServiceWireFile {
   name?: string;
   type?: string;
   size?: number;
+  /** Set by Cobblr once it holds the bytes in core-files (a question's
+   *  preview on a job's `needs`), never by a service. */
+  file_id?: string;
 }
 
 export interface ServiceSubmitBody {
@@ -393,8 +396,9 @@ export interface ServiceInvokeRequest {
   input: unknown;
   /** Input files: the manifest's `files_in` name → a core-files id. */
   files?: Record<string, string>;
-  /** Pin one connection: no fall-through to the next in the order. */
-  via?: { credentialId: string };
+  /** Pin who answers, a connection or a built-in: no fall-through to the
+   *  next in the order. */
+  via?: { credentialId: string } | { builtIn: string };
   idempotencyKey?: string;
   /** Outputs attach here as well as to the job. */
   attachTo?: { kind: string; id: string };
@@ -412,6 +416,49 @@ export interface BuiltInServiceContext {
   files: Record<string, string>;
   /** Report progress while it works. */
   progress(fraction: number, message?: string): Promise<void>;
+  /** An adapter's connection settings (see BuiltInServiceDef.connection):
+   *  the config of the connection this job runs on, decrypted. Absent for a
+   *  plain built-in. */
+  config?: Record<string, string>;
+  /** An adapter's connection id: the key a module keeps its own per-record
+   *  settings under (a detector's camera map). Absent for a plain built-in. */
+  connectionId?: string;
+}
+
+/** A setting on an adapter's connection form. Flat strings only. */
+export interface AdapterConfigProperty {
+  type: "string";
+  title: string;
+  description?: string;
+  /** Drawn as an address field. */
+  format?: "uri";
+  /** A secret: stored encrypted, never shown again. */
+  writeOnly?: true;
+  default?: string;
+  enum?: string[];
+}
+
+/** What testing an adapter connection found. */
+export interface AdapterTestResult {
+  ok: boolean;
+  reason?: "invalid_key" | "unreachable" | "busy" | "unknown";
+  error?: string;
+  /** "PrintGuard 2.1, answered in 80 ms". */
+  note?: string;
+}
+
+/** A built-in that speaks a third-party program's own API (PrintGuard, Obico)
+ *  needs to know where that program is. With `connection`, it is offered on
+ *  Add a service like a connected service: its settings are a normal service
+ *  connection (provider `adapter:<id>`, the settings as its credentials, no
+ *  manifest), it is ordered like one, and each job runs with the settings of
+ *  the connection it was sent to (`ctx.config`). */
+export interface BuiltInConnectionDef {
+  /** On the Add a service list ("PrintGuard"). */
+  title: string;
+  summary?: string;
+  config_schema: { type: "object"; properties: Record<string, AdapterConfigProperty>; required?: string[] };
+  test(config: Record<string, string>, ctx: { userId: string; orgId?: string }): Promise<AdapterTestResult>;
 }
 
 export interface BuiltInServiceResult {
@@ -426,6 +473,13 @@ export interface BuiltInServiceDef {
   name: string;
   capability: Omit<ServiceCapabilityDecl, "options_endpoint">;
   run(ctx: BuiltInServiceContext): Promise<BuiltInServiceResult>;
+  /** An adapter: runs only on a connection a person made for it. */
+  connection?: BuiltInConnectionDef;
+}
+
+/** The provider id an adapter's connection row carries. */
+export function adapterProviderId(builtInId: string): string {
+  return `adapter:${builtInId}`;
 }
 
 /** The job events wires trigger on (§10): how a flow chains. Payload:
@@ -451,6 +505,11 @@ export interface PlatformServices {
   cancel(orgId: string, jobId: string, userId: string | null): Promise<void>;
   /** An in-process implementation of a capability. */
   registerBuiltIn(def: BuiltInServiceDef): void;
+  /** An adapter connection's settings, for the module that owns the adapter
+   *  (a detector page listing the cameras behind its connection). Null
+   *  unless `credentialId` is a connection of `builtInId` in this workspace:
+   *  a module reads only its own adapter's settings, and only here. */
+  adapterConfig(orgId: string, credentialId: string, builtInId: string): Promise<Record<string, string> | null>;
 }
 
 /** Thrown by the placeholder platform().services until the kernel lands, so a

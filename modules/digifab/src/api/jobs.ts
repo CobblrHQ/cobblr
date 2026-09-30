@@ -6,9 +6,11 @@
 // farm, so it's owner/admin only and isolated. The mock driver makes
 // the whole pipeline testable without touching hardware.
 
+import { sql } from "kysely";
 import { Router } from "express";
 import { z } from "zod";
 import { platform } from "@cobblr/platform-contract";
+import { decodeKeysetCursor, encodeKeysetCursor } from "@cobblr/platform-contract/keyset-cursor";
 import { tenantDb, tenantContext, sessionUser } from "../db.js";
 import { asyncHandler, badBody, requireRole } from "./util.js";
 import { pollJob, sendJob, assignJob, buildDriverById, reverseBuildIfCommitted, TERMINAL, markJobTerminal, managerName } from "../jobs-core.js";
@@ -43,6 +45,13 @@ const JOB_COLS = [
   "build_qty",
   "build_consumed_at",
   "build_reversed_at",
+  "build_output_at",
+  "outcome",
+  "outcome_good_qty",
+  "outcome_scrap_qty",
+  "outcome_at",
+  "outcome_source",
+  "metadata",
   "created_at",
   "updated_at",
   "last_polled_at",
@@ -71,11 +80,12 @@ const JobCreate = z.object({
 
 // F-5: cursor-paginated + status-filterable, so a busy farm's older jobs don't
 // silently vanish past a hard cap. `?limit=&cursor=&status=`. cursor = the
-// created_at of the last row seen (descending). Returns next_cursor when there's
-// more. Back-compatible: no params → newest 100 + a cursor to load the rest.
+// last row seen, to the millisecond with its id (@cobblr/platform-contract/
+// keyset-cursor); an older time-only cursor still reads. Returns next_cursor
+// when there's more. Back-compatible: no params → newest 100 + a cursor.
 const ListQuery = z.object({
   limit: z.coerce.number().int().min(1).max(200).default(100),
-  cursor: z.string().datetime().optional(),
+  cursor: z.string().max(120).refine((v) => decodeKeysetCursor(v) !== null, "not a page cursor").optional(),
   status: z.string().max(40).optional(),
 });
 
@@ -87,11 +97,17 @@ jobsRouter.get(
     const { limit, cursor, status } = parsed.data;
     let q = tenantDb(req).selectFrom("digifab_jobs").select(JOB_COLS);
     if (status) q = q.where("status", "=", status);
-    if (cursor) q = q.where("created_at", "<", new Date(cursor));
-    const rows = await q.orderBy("created_at", "desc").limit(limit + 1).execute();
+    const c = decodeKeysetCursor(cursor);
+    if (c) {
+      q = c.id && /^[0-9a-f-]{36}$/i.test(c.id)
+        ? q.where(sql<boolean>`(date_trunc('milliseconds', created_at), id) < (${c.at}, ${c.id}::uuid)`)
+        : q.where(sql<boolean>`date_trunc('milliseconds', created_at) < ${c.at}`);
+    }
+    const rows = await q.orderBy(sql`date_trunc('milliseconds', created_at)`, "desc").orderBy("id", "desc").limit(limit + 1).execute();
     const hasMore = rows.length > limit;
     const base = rows.slice(0, limit).map((r) => ({ ...r, external: false }));
-    const next_cursor = hasMore ? new Date(base[base.length - 1]!.created_at).toISOString() : null;
+    const lastRow = base[base.length - 1];
+    const next_cursor = hasMore && lastRow ? encodeKeysetCursor(lastRow.created_at, lastRow.id) : null;
     // Prepend in-progress prints started ON the machine (no Cobblr job) on the
     // first page, so a running externally-started print shows in the queue. They
     // carry status 'printing' → canSend/canDelete already treat them as read-only.
@@ -111,8 +127,10 @@ jobsRouter.get(
         status: "printing", priority: 0, attempts: 0, max_attempts: 1, progress: null, eta_sec: null,
         error: null, file_id: null, linked_machine_id: null, linked_task_id: null,
         linked_build_id: null, build_qty: 1, build_consumed_at: null, build_reversed_at: null,
+        outcome: null, outcome_good_qty: null, outcome_scrap_qty: null, outcome_at: null, outcome_source: null,
+        build_output_deferred: false, build_output_at: null,
         created_at: o.started_at ?? o.created_at, updated_at: o.started_at ?? o.created_at,
-        last_polled_at: null, external: true,
+        last_polled_at: null, metadata: {}, external: true,
       })) as typeof base;
       items = [...ext, ...base];
     }
@@ -192,7 +210,10 @@ jobsRouter.get(
       .where("id", "=", req.params.id!)
       .executeTakeFirst();
     if (!row) return void res.status(404).json({ error: { code: "not_found", message: "no such job" } });
-    res.json(row);
+    // The same labels the list resolver's rows carry, so the record page and
+    // the list name a job's people and relations alike.
+    const [labelled] = await platform().entities.withFieldLabels(tenantContext(req).org.id, "digifab:job", [row]);
+    res.json(labelled ?? row);
   }),
 );
 
@@ -201,6 +222,7 @@ jobsRouter.get(
 const JobPatch = z.object({
   priority: z.number().int().min(0).max(100).optional(),
   max_attempts: z.number().int().min(1).max(10).optional(),
+  metadata: z.record(z.unknown()).optional(),
 });
 jobsRouter.patch(
   "/:id",
@@ -211,6 +233,8 @@ jobsRouter.patch(
     const patch: Record<string, unknown> = { updated_at: new Date() };
     if (parsed.data.priority != null) patch.priority = parsed.data.priority;
     if (parsed.data.max_attempts != null) patch.max_attempts = parsed.data.max_attempts;
+    // A custom field saved on its own merges into what the job holds.
+    if (parsed.data.metadata !== undefined) patch.metadata = platform().db.mergeJsonb("metadata", parsed.data.metadata);
     const row = await tenantDb(req).updateTable("digifab_jobs").set(patch).where("id", "=", req.params.id!).returning(JOB_COLS).executeTakeFirst();
     if (!row) return void res.status(404).json({ error: { code: "not_found", message: "no such job" } });
     if (parsed.data.priority != null && row.target_pool && row.status === "queued") {
@@ -230,28 +254,53 @@ jobsRouter.post(
   asyncHandler(async (req, res) => {
     if (!requireRole(req, res, "owner", "admin")) return;
     const ctx = tenantContext(req);
-    const r = await sendJob(tenantDb(req), ctx.org.id, req.params.id!);
+    const r = await sendAndWatch(tenantDb(req), ctx.org.id, req.params.id!);
     if (!r.ok) {
       if (r.code === "send_failed") return void res.status(502).json({ error: { code: r.code, message: r.message } });
-      const status = r.code === "not_found" ? 404 : 409;
-      const message =
-        r.code === "already_sent"
-          ? "job already sent"
-          : r.code === "already_terminal"
-            ? "job already finished — use retry"
-            : r.code === "unknown_device"
-              ? "target printer is not on this connection"
-              : r.code === "file_missing"
-                ? "the job's stored file no longer exists"
-                : r.code === "no_connection"
-                  ? "connection missing"
-                  : "no such job";
-      return void res.status(status).json({ error: { code: r.code, message } });
+      return void res.status(r.code === "not_found" ? 404 : 409).json({ error: { code: r.code, message: r.message } });
     }
-    if (r.shouldPoll) await enqueuePoll(ctx.org.id, req.params.id!);
     res.json({ status: r.status, remote_job_id: r.remoteJobId, placement: r.placement, uploaded_bytes: r.uploadedBytes });
   }),
 );
+
+const SEND_REFUSALS: Record<string, string> = {
+  already_sent: "job already sent",
+  already_sending: "This job is already being sent to its printer.",
+  already_terminal: "job already finished — use retry",
+  unknown_device: "target printer is not on this connection",
+  file_missing: "the job's stored file no longer exists",
+  no_connection: "connection missing",
+  not_found: "no such job",
+};
+
+/** Send a job to its machine and start watching it: the ONE send, behind the
+ *  page's button (the route above) and the digifab:send action alike, so the
+ *  action's physical effect is the only way a job reaches a machine (Services
+ *  §9, §14.3). */
+export async function sendAndWatch(db: Parameters<typeof sendJob>[0], orgId: string, jobId: string) {
+  const r = await sendJob(db, orgId, jobId);
+  if (!r.ok) {
+    const message = r.code === "send_failed" ? r.message : (SEND_REFUSALS[r.code] ?? "no such job");
+    return { ok: false as const, code: r.code, message };
+  }
+  if (r.shouldPoll) await enqueuePoll(orgId, jobId);
+  return r;
+}
+
+/** digifab:send: the action that starts a machine. Declared `effect:
+ *  physical`, so a person's yes stands in front of it from every door (an
+ *  assistant, a wire, module code), not only the page's dialog. */
+export function registerSendAction(): void {
+  platform().actions.registerHandler("digifab.send", async (ctx) => {
+    const a = (ctx.args as Record<string, unknown> | null) ?? {};
+    const jobId = typeof a.job_id === "string" && a.job_id ? a.job_id : ctx.entity?.kind === "digifab:job" ? ctx.entity.id : null;
+    if (!jobId) return { ok: false, error: "which job to send is needed (job_id)" };
+    const db = (await platform().tenants.getDb(ctx.orgId)) as Parameters<typeof sendJob>[0];
+    const r = await sendAndWatch(db, ctx.orgId, jobId);
+    if (!r.ok) return { ok: false, error: r.message, code: r.code };
+    return { ok: true, job_id: jobId, status: r.status, remote_job_id: r.remoteJobId };
+  });
+}
 
 // ── re-pick a printer for an awaiting-assignment job (F-14) ──
 // The job's already uploaded; this re-submits it to an explicit, validated
@@ -277,7 +326,9 @@ jobsRouter.post(
               ? "job has nothing uploaded to place"
               : r.code === "unknown_device"
                 ? "target printer is not on this connection"
-                : "connection missing";
+                : r.code === "already_sending"
+                  ? "This job is already being sent to its printer."
+                  : "connection missing";
       return void res.status(status).json({ error: { code: r.code, message } });
     }
     if (r.shouldPoll) await enqueuePoll(ctx.org.id, req.params.id!);
@@ -304,10 +355,15 @@ jobsRouter.post(
       return void res.status(409).json({ error: { code: "not_retryable", message: "only a failed or cancelled job can be retried" } });
     }
     // A build whose consumption was reversed can commit again on this send.
-    await db
+    // Conditional on the job still being failed or cancelled: two retries at
+    // once must not both re-queue it (the second would wipe the first's send
+    // and print the job again).
+    const requeued = await db
       .updateTable("digifab_jobs")
       .set({
         status: "queued",
+        send_token: null,
+        send_claimed_at: null,
         remote_job_id: null,
         remote_file_id: null,
         progress: 0,
@@ -315,25 +371,40 @@ jobsRouter.post(
         poll_errors: 0,
         build_consumed_at: null,
         build_reversed_at: null,
+        // A retried job is judged afresh: the failed attempt's scrap is in the
+        // event history, and the next plate gets its own verdict.
+        build_output_deferred: false,
+        build_output_at: null,
+        outcome: null,
+        outcome_good_qty: null,
+        outcome_scrap_qty: null,
+        outcome_at: null,
+        outcome_source: null,
         ...(job.target_pool ? { connection_id: null, target_device: null } : {}),
         updated_at: new Date(),
       })
       .where("id", "=", job.id)
-      .execute();
+      .where("status", "in", ["failed", "cancelled"])
+      .executeTakeFirst();
+    if (Number(requeued.numUpdatedRows ?? 0n) === 0) {
+      return void res.status(409).json({ error: { code: "already_retried", message: "This job is already being retried." } });
+    }
     if (job.target_pool) {
       const { kickAssign } = await import("../assign-worker.js");
       await kickAssign(ctx.org.id);
       return void res.json({ status: "queued", pooled: true });
     }
-    const r = await sendJob(db, ctx.org.id, job.id);
+    const r = await sendAndWatch(db, ctx.org.id, job.id);
     if (!r.ok) {
       // Left queued — the user can fix the cause and Send manually.
       return void res.json({ status: "queued", sent: false, reason: r.code });
     }
-    if (r.shouldPoll) await enqueuePoll(ctx.org.id, job.id);
     res.json({ status: r.status, sent: true, remote_job_id: r.remoteJobId });
   }),
 );
+
+/** Within this long, the same person reprinting the same job again is asked first. */
+const REPRINT_AGAIN_MS = 10_000;
 
 // ── REPRINT — "print this again": CLONE a (typically completed) job into a
 // fresh queued one and send it. Distinct from retry (which re-runs the SAME
@@ -349,6 +420,28 @@ jobsRouter.post(
     const db = tenantDb(req);
     const src = await db.selectFrom("digifab_jobs").selectAll().where("id", "=", req.params.id!).executeTakeFirst();
     if (!src) return void res.status(404).json({ error: { code: "not_found", message: "no such job" } });
+    // A double tap is almost never "two copies, please", and a print is
+    // physical. The stamp is one conditional UPDATE, so two taps at once
+    // cannot both pass; the second is asked, and `again: true` is the
+    // deliberate second copy.
+    const again = (req.body as { again?: unknown } | undefined)?.again === true;
+    const userId = sessionUser(req)?.id ?? null;
+    const now = new Date();
+    const stamp = db.updateTable("digifab_jobs").set({ last_reprint_at: now, last_reprint_by: userId }).where("id", "=", src.id);
+    const stamped = again
+      ? await stamp.executeTakeFirst()
+      : await stamp
+          .where(({ or, eb }) =>
+            or([
+              eb("last_reprint_at", "is", null),
+              eb("last_reprint_at", "<", new Date(now.getTime() - REPRINT_AGAIN_MS)),
+              sql<boolean>`(last_reprint_by is distinct from ${userId}::uuid)`,
+            ]),
+          )
+          .executeTakeFirst();
+    if (Number(stamped.numUpdatedRows ?? 0n) === 0) {
+      return void res.status(409).json({ error: { code: "just_reprinted", message: "You just reprinted this. Print another copy?" } });
+    }
     const clone = await db
       .insertInto("digifab_jobs")
       .values({
@@ -382,13 +475,12 @@ jobsRouter.post(
       await kickAssign(ctx.org.id);
       return void res.json({ job: clone, status: "queued", pooled: true });
     }
-    const r = await sendJob(db, ctx.org.id, clone.id);
+    const r = await sendAndWatch(db, ctx.org.id, clone.id);
     if (!r.ok) {
       // Clone stays queued (e.g. its stored file was deleted) — visible in the
       // queue with the reason, sendable manually once fixed.
       return void res.json({ job: clone, status: "queued", sent: false, reason: r.code });
     }
-    if (r.shouldPoll) await enqueuePoll(ctx.org.id, clone.id);
     res.json({ job: clone, status: r.status, sent: true, remote_job_id: r.remoteJobId });
   }),
 );

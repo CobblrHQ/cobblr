@@ -31,6 +31,7 @@ import {
   useToast,
   useViewMode, TILE_GRID, InboxWaitingStrip, SearchInput, CollectionHeader, headerButton } from "@cobblr/platform-web";
 import { EntityAttachments } from "../components/EntityAttachments";
+import { ContributedDetailPanels } from "../panels/registry";
 import { EntityImageEdit } from "../components/EntityImageEdit";
 import { ImageSearchPicker } from "../components/ImageSearchPicker";
 import { SuggestedPhoto } from "../components/SuggestedPhoto";
@@ -147,7 +148,7 @@ export function RecordsPage({
         // real debugging session down the wrong path (reported 2026-07-18).
         if (r.unresolved > 0)
           toast.error(
-            `Couldn't read ${countOf(r.unresolved, noun)} — that's a bug on our side, not your data.`,
+            `Couldn't read ${countOf(r.unresolved, noun)}. That's a bug on our side, not your data.`,
           );
         else if (r.unnamed > 0)
           toast.error(`Nothing to look up: these ${pluralise(noun)} need a name first.`);
@@ -171,9 +172,10 @@ export function RecordsPage({
     <div className="space-y-4">
       <CollectionHeader
         title={displayName ?? "records"}
-        count={`${filtered.length} of ${allRows.length}`}
+        count={`${filtered.length} of ${list.data?.total ?? allRows.length}`}
         hint={hint} kind={instance ? `${instance}:item` : ENTITY_KIND}
         search={<SearchInput value={query} onChange={setQuery} placeholder="search…" aria-label={`Search ${pluralise(noun)}`} wrapperClassName="w-48 max-sm:w-full max-sm:flex-1" />}
+        exportQuery={query}
         actions={
           <>
             {missingCovers > 0 && (
@@ -488,7 +490,11 @@ export function RecordDetailModal({
                   update.mutate({ metadata: { [name]: value } })
                 }
               />
-              <EntityAttachments kind={ENTITY_KIND} entityId={r.id} collection={instance ? `${instance}:item` : undefined} />
+              <ContributedDetailPanels
+                target={ENTITY_KIND}
+                ctx={{ slug: activeSlug, entityId: r.id, entityTitle: r.name, hints: { collection: instance ? `${instance}:item` : undefined } }}
+              />
+              <EntityAttachments kind={ENTITY_KIND} entityId={r.id} collection={instance ? `${instance}:item` : undefined} omit={["tags", "discussion", "pairings"]} />
               <FieldPack className="text-xs" items={[editFieldItem("notes", { label: fp.label("notes", "Notes"), value: r.notes ?? "", multiline: true, onCommit: (v) => update.mutate({ notes: v || null }) })]} />
             </div>
           </div>

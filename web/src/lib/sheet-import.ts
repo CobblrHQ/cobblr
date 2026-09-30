@@ -3,6 +3,7 @@
 // names what it said.
 
 import { DISPOSITION_LABELS, type Disposition } from "@cobblr/platform-contract/disposition";
+import { toCsv } from "@cobblr/platform-contract/csv";
 
 export type ColumnType =
   | "text"
@@ -165,7 +166,16 @@ export interface ImportRunSheet {
   retired?: number;
   checks?: SummaryCheck[];
   problems?: string[];
+  /** Every row not taken exactly as written, and why; issue_count is the total. */
+  issues?: Array<{ row: number; name: string; problem: string }>;
+  issue_count?: number;
   planned?: { create: number; update: number; unchanged: number };
+}
+
+/** The rows of one sheet that did not go in exactly as written, as a CSV a
+ *  person can open beside their spreadsheet and fix. */
+export function issuesCsv(sheet: ImportRunSheet): string {
+  return toCsv(["Row", "Name", "What happened"], (sheet.issues ?? []).map((i) => [i.row, i.name, i.problem]));
 }
 
 export interface HeldStep {

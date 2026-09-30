@@ -90,14 +90,22 @@ function FeedbackShot({ url, name }: { url: string | null; name?: string }) {
   );
 }
 
+const OPEN = new Set(["new", "triaged", "in_progress", "awaiting_decision"]);
+
 export function FeedbackCard({
   f,
   source,
   onUpdate,
+  onPostToDiscord,
+  posting = false,
 }: {
   f: FeedbackSourceItem;
-  source: Pick<FeedbackSource, "imageUrl" | "update">;
+  source: Pick<FeedbackSource, "imageUrl" | "update" | "postToDiscord">;
   onUpdate: (body: FeedbackUpdate) => void;
+  /** Post this item's card to the team channel. Offered only for an open item
+   *  with no card, and only where the source can do it. */
+  onPostToDiscord?: () => void;
+  posting?: boolean;
 }) {
   const [notes, setNotes] = useState(f.admin_notes ?? "");
   const [reply, setReply] = useState("");
@@ -164,6 +172,17 @@ export function FeedbackCard({
         )}
         <span className="text-faint dark:text-slate-500">· {new Date(f.created_at).toLocaleString()}</span>
         <div className="flex-1" />
+        {source.postToDiscord && onPostToDiscord && !f.announce_message_id && OPEN.has(f.status) && (
+          <button
+            type="button"
+            className="text-xs rounded border border-line dark:border-slate-700 px-2 py-0.5 hover:bg-subtle dark:hover:bg-slate-800 disabled:opacity-60"
+            disabled={posting}
+            title="This report has no card in the team channel: it was filed while Discord was off, or its post failed."
+            onClick={onPostToDiscord}
+          >
+            {posting ? "Posting…" : "Post to Discord"}
+          </button>
+        )}
         {canAct ? (
           <select
             value={f.status}

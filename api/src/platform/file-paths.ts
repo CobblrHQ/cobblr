@@ -21,3 +21,24 @@ export function fileIdFromRawPath(path: unknown): string | null {
 export function rawPathFor(slug: string, fileId: string): string {
   return `/api/v1/orgs/${slug}/modules/core-files/files/${fileId}/raw`;
 }
+
+/** Every stored-file path inside a value (a row, its metadata), re-spelled for
+ *  the workspace it now lives in and the id its file came back under. A
+ *  restored backup kept its pictures' old addresses and served none of them
+ *  (#4217). External URLs are left as they are. */
+export function repathFiles<T>(value: T, slug: string, newIds?: ReadonlyMap<string, string>): T {
+  if (typeof value === "string") {
+    const old = fileIdFromRawPath(value);
+    // The file came back under a new id; a path carries the id inside it, so
+    // a whole-value id swap never reaches it.
+    const id = old ? (newIds?.get(old) ?? old) : null;
+    // RAW_PATH matches from /orgs/…, so whatever came before it (an /api/v1
+    // prefix, an origin) is kept as it was.
+    return (id ? value.replace(RAW_PATH, `/orgs/${slug}/modules/core-files/files/${id}/raw`) : value) as T;
+  }
+  if (Array.isArray(value)) return value.map((v) => repathFiles(v, slug, newIds)) as T;
+  if (value && typeof value === "object" && !(value instanceof Date)) {
+    return Object.fromEntries(Object.entries(value as Record<string, unknown>).map(([k, v]) => [k, repathFiles(v, slug, newIds)])) as T;
+  }
+  return value;
+}

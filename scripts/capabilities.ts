@@ -87,6 +87,32 @@ export const CAPABILITIES: Capability[] = [
   },
   {
     kind: "owns",
+    id: "purchases:receiving-an-order",
+    what: "receiving an order's lines and telling the stock and spend wires: receiveOrderLines in modules/purchases/src/receive.ts, the one emitter of purchases.order_item.received",
+    why:
+      "two doors received an order each their own way: 'Mark arrived' sent qty where the stock wire reads delta, so no stock was added, " +
+      "and nothing stamped a line received, so an order that arrived twice added its stock twice (#4115)",
+    owner: "modules/purchases/src/receive.ts",
+    scope: ["api/src/**/*.ts", "modules/*/src/**/*.ts"],
+    detect: /emit\(\s*["']purchases\.order_item\.received["']/,
+    use: "receiveOrderLines(db, orgId, orderId, receivedOn) from modules/purchases/src/receive.ts",
+  },
+  {
+    kind: "owns",
+    id: "counters:what-a-record-counts",
+    what: "the counters a kind keeps and one record's reading of them (a module's own EntityWriter.counters plus every number field with the usage role): countersFor / readCounters in api/src/platform/counters.ts, reached as platform().entities.countersFor / readCounters",
+    why:
+      "the schedule form's choices and the schedule's due reading each asked the writer for its counters, so a counter from a field " +
+      "could be offered and never read, or read and never offered, and only machines could be serviced by use (#4174)",
+    owner: "api/src/platform/counters.ts",
+    scope: ["api/src/**/*.ts", "modules/*/src/**/*.ts"],
+    // Reaching into a writer's own counters: the declaration inside a module's
+    // writer (counters: { defs: ...) is not a read.
+    detect: /\.counters\??\.(?:defs|read)\b/,
+    use: "platform().entities.countersFor(orgId, kind) and platform().entities.readCounters(orgId, kind, id)",
+  },
+  {
+    kind: "owns",
     id: "network:is-this-a-home-address",
     what: "deciding whether an address is on the person's own network (and so needs a bridge from a hosted Cobblr): addressReach / needsBridge in packages/platform-contract/src/address-reach.ts",
     why:
@@ -141,6 +167,30 @@ export const CAPABILITIES: Capability[] = [
   },
   {
     kind: "owns",
+    id: "bridge:a-call-to-a-lan-service",
+    what: "a fetch-shaped call a bridge performs on its own network: platform().edge.fetch (fetchViaEdge in api/src/platform/edge.ts)",
+    why:
+      "four modules each built their own source call on edge.send, each with its own body, headers and retry rules, and two " +
+      "retried on an error text the kernel had reworded, so the retry never fired (#4034 S3a)",
+    owner: "api/src/platform/edge.ts",
+    scope: ["modules/*/src/**/*.ts", "api/src/**/*.ts"],
+    detect: /\bsource:\s*\{\s*baseUrl\b/,
+    use: "platform().edge.fetch(key, { baseUrl, path, method, headers, body, timeoutMs, lane }), which returns a Response",
+  },
+  {
+    kind: "owns",
+    id: "bridge:tells-offline-from-no-answer",
+    what: "telling 'no bridge' from 'the bridge did not answer': the EdgeOffline and EdgeTimeout types in @cobblr/platform-contract",
+    why:
+      "the AI transits matched an edge error's words (/no edge device|edge disconnected/), the kernel reworded the message, and " +
+      "a bridge's poll gap became a hard AI failure with nothing to show why (#4034 S3a)",
+    owner: "packages/platform-contract/src/index.ts",
+    scope: ["modules/*/src/**/*.ts", "api/src/**/*.ts", "web/src/**/*.ts", "web/src/**/*.tsx"],
+    detect: /no edge device|edge disconnected|edge channel gone/i,
+    use: "catch (e) { if (e instanceof EdgeOffline) … } from @cobblr/platform-contract",
+  },
+  {
+    kind: "owns",
     id: "overlay:holds-the-page-still",
     what: "stopping the page scrolling behind an overlay: lockPageScroll / useLockPageScroll in packages/platform-web/src/scrollLock.ts",
     why:
@@ -174,6 +224,9 @@ export const CAPABILITIES: Capability[] = [
         "the one-shot heal that folds rows stored under a collection's kind onto the base kind (retires by its DONE WHEN)",
       "api/src/routes/test-support.ts":
         "the test-only door that plants a row as it was stored before the fix, so the heal's test has one to fold",
+      "api/src/platform/heal-dangling-places.ts":
+        "the one-shot heal that FINDS placements whose place no longer exists, a question the seam cannot ask without the place's " +
+        "id; it only reads, and takes each thing out through platform().placement.remove (retires by its DONE WHEN)",
     },
   },
   {
@@ -422,7 +475,6 @@ export const CAPABILITIES: Capability[] = [
       "web/src/components/ModuleNav.tsx",
       "web/src/components/HeaderMenu.tsx",
       "web/src/components/UserMenu.tsx",
-      "web/src/components/NavCustomizeMenu.tsx",
       "web/src/components/SidebarNav.tsx",
       "web/src/components/MobileNav.tsx",
       "web/src/components/CommandPalette.tsx",
@@ -537,6 +589,24 @@ export const CAPABILITIES: Capability[] = [
   },
   {
     kind: "owns",
+    id: "csv:a-spreadsheet-cell",
+    what:
+      "writing a CSV cell or file (quoting, the formula guard, line ends, the byte order mark): csvCell / toCsv / " +
+      "csvDownloadHeaders in packages/platform-contract/src/csv.ts, and unguardCsvText to read a guarded cell back",
+    why:
+      "three exporters each kept their own cell writer and they drifted: one did not quote a carriage return, and none " +
+      "guarded a record named like =HYPERLINK(...), which a spreadsheet runs as a formula when the export is opened",
+    owner: "packages/platform-contract/src/csv.ts",
+    scope: ["api/src/**/*.ts", "modules/*/src/**/*.{ts,tsx}", "web/src/**/*.{ts,tsx}", "packages/*/src/**/*.{ts,tsx}"],
+    // A hand-rolled CSV quote: doubling the quotes inside a cell.
+    detect: /replace\(\/"\/g,\s*['"`]""['"`]\)/,
+    use: 'csvCell(value) / toCsv(header, rows) from "@cobblr/platform-contract/csv"',
+    except: {
+      "api/src/sandbox/module-role.ts": "quotes a Postgres identifier (a role name), not a spreadsheet cell",
+    },
+  },
+  {
+    kind: "owns",
     id: "scan:picture-options-pool",
     what: "the ladder for a web picture: library first for fresh things, the engine one ask at a time, the shop-less retry, the library when the engine refuses, and the refusal reported",
     why:
@@ -619,9 +689,28 @@ export const CAPABILITIES: Capability[] = [
       "web/src/pages/ScanResultModal.tsx",
       "web/src/pages/ScanCaptureDrawer.tsx",
       "web/src/components/ManualScanField.tsx",
+      "web/src/components/GlobalScanWedge.tsx",
+      "web/src/components/LiveSortSheet.tsx",
     ],
     detect: /qrTokenFromUrl\(|isGenericLink\(|\^\\d\{8,14\}\$/,
     use: "classifyScanPayload(raw) / typedVerdict(raw) from lib/scanPayload.ts",
+  },
+  {
+    kind: "owns",
+    id: "photo:add-to-record",
+    what: "letting a person add a photo to something: usePhotoPick in packages/platform-web/src/photo-capture.tsx, which opens the app's camera on a phone and the file picker elsewhere",
+    why:
+      "every record surface hand-rolled <input type=file accept=\"image/*\">, which on a phone is the OS chooser, library first, " +
+      "a detour away from the thing in front of you and past the app's own camera (#4140, the #4115 audit)",
+    owner: "packages/platform-web/src/photo-capture.tsx",
+    scope: ["web/src/**/*.tsx", "packages/platform-web/src/**/*.tsx", "modules/*/src/ui/**/*.tsx"],
+    detect: /accept=["']image\/\*["']/,
+    use: "usePhotoPick(onFiles, { title, label, multiple?, camera? }) from @cobblr/platform-web: call pick() from your button and render input once; camera: false for a picture that is not a photo of the thing (a catalog image, a screenshot)",
+    except: {
+      "web/src/components/FeedbackWidget.tsx": "attaches a screenshot of the app to a report; the library is the right first choice",
+      "web/src/components/ThemeEditor.tsx": "a workspace logo is a file you already have, never a photo taken now",
+      "web/src/pages/ScanCameraPage.tsx": "the camera page's hidden test door, used by the e2e suite to feed a picture without a camera",
+    },
   },
   {
     kind: "owns",
@@ -1081,7 +1170,6 @@ export const CAPABILITIES: Capability[] = [
       "web/src/components/MobileNav.tsx",
       "web/src/components/LiveBox.tsx",
       "web/src/components/EmailVerifyBanner.tsx",
-      "web/src/components/NavCustomizeMenu.tsx",
       "web/src/tour/GuidedTour.tsx",
       "web/src/lib/nav-layout.ts",
     ],
@@ -1551,5 +1639,41 @@ export const CAPABILITIES: Capability[] = [
     scope: ["web/src/components/**/*.tsx", "web/src/pages/**/*.tsx"],
     detect: /\btoggleNavHidden\(/,
     use: "const toggleHidden = useToggleNavHidden() from web/src/lib/moreApps.ts; toggleHidden(slug, name).",
+  },
+  {
+    id: "inventory:stock-moved",
+    kind: "owns",
+    what: "What follows a change to a part's count: the statement line, inventory.stock.changed, and inventory.stock.low on a decrease, through stockMoved in modules/inventory/src/api/stock-moved.ts.",
+    why:
+      "five doors changed a count and each ran its own subset of what follows: an edit of the record (and so Cobb's update) ran none, " +
+      "so a count typed down past the minimum never reached the running-low list or a draft order, and a recount left no statement line",
+    owner: "modules/inventory/src/api/stock-moved.ts",
+    scope: ["modules/inventory/src/**/*.ts"],
+    detect: /emit\(\s*["'`]inventory\.stock\.(changed|low)["'`]/,
+    use: "await stockMoved(db, orgId, { partId, delta, newQty, minQty, reason, ledger }) from modules/inventory/src/api/stock-moved.ts.",
+    except: {
+      "modules/inventory/src/api/target-lines.ts": "a holding moved between places; the count did not change (delta 0), so there is nothing to ledger or check",
+    },
+  },
+  {
+    kind: "owns",
+    id: "sales:an-order-change-is-written-down",
+    what: "writing to a sales order's timeline: orderHappened in modules/sales/src/history.ts, which also writes the workspace log and the status_changed event",
+    why:
+      "each door wrote what it remembered: Fulfill and Ship moved the status with no event and no log entry, and a line change left no trace (#4115)",
+    owner: "modules/sales/src/history.ts",
+    scope: ["modules/sales/src/**/*.ts"],
+    detect: /insertInto\(\s*["']sales_order_history["']|insert\s+into\s+sales_order_history/i,
+    use: "orderHappened(db, orgId, orderId, { kind, ... }) from modules/sales/src/history.ts",
+  },
+  {
+    kind: "owns",
+    id: "sales:an-order-line-is-written-down",
+    what: "adding or removing a line on a sales order: addLine / removeLine (and changeLine) in modules/sales/src/order-lines.ts",
+    why: "the routes and the actions each inserted and deleted lines directly, so no line change reached the order's timeline or the log (#4115)",
+    owner: "modules/sales/src/order-lines.ts",
+    scope: ["modules/sales/src/**/*.ts"],
+    detect: /(?:insertInto|deleteFrom)\(\s*["']sales_order_items["']|(?:insert\s+into|delete\s+from)\s+sales_order_items/i,
+    use: "addLine / changeLine / removeLine from modules/sales/src/order-lines.ts",
   },
 ];

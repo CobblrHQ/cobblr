@@ -35,6 +35,7 @@ export interface PurchasesOrdersTable {
   shipping_cost: ColumnType<string | null, number | null | undefined, number | null | undefined>;
   tracking_number: string | null;
   tracking_added_by_user_id: string | null;
+  add_to_stock: ColumnType<boolean, boolean | undefined, boolean | undefined>;
   notes: string | null;
   metadata: ColumnType<Record<string, unknown>, Record<string, unknown> | undefined, Record<string, unknown> | undefined>;
   instance: Generated<string>;
@@ -59,6 +60,9 @@ export interface PurchasesOrderItemsTable {
   consumed_by_entity_type: string | null;
   consumed_by_entity_id: string | null;
   received_at: ColumnType<Date | null, string | null | undefined, string | null | undefined>;
+  /** Received before a line's stock was reliably added; a person settles it
+   *  (0010, heal-unreceived-arrivals.ts). */
+  receipt_unconfirmed: Generated<boolean>;
   metadata: ColumnType<Record<string, unknown>, Record<string, unknown> | undefined, Record<string, unknown> | undefined>;
   instance: Generated<string>;
   created_at: Generated<Date>;

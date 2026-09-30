@@ -6,9 +6,10 @@
 // fire, so hierarchy + wires + views stay consistent with the HTTP path.
 
 import { duplicateSiblingMessage, siblingNamed } from "./siblings.js";
-import { DuplicateRecordError, findRowIdByKey, platform, restoreRow, snapshotRow } from "@cobblr/platform-contract";
+import { DuplicateRecordError, findRowIdByKey, imageId, platform, restoreRow, snapshotRow } from "@cobblr/platform-contract";
 import { sql, type Kysely } from "kysely";
 import type { CoreLocationsDB } from "../db.js";
+import { deletePlace, restoreDeletedPlace } from "./place-delete.js";
 
 let registered = false;
 
@@ -104,15 +105,17 @@ export function registerLocationsWriter(): void {
     },
 
     async delete(orgId, id) {
-      const db = (await platform().tenants.getDb(orgId)) as Kysely<CoreLocationsDB>;
-      await db.deleteFrom("core_locations_locations").where("id", "=", id).execute();
-      void platform().events.emit("core-locations.location.deleted", { orgId, locationId: id });
+      await deletePlace(orgId, id, null);
     },
 
     /** Put the row back exactly as it was, id and all (EntityWriter.restore).
      *  Not a create: no name-clash rule, no re-derived id, no new row for
-     *  everything that pointed at the old one to miss. */
+     *  everything that pointed at the old one to miss. A place that was
+     *  deleted comes back with every place that went with it and each thing
+     *  where it was (place-delete.ts), not as one empty shelf. */
     async restore(orgId, image) {
+      const id = imageId(image);
+      if (id && (await restoreDeletedPlace(orgId, id))) return;
       await restoreRow(await platform().tenants.getDb(orgId), "core_locations_locations", image);
     },
 

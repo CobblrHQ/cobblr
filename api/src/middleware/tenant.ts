@@ -4,6 +4,8 @@
 //
 // Modules will compose this onto their own routers in later phases.
 
+import { guestMayRead, guestRouteKey } from "../auth/guest-reads.js";
+import { holdForAPerson } from "../platform/ai-held-changes.js";
 import { sandboxIsOver, trialIsOver } from "../platform/sandbox-over.js";
 import { sandboxEnabled } from "../platform/try-sandbox.js";
 import type { NextFunction, Request, Response } from "express";
@@ -194,6 +196,15 @@ export async function withTenant(
     return;
   }
 
+  // A guest reads what the workspace shares in its portal, not the workspace
+  // itself (auth/guest-reads.ts). Writes are each route's own role check.
+  if (row.role === "guest" && req.method === "GET" && !guestMayRead(guestRouteKey(req.baseUrl, req.route?.path as string | undefined, slug))) {
+    res.status(403).json({
+      error: { code: "guest_not_shared", message: "A guest sees what this workspace shares in its portal, and this is not part of it." },
+    });
+    return;
+  }
+
   try {
     const db = await getTenantDb(row.org_id);
     serveShapeVersion(res, row.org_id, row.shape_version);
@@ -206,6 +217,12 @@ export async function withTenant(
     // activation funnel is built on. Sessions only: an API token is an
     // integration or an edge device polling, not someone coming back.
     if (currentActor()?.authMethod === "session") noteActiveDay(row.org_id, req.session.id);
+    // An assistant's delete waits for its person (ai-held-changes.ts). Here,
+    // because every workspace route passes this door.
+    if (req.method === "DELETE" && req.session.ai_door) {
+      await holdForAPerson(req, res);
+      return;
+    }
     next();
   } catch (err) {
     if (err instanceof WorkspaceDeletingError) {

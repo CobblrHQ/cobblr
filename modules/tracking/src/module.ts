@@ -14,10 +14,10 @@ import { defineModule } from "@cobblr/platform-contract";
 
 export default defineModule({
   name: "tracking",
-  version: "0.1.7",
+  version: "0.1.10",
   displayName: "Tracking",
   description:
-    "Log a number over time toward a goal, and see the trend. Weight, runs, habits, budgets, mood, any measurement with a target. Ships a trend-chart view.",
+    "Log a number over time toward a goal (weight, runs, a budget) and see the trend.",
   icon: "trending-up",
   band: "stock",
   autoEnable: false,
@@ -82,7 +82,6 @@ export default defineModule({
       "tracking.measurement.logged",
       "tracking.goal.reached",
     ],
-    api: [],
     actions: [
       {
         // NO-PHRASING: the way back for another action, run only from Undo

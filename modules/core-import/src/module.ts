@@ -13,10 +13,10 @@ import { defineModule } from "@cobblr/platform-contract";
 
 export default defineModule({
   name: "core-import",
-  version: "0.6.1",
+  version: "0.6.3",
   displayName: "Import",
   description:
-    "Bring your records in from a spreadsheet or another system (Homebox today): items, the location hierarchy, and labels, mapped onto Cobblr's own modules.",
+    "Bring your records in from a spreadsheet or another app: your items, where they are kept and their labels.",
   icon: "download",
   band: "stock",
   autoEnable: true, // ambient capability — on for every workspace
@@ -35,10 +35,6 @@ export default defineModule({
     },
   },
 
-  intents: [
-    { name: "import", description: "Bring records in from another inventory system" },
-  ],
-
   dependencies: [],
 
   // AI-REACH: no kinds/actions by design. An import is a one-shot operation a
@@ -50,7 +46,6 @@ export default defineModule({
 
   exposes: {
     events: [],
-    api: ["import"],
     actions: [],
   },
 

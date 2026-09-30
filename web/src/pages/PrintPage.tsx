@@ -99,12 +99,12 @@ export function PrintPage({ embedded = false }: { embedded?: boolean } = {}) {
   const printTest = useMutation({
     mutationFn: (id: string) =>
       api.printToPrinter(activeSlug, id, {
-        document_base64: toBase64("Cobblr — core-print test page\n"),
+        document_base64: toBase64("Cobblr: core-print test page\n"),
         content_type: "text/plain",
         filename: "cobblr-test.txt",
         job_name: "cobblr-test",
       }),
-    onSuccess: (r) => toast.success(`Sent — job ${r.jobId} (${r.state})`),
+    onSuccess: (r) => toast.success(`Sent: job ${r.jobId} (${r.state})`),
     onError: (e) => toast.error(e instanceof ApiError ? e.message : String(e)),
   });
 
@@ -591,7 +591,7 @@ function PrinterModal({
         setBtHeightMm(String(Number((detected.pitchMm - gap).toFixed(1))));
         setBtGapMm(String(gap));
       }
-      toast.success(`Detected ${detected.label} — review and save.`);
+      toast.success(`Detected ${detected.label}. Review and save.`);
     } catch (e) {
       toast.error(e instanceof Error ? e.message : String(e));
     } finally {

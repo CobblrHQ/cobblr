@@ -43,6 +43,7 @@ import {
   type UnitBinding,
   type AllocationLike,
 } from "./consumption/perUnit";
+import { withArticle } from "@cobblr/platform-contract/plural";
 
 // The part-detail body. Rendered inside PartDetailModal (below) — the
 // detail view is a modal over the list now (consistent with machines),
@@ -1262,7 +1263,7 @@ function FlatConsumptionPanel({
         <button
           onClick={onEnablePerUnit}
           className="text-[11px] text-faint hover:text-accent"
-          title={`Track each ${unit} on its own — a by-state count with the open one's remaining`}
+          title={`Track each ${unit} on its own: a by-state count with the open one's remaining`}
         >
           Track each {unit} separately →
         </button>
@@ -1414,7 +1415,7 @@ function PerUnitConsumptionPanel({
     });
     await api.stockAdjust(child.id, unitCapacity, `Opened ${countUnit || "unit"}`);
     await api.createParentPairing(child.id, partId);
-    if (modelQty > 0) await api.stockAdjust(partId, -1, `Opened a ${countUnit || "unit"}`);
+    if (modelQty > 0) await api.stockAdjust(partId, -1, `Opened ${withArticle(countUnit || "unit")}`);
     if (bindTo) {
       await api.createAllocation({
         part_id: child.id,
@@ -1480,7 +1481,7 @@ function PerUnitConsumptionPanel({
       {unitCapacity == null && !loading && (
         <p className="text-[11px] text-faint">
           {sourceLabel
-            ? `Add a ${sourceLabel} above to derive each ${countUnit || "unit"}'s full amount.`
+            ? `Add ${withArticle(sourceLabel)} above to derive each ${countUnit || "unit"}'s full amount.`
             : `Set a full amount per ${countUnit || "unit"} to track what's left as you use it.`}
         </p>
       )}
@@ -1535,7 +1536,7 @@ function PerUnitConsumptionPanel({
       ))}
 
       {pool.open.length === 0 && pool.newCount > 0 && unitCapacity != null && !loading && (
-        <p className="text-[11px] text-faint">Nothing open yet - open a {countUnit || "unit"} to start tracking what's left.</p>
+        <p className="text-[11px] text-faint">Nothing open yet - open {withArticle(countUnit || "unit")} to start tracking what's left.</p>
       )}
 
       <div className="flex items-center gap-3 pt-1">
@@ -1543,9 +1544,9 @@ function PerUnitConsumptionPanel({
           onClick={() => openOne.mutate()}
           disabled={openOne.isPending || modelQty <= 0 || unitCapacity == null}
           className="inline-flex items-center gap-1 text-xs rounded bg-cobble-600 hover:bg-cobble-700 disabled:opacity-40 disabled:cursor-not-allowed text-white px-2.5 py-1"
-          title={modelQty <= 0 ? `No new ${nounPlural} to open` : `Open a ${countUnit || "unit"} (uses one spare)`}
+          title={modelQty <= 0 ? `No new ${nounPlural} to open` : `Open ${withArticle(countUnit || "unit")} (uses one spare)`}
         >
-          <Plus size={12} /> Open a {countUnit || "unit"}
+          <Plus size={12} /> Open {withArticle(countUnit || "unit")}
         </button>
         {modelQty <= 0 && pool.open.length > 0 && (
           <span className="text-[11px] text-faint">No new {nounPlural} left - you're on your open {pool.open.length > 1 ? nounPlural : (countUnit || "unit")}.</span>
@@ -1644,7 +1645,7 @@ function OpenUnitCard({
     }
     if (gate === "silent-keep") {
       release();
-      toast.success(`Kept ~${round3(unit.qty)}${u ? " " + u : ""} left — back in the pool.`);
+      toast.success(`Kept ~${round3(unit.qty)}${u ? " " + u : ""} left, back in the pool.`);
       return;
     }
     // "none" — already empty; just clear the binding.

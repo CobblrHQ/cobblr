@@ -407,7 +407,7 @@ export function MachinesPage({
     <div className="space-y-4">
       <CollectionHeader
         title={displayName ?? "machines"}
-        count={`${filtered.length} of ${allRows.length}${allUnits !== allRows.length ? ` · ${machineCount(filtered)} machines` : ""}`}
+        count={`${filtered.length} of ${machines.data?.total ?? allRows.length}${allUnits !== allRows.length ? ` · ${machineCount(filtered)} machines` : ""}`}
         hint={hint} kind={instance ? `${instance}:item` : ENTITY_KIND}
         filters={
           <>
@@ -505,6 +505,7 @@ export function MachinesPage({
           </>
         }
         search={<SearchInput value={query} onChange={setQuery} placeholder="search…" aria-label={`Search ${pluralise(noun)}`} wrapperClassName="w-48 max-sm:w-full max-sm:flex-1" />}
+        exportQuery={query}
         actions={
           <>
             <ViewModeToggle mode={viewMode} onChange={setViewMode} />
@@ -908,7 +909,7 @@ function SaveViewModal({
             </div>
             <div className="text-[10px] text-faint mt-1">
               {included.size === allStates.length
-                ? "All states — no filter, shows everything"
+                ? "All states: no filter, shows everything"
                 : `${included.size} of ${allStates.length} states`}
             </div>
           </div>
@@ -1048,6 +1049,8 @@ function MachineTable({
             )}
             <th className="text-left px-3 py-2">Name</th>
             <th className="text-left px-3 py-2">Family</th>
+            {/* The machine's category, typed or scanned: one field (#4115). */}
+            {!fp.hidden("type") && <th className="text-left px-3 py-2">{fp.label("type", "Type")}</th>}
             <th className="text-left px-3 py-2">{fp.label("manufacturer", "Manufacturer")}</th>
             <th className="text-left px-3 py-2">State</th>
             {lensFieldDefs.map((d) => (
@@ -1101,6 +1104,7 @@ function MachineTable({
               <td className="px-3 py-2 text-muted dark:text-slate-400">
                 {m.family || "—"}
               </td>
+              {!fp.hidden("type") && <td className="px-3 py-2 text-muted dark:text-slate-400">{m.type || "—"}</td>}
               <td className="px-3 py-2 text-muted dark:text-slate-400">
                 {m.manufacturer || "—"}
               </td>

@@ -64,10 +64,6 @@
     "why": "The app builder's view picker: the view's name comes first and the kind in parentheses tells two views with the same name apart, for the person composing an app who knows which table they mean."
   },
   {
-    "key": "web/src/pages/BackupPage.tsx::toast.success(`Restored ${r?.rows ?? 0} rows, ${r?.files ?? 0} files.`);",
-    "why": "A database restore reports rows because rows are what it wrote, across every table at once; there is no single noun for a whole workspace's worth of restored data."
-  },
-  {
     "key": "web/src/pages/BindingsPage.tsx::<span className=\"font-mono text-[10px] text-accent\">{d.event ?? \"?\"}</span>",
     "why": "The run log at the foot of the automations page, where each row already reads fired or failed in words; the event and action ids beside the time are for the person who wrote the binding and is checking which one fired."
   },

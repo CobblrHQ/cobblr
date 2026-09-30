@@ -117,3 +117,30 @@ export function canonicalJson(value: unknown): string {
 export function confirmMaterial(req: { capability: string; input: unknown; fileHashes: Record<string, string>; connectionId: string | null }): string {
   return canonicalJson({ v: 1, capability: req.capability, input: req.input ?? null, files: req.fileHashes, connection: req.connectionId });
 }
+
+// Where the Cobb and MCP doors read a person's Changes setting. It lives in
+// core-ai's own table, which the kernel may not read (module isolation), so
+// core-ai registers how to read it and the gate asks through here. No source
+// registered, or one that fails, reads as "ask": the careful setting.
+type WriteModeSource = (orgId: string, userId: string) => Promise<ServiceWriteMode | null>;
+let writeModeSource: WriteModeSource | null = null;
+
+export function registerServiceWriteModeSource(fn: WriteModeSource): void {
+  writeModeSource = fn;
+}
+
+export async function serviceWriteModeFor(orgId: string, userId: string | null): Promise<ServiceWriteMode> {
+  if (!userId || !writeModeSource) return "ask";
+  try {
+    return (await writeModeSource(orgId, userId)) ?? "ask";
+  } catch {
+    return "ask";
+  }
+}
+
+/** Whether a job of this effect waits for a person even when Cobb starts it
+ *  with Changes on Auto: what a tool list or a prompt tells the model, so it
+ *  says "waiting" rather than "done". Read from the rule, never beside it. */
+export function serviceWaitsForAPerson(effect: ServiceEffect | string): boolean {
+  return serviceConsent(effect, "cobb", { writeMode: "auto" }).verdict !== "run";
+}

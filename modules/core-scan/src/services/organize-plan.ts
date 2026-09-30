@@ -209,7 +209,7 @@ function heuristicPlan(
       label: bucket.name,
       rationale:
         members.length > 1
-          ? `Grouped by category — start a "${bucket.name}" bin for these.`
+          ? `Grouped by category. Start a "${bucket.name}" bin for these.`
           : `Start a "${bucket.name}" bin for this.`,
       item_ids: members.map((m) => m.id),
       destination: { kind: "new", name: bucket.name, parent_id: null, parent_name: null },

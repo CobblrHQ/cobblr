@@ -64,6 +64,12 @@ export interface SessionUser {
   must_reset_password: boolean;
   /** The account's title format (the contract's TitleFormat), or null. */
   title_pref?: string | null;
+  /** Set when an assistant makes this request through a door with no way to
+   *  show a person a confirmation: "mcp" (the MCP endpoint's own calls, or an
+   *  API token the MCP server marks as its own) or "relay" (the in-app chat's
+   *  read/write grant). Decided from what signed the request, never from a
+   *  client header alone, except that a header can only ever ADD it. */
+  ai_door?: "mcp" | "relay" | null;
 }
 
 // H1 Tier B — server-side clamp for capability-scoped app tokens. The
@@ -148,6 +154,8 @@ const MCP_READ_PATHS: Array<string | RegExp> = [
   "/registered-actions",
   /^\/entities\//,
   "/pairings",
+  // One person's things across every collection ("what does Alex own").
+  "/people/things",
   // what is inside a container and where a thing is: list_related reads both
   // beside the pairings, so a relayed "what's in Bin 7" sees the bin's contents
   "/modules/core-placement/contents",
@@ -173,6 +181,11 @@ const MCP_READ_PATHS: Array<string | RegExp> = [
   // never an item's own sub-routes), and its put-away plan
   /^\/modules\/core-scan\/inbox(\/stats|\/[A-Za-z0-9-]+)?$/,
   "/modules/core-scan/organize/plan/latest",
+  // the outside services usable here, and one job (list_services,
+  // get_service_job); a job's confirm is never reachable from here
+  "/services/capabilities",
+  /^\/services\/capabilities\/[a-z0-9_-]+(\.[a-z0-9_-]+)+$/,
+  /^\/services\/jobs\/[A-Za-z0-9-]+$/,
   // service history, cross-kind search, label codes
   "/modules/core-maintenance/entries",
   "/modules/core-search/search",
@@ -204,7 +217,9 @@ const MCP_READ_PATHS: Array<string | RegExp> = [
 // 60 seconds, minted in-process, never handed to the bridge, and the invoke
 // route still applies requireCapability. Widening the SHAPE to admit it would
 // have admitted every other platform route too, so it is named exactly.
-const MCP_WRITE_PLATFORM_PATHS = new Set(["/actions/invoke"]);
+// Starting a service job is a write the gate decides (services.md section 9);
+// confirming one is a person's, in Cobblr, and is not here.
+const MCP_WRITE_PLATFORM_PATHS = new Set(["/actions/invoke", "/services/jobs"]);
 const MCP_WRITE_DENIED = /\/connections(\/|$)/; // credential-bearing module routes
 
 export function mcpWritePathAllowed(method: string, originalUrl: string, slug: string): boolean {
@@ -427,6 +442,13 @@ export async function requireAuth(
       // composed with it (core-scan's withTitle), so every surface shows the
       // one format without each reading the account (#3061).
       title_pref: user.title_pref ?? null,
+      ai_door:
+        mcpReadSlug !== null || mcpWriteSlug !== null
+          ? "relay"
+          : isMcpProxyCall(req.headers) ||
+              (authMethod === "api_token" && String(req.headers["x-cobblr-client"] ?? "").toLowerCase() === "mcp")
+            ? "mcp"
+            : null,
     };
     // Wrap the rest of the request chain in actor context so any
     // deeply-nested activity.log() call automatically picks up
@@ -436,10 +458,17 @@ export async function requireAuth(
     // assistant over MCP (the MCP server says so on every call it makes with
     // the member's API token). A token call without the header stays "via
     // <token>", which the token's own name already describes.
+    //
+    // The in-app chat calls on the person's own session and says so with
+    // x-cobblr-client: cobb on the calls that start service jobs, so the job
+    // is stamped as Cobb's and follows Cobb's consent. A person could send the
+    // header themselves, and it would only make their own request ask more:
+    // the Cobb door never runs anything the person door would not.
+    const client = String(req.headers["x-cobblr-client"] ?? "").toLowerCase();
     const via: Via | null =
-      mcpWriteSlug || mcpReadSlug
+      mcpWriteSlug || mcpReadSlug || client === "cobb"
         ? { kind: "assistant" }
-        : authMethod === "api_token" && String(req.headers["x-cobblr-client"] ?? "").toLowerCase() === "mcp"
+        : authMethod === "api_token" && client === "mcp"
           ? { kind: "mcp" }
           : null;
     runWithActor(

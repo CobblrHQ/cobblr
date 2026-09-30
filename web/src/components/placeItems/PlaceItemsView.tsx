@@ -11,6 +11,7 @@
 // several places asks what to move. Every move can be undone, and reads
 // "moved via floor plan" in the activity.
 
+import { swallowNextClick } from "../../lib/swallow-click";
 import { useMemo, useRef, useState, type PointerEvent as ReactPointerEvent } from "react";
 import { Link } from "react-router-dom";
 import { ChevronDown, ChevronUp, X } from "lucide-react";
@@ -25,6 +26,13 @@ import { FaceFor, FloorPlan } from "../FloorPlan";
 import { PlacingContext, placeAtPoint, type Pin, type Placing } from "./placing";
 import { usePlaceActions, type Undo } from "./usePlaceActions";
 import { SeveralPlacesDialog, type SeveralPlacesAnswer } from "./SeveralPlacesDialog";
+
+/** What the toast says once something is put somewhere. A drop on a plan's
+ *  bare floor is a pin at that spot, and saying only "is in Kitchen now"
+ *  left the person wondering where in the kitchen it went (#4147). */
+export function placedSaying(names: string, where: string, pinned: boolean): string {
+  return pinned ? `${names} is pinned here, in ${where}` : `${names} is in ${where} now`;
+}
 
 const keyOf = (r: PlaceableRecord) => `${r.kind}:${r.id}`;
 const LONG_PRESS_MS = 450;
@@ -47,22 +55,6 @@ interface Press {
   timer: number;
   long: boolean;
   moved: boolean;
-}
-
-/** Swallow the next click, if it comes within a moment: the one a browser
- *  sends after a long press. */
-function swallowNextClick() {
-  const stop = (ev: MouseEvent) => {
-    ev.stopPropagation();
-    ev.preventDefault();
-    done();
-  };
-  const done = () => {
-    window.removeEventListener("click", stop, true);
-    window.clearTimeout(t);
-  };
-  window.addEventListener("click", stop, true);
-  const t = window.setTimeout(done, 600);
 }
 
 export function PlaceItemsView({
@@ -125,7 +117,7 @@ export function PlaceItemsView({
       const undos: Undo[] = [];
       try {
         for (const r of single) undos.push(await actions.move(r, locationId, position));
-        toast.action(`${nameOf(single.map(keyOf))} is in ${pathOf(locationId, byId)} now`, {
+        toast.action(placedSaying(nameOf(single.map(keyOf)), pathOf(locationId, byId), !!position), {
           actionLabel: "Undo",
           duration: 8000,
           onAction: async () => {

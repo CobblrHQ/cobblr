@@ -37,7 +37,7 @@ function readUnitArgs(args: Record<string, unknown>): { unit: ReturnType<typeof 
   if (builtin) {
     // Not a failure worth alarming anyone about — they asked for something
     // they already have, so say what they have.
-    return { error: `"${parsed.data.code}" is already a built-in unit (${builtin.name}) — it can be used as-is.` };
+    return { error: `"${parsed.data.code}" is already a built-in unit (${builtin.name}), so it can be used as-is.` };
   }
   return { unit: parsed.data };
 }

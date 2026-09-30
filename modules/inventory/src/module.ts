@@ -13,10 +13,10 @@ import { defineModule } from "@cobblr/platform-contract";
 
 export default defineModule({
   name: "inventory",
-  version: "0.15.1",
+  version: "0.15.5",
   displayName: "Inventory",
   description:
-    "Parts, locations, categories, stock tracking, polymorphic allocations. The generalised toolkit you'd otherwise Frankenstein from a spreadsheet.",
+    "Parts and supplies: how many you have, where they are kept, and what is running low.",
   icon: "boxes",
   band: "stock",
   instanceability: "multi",
@@ -162,12 +162,6 @@ export default defineModule({
     ],
   },
 
-  intents: [
-    { name: "add_part", description: "Add a new part to inventory" },
-    { name: "adjust_stock", description: "Increase or decrease a part's on-hand quantity" },
-    { name: "allocate_part", description: "Reserve a part for an entity in another module" },
-  ],
-
   dependencies: [],
 
   exposes: {
@@ -193,7 +187,6 @@ export default defineModule({
       "inventory.allocation.released",
       "inventory.category.created", // emitted by categories.ts — declare so it's bindable (audit 2026-06-26)
     ],
-    api: ["getPartById", "searchParts", "adjustStock", "allocate", "release"],
     actions: [
       // DECLARED IN THE ORDER A PERSON WANTS THEM. The record's strip shows the
       // first few in the open and folds the rest. One button per gesture: the
@@ -526,6 +519,9 @@ export default defineModule({
         // Drives the wire composer's structured "With" form. Values can be
         // literals or {{tokens}} (e.g. delta = {{event.delta}}), rendered at
         // fire time against the event payload + target entity.
+        // Fired by a wire with no args of its own, it takes the part and the
+        // amount off the event.
+        readsFromEvent: ["partId", "delta"],
         argsSchema: {
           partId: { label: "Part id", type: "text" },
           delta: { label: "Change in qty (+ adds, − subtracts)", type: "number" },

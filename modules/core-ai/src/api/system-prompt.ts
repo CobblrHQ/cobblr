@@ -13,6 +13,7 @@
 // it its authenticated callApi, the bench hands it its own client, and there
 // is exactly one prompt.
 
+import { serviceWaitsForAPerson } from "@cobblr/platform-contract/service-consent";
 import { resolveCreatePath,
   type KindRec,
   offerableToAssistant,
@@ -102,6 +103,29 @@ export function situationalSuffix(opts: PromptOptions): string {
   return `${pageContextLine(opts.context)}${selectionLine(opts.selection)}${consentLine(opts.consent)}${
     opts.suggestion ? suggestionLine(opts.suggestion) : ""
   }`;
+}
+
+interface ServiceLine {
+  id?: string;
+  summary?: string;
+  effect?: string;
+}
+
+/** The services block of the prompt, capped so a workspace with many
+ *  services cannot crowd out the rest. Exported for the test. */
+export function servicesBlock(items: readonly ServiceLine[], cap = 1500): string {
+  const lines: string[] = [];
+  let used = 0;
+  for (const c of items) {
+    if (!c.id) continue;
+    const note = serviceWaitsForAPerson(c.effect ?? "") ? " (waits for the person to confirm)" : "";
+    const line = `- ${c.id}: ${(c.summary ?? "").slice(0, 300)}${note}`;
+    if (used + line.length > cap) break;
+    lines.push(line);
+    used += line.length + 1;
+  }
+  if (!lines.length) return "";
+  return `\nSERVICES you can start with invoke_service (list_services gives each one's input). Pick the one whose summary fits the request; a Cobblr action or record write is still the way for anything inside the workspace:\n${lines.join("\n")}\n`;
 }
 
 export async function buildSystemPrompt(
@@ -194,6 +218,15 @@ export async function buildSystemPrompt(
     })
     .filter(Boolean) as string[];
 
+  // Outside services this workspace can use, one line each so the model can
+  // route a request (design this, slice that) without a lookup; the input
+  // schema is list_services' job. Capped, and absent when nothing is
+  // connected, which is most workspaces (services.md section 11).
+  const serviceLines = await w
+    .get("/services/capabilities")
+    .then((r) => (r.status < 400 ? servicesBlock((r.body.items as ServiceLine[] | undefined) ?? []) : ""))
+    .catch(() => "");
+
   const whoLine = w.userName
     ? `You are talking to ${w.userName}.`
     : `You do not know the user's name — greet them without one, and do not guess.`;
@@ -231,7 +264,7 @@ ${actionLines.join("\n") || "(none)"}
 ACTIONS that run on the WORKSPACE (no record — omit entity_kind/entity_query):
 ${workspaceActionLines.join("\n") || "(none)"}
 ${railMode === "full" ? "" : RAIL_LOOKUP_NOTE}
-
+${serviceLines}
 ${TOOL_USE_RULES}
 
 ${jsonShapes}${situationalSuffix(opts)}`;

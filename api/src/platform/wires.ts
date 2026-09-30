@@ -27,6 +27,7 @@ import { render } from "./templates.js";
 import { templateDataOf } from "@cobblr/platform-contract/entity-metadata";
 import { namePeopleForTemplate } from "./member-fields.js";
 import { log as logActivity } from "./activity.js";
+import { sandboxAwaitingVisitor } from "./sandbox-awaiting.js";
 import { parseWireFilter, passesWireFilter } from "./wire-filter.js";
 import { FiringLedger, firingKey } from "./wire-firing-key.js";
 import { runVia, currentActor } from "../lib/request-context.js";
@@ -147,6 +148,7 @@ export async function fireEvent(
     .where("enabled", "=", true)
     .execute();
   if (bindings.length === 0) return;
+  if (await sandboxAwaitingVisitor(orgId)) return;
 
   const depth = wireDepth.getStore() ?? 0;
   if (depth >= MAX_WIRE_DEPTH) {

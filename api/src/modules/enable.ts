@@ -18,14 +18,12 @@ import { getTenantPool, evictTenantPool } from "../db/tenant.js";
 import { getEntry, listEntries } from "./registry.js";
 import * as activity from "../platform/activity.js";
 import { isTrialDenied, isTrialDeniedForOrg } from "../platform/trial.js";
-import { clearServerManagedCache, clearEnabledModulesCache } from "../platform/entities.js";
-import { clearRelationDefsCache } from "../platform/relation-fields.js";
-import { clearMemberFieldCaches } from "../platform/member-fields.js";
-import { clearFieldLabelDefsCache } from "../platform/field-labels.js";
+import { clearEnabledModulesCache } from "../platform/entities.js";
 import { moduleHasScanFallback, reconcileScanCategoryFor } from "../platform/reconcile-scan-category.js";
 import { runSweepEnableSteps } from "../platform/tenant-sweeps.js";
 import { recordClaim } from "../platform/bundle-claims.js";
 import { releaseEmptyDefaultInstance } from "../platform/instances.js";
+import { applyContributedFieldDefs } from "../platform/contributed-fields.js";
 
 /** Maintainer-curated foundational set. A module manifest can declare
  *  `band: "foundational"`, but the kernel only TREATS it as foundational
@@ -43,6 +41,7 @@ const FOUNDATIONAL_ALLOWLIST = new Set([
   "core-healthcheck",
   "core-locations",
   "core-placement",
+  "core-services",
 ]);
 
 const warnedNonCuratedFoundational = new Set<string>();
@@ -180,7 +179,7 @@ export async function enableModuleForOrg(
     .executeTakeFirst();
   if (existing) {
     await ensurePlacementSyncIfLocated(orgId, moduleName);
-    if (options.claimedBy) await recordClaim(orgId, options.claimedBy, "module", moduleName);
+    if (options.claimedBy && !isDefaultModule(entry)) await recordClaim(orgId, options.claimedBy, "module", moduleName);
     return {
       alreadyEnabled: true,
       migrationsApplied: 0,
@@ -251,37 +250,7 @@ export async function enableModuleForOrg(
   // source_module so disable can clean them up. Idempotent via
   // existence checks; safe to re-run.
   const contributes = entry.manifest.contributes;
-  for (const fd of contributes.fieldDefs) {
-    await meta
-      .insertInto("module_field_defs")
-      .values({
-        org_id: orgId,
-        entity_kind: fd.entity_kind,
-        name: fd.name,
-        display_label: fd.display_label,
-        type: fd.type,
-        required: fd.required ?? false,
-        position: fd.position ?? 0,
-        source_module: moduleName,
-        choices: fd.choices ? JSON.stringify(fd.choices) : null,
-        renderer: (fd as { renderer?: string | null }).renderer ?? null,
-        server_managed: (fd as { server_managed?: boolean }).server_managed ?? false,
-        ref_kind: (fd as { ref_kind?: string | null }).ref_kind ?? null,
-      })
-      .onConflict((b) => b.columns(["org_id", "entity_kind", "name"]).doNothing())
-      .execute();
-  }
-  // A contributed def may be server_managed or a relation — drop the per-kind
-  // caches so the first read/write after enable sees the new field immediately,
-  // not after the TTL.
-  if (contributes.fieldDefs.length > 0) {
-    clearServerManagedCache();
-    clearRelationDefsCache();
-    // Same reason: enabling a module can add member field defs, and a stale defs
-    // cache would leave the new field rendering its raw id for the TTL.
-    clearMemberFieldCaches();
-    clearFieldLabelDefsCache();
-  }
+  await applyContributedFieldDefs(moduleName, contributes.fieldDefs, [orgId]);
   for (const w of contributes.wires) {
     // No idempotency key on bindings; skip if a binding from this
     // module already exists for the (source_kind, action_id,
@@ -339,7 +308,7 @@ export async function enableModuleForOrg(
   // is not a workspace missing it (#4091).
   await runSweepEnableSteps(orgId, moduleName);
 
-  if (options.claimedBy) await recordClaim(orgId, options.claimedBy, "module", moduleName);
+  if (options.claimedBy && !isDefaultModule(entry)) await recordClaim(orgId, options.claimedBy, "module", moduleName);
 
   void sql; // re-export kept in case future cleanup needs it
   return { alreadyEnabled: false, migrationsApplied: migrationsApplied.length, lastMigration };
@@ -747,10 +716,18 @@ export async function enableDefaultModulesForOrg(
  *  missing a capability open their pool + migrate. Boot-time, so pools are
  *  evicted unconditionally after each heal. */
 export async function reconcileDefaultModules(): Promise<{ orgsHealed: number; modulesAdded: number }> {
-  const wanted = listEntries()
-    .filter((e) => e.manifest.band === "foundational" || e.manifest.autoEnable === true)
-    .map((e) => e.manifest.name);
+  // One rule for what a workspace is born with, the one signup uses: a
+  // foundational flag off the curated list is not a default, and counting it
+  // here opened every workspace's pool on every boot for a module signup
+  // would never enable.
+  const wanted = listEntries().filter(isDefaultModule).map((e) => e.manifest.name);
   if (wanted.length === 0) return { orgsHealed: 0, modulesAdded: 0 };
+
+  // A claim on a module every workspace is born with means nothing, and one a
+  // bundle recorded while the module was still optional is worse: uninstalling
+  // that bundle would turn off a module the workspace must have. One meta
+  // delete, no tenant pool. enableModuleForOrg records no such claim from here on.
+  await meta.deleteFrom("bundle_resource_claims").where("resource_type", "=", "module").where("resource_key", "in", wanted).execute();
 
   // Skip orgs that were never provisioned (no tenant credentials): enabling
   // anything on them can only throw "has not been provisioned yet" — which one

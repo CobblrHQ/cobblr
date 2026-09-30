@@ -19,22 +19,20 @@
 // account would show anyway RELEASES the device lock (stays in sync); toggling
 // away LOCKS this device.
 //
-// FOUC: both prefs are cached in localStorage so first paint is right before
-// the server sync lands. The legacy single "cobblr.theme" key (the old combined
-// value) is migrated to the account slot on first load.
+// FOUC: both prefs are cached in localStorage, and web/public/prepaint.js reads
+// them (with resolveTheme's rule) to set the class BEFORE the first paint, so a
+// dark-mode user never sees a light page while the app loads. The effect below
+// only takes over from there. The legacy single "cobblr.theme" key (the old
+// combined value) is migrated to the account slot on first load.
 
 import {
   createContext, useCallback, useContext, useEffect, useState,
   type ReactNode,
 } from "react";
 import { api } from "../lib/api";
+import { resolveTheme, type DeviceOverride, type Theme, type ThemePref } from "./resolve-theme";
 
-export type Theme = "light" | "dark";
-/** Account pref: null = "match device" (follow this device's OS). */
-export type ThemePref = Theme | null;
-/** Device override: a hard "light"/"dark" lock, "os" = follow THIS device's OS
- *  (independent of the account default), or null = no override (use account). */
-export type DeviceOverride = Theme | "os" | null;
+export type { DeviceOverride, Theme, ThemePref };
 
 interface ThemeCtx {
   /** The resolved theme actually applied. */
@@ -97,12 +95,7 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
   const [deviceOverride, setDeviceOverrideState] = useState<DeviceOverride>(readDeviceOverride);
   const [os, setOS] = useState<Theme>(detectOS);
 
-  const theme: Theme =
-    deviceOverride === "light" || deviceOverride === "dark"
-      ? deviceOverride // this device is hard-locked
-      : deviceOverride === "os"
-        ? os // this device follows its own OS, ignoring the account default
-        : (accountPref ?? os); // no override → account default (or its OS fallback)
+  const theme: Theme = resolveTheme(deviceOverride, accountPref, os);
 
   // Follow the OS live when nothing overrides it (account = match device, no
   // device lock). Harmless otherwise — `theme` ignores os when a pref is set.
@@ -117,6 +110,8 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
   // Paint the resolved theme.
   useEffect(() => {
     document.documentElement.classList.toggle("dark", theme === "dark");
+    // prepaint.js's stand-in for the stylesheet; from here index.css says it.
+    document.documentElement.style.removeProperty("color-scheme");
   }, [theme]);
 
   const writeCache = (key: string, p: string | null) => {

@@ -14,6 +14,7 @@ import { tick } from "./scheduler.js";
 const router = Router({ mergeParams: true });
 
 // AI-REACH: drives a device or a preview surface, or is an operator/self-test probe
+// UI-REACH: an operator's tick of the recurrence sweep, which otherwise runs on its own
 router.post("/tick", (req, res, next) => {
   // Ops/test endpoint: force-firing every scheduled wire for the workspace is
   // privileged — keep a read-only guest (or plain member) from triggering it.

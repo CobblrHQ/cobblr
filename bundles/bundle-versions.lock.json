@@ -52,8 +52,8 @@
     "hash": "f641ed9f1861f4e262edec5da8e397b7b2c8ef7760e7e2d889e117210c623dcc"
   },
   "cobblr.flagship.cnc-tooling": {
-    "version": "0.2.2",
-    "hash": "2fb6f9277ee613ab695507718ce8164f24f50dbaa661f9d7c7f8875927094543"
+    "version": "0.2.3",
+    "hash": "04d8456d7353597e6be1eac1d7434ba9373aa2eb508e2fa6349418a629504a7e"
   },
   "cobblr.flagship.collections": {
     "version": "0.3.2",
@@ -68,8 +68,8 @@
     "hash": "c2ade72a9d833206ca0c689006d3765741137a2c0a6f1773c772e316d54c3993"
   },
   "cobblr.flagship.filament": {
-    "version": "0.8.0",
-    "hash": "6afa255019d8412283407a154e550de3895d077f12a4576df5fa1f69f640326e"
+    "version": "0.8.1",
+    "hash": "968d855d923773977b141c6cbad8bfc68814cce8d591a8e2eb75814148a6183d"
   },
   "cobblr.flagship.gifts-occasions": {
     "version": "0.2.2",
@@ -108,8 +108,8 @@
     "hash": "76c079bf39108085d557f40df29b4bd887157c6d2920434bb57b4f39a39618a4"
   },
   "cobblr.flagship.plants": {
-    "version": "0.3.2",
-    "hash": "07624338cfbe4a034a7cd8aadc9e88b29635a3dd30d4866243e4dd4fbed92020"
+    "version": "0.3.3",
+    "hash": "4d11e77d863c6fa6bee4f4a34d5a44be68df777fed39104920f29aa93e002f80"
   },
   "cobblr.flagship.small-shop": {
     "version": "0.1.0",
@@ -132,8 +132,8 @@
     "hash": "fe43d71525f8d61c811f401defd0e6f75aa6e23bf9720807de9df8b8468bb482"
   },
   "cobblr.flagship.wardrobe": {
-    "version": "0.1.4",
-    "hash": "deacaf8695723141456d106646c7e4791e11d25af755b90a983487024b7fea92"
+    "version": "0.1.5",
+    "hash": "7f4448bba739210b67094bcf561a48871ea876d4902dbb41f2ce955a4787fe2a"
   },
   "cobblr.flagship.warranties": {
     "version": "0.2.3",

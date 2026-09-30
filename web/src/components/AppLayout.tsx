@@ -8,15 +8,18 @@
 // specialisations (3D Printers, Laser Cutters, etc.) into a hover
 // popover under the parent rather than as broken top-level links.
 
+import { MAIN_ID, RouteAnnouncer, SkipToContent } from "./a11y/shell-landmarks";
 import { JustFiledNotice } from "./JustFiledNotice";
 import { Fragment, useEffect, useRef, useState, type ReactNode } from "react";
 import { Moon, PanelLeft, PanelTop, Pin, PinOff, Sliders, Sun } from "lucide-react";
+import { ModuleOffGate } from "./ModuleOffGate";
 import { Link, NavLink, Outlet, useLocation } from "react-router-dom";
 import { Search } from "lucide-react";
 import { useQuery, useQueryClient, useMutation } from "@tanstack/react-query";
 import { CobblestoneMark } from "../CobblestoneMark";
 import { DesktopDragStrip } from "./DesktopDragStrip";
 import { NotificationsBell } from "./NotificationsBell";
+import { PhoneHeaderShortcuts } from "./PhoneHeaderShortcuts";
 import { DriveProvider } from "./DriveContext";
 import { LiveBox } from "./LiveBox";
 import { WorkspaceSwitcher } from "./WorkspaceSwitcher";
@@ -35,6 +38,7 @@ import { DiscussionTab } from "./DiscussionTab";
 import { PinnedTab } from "./PinnedTab";
 import { FeedbackWidget } from "./FeedbackWidget";
 import { GlobalScanWedge } from "./GlobalScanWedge";
+import { PhotoCaptureHost } from "./PhotoCaptureHost";
 import { SearchBar } from "./SearchBar";
 import { CommandPalette, OPEN_PALETTE_EVENT } from "./CommandPalette";
 import { noteSearchUsed, searchHintShown } from "../lib/moreApps";
@@ -58,6 +62,7 @@ import { useTour } from "../tour/useTour";
 import { DASHBOARD_TOUR } from "../tour/tour.config";
 import { useTheme } from "../theme/ThemeContext";
 import { FloatingChrome, useToast } from "@cobblr/platform-web";
+import { ShortcutsSheet } from "./ShortcutsSheet";
 import { readOpenOn, readOpenTab, restoresOn, writeOpenOn, writeOpenTab } from "../lib/panel-memory";
 
 export function AppLayout({ activeSlug }: { activeSlug: string }) {
@@ -356,7 +361,7 @@ export function AppLayout({ activeSlug }: { activeSlug: string }) {
       <button
         type="button"
         onClick={flipAutoHide}
-        title={navAutoHide ? "Auto-hiding — click to pin the sidebar open" : "Pinned — click to auto-hide the sidebar"}
+        title={navAutoHide ? "Auto-hiding: click to pin the sidebar open" : "Pinned: click to auto-hide the sidebar"}
         className="p-1 rounded text-faint dark:text-slate-500 hover:text-accent transition"
       >
         {navAutoHide ? <PinOff size={13} /> : <Pin size={13} />}
@@ -485,6 +490,8 @@ export function AppLayout({ activeSlug }: { activeSlug: string }) {
     // viewport, that's a layout bug to fix locally rather than mask
     // here.
     <DriveProvider>
+    <SkipToContent />
+    <RouteAnnouncer />
     {/* Only renders inside the desktop app, where the window has no title bar
         left to grab. A PINNED sidebar is sticky, so the band over it stays live
         while scrolled; everywhere else the band must yield once content can
@@ -609,7 +616,7 @@ export function AppLayout({ activeSlug }: { activeSlug: string }) {
               type="button"
               onClick={demoToast}
               className={`hidden sm:inline-block shrink-0 rounded px-1.5 py-0.5 text-[10px] font-mono font-bold uppercase tracking-widest ${envBanner.chip}`}
-              title={`You are on the ${envBanner.label} environment — not production. Click: fire a sample toast.`}
+              title={`You are on the ${envBanner.label} environment, not production. Click: fire a sample toast.`}
             >
               {envBanner.label}
             </button>
@@ -676,6 +683,9 @@ export function AppLayout({ activeSlug }: { activeSlug: string }) {
           <div className="flex-1 md:hidden" />
           <div className="shrink-0 md:hidden flex items-center gap-0.5">
             <HeaderActions />
+            {/* An app-mode workspace keeps its menu to the app, the same way
+                the menu leaves search out there. */}
+            <PhoneHeaderShortcuts search={!appMode} />
             <ChatLauncher open={chatOpen} setOpen={setChatOpen} />
             <MobileNav />
           </div>
@@ -745,7 +755,7 @@ export function AppLayout({ activeSlug }: { activeSlug: string }) {
             </aside>
           </FloatingChrome>
         )}
-      <main className={`flex-1 min-w-0 transition-[padding] duration-200 ${chatOpen ? "xl:pr-[456px]" : ""}`}>
+      <main id={MAIN_ID} tabIndex={-1} className={`focus:outline-none flex-1 min-w-0 transition-[padding] duration-200 ${chatOpen ? "xl:pr-[456px]" : ""}`}>
         {/* pb clears the mobile bottom action bar; md+ has no bar. */}
         {/* `page-shell` carries the max-width in CSS so a page can widen it
             with usePageWidth("wide") — see index.css. A wide TABLE is
@@ -763,7 +773,10 @@ export function AppLayout({ activeSlug }: { activeSlug: string }) {
           {/* What a one-tap filing just did, on the record it opened, once. */}
           <JustFiledNotice />
           <ErrorBoundary key={location.pathname} scope="page">
-            <Outlet />
+            {/* A page for a module that is off offers only turning it on. */}
+            <ModuleOffGate>
+              <Outlet />
+            </ModuleOffGate>
           </ErrorBoundary>
         </div>
       </main>
@@ -772,11 +785,14 @@ export function AppLayout({ activeSlug }: { activeSlug: string }) {
           from any screen (off the Scan tab) and always toasts — no silent drop.
           Stands down on the Scan page, which owns the wedge there. */}
       {activeSlug ? <GlobalScanWedge activeSlug={activeSlug} /> : null}
+      <PhotoCaptureHost />
       {/* Quick Access — pinned Knowledge Base entries, one tap from any page
           (renders only when the knowledge module is enabled). */}
       {activeSlug ? <QuickAccess activeSlug={activeSlug} /> : null}
       {/* ⌘K — do or find anything (redesign B4). */}
       <CommandPalette />
+      {/* ? — every key the app answers to, from the one registry. */}
+      <ShortcutsSheet />
       {/* Bring your spreadsheet: one sheet, opened from any door (openSheetImport). */}
       {activeSlug ? <SheetImportHost /> : null}
       {/* Stale-tab nudge: deploys are frequent; open tabs must find out. */}

@@ -5,7 +5,9 @@
 
 import { withMetadataMerged } from "@cobblr/platform-contract/entity-metadata";
 import { Router } from "express";
+import { sql } from "kysely";
 import { z } from "zod";
+import { pagedAnswer, readListPage, TOTAL_COLUMN } from "@cobblr/platform-contract/list-page";
 import { platform } from "@cobblr/platform-contract";
 import { instanceOf, sessionUser, tenantContext, tenantDb } from "../db.js";
 import { asyncHandler, badBody, requireRole } from "./util.js";
@@ -22,11 +24,14 @@ const CustomerCreate = z.object({
 });
 const CustomerUpdate = CustomerCreate.partial();
 
+/** A page of customers, by name, with how many there are. `q` searches the
+ *  name, the email and the phone. */
 customersRouter.get(
   "/",
   asyncHandler(async (req, res) => {
-    const db = tenantDb(req);
-    const items = await db
+    const page = readListPage(req.query);
+    const term = typeof req.query.q === "string" ? req.query.q.trim().slice(0, 200) : "";
+    let q = tenantDb(req)
       .selectFrom("sales_customers as c")
       .where("c.instance", "=", instanceOf(req))
       .select((eb) => [
@@ -34,10 +39,15 @@ customersRouter.get(
         "c.metadata", "c.created_at", "c.updated_at",
         eb.selectFrom("sales_orders as o").select(eb.fn.countAll().as("n"))
           .whereRef("o.customer_id", "=", "c.id").as("order_count"),
-      ])
-      .orderBy("c.name")
-      .execute();
-    res.json({ items: items.map((c) => ({ ...c, order_count: Number(c.order_count ?? 0) })) });
+        sql<string>`count(*) over()`.as(TOTAL_COLUMN),
+      ]);
+    if (term) {
+      const like = `%${term.replace(/[\\%_]/g, (ch) => `\\${ch}`)}%`;
+      q = q.where((eb) => eb.or([eb("c.name", "ilike", like), eb("c.email", "ilike", like), eb("c.phone", "ilike", like)]));
+    }
+    const rows = await q.orderBy("c.name").orderBy("c.id").limit(page.limit).offset(page.offset).execute();
+    const answer = pagedAnswer(rows, page);
+    res.json({ ...answer, items: answer.items.map((c) => ({ ...c, order_count: Number(c.order_count ?? 0) })) });
   }),
 );
 
@@ -142,12 +152,19 @@ customersRouter.delete(
       .deleteFrom("sales_customers")
       .where("id", "=", req.params.id!)
       .where("instance", "=", instanceOf(req))
-      .returning("id")
+      .returning(["id", "name"])
       .executeTakeFirst();
     if (!deleted) {
       res.status(404).json({ error: { code: "not_found", message: "customer not found" } });
       return;
     }
+    await platform().activity.log({
+      orgId: tenantContext(req).org.id,
+      userId: sessionUser(req)?.id ?? null,
+      action: "customer_deleted",
+      ref: { module: "sales", entityType: "customer", entityId: deleted.id },
+      diff: { name: deleted.name },
+    });
     res.status(204).end();
   }),
 );

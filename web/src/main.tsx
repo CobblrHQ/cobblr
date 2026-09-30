@@ -5,10 +5,13 @@ import { App } from "./App";
 import { ThemeProvider } from "./theme/ThemeContext";
 import "./index.css";
 import { listenForInstallPrompt } from "./lib/install-app";
+import { registerServiceWorker } from "./lib/offline";
 
 // Chromium's install prompt fires early and once per page; kept here so the
 // tour's install step, minutes later, can raise the real one.
 listenForInstallPrompt();
+// Offline: the shell and the reads this device kept (#4226).
+registerServiceWorker();
 
 const queryClient = new QueryClient({
   defaultOptions: {

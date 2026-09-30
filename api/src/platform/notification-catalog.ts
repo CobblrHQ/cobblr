@@ -19,16 +19,16 @@ export interface NotificationTypeDef {
 export const NOTIFICATION_TYPES: NotificationTypeDef[] = [
   // ── Tier 1 — always email, locked ──────────────────────────────────────────
   { key: "auth.magic_link", label: "Magic sign-in link", description: "Your one-tap login links.", tier: 1 },
-  { key: "auth.security", label: "Password & security", description: "Password resets and 2FA changes.", tier: 1 },
+  { key: "auth.security", label: "Password & security", description: "Password resets and changes to how you sign in.", tier: 1 },
   { key: "billing", label: "Subscription & billing", description: "Plan, payment and billing notices.", tier: 1 },
   { key: "account.deletion", label: "Account deletion", description: "Confirmation when an account is deleted.", tier: 1 },
-  { key: "platform.account.notice", label: "Important notices", description: "Breaking changes or actions that affect your access — e.g. a workspace web address change.", tier: 1 },
+  { key: "platform.account.notice", label: "Important notices", description: "Breaking changes or actions that affect your access, such as a workspace's web address changing.", tier: 1 },
   // ── Tier 2 — configurable ───────────────────────────────────────────────────
+  // A row here is a promise that something sends it: a person who switches on
+  // a type nothing emits has chosen a channel for silence. The catalog test
+  // holds every tier-2 key to a sender in the source.
   { key: "platform.feedback.replied", label: "Feedback responses", description: "When we reply to or ship the feedback you sent.", tier: 2 },
-  { key: "platform.feature.announced", label: "Feature announcements", description: "New features and bundle releases.", tier: 2 },
-  { key: "platform.workspace.update", label: "Workspace updates", description: "Notable changes in your workspaces.", tier: 2 },
   { key: "platform.ai.share_offered", label: "AI-sharing offers", description: "When a member offers to share their AI with a workspace you own.", tier: 2 },
-  { key: "platform.claude.message", label: "Messages from Claude", description: "Personalized notes from your Cobblr assistant.", tier: 2 },
 ];
 
 /** The matrix columns, in display order — Discord before email (Discord is the
@@ -63,7 +63,7 @@ export function isPrefChannel(c: string): c is PrefChannel {
  *  Making them say it again in a different screen is ceremony, not consent, and
  *  in practice it meant a connected account that silently received nothing.
  *
- *  EXCEPT tier 1. Sign-in links, password resets, 2FA changes and billing keep
+ *  EXCEPT tier 1. Sign-in links, password resets and billing keep
  *  their existing channels: a credential is not something to put in a chat DM
  *  by default, and unlike everything else here, tier 1 cannot be turned off
  *  afterwards. The opt-in someone gave was for being told things, not for

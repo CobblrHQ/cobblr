@@ -2,8 +2,8 @@
 //
 // Portaled to document.body on purpose. The app header uses `backdrop-blur`,
 // which makes it a containing block for fixed/absolute descendants, so a panel
-// rendered inside it mis-positions (the trap NavCustomizeMenu and the Modal
-// primitive both document). Everything here is generic: the scan header uses it
+// rendered inside it mis-positions (the trap the Modal
+// primitive documents). Everything here is generic: the scan header uses it
 // for filing location, file intake, grouping and overflow, but nothing in it
 // knows about scanning.
 

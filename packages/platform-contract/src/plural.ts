@@ -117,3 +117,35 @@ export function itemNounFor(opts: {
   if (tail && tail !== "item") return tail.replace(/[_-]/g, " ");
   return "item";
 }
+
+// Letters whose NAME starts with a vowel sound: "an SKU", "an FDM printer",
+// "an HDMI cable", but "a USB stick" and "a PLA spool".
+const VOWEL_SOUND_LETTERS = new Set(["a", "e", "f", "h", "i", "l", "m", "n", "o", "r", "s", "x"]);
+
+/** "a" or "an" for a noun that is data (an order, a spool, an Inventory),
+ *  by the sound it starts with. Like `pluralise`, it is the small set of
+ *  rules a noun needs, not a dictionary: an unusual word reads as its
+ *  spelling suggests ("a unicorn", "an umbrella", "an hour"). */
+export function articleFor(noun: string): "a" | "an" {
+  const word = noun.trim().split(/\s+/)[0] ?? "";
+  if (!word) return "a";
+  const lower = word.toLowerCase();
+  // A number: "an 8", "an 11-piece set", "an 18mm socket"; every other number
+  // starts with a consonant sound.
+  if (/^\d/.test(word)) return /^(8|11(?!\d)|18(?!\d))/.test(word) ? "an" : "a";
+  // An initialism is read letter by letter: "an SKU", "a USB stick".
+  if (word.length > 1 && word.length <= 5 && word === word.toUpperCase() && /^[A-Z]+$/.test(word)) {
+    return VOWEL_SOUND_LETTERS.has(lower[0]!) ? "an" : "a";
+  }
+  // Silent h.
+  if (/^(hour|honest|honou?r|heir)/.test(lower)) return "an";
+  // A vowel read as a consonant: "a unit", "a user", "a euro", "a one-off".
+  if (/^(u[bcdfgjklmnpqrstvz][aeiou]|eu|ewe|one\b|once)/.test(lower) && !/^(un[^i]|under|umb|up|us$)/.test(lower)) return "a";
+  return /^[aeiou]/.test(lower) ? "an" : "a";
+}
+
+/** The noun with its article: "an order", "a spool", "an Inventory". */
+export function withArticle(noun: string): string {
+  const n = noun.trim();
+  return n ? `${articleFor(n)} ${n}` : n;
+}

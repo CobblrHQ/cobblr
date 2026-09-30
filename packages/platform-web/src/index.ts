@@ -53,6 +53,7 @@ export { ViewModeToggle, useViewMode, type ViewMode } from "./ViewModeToggle";
 export { useImageSrc } from "./useImageSrc";
 export { openAuthedFile, type OpenAuthedFileOptions } from "./openAuthedFile";
 export { FileIntake, FileIntakePanels, useFileIntake, describeLine, type IntakeLine, type FileIntakeOptions } from "./FileIntake";
+export { sendUpload, uploadErrorOf, uploadJson, UploadError, type SendUploadOptions } from "./upload-client";
 export { TableFileIntake, intakeSummary, type TableFileIntakeResult, type AskField } from "./TableFileIntake";
 export { SnippetText } from "./SnippetText";
 export { TableConnectorImport, importSummary, type SectionOutcome } from "./TableConnectorImport";
@@ -61,6 +62,8 @@ export { PasswordInput, SecretInput, AddressInput, NOT_A_LOGIN, type PasswordInp
 export { NounChoiceButtons, nounChoiceHeading } from "./NounChoice";
 export { BulkActionBar } from "./BulkActionBar";
 export { CustomFieldsPanel, RelationSelect } from "./CustomFieldsPanel";
+export { TipLine, pickTip, registerTip, registeredTips, type Tip, type TipState, type TipStripProps } from "./tips";
+export { useRecordInPath, type RecordInPathOptions } from "./useRecordInPath";
 export { EditableCell, type EditableCellDef } from "./EditableCell";
 export {
   isForeign,
@@ -149,10 +152,12 @@ export {
   type DetailPanelComponent,
 } from "./panels";
 export { Modal } from "./Modal";
+export { SHORTCUTS, isShortcut, keyCap, typingIn, OPEN_SHORTCUTS_EVENT, type Shortcut, type KeyLike } from "./shortcuts";
 export { lockPageScroll, useLockPageScroll } from "./scrollLock";
 export { ContentsPanel, useHoldsContents } from "./ContentsPanel";
 export { ToastProvider, useToast, ERROR_WITHOUT_WORDS } from "./ToastContext";
 export { ConfirmProvider, useConfirm } from "./ConfirmContext";
+export { usePhotoPick, usePhotoCaptureHost, requestCapturedPhoto, photoFile, type PhotoRequest } from "./photo-capture";
 export { UnitInput } from "./UnitInput";
 export { InboxWaitingStrip } from "./InboxWaitingStrip";
 export { PersonSelect, usePersonName, useMemberName } from "./PersonSelect";
@@ -262,7 +267,8 @@ export { withPngDpi, readPngDpi, isPng, crc32, dpiToPixelsPerMetre } from "./png
 export { YIELDING_CLASS, useYieldToContent, pressableBeneath, samplePoints } from "./yield-to-content";
 export { FloatingChrome, type FloatingChromeProps, type FloatingAnchor } from "./FloatingChrome";
 export { registerBottomChrome, registerCornerChrome, stackBottomChrome, bottomClearance, layoutDockNow, BOTTOM_CHROME_HEIGHT_VAR, BOTTOM_CLEARANCE_VAR } from "./bottom-dock";
-export { useLayerStack, topLayerZ, stackedZ } from "./layer-stack";
+export { useLayerStack, topLayerZ, stackedZ, isTopLayer } from "./layer-stack";
+export { useDialogFocus, tabbables } from "./useDialogFocus";
 export { DragInput, type DragInputProps } from "./DragInput";
 export { OverlayLayer, PopoverLayer, BackdropLayer, clampToViewport, POPOVER_GUTTER, OVERLAY_LAYER_CLASS, POPOVER_LAYER_CLASS, BACKDROP_LAYER_CLASS, type LayerProps, type PopoverLayerProps } from "./fixed-layers";
 export { LiveSurfaceProvider, useOverLiveSurface } from "./live-surface";
@@ -275,6 +281,8 @@ export {
 export { viewCardFields, CARD_FIELDS_ON_CARD, type ViewCardFields } from "./view-card-fields";
 export { SearchInput, type SearchInputProps } from "./SearchInput";
 export { CollectionHeader, HEADER_CONTROL, headerButton } from "./CollectionHeader";
+export { ExportCsvButton } from "./ExportCsvButton";
 export { usePhotoSuggestions, usePhotoSuggestionFor, suggestedSrcFor, pictureStateFor, PICTURE_STATE_TEXT, markShownBeside, useShownBeside } from "./photoSuggestions";
 export type { PictureState } from "./photoSuggestions";
 export type { PhotoSuggestionRow } from "./types";
+export type { PlatformWire, PlatformWireInput } from "./types";

@@ -7,7 +7,9 @@ import { sql } from "kysely";
 import { platform } from "@cobblr/platform-contract";
 import { sessionUser, tenantContext, tenantDb } from "../db.js";
 import { DUPLICATE_SIBLING, duplicateSiblingMessage, siblingNamed } from "./siblings.js";
-import { asyncHandler, badBody, requireRole } from "./util.js";
+import { asyncHandler, badBody, requireCapability, requireRole } from "./util.js";
+import { deletePlace, hasPlacesInside, restoreDeletedPlace, whatGoesWith } from "./place-delete.js";
+import { MoveRefused, moveEverything, putBackEverything, readMoveResult } from "./move-everything.js";
 
 export const locationsRouter = Router({ mergeParams: true });
 
@@ -232,6 +234,8 @@ locationsRouter.post(
             code: DUPLICATE_SIBLING,
             message: duplicateSiblingMessage(parsed.data.name, placeName),
             existing_id: clash.id,
+            // Also under details, where a client reads a refusal's data.
+            details: { existing_id: clash.id },
           },
         });
         return;
@@ -306,7 +310,7 @@ locationsRouter.patch(
       // Reject cycle: new parent_id can't be self or a descendant.
       if (parsed.data.parent_id === id) {
         res.status(400).json({
-          error: { code: "cycle", message: "A location cannot be its own parent." },
+          error: { code: "cycle", message: "A place cannot go inside itself." },
         });
         return;
       }
@@ -318,7 +322,7 @@ locationsRouter.patch(
         while (cursor) {
           if (cursor === id) {
             res.status(400).json({
-              error: { code: "cycle", message: "Reparent would create a cycle." },
+              error: { code: "cycle", message: "A place cannot go inside a place that is inside it." },
             });
             return;
           }
@@ -379,6 +383,8 @@ locationsRouter.patch(
             code: DUPLICATE_SIBLING,
             message: duplicateSiblingMessage(parsed.data.name, place?.name ?? null),
             existing_id: clash.id,
+            // Also under details, where a client reads a refusal's data.
+            details: { existing_id: clash.id },
           },
         });
         return;
@@ -417,6 +423,22 @@ locationsRouter.patch(
   }),
 );
 
+/** What deleting this place would take with it, for the dialog to say before
+ *  anyone presses Delete. */
+locationsRouter.get(
+  "/:id/what-goes",
+  asyncHandler(async (req, res) => {
+    const id = req.params.id!;
+    const db = tenantDb(req);
+    if (!(await db.selectFrom("core_locations_locations").select("id").where("id", "=", id).executeTakeFirst())) {
+      res.status(404).json({ error: { code: "not_found", message: "location not found" } });
+      return;
+    }
+    const goes = await whatGoesWith(tenantContext(req).org.id, id);
+    res.json({ ...goes, needs: goes.places > 0 ? "core-locations:delete-with-places-inside" : null });
+  }),
+);
+
 locationsRouter.delete(
   "/:id",
   asyncHandler(async (req, res) => {
@@ -426,29 +448,98 @@ locationsRouter.delete(
       res.status(400).json({ error: { code: "missing_id", message: "id required" } });
       return;
     }
-    const db = tenantDb(req);
     const ctx = tenantContext(req);
-    const deleted = await db
-      .deleteFrom("core_locations_locations")
-      .where("id", "=", id)
-      .returning("id")
-      .executeTakeFirst();
-    if (!deleted) {
+    // One shelf is a member's to delete. A place with places inside it takes
+    // all of them, and everything kept there loses its place, so that is an
+    // owner's or admin's call, or a grant: a member is told so and can ask,
+    // and the kept request finishes the delete once someone says yes.
+    if ((await hasPlacesInside(ctx.org.id, id)) && !(await requireCapability(req, res, "core-locations:delete-with-places-inside"))) return;
+    const gone = await deletePlace(ctx.org.id, id, sessionUser(req).id);
+    if (!gone) {
       res.status(404).json({ error: { code: "not_found", message: "location not found" } });
       return;
     }
-    void platform().events.emit("core-locations.location.deleted", {
-      orgId: ctx.org.id,
-      locationId: id,
-    });
-    res.status(204).end();
+    res.json({ deleted: true, ...gone, undo: { restore: `deleted/${id}/restore` } });
+  }),
+);
+
+/** Undo a delete: the place, every place that went with it, and each thing
+ *  back where it was. Anyone who could delete a shelf can put one back;
+ *  putting things back is never the dangerous direction. */
+// AI-REACH: exempt the page's Undo. The assistant undoes a place delete
+// through its change ledger, which calls the writer's restore and reaches the
+// same kept record (place-delete.ts), so a second door here would be the same
+// door.
+locationsRouter.post(
+  "/deleted/:id/restore",
+  asyncHandler(async (req, res) => {
+    if (!requireRole(req, res, "owner", "admin", "member")) return;
+    const back = await restoreDeletedPlace(tenantContext(req).org.id, req.params.id!);
+    if (!back) {
+      res.status(404).json({ error: { code: "not_found", message: "That place was not deleted recently enough to put back." } });
+      return;
+    }
+    res.json({ restored: true, ...back });
+  }),
+);
+
+const MoveEverythingBody = z.object({
+  to: z.string().uuid(),
+  places: z.boolean().optional(),
+  then_delete: z.boolean().optional(),
+});
+
+/** Move everything kept in a place into another, optionally the places inside
+ *  it too, optionally then deleting it (a merge). The delete follows the
+ *  delete's own rule: by then the place is empty, so it is a member's to
+ *  make. */
+// AI-ACTION: core-locations:move-everything
+// AI-REACH: action core-locations:move-everything
+locationsRouter.post(
+  "/:id/move-everything",
+  asyncHandler(async (req, res) => {
+    if (!requireRole(req, res, "owner", "admin", "member")) return;
+    const parsed = MoveEverythingBody.safeParse(req.body);
+    if (!parsed.success) return badBody(res, parsed.error);
+    try {
+      const moved = await moveEverything(tenantContext(req).org.id, req.params.id!, parsed.data.to, {
+        places: parsed.data.places,
+        thenDelete: parsed.data.then_delete,
+        userId: sessionUser(req).id,
+      });
+      res.json(moved);
+    } catch (e) {
+      if (!(e instanceof MoveRefused)) throw e;
+      res.status(409).json({ error: { code: "move_refused", message: e.message } });
+    }
+  }),
+);
+
+/** Undo a move: the result it answered, sent back. */
+// AI-ACTION: core-locations:put-back-everything
+// AI-REACH: action core-locations:put-back-everything
+locationsRouter.post(
+  "/move-everything/undo",
+  asyncHandler(async (req, res) => {
+    if (!requireRole(req, res, "owner", "admin", "member")) return;
+    const move = readMoveResult((req.body as { move?: unknown } | null)?.move);
+    if (!move) {
+      res.status(400).json({ error: { code: "invalid_body", message: "Send the move to put back, as the move answered it." } });
+      return;
+    }
+    try {
+      res.json(await putBackEverything(tenantContext(req).org.id, move, sessionUser(req).id));
+    } catch (e) {
+      if (!(e instanceof MoveRefused)) throw e;
+      res.status(409).json({ error: { code: "move_refused", message: e.message } });
+    }
   }),
 );
 
 /** Walk descendants of `rootId` and rewrite their depth so they
  *  stay consistent after a reparent. Iterative BFS — no recursion
  *  budget, no SQL recursion required. */
-async function rebuildDescendantDepths(
+export async function rebuildDescendantDepths(
   db: ReturnType<typeof tenantDb>,
   rootId: string,
 ): Promise<void> {

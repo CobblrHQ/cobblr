@@ -18,8 +18,8 @@ export const TOKEN_ACCESS_LABEL: Record<TokenAccess, string> = {
 
 export const TOKEN_ACCESS_MEANS: Record<TokenAccess, string> = {
   look: "Reads records. Changes nothing.",
-  change: "Reads, adds, edits and moves records, and runs actions. Never touches settings, members, connections or other tokens.",
-  full: "Everything you can do yourself, including settings and minting other tokens.",
+  change: "Reads, adds, edits and moves records, and runs actions. Never touches settings, members, connections or other tokens. When an AI assistant uses it, deletes and anything that cannot be undone always ask you first.",
+  full: "Everything you can do yourself, including settings and minting other tokens. When an AI assistant uses it, deletes and anything that cannot be undone always ask you first.",
 };
 
 /** What a new token starts as, wherever one is minted from a screen: the

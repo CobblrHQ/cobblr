@@ -20,10 +20,10 @@ import { defineModule } from "@cobblr/platform-contract";
 
 export default defineModule({
   name: "core-placement",
-  version: "0.2.7",
+  version: "0.2.8",
   displayName: "Placement",
   description:
-    "The containment primitive: records which container each thing lives inside (a part in a machine, a component in a server, an item in a location). Exposed platform-wide via platform().placement; a Location is just one kind of container.",
+    "Keeps track of what is inside what: a part in a machine, a jar on a shelf, a shelf in a room.",
   icon: "package",
   band: "foundational",
 
@@ -35,7 +35,6 @@ export default defineModule({
   // Thin HTTP surface over platform().placement (contents / of / place / remove).
   api: () => import("./api/index.js"),
 
-  intents: [],
   dependencies: [],
   exposes: {
     events: [
@@ -45,7 +44,6 @@ export default defineModule({
       // plus kinds, so a subscriber can decide relevance without a lookup.
       "core-placement.placed",
     ],
-    api: ["contents", "of", "place", "remove"],
     actions: [
       // Wire/AI-invokable placement — the same put-inside/take-out the /place
       // and /remove routes do, reachable through the actions surface (Ask Cobb

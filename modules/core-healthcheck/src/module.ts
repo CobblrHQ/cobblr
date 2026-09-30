@@ -16,16 +16,15 @@ import { defineModule, platform } from "@cobblr/platform-contract";
 
 export default defineModule({
   name: "core-healthcheck",
-  version: "0.1.0",
+  version: "0.1.1",
   displayName: "Healthcheck",
   description:
-    "Aggregates every module's health probes into one rollup. Modules register probes via platform().health.registerProbe(); this module exposes the snapshot over HTTP.",
+    "Shows whether every part of your workspace is working, in one place.",
   icon: "heart-pulse",
   band: "foundational",
 
   api: () => import("./api/index.js"),
 
-  intents: [],
   dependencies: [],
 
   // AI-REACH: none needed — operator plumbing (liveness probes for the deploy).
@@ -35,7 +34,6 @@ export default defineModule({
 
   exposes: {
     events: [],
-    api: ["snapshot"],
     actions: [],
   },
 

@@ -16,10 +16,10 @@ import { defineModule } from "@cobblr/platform-contract";
 
 export default defineModule({
   name: "core-scan",
-  version: "0.49.13",
+  version: "0.49.17",
   displayName: "Scan",
   description:
-    "Scan a barcode or take a photo of a thing; end up with a draft inventory row, pre-filled with the resolved name + brand + catalog photo. One tap to commit.",
+    "Scan a barcode or snap a photo, and get the thing named and ready to file in one tap.",
   icon: "scan-line",
   band: "stock",
   autoEnable: true, // ambient capability — on for every workspace
@@ -111,7 +111,6 @@ export default defineModule({
 
   api: () => import("./api/index.js"),
 
-  intents: [],
   dependencies: [],
 
   provides: {
@@ -149,7 +148,6 @@ export default defineModule({
       "core-scan.storage.mismatch",
       "core-scan.putaway.session-ended",
     ],
-    api: [],
     // ──────────── Live box — scan-drive session mode ────────────
     // Applicable only when a bridge scanner is connected (a scan from elsewhere
     // can drive THIS screen). Tab-scoped (the follower is this browser tab); the

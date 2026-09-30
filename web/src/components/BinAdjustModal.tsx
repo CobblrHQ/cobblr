@@ -66,7 +66,7 @@ export function BinAdjustModal({
       toast.action(
         vars.set != null
           ? `${r.entity_title}: counted ${r.new_qty} (was ${r.old_qty})`
-          : `${applied! > 0 ? "+" : ""}${applied} ${r.entity_title} — now ${r.new_qty} in ${locationName}`,
+          : `${applied! > 0 ? "+" : ""}${applied} ${r.entity_title}, now ${r.new_qty} in ${locationName}`,
         {
           actionLabel: "Undo",
           duration: 7000,

@@ -35,6 +35,9 @@ export interface SalesOrdersTable {
   status: SalesOrderStatus;
   order_date: ColumnType<Date | null, string | null | undefined, string | null | undefined>;
   fulfilled_at: ColumnType<Date | null, string | null | undefined, string | null | undefined>;
+  carrier: string | null;
+  tracking_number: string | null;
+  shipped_at: ColumnType<Date | null, Date | string | null | undefined, Date | string | null | undefined>;
   shipping_address: string | null;
   notes: string | null;
   metadata: ColumnType<Record<string, unknown>, Record<string, unknown> | undefined, Record<string, unknown> | undefined>;
@@ -49,16 +52,32 @@ export interface SalesOrderItemsTable {
   part_id: string | null;
   description: string | null;
   qty: ColumnType<string, number, number>;
+  /** How many of this line have left stock so far; the rest is still owed. */
+  qty_fulfilled: ColumnType<string, string | undefined, string | undefined>;
   unit_price: ColumnType<string | null, number | null | undefined, number | null | undefined>;
   metadata: ColumnType<Record<string, unknown>, Record<string, unknown> | undefined, Record<string, unknown> | undefined>;
   created_at: Generated<Date>;
   updated_at: Generated<Date>;
 }
 
+export type SalesHistoryKind = "status" | "stock" | "shipped" | "email" | "work_order" | "line";
+
+export interface SalesOrderHistoryTable {
+  id: Generated<string>;
+  order_id: string;
+  kind: SalesHistoryKind;
+  from_status: string | null;
+  to_status: string | null;
+  detail: ColumnType<Record<string, unknown>, string | undefined, string | undefined>;
+  by_user: string | null;
+  created_at: Generated<Date>;
+}
+
 export interface SalesDB {
   sales_customers: SalesCustomersTable;
   sales_orders: SalesOrdersTable;
   sales_order_items: SalesOrderItemsTable;
+  sales_order_history: SalesOrderHistoryTable;
 }
 
 /** Re-exported from the contract so this module cannot fall behind the

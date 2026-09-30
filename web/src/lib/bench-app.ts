@@ -69,12 +69,12 @@ export const CATALOGING_BENCH_HTML = String.raw`
   .cb-empty{color:var(--muted);font-size:12px}
 </style>
 <div class="cb-wrap">
-  <div class="cb-conn" id="cb-conn"><span class="cb-dot" id="cb-dot"></span><span id="cb-conntxt">Bench not connected — simulated readings (Phase 1).</span></div>
+  <div class="cb-conn" id="cb-conn"><span class="cb-dot" id="cb-dot"></span><span id="cb-conntxt">Bench not connected. Simulated readings (Phase 1).</span></div>
   <div class="cb-stage" id="cb-stage"></div>
   <div class="cb-tape" id="cb-tape"></div>
   <div class="cb-log">
     <h4>// binned this session</h4>
-    <div id="cb-log"><span class="cb-empty">Nothing yet — run a tool through the bench.</span></div>
+    <div id="cb-log"><span class="cb-empty">Nothing yet. Run a tool through the bench.</span></div>
   </div>
 </div>
 <script>
@@ -169,7 +169,7 @@ export const CATALOGING_BENCH_HTML = String.raw`
     if(!item){
       stage.innerHTML='<div class="cb-step">// the bench</div>'+
         '<div class="cb-prompt">Ready for the next tool.</div>'+
-        '<div class="cb-sub">Drop an unknown tool on the bench. We\'ll measure it, weigh it, look at it, photograph it, and tell you which bin it goes in — no typing.</div>'+
+        '<div class="cb-sub">Drop an unknown tool on the bench. We\'ll measure it, weigh it, look at it, photograph it, and tell you which bin it goes in, no typing.</div>'+
         '<div class="cb-row"><div class="cb-spacer"></div>'+pedal('Start')+'</div>';
       bind(start); return;
     }
@@ -182,7 +182,7 @@ export const CATALOGING_BENCH_HTML = String.raw`
         ? '<div class="cb-live"><span class="src">🔌 LIVE</span><span id="cb-livev">'+(liveVal!=null?fmt(liveVal):'—')+'</span></div><span class="cb-unit">'+st.unit+'</span>'
         : '<input class="cb-num" id="cb-val" value="'+st.val+'"><span class="cb-unit">'+st.unit+'</span>';
       stage.innerHTML=head+'<div class="cb-prompt">'+hw+'.</div>'+
-        '<div class="cb-sub">'+(live.on?'Reading straight from the bench — pedal to capture it.':'Pedal when the reading is right (Phase 1: editable; a real caliper/scale feeds it in Phase 2).')+'</div>'+
+        '<div class="cb-sub">'+(live.on?'Reading straight from the bench. Pedal to capture it.':'Pedal when the reading is right (Phase 1: editable; a real caliper/scale feeds it in Phase 2).')+'</div>'+
         '<div class="cb-readout">'+readout+'</div>'+
         '<div class="cb-row"><div class="cb-spacer"></div>'+pedal('Capture')+'</div>';
       bind(function(){
@@ -208,7 +208,7 @@ export const CATALOGING_BENCH_HTML = String.raw`
     } else if(st.k==='locate'){
       stage.innerHTML=head+'<div class="cb-prompt">Done. Put it in:</div>'+
         '<div class="cb-row"><span class="cb-bin">📦 '+item.bin+'</span><div class="cb-spacer"></div>'+pedal('Bin it + commit')+'</div>'+
-        '<div class="cb-sub">'+specName(item.captured)+' — committing…</div>';
+        '<div class="cb-sub">'+specName(item.captured)+': committing…</div>';
       bind(commit);
     }
   }
@@ -267,7 +267,7 @@ export const CATALOGING_BENCH_HTML = String.raw`
     SDK.appLoad('bench-live').then(function(v){
       var now=Date.now();
       if(v && typeof v==='object' && typeof v.ts==='number' && (now - v.ts) < 6000){
-        if(!live.on){live.on=true;dotEl.classList.add('on');connTxt.textContent='Bench connected — live readings from the edge agent.';if(item)render();}
+        if(!live.on){live.on=true;dotEl.classList.add('on');connTxt.textContent='Bench connected: live readings from the edge agent.';if(item)render();}
         live.caliper_mm=v.caliper_mm; live.scale_g=v.scale_g;
         // refresh the live readout in place (no full re-render → no flicker)
         var lv=document.getElementById('cb-livev');
@@ -275,7 +275,7 @@ export const CATALOGING_BENCH_HTML = String.raw`
         // a physical pedal press = pedal_seq ticking up
         if(typeof v.pedal_seq==='number' && v.pedal_seq>live.pedal_seq){live.pedal_seq=v.pedal_seq; firePedal();}
       } else if(live.on){
-        live.on=false;dotEl.classList.remove('on');connTxt.textContent='Bench not connected — simulated readings (Phase 1).';if(item)render();
+        live.on=false;dotEl.classList.remove('on');connTxt.textContent='Bench not connected. Simulated readings (Phase 1).';if(item)render();
       }
     }).catch(function(){});
   }

@@ -18,12 +18,13 @@ import { sql } from "kysely";
 import { meta, metaPool } from "../db/meta.js";
 import { lockoutState, isLocked } from "../auth/lockout.js";
 import { applyBlueprint, BlueprintManifest } from "./blueprint.js";
-import { provisionTenantDb } from "../db/provision.js";
+import { provisionWholeOrRemove, WorkspaceNotProvisioned, WORKSPACE_NOT_CREATED_MESSAGE } from "../platform/provision-workspace.js";
 import { slugifyBase } from "../lib/slugify.js";
 import { hashPassword, verifyPassword } from "../auth/password.js";
 import { TRIAL_MODE, TRIAL_TTL_DAYS } from "../platform/trial.js";
 import { verifyCaptcha, captchaEnabled } from "../platform/captcha.js";
 import { blockDisposableEnabled, isDisposableEmail } from "../platform/disposable-emails.js";
+import { confirmEmailChange, revertEmailChange } from "../platform/email-change.js";
 
 // A throwaway hash, computed once, so the "no such user / inactive" login
 // path spends the same ~bcrypt time as a real password check — otherwise the
@@ -61,7 +62,6 @@ import * as activity from "../platform/activity.js";
 import { fireSignup, sendAuthEmail } from "../platform/hosted-seams.js";
 import { discordAppId } from "../platform/discord-oauth.js";
 import { communityLinks, discordInviteUrl, type CommunityLink } from "../platform/community.js";
-import { enableDefaultModulesForOrg } from "../modules/enable.js";
 import { provisionAppWorkspace, ProvisionAppError } from "../platform/provision-app.js";
 import { getManagedApp } from "../platform/managed-apps.js";
 import { planIdentityWorkspace } from "../platform/identity-provision.js";
@@ -167,6 +167,8 @@ interface AuthResponseUser {
   title_pref?: string | null;
   nav_pref: unknown;
   tour_seen_at: Date | string | null;
+  /** Tips shown and dismissed (see users.tips). */
+  tips: { shown?: Record<string, string>; dismissed?: Record<string, string> };
   /** Community Discord invite (see discordInviteUrl) or null; signed-in chrome only. */
   discord_invite_url: string | null;
   /** Every place this deployment offers for questions, in the order to show
@@ -254,19 +256,11 @@ export async function provisionOrgForUser(
     client.release();
   }
 
-  let provisioned = false;
-  try {
-    const { credentialsEncrypted, migrationsApplied } = await provisionTenantDb(dbName);
-    await meta
-      .updateTable("orgs")
-      .set({ db_credentials_encrypted: credentialsEncrypted, updated_at: new Date() })
-      .where("id", "=", orgId)
-      .execute();
-    console.log(`[org-provision] ${dbName} for org ${orgId} (${migrationsApplied} migrations)`);
-    provisioned = true;
-  } catch (err) {
-    console.error(`[org-provision] FAILED to provision ${dbName}:`, err);
-  }
+  // The database, its credentials and the default modules. Made whole or not
+  // at all (platform/provision-workspace.ts): one more try from a clean slate,
+  // then the row goes and the caller hears WorkspaceNotProvisioned, instead of
+  // a workspace that answers 503 on every page for good.
+  await provisionWholeOrRemove(orgId, orgName, userId);
 
   try {
     await activity.log({
@@ -276,40 +270,10 @@ export async function provisionOrgForUser(
       ref: { module: null, entityType: "org", entityId: orgId },
       diff: { name: orgName, db_name: dbName },
     });
-    if (provisioned) {
-      await activity.log({
-        orgId,
-        userId,
-        action: "tenant_provisioned",
-        ref: { module: null, entityType: "org", entityId: orgId },
-        diff: { db_name: dbName },
-      });
-    }
   } catch (err) {
     console.error("[org-provision] activity logging failed:", err);
   }
-
-  if (provisioned) {
-    try {
-      // New workspace gets the always-on substrate (foundational) plus
-      // the ambient capability modules (autoEnable) — views, search,
-      // scan, ai, apps, … — which carry no decision content and do
-      // nothing until used. Only DOMAIN modules (inventory, machines,
-      // digifab, …) stay off until the user opts in: choosing what you
-      // *manage* is the one decision worth surfacing.
-      const enabled = await enableDefaultModulesForOrg(orgId, userId);
-      if (enabled.length > 0) {
-        console.log(`[org-provision] enabled default modules for ${orgId}: ${enabled.join(", ")}`);
-      }
-    } catch (err) {
-      console.error("[org-provision] default-module enable failed:", err);
-    }
-    // Default wires for the org get installed transitively when
-    // `enableDefaultModulesForOrg` enables each module — `enableModuleForOrg`
-    // iterates `manifest.contributes.wires` and inserts every entry.
-    // The backfillDefaultBindings call at boot covers orgs created
-    // before a given default wire was added to the manifest.
-  }
+  const provisioned = true as const;
 
   return { orgId, slug, dbName, provisioned };
 }
@@ -558,9 +522,28 @@ authRouter.post("/signup", async (req, res, next) => {
     // Phase 2: provision the user's first org. A managed-app signup ("Cobblr
     // for Yarn") makes that workspace the app itself (bundle + app mode);
     // otherwise it's a generic workspace.
-    const provisioned = body.app
-      ? await provisionAppWorkspace(userId, body.app, body.manifest, { auth_method: "session" })
-      : await provisionOrgForUser(userId, body.org_name ?? `${body.display_name.trim()}'s workspace`);
+    let provisioned: { orgId: string };
+    try {
+      provisioned = body.app
+        ? await provisionAppWorkspace(userId, body.app, body.manifest, { auth_method: "session" })
+        : await provisionOrgForUser(userId, body.org_name ?? `${body.display_name.trim()}'s workspace`);
+    } catch (err) {
+      if (!(err instanceof WorkspaceNotProvisioned)) throw err;
+      // The workspace could not be made and was removed. The account was made a
+      // moment ago for it: without the workspace the signup did not happen, so
+      // it goes too and the invite is free again. The person tries again with
+      // the same address, and nobody is left holding a workspace that 503s.
+      await hardDeleteUser(userId).catch((e) => console.error(`[signup] could not undo account ${userId}:`, (e as Error).message));
+      if (invite) {
+        await meta
+          .updateTable("signup_invites")
+          .set({ consumed_at: null, consumed_by_user: null })
+          .where("id", "=", invite.id)
+          .execute()
+          .catch((e) => console.error(`[signup] could not release invite ${invite!.id}:`, (e as Error).message));
+      }
+      return res.status(503).json({ error: { code: err.code, message: WORKSPACE_NOT_CREATED_MESSAGE } });
+    }
 
     // Lifecycle seam: the hosted overlay attaches here. No-op in open core.
     await fireSignup({ userId, email, orgId: provisioned.orgId });
@@ -983,6 +966,7 @@ async function adoptOrProvisionIdentity(
 // an orphan identity-linked user was handed a fresh workspace on the next
 // hand-off (#3276).
 const IdentityDeletedBody = z.object({ identity_id: z.string().uuid(), secret: z.string().min(1) });
+// UI-REACH: the identity service telling this instance an account is gone, server to server
 authRouter.post("/identity/deleted", async (req, res, next) => {
   try {
     if (!identityCallbackEnabled()) {
@@ -1712,6 +1696,42 @@ export async function issueAndSendVerifyEmail(
   return { emailed, devToken: !emailed && process.env.NODE_ENV !== "production" ? plain : undefined };
 }
 
+// ───────────────── POST /auth/email-change/confirm | /revert ─────────────────
+// Public: the token in the link is the proof (platform/email-change.ts).
+// confirm, from the NEW address, makes the change and ends every session;
+// revert, from the OLD address for 7 days, takes the account back and asks
+// for a new password. Neither signs anybody in: the person signs in again.
+const EmailChangeToken = z.object({ token: z.string().min(8).max(200) });
+for (const [path, act] of [
+  ["/email-change/confirm", "confirm"],
+  ["/email-change/revert", "revert"],
+] as const) {
+  // AI-REACH: exempt: a link a person opens from their own mailbox.
+  authRouter.post(path, async (req, res, next) => {
+    try {
+      if (overLimit(verifyEmailLimiter, req)) {
+        rateLimited(res);
+        return;
+      }
+      const parsed = EmailChangeToken.safeParse(req.body);
+      if (!parsed.success) {
+        res.status(400).json({ error: { code: "invalid_body", message: "The link is incomplete." } });
+        return;
+      }
+      const origin = `${req.protocol}://${req.get("host") ?? ""}`;
+      const out = act === "confirm" ? await confirmEmailChange(parsed.data.token, origin) : await revertEmailChange(parsed.data.token);
+      if ("refused" in out) {
+        res.status(out.refused.status).json({ error: { code: out.refused.code, message: out.refused.message } });
+        return;
+      }
+      const dev = "revertDevToken" in out && out.revertDevToken ? { dev_revert_token: out.revertDevToken } : {};
+      res.json({ email: out.email, ...dev });
+    } catch (err) {
+      next(err);
+    }
+  });
+}
+
 // ───────────────── POST /auth/verify-email ─────────────────
 // Public: consumes a verification token + marks the user's email verified.
 const VerifyEmail = z.object({ token: z.string().min(8).max(200) });
@@ -1768,6 +1788,7 @@ authRouter.post("/verify-email", async (req, res, next) => {
 // discord_dm channel.
 const VerifyDmBody = z.object({ token: z.string().min(10).max(255) });
 
+// UI-REACH: the Discord bot confirming a test DM was received
 authRouter.post("/discord/verify-dm", async (req, res, next) => {
   try {
     const parsed = VerifyDmBody.safeParse(req.body ?? {});

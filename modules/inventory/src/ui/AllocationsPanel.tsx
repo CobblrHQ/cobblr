@@ -8,6 +8,7 @@ import { collectionLabelFor } from "@cobblr/platform-contract/kind-label";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useInventory } from "./context";
 import type { AllocationStatus } from "./api";
+import { withArticle } from "@cobblr/platform-contract/plural";
 
 export function AllocationsPanel({ partId }: { partId: string }) {
   const { api } = useInventory();
@@ -213,7 +214,7 @@ export function EntityPicker({
     ),
   );
   const searchHint = nouns.length
-    ? `search a ${nouns.slice(0, 3).join(", ")}…`
+    ? `search ${withArticle(nouns.slice(0, 3).join(", "))}…`
     : "search anything to reserve for…";
 
   if (selected) {

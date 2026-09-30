@@ -36,7 +36,7 @@ const MAX_KINDS_PROBED = 24;
  *  included. */
 async function detailPathFor(
   kind: string,
-  item: { id: string; detailUrl?: string; instance?: string },
+  item: { id: string; detailUrl?: string; instance?: string | null },
   routeCache: Map<string, string | null>,
 ): Promise<string | undefined> {
   if (!routeCache.has(kind)) {

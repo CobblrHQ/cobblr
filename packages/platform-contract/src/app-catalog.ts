@@ -18,7 +18,9 @@ export interface AppModuleLike {
   description?: string | null;
   band?: string | null;
   enabled: boolean;
-  nav?: { label: string; route: string } | null;
+  nav?: { label: string; route: string; icon?: string | null } | null;
+  /** The module's icon name (kebab-case lucide), the one the sidebar shows. */
+  icon?: string | null;
 }
 
 export type AppState = "on" | "hidden" | "off";
@@ -33,6 +35,8 @@ export interface AppEntry {
    *  sidebar's per-device hide list holds. */
   key: string;
   state: AppState;
+  /** The icon the sidebar shows for it (its nav entry's, else the module's). */
+  icon: string | null;
   description: string;
   /** Everything a person might type for it, lower-cased. */
   words: string;
@@ -54,9 +58,12 @@ export function appCatalog(modules: readonly AppModuleLike[], hidden: ReadonlySe
     const route = m.nav?.route || `/${m.name}`;
     const key = route.replace(/^\//, "").split("/")[0] || m.name;
     const label = m.nav?.label || m.displayName || m.name;
-    const state: AppState = !m.enabled ? "off" : hidden.has(key) ? "hidden" : "on";
+    // The sidebar hides a row by its own name, which for a module is its route
+    // word and for an app inside a group (a lens, a bundle's heading) is the
+    // module's name: either one means hidden.
+    const state: AppState = !m.enabled ? "off" : hidden.has(key) || hidden.has(m.name) ? "hidden" : "on";
     const words = [label, m.displayName, m.name.replace(/-/g, " "), m.description ?? ""].join(" ").toLowerCase();
-    out.push({ name: m.name, label, route, key, state, description: m.description ?? "", words });
+    out.push({ name: m.name, label, route, key, state, icon: m.nav?.icon || m.icon || null, description: m.description ?? "", words });
   }
   return out.sort((a, b) => a.label.localeCompare(b.label));
 }

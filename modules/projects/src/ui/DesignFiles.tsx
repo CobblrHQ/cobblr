@@ -13,7 +13,7 @@
 import { useEffect, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { FileText, Images, Trash2, Upload } from "lucide-react";
-import { canPreviewFile, FilePreview, Modal, openAuthedFile, useConfirm, useFilePreviewRegistry, useImageSrc, useToast, EntityPhoto } from "@cobblr/platform-web";
+import { canPreviewFile, FilePreview, Modal, openAuthedFile, useConfirm, useFilePreviewRegistry, useImageSrc, useToast, EntityPhoto, uploadJson } from "@cobblr/platform-web";
 import { useProjects } from "./context";
 import type { PatternPhotoState } from "./api";
 import { patternNeedsKey } from "./PatternNeeds";
@@ -93,9 +93,7 @@ export function DesignFiles({ designId }: { designId: string }) {
     mutationFn: async (file: File) => {
       const fd = new FormData();
       fd.append("file", file);
-      const ures = await fetch(`${base}/files`, { method: "POST", headers: auth(), body: fd });
-      if (!ures.ok) throw await refusal(ures, "Couldn't upload that file");
-      const f = (await ures.json()) as { id: string };
+      const f = await uploadJson<{ id: string }>(`${base}/files`, fd, { token: getToken(), file });
       const role = file.type === "application/pdf" ? "pattern" : "gallery";
       const ares = await fetch(`${base}/attachments`, {
         method: "POST",

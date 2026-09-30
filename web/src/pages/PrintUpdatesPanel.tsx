@@ -225,7 +225,7 @@ function RuleEditor({
       scope_type: scopeType, scope_value: scopeType === "printer" ? scopeValue : null,
       pre_actions: pre, post_actions: post,
     }),
-    onSuccess: (r) => toast.success(`Sent to ${r.printer} — check the channel`),
+    onSuccess: (r) => toast.success(`Sent to ${r.printer}. Check the channel`),
     onError: (e) => toast.error(e instanceof ApiError ? e.message : "Test fire failed"),
   });
 

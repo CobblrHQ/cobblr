@@ -25,7 +25,10 @@ import { useTheme } from "../theme/ThemeContext";
 import { useToast, usePageTitle, PasswordInput } from "@cobblr/platform-web";
 import { NAV_LAYOUTS, setNavLayout, useNavLayout } from "../lib/nav-mode";
 import { LayoutPreview } from "../components/LayoutPreview";
+import { DownloadMyDataSection } from "../components/DownloadMyDataSection";
 import { DeleteAccountSection } from "../components/DeleteAccountSection";
+import { DeletedWorkspaceBackups } from "../components/DeletedWorkspaceBackups";
+import { ChangeEmailSection } from "../components/ChangeEmailSection";
 import {
   DEFAULT_TITLE_FORMAT,
   TITLE_FORMATS,
@@ -66,6 +69,7 @@ export function MeProfilePage() {
           <AccountCard key={id} to={`/me/s/${id}`} meta={meta} items={items} />
         ))}
       </div>
+      <DeletedWorkspaceBackups />
       <Link
         to="/configuration"
         className="flex items-center gap-2 rounded-xl border border-line dark:border-slate-700 bg-surface dark:bg-slate-900 px-4 py-3 text-sm text-muted dark:text-slate-400 hover:border-cobble-300 dark:hover:border-cobble-700 transition"
@@ -163,6 +167,7 @@ export function MeIdentityPage() {
         />
       )}
       <PasswordSection onChanged={() => toast.success("Password updated - you stay signed in.")} />
+      <DownloadMyDataSection />
       <DeleteAccountSection />
     </div>
   );
@@ -202,18 +207,7 @@ function DisplayNameSection({
       <h2 className="text-sm font-medium text-content dark:text-slate-300">
         Identity
       </h2>
-      <label className="block">
-        <div className="text-xs text-muted mb-1">Email</div>
-        <input
-          type="email"
-          value={email}
-          readOnly
-          className="w-full px-2 py-1 text-sm border border-line dark:border-slate-700 rounded bg-subtle dark:bg-slate-800/40 text-muted cursor-not-allowed"
-        />
-        <div className="text-[11px] text-faint mt-1">
-          Email changes go through a separate flow - not in v0.1.
-        </div>
-      </label>
+      <ChangeEmailSection email={email} />
       <label className="block">
         <div className="text-xs text-muted mb-1">Display name</div>
         <input
@@ -305,7 +299,7 @@ function AppearanceSection() {
 
       <ThemeChoiceRow
         label="This device only"
-        sub="Overrides the account default on this browser — never synced."
+        sub="Overrides the account default on this browser (never synced)."
         value={deviceOverride}
         onPick={setDeviceOverride}
         options={[

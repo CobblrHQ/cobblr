@@ -6,6 +6,7 @@
 // history — with complete / edit / delete in line.
 
 import { useState } from "react";
+import { Link } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { CalendarClock, Check, History, Pencil, Trash2, Wrench } from "lucide-react";
 import { ApiError, api, type MaintenanceEntry } from "../lib/api";
@@ -134,7 +135,7 @@ export function MaintenancePage() {
             onDelete={async () => {
               const ok = await confirm({
                 title: "Delete this entry?",
-                message: `${e.name} — removed from the service log permanently.`,
+                message: `${e.name} will be removed from the service log permanently.`,
                 confirmLabel: "Delete",
                 destructive: true,
               });
@@ -185,9 +186,13 @@ function MaintenanceCard({
             <span className="font-medium text-content dark:text-mortar-100">
               {entry.name}
             </span>
-            <span className="text-[10px] font-mono text-faint dark:text-slate-500">
-              {entry.entity_module}·{entry.entity_type}
-            </span>
+            <Link
+              to={`/open/${encodeURIComponent(`${entry.entity_module}:${entry.entity_type}`)}/${entry.entity_id}`}
+              className="text-xs text-accent hover:underline"
+              data-testid="maint-for"
+            >
+              {entry.entity_title ?? "a record that is no longer here"}
+            </Link>
             {due && (
               <span
                 className={`text-[10px] font-mono uppercase tracking-wider px-1.5 py-0.5 rounded ${due.cls}`}
@@ -215,7 +220,6 @@ function MaintenanceCard({
             {entry.cost_cents != null && (
               <span>${(entry.cost_cents / 100).toFixed(2)}</span>
             )}
-            {entry.recurrence_rule && <span>↻ {entry.recurrence_rule}</span>}
           </div>
           {entry.notes && (
             <div className="text-xs text-muted dark:text-slate-400 mt-1 italic">
@@ -305,7 +309,6 @@ function EditEntryModal({
     entry.cost_cents != null ? (entry.cost_cents / 100).toFixed(2) : "",
   );
   const [notes, setNotes] = useState(entry.notes ?? "");
-  const [rule, setRule] = useState(entry.recurrence_rule ?? "");
 
   const save = useMutation({
     mutationFn: () => {
@@ -322,7 +325,6 @@ function EditEntryModal({
           : null,
         cost_cents: Number.isFinite(cents as number) ? cents : null,
         notes: notes.trim() || null,
-        recurrence_rule: rule.trim() || null,
       });
     },
     onSuccess: () => {
@@ -337,7 +339,7 @@ function EditEntryModal({
     name.trim() !== "" && (scheduledAt !== "" || performedAt !== "");
 
   return (
-    <Modal open onClose={onClose} title={`Edit — ${entry.name}`}>
+    <Modal open onClose={onClose} title={`Edit: ${entry.name}`}>
       <form
         onSubmit={(e) => {
           e.preventDefault();
@@ -390,18 +392,6 @@ function EditEntryModal({
               onChange={(e) => setCostDollars(e.target.value)}
               placeholder="0.00"
               className="w-full px-2 py-1 text-sm border border-line dark:border-slate-600 rounded bg-surface dark:bg-slate-900"
-            />
-          </label>
-          <label className="block">
-            <div className="text-xs text-muted mb-1">
-              Recurrence (RRULE)
-            </div>
-            <input
-              type="text"
-              value={rule}
-              onChange={(e) => setRule(e.target.value)}
-              placeholder="FREQ=MONTHLY"
-              className="w-full px-2 py-1 text-sm font-mono border border-line dark:border-slate-600 rounded bg-surface dark:bg-slate-900"
             />
           </label>
         </div>

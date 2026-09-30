@@ -9,6 +9,8 @@ import { Router } from "express";
 import { z } from "zod";
 import { sql } from "kysely";
 import { platform } from "@cobblr/platform-contract";
+import { withMetadataMerged } from "@cobblr/platform-contract/entity-metadata";
+import { madeByWorkOrder } from "../work-orders.js";
 import { sessionUser, tenantContext, tenantDb } from "../db.js";
 import {
   readComponentStock,
@@ -21,6 +23,7 @@ import { rollupOperation } from "../execution.js";
 import { traceBackward, lineageCodes, type GenealogyLoaders, type RunInput } from "../genealogy.js";
 import { scheduleEDD, type PlannedItem } from "../schedule.js";
 import { asyncHandler, badBody, requireRole } from "./util.js";
+import { resolveOutputPart } from "../output-part.js";
 
 export const buildsRouter = Router({ mergeParams: true });
 
@@ -28,8 +31,13 @@ const BuildCreate = z.object({
   name: z.string().min(1).max(200),
   description: z.string().max(8_000).nullable().optional(),
   output_part_id: z.string().uuid().nullable().optional(),
+  /** What the build makes, by name: the inventory part with that name, made
+   *  when there is none. Ignored when output_part_id is given. */
+  output_part_name: z.string().min(1).max(200).optional(),
   output_qty: z.number().positive().optional(),
   notes: z.string().max(8_000).nullable().optional(),
+  /** A bundle's custom fields on the build ("Sells for"), merged into the bag. */
+  metadata: z.record(z.unknown()).optional(),
 });
 const BuildUpdate = BuildCreate.partial();
 
@@ -75,15 +83,25 @@ buildsRouter.post(
     if (!parsed.success) return badBody(res, parsed.error);
     const db = tenantDb(req);
     const ctx = tenantContext(req);
+    let outputPartId = parsed.data.output_part_id ?? null;
+    if (!outputPartId && parsed.data.output_part_name) {
+      const out = await resolveOutputPart(ctx.org.id, parsed.data.output_part_name);
+      if (!out.ok) {
+        res.status(409).json({ error: { code: "no_output_part", message: out.reason } });
+        return;
+      }
+      outputPartId = out.partId;
+    }
     const row = await db
       .insertInto("builds_builds")
       .values({
         name: parsed.data.name.trim(),
         description: parsed.data.description ?? null,
-        output_part_id: parsed.data.output_part_id ?? null,
+        output_part_id: outputPartId,
         output_qty: String(parsed.data.output_qty ?? 1),
         notes: parsed.data.notes ?? null,
-      })
+        ...(parsed.data.metadata ? { metadata: sql`${JSON.stringify(parsed.data.metadata)}::jsonb` } : {}),
+      } as never)
       .returningAll()
       .executeTakeFirstOrThrow();
     await platform().events.emit("builds.build.created", { orgId: ctx.org.id, buildId: row.id });
@@ -184,6 +202,8 @@ buildsRouter.get(
     }
     const qtyByOp = new Map<string, Array<{ kind: string; quantity: number }>>();
     for (const q of qtyRows) {
+      // A judged print's count belongs to the build, not to an operation.
+      if (q.operation_id == null) continue;
       (qtyByOp.get(q.operation_id) ?? qtyByOp.set(q.operation_id, []).get(q.operation_id)!).push({ kind: q.kind, quantity: Number(q.quantity) || 0 });
     }
     const operations = operationRows.map((op) => ({
@@ -191,7 +211,19 @@ buildsRouter.get(
       rollup: rollupOperation(timeByOp.get(op.id) ?? [], qtyByOp.get(op.id) ?? []),
     }));
 
-    res.json({ build, components, buildable, operations });
+    // The build's yield across everything counted for it: per-operation logs
+    // and judged prints alike (#4053), one number rather than two records.
+    const r = rollupOperation([], qtyRows.map((q) => ({ kind: q.kind, quantity: Number(q.quantity) || 0 })));
+    const quality = { good_qty: r.good_qty, scrap_qty: r.scrap_qty, yield_pct: r.yield_pct };
+
+    // What a Build press adds to stock, named, so the sheet can say it before
+    // anything is consumed.
+    const outputPart = build.output_part_id ? await platform().entities.lookup(ctx.org.id, "inventory:part", build.output_part_id) : null;
+    const output = build.output_part_id
+      ? { part_id: build.output_part_id, name: outputPart?.title ?? null, qty: outputPart ? Number(outputPart.fields?.qty ?? 0) : null }
+      : null;
+
+    res.json({ build, components, buildable, operations, quality, output });
   }),
 );
 
@@ -206,11 +238,21 @@ buildsRouter.patch(
     if (parsed.data.name !== undefined) patch.name = parsed.data.name.trim();
     if (parsed.data.description !== undefined) patch.description = parsed.data.description;
     if (parsed.data.output_part_id !== undefined) patch.output_part_id = parsed.data.output_part_id;
+    else if (parsed.data.output_part_name) {
+      const out = await resolveOutputPart(tenantContext(req).org.id, parsed.data.output_part_name);
+      if (!out.ok) {
+        res.status(409).json({ error: { code: "no_output_part", message: out.reason } });
+        return;
+      }
+      patch.output_part_id = out.partId;
+    }
     if (parsed.data.output_qty !== undefined) patch.output_qty = String(parsed.data.output_qty);
     if (parsed.data.notes !== undefined) patch.notes = parsed.data.notes;
+    // Custom fields MERGE into the stored bag, so saving one keeps the others.
+    const set = withMetadataMerged(parsed.data.metadata !== undefined ? { ...patch, metadata: parsed.data.metadata } : patch);
     const row = await db
       .updateTable("builds_builds")
-      .set(patch)
+      .set(set as never)
       .where("id", "=", req.params.id!)
       .returningAll()
       .executeTakeFirst();
@@ -872,6 +914,7 @@ buildsRouter.get(
   "/schedule",
   asyncHandler(async (req, res) => {
     const db = tenantDb(req);
+    const ctx = tenantContext(req);
     const rows = await db
       .selectFrom("builds_planned")
       .innerJoin("builds_builds", "builds_builds.id", "builds_planned.build_id")
@@ -883,6 +926,7 @@ buildsRouter.get(
         "builds_planned.due_date as due_date",
         "builds_planned.priority as priority",
         "builds_planned.resource_label as resource_label",
+        "builds_planned.created_at as created_at",
       ])
       .where("builds_planned.status", "=", "planned")
       .execute();
@@ -901,6 +945,39 @@ buildsRouter.get(
       }
     }
 
+    // What each work order has made so far: scrap counted for its build since
+    // it was planned, from the one quality record (#4053); good handed out
+    // oldest order first (work-orders.ts), so two orders never share a part.
+    const madeByPlan = new Map<string, { good: number; scrap: number }>();
+    if (buildIds.length > 0) {
+      const earliest = rows.reduce((m, r) => (new Date(r.created_at) < m ? new Date(r.created_at) : m), new Date());
+      const qtys = await db
+        .selectFrom("builds_op_qty")
+        .select(["build_id", "kind", "quantity", "logged_at"])
+        .where("build_id", "in", buildIds)
+        .where("logged_at", ">=", earliest)
+        .execute();
+      for (const r of rows) {
+        const since = new Date(r.created_at);
+        let good = 0;
+        let scrap = 0;
+        for (const q of qtys) {
+          if (q.build_id !== r.build_id || new Date(q.logged_at) < since) continue;
+          if (q.kind === "good") good += Number(q.quantity) || 0;
+          else if (q.kind === "scrap") scrap += Number(q.quantity) || 0;
+        }
+        madeByPlan.set(r.id, { good, scrap });
+      }
+    }
+
+    const fifo = await madeByWorkOrder(db, buildIds);
+    // Whom each work order is for, in the owning module's own words.
+    const forTitle = new Map<string, { title: string; url: string | null }>();
+    for (const w of fifo.values()) {
+      if (!w.source_kind || !w.source_id || w.status !== "planned") continue;
+      const ent = await platform().entities.lookup(ctx.org.id, w.source_kind, w.source_id).catch(() => null);
+      if (ent) forTitle.set(w.id, { title: ent.title, url: ent.detailUrl ?? null });
+    }
     const items: PlannedItem[] = rows.map((r) => ({
       id: r.id,
       build_id: r.build_id,
@@ -910,6 +987,12 @@ buildsRouter.get(
       priority: r.priority,
       resource_label: r.resource_label,
       est_minutes_each: estByBuild.get(r.build_id) ?? 0,
+      good_qty: fifo.get(r.id)?.made ?? 0,
+      source_kind: fifo.get(r.id)?.source_kind ?? null,
+      source_id: fifo.get(r.id)?.source_id ?? null,
+      for_title: forTitle.get(r.id)?.title ?? null,
+      for_url: forTitle.get(r.id)?.url ?? null,
+      scrap_qty: madeByPlan.get(r.id)?.scrap ?? 0,
     }));
 
     res.json(scheduleEDD(items, new Date().toISOString()));

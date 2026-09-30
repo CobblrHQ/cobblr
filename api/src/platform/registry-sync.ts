@@ -53,6 +53,7 @@ export async function syncManifestRegistries(): Promise<{
     finishes: string | null;
     args_schema: unknown;
     undoable: boolean;
+    effect: string | null;
     examples: string[];
     version: string;
     position: number;
@@ -130,6 +131,7 @@ export async function syncManifestRegistries(): Promise<{
         finishes: a.finishes ?? null,
         args_schema: a.argsSchema ?? null,
         undoable: a.undoable ?? false,
+        effect: a.effect ?? null,
         examples: a.examples ?? [],
         version: a.version ?? m.version,
         position,
@@ -161,6 +163,7 @@ export async function syncManifestRegistries(): Promise<{
       finishes: null,
       args_schema: a.args_schema,
       undoable: a.undoable ?? false,
+      effect: null,
       examples: a.examples ?? [],
       version: a.version,
       position,
@@ -292,6 +295,7 @@ export async function syncManifestRegistries(): Promise<{
           user_invokable: a.user_invokable,
           args_schema: a.args_schema ? sql`${JSON.stringify(a.args_schema)}::jsonb` : null,
           undoable: a.undoable,
+          effect: a.effect,
           examples: sql`${JSON.stringify(a.examples)}::jsonb`,
           version: a.version,
           position: a.position,
@@ -314,6 +318,7 @@ export async function syncManifestRegistries(): Promise<{
             user_invokable: a.user_invokable,
             args_schema: a.args_schema ? sql`${JSON.stringify(a.args_schema)}::jsonb` : null,
             undoable: a.undoable,
+            effect: a.effect,
             examples: sql`${JSON.stringify(a.examples)}::jsonb`,
             position: a.position,
             face: a.face,

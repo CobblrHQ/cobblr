@@ -210,8 +210,8 @@ function ActionCard({
             <div className="text-[10px] text-faint mt-1">
               Fixed in <span className="font-mono">{action.module_name}</span>'s manifest
               {"any" in action.effective_applies_to
-                ? " — deliberately universal (a wire-driven shape that locates its subject from the event/args, or a verb that genuinely applies to anything)"
-                : " — a precise, module-internal kind list"}
+                ? ": deliberately universal (a wire-driven shape that locates its subject from the event/args, or a verb that genuinely applies to anything)"
+                : ": a precise, module-internal kind list"}
               . Matches {action.matched_kinds.length} kind
               {action.matched_kinds.length === 1 ? "" : "s"}.
             </div>
@@ -228,7 +228,7 @@ function ActionCard({
               onChange={(next) => setSelected(new Set(next))}
               kinds={kinds}
               previewVerb={dirty ? "would match" : "matches"}
-              emptyHint="matches nothing — pick at least one trait, or revert"
+              emptyHint="matches nothing. Pick at least one trait, or revert"
             />
 
             <div className="flex items-center gap-2 pt-1">

@@ -26,7 +26,7 @@ import { useActiveOrg } from "../auth/ActiveOrgContext";
 import { navTargetFor, INSTANCE_PREFIX } from "../components/useNavModules";
 import { initialViewId, rememberView, rememberedView } from "../lib/instance-view";
 import { SavedViewPage } from "./SavedViewPage";
-import { usePageWidth } from "@cobblr/platform-web";
+import { CollectionHeader, usePageWidth } from "@cobblr/platform-web";
 
 export function InstancePage({ instanceName }: { instanceName?: string } = {}) {
   const { activeSlug, activeOrg } = useActiveOrg();
@@ -302,9 +302,11 @@ export function InstancePage({ instanceName }: { instanceName?: string } = {}) {
       )}
       {shownView && !showsOneThing ? (
         <div className="space-y-3">
-          <h1 className="font-display text-2xl font-extrabold text-content dark:text-mortar-100 page-title">
-            {displayName}
-          </h1>
+          {/* The collection's own header on every tab, so what it offers (the
+              floor plan's place mode for physical things) is not only on the
+              Table: Groceries opens on its cards, and the door was missing
+              there (#4147). */}
+          <CollectionHeader title={displayName} kind={shownView.entity_kind || undefined} />
           <SavedViewPage viewId={shownView.id} embedded />
         </div>
       ) : (

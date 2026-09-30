@@ -194,16 +194,18 @@ export function toResolvedPart(row: {
   // surface that uses the resolved detailUrl — a saved view, the dashboard,
   // search — navigated to the base route, which scopes to the default instance →
   // "part not found".
+  const namedInstance = row.instance && row.instance !== "inventory" ? row.instance : null;
   const detailUrl = resolveDetailPath({
     kind: "inventory:part",
     id: row.id,
-    instance: row.instance && row.instance !== "inventory" ? row.instance : null,
+    instance: namedInstance,
     detailUrl: null,
     baseDetailRoute: "/inventory/parts/{id}",
   })!;
   return {
     kind: "inventory:part",
     id: row.id,
+    instance: namedInstance,
     // Archived is inventory's word for "out of use". Reported generically so a
     // sweeper in another module can honour it without knowing this table.
     ...(row.archived ? { retired: true } : {}),

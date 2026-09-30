@@ -18,6 +18,14 @@ export function takeYourWorkEmail(o: {
    *  rather than printed as a dead line. */
   cloudUrl?: string | null;
   selfhostUrl?: string | null;
+  /** What is true of the sandbox right now, in the words the page uses
+   *  (lifetimeSentence), so the email never says something the page does not. */
+  lifetime: string;
+  /** The hosted product's door that brings this file straight into a new
+   *  workspace after sign-up or sign-in (/bring). When there is one it is the
+   *  email's first link, and the file itself is the second: a .zip on a phone
+   *  has nowhere useful to go (#4217). */
+  continueUrl?: string | null;
 }): { subject: string; text: string } {
   const paths: string[] = [];
   if (o.cloudUrl) paths.push(`  Hosted, nothing to run: ${o.cloudUrl}`);
@@ -28,12 +36,22 @@ export function takeYourWorkEmail(o: {
         `${paths.length > 1 ? "either one" : "it"}:\n\n${paths.join("\n")}\n\n` +
         `Make a workspace, then restore this file into it and you are back where you left off.\n`
       : `Make a workspace anywhere Cobblr runs, restore this file into it, and you are back where you left off.\n`;
+  if (o.continueUrl) {
+    return {
+      subject: "Your Cobblr workspace, to keep",
+      text:
+        `Carry on with everything you made in your Cobblr sandbox. Open this, sign up or sign in, ` +
+        `and it is all brought into a new workspace for you:\n\n${o.continueUrl}\n\n` +
+        `${o.lifetime} This link and the file behind it work for ${o.days} days.\n\n` +
+        `Or download a copy of the file, to keep or to run Cobblr yourself:\n\n${o.link}\n` +
+        (o.selfhostUrl ? `\nRunning it yourself: ${o.selfhostUrl}\n` : ""),
+    };
+  }
   return {
     subject: "Your Cobblr workspace, to keep",
     text:
       `Here is everything you made in your Cobblr sandbox, as one file:\n\n${o.link}\n\n` +
-      `The link works for ${o.days} days, then the file is deleted. Your sandbox itself is already gone - ` +
-      `that part was always going to happen after an hour.\n\n` +
+      `The link works for ${o.days} days, then the file is deleted. ${o.lifetime}\n\n` +
       carryOn,
   };
 }

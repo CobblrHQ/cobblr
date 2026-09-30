@@ -98,7 +98,7 @@ export function ExportInboxModal({
       const blob = await res.blob();
       // UTC-DAY OK: the download filename's stamp, not a claim about anybody's calendar.
       downloadBlob(blob, `cobblr-scan-selection-${new Date().toISOString().slice(0, 10)}.json`);
-      toast.success(`Exported ${selectedIds.length} item${selectedIds.length === 1 ? "" : "s"} — import it via ‘Import’`);
+      toast.success(`Exported ${selectedIds.length} item${selectedIds.length === 1 ? "" : "s"}. Import it via ‘Import’`);
       onClose();
     } catch (e) {
       toast.error(e instanceof Error ? e.message : "Couldn't export");

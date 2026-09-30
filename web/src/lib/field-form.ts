@@ -45,7 +45,7 @@ export function fieldFormReadiness(s: FieldFormState): Readiness {
   // In scope mode the entity_kind is DERIVED from the traits server-side, so it's
   // empty here on purpose. The traits are what must be present.
   if (s.mode === "scope" && s.scopeTraits.length === 0) {
-    return no("pick at least one trait — a class with no traits lands on nothing");
+    return no("pick at least one trait; a class with no traits lands on nothing");
   }
   if (s.type === "computed" && !s.template.trim()) {
     return no("a computed field needs a template, e.g. {{year}} {{manufacturer}}");

@@ -52,6 +52,17 @@ export function collectionLabelFor(
   return head ? humanise(head) : "Item";
 }
 
+/** The collection a RECORD belongs to. A record in a named collection comes
+ *  back under its module's base kind with `instance` set (a grocery is an
+ *  `inventory:part` in the "groceries" instance), so labelling it by `kind`
+ *  alone called a jar of Nutella a "Part" in a pantry (#4146). */
+export function collectionLabelForRecord(
+  record: { kind: string; instance?: string | null },
+  instances: readonly InstanceForLabel[] | null | undefined,
+): string {
+  return collectionLabelFor(record.instance ? `${record.instance}:item` : record.kind, instances);
+}
+
 /** One thing in that collection: "book" for `bookshelf:item` when the
  *  instance declares it, "part" for `inventory:part`. */
 export function itemNounForKind(

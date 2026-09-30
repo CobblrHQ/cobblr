@@ -148,3 +148,15 @@ export const COULD_NOT_TELL = "Couldn't tell what this is";
  *  on the card: what happened, and the two ways on the card offers beside it.
  *  Never a promise of another attempt (#3710). */
 export const LOOKUP_GAVE_UP = "Couldn't look this up. Take a photo or name it.";
+
+/** The chip that offers the put-away walk. Accept files things where they
+ *  belong on record; the walk is carrying them there. It used to read "2
+ *  items left to place" the moment Accept was pressed, which reads as work
+ *  left undone (#4146). A walk not begun is the next step; only a walk begun
+ *  and left is something to resume. */
+export function putawayWalkChip(remaining: number, places: number, resumed: boolean): string {
+  const things = `${remaining} ${remaining === 1 ? "item" : "items"}`;
+  if (resumed) return `Resume shelving - ${things} still to put away`;
+  const where = places > 1 ? `, ${places} places` : places === 1 ? ", 1 place" : "";
+  return `Shelve what you filed - ${things}${where}`;
+}

@@ -6,11 +6,13 @@
 // calendar units and, after them, the counters this record's kind keeps
 // (a printer's print hours and prints), so "every 200 print hours" is the
 // same gesture as "every 3 months". Logging the service with the strip's
-// Log service rolls the schedule forward; nothing here needs pressing for it.
+// Log service rolls the schedule forward, and so does Done on the schedule
+// itself. Each schedule can be changed in place, and the record's service
+// history (what was done, when, what it cost) reads underneath.
 
 import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { CalendarClock, Loader2, Trash2 } from "lucide-react";
+import { CalendarClock, Check, History, Loader2, Pencil, Trash2 } from "lucide-react";
 import { useToast } from "@cobblr/platform-web";
 import { api, type MaintenanceIntervalUnit, type MaintenanceSchedule } from "../../lib/api";
 import type { EntityDetailPanelCtx } from "../../panels/types";
@@ -90,6 +92,46 @@ export function MaintenanceSchedulesPanel({ ctx }: { ctx: EntityDetailPanelCtx }
     onSuccess: () => refresh(),
     onError: (e) => toast.error(e instanceof Error ? e.message : "Couldn't remove the schedule"),
   });
+  const historyKey = ["maintenance-history", ctx.slug, ctx.entityId];
+  const historyQ = useQuery({
+    queryKey: historyKey,
+    queryFn: () => api.listMaintenance(ctx.slug, { kind: "history", entity_id: ctx.entityId, limit: 10 }),
+  });
+  const done = useMutation({
+    mutationFn: (s: MaintenanceSchedule) =>
+      api.logMaintenance(ctx.slug, {
+        entity_module: s.entity_module,
+        entity_type: s.entity_type,
+        entity_id: s.entity_id,
+        name: s.name,
+        performed_at: new Date().toISOString(),
+        schedule_id: s.id,
+      }),
+    onSuccess: (_e, s) => {
+      toast.success(`${s.name} done. The next one is scheduled.`);
+      refresh();
+      void qc.invalidateQueries({ queryKey: historyKey });
+    },
+    onError: (e) => toast.error(e instanceof Error ? e.message : "Couldn't log it"),
+  });
+  const [editing, setEditing] = useState<string | null>(null);
+  const edit = useMutation({
+    mutationFn: (v: { id: string; name: string; n: number; unit: string }) => {
+      const counter = counters.find((c) => c.key === v.unit);
+      return api.updateMaintenanceSchedule(ctx.slug, v.id, {
+        name: v.name,
+        ...(counter
+          ? { counter_field: counter.key, counter_every: v.n, every_n: null, every_unit: null }
+          : { every_n: Math.round(v.n), every_unit: v.unit as MaintenanceIntervalUnit, counter_field: null, counter_every: null }),
+      });
+    },
+    onSuccess: (s) => {
+      toast.success(`${s.name}: ${s.rule}.`);
+      setEditing(null);
+      refresh();
+    },
+    onError: (e) => toast.error(e instanceof Error ? e.message : "Couldn't change the schedule"),
+  });
 
   const every = Number(everyText);
   const ready = name.trim().length > 0 && Number.isFinite(every) && every > 0;
@@ -109,7 +151,19 @@ export function MaintenanceSchedulesPanel({ ctx }: { ctx: EntityDetailPanelCtx }
         <p className="text-sm text-muted dark:text-slate-400">Nothing scheduled. Set how often this wants servicing and it will come up on its own.</p>
       ) : (
         <ul className="space-y-2">
-          {schedules.map((s) => (
+          {schedules.map((s) =>
+            editing === s.id ? (
+              <li key={s.id}>
+                <EditSchedule
+                  schedule={s}
+                  counters={counters}
+                  input={input}
+                  pending={edit.isPending}
+                  onCancel={() => setEditing(null)}
+                  onSave={(v) => edit.mutate({ id: s.id, ...v })}
+                />
+              </li>
+            ) : (
             <li key={s.id} className="flex items-start gap-2 rounded-lg border border-line/70 dark:border-slate-700/70 px-3 py-2">
               <div className="flex-1 min-w-0">
                 <div className="text-sm font-medium text-content dark:text-slate-100 truncate">{s.name}</div>
@@ -121,6 +175,25 @@ export function MaintenanceSchedulesPanel({ ctx }: { ctx: EntityDetailPanelCtx }
               </div>
               <button
                 type="button"
+                onClick={() => done.mutate(s)}
+                disabled={done.isPending}
+                aria-label={`${s.name} done today`}
+                title="Done today: logs it and schedules the next one"
+                className="shrink-0 inline-flex items-center gap-1 rounded px-2 py-1 text-xs bg-moss-600 text-white hover:bg-moss-700 disabled:opacity-50"
+              >
+                <Check size={12} /> Done
+              </button>
+              <button
+                type="button"
+                onClick={() => setEditing(s.id)}
+                aria-label={`Change ${s.name}`}
+                title="Change how often"
+                className="shrink-0 p-1 text-faint hover:text-accent transition"
+              >
+                <Pencil size={14} />
+              </button>
+              <button
+                type="button"
                 onClick={() => remove.mutate(s.id)}
                 disabled={remove.isPending}
                 aria-label={`Stop scheduling ${s.name}`}
@@ -130,8 +203,27 @@ export function MaintenanceSchedulesPanel({ ctx }: { ctx: EntityDetailPanelCtx }
                 <Trash2 size={14} />
               </button>
             </li>
-          ))}
+            ),
+          )}
         </ul>
+      )}
+
+      {(historyQ.data?.items.length ?? 0) > 0 && (
+        <div data-testid="maintenance-history" className="space-y-1">
+          <div className="flex items-center gap-1 text-xs text-muted dark:text-slate-400">
+            <History size={12} aria-hidden /> Done before
+          </div>
+          <ul className="space-y-0.5 text-xs text-content dark:text-slate-200">
+            {historyQ.data!.items.map((h) => (
+              <li key={h.id} className="flex flex-wrap gap-x-2">
+                <span className="font-medium">{h.name}</span>
+                <span className="text-muted">{h.performed_at ? new Date(h.performed_at).toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" }) : ""}</span>
+                {h.cost_cents != null && <span className="text-muted">{(h.cost_cents / 100).toFixed(2)}</span>}
+                {h.notes && <span className="text-muted italic truncate">{h.notes}</span>}
+              </li>
+            ))}
+          </ul>
+        </div>
       )}
 
       <form
@@ -189,5 +281,55 @@ export function MaintenanceSchedulesPanel({ ctx }: { ctx: EntityDetailPanelCtx }
         </button>
       </form>
     </div>
+  );
+}
+
+function EditSchedule({
+  schedule,
+  counters,
+  input,
+  pending,
+  onCancel,
+  onSave,
+}: {
+  schedule: MaintenanceSchedule;
+  counters: Array<{ key: string; label: string; value: number | null }>;
+  input: string;
+  pending: boolean;
+  onCancel: () => void;
+  onSave: (v: { name: string; n: number; unit: string }) => void;
+}) {
+  const [name, setName] = useState(schedule.name);
+  const [n, setN] = useState(String(schedule.counter_field ? schedule.counter_every ?? "" : schedule.every_n ?? ""));
+  const [unit, setUnit] = useState<string>(schedule.counter_field ?? schedule.every_unit ?? "month");
+  const num = Number(n);
+  const ok = name.trim().length > 0 && Number.isFinite(num) && num > 0;
+  return (
+    <form
+      data-testid="maintenance-schedule-edit"
+      className="space-y-2 rounded-lg border border-accent/50 px-3 py-2"
+      onSubmit={(e) => {
+        e.preventDefault();
+        if (ok && !pending) onSave({ name: name.trim(), n: num, unit });
+      }}
+    >
+      <input aria-label="What needs doing" value={name} onChange={(e) => setName(e.target.value)} className={`${input} w-full`} />
+      <div className="flex flex-wrap items-center gap-2">
+        <span className="text-sm">Every</span>
+        <input type="number" inputMode="decimal" min={1} aria-label="How many" value={n} onChange={(e) => setN(e.target.value)} className={`${input} w-20`} />
+        <select aria-label="Of what" value={unit} onChange={(e) => setUnit(e.target.value)} className={input}>
+          {UNITS.map((u) => (
+            <option key={u.value} value={u.value}>{num === 1 ? u.one : u.many}</option>
+          ))}
+          {counters.map((c) => (
+            <option key={c.key} value={c.key}>{c.label}</option>
+          ))}
+        </select>
+      </div>
+      <div className="flex gap-2">
+        <button type="submit" disabled={!ok || pending} className="rounded-md bg-accent px-3 py-1 text-sm text-white disabled:opacity-50">Save</button>
+        <button type="button" onClick={onCancel} className="text-sm text-muted">Cancel</button>
+      </div>
+    </form>
   );
 }

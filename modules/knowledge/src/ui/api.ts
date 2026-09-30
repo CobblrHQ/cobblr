@@ -1,7 +1,7 @@
 // Thin fetch wrapper for the knowledge REST surface. Auth via getToken().
 // Routes are mounted at /api/v1/orgs/:slug/modules/knowledge/...
 
-import { describeUnreadableBody } from "@cobblr/platform-web";
+import { describeUnreadableBody, uploadJson, UploadError } from "@cobblr/platform-web";
 
 export interface Entry {
   id: string;
@@ -11,6 +11,8 @@ export interface Entry {
   pinned: boolean;
   code: string | null;
   image_path: string | null;
+  /** Custom fields a bundle or a person defines for entries. */
+  metadata?: Record<string, unknown>;
   created_at: string;
   updated_at: string;
 }
@@ -22,6 +24,7 @@ export type EntryInput = {
   pinned?: boolean;
   code?: string | null;
   image_path?: string | null;
+  metadata?: Record<string, unknown>;
 };
 
 export class KnowledgeApiError extends Error {
@@ -84,15 +87,11 @@ export class KnowledgeApi {
     const token = this.getToken();
     const form = new FormData();
     form.append("file", file);
-    const res = await fetch(`/api/v1/orgs/${this.slug}/modules/knowledge/entries/${id}/image`, {
-      method: "POST",
-      headers: token ? { Authorization: `Bearer ${token}` } : {},
-      body: form,
-    });
-    if (!res.ok) {
-      const e = (await res.json().catch(() => null)) as { error?: { message?: string } } | null;
-      throw new KnowledgeApiError(res.status, "upload_failed", e?.error?.message ?? "Image upload failed");
+    try {
+      return await uploadJson<{ image_path: string }>(`/api/v1/orgs/${this.slug}/modules/knowledge/entries/${id}/image`, form, { token, file });
+    } catch (err) {
+      if (err instanceof UploadError) throw new KnowledgeApiError(err.status, err.code, err.message);
+      throw err;
     }
-    return (await res.json()) as { image_path: string };
   }
 }

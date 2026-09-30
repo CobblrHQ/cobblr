@@ -20,14 +20,13 @@ import { defineModule } from "@cobblr/platform-contract";
 
 export default defineModule({
   name: "core-queue",
-  version: "0.1.0",
+  version: "0.1.1",
   displayName: "Background queue",
   description:
-    "Persistent background work for modules. Modules enqueue() jobs and registerWorker(name, fn); the api process's worker loop polls every 5s, locks rows via SKIP LOCKED, retries failures with exponential backoff, and reclaims locks from crashed workers after 15min.",
+    "Runs longer jobs in the background so you can keep working.",
   icon: "list-todo",
   band: "foundational",
 
-  intents: [],
   dependencies: [],
 
   // AI-REACH: none needed — the background job runner. Its jobs are an
@@ -36,7 +35,6 @@ export default defineModule({
 
   exposes: {
     events: [],
-    api: ["enqueue", "registerWorker"],
     actions: [],
   },
 

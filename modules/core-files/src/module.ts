@@ -19,10 +19,10 @@ import { defineModule } from "@cobblr/platform-contract";
 
 export default defineModule({
   name: "core-files",
-  version: "0.4.0",
+  version: "0.6.1",
   displayName: "Files",
   description:
-    "File uploads, image variants (thumb + medium), and polymorphic attachments. The platform answer to 'where does this photo live?' so every module doesn't reinvent storage.",
+    "Keep photos, manuals and other files with the things they belong to.",
   icon: "image",
   band: "foundational",
 
@@ -70,6 +70,7 @@ export default defineModule({
           { name: "kind", type: "text" },
           { name: "width", type: "number" },
           { name: "height", type: "number" },
+          { name: "metadata", type: "object" },
           // Path to the canonical-display variant ("medium" for images,
           // "original" for everything else). Modules that want to
           // embed this entity render via this field.
@@ -92,22 +93,32 @@ export default defineModule({
     ],
   },
 
-  intents: [
-    { name: "upload_file", description: "Upload a new file" },
-    { name: "attach_file", description: "Attach an existing file to an entity" },
-  ],
-
   dependencies: [],
 
   exposes: {
     events: [
       "core-files.file.uploaded",
       "core-files.file.deleted",
+      "core-files.file.restored",
       "core-files.attachment.created",
       "core-files.attachment.deleted",
     ],
-    api: ["getFileById", "listAttachments"],
-    actions: [],
+    actions: [
+      {
+        id: "core-files:restore",
+        label: "Restore a deleted file",
+        description:
+          "Brings a file back from Recently deleted, where it was. A deleted file stays there for 30 days before it is removed for good.",
+        appliesTo: { kinds: ["core-files:file"] },
+        recordOptional: true,
+        userInvokable: false,
+        examples: ["restore the photo I deleted", "bring back the manual I deleted yesterday"],
+        invokeHandler: "core-files.restore",
+        argsSchema: {
+          file_id: { label: "File", type: "text" },
+        },
+      },
+    ],
   },
 
   subscribes: [],
@@ -118,6 +129,10 @@ export default defineModule({
       // they repeat (see heal-same-bytes.ts for the retirement condition).
       const { registerSameBytesHeal } = await import("./heal-same-bytes.js");
       registerSameBytesHeal();
+      // Recently deleted files are purged once their days run out.
+      const { registerPurgeSweep, registerRestoreAction } = await import("./purge.js");
+      registerPurgeSweep();
+      registerRestoreAction();
     },
   },
 });

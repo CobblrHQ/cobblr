@@ -29,6 +29,14 @@ registerDetailPanel(
   lazy(() => import("../features/digifab/fleet").then((m) => ({ default: m.MachineCockpitPanel }))),
 );
 registerDetailPanel(
+  "digifab:printing-profile",
+  lazy(() => import("../features/digifab/printingProfile").then((m) => ({ default: m.PrintingProfilePanel }))),
+);
+registerDetailPanel(
+  "digifab:print-this",
+  lazy(() => import("../features/digifab/printThis").then((m) => ({ default: m.PrintThisFilePanel }))),
+);
+registerDetailPanel(
   "inventory:stock-here",
   lazy(() => import("../features/inventory/stockHere").then((m) => ({ default: m.StockHerePanel }))),
 );
@@ -64,6 +72,10 @@ registerDetailPanel(
 registerDetailPanel(
   "platform:links",
   lazy(() => import("../features/links/panel").then((m) => ({ default: m.LinksPanel }))),
+);
+registerDetailPanel(
+  "core-activity-log:history",
+  lazy(() => import("../features/core-activity-log/history").then((m) => ({ default: m.HistoryPanel }))),
 );
 registerDetailPanel(
   "core-maintenance:schedules",

@@ -841,7 +841,7 @@ function ChoiceRow({
       <label className="block">
         <span className="block text-[10px] font-mono uppercase tracking-widest text-faint dark:text-slate-500 mb-1">
           {def.display_label}{" "}
-          <span className="text-accent">— new value</span>
+          <span className="text-accent">(new value)</span>
         </span>
         <input
           type="text"

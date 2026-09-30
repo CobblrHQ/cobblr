@@ -3,7 +3,7 @@
 // what the trend-chart view renderer consumes.
 
 import { type Kysely } from "kysely";
-import { platform, type ResolvedEntity } from "@cobblr/platform-contract";
+import { platform, type ResolvedEntity, textSearchWhere } from "@cobblr/platform-contract";
 import type { TrackingDB } from "../db.js";
 
 let registered = false;
@@ -20,9 +20,9 @@ export function registerTrackingResolvers(): void {
 
   platform().entities.registerListResolver("tracking:metric", async (orgId, query) => {
     const db = (await platform().tenants.getDb(orgId)) as Kysely<TrackingDB>;
-    const rows = await db
-      .selectFrom("tracking_metrics")
-      .selectAll()
+    let q = db.selectFrom("tracking_metrics").selectAll();
+    if (query.q?.trim()) q = q.where((eb) => textSearchWhere(eb, query.q, { text: ["name", "unit"] })!);
+    const rows = await q
       .limit(Math.min(query.limit ?? 50, 200))
       .offset(query.offset ?? 0)
       .orderBy("created_at", "desc")
@@ -41,6 +41,7 @@ export function registerTrackingResolvers(): void {
     let q = db.selectFrom("tracking_measurements").selectAll();
     const metricId = query.filter?.metric_id;
     if (typeof metricId === "string") q = q.where("metric_id", "=", metricId);
+    if (query.q?.trim()) q = q.where((eb) => textSearchWhere(eb, query.q, { text: ["note"] })!);
     const rows = await q.limit(Math.min(query.limit ?? 500, 2000)).offset(query.offset ?? 0).orderBy("measured_at", "asc").execute();
     return { items: rows.map(measurementToResolved) };
   });

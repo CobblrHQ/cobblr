@@ -88,5 +88,10 @@
     "file": "modules/projects/src/api/subscribers.ts",
     "name": "registerProjectsSubscribers",
     "reason": "baselined 2026-07-30 \u2014 pre-existing dead/half-wired export; remove or wire up, never grow."
+  },
+  {
+    "file": "api/src/platform/services.ts",
+    "name": "setServiceGate",
+    "reason": "baselined 2026-09-29: the consent rule's seam; Services S2 (the gate) registers through it at boot. Remove this row when S2 lands."
   }
 ]

@@ -7,7 +7,7 @@
 import { useState } from "react";
 import { useSearchParams } from "react-router-dom";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { ContributedDetailPanels, Modal, useToast, useConfirm, usePageTitle } from "@cobblr/platform-web";
+import { ContributedDetailPanels, CustomFieldsPanel, Modal, useRecordInPath, useToast, useConfirm, usePageTitle } from "@cobblr/platform-web";
 import { TrendingUp, Plus, Trash2 } from "lucide-react";
 import { TrackingApi, type MetricSummary, type Measurement, type GoalDirection, TrackingApiError } from "./api.js";
 
@@ -24,11 +24,12 @@ export function TrackingUI({ orgSlug, getToken }: Props) {
   const qc = useQueryClient();
   const toast = useToast();
   const confirm = useConfirm();
-  // `?metric=<id>` opens that metric. The goal-reached notification points
-  // here, and landing on a grid of cards after being told a specific number
-  // makes you do the finding twice.
+  // A metric's address (/tracking/<id>) opens it, and so does the older
+  // `?metric=<id>` a notification may still carry: landing on a grid of cards
+  // after being told a specific number makes you do the finding twice.
   const [params] = useSearchParams();
-  const [open, setOpen] = useState<string | null>(() => params.get("metric"));
+  const [inPath, setOpen] = useRecordInPath("tracking");
+  const open = inPath ?? params.get("metric");
   const [creating, setCreating] = useState(false);
 
   const metrics = useQuery({ queryKey: ["tracking", orgSlug], queryFn: () => api.listMetrics() });
@@ -204,6 +205,11 @@ function MetricDetailModal({ metricId, api, orgSlug, onClose }: { metricId: stri
     onSuccess: () => { setVal(""); invalidate(); },
     onError: (e) => toast.error(e instanceof TrackingApiError ? e.message : String(e)),
   });
+  const setField = useMutation({
+    mutationFn: (m: Record<string, unknown>) => api.setMetricFields(metricId, m),
+    onSuccess: invalidate,
+    onError: (e) => toast.error(e instanceof TrackingApiError ? e.message : String(e)),
+  });
 
   const d = detail.data;
   return (
@@ -227,6 +233,9 @@ function MetricDetailModal({ metricId, api, orgSlug, onClose }: { metricId: stri
             ))}
           </ul>
         )}
+
+        {/* The metric's own fields, as a bundle or a person defines them. */}
+        {d && <CustomFieldsPanel entityKind="tracking:metric" entityId={metricId} values={d.metadata ?? {}} onCommit={(name, value) => setField.mutate({ [name]: value })} />}
 
         {/* Tags and discussion, contributed at every kind. A record you
             open is a record somebody may want to say something about. */}

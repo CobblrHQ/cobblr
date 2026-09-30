@@ -1,0 +1,10 @@
+{
+  "lint": "lint:machine-starts-through-send",
+  "run": "node scripts/lint-machine-starts-through-send.ts",
+  "rows": [
+    "module-ui"
+  ],
+  "ms": 924,
+  "recorded": "2026-09-29",
+  "source": "scaffolded by new-lint.sh at twice a local run (a shared box); replaced from its first CI measurement"
+}

@@ -3,14 +3,15 @@
 // "consumed by" pointers so finished items can be attributed to
 // printers/mods/projects in other modules.
 
+import { ORDER_ITEM_RECEIVED_KEYS } from "./receive-keys.js";
 import { defineModule } from "@cobblr/platform-contract";
 
 export default defineModule({
   name: "purchases",
-  version: "0.11.0",
+  version: "0.11.3",
   displayName: "Purchases",
   description:
-    "Orders, line items, and cost rollup. Each order is a vendor purchase; line items can link to inventory parts and to whatever consumed them: printer mods, projects, anything.",
+    "Orders you placed and what they cost, with each line tied to the parts it bought and what they went into.",
   icon: "shopping-bag",
   band: "stock",
   instanceability: "multi",
@@ -26,11 +27,11 @@ export default defineModule({
   navKind: "collection",
 
   lifecycle: {
-    // Boot-time heal for orders that list each receipt line twice - see the
-    // DONE WHEN in heal-doubled-receipt-lines.ts for when this call goes.
+    // Past arrivals whose stock may never have been added: stamped, and the
+    // recent ones put to a person (heal-unreceived-arrivals.ts).
     onBoot: async () => {
-      const { registerDoubledReceiptLinesHeal } = await import("./heal-doubled-receipt-lines.js");
-      registerDoubledReceiptLinesHeal();
+      const { registerUnreceivedArrivalsHeal } = await import("./heal-unreceived-arrivals.js");
+      registerUnreceivedArrivalsHeal();
     },
   },
   schema: {
@@ -126,18 +127,19 @@ export default defineModule({
     ],
   },
 
-  intents: [
-    { name: "log_order", description: "Record a new vendor order" },
-    { name: "mark_arrived", description: "Mark an order as arrived" },
-  ],
-
   dependencies: [],
 
   exposes: {
+    // What each event carries, for the wires that read it (receive.ts is
+    // the one emitter of order_item.received).
+    eventPayloads: {
+      "purchases.order_item.received": [...ORDER_ITEM_RECEIVED_KEYS],
+    },
     // The KINDS of workspace notification this module sends, so the
     // workspace can say who each kind is for (Configuration > Who gets told).
     notifications: [
       { eventType: "purchases.order.due", label: "An order that should have arrived", description: "A purchase order past its expected arrival, with a Yes it turned up button." },
+      { eventType: "purchases.receipts.unconfirmed", label: "Orders to check", description: "Once, when orders marked arrived before a fix may not have added their stock, with a link to settle each line." },
       { eventType: "purchases.order.return", label: "A return moved", description: "A return on one of your orders was started, dropped off, received, or refunded, read from the store's own email." },
     ],
     events: [
@@ -150,7 +152,6 @@ export default defineModule({
       "purchases.order_item.received",
       "purchases.vendor.created",
     ],
-    api: [],
     actions: [
       {
         // NO-PHRASING: the way back for another action, run only from Undo
@@ -183,6 +184,24 @@ export default defineModule({
           for_kind: { label: "Kind of the record it bought (optional)", type: "text" },
           for_id: { label: "Id of the record it bought (optional)", type: "text" },
           unit_cost: { label: "Cost each (optional)", type: "number" },
+          add_to_stock: { label: "On an order that already arrived, add this line to stock (default: the order's choice, normally yes)", type: "boolean" },
+        },
+      },
+      {
+        id: "purchases:edit-line",
+        examples: ["that line was 5, not 3", "the screws were 12 cents each"],
+        undoable: true,
+        label: "Correct a line on this order",
+        description:
+          "Change one line of an order: `line_id`, and any of `description`, `qty`, `unit_cost`. A line whose stock was already added keeps its count; correct the item's own count instead, so its history says why.",
+        icon: "pencil",
+        appliesTo: { kinds: ["purchases:order"] },
+        invokeHandler: "purchases.edit-line",
+        argsSchema: {
+          line_id: { label: "Which line", type: "text", required: true },
+          description: { label: "What it is", type: "text" },
+          qty: { label: "How many", type: "number" },
+          unit_cost: { label: "Cost each", type: "number" },
         },
       },
       {
@@ -230,6 +249,7 @@ export default defineModule({
         argsSchema: {
           orderId: { label: "Which order, defaults to the record this ran on", type: "text" },
           arrivedOn: { label: "The date it arrived, defaults to today", type: "text" },
+          add_to_stock: { label: "Add its lines to stock (default yes; no for a past purchase whose stock is already counted)", type: "boolean" },
         },
         userInvokable: true,
       },

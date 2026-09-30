@@ -157,7 +157,7 @@ export function TemplatesPage() {
                       onClick={async () => {
                         const ok = await confirm({
                           title: "Delete template?",
-                          message: `${t.name} — entities already created from it stay; only the template definition is removed.`,
+                          message: `${t.name}: entities already created from it stay; only the template definition is removed.`,
                           confirmLabel: "Delete",
                           destructive: true,
                         });

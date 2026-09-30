@@ -20,7 +20,7 @@
 // edge target (a local Ollama uses it literally; the claude bridge maps it to a
 // Claude tier), so override it via capability defaults to match your device.
 
-import { platform, type AiCapability, type EdgeRequest, type EdgeResponse } from "@cobblr/platform-contract";
+import { EdgeOffline, platform, type AiCapability, type EdgeRequest, type EdgeResponse } from "@cobblr/platform-contract";
 import { IDENTIFY_PROMPT, measurementContext, visionPromptFor } from "./identify-prompt.js";
 import { rankImagesPromptFor } from "./rank-images-prompt.js";
 import { toolsOf, turnsOf, openAiToolsOf, ollamaMessagesOf, parseOllamaToolCalls, bridgeUsage } from "./tool-wire.js";
@@ -110,14 +110,13 @@ function release(key: string): void {
   else st.inflight--;
 }
 
-// The edge agent long-polls; between poll cycles (and for the reaper window after
-// a gap) the channel can be momentarily unregistered, so platform().edge.send
-// THROWS "no edge device connected" / "edge disconnected". That's transient — the
-// agent re-polls within seconds — but it was surfacing as a hard AI failure, so the
-// matchmaker dropped to its "no AI" keyword note even though AI is connected. Retry
-// those throws too, a touch more patiently than the gateway retries (a re-poll can
-// take a second or two).
-const RECONNECTING = /no edge device|edge disconnected|edge channel gone/i;
+// The edge agent long-polls; between poll cycles the channel is momentarily
+// unheld, so platform().edge.send throws EdgeOffline. That's transient (the
+// agent re-polls within seconds), and surfacing it as a hard AI failure made the
+// matchmaker drop to its "no AI" keyword note while AI was connected. So those
+// are retried, a touch more patiently than the gateway retries. This used to
+// match the error's TEXT, which the kernel had long since reworded, so the
+// retry never fired; the type cannot drift that way.
 
 /** Route one Ollama-shaped POST down the workspace's edge channel. The agent
  *  forwards `body` verbatim to its local target and returns the parsed reply.
@@ -140,7 +139,7 @@ async function edgePost(channelKey: string, path: string, body: unknown): Promis
         lastErr = e;
         // Channel momentarily unregistered (poll gap / just reaped / re-registering)
         // → wait for the agent's next poll. A real send error is not papered over.
-        if (RECONNECTING.test((e as Error)?.message ?? "")) continue;
+        if (e instanceof EdgeOffline) continue;
         throw e;
       }
       if (res.status >= 200 && res.status < 300) return (res.body ?? {}) as Record<string, unknown>;

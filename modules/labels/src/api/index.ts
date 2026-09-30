@@ -31,12 +31,4 @@ router.use("/sizes", sizesRouter);
 router.use("/autoflush", autoflushRouter);
 router.use("/action-labels", actionLabelsRouter);
 
-// Old-shape alias for the former core-labels-qr module's paths
-// (/modules/core-labels-qr/{tokens,settings}). The platform mounts this at
-// the old module segment during the merge-compat window; retire together
-// with migration 0004's compat views once no client ships the old paths.
-export const qrCompatRouter = Router({ mergeParams: true });
-qrCompatRouter.use("/tokens", qrTokensRouter);
-qrCompatRouter.use("/settings", qrSettingsRouter);
-
 export default router;

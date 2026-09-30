@@ -15,6 +15,7 @@ import { kindWordsFrom, viewTypeLabel } from "@cobblr/platform-contract/kind-lab
 import type { Kysely } from "kysely";
 import { ViewCreate } from "./views.js";
 import type { CoreViewsDB } from "../db.js";
+import { withArticle } from "@cobblr/platform-contract/plural";
 
 /** The renderers core-views ships. A model asked for "a board" means kanban and
  *  "a timeline" means gantt; mapping the words it actually uses is cheaper than
@@ -40,7 +41,7 @@ export function registerViewsHandlers(): void {
     if (!viewType) {
       return {
         ok: false,
-        error: `"${wantedType || "(none)"}" is not a view type — use one of: table, list, kanban, calendar, gantt`,
+        error: `"${wantedType || "(none)"}" is not a view type. Use one of: table, list, kanban, calendar, gantt`,
       };
     }
     const parsed = ViewCreate.safeParse({
@@ -101,7 +102,7 @@ export function registerViewsHandlers(): void {
 
     return {
       ok: true,
-      summary: `"${row.name}" saved as a ${viewTypeLabel(row.view_type).toLowerCase()} view of ${kindWordsFrom(row.entity_kind, kinds).many}${row.pinned ? ", pinned to the dashboard" : ""}`,
+      summary: `"${row.name}" saved as ${withArticle(viewTypeLabel(row.view_type).toLowerCase())} view of ${kindWordsFrom(row.entity_kind, kinds).many}${row.pinned ? ", pinned to the dashboard" : ""}`,
       data: { id: row.id, name: row.name, entity_kind: row.entity_kind, view_type: row.view_type },
     };
   });

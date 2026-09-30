@@ -17,7 +17,7 @@
     "node": ">=22.0.0"
   },
   "scripts": {
-    "typecheck": "pnpm -r --no-sort --workspace-concurrency=${COBBLR_TSC_CONCURRENCY:-8} run --if-present typecheck && node scripts/verify-cache.mjs stamp typecheck",
+    "typecheck": "H=$(node scripts/lib/job-budget.mjs heap tsc) && NODE_OPTIONS=\"$H ${NODE_OPTIONS:-}\" pnpm -r --no-sort --workspace-concurrency=${COBBLR_TSC_CONCURRENCY:-$(node scripts/lib/job-budget.mjs tsc 8)} run --if-present typecheck && node scripts/verify-cache.mjs stamp typecheck",
     "verify:served": "node scripts/verify-served.mjs",
     "where": "tsx scripts/placement.ts",
     "lint": "node scripts/run-lints.mjs --one",
@@ -31,7 +31,7 @@
     "dev:web": "npm run dev -w web",
     "test": "pnpm -r run --if-present test",
     "prepare": "git config core.hooksPath scripts/git-hooks 2>/dev/null || true; git config merge.semver-version.driver 'node scripts/merge-semver-version.mjs %O %A %B' 2>/dev/null || true",
-    "typecheck:fast": "pnpm -r run --if-present typecheck:fast",
+    "typecheck:fast": "node scripts/typecheck-tsgo.mjs && node scripts/verify-cache.mjs stamp typecheck",
     "embed:bridge": "node scripts/embed-bridge-bundle.mjs",
     "pretest:unit": "node scripts/ensure-packages-built.mjs",
     "test:unit": "node scripts/run-unit-tests.mjs",

@@ -4,24 +4,23 @@
 // logged.
 
 import { readableFilename } from "./filename.js";
-import { createHash, randomUUID } from "node:crypto";
+import { randomUUID } from "node:crypto";
 import type { Kysely } from "kysely";
 import { platform } from "@cobblr/platform-contract";
 import type { CoreFilesDB } from "../db.js";
-import { removeStoredFile, storeUpload, type StoredFile } from "./storage.js";
+import { removeStoredFile, storeUpload, type FileSourceIn, type Fingerprint, type StoredFile } from "./storage.js";
 
 /** The file already holding these exact bytes (the oldest), if any, with
  *  the names of the folders it sits in (top first; empty at the top level).
  *  The names come with the answer because a caller cannot look them up
  *  itself: a zip can make the folder in the same request, after the page
  *  last read its folder list. */
-export async function sameBytes(db: Kysely<CoreFilesDB>, buffer: Buffer) {
-  const sha = createHash("sha256").update(buffer).digest("hex");
+export async function sameBytes(db: Kysely<CoreFilesDB>, fp: Fingerprint) {
   const row = await db
     .selectFrom("core_files_files")
     .select(["id", "filename", "folder_id", "mime_type", "kind", "width", "height", "created_at", "size_bytes", "variants", "sha256"])
-    .where("sha256", "=", sha)
-    .where("size_bytes", "=", String(buffer.length))
+    .where("sha256", "=", fp.sha256)
+    .where("size_bytes", "=", String(fp.size))
     .where("deleted_at", "is", null)
     .orderBy("created_at", "asc")
     .executeTakeFirst();
@@ -44,7 +43,11 @@ export async function folderNames(db: Kysely<CoreFilesDB>, folderId: string | nu
 }
 
 export interface Intake {
-  buffer: Buffer;
+  /** Bytes in hand, or a file on disk (an upload) moved in without a read. */
+  source: FileSourceIn;
+  /** The fingerprint, when the caller already has it (the door hashed the
+   *  upload as it arrived). */
+  fingerprint?: Fingerprint;
   filename: string;
   mime: string;
   folderId: string | null;
@@ -54,7 +57,7 @@ export interface Intake {
  *  insert the stored bytes are removed again. */
 export async function intakeFile(db: Kysely<CoreFilesDB>, orgId: string, userId: string | null, f: Intake): Promise<{ row: { id: string; filename: string; mime_type: string; kind: string; width: number | null; height: number | null; created_at: Date; folder_id: string | null }; stored: StoredFile }> {
   const fileId = randomUUID();
-  const stored = await storeUpload(orgId, fileId, f.buffer, f.mime || "application/octet-stream");
+  const stored = await storeUpload(orgId, fileId, f.source, f.mime || "application/octet-stream", f.fingerprint);
   try {
     const row = await db
       .insertInto("core_files_files")

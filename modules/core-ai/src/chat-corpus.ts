@@ -404,6 +404,9 @@ const RAW_CORPUS: CorpusCase[] = [
   ...ph("workspace", neverOffer, "action:core-locations:reorder", [
     "put the racks in Den in numeric order", "sort the shelves by name",
   ]),
+  ...ph("workspace", neverOffer, "action:core-locations:move-everything", [
+    "move everything from Bin 3 to Bin 7", "merge the two Bin 3s",
+  ]),
   ...ph("workspace", neverOffer, "action:inventory:adjust-stock", [
     "I used 2 of the M3 screws", "add five more of the blue filament",
   ]),

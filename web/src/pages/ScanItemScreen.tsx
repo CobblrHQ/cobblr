@@ -11,6 +11,7 @@
 // which are the same components the desktop card renders. Two layouts, one
 // set of behaviours.
 import { useState, type ReactNode } from "react";
+import { usePhotoPick } from "@cobblr/platform-web";
 import { scanToolsFold, scanToolsFoldGroups } from "@cobblr/platform-contract/scan-triage";
 import type { ScanTool, ScanToolHints } from "@cobblr/platform-contract/scan-tools";
 import { Camera, ChevronDown, Pencil, ReceiptText, RefreshCw, RotateCcw, Scissors, Sparkles, Undo2, X } from "lucide-react";
@@ -258,6 +259,7 @@ function Picture({
   onOpen,
   onBroken,
   onPick,
+  camera = false,
 }: {
   src: string | null;
   caption: string;
@@ -268,7 +270,11 @@ function Picture({
    *  camera as its second choice), and the file lands where the slot says
    *  (#2982). */
   onPick?: (file: File) => void;
+  /** A photo of the thing itself: the camera on a phone. Off for a catalog
+   *  picture, which is found, not taken. */
+  camera?: boolean;
 }) {
+  const photo = usePhotoPick((files) => files[0] && onPick?.(files[0]), { camera, title: caption, label: `Add ${caption.toLowerCase()}` });
   return (
     <figure className="min-w-0">
       {src ? (
@@ -276,24 +282,18 @@ function Picture({
           <img src={src} alt={caption} className="h-40 w-full object-contain" onError={onBroken} />
         </button>
       ) : onPick ? (
-        <label
-          data-testid="empty-picture"
-          className="flex h-40 cursor-pointer flex-col items-center justify-center gap-1 rounded-xl border border-dashed border-line dark:border-slate-700 text-sm text-faint active:bg-mortar-50 dark:active:bg-slate-800"
-        >
-          <span>{empty}</span>
-          <span className="text-xs text-accent">Tap to add one</span>
-          <input
-            type="file"
-            accept="image/*"
-            className="sr-only"
-            aria-label={`Add ${caption.toLowerCase()}`}
-            onChange={(e) => {
-              const f = e.target.files?.[0];
-              e.target.value = "";
-              if (f) onPick(f);
-            }}
-          />
-        </label>
+        <>
+          <button
+            type="button"
+            data-testid="empty-picture"
+            onClick={photo.pick}
+            className="flex h-40 w-full cursor-pointer flex-col items-center justify-center gap-1 rounded-xl border border-dashed border-line dark:border-slate-700 text-sm text-faint active:bg-mortar-50 dark:active:bg-slate-800"
+          >
+            <span>{empty}</span>
+            <span className="text-xs text-accent">Tap to add one</span>
+          </button>
+          {photo.input}
+        </>
       ) : (
         <div className="flex h-40 items-center justify-center rounded-xl border border-dashed border-line dark:border-slate-700 text-sm text-faint">{empty}</div>
       )}
@@ -304,6 +304,8 @@ function Picture({
 
 export function ScanItemScreen(p: ScanItemScreenProps) {
   const { item } = p;
+  // A catalog picture is found, not taken: the file picker, not the camera.
+  const catalogPick = usePhotoPick((files) => files[0] && p.pictures.onPickCatalog?.(files[0]), { camera: false, label: "Add catalog picture" });
   return (
     <div className="bg-surface dark:bg-slate-900">
       <ScanItemSheetHeader nav={p.nav} />
@@ -452,26 +454,23 @@ export function ScanItemScreen(p: ScanItemScreenProps) {
                 onBroken={p.pictures.onCatalogBroken}
                 onPick={p.pictures.onPickCatalog}
               />
-              <Picture src={p.pictures.yours} caption="Your photo" empty="No photo yet" onOpen={p.pictures.onOpenYours} onBroken={p.pictures.onYoursBroken} onPick={p.pictures.onPickYours} />
+              <Picture src={p.pictures.yours} caption="Your photo" empty="No photo yet" onOpen={p.pictures.onOpenYours} onBroken={p.pictures.onYoursBroken} onPick={p.pictures.onPickYours} camera />
             </div>
           ) : (
             <div data-testid="pictures-yours-only">
-              <Picture src={p.pictures.yours} caption={p.pictures.yours ? "Photo" : "Your photo"} empty="No photo yet" onOpen={p.pictures.onOpenYours} onBroken={p.pictures.onYoursBroken} onPick={p.pictures.onPickYours} />
+              <Picture src={p.pictures.yours} caption={p.pictures.yours ? "Photo" : "Your photo"} empty="No photo yet" onOpen={p.pictures.onOpenYours} onBroken={p.pictures.onYoursBroken} onPick={p.pictures.onPickYours} camera />
               {p.pictures.onPickCatalog && (
-                <label data-testid="add-catalog-picture" className="mt-1 inline-flex cursor-pointer items-center gap-1 text-[11px] text-muted hover:text-content">
-                  No catalog picture. Add one
-                  <input
-                    type="file"
-                    accept="image/*"
-                    className="sr-only"
-                    aria-label="Add catalog picture"
-                    onChange={(e) => {
-                      const f = e.target.files?.[0];
-                      e.target.value = "";
-                      if (f) p.pictures.onPickCatalog?.(f);
-                    }}
-                  />
-                </label>
+                <>
+                  <button
+                    type="button"
+                    data-testid="add-catalog-picture"
+                    onClick={catalogPick.pick}
+                    className="mt-1 inline-flex cursor-pointer items-center gap-1 text-[11px] text-muted hover:text-content"
+                  >
+                    No catalog picture. Add one
+                  </button>
+                  {catalogPick.input}
+                </>
               )}
             </div>
           )}

@@ -18,10 +18,10 @@ import { defineModule } from "@cobblr/platform-contract";
 
 export default defineModule({
   name: "core-integrations",
-  version: "0.1.3",
+  version: "0.1.4",
   displayName: "Integrations",
   description:
-    "Connect your workspace to Slack, Discord, email, and any service with a webhook. Fire on entity events, receive external pings.",
+    "Connect your workspace to Slack, Discord, email and other services, sending and receiving updates as things happen.",
   icon: "plug",
   band: "stock",
   autoEnable: true, // ambient capability — on for every workspace
@@ -33,7 +33,6 @@ export default defineModule({
 
   api: () => import("./api/index.js"),
 
-  intents: [],
   dependencies: [],
 
   // AI-REACH: no kinds/actions by design. A connector holds CREDENTIALS for an
@@ -55,7 +54,6 @@ export default defineModule({
       "core-integrations.inbound.token.revoked",
       "core-integrations.inbound.received",
     ],
-    api: [],
     actions: [],
   },
 

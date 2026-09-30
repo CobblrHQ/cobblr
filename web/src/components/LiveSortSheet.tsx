@@ -23,7 +23,7 @@ import {
 } from "lucide-react";
 import { useToast, OverlayLayer } from "@cobblr/platform-web";
 import { api, ApiError, type LiveSortEntry } from "../lib/api";
-import { qrTokenFromUrl } from "@cobblr/platform-contract/qr-token";
+import { classifyScanPayload } from "../lib/scanPayload";
 import { useBarcodeWedge } from "../lib/useBarcodeWedge";
 import { isLocationQrTarget } from "../lib/scanFiling";
 import { LocationTreePicker } from "./LocationTreePicker";
@@ -76,7 +76,7 @@ export function LiveSortSheet({ slug, onClose }: { slug: string; onClose: () => 
         const confirmed = (s.entries ?? []).filter((e) => e.status === "confirmed");
         setTape(confirmed.slice(-30).reverse());
         if (s.resumed && confirmed.length > 0) {
-          toast.info(`Resumed your sort session — ${confirmed.length} already sorted.`);
+          toast.info(`Resumed your sort session: ${confirmed.length} already sorted.`);
         }
         const b = await api.createScanBatch(slug).catch(() => null);
         if (!cancelled && b) setBatchId(b.id);
@@ -145,7 +145,13 @@ export function LiveSortSheet({ slug, onClose }: { slug: string; onClose: () => 
       if (phaseRef.current === "routing" || phaseRef.current === "ended") return;
       // A directive is pending: a scanned LOCATION label means "this bin
       // instead" — confirm the current item into it (retarget, one gesture).
-      const qrToken = qrTokenFromUrl(code);
+      const payload = classifyScanPayload(code);
+      // A link to a page here or to Cobblr itself is not an item to sort.
+      if (payload.kind === "own-route" || payload.kind === "own-link" || payload.kind === "empty") {
+        toast.info("That code is a Cobblr link, not an item. Scan the item's barcode.");
+        return;
+      }
+      const qrToken = payload.kind === "cobblr-qr" ? payload.token : null;
       if (qrToken) {
         void (async () => {
           const resolved = await api.resolveQrToken(qrToken).catch(() => null);
@@ -169,7 +175,7 @@ export function LiveSortSheet({ slug, onClose }: { slug: string; onClose: () => 
           });
           await routeIntaken(item.id);
         } catch (e) {
-          toast.error(e instanceof ApiError ? e.message : "Scan failed — try again.");
+          toast.error(e instanceof ApiError ? e.message : "Scan failed. Try again.");
           setPhase(phaseRef.current === "ended" ? "ended" : "ready");
         }
       })();
@@ -240,7 +246,7 @@ export function LiveSortSheet({ slug, onClose }: { slug: string; onClose: () => 
         const range =
           names.length > 1 ? `${names[0]}–${names[names.length - 1]}` : (names[0] ?? "no new bins");
         toast.success(
-          `Created ${range}${r.catch_all_location_id && withCatchAll ? " + an Unsorted catch-all" : ""}. Number your containers with a marker to match — QR labels can come later.`,
+          `Created ${range}${r.catch_all_location_id && withCatchAll ? " + an Unsorted catch-all" : ""}. Number your containers with a marker to match. QR labels can come later.`,
         );
         setBinsOpen(false);
       })
@@ -344,6 +350,9 @@ export function LiveSortSheet({ slug, onClose }: { slug: string; onClose: () => 
     <OverlayLayer
       className="z-[70] bg-surface dark:bg-slate-950 flex flex-col"
       data-testid="live-sort-sheet"
+      role="dialog"
+      aria-modal="true"
+      aria-label="Sort as you go"
     >
       {/* Header */}
       {/* The heading and the actions competed for a phone's width and the

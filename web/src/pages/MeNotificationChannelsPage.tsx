@@ -16,6 +16,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Plus, Send, Trash2, Zap } from "lucide-react";
 import { FieldPack, LabeledField, Modal, fieldNeed, useConfirm, usePageTitle, useToast, SecretInput } from "@cobblr/platform-web";
 import { useAuth } from "../auth/AuthContext";
+import { EMAIL_PROVIDER_FIELDS } from "../lib/email-provider-fields";
 import {
   ApiError,
   api,
@@ -108,33 +109,9 @@ const CHANNEL_OPTIONS: Array<{
     label: "Email",
     hint: "Bring your own delivery. Pick a provider and paste its creds. Cobblr doesn't host an outbound mail server.",
     fields: [
-      {
-        key: "provider",
-        label: "Provider",
-        type: "select",
-        default: "smtp",
-        options: [
-          { value: "smtp", label: "SMTP (Gmail, Fastmail, SES SMTP, …)" },
-          { value: "mailgun", label: "Mailgun (HTTP API)" },
-          { value: "resend", label: "Resend (HTTP API)" },
-          { value: "postmark", label: "Postmark (HTTP API)" },
-        ],
-      },
-      { key: "from", label: "From", placeholder: "cobblr@example.com" },
+      ...EMAIL_PROVIDER_FIELDS.slice(0, 2),
       { key: "to", label: "Send to", placeholder: "you@example.com" },
-      // SMTP
-      { key: "smtp_host", label: "SMTP host", placeholder: "smtp.gmail.com", showIf: { key: "provider", in: ["smtp"] } },
-      { key: "smtp_port", label: "Port", type: "number", placeholder: "465", helpText: "465 = TLS, 587 = STARTTLS", showIf: { key: "provider", in: ["smtp"] } },
-      { key: "smtp_user", label: "Username", placeholder: "you@example.com", showIf: { key: "provider", in: ["smtp"] } },
-      { key: "smtp_pass", label: "Password / app password", type: "password", helpText: "Gmail: an App Password (needs 2FA), not your account password. Free Gmail caps ~500/day.", showIf: { key: "provider", in: ["smtp"] } },
-      // Mailgun
-      { key: "mailgun_api_key", label: "Mailgun API key", type: "password", showIf: { key: "provider", in: ["mailgun"] } },
-      { key: "mailgun_domain", label: "Mailgun domain", placeholder: "mg.example.com", showIf: { key: "provider", in: ["mailgun"] } },
-      { key: "mailgun_eu", label: "EU region", type: "checkbox", helpText: "Tick if your Mailgun account is in the EU region.", showIf: { key: "provider", in: ["mailgun"] } },
-      // Resend
-      { key: "resend_api_key", label: "Resend API key", type: "password", placeholder: "re_…", showIf: { key: "provider", in: ["resend"] } },
-      // Postmark
-      { key: "postmark_token", label: "Postmark server token", type: "password", showIf: { key: "provider", in: ["postmark"] } },
+      ...EMAIL_PROVIDER_FIELDS.slice(2),
     ],
   },
   {
@@ -250,7 +227,7 @@ function WorkspaceBindings({ orgId }: { orgId: string }) {
     onSuccess: (r, args) => {
       if (r.deliveredVia.length === 0) {
         toast.error(
-          `Test at priority=${args.priority} didn't deliver — check config or threshold.`,
+          `Test at priority=${args.priority} didn't deliver. Check config or threshold.`,
         );
       } else {
         toast.success(`Delivered via ${r.deliveredVia.join(", ")}.`, {

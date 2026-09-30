@@ -13,11 +13,11 @@ import { defineModule } from "@cobblr/platform-contract";
 
 export default defineModule({
   name: "knowledge",
-  version: "0.1.1",
+  version: "0.1.5",
   maturity: "beta",
   displayName: "Knowledge Base",
   description:
-    "A knowledge base: rich Markdown entries (notes, references, SOPs, prompts, papers) with custom fields, tags, and attachments. Categorise inside one vault; pin entries for quick access.",
+    "Notes, how-tos and references in one place, with tags, fields and attachments, and the ones you use most pinned to the top.",
   icon: "book-open",
   band: "stock",
   autoEnable: false, // opt-in — "do you keep a knowledge base?"
@@ -64,7 +64,6 @@ export default defineModule({
 
   exposes: {
     events: ["knowledge.entry.created", "knowledge.entry.updated", "knowledge.entry.deleted"],
-    api: [],
     actions: [],
   },
 

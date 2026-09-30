@@ -40,6 +40,15 @@ export interface ListsDB {
   lists_lists: ListsTable;
   lists_items: ItemsTable;
   lists_expiry_notifications: ExpiryNotificationsTable;
+  lists_source_last_list: SourceLastListTable;
+}
+
+/** The list a record last went on (0005). */
+export interface SourceLastListTable {
+  source_kind: string;
+  source_id: string;
+  list_id: string;
+  updated_at: Generated<Date>;
 }
 
 /** Re-exported from the contract so this module cannot fall behind the

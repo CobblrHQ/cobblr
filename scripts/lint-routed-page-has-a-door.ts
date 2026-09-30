@@ -34,6 +34,7 @@
 //   npx tsx scripts/lint-routed-page-has-a-door.ts   (pnpm lint routed-page-has-a-door)
 import { readFileSync, readdirSync, statSync } from "node:fs";
 import { join } from "node:path";
+import { routesIn } from "./lib/web-routes.ts";
 
 const APP = "web/src/App.tsx";
 
@@ -47,6 +48,10 @@ const EXEMPT: Record<string, string> = {
   "/pair": "the QR code the desktop shows for phone sign-in",
   "/start/:app": "the managed app's own signup link on its landing page",
   "/try/ended": "a preview of the sandbox's ending, opened by hand on test-door boxes",
+  "/email-change/:token": "the link sent to the new address when a person changes the address they sign in with",
+  "/email-change/revert/:token": "the link sent to the old address that takes an address change back",
+  "/bring": "the Continue on Cobblr button in a sandbox's email",
+  "/try/join/:token": "the link sent to an address that already keeps a trial, to take another sandbox in",
 };
 
 function* walk(dir: string): Generator<string> {
@@ -70,27 +75,12 @@ const moduleRoots = readdirSync("modules").flatMap((m) => [join("modules", m, "s
 const ROOTS = ["web/src", "packages", "bundles", ...moduleRoots];
 
 const app = readFileSync(APP, "utf8");
-const appLines = app.split("\n");
 // Every source that could hold a link, App.tsx's own redirect targets included.
 let hay = "";
 for (const root of ROOTS) for (const file of walk(root)) if (file !== APP) hay += readFileSync(file, "utf8") + "\n";
 for (const m of app.matchAll(/<Navigate\s+to="([^"]+)"/g)) hay += `"${m[1]}"\n`;
 
-interface Route { path: string; line: number; redirect: boolean }
-const routes: Route[] = [];
-// A Route may span lines (`<Route\n path="…"\n element={…}`); read from `<Route`
-// to its closing `/>` or `>`.
-for (let i = 0; i < appLines.length; i++) {
-  if (!/<Route\b/.test(appLines[i] ?? "")) continue;
-  let tag = "";
-  for (let j = i; j < Math.min(i + 12, appLines.length); j++) {
-    tag += (appLines[j] ?? "") + "\n";
-    if (/\/>\s*$|>\s*$/.test((appLines[j] ?? "").trim()) && /path=|index/.test(tag)) break;
-  }
-  const path = /path="(\/[^"]*)"/.exec(tag)?.[1];
-  if (!path) continue;
-  routes.push({ path, line: i + 1, redirect: /element=\{\s*<(Navigate\b|\w*Redirect\b)/.test(tag) });
-}
+const routes = routesIn(app);
 
 const esc = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 function reached(path: string): boolean {

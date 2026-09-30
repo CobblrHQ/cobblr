@@ -21,10 +21,10 @@ import { defineModule } from "@cobblr/platform-contract";
 
 export default defineModule({
   name: "core-locations",
-  version: "0.5.5",
+  version: "0.7.0",
   displayName: "Locations",
   description:
-    "Workspace-wide hierarchical tree of physical places (rooms, shelves, bins). Every module's location-bearing entities reference rows here via polymorphic location_id.",
+    "Where your things live: rooms, shelves and bins, one inside another, and a floor plan to draw them on.",
   icon: "map-pin",
   band: "foundational",
 
@@ -114,13 +114,25 @@ export default defineModule({
     ],
   },
 
+  // A place with places inside it takes all of them when it goes, and what was
+  // kept in them loses its place. Deleting one shelf stays open to a member;
+  // clearing out a whole room is an owner's or admin's call, or a grant of
+  // this (DELETE /locations/:id asks for it only when the place has places
+  // inside it).
+  capabilities: [
+    {
+      id: "core-locations:delete-with-places-inside",
+      label: "Delete a place with places inside it",
+      description: "Delete a room, rack or shelf together with every place inside it. Deleting a place with nothing inside it does not need this.",
+    },
+  ],
+
   exposes: {
     events: [
       "core-locations.location.created",
       "core-locations.location.updated",
       "core-locations.location.deleted",
     ],
-    api: [],
     // Sentences people say to a locations module on day one, before they have
     // connected any AI at all. Numbering a run of shelves or bins is the single
     // most common bulk ask there is, and the one an AI was previously required
@@ -168,6 +180,36 @@ export default defineModule({
         invokeHandler: "core-locations.reorder",
         argsSchema: {
           ids: { label: "Location ids, in the order they should appear", type: "list" as const, required: true },
+        },
+      },
+      {
+        // The person-facing door is "Move everything to…" on the place's own
+        // page (a picker for the destination); this is the assistant's.
+        id: "core-locations:move-everything",
+        examples: ["move everything from Bin 3 to Bin 7", "empty the old shelf into the new one", "merge the two Bin 3s"],
+        label: "Move everything to another place",
+        description:
+          "Move every thing kept in this place into another place, through placement, each move recorded on the thing. `to`: the destination place's id. `places: true` also moves the places inside it (with their contents) under the destination. `then_delete: true` merges: moves everything including the places, then deletes this now-empty place. Refused when the destination is inside this place and places would move. Undo puts each thing and place back, and restores a merged-away place.",
+        appliesTo: { kinds: ["core-locations:location"] },
+        invokeHandler: "core-locations.move-everything",
+        userInvokable: false,
+        argsSchema: {
+          to: { label: "Destination place id", type: "text" as const, required: true },
+          places: { label: "Also move the places inside it", type: "boolean" as const },
+          then_delete: { label: "Then delete this place (merge)", type: "boolean" as const },
+        },
+      },
+      // NO-PHRASING: only ever run as Move everything's Undo, never asked for.
+      {
+        id: "core-locations:put-back-everything",
+        label: "Put back what was moved",
+        description: "The way back for Move everything: puts each thing and place back where the move found it.",
+        scope: "workspace" as const,
+        internal: true,
+        userInvokable: false,
+        invokeHandler: "core-locations.put-back-everything",
+        argsSchema: {
+          move: { label: "The move to put back", type: "json" as const, required: true },
         },
       },
     ],

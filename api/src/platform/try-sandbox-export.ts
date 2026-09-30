@@ -14,6 +14,7 @@
 // workspace exactly, which is the same file whether they land on the hosted
 // service or their own machine. That is what makes the two paths honest: the
 // same export opens either door.
+import { examplesOf, handedOverAt } from "./trial-ledger.js";
 import { randomBytes, createHash } from "node:crypto";
 import { meta } from "../db/meta.js";
 import { env } from "../env.js";
@@ -50,8 +51,13 @@ export async function createSandboxExport(
   slug: string,
   email: string,
   now: number = Date.now(),
+  opts: { keepExamples?: boolean } = {},
 ): Promise<CreateExportResult> {
-  const { buffer, filename } = await buildBackupZip(orgId, slug);
+  // What the person made, and the examples the sandbox came with only when
+  // they asked for those too (#4217: a take carried 22 sample records and 5
+  // list lines as if they were the person's).
+  const stockUntil = opts.keepExamples ? null : await handedOverAt(orgId);
+  const { buffer, filename } = await buildBackupZip(orgId, slug, stockUntil ? { omit: await examplesOf(orgId), stockUntil } : {});
   if (buffer.length > MAX_EXPORT_BYTES) return { ok: false, reason: "too_large" };
 
   const { plain, hash } = mintExportToken();

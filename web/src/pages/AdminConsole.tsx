@@ -114,7 +114,7 @@ function OverviewTab() {
       {/* The reason an operator opens this page: does anything need me? */}
       <div>
         <h2 className="text-[10px] font-mono uppercase tracking-widest text-muted dark:text-slate-400 mb-2">
-          Needs attention{attention === 0 ? " — all clear" : ""}
+          Needs attention{attention === 0 ? ": all clear" : ""}
         </h2>
         <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
           <Stat label="Open feedback" value={d.feedback_open} to="/admin/feedback" alert={d.feedback_open > 0} />
@@ -250,7 +250,7 @@ function WorkspacesTab() {
   async function handleDelete(w: { id: string; name: string; slug: string; member_count: number }) {
     const ok = await confirm({
       title: `Delete "${w.name}"?`,
-      message: `Hard-deletes workspace ${w.slug} (${w.member_count} member${w.member_count === 1 ? "" : "s"}): its tenant database is DROPPED and every entity in it is gone. This cannot be undone. Built for clearing e2e/test detritus — be sure.`,
+      message: `Hard-deletes workspace ${w.slug} (${w.member_count} member${w.member_count === 1 ? "" : "s"}): its tenant database is DROPPED and every entity in it is gone. This cannot be undone. Built for clearing e2e/test detritus, so be sure.`,
       confirmLabel: "Delete workspace",
       destructive: true,
     });
@@ -1272,7 +1272,7 @@ function InvitesTab() {
       const sentTo = inv.emailed ? inv.invited_email : null;
       setEmail(""); setNote("");
       void qc.invalidateQueries({ queryKey: ["signup-invites"] });
-      toast.success(sentTo ? `Invite emailed to ${sentTo}.` : "Invite minted — copy the link below.");
+      toast.success(sentTo ? `Invite emailed to ${sentTo}.` : "Invite minted. Copy the link below.");
     },
     onError: (e) => toast.error(e instanceof ApiError ? e.message : "Couldn't mint"),
   });
@@ -1313,7 +1313,7 @@ function InvitesTab() {
         {freshLink && (
           <div className="rounded-lg border border-cobble-300 dark:border-cobble-700 bg-cobble-50 dark:bg-cobble-900/30 p-3 space-y-1.5">
             <div className="text-[10px] font-mono uppercase tracking-widest text-accent">
-              {emailedTo ? `// emailed to ${emailedTo} — link also shown here` : "// copy this now — shown once"}
+              {emailedTo ? `// emailed to ${emailedTo}, link also shown here` : "// copy this now, shown once"}
             </div>
             <div className="flex items-center gap-2">
               <input readOnly value={freshLink} onFocus={(e) => e.currentTarget.select()} className="input flex-1 font-mono text-xs" />
@@ -1373,7 +1373,7 @@ function WaitlistTab() {
       setEmailedTo(r.invite.emailed ? r.invite.invited_email : null);
       void qc.invalidateQueries({ queryKey: ["waitlist"] });
       void qc.invalidateQueries({ queryKey: ["signup-invites"] });
-      toast.success(r.invite.emailed ? `Invite emailed to ${r.invite.invited_email}.` : "Invite minted — copy the link below.");
+      toast.success(r.invite.emailed ? `Invite emailed to ${r.invite.invited_email}.` : "Invite minted. Copy the link below.");
     },
     onError: (e) => toast.error(e instanceof ApiError ? e.message : "Couldn't approve"),
   });
@@ -1397,7 +1397,7 @@ function WaitlistTab() {
       {freshLink && (
         <div className="rounded-lg border border-cobble-300 dark:border-cobble-700 bg-cobble-50 dark:bg-cobble-900/30 p-3 space-y-1.5">
           <div className="text-[10px] font-mono uppercase tracking-widest text-accent">
-            {emailedTo ? `// emailed to ${emailedTo} — link also shown here` : "// copy this now — shown once"}
+            {emailedTo ? `// emailed to ${emailedTo}, link also shown here` : "// copy this now, shown once"}
           </div>
           <div className="flex items-center gap-2">
             <input readOnly value={freshLink} onFocus={(e) => e.currentTarget.select()} className="input flex-1 font-mono text-xs" />
@@ -1600,7 +1600,7 @@ function BarcodeReviewSection() {
     mutationFn: ({ id, action }: { id: string; action: "verify" | "reject" }) =>
       action === "verify" ? api.superAdminVerifyBarcodeCorrection(id) : api.superAdminRejectBarcodeCorrection(id),
     onSuccess: (_d, v) => {
-      toast.success(v.action === "verify" ? "Approved — now the answer for every workspace" : "Rejected");
+      toast.success(v.action === "verify" ? "Approved: now the answer for every workspace" : "Rejected");
       void qc.invalidateQueries({ queryKey: ["sa-barcode-corrections"] });
     },
     onError: (e: unknown) => toast.error(e instanceof ApiError ? e.message : String(e)),
@@ -1895,7 +1895,7 @@ function ScanEvalTab() {
               </tr>
             ))}
             {items.length === 0 && (
-              <tr><td colSpan={7} className="px-3 py-4 text-center text-faint italic">{q.isLoading ? "Loading…" : "No eval cases captured yet — tick “Save as eval case” on a scan commit."}</td></tr>
+              <tr><td colSpan={7} className="px-3 py-4 text-center text-faint italic">{q.isLoading ? "Loading…" : "No eval cases captured yet. Tick “Save as eval case” on a scan commit."}</td></tr>
             )}
           </tbody>
         </table>
@@ -2122,11 +2122,19 @@ function FeedbackTab() {
             ? res.emailed
               ? "Reporter notified + emailed."
               : "Reporter notified."
-            : "Couldn't notify — reporter has no workspace.",
+            : "Couldn't notify: the reporter has no workspace.",
         );
       }
     },
     onError: () => toast.error("Update failed."),
+  });
+  const post = useMutation({
+    mutationFn: (f: FeedbackSourceItem) => apiFeedbackSource.postToDiscord!(f),
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: ["sa-feedback"] });
+      toast.success("Posted to Discord.");
+    },
+    onError: (err) => toast.error(err instanceof Error ? err.message : "Could not post to Discord."),
   });
   const items = q.data?.items ?? [];
   return (
@@ -2178,6 +2186,8 @@ function FeedbackTab() {
             f={f as unknown as FeedbackSourceItem}
             source={apiFeedbackSource}
             onUpdate={(body) => update.mutate({ id: f.id, body })}
+            onPostToDiscord={() => post.mutate(f as unknown as FeedbackSourceItem)}
+            posting={post.isPending && post.variables?.id === f.id}
           />
         ))}
       </ul>

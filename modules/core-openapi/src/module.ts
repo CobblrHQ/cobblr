@@ -15,17 +15,16 @@ import { defineModule } from "@cobblr/platform-contract";
 
 export default defineModule({
   name: "core-openapi",
-  version: "0.1.0",
+  version: "0.1.1",
   displayName: "OpenAPI",
   description:
-    "Auto-generated API description from the live module registry. Hand it to Swagger UI / Insomnia / any external integration.",
+    "A description of your workspace's API for developers and outside tools.",
   icon: "file-text",
   band: "stock",
   autoEnable: true, // ambient capability — on for every workspace
 
   api: () => import("./api/index.js"),
 
-  intents: [],
   dependencies: [],
 
   // AI-REACH: none needed — generates the OpenAPI spec for the workspace's own
@@ -36,7 +35,6 @@ export default defineModule({
 
   exposes: {
     events: [],
-    api: ["spec"],
     actions: [],
   },
 

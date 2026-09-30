@@ -8,6 +8,10 @@
 //   "thing@Voron 2.4.gcode"  → routes to the printer named "Voron 2.4"
 //   "thing#pla.gcode"        → routes to the tag "pla" (its printer set)
 // resolvePlacement reads that; submitJob({deviceId}|{tag}) overrides it.
+//
+// A filename containing "[fails]" prints for one poll and then fails, the
+// way a spaghetti print does, so an api test can drive a failed print end to
+// end over HTTP.
 
 import type {
   CommandResult,
@@ -33,6 +37,8 @@ interface MockJob {
   polls: number;
   completeAfter: number;
   fail?: boolean;
+  /** Fail once this many polls have passed (the "[fails]" filename marker). */
+  failAfter?: number;
   cancelled?: boolean;
   paused?: boolean;
 }
@@ -126,7 +132,8 @@ export class MockDriver implements MachineDriver {
     // Exactly one printer → queue it; otherwise await a manual pick.
     if (deviceIds.length === 1) {
       const jobId = `j${++this.seq}`;
-      this.jobs.set(jobId, { jobId, deviceId: deviceIds[0]!, polls: 0, completeAfter: this.completeAfter });
+      const fails = (this.files.get(args.fileId)?.filename ?? "").includes("[fails]");
+      this.jobs.set(jobId, { jobId, deviceId: deviceIds[0]!, polls: 0, completeAfter: this.completeAfter, ...(fails ? { failAfter: 1 } : {}) });
       return { jobId, deviceId: deviceIds[0]!, queued: true, status: "queued" };
     }
     return { jobId: null, deviceId: null, queued: false, status: "awaiting-assignment" };
@@ -136,6 +143,7 @@ export class MockDriver implements MachineDriver {
     const job = this.jobs.get(jobId);
     if (!job) throw new Error(`mock: no job ${jobId}`);
     if (job.cancelled) return { jobId, state: "cancelled", progress: null, deviceId: job.deviceId };
+    if (job.failAfter != null && job.polls >= job.failAfter) job.fail = true;
     if (job.fail) return { jobId, state: "failed", progress: null, deviceId: job.deviceId };
     // A paused job holds — it doesn't advance toward completion until resumed.
     if (job.paused) {

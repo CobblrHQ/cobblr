@@ -71,6 +71,7 @@ for (const mod of existsSync(MODULES_DIR) ? readdirSync(MODULES_DIR) : []) {
 function panelBlocks(text: string): Array<{ id: string; line: number; body: string }> {
   const start = text.indexOf("panels: [");
   if (start < 0) return [];
+  if (/^panels: \[\s*\]/.test(text.slice(start))) return [];
   const indent = /(^|\n)([ \t]*)panels: \[/.exec(text)?.[2] ?? "";
   const endRe = new RegExp(`\\n${indent}\\],`);
   const endMatch = endRe.exec(text.slice(start));
@@ -95,6 +96,10 @@ function panelBlocks(text: string): Array<{ id: string; line: number; body: stri
 function actionBlocks(text: string): Array<{ id: string; line: number; body: string }> {
   const start = text.indexOf("actions: [");
   if (start < 0) return [];
+  // An empty array on one line (`actions: [],`) has no closing line of its
+  // own: reading on to the next `],` at its indent took core-activity-log's
+  // panels for actions and reported its History panel (2026-09-30).
+  if (/^actions: \[\s*\]/.test(text.slice(start))) return [];
   // The array ends at the first `],` back at its own indent.
   const indent = /(^|\n)([ \t]*)actions: \[/.exec(text)?.[2] ?? "";
   const endRe = new RegExp(`\\n${indent}\\],`);

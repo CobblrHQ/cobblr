@@ -14,6 +14,7 @@
 // BEFORE the renderer switch, so every renderer (and any new one) gets it.
 import { Camera, Plus } from "lucide-react";
 import { Link } from "react-router-dom";
+import { withArticle } from "@cobblr/platform-contract/plural";
 
 export interface ViewEmptyStateProps {
   /** "book", "books" — the kind's own words, never its id. */
@@ -42,7 +43,7 @@ export function ViewEmptyState({ noun, plural, collectionEmpty, createTo, seeAll
       >
         <h2 className="font-display text-xl font-bold text-content dark:text-mortar-100">Add your first {noun}</h2>
         <p className="text-sm text-muted dark:text-slate-400">
-          {createTo ? `Nothing here yet. Add a ${noun} by hand, or scan one and it lands here.` : `Nothing here yet. Scan a ${noun} and it lands here.`}
+          {createTo ? `Nothing here yet. Add ${withArticle(noun)} by hand, or scan one and it lands here.` : `Nothing here yet. Scan ${withArticle(noun)} and it lands here.`}
         </p>
         <div className="flex flex-wrap items-center justify-center gap-2">
           {createTo && (
@@ -50,7 +51,7 @@ export function ViewEmptyState({ noun, plural, collectionEmpty, createTo, seeAll
               to={createTo}
               className="inline-flex items-center gap-1.5 rounded-md bg-cobble-600 hover:bg-cobble-700 text-white text-sm font-medium px-4 py-2 transition"
             >
-              <Plus size={15} /> Add a {noun}
+              <Plus size={15} /> Add {withArticle(noun)}
             </Link>
           )}
           <Link

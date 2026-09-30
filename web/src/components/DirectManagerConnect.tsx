@@ -51,7 +51,7 @@ export function DirectManagerConnect({
 
   const connect = useMutation({
     mutationFn: async () => {
-      if (!entry) throw new ApiError(400, "no_driver", "Driver catalog still loading — try again in a moment");
+      if (!entry) throw new ApiError(400, "no_driver", "Driver catalog still loading. Try again in a moment");
       // 1. Install the driver if this workspace doesn't have it yet.
       const drivers = await api.listDigifabDrivers(activeSlug);
       const have = new Set([...drivers.builtins.map((b) => b.key), ...drivers.installed.map((d) => d.key)]);
@@ -66,7 +66,7 @@ export function DirectManagerConnect({
       try {
         baseUrl = new URL(withScheme).toString().replace(/\/+$/, "");
       } catch {
-        throw new ApiError(400, "bad_url", `"${addr}" isn't a valid address — try an IP or hostname (e.g. 192.168.1.50) or a full URL.`);
+        throw new ApiError(400, "bad_url", `"${addr}" isn't a valid address. Try an IP or hostname (e.g. 192.168.1.50) or a full URL.`);
       }
       // 3. Create the connection (credential goes where the driver's auth wants it).
       const credField =

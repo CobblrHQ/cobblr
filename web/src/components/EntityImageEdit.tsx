@@ -1,6 +1,7 @@
 // An editable entity thumbnail: click to replace the photo (upload), optionally
 // re-fetch the auto image, or remove it. Wraps the read-only EntityPhoto frame with a
-// hover "Change" overlay + a hidden file input, so any detail modal can let the
+// hover "Change" overlay; tapping it opens the camera on a phone (usePhotoPick)
+// and the file picker elsewhere, so any detail modal can let the
 // user re-select an image instead of being stuck with whatever auto-loaded.
 //
 // Generic + web-side (imports EntityPhoto from platform-web, never edits it).
@@ -8,8 +9,8 @@
 // entity. `onAutoFetch` is optional (only entities with an auto-image flow, e.g.
 // machines, pass it).
 
-import { useRef, useState } from "react";
-import { EntityPhoto, useToast } from "@cobblr/platform-web";
+import { useState } from "react";
+import { EntityPhoto, usePhotoPick, useToast } from "@cobblr/platform-web";
 import { api, ApiError } from "../lib/api";
 
 export function EntityImageEdit({
@@ -40,7 +41,6 @@ export function EntityImageEdit({
   autoBusy?: boolean;
   className?: string;
 }) {
-  const fileRef = useRef<HTMLInputElement>(null);
   const [uploading, setUploading] = useState(false);
   const toast = useToast();
 
@@ -61,12 +61,13 @@ export function EntityImageEdit({
     }
   }
 
+  const photo = usePhotoPick((files) => files[0] && void pick(files[0]), { title: `Photo of ${alt}`, label: `Choose a photo of ${alt}` });
   const busy = uploading || autoBusy;
   return (
     <div className={"shrink-0 " + (className ?? "")}>
       <button
         type="button"
-        onClick={() => fileRef.current?.click()}
+        onClick={photo.pick}
         disabled={busy}
         title="Change photo"
         className="relative group block rounded overflow-hidden disabled:cursor-wait"
@@ -81,17 +82,7 @@ export function EntityImageEdit({
           {uploading ? "Uploading…" : "Change"}
         </span>
       </button>
-      <input
-        ref={fileRef}
-        type="file"
-        accept="image/*"
-        className="hidden"
-        onChange={(e) => {
-          const f = e.target.files?.[0];
-          if (f) void pick(f);
-          e.target.value = "";
-        }}
-      />
+      {photo.input}
       <div className="flex justify-center gap-2 mt-1">
         {onAutoFetch && (
           <button type="button" onClick={onAutoFetch} disabled={busy} className="text-[10px] text-accent hover:underline disabled:opacity-50">

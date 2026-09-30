@@ -68,13 +68,18 @@ export interface OpTimeTable {
 
 export interface OpQtyTable {
   id: Generated<string>;
-  operation_id: string;
+  /** null for a count a judged print wrote: a print is not one of the build's
+   *  hand operations (0007_yield_from_prints). */
+  operation_id: string | null;
   build_id: string;
   kind: string;
   quantity: string;
   reason: string | null;
   logged_by: string | null;
   logged_at: Generated<Date>;
+  /** The digifab job whose verdict wrote this count; one good and one scrap row
+   *  per job at most (a unique index), so a re-delivered verdict counts once. */
+  source_job_id: string | null;
 }
 
 export interface RunOutputsTable {
@@ -104,6 +109,9 @@ export interface PlannedTable {
   resource_label: string | null;
   status: Generated<string>;
   notes: string | null;
+  /** The record this is made for (a sales order), when it is a work order. */
+  source_kind: string | null;
+  source_id: string | null;
   created_at: Generated<Date>;
   updated_at: Generated<Date>;
 }

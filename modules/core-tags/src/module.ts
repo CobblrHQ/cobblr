@@ -9,10 +9,10 @@ import { defineModule } from "@cobblr/platform-contract";
 
 export default defineModule({
   name: "core-tags",
-  version: "0.1.6",
+  version: "0.1.8",
   displayName: "Tags",
   description:
-    "Cross-module polymorphic labels. Attach the same tag to a part, a task, a printer: they all show up under that tag.",
+    "Label anything with the same tag, whatever it is, and see everything with that tag together.",
   icon: "tag",
   band: "foundational",
 
@@ -48,17 +48,13 @@ export default defineModule({
         fields: [
           { name: "name", type: "text", role: "title", required: true },
           { name: "color", type: "text" },
+          { name: "metadata", type: "object" },
         ],
         exposableFields: ["name", "color"],
         detailRoute: "/tags/{id}",
       },
     ],
   },
-
-  intents: [
-    { name: "create_tag", description: "Define a new tag" },
-    { name: "attach_tag", description: "Apply a tag to any entity" },
-  ],
 
   dependencies: [],
 
@@ -69,7 +65,6 @@ export default defineModule({
       "core-tags.assignment.created",
       "core-tags.assignment.deleted",
     ],
-    api: [],
     actions: [
       {
         id: "core-tags:merge",

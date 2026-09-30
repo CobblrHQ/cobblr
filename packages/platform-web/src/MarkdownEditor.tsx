@@ -10,7 +10,7 @@ export function MarkdownEditor({
   value,
   onChange,
   onBlur,
-  placeholder = "Write Markdown — **bold**, _italic_, `code`, - lists, [links](https://…)",
+  placeholder = "Write Markdown: **bold**, _italic_, `code`, - lists, [links](https://…)",
   minRows = 6,
   ariaLabel,
 }: {

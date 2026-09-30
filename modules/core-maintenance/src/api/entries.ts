@@ -106,10 +106,24 @@ entriesRouter.get(
     // Where each open entry stands, from the one calendar rule the record's
     // schedule uses, so the list never counts its own days (#3991).
     const now = new Date();
+    // What each entry is for, by name: a service log that says "assets·asset"
+    // does not say which of a hundred assets. One lookup per record.
+    const orgId = tenantContext(req).org.id;
+    const titles = new Map<string, string | null>();
+    await Promise.all(
+      [...new Set(rows.map((r) => `${r.entity_module}:${r.entity_type}|${r.entity_id}`))].map(async (key) => {
+        const [kind, id] = key.split("|") as [string, string];
+        const found = await platform().entities.lookup(orgId, kind, id).catch(() => null);
+        titles.set(key, found?.title ?? null);
+      }),
+    );
     res.json({
-      items: rows.map((r) =>
-        r.scheduled_at && !r.performed_at ? { ...r, due: calendarDue(new Date(r.scheduled_at), now, filter.tz ?? null) } : r,
-      ),
+      items: rows.map((r) => {
+        const entity_title = titles.get(`${r.entity_module}:${r.entity_type}|${r.entity_id}`) ?? null;
+        return r.scheduled_at && !r.performed_at
+          ? { ...r, entity_title, due: calendarDue(new Date(r.scheduled_at), now, filter.tz ?? null) }
+          : { ...r, entity_title };
+      }),
     });
   }),
 );

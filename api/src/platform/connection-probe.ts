@@ -8,7 +8,7 @@
 // every bridge as Unverified forever, however well it answered.
 
 import { verificationOf, type ConnectionVerification } from "@cobblr/platform-contract/connection-verification";
-import * as aiImpl from "./ai.js";
+import * as connectionProviders from "./connections.js";
 import { meta } from "../db/meta.js";
 import { onBridgeOnline } from "./edge.js";
 import { storedUserCredentials, updateUserCredential, usesEdge } from "./user-credentials.js";
@@ -19,19 +19,25 @@ export function carriesCredentials(credentials: Record<string, unknown> | undefi
 }
 
 /** Probe a provider with these credentials, as this user. A provider with no
- *  probe is "unverified" by construction and says so. */
+ *  probe is "unverified" by construction and says so.
+ *
+ *  Every kind's own probe, through the one registry (connections.ts): this
+ *  used to read the AI catalogue alone, so no other kind was ever verified,
+ *  and a service (named by its own manifest id) was not even found. */
 export async function probeConnection(
   providerId: string,
+  kind: string | null,
   credentials: Record<string, unknown>,
   userId: string,
+  credentialId?: string,
 ): Promise<ConnectionVerification | null> {
-  const def = aiImpl.getProvider(providerId);
-  if (!def) return null;
-  if (!def.testConnection) return { state: "unverified", at: new Date().toISOString(), message: "This provider has no way to be tested from here." };
+  const testable = connectionProviders.canTest(providerId, kind);
+  if (testable === null) return null;
+  if (!testable) return { state: "unverified", at: new Date().toISOString(), message: "This provider has no way to be tested from here." };
   const model = typeof credentials.model === "string" && credentials.model.trim() ? credentials.model.trim() : null;
   const started = Date.now();
   try {
-    const probe = await def.testConnection({ ...credentials, __connection_user_id: userId });
+    const probe = await connectionProviders.testConnection(providerId, kind, credentials, { userId, ...(credentialId ? { credentialId } : {}) });
     return verificationOf(probe, model, new Date(), Date.now() - started);
   } catch (err) {
     return verificationOf({ ok: false, reason: "unknown", error: (err as Error)?.message }, null, new Date(), Date.now() - started);
@@ -42,7 +48,7 @@ export async function probeConnection(
 export async function testStoredConnection(userId: string, id: string): Promise<ConnectionVerification | null> {
   const stored = await storedUserCredentials(userId, id);
   if (!stored) return null;
-  const verification = (await probeConnection(stored.provider_id, stored.credentials, userId)) ?? {
+  const verification = (await probeConnection(stored.provider_id, stored.kind, stored.credentials, userId, id)) ?? {
     state: "unverified" as const,
     at: new Date().toISOString(),
     message: "This provider is not available on this server.",

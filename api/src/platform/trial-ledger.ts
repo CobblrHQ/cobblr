@@ -18,7 +18,10 @@ import { meta } from "../db/meta.js";
 import { listEntries } from "../modules/registry.js";
 import { isDefaultModule } from "../modules/enable.js";
 import { USER_SOURCE } from "./bundle-claims.js";
-import { listKindsForOrg } from "./entities.js";
+import { listKindsForOrg, lookupMany } from "./entities.js";
+
+/** A stored file's id inside a record's picture address. */
+const PICTURE_ID_IN_PATH = /files\/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})/i;
 import { SANDBOX_HANDED_OVER } from "./try-sandbox.js";
 import { collectionLabelFor } from "@cobblr/platform-contract/kind-label";
 
@@ -92,7 +95,7 @@ export const LEFT_BEHIND = [
   "the guest account itself",
 ];
 
-async function handedOverAt(orgId: string): Promise<Date | null> {
+export async function handedOverAt(orgId: string): Promise<Date | null> {
   const row = await meta
     .selectFrom("activity_log")
     .select(sql<Date | null>`max(occurred_at)`.as("at"))
@@ -249,14 +252,28 @@ export async function trialLedger(orgId: string): Promise<TrialLedger> {
   for (const r of rows) if (r.action.endsWith("_deleted")) deleted.add(`${r.module_name}:${r.entity_type}:${r.entity_id}`);
   const alive = (module: string | null, type: string, id: string): boolean => !deleted.has(`${module}:${type}:${id}`);
 
+  // A picture of something the person made is part of that thing: a scan's
+  // photos are its record's, and a record's own picture is the record's. The
+  // file store logs each upload as a file of its own, so without this two
+  // scanned bottles read as "4 items" on the ending (#4217).
+  const pictures = new Set<string>();
   const scans: LedgerScan[] = [];
   for (const r of rows) {
     if (r.action !== "scan_committed") continue;
-    const d = (r.diff ?? {}) as { entity_kind?: string; entity_id?: string; instance?: string | null; name?: string; photo_file_ids?: string[] };
+    const d = (r.diff ?? {}) as {
+      entity_kind?: string;
+      entity_id?: string;
+      instance?: string | null;
+      name?: string;
+      photo_file_ids?: string[];
+      catalog_image_file_id?: string | null;
+    };
+    if (typeof d.catalog_image_file_id === "string") pictures.add(d.catalog_image_file_id);
     if (!d.entity_kind || !d.entity_id) continue;
     const [module, type] = d.entity_kind.split(":");
     if (!alive(module ?? null, type ?? "", d.entity_id)) continue;
     const photos = Array.isArray(d.photo_file_ids) ? d.photo_file_ids : [];
+    for (const p of photos) pictures.add(p);
     scans.push({
       entity_kind: d.entity_kind,
       entity_id: d.entity_id,
@@ -288,6 +305,21 @@ export async function trialLedger(orgId: string): Promise<TrialLedger> {
     if (!ids.includes(r.entity_id)) ids.push(r.entity_id);
     byKind.set(kind, ids);
   }
+  // A record's own picture is the record's too, found by reading the records
+  // themselves (a handful: what one person made in an hour). Whatever kind
+  // stores the picture, an id that is some record's picture is not a thing
+  // of its own.
+  const refs = [...byKind.entries()].flatMap(([kind, ids]) => ids.map((id) => ({ kind, id })));
+  for (const rec of refs.length ? await lookupMany(orgId, refs).catch(() => []) : []) {
+    const path = (rec.fields as { image_path?: unknown }).image_path ?? rec.image_path;
+    const id = typeof path === "string" ? PICTURE_ID_IN_PATH.exec(path)?.[1] : undefined;
+    if (id && id !== rec.id) pictures.add(id);
+  }
+  for (const [kind, ids] of byKind) {
+    const own = ids.filter((id) => !pictures.has(id));
+    if (own.length) byKind.set(kind, own);
+    else byKind.delete(kind);
+  }
   const records: LedgerRecords[] = [...byKind.entries()].map(([kind, ids]) => {
     const label = kindWords(kind, ids.length);
     const scanned = ids.filter((id) => scannedIds.has(`${kind}:${id}`)).length;
@@ -311,4 +343,21 @@ export async function trialLedger(orgId: string): Promise<TrialLedger> {
     records,
     left_behind: LEFT_BEHIND,
   };
+}
+
+/** The ids of what a sandbox came stocked with: every record whose create was
+ *  logged before the hand-over, the one line that splits the platform's work
+ *  from the person's (the ledger above is everything after it). Empty for a
+ *  workspace that was never handed over, where nothing is an example. */
+export async function examplesOf(orgId: string): Promise<Set<string>> {
+  const since = await handedOverAt(orgId);
+  if (!since) return new Set();
+  const rows = await meta
+    .selectFrom("activity_log")
+    .select("entity_id")
+    .where("org_id", "=", orgId)
+    .where("action", "like", "%\\_created")
+    .where("occurred_at", "<=", since)
+    .execute();
+  return new Set(rows.map((r) => r.entity_id));
 }

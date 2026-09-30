@@ -38,6 +38,8 @@ export interface FilesTable {
   /** The file this one repeats byte for byte; null for an original. A copy
    *  resolves by its id and is left out of every list (#3859). */
   same_as: Generated<string | null>;
+  /** Custom fields a bundle or a person defines for files (0004). */
+  metadata: Generated<Record<string, unknown>>;
 }
 
 export interface FoldersTable {

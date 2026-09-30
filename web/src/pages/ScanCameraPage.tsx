@@ -730,7 +730,7 @@ export function ScanCameraPage() {
         sortSessionRef.current = r.session_id;
         const confirmed = (r.entries ?? []).filter((e) => e.status === "confirmed").length;
         setSortCount(confirmed);
-        if (r.resumed && confirmed > 0) showFilingNote(`Sort session resumed — ${confirmed} sorted so far.`);
+        if (r.resumed && confirmed > 0) showFilingNote(`Sort session resumed: ${confirmed} sorted so far.`);
       })
       .catch(() => {
         showFilingNote("Couldn't start the sort session.", "warn");
@@ -748,7 +748,7 @@ export function ScanCameraPage() {
       if (!sid) return;
       const r = await api.putawayScan(activeSlug, sid, { inbox_item_id: inboxItemId });
       if (r.already_placed) {
-        showFilingNote(`Already lives in ${r.already_placed.location_name ?? "a bin"} — re-find, not a re-sort.`);
+        showFilingNote(`Already lives in ${r.already_placed.location_name ?? "a bin"}: re-find, not a re-sort.`);
         return;
       }
       if (!r.entry) return;
@@ -938,7 +938,7 @@ export function ScanCameraPage() {
         const nm = b ? filingLabel(b) : "location";
         const p = decision.reparent ? byId.get(decision.reparent.parent) : null;
         showFilingNote(
-          p ? `Filed ${nm} in ${filingLabel(p)} — filing into ${nm}` : `Filing into ${nm}`,
+          p ? `Filed ${nm} in ${filingLabel(p)}. Filing into ${nm}` : `Filing into ${nm}`,
         );
         setPhase("scanning");
         return;
@@ -955,7 +955,7 @@ export function ScanCameraPage() {
         containerBinRef.current = cb;
         setAreaId(null);
         areaIdRef.current = null;
-        showFilingNote("Filing into this — scan components to add them inside.");
+        showFilingNote("Filing into this. Scan components to add them inside.");
         setPhase("scanning");
         return;
       }
@@ -1162,7 +1162,7 @@ export function ScanCameraPage() {
             // Name the code that failed — in a 40-serial run "that serial" is
             // unfindable; this one can be retyped into the manual field.
             showFilingNote(
-              `Couldn't file ${raw}${e instanceof ApiError ? ` — ${e.message}` : " — scan it again."}`,
+              `Couldn't file ${raw}${e instanceof ApiError ? `: ${e.message}` : ". Scan it again."}`,
               "warn",
             );
           }
@@ -2331,10 +2331,11 @@ export function ScanCameraPage() {
               A
             </span>
           </button>
-        ) : (
-          <span className="w-10 shrink-0" />
-        )}
-        {/* Where you are and how scans behave. At 320px these five and Close
+        ) : null}
+        {/* No slot is kept for a light the camera does not have: at 390px the
+            empty 40px clipped Count to its icon (#4146). A camera that reports
+            a light moves the strip once, when the stream starts.
+            Where you are and how scans behave. At 320px these five and Close
             needed more room than the strip had, and the last one out was
             Close (#4033). So they scroll sideways between the two pinned
             ends, and Close never leaves the right edge. */}
@@ -2362,7 +2363,7 @@ export function ScanCameraPage() {
           <button
             type="button"
             onClick={() => setAssignOpen(true)}
-            className="inline-flex items-center gap-1.5 bg-black/50 hover:bg-black/70 rounded-full px-3 py-1.5 text-white text-xs min-w-[6rem] flex-1"
+            className="inline-flex items-center gap-1.5 bg-black/50 hover:bg-black/70 rounded-full px-3 py-1.5 text-white text-xs min-w-[5.5rem] flex-1"
           >
             <MapPin
               size={13}
@@ -2472,7 +2473,7 @@ export function ScanCameraPage() {
             <div className="mt-4 text-center text-white/85 text-sm px-8 [text-shadow:0_1px_2px_rgba(0,0,0,0.7)]" data-testid="camera-instructions">
               {supported === false
                 ? "Hold a barcode steady, snap a photo, or type the barcode number below."
-                : "Point at a barcode or a Cobblr QR label — or hit the shutter to photograph it."}
+                : "Point at a barcode or a Cobblr QR label, or hit the shutter to photograph it."}
             </div>
           )}
         </div>
@@ -3028,7 +3029,7 @@ export function ScanCameraPage() {
             // The bin is gaining a second SKU — flip to the filing flow: set it
             // as the active bin and keep scanning into it.
             setAreaId(binAdjust.locationId);
-            showFilingNote(`Filing into ${binAdjust.locationName} — scan the new item`);
+            showFilingNote(`Filing into ${binAdjust.locationName}. Scan the new item`);
             setBinAdjust(null);
             setPhase("scanning");
           }}

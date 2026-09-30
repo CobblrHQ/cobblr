@@ -179,6 +179,7 @@ function ChannelCadence({
       </div>
 
       <Cadence
+        channel={channel.label}
         icon={<MessageSquare size={12} className="text-faint" />}
         label="Conversation"
         hint="replies, mentions, things that just happened"
@@ -191,6 +192,7 @@ function ChannelCadence({
       />
 
       <Cadence
+        channel={channel.label}
         icon={<CalendarClock size={12} className="text-faint" />}
         label="Due today"
         hint="expiring, service due, running low"
@@ -239,6 +241,7 @@ const MODE_LABEL: Record<string, string> = {
 };
 
 function Cadence({
+  channel,
   icon,
   label,
   hint,
@@ -249,6 +252,7 @@ function Cadence({
   onMode,
   onMinute,
 }: {
+  channel: string;
   icon: React.ReactNode;
   label: string;
   hint: string;
@@ -266,6 +270,7 @@ function Cadence({
         <span className="text-xs text-content dark:text-mortar-200">{label}</span>
       </span>
       <select
+        aria-label={`${channel}: ${label}`}
         value={mode}
         onChange={(e) => onMode(e.target.value)}
         // w-auto: `.input` is w-full, which turns a row that should read
@@ -282,6 +287,7 @@ function Cadence({
       {mode === "daily" && (
         <input
           type="time"
+          aria-label={`${channel}: ${label}, time`}
           value={hhmm(minute)}
           onChange={(e) => onMinute(toMinute(e.target.value))}
           className="input w-auto text-xs px-2 py-1"

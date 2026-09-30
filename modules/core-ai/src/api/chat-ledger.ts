@@ -657,7 +657,7 @@ export async function undoWrite(
           held: "has-contents",
           label: row.entity_label,
           detail: `${names}${more}`,
-          message: `${row.entity_label} still has ${names}${more} in it, so it was left alone — removing it would have taken ${wouldTake.length === 1 ? "that" : "those"} with it.`,
+          message: `${row.entity_label} still has ${names}${more} in it, so it was left alone. Removing it would have taken ${wouldTake.length === 1 ? "that" : "those"} with it.`,
         };
       }
 

@@ -12,8 +12,9 @@
 // halves look fine alone) and invisible at runtime (the key just reads
 // undefined and the feature silently no-ops).
 //
-// So: parse the renderers' `cfg.<key>` READS and the modals' `config.<key> =`
-// WRITES out of ViewsPage.tsx, and fail when a read has no writer. Textual on
+// So: parse the renderers' `cfg.<key>` READS and the modals' WRITES (a
+// `config.<key> =`, or a key both modals pass to layoutConfig) out of
+// ViewsPage.tsx, and fail when a read has no writer. Textual on
 // purpose — it needs no view-model refactor, and the two halves live in one
 // file, so a grep-level check is exactly as reliable as the thing it guards.
 
@@ -37,6 +38,31 @@ for (const m of src.matchAll(/\bconfig(?:\.(\w+)\s*=|\[["'](\w+)["']\]\s*=)/g)) 
   if (key) writes.add(key);
 }
 
+// Both modals build their layout keys through layoutConfig(type, previous,
+// { key: value, ... }) (web/src/lib/view-config.ts). A key counts as written
+// when EVERY such call carries it, so a control added to one modal and not
+// the other still fails; and the helper keeps only the keys its LAYOUT_KEYS
+// table names for a type, so a key a modal passes that no type lists would be
+// dropped on save without a word.
+const HELPER = "web/src/lib/view-config.ts";
+const helperSrc = readFileSync(HELPER, "utf8");
+const tableBody = /LAYOUT_KEYS[^=]*=\s*\{([\s\S]*?)\n\};/.exec(helperSrc)?.[1] ?? "";
+const layoutKeys = new Set([...tableBody.matchAll(/"(\w+)"/g)].map((m) => m[1]!));
+const calls = [...src.matchAll(/\blayoutConfig\(\s*\w+\s*,\s*[^,]+,\s*\{([\s\S]*?)\}\s*\)/g)].map(
+  (m) => new Set([...m[1]!.matchAll(/^\s*(\w+)\s*:/gm)].map((k) => k[1]!)),
+);
+if (calls.length > 0) {
+  const inEvery = [...calls[0]!].filter((k) => calls.every((c) => c.has(k)));
+  for (const k of inEvery) writes.add(k);
+  const unlisted = [...new Set(calls.flatMap((c) => [...c]))].filter((k) => !layoutKeys.has(k)).sort();
+  if (unlisted.length > 0) {
+    console.error(`[lint:view-config-keys] ✗ ${FILE}: a modal passes a layout key ${HELPER}'s LAYOUT_KEYS does not list, so saving drops it:\n`);
+    for (const k of unlisted) console.error(`    ${k}`);
+    console.error("\n  Add it to LAYOUT_KEYS under the view type whose renderer reads it.\n");
+    process.exit(1);
+  }
+}
+
 // Keys that are legitimately not written by the view modals.
 const ALLOW = new Set([
   // Filter/sort ride in via filterRowsToConfig()/rowsToSort() spreads, not a
@@ -57,7 +83,8 @@ if (orphans.length > 0) {
   for (const k of orphans) console.error(`    cfg.${k}`);
   console.error(
     "\n  Each key a renderer reads needs a control in BOTH the New-view and\n" +
-      "  Edit-view modals (write it as `config.<key> = …`), or the feature is\n" +
+      "  Edit-view modals (pass it to layoutConfig in both, or write\n" +
+      "  `config.<key> = …`), or the feature is\n" +
       "  unreachable — a dead knob only hand-written JSON can turn on.\n" +
       "  If the key genuinely isn't a per-view setting, add it to ALLOW here\n" +
       "  with a reason.\n",

@@ -245,9 +245,7 @@ export const easypostCompatDriver: CarrierDriver = {
       // Insufficient Storage: the service is at capacity. A distinct failure
       // from "it could not answer" — the user has to free a slot or upgrade,
       // and silence would leave them with no idea why nothing is tracked.
-      const full = new CarrierError("the tracking service is at capacity", false);
-      (full as CarrierError & { quotaExhausted?: boolean }).quotaExhausted = true;
-      throw full;
+      throw new CarrierError("the tracking service is at capacity", false, { quotaExhausted: true });
     }
     if (!res.ok) {
       throw new CarrierError(

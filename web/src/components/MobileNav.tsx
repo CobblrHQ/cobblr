@@ -161,7 +161,7 @@ export function MobileNav() {
 
       {open &&
         createPortal(
-          <OverlayLayer className="md:hidden z-[80]">
+          <OverlayLayer className="md:hidden z-[80]" role="dialog" aria-modal="true" aria-label="Menu">
             {/* No backdrop: the panel below is `absolute inset-0` and opaque, so
                 anything behind it is invisible AND unreachable. One used to sit
                 here claiming "tap to dismiss", which was never true and is the
@@ -245,10 +245,9 @@ export function MobileNav() {
               </NavLink>
               )}
 
-              {/* Search moved here when the bottom thumb-bar was removed — the
-                  header search bar is desktop-only, so this is its only mobile
-                  home. (Scan already has a header camera icon + a Scan Inbox nav
-                  item, so it isn't duplicated here.) */}
+              {/* The phone header carries a search icon too
+                  (PhoneHeaderShortcuts); this row stays for anyone who looks
+                  for search in the menu. */}
               {!appMode && (
               <NavLink to="/search" className={linkClass} onClick={() => setOpen(false)}>
                 search

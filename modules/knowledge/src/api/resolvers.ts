@@ -2,7 +2,7 @@
 // via platform().entities.lookup()/list() without knowing our table.
 
 import { type Kysely } from "kysely";
-import { platform, type ResolvedEntity } from "@cobblr/platform-contract";
+import { platform, type ResolvedEntity, textSearchWhere } from "@cobblr/platform-contract";
 import type { KnowledgeDB } from "../db.js";
 
 let registered = false;
@@ -28,6 +28,7 @@ export function registerKnowledgeResolvers(): void {
     if (typeof kind === "string") q = q.where("kind", "=", kind);
     const pinned = query.filter?.pinned;
     if (pinned === true || pinned === "true") q = q.where("pinned", "=", true);
+    if (query.q?.trim()) q = q.where((eb) => textSearchWhere(eb, query.q, { text: ["title", "body", "kind"] })!);
     const rows = await q
       .limit(Math.min(query.limit ?? 50, 500))
       .offset(query.offset ?? 0)

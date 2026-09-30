@@ -2,21 +2,19 @@
 
 import { Router } from "express";
 import { z } from "zod";
-import multer from "multer";
-import { platform } from "@cobblr/platform-contract";
+import { platform, uploadOne } from "@cobblr/platform-contract";
+import { uploadedFile } from "@cobblr/platform-contract/upload";
 import { sessionUser, tenantContext, tenantDb } from "../db.js";
 import type { CoreFilesDB, FileKind, FileVariants } from "../db.js";
-import type { SelectQueryBuilder } from "kysely";
+import { sql, type SelectQueryBuilder } from "kysely";
+import { decodeKeysetCursor, encodeKeysetCursor } from "@cobblr/platform-contract/keyset-cursor";
 import { asyncHandler, badBody, requireRole } from "./util.js";
 import { readVariant, readVariantBytes } from "./storage.js";
 import { intakeFile, resolveTarget, sameBytes } from "./intake.js";
 import { bytesUsed, QUOTA_BYTES, quotaDecision } from "./quota.js";
+import { purgeAfter, purgeFile, restoreFile, RECENTLY_DELETED_DAYS } from "../purge.js";
 
 export const filesRouter = Router({ mergeParams: true });
-
-// 25MB ceiling per file. Generous for photos, doesn't try to also be
-// a cloud-storage backend.
-const MAX_BYTES = 25 * 1024 * 1024;
 
 // Mime types safe to serve inline from our own origin. Non-scriptable raster
 // images only — SVG is deliberately excluded (it can carry <script>), as is
@@ -31,13 +29,11 @@ const INLINE_SAFE_MIME = new Set([
   "image/webp",
 ]);
 
-// In-memory buffer (multer.memoryStorage) — we re-encode + write
-// derived variants anyway, so streaming straight to disk wouldn't
-// save much, and keeping the buffer in hand simplifies sharp.
-const upload = multer({
-  storage: multer.memoryStorage(),
-  limits: { fileSize: MAX_BYTES, files: 1 },
-});
+// Through the platform's one upload door: streamed to disk and hashed as it
+// arrives, each file's limit by its kind (PDFs and design files 200 MB,
+// everything else 25 MB), a file over it answered 413 with its size and the
+// limit. The stored original is linked in from there, never read whole.
+const upload = uploadOne({});
 
 // D5 attach-shortcut. POST /files accepts optional fields that, when
 // present, also create a core_files_attachments row in the same
@@ -54,13 +50,13 @@ const upload = multer({
 // AI-REACH: takes or produces a file (multipart or binary), which an action cannot carry
 filesRouter.post(
   "/",
-  upload.single("file"),
+  upload,
   asyncHandler(async (req, res) => {
     if (!requireRole(req, res, "owner", "admin", "member")) return;
     const session = sessionUser(req);
     const ctx = tenantContext(req);
-    const file = (req as unknown as { file?: Express.Multer.File }).file;
-    if (!file || !file.buffer) {
+    const file = uploadedFile(req);
+    if (!file) {
       res.status(400).json({
         error: { code: "missing_file", message: "Multipart field 'file' is required." },
       });
@@ -79,17 +75,18 @@ filesRouter.post(
       orgId: ctx.org.id,
       feature: "files.upload",
       userId: session?.id,
-      quantity: file.buffer.length,
+      quantity: file.size,
       used,
     });
     if (!ent.allow) {
-      res.status(402).json({
-        error: { code: "plan_limit", message: ent.reason ?? "File uploads aren't available on your plan." },
-      });
+      const message = ent.reason ?? "File uploads aren't available on your plan.";
+      platform().http.uploadRefused(req, { reason: "plan_limit", sizeBytes: file.size, mimeType: file.mimetype, message });
+      res.status(402).json({ error: { code: "plan_limit", message } });
       return;
     }
-    const room = quotaDecision(used, file.buffer.length, QUOTA_BYTES);
+    const room = quotaDecision(used, file.size, QUOTA_BYTES);
     if (!room.allow) {
+      platform().http.uploadRefused(req, { reason: "storage_full", sizeBytes: file.size, limitBytes: QUOTA_BYTES, mimeType: file.mimetype, message: room.reason ?? "This workspace's storage is full." });
       res.status(413).json({ error: { code: "storage_full", message: room.reason } });
       return;
     }
@@ -139,7 +136,8 @@ filesRouter.post(
     // The same bytes already here: say which file, and with
     // on_duplicate=skip keep the one copy instead of storing a second
     // (a re-imported download folder, a pattern bought twice).
-    const same = await sameBytes(db0, file.buffer);
+    const fingerprint = { sha256: file.sha256, size: file.size };
+    const same = await sameBytes(db0, fingerprint);
     if (same && readField("on_duplicate") === "skip") {
       res.status(200).json({ ...same, size_bytes: Number(same.size_bytes), duplicate: true, duplicate_of: { id: same.id, filename: same.filename, folder_id: same.folder_id, folder_names: same.folder_names } });
       return;
@@ -148,7 +146,8 @@ filesRouter.post(
     let taken;
     try {
       taken = await intakeFile(db0, ctx.org.id, session?.id ?? null, {
-        buffer: file.buffer,
+        source: { path: file.path, size: file.size, sha256: file.sha256 },
+        fingerprint,
         filename: file.originalname || "untitled",
         mime: file.mimetype || "application/octet-stream",
         folderId,
@@ -227,9 +226,9 @@ filesRouter.get(
     const text = typeof req.query.q === "string" ? req.query.q.trim() : "";
     // Keyset pagination (docs/design-decisions/list-pagination.md): the
     // cursor is the last row's created_at and id, newest first.
-    const cursor = typeof req.query.cursor === "string" ? req.query.cursor : "";
-    const [cursorAt, cursorId] = cursor.split("|");
-    const cursorDate = cursorAt ? new Date(cursorAt) : null;
+    // To the millisecond, the precision the cursor carries
+    // (@cobblr/platform-contract/keyset-cursor).
+    const c = decodeKeysetCursor(typeof req.query.cursor === "string" ? req.query.cursor : null);
     const filtered = <O,>(qb: SelectQueryBuilder<CoreFilesDB, "core_files_files", O>) => {
       // A copy that repeats another file's bytes is listed as that file (#3859).
       let out = qb.where("deleted_at", "is", null).where("same_as", "is", null);
@@ -253,12 +252,12 @@ filesRouter.get(
         "created_at",
         "folder_id",
       ])
-      .orderBy("created_at", "desc")
+      .orderBy(sql`date_trunc('milliseconds', created_at)`, "desc")
       .orderBy("id", "desc")
       .limit(limit + 1);
     q = filtered(q);
-    if (cursorDate && !Number.isNaN(cursorDate.getTime()) && cursorId) {
-      q = q.where((eb) => eb.or([eb("created_at", "<", cursorDate), eb.and([eb("created_at", "=", cursorDate), eb("id", "<", cursorId)])]));
+    if (c?.id && /^[0-9a-f-]{36}$/i.test(c.id)) {
+      q = q.where(sql<boolean>`(date_trunc('milliseconds', created_at), id) < (${c.at}, ${c.id}::uuid)`);
     }
     const rows = await q.execute();
     const page = rows.slice(0, limit);
@@ -271,7 +270,7 @@ filesRouter.get(
     );
     res.json({
       items,
-      next_cursor: rows.length > limit && last ? `${new Date(last.created_at).toISOString()}|${last.id}` : null,
+      next_cursor: rows.length > limit && last ? encodeKeysetCursor(last.created_at, last.id) : null,
       total: Number(counted?.n ?? 0),
     });
   }),
@@ -283,6 +282,84 @@ filesRouter.get(
   "/usage",
   asyncHandler(async (req, res) => {
     res.json({ bytes_used: await bytesUsed(tenantDb(req)), quota_bytes: QUOTA_BYTES });
+  }),
+);
+
+// Recently deleted: what was deleted in the last RECENTLY_DELETED_DAYS, newest
+// first, each with the moment it goes for good. A same-bytes copy is left out,
+// as it is from every list.
+filesRouter.get(
+  "/deleted",
+  asyncHandler(async (req, res) => {
+    const rows = await tenantDb(req)
+      .selectFrom("core_files_files")
+      .select(["id", "filename", "mime_type", "size_bytes", "kind", "variants", "deleted_at", "created_at"])
+      .where("deleted_at", "is not", null)
+      .where("same_as", "is", null)
+      .orderBy("deleted_at", "desc")
+      .limit(500)
+      .execute();
+    res.json({
+      days: RECENTLY_DELETED_DAYS,
+      items: rows.map((r) => ({
+        ...r,
+        size_bytes: Number(r.size_bytes),
+        purge_after: purgeAfter(r.deleted_at as Date).toISOString(),
+      })),
+    });
+  }),
+);
+
+// Bring a deleted file back, where it was (restoreFile, shared with the
+// core-files:restore action).
+// AI-REACH: action core-files:restore
+filesRouter.post(
+  "/:id/restore",
+  asyncHandler(async (req, res) => {
+    if (!requireRole(req, res, "owner", "admin", "member")) return;
+    const id = req.params.id!;
+    const ctx = tenantContext(req);
+    const r = await restoreFile(tenantDb(req), ctx.org.id, id);
+    if (!r.ok) {
+      res.status(r.code === "not_found" ? 404 : 413).json({ error: { code: r.code, message: r.message } });
+      return;
+    }
+    await platform().activity.log({
+      orgId: ctx.org.id,
+      userId: sessionUser(req)?.id ?? null,
+      action: "file_restored",
+      ref: { module: "core-files", entityType: "file", entityId: id },
+    });
+    res.json({ ok: true });
+  }),
+);
+
+// Delete forever now: a file already in Recently deleted goes at once, bytes
+// and all, instead of waiting out its days.
+// AI-REACH: exempt irreversible by design; a person does it from Recently deleted, and a deleted file goes by itself after its days
+filesRouter.delete(
+  "/:id/forever",
+  asyncHandler(async (req, res) => {
+    if (!requireRole(req, res, "owner", "admin")) return;
+    const id = req.params.id!;
+    const ctx = tenantContext(req);
+    const gone = await purgeFile(tenantDb(req), ctx.org.id, id);
+    if (!gone) {
+      res.status(409).json({
+        error: {
+          code: "not_purgeable",
+          message: "Only a file in Recently deleted can be deleted forever, and not while a copy of it is still in use.",
+        },
+      });
+      return;
+    }
+    await platform().activity.log({
+      orgId: ctx.org.id,
+      userId: sessionUser(req)?.id ?? null,
+      action: "file_purged",
+      ref: { module: "core-files", entityType: "file", entityId: id },
+    });
+    res.status(204).end();
   }),
 );
 
@@ -307,6 +384,40 @@ filesRouter.get(
     }
     const [labelled] = await platform().entities.withFieldLabels(tenantContext(req).org.id, "core-files:file", [{ ...row, size_bytes: Number(row.size_bytes) }]);
     res.json(labelled);
+  }),
+);
+
+// The records a file is attached to, each with its title and where it opens:
+// the file page's "Used by". A record this viewer cannot see, or one that no
+// longer resolves, is left out rather than shown as a bare id.
+filesRouter.get(
+  "/:id/used-by",
+  asyncHandler(async (req, res) => {
+    const id = req.params.id;
+    if (!id) {
+      res.status(400).json({ error: { code: "missing_id", message: "id required" } });
+      return;
+    }
+    const db = tenantDb(req);
+    const rows = await db
+      .selectFrom("core_files_attachments as fa")
+      .innerJoin("core_files_files as f", "f.id", "fa.file_id")
+      .select(["fa.id as attachment_id", "fa.source_module", "fa.source_type", "fa.source_id", "fa.role"])
+      .where("fa.file_id", "=", id)
+      .where("f.deleted_at", "is", null)
+      .orderBy("fa.created_at", "asc")
+      .execute();
+    const orgId = tenantContext(req).org.id;
+    const userId = sessionUser(req)?.id;
+    const items = await Promise.all(
+      rows.map(async (r) => {
+        const kind = r.source_type.includes(":") ? r.source_type : `${r.source_module}:${r.source_type}`;
+        const found = await platform().entities.lookup(orgId, kind, r.source_id, userId ? { userId } : undefined);
+        if (!found) return null;
+        return { attachment_id: r.attachment_id, kind, id: r.source_id, role: r.role, title: found.title, detail_url: found.detailUrl ?? null };
+      }),
+    );
+    res.json({ items: items.filter((x) => x !== null) });
   }),
 );
 
@@ -382,8 +493,8 @@ filesRouter.get(
 // the file by and the folder it lives in.
 // AI-REACH: crud — the core-files:file kind's update endpoint (filename, folder_id)
 const FilePatch = z
-  .object({ filename: z.string().trim().min(1).max(255).optional(), folder_id: z.string().uuid().nullable().optional() })
-  .refine((b) => b.filename !== undefined || b.folder_id !== undefined, "filename or folder_id");
+  .object({ filename: z.string().trim().min(1).max(255).optional(), folder_id: z.string().uuid().nullable().optional(), metadata: z.record(z.unknown()).optional() })
+  .refine((b) => b.filename !== undefined || b.folder_id !== undefined || b.metadata !== undefined, "filename, folder_id or metadata");
 filesRouter.patch(
   "/:id",
   asyncHandler(async (req, res) => {
@@ -399,10 +510,15 @@ filesRouter.patch(
     }
     const row = await db
       .updateTable("core_files_files")
-      .set({ ...(parsed.data.filename !== undefined ? { filename: parsed.data.filename } : {}), ...(to !== undefined ? { folder_id: to } : {}) })
+      .set({
+        ...(parsed.data.filename !== undefined ? { filename: parsed.data.filename } : {}),
+        ...(to !== undefined ? { folder_id: to } : {}),
+        // A custom field saved on its own merges into what the file holds.
+        ...(parsed.data.metadata !== undefined ? { metadata: platform().db.mergeJsonb("metadata", parsed.data.metadata) as never } : {}),
+      })
       .where("id", "=", id)
       .where("deleted_at", "is", null)
-      .returning(["id", "filename", "folder_id", "mime_type", "kind", "size_bytes", "created_at"])
+      .returning(["id", "filename", "folder_id", "mime_type", "kind", "size_bytes", "metadata", "created_at"])
       .executeTakeFirst();
     if (!row) {
       res.status(404).json({ error: { code: "not_found", message: "file not found" } });

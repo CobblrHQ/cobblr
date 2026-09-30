@@ -1,0 +1,10 @@
+{
+  "lint": "lint:ci-main-generated",
+  "run": "node scripts/lint-ci-main-generated.ts",
+  "rows": [
+    "ci-workflow"
+  ],
+  "ms": 638,
+  "recorded": "2026-09-30",
+  "source": "scaffolded by new-lint.sh at twice a local run (a shared box); replaced from its first CI measurement"
+}

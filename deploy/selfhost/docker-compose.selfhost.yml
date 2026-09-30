@@ -15,6 +15,17 @@
 
 services:
   db:
+    # Room for Postgres's dynamic shared memory (/dev/shm). Docker's default is
+    # 64 MB, and a server holding many workspace databases outgrows it: the
+    # cumulative statistics live there (about 100 KB per workspace database,
+    # measured at 605 databases filling 61 MB), and so does every parallel
+    # query's hash table (work_mem 4 MB x hash_mem_multiplier 2 x 3 processes,
+    # grown in 32 MB segments, up to four at once with max_parallel_workers 8).
+    # When it ran out, new workspaces failed to provision at signup and stayed
+    # dead, and ordinary queries failed with "could not resize shared memory
+    # segment". 1 GB covers several thousand workspaces plus the parallel
+    # peak; it is a ceiling, not an allocation.
+    shm_size: "1gb"
     # Not reachable from the LAN — only the api container connects to it.
     ports: !reset []
 

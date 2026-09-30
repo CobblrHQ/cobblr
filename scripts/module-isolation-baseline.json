@@ -60,6 +60,12 @@
     "reason": "INTENTIONAL (not drift): the maintainer-curated foundational allowlist — core-placement owns the tenant-local containment table (core_placement_placements) that platform().placement reads, so it's load-bearing infrastructure and can't be disableable. See placement-and-containment.md + manifest-contract.md."
   },
   {
+    "rule": "C-kernel-names-module",
+    "file": "api/src/modules/enable.ts",
+    "token": "core-services",
+    "reason": "INTENTIONAL (not drift): the maintainer-curated foundational allowlist. core-services owns the tenant-local job tables (core_services_jobs, core_services_job_files) that platform().services reads, so every workspace must be born with them. See services-contract.md; lint:foundational-is-curated holds it."
+  },
+  {
     "rule": "D-module-names-module",
     "file": "modules/core-authoring/src/services/compile.ts",
     "token": "records",
@@ -133,12 +139,6 @@
   },
   {
     "rule": "C-kernel-names-module",
-    "file": "api/src/platform/heal-mention-entity-ref.ts",
-    "token": "core-discussion",
-    "reason": "DELIBERATE, TIME-LIMITED: a one-shot heal shim for a historical bug, carrying a DONE WHEN header (lint:heal-shims enforces it) and deleted once every install is clean. It names core-discussion because it is repairing rows THAT MODULE wrote wrongly - notifications whose stored entity ref said the raising module instead of the thing it was about, so a Reply pressed on an already-delivered Discord DM posted into an invisible second conversation. The repair cannot be expressed through platform.* : it corrects cobblr_meta rows (kernel-owned) using the tenant's conversations as the authority, which is a data question about the past rather than a runtime dependency. Same shape as merge-labels-qr.ts. Nothing at runtime routes through it."
-  },
-  {
-    "rule": "C-kernel-names-module",
     "file": "api/src/platform/retire-receipt-failure-placeholders.ts",
     "token": "core-scan",
     "reason": "INTENTIONAL (historical data migration, not kernel logic): a one-shot boot pass that moves a failed receipt's placeholder row (written by core-scan before 2026-09-13) into the session's read state, on every workspace that has one. It cannot go through a module API because the rows are exactly the ones no live code path writes any more; it names core-scan only to SCOPE itself - a workspace without core-scan opens no tenant pool. Retires with the file: see its DONE WHEN header (rowsRetired=0 on prod + staging + dev)."
@@ -148,5 +148,11 @@
     "file": "modules/purchases/src/api/line-subject.ts",
     "token": "inventory:part",
     "reason": "DOCUMENTED EXCEPTION: `part_id` is purchases' own column and has always meant an inventory part (arrival restocks, price history and draft-po read it; the manifest's actions already target inventory:part). A line now names any record through subject_kind/subject_id (#3856); mirroring the subject into part_id when it resolves to a part keeps those readers unchanged instead of rewriting them in the same change."
+  },
+  {
+    "rule": "D-module-names-module",
+    "file": "modules/labels/src/ui/api.ts",
+    "token": "core-print",
+    "reason": "DELIBERATE: labels already reaches core-print through that module's own HTTP endpoints (the printer registry it turns on when a printer is first connected). This asks the kernel's module list whether Print is on before calling it, so a workspace without Print is not sent a request that can only answer 409. The kernel's list is the authority; nothing reads core-print's tables."
   }
 ]

@@ -16,7 +16,7 @@
 
 import { readFileSync, globSync } from "node:fs";
 
-const MAP = "web/src/lib/panel-icons.ts";
+const MAP = "web/src/lib/module-icon.ts";
 
 const known = new Set<string>();
 for (const line of readFileSync(MAP, "utf8").split("\n")) {
@@ -44,7 +44,13 @@ for (const file of files) {
     // match an icon next to a control/scope declaration within a few lines.
     const m = /\bicon:\s*(?:byScans\s*\?\s*)?["']([a-z0-9-]+)["']/.exec(t);
     if (!m?.[1]) return;
-    const near = lines.slice(Math.max(0, i - 6), i + 7).join("\n");
+    // Keys only: a string's words are blanked first, so prose that happens to
+    // say "live:" (a description, "Where your things live: ...") is not read
+    // as a live control declaring its icon.
+    const near = lines
+      .slice(Math.max(0, i - 6), i + 7)
+      .join("\n")
+      .replace(/"(?:[^"\\\n]|\\.)*"|'(?:[^'\\\n]|\\.)*'|`[^`]*`/g, (q) => (/^["']tab/.test(q) ? q : '""'));
     if (!/\b(control:|scope:\s*["']tab|liveControls|live:)/.test(near)) return;
     declared.push({ file, line: i + 1, icon: m[1] });
     // A ternary can name two icons on one line.

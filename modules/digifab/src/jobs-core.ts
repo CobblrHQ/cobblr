@@ -3,14 +3,16 @@
 // and the core-queue poll worker use the same code.
 
 import { interpretReport, plainDriverError, unreachablePlan, POLL_MS } from "./job-truth.js";
+import { settleMakeForJob } from "./makes-core.js";
 import { platform } from "@cobblr/platform-contract";
 import { isEdgeManagerUrl, edgeInstanceOf } from "@cobblr/platform-contract/edge-bridge-client";
-import type { Kysely } from "kysely";
+import type { Kysely, Selectable } from "kysely";
 import type { DigifabDB } from "./db.js";
 import { resolveDriver } from "./drivers/registry.js";
 import { EdgeAdapterDriver, type EdgeRelay } from "./drivers/edge-adapter.js";
 import type { CommandResult, MachineDriver, RemoteDevice, SubmitResult } from "./drivers/types.js";
 import { isAssignable } from "./state.js";
+import { randomUUID } from "node:crypto";
 import { notifyPrint, progressBucket } from "./notify.js";
 // Call-time only (reprint-on-fail re-queue) — lazy/circular by design; ESM
 // resolves it when the retry fires.
@@ -342,7 +344,7 @@ export function buildEdgeRelay(
         const oe = ownerCreds.edge;
         const instance = id && oe && typeof oe.driver === "string" && oe.driver ? { id, driver: oe.driver, config: edgeDriverConfig(oe) } : undefined;
         const oeBridge = typeof (oe as { bridge?: unknown } | undefined)?.bridge === "string" ? ((oe as { bridge?: string }).bridge as string) : null;
-        const res = await platform().edge.send(edgeChannelKey(ownerOrg, oeBridge), { path: r.path, method, body: r.body, ...(instance ? { instance } : {}) });
+        const res = await platform().edge.send(edgeChannelKey(ownerOrg, oeBridge), { path: r.path, method, body: r.body, ...(instance ? { instance } : {}), ...(r.file ? { bodyFile: r.file } : {}) });
         void odb.updateTable("digifab_edge_shares").set({ last_used_at: new Date() }).where("id", "=", shareId).execute().catch(() => {});
         return { status: res.status, body: res.body };
       } finally {
@@ -366,6 +368,7 @@ export function buildEdgeRelay(
       method: r.method === "POST" ? "POST" : "GET",
       body: r.body,
       ...(instance ? { instance } : {}),
+      ...(r.file ? { bodyFile: r.file } : {}),
     });
     return { status: res.status, body: res.body };
   };
@@ -554,10 +557,19 @@ export async function pollJob(
         },
       );
     }
-    // A failed/cancelled job whose build was committed at send never made its
-    // output — undo the consumption (idempotent; no-op if never committed).
-    if (status !== "completed") {
-      await reverseBuildIfCommitted(db, orgId, jobId, `print ${status}`);
+    // The Make this job printed catches up: its Print step's state and the
+    // spools it drew from.
+    await settleMakeForJob(db, orgId, jobId, status as "completed" | "failed" | "cancelled");
+    // A failed print is scrap: nothing it made counts, and its build is
+    // reversed. A cancel made nothing and is not scrap; its commit is undone.
+    // A completion is judged at the bed-clear verdict; one with no bed to clear
+    // (no device on the job) has no verdict coming, so it counts as made now.
+    if (status === "failed") {
+      await recordJobOutcome(db, orgId, jobId, "scrap", "print-failed");
+    } else if (status === "cancelled") {
+      await reverseBuildIfCommitted(db, orgId, jobId, "print cancelled");
+    } else if (!needsBedClear(job as never)) {
+      await recordJobOutcome(db, orgId, jobId, "good", "auto");
     }
     // Discord/in-app update on the terminal outcome.
     const cam = await cameraFor(db, job.connection_id, job.target_device);
@@ -582,9 +594,11 @@ export async function pollJob(
 
 /** Queue commits the materials. When a just-placed job (status "sent") produces
  *  a build (BoM) and hasn't been consumed yet, fire `digifab.job.build_committed`
- *  ONCE — a seeded builds wire deducts the components from inventory + bumps the
- *  output part. The build_consumed_at guard (set atomically here) makes a re-send
- *  / recut idempotent. Best-effort: a failure never blocks the send. */
+ *  ONCE — a seeded builds wire deducts the components from inventory. The output
+ *  part is NOT credited here: parts count as made when the plate is judged good
+ *  (recordJobOutcome), so a print that fails never adds stock (#4050). The
+ *  build_consumed_at guard (set atomically here) makes a re-send / recut
+ *  idempotent. Best-effort: a failure never blocks the send. */
 async function commitBuildIfLinked(
   db: Kysely<DigifabDB>,
   orgId: string,
@@ -608,7 +622,7 @@ async function commitBuildIfLinked(
   }
   const res = await db
     .updateTable("digifab_jobs")
-    .set({ build_consumed_at: new Date() })
+    .set({ build_consumed_at: new Date(), build_output_deferred: true })
     .where("id", "=", jobId)
     .where("build_consumed_at", "is", null)
     .executeTakeFirst();
@@ -629,6 +643,9 @@ async function commitBuildIfLinked(
     jobId,
     buildId: job.linked_build_id,
     qty: job.build_qty != null ? Number(job.build_qty) : 1,
+    // builds:build-one consumes the components and leaves the output for
+    // digifab.job.build_output, fired by the good verdict.
+    outputOnGood: true,
   });
 }
 
@@ -647,7 +664,7 @@ export async function reverseBuildIfCommitted(
 ): Promise<boolean> {
   const job = await db
     .selectFrom("digifab_jobs")
-    .select(["linked_build_id", "build_qty", "build_consumed_at", "build_reversed_at"])
+    .select(["linked_build_id", "build_qty", "build_consumed_at", "build_reversed_at", "build_output_deferred", "build_output_at"])
     .where("id", "=", jobId)
     .executeTakeFirst();
   if (!job?.linked_build_id || !job.build_consumed_at || job.build_reversed_at) return false;
@@ -667,16 +684,132 @@ export async function reverseBuildIfCommitted(
     buildId: job.linked_build_id,
     qty: job.build_qty != null ? Number(job.build_qty) : 1,
     reason,
+    // Take back an output credit only when one was given: at send on a job
+    // committed before #4050, or by a good verdict. A deferred output that was
+    // never credited has nothing to take back.
+    outputCredited: !job.build_output_deferred || !!job.build_output_at,
   });
   return true;
 }
 
+export type JobOutcome = "good" | "scrap";
+export type JobOutcomeSource = "bed-clear" | "print-failed" | "auto";
+export type JobOutcomeRecorded = { recorded: true; outcome: JobOutcome; goodQty: number; scrapQty: number } | { recorded: false };
+
+/**
+ * THE ONE PLACE A JOB'S OUTCOME IS WRITTEN: how many came off the plate good
+ * and how many were scrap. Parts count as made here and nowhere else (#4050):
+ * a good count credits the build's output (digifab.job.build_output → the
+ * seeded builds:credit-output wire); a whole-plate scrap reverses the build;
+ * a partial scrap leaves the components consumed, because they were used and
+ * lost. Written once (outcome_at null→now), so a second verdict never counts
+ * twice. Emits digifab.job.outcome for every judged job, build or not, which
+ * is what a work order's yield reads.
+ *
+ * `counts` are in builds (the job's build_qty unit). Without them the verdict
+ * covers the whole plate.
+ */
+export async function recordJobOutcome(
+  db: Kysely<DigifabDB>,
+  orgId: string,
+  jobId: string,
+  outcome: JobOutcome,
+  source: JobOutcomeSource,
+  counts?: { good: number; scrap: number },
+): Promise<JobOutcomeRecorded> {
+  const job = await db
+    .selectFrom("digifab_jobs")
+    .select(["id", "run_id", "linked_build_id", "build_qty", "build_consumed_at", "build_reversed_at", "build_output_deferred", "outcome_at"])
+    .where("id", "=", jobId)
+    .executeTakeFirst();
+  if (!job || job.outcome_at) return { recorded: false };
+  const whole = Math.max(1, Number(job.build_qty ?? 1) || 1);
+  const clean = (n: number) => Math.max(0, Math.floor(Number(n) || 0));
+  const good = counts ? clean(counts.good) : outcome === "good" ? whole : 0;
+  const scrap = counts ? clean(counts.scrap) : outcome === "good" ? 0 : whole;
+  const settled: JobOutcome = good > 0 ? "good" : "scrap";
+
+  const claim = await db
+    .updateTable("digifab_jobs")
+    .set({
+      outcome: settled,
+      outcome_good_qty: good,
+      outcome_scrap_qty: scrap,
+      outcome_at: new Date(),
+      outcome_source: source,
+      updated_at: new Date(),
+    })
+    .where("id", "=", jobId)
+    .where("outcome_at", "is", null)
+    .executeTakeFirst();
+  if (Number(claim.numUpdatedRows ?? 0n) === 0) return { recorded: false };
+
+  const committed = !!job.linked_build_id && !!job.build_consumed_at && !job.build_reversed_at;
+  if (committed && job.build_output_deferred && good > 0) {
+    const credit = await db
+      .updateTable("digifab_jobs")
+      .set({ build_output_at: new Date() })
+      .where("id", "=", jobId)
+      .where("build_output_at", "is", null)
+      .executeTakeFirst();
+    // Awaited: whoever gave the verdict re-reads stock the moment it answers.
+    if (Number(credit.numUpdatedRows ?? 0n) > 0) {
+      await platform().events.emit("digifab.job.build_output", {
+        orgId,
+        jobId,
+        buildId: job.linked_build_id,
+        qty: good,
+      });
+    }
+  }
+  if (committed && good === 0) {
+    await reverseBuildIfCommitted(db, orgId, jobId, source === "print-failed" ? "print failed" : "print scrapped");
+  }
+
+  await platform().events.emit("digifab.job.outcome", {
+    orgId,
+    jobId,
+    runId: job.run_id,
+    buildId: job.linked_build_id,
+    outcome: settled,
+    goodQty: good,
+    scrapQty: scrap,
+    source,
+  });
+  return { recorded: true, outcome: settled, goodQty: good, scrapQty: scrap };
+}
+
 export type SendJobResult =
   | { ok: true; status: string; remoteJobId: string | null; placement: SubmitResult; uploadedBytes: number; shouldPoll: boolean }
-  | { ok: false; code: "not_found" | "already_sent" | "already_terminal" | "no_connection" | "unknown_device" | "file_missing" }
+  | { ok: false; code: "not_found" | "already_sent" | "already_sending" | "already_terminal" | "no_connection" | "unknown_device" | "file_missing" }
   /** The manager refused or could not be reached: the job is failed with this
    *  sentence on it, and the sentence is what the person sees. */
   | { ok: false; code: "send_failed"; message: string };
+
+/** Claim a job for ONE send, in a single conditional UPDATE: the job still
+ *  unsent, in one of `statuses`, and not already claimed. Two sends of one job
+ *  at once (a double tap, a retry, an assistant and a person, two tabs) both
+ *  pass a read-then-check; only one wins this. Returns the claim's token, or
+ *  null when another send holds the job. Only the winner talks to the printer. */
+export async function claimSend(db: Kysely<DigifabDB>, jobId: string, statuses: readonly string[]): Promise<string | null> {
+  const token = randomUUID();
+  const r = await db
+    .updateTable("digifab_jobs")
+    .set({ send_token: token, send_claimed_at: new Date() })
+    .where("id", "=", jobId)
+    .where("remote_job_id", "is", null)
+    .where("status", "in", [...statuses])
+    .where("send_token", "is", null)
+    .executeTakeFirst();
+  return Number(r.numUpdatedRows ?? 0n) > 0 ? token : null;
+}
+
+/** Give a claim back when the send stops before the printer was asked anything. */
+async function releaseSend(db: Kysely<DigifabDB>, jobId: string, token: string): Promise<void> {
+  await db.updateTable("digifab_jobs").set({ send_token: null, send_claimed_at: null }).where("id", "=", jobId).where("send_token", "=", token).execute();
+}
+
+const SENDABLE = ["queued", "assigning", "sent", "awaiting-assignment", "printing", "paused"] as const;
 
 /** Upload + place a job on its connection's farm. Pure (no express, no poll
  *  enqueue) so the send ROUTE and the assignment WORKER share it — the caller
@@ -697,7 +830,24 @@ export async function sendJob(
   if (TERMINAL.has(job.status)) return { ok: false, code: "already_terminal" };
   if (!job.connection_id) return { ok: false, code: "no_connection" };
 
-  const driver = await buildDriverById(db, orgId, job.connection_id);
+  // From here on this send owns the job, or it stops: nothing below this line
+  // runs twice for one job at the same time.
+  const token = await claimSend(db, jobId, SENDABLE);
+  if (!token) return { ok: false, code: "already_sending" };
+  const r = await sendClaimed(db, orgId, jobId, job, token);
+  if (!r.ok) await releaseSend(db, jobId, token);
+  return r;
+}
+
+async function sendClaimed(
+  db: Kysely<DigifabDB>,
+  orgId: string,
+  jobId: string,
+  job: Selectable<DigifabDB["digifab_jobs"]>,
+  token: string,
+): Promise<SendJobResult> {
+  const connectionId = job.connection_id!;
+  const driver = await buildDriverById(db, orgId, connectionId);
   if (!driver) return { ok: false, code: "no_connection" };
 
   // A job linked to a machine (and not otherwise targeted) routes to that
@@ -707,7 +857,7 @@ export async function sendJob(
     const link = await db
       .selectFrom("digifab_device_links")
       .select(["remote_device_id"])
-      .where("connection_id", "=", job.connection_id)
+      .where("connection_id", "=", connectionId)
       .where("machine_id", "=", job.linked_machine_id)
       .executeTakeFirst();
     if (link) deviceId = link.remote_device_id;
@@ -774,7 +924,7 @@ export async function sendJob(
   // (cloud `driver` is still used above for listDevices/validation).
   let sendDriver = driver;
   if (deviceId) {
-    const lan = await bambuLanDriverFor(orgId, job.connection_id, deviceId);
+    const lan = await bambuLanDriverFor(orgId, connectionId, deviceId);
     if (lan) sendDriver = lan;
   }
 
@@ -788,9 +938,9 @@ export async function sendJob(
   try {
     up = await sendDriver.uploadFile(fileBytes, uploadName);
     doing = "starting the print";
-    sub = await sendDriver.submitJob({ fileId: up.fileId, deviceId, tag: job.target_tag });
+    sub = await sendDriver.submitJob({ fileId: up.fileId, deviceId, tag: job.target_tag, idempotencyKey: token });
   } catch (e) {
-    const message = plainDriverError(e, await managerName(orgId, job.connection_id), doing).slice(0, 300);
+    const message = plainDriverError(e, await managerName(orgId, connectionId), doing).slice(0, 300);
     await markJobTerminal(db, job, "failed", { error: message });
     return { ok: false, code: "send_failed", message };
   }
@@ -810,6 +960,8 @@ export async function sendJob(
       status,
       sent_at: new Date(),
       cancel_requested_at: null,
+      send_token: null,
+      send_claimed_at: null,
       // A note from before the send (a stopped send, a retry waiting on the
       // bed) no longer describes the job once it is on a printer.
       error: untrackable ? "the manager accepted the job but returned no job id. Cobblr can't track it to completion" : null,
@@ -838,7 +990,7 @@ export async function sendJob(
 
 export type AssignJobResult =
   | { ok: true; status: string; remoteJobId: string | null; placement: SubmitResult; shouldPoll: boolean }
-  | { ok: false; code: "not_found" | "not_awaiting" | "no_connection" | "no_file" | "unknown_device" };
+  | { ok: false; code: "not_found" | "not_awaiting" | "no_connection" | "no_file" | "unknown_device" | "already_sending" };
 
 /** F-14 — re-pick a printer for a job stuck in `awaiting-assignment` (its target
  *  matched 0 or many printers). The file is ALREADY on the farm (remote_file_id),
@@ -871,7 +1023,17 @@ export async function assignJob(
     return { ok: false, code: "unknown_device" };
   }
 
-  const sub = await driver.submitJob({ fileId: job.remote_file_id, deviceId });
+  // The same one-send claim as sendJob: two re-picks of one job at once would
+  // otherwise both submit it.
+  const token = await claimSend(db, jobId, ["awaiting-assignment"]);
+  if (!token) return { ok: false, code: "already_sending" };
+  let sub: SubmitResult;
+  try {
+    sub = await driver.submitJob({ fileId: job.remote_file_id, deviceId, idempotencyKey: token });
+  } catch (e) {
+    await releaseSend(db, jobId, token);
+    throw e;
+  }
   const status = sub.queued ? "sent" : "awaiting-assignment";
   const remoteJobId = sub.jobId ? String(sub.jobId) : null; // ""/undefined → null (see sendJob)
   await db
@@ -881,6 +1043,8 @@ export async function assignJob(
       target_device: sub.deviceId ?? deviceId,
       target_tag: null, // a specific printer was chosen — drop the ambiguous tag
       status,
+      send_token: null,
+      send_claimed_at: null,
       sent_at: new Date(),
       error: sub.queued && !remoteJobId ? "the manager accepted the job but returned no job id. Cobblr can't track it to completion" : null,
       poll_errors: 0,

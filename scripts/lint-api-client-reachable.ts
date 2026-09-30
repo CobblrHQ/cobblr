@@ -15,42 +15,24 @@
 // never grow it.
 //
 //   npx tsx scripts/lint-api-client-reachable.ts
-import { readFileSync, readdirSync, statSync } from "node:fs";
-import { join } from "node:path";
-
-const API = "web/src/lib/api.ts";
-const ROOTS = ["web/src", "packages/platform-web/src", "modules"];
+import { API_CLIENT as API, apiClientMethods, callerCorpus, isCalled } from "./lib/api-client-methods.ts";
 
 /** Unreachable on 2026-09-08. Each is a surface still owed or a method to
  *  delete; either way, wiring one REMOVES it from here. */
 const BASELINE = new Set([
   "listMySignupInvites", "revokeMySignupInvite", "pairStart", "verifyEmail", "orgLocal",
-  "addOrderItem", "markConversationRead", "placementContainerOf",
+  "markConversationRead", "placementContainerOf",
   "uninstallRenderer", "authoringContext",
   "markNotificationRead", "markAllNotificationsRead", "mintAppToken",
   "setDigifabDevicePosition", "patchDigifabChannel", "renameDigifabLibrary", "deleteInstance",
   "updateNavHeading", "updateSyncConnection", "putawayConfirm", "setupPutawayBins",
   "putawayUndo", "getPutawayCurrent", "backfillScanCatalogPhotos", "matchScanItem",
-  "peekAnswer", "invokeAi", "aiChat", "aiChatWrites", "updateCatalog", "instantiateTemplate",
+  "peekAnswer", "invokeAi", "aiChat", "aiChatWrites", "instantiateTemplate",
 ]);
 
-function* walk(dir: string): Generator<string> {
-  for (const name of readdirSync(dir)) {
-    if (name === "node_modules" || name === "dist" || name.startsWith(".")) continue;
-    const p = join(dir, name);
-    if (statSync(p).isDirectory()) yield* walk(p);
-    else if (/\.(ts|tsx|mjs)$/.test(name) && !/\.test\.tsx?$/.test(name)) yield p;
-  }
-}
-
-const apiSrc = readFileSync(API, "utf8");
-const methods = [...apiSrc.matchAll(/^  ([a-zA-Z0-9_]+): (?:\(|async \(|<)/gm)].map((m) => m[1]!);
-
-let corpus = "";
-for (const root of ROOTS) for (const f of walk(root)) if (!f.endsWith(API)) corpus += readFileSync(f, "utf8") + "\n";
-
-const called = (name: string) =>
-  new RegExp(`\\bapi\\.${name}\\b`).test(corpus) || new RegExp(`\\b${name}\\b\\s*[,)}]`).test(corpus);
+const methods = apiClientMethods();
+const corpus = callerCorpus();
+const called = (name: string) => isCalled(name, corpus);
 
 const orphans = methods.filter((m) => !called(m) && !BASELINE.has(m));
 const healed = [...BASELINE].filter((m) => methods.includes(m) && called(m));

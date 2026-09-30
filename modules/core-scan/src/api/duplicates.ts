@@ -27,7 +27,7 @@ import { Router } from "express";
 import { z } from "zod";
 import { platform, type ResolvedEntity } from "@cobblr/platform-contract";
 import { scanTargetOfRecord, scanTargetsForOrg } from "../services/scan-target.js";
-import { bearer, tenantContext } from "../db.js";
+import { bearer, sessionUser, tenantContext } from "../db.js";
 import { INTERNAL_API } from "./inbox.js";
 import { asyncHandler, badBody, requireRole } from "./util.js";
 import { looksLikeSameThing, mergePlan } from "../services/merge-records.js";
@@ -123,7 +123,9 @@ duplicatesRouter.get(
     for (const k of kinds) {
       let items: ResolvedEntity[];
       try {
-        const r = await platform().entities.list(ctx.org.id, k.kind, { limit: SWEEP_LIMIT });
+        // As the person asking: a pair is shown with the identifier the two
+        // share, so a field hidden from them must not decide it.
+        const r = await platform().entities.list(ctx.org.id, k.kind, { limit: SWEEP_LIMIT }, { userId: sessionUser(req)?.id, role: ctx.role });
         items = r.items;
       } catch {
         // A kind whose resolver is unhappy must not take the whole sweep down.

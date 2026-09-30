@@ -227,7 +227,7 @@ function PasteRuleModal({
     try {
       parsed = JSON.parse(text);
     } catch {
-      setErr("That isn't valid JSON — check for a stray comma or quote.");
+      setErr("That isn't valid JSON. Check for a stray comma or quote.");
       return;
     }
     if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
@@ -478,7 +478,7 @@ function RuleModal({
       setD(parsed as RuleDraft);
       setJsonErr(null);
     } catch {
-      setJsonErr("Invalid JSON — the form keeps the last valid version.");
+      setJsonErr("Invalid JSON. The form keeps the last valid version.");
     }
   }
 

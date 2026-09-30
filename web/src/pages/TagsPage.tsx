@@ -6,35 +6,31 @@
 import { useState, type ReactNode } from "react";
 import { Link } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { ExternalLink, Pencil, Pin, Plus, Tag as TagIcon, Trash2 } from "lucide-react";
+import { Pencil, Pin, Plus, Tag as TagIcon, Trash2 } from "lucide-react";
 import { ApiError, api, type TagRecord } from "../lib/api";
+import { EditTagModal } from "../components/EditTagModal";
 import { useActiveOrg } from "../auth/ActiveOrgContext";
-import { DragInput, Modal, useToast, useConfirm, usePageTitle } from "@cobblr/platform-web";
-import { useDetailRoute } from "../lib/useDetailRoute";
+import { DragInput, Modal, SearchInput, useToast, useConfirm, usePageTitle } from "@cobblr/platform-web";
 
-interface TagAttachment {
-  id: string;
-  tag_id: string;
-  source_module: string;
-  source_type: string;
-  source_id: string;
-  tag_name: string;
-  tag_color: string | null;
-  created_at: string;
-}
 
+
+// A pill's buttons are 12 px icons. On a phone that was the whole tap target,
+// three of them side by side on every tag; they get a finger's room there and
+// stay compact where a pointer can aim.
+const PILL_BUTTON = "inline-flex items-center justify-center w-8 h-8 -my-1.5 sm:w-5 sm:h-5 sm:my-0 rounded-full transition";
 
 // One tag rendered as a pill — its emoji icon (or the default tag glyph), name
 // (click to see what's tagged), edit + delete.
 function TagPillRow({
   t,
-  onExplore,
   onEdit,
   onDelete,
   onTogglePin,
+  path,
 }: {
   t: TagRecord;
-  onExplore: () => void;
+  /** The tag's parents, shown when a search lifts it out of its tree. */
+  path?: string;
   onEdit: () => void;
   onDelete: () => void;
   onTogglePin: () => void;
@@ -52,14 +48,15 @@ function TagPillRow({
       ) : (
         <TagIcon size={12} style={{ color: t.color ?? undefined }} />
       )}
-      <button
-        type="button"
-        onClick={onExplore}
-        className="hover:underline focus:outline-none"
-        title={`Show what's tagged "${t.name}"`}
-      >
+      <Link to={`/tags/${t.id}`} className="hover:underline focus:outline-none" title={`Show what's tagged "${t.name}"`}>
+        {path && <span className="text-faint">{path} › </span>}
         {t.name}
-      </button>
+      </Link>
+      {/* How much it is used, so a tidy-up can start from the tags nothing
+          carries and a merge can tell which name is the one people use. */}
+      <span className="text-xs text-muted dark:text-slate-400 tabular-nums" title={`On ${t.uses ?? 0} ${(t.uses ?? 0) === 1 ? "thing" : "things"}`}>
+        {t.uses ?? 0}
+      </span>
       {/* The escape hatch for the automatic ordering. A pinned tag stays at
           the front of every chip row and never folds behind "+N", however long
           ago it was last used — so a rule that reads a workspace wrongly is
@@ -67,7 +64,7 @@ function TagPillRow({
       <button
         onClick={onTogglePin}
         className={
-          "transition " +
+          PILL_BUTTON + " " +
           (t.pinned ? "text-amber-500" : "text-faint hover:text-accent")
         }
         title={
@@ -76,13 +73,14 @@ function TagPillRow({
             : "Pin: keep this tag at the front and never fold it away"
         }
         aria-pressed={!!t.pinned}
+        aria-label={t.pinned ? `Unpin ${t.name}` : `Pin ${t.name}`}
       >
         <Pin size={12} />
       </button>
-      <button onClick={onEdit} className="text-faint hover:text-accent transition" title="Edit">
+      <button onClick={onEdit} className={`${PILL_BUTTON} text-faint hover:text-accent`} title="Edit" aria-label={`Edit ${t.name}`}>
         <Pencil size={12} />
       </button>
-      <button onClick={onDelete} className="text-faint hover:text-ember-500 transition" title="Delete">
+      <button onClick={onDelete} className={`${PILL_BUTTON} text-faint hover:text-ember-500`} title="Delete" aria-label={`Delete ${t.name}`}>
         <Trash2 size={12} />
       </button>
     </span>
@@ -91,19 +89,6 @@ function TagPillRow({
 
 // Every descendant id of a tag — excluded from its own parent options so you
 // can't create a loop (the API guards this too).
-function descendantIds(tags: TagRecord[], rootId: string): Set<string> {
-  const out = new Set<string>();
-  const walk = (pid: string) => {
-    for (const c of tags.filter((t) => t.parent_id === pid)) {
-      if (!out.has(c.id)) {
-        out.add(c.id);
-        walk(c.id);
-      }
-    }
-  };
-  walk(rootId);
-  return out;
-}
 
 export function TagsPage() {
   usePageTitle("Tags");
@@ -112,8 +97,8 @@ export function TagsPage() {
   const toast = useToast();
   const confirm = useConfirm();
   const [createOpen, setCreateOpen] = useState(false);
-  const [exploring, setExploring] = useState<TagRecord | null>(null);
   const [editing, setEditing] = useState<TagRecord | null>(null);
+  const [find, setFind] = useState("");
 
   const list = useQuery({
     queryKey: ["tags", activeSlug],
@@ -156,18 +141,29 @@ export function TagsPage() {
   const onDelete = async (t: TagRecord) => {
     const ok = await confirm({
       title: "Delete tag?",
-      message: `${t.name} — its attachments are removed (cascade); any child tags become top-level.`,
+      message: `${t.name}: its attachments are removed (cascade); any child tags become top-level.`,
       confirmLabel: "Delete",
       destructive: true,
     });
     if (ok) del.mutate(t.id);
   };
+  const byId = new Map(items.map((t) => [t.id, t]));
+  const pathOf = (t: TagRecord): string => {
+    const names: string[] = [];
+    const seen = new Set<string>();
+    for (let p = t.parent_id ? byId.get(t.parent_id) : undefined; p && !seen.has(p.id); p = p.parent_id ? byId.get(p.parent_id) : undefined) {
+      seen.add(p.id);
+      names.unshift(p.name);
+    }
+    return names.join(" › ");
+  };
+  const needle = find.trim().toLowerCase();
+  const found = needle ? items.filter((t) => t.name.toLowerCase().includes(needle)) : [];
   const renderNodes = (parentId: string | null, depth: number): ReactNode[] =>
     (byParent.get(parentId) ?? []).map((t) => (
       <div key={t.id} style={{ marginLeft: depth * 18 }} className="space-y-1.5">
         <TagPillRow
           t={t}
-          onExplore={() => setExploring(t)}
           onEdit={() => setEditing(t)}
           onDelete={() => void onDelete(t)}
           onTogglePin={() => pin.mutate(t)}
@@ -178,12 +174,15 @@ export function TagsPage() {
 
   return (
     <div className="space-y-4">
-      <div className="flex items-baseline gap-3 border-b border-line dark:border-slate-700 pb-3">
+      <div className="flex flex-wrap items-baseline gap-3 border-b border-line dark:border-slate-700 pb-3">
         <h1 className="text-2xl font-semibold text-content dark:text-mortar-100">Tags</h1>
         <span className="text-sm text-muted dark:text-slate-400">
-          {items.length} {items.length === 1 ? "tag" : "tags"}
+          {needle ? `${found.length} of ${items.length}` : items.length} {items.length === 1 ? "tag" : "tags"}
         </span>
         <div className="flex-1" />
+        {items.length > 0 && (
+          <SearchInput value={find} onChange={setFind} placeholder="find a tag…" aria-label="Find a tag" wrapperClassName="w-44 max-sm:w-full max-sm:order-last" />
+        )}
         <button
           onClick={() => setCreateOpen(true)}
           className="inline-flex items-center gap-2 rounded bg-cobble-600 hover:bg-cobble-700 text-white px-3 py-1.5 text-sm transition"
@@ -200,14 +199,20 @@ export function TagsPage() {
         </div>
       )}
 
-      <div className="space-y-1.5">{renderNodes(null, 0)}</div>
-
-      {exploring && (
-        <TagAttachmentsModal
-          slug={activeSlug}
-          tag={exploring}
-          onClose={() => setExploring(null)}
-        />
+      {needle ? (
+        found.length ? (
+          <div className="space-y-1.5">
+            {found.map((t) => (
+              <div key={t.id}>
+                <TagPillRow t={t} path={pathOf(t) || undefined} onEdit={() => setEditing(t)} onDelete={() => void onDelete(t)} onTogglePin={() => pin.mutate(t)} />
+              </div>
+            ))}
+          </div>
+        ) : (
+          <div className="text-sm text-muted dark:text-slate-400 italic">No tag is called anything like "{find.trim()}".</div>
+        )
+      ) : (
+        <div className="space-y-1.5">{renderNodes(null, 0)}</div>
       )}
 
       {createOpen && (
@@ -236,259 +241,7 @@ export function TagsPage() {
   );
 }
 
-function EditTagModal({
-  slug,
-  tag,
-  onClose,
-  onSaved,
-}: {
-  slug: string;
-  tag: TagRecord;
-  onClose: () => void;
-  onSaved: () => void;
-}) {
-  const [name, setName] = useState(tag.name);
-  const [color, setColor] = useState(tag.color ?? "#888888");
-  const [icon, setIcon] = useState(tag.icon ?? "");
-  const [parentId, setParentId] = useState(tag.parent_id ?? "");
-  const [mergeInto, setMergeInto] = useState("");
-  const toast = useToast();
-  const confirm = useConfirm();
-  const save = useMutation({
-    mutationFn: () =>
-      api.updateTag(slug, tag.id, {
-        name: name.trim(),
-        color,
-        icon: icon.trim() || null,
-        parent_id: parentId || null,
-      }),
-    onSuccess: () => {
-      toast.success("Tag updated - change applies everywhere it's attached");
-      onSaved();
-    },
-    onError: (e: unknown) =>
-      toast.error(e instanceof ApiError ? e.message : "Couldn't save"),
-  });
-  // Other tags this one can be merged into.
-  const allTags = useQuery({ queryKey: ["tags", slug], queryFn: () => api.listTags(slug) });
-  const allItems = allTags.data?.items ?? [];
-  const otherTags = allItems.filter((t) => t.id !== tag.id);
-  // Valid parents = anything that isn't this tag or one of its descendants
-  // (else you'd create a loop; the API guards this too).
-  const noParent = descendantIds(allItems, tag.id);
-  const parentOptions = otherTags.filter((t) => !noParent.has(t.id));
-  const merge = useMutation({
-    mutationFn: (into: string) => api.mergeTag(slug, tag.id, into),
-    onSuccess: (r) => {
-      const n = r.moved_assignments;
-      toast.success(`Merged into "${r.merged_into.name}" — moved ${n} attachment${n === 1 ? "" : "s"}`);
-      onSaved();
-    },
-    onError: (e: unknown) =>
-      toast.error(e instanceof ApiError ? e.message : "Couldn't merge"),
-  });
 
-  return (
-    <Modal open onClose={onClose} title={`Edit — ${tag.name}`}>
-      <form
-        onSubmit={(e) => {
-          e.preventDefault();
-          if (name.trim()) save.mutate();
-        }}
-        className="space-y-3"
-      >
-        <label className="block">
-          <div className="text-xs text-muted mb-1">Name</div>
-          <input
-            type="text"
-            value={name}
-            onChange={(e) => setName(e.target.value)}
-            className="w-full px-2 py-1 text-sm border border-line dark:border-slate-600 rounded bg-surface dark:bg-slate-900"
-            autoFocus
-          />
-        </label>
-        <label className="flex items-center gap-3 text-sm">
-          <span className="text-xs text-muted">Color</span>
-          <DragInput
-            control="color"
-            value={color}
-            onPreview={setColor}
-            onCommit={setColor}
-            className="h-8 w-12 border border-line dark:border-slate-600 rounded"
-          />
-          <span className="font-mono text-xs">{color}</span>
-        </label>
-        <label className="flex items-center gap-3 text-sm">
-          <span className="text-xs text-muted">Icon</span>
-          <input
-            type="text"
-            value={icon}
-            onChange={(e) => setIcon(e.target.value)}
-            placeholder="🏷️"
-            maxLength={8}
-            className="w-14 px-2 py-1 text-sm text-center border border-line dark:border-slate-600 rounded bg-surface dark:bg-slate-900"
-          />
-          <span className="text-[11px] text-faint">an emoji</span>
-        </label>
-        <label className="block">
-          <div className="text-xs text-muted mb-1">Parent tag (optional - for grouping)</div>
-          <select
-            value={parentId}
-            onChange={(e) => setParentId(e.target.value)}
-            className="w-full px-2 py-1 text-sm border border-line dark:border-slate-600 rounded bg-surface dark:bg-slate-900"
-          >
-            <option value=""> - none (top-level) - </option>
-            {parentOptions.map((t) => (
-              <option key={t.id} value={t.id}>{t.icon ? `${t.icon} ` : ""}{t.name}</option>
-            ))}
-          </select>
-        </label>
-        <p className="text-[11px] text-faint">
-          Renaming updates the tag everywhere it's attached - it's the same tag,
-          not a copy.
-        </p>
-        {otherTags.length > 0 && (
-          <div className="border-t border-line dark:border-slate-700 pt-3">
-            <div className="text-xs text-muted mb-1">Merge into another tag</div>
-            <div className="flex items-center gap-2">
-              <select
-                value={mergeInto}
-                onChange={(e) => setMergeInto(e.target.value)}
-                className="flex-1 px-2 py-1 text-sm border border-line dark:border-slate-600 rounded bg-surface dark:bg-slate-900"
-              >
-                <option value=""> - choose a tag - </option>
-                {otherTags.map((t) => (
-                  <option key={t.id} value={t.id}>{t.name}</option>
-                ))}
-              </select>
-              <button
-                type="button"
-                disabled={!mergeInto || merge.isPending}
-                onClick={() => {
-                  const target = otherTags.find((t) => t.id === mergeInto);
-                  void confirm({
-                    title: "Merge tag",
-                    message: `Move every attachment from "${tag.name}" to "${target?.name}", then delete "${tag.name}". This can't be undone.`,
-                    confirmLabel: "Merge",
-                  }).then((ok) => {
-                    if (ok) merge.mutate(mergeInto);
-                  });
-                }}
-                className="px-3 py-1.5 text-sm rounded border border-line dark:border-slate-600 text-content hover:bg-subtle dark:hover:bg-slate-800 disabled:opacity-50"
-              >
-                Merge
-              </button>
-            </div>
-          </div>
-        )}
-        <div className="flex justify-end gap-2 pt-2">
-          <button
-            type="button"
-            onClick={onClose}
-            className="px-3 py-1.5 text-sm rounded text-content hover:bg-subtle dark:hover:bg-slate-800"
-          >
-            Cancel
-          </button>
-          <button
-            type="submit"
-            disabled={!name.trim() || save.isPending}
-            className="px-3 py-1.5 text-sm rounded bg-cobble-600 hover:bg-cobble-700 disabled:opacity-50 text-white"
-          >
-            Save
-          </button>
-        </div>
-      </form>
-    </Modal>
-  );
-}
-
-function TagAttachmentsModal({
-  slug,
-  tag,
-  onClose,
-}: {
-  slug: string;
-  tag: TagRecord;
-  onClose: () => void;
-}) {
-  const routeFor = useDetailRoute(slug);
-  const list = useQuery({
-    queryKey: ["tag-attachments", slug, tag.id],
-    queryFn: async () => {
-      const token = localStorage.getItem("cobblr.token") ?? "";
-      const res = await fetch(
-        `/api/v1/orgs/${slug}/modules/core-tags/attachments?tag_id=${encodeURIComponent(tag.id)}`,
-        { headers: { Authorization: `Bearer ${token}` } },
-      );
-      if (!res.ok) throw new Error(`HTTP ${res.status}`);
-      return (await res.json()) as { items: TagAttachment[] };
-    },
-  });
-
-  const items = list.data?.items ?? [];
-
-  return (
-    <Modal open onClose={onClose} title={`Tagged "${tag.name}"`} size="md">
-      {list.isLoading && (
-        <div className="text-sm text-muted">Loading…</div>
-      )}
-      {!list.isLoading && items.length === 0 && (
-        <div className="text-sm text-muted italic py-4 text-center">
-          Nothing's tagged with this yet. Attach the tag from any
-          entity's detail page.
-        </div>
-      )}
-      {items.length > 0 && (
-        <ul className="space-y-1.5">
-          {items.map((a) => {
-            // A tag's attachment row names the kind, not the collection; the
-            // one rule (recordHref) sends a base kind of a module with
-            // collections through the open door, which asks.
-            const route = routeFor(`${a.source_module}:${a.source_type}`, a.source_id);
-            const label = `${a.source_module}:${a.source_type}`;
-            return (
-              <li
-                key={a.id}
-                className="flex items-center justify-between gap-2 border border-line dark:border-slate-700 rounded-md px-3 py-2 text-sm"
-              >
-                <div className="min-w-0">
-                  <div className="font-mono text-[11px] text-faint dark:text-slate-500">
-                    {label}
-                  </div>
-                  <div className="text-[10px] font-mono text-faint dark:text-slate-500 truncate">
-                    {a.source_id}
-                  </div>
-                </div>
-                {route ? (
-                  <Link
-                    to={route}
-                    onClick={onClose}
-                    className="text-accent hover:text-accent inline-flex items-center gap-1 text-xs"
-                  >
-                    open <ExternalLink size={11} />
-                  </Link>
-                ) : (
-                  <span className="text-[10px] text-faint italic">
-                    no detail route
-                  </span>
-                )}
-              </li>
-            );
-          })}
-        </ul>
-      )}
-      <div className="flex justify-end pt-3">
-        <button
-          type="button"
-          onClick={onClose}
-          className="px-3 py-1.5 text-sm rounded text-content hover:bg-subtle dark:hover:bg-slate-800"
-        >
-          Close
-        </button>
-      </div>
-    </Modal>
-  );
-}
 
 function CreateTagModal({
   slug,

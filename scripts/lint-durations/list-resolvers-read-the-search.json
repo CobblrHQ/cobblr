@@ -1,0 +1,10 @@
+{
+  "lint": "lint:list-resolvers-read-the-search",
+  "run": "node scripts/lint-list-resolvers-read-the-search.ts",
+  "rows": [
+    "new-module"
+  ],
+  "ms": 774,
+  "recorded": "2026-09-30",
+  "source": "scaffolded by new-lint.sh at twice a local run (a shared box); replaced from its first CI measurement"
+}

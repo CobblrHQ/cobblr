@@ -8,6 +8,7 @@ import { detailPathForEntity, titleForEntity } from "../platform/entities.js";
 import { Router, type Request } from "express";
 import { z } from "zod";
 import { BindingAsk, BindingLabel, bindingAskOf } from "@cobblr/platform-contract/binding-ask";
+import { csvDownloadHeaders } from "@cobblr/platform-contract/csv";
 import { parseWireFilter } from "../platform/wire-filter.js";
 import { sql } from "kysely";
 import { platform, isActionRefusal, crashSentence } from "@cobblr/platform-contract";
@@ -17,6 +18,7 @@ import { requireCapability, requireRole } from "../auth/capability.js";
 import { withTenant } from "../middleware/tenant.js";
 import { meta } from "../db/meta.js";
 import { labelVia } from "./label-via.js";
+import { actionRefusal, actionSafety } from "../platform/ai-action-door.js";
 import { getTenantDb } from "../db/tenant.js";
 import { listEntries } from "../modules/registry.js";
 import * as activity from "../platform/activity.js";
@@ -51,6 +53,7 @@ import { upsertNativeFieldOverride } from "../platform/native-field-overrides.js
 import { getScannableForModule } from "../platform/scan-registry.js";
 import { FIELD_PRESETS, presetState } from "../platform/field-presets.js";
 import { presetFieldStates, turnPresetOff, turnPresetOn } from "../platform/field-preset-switch.js";
+import { listPeople } from "../platform/people.js";
 
 export const platformOrgRouter = Router({ mergeParams: true });
 
@@ -150,6 +153,49 @@ platformOrgRouter.get(
         return;
       }
       res.json({ items });
+    } catch (err) {
+      next(err);
+    }
+  },
+);
+
+// Any collection as a spreadsheet, read as the viewer: fields their role may
+// not read are neither a column nor a value. Registered before /:kind/:id,
+// which would otherwise take "export.csv" for a record id.
+// AI-REACH: exempt (a file download for a person; the assistant reads the same rows through the entity list)
+platformOrgRouter.get(
+  "/:slug/entities/:kind/export.csv",
+  requireAuth,
+  withTenant,
+  async (req, res, next) => {
+    try {
+      const { kind } = req.params;
+      if (!kind) {
+        res.status(400).json({ error: { code: "missing_params", message: "kind required" } });
+        return;
+      }
+      const filter: Record<string, unknown> = {};
+      const raw = req.query.filter;
+      if (raw && typeof raw === "object" && !Array.isArray(raw)) {
+        for (const [k, v] of Object.entries(raw as Record<string, unknown>)) {
+          if (typeof v === "string") filter[k] = v;
+        }
+      }
+      const out = await platform().entities.exportCsv(
+        req.tenant!.org.id,
+        kind,
+        {
+          q: typeof req.query.q === "string" && req.query.q ? req.query.q : undefined,
+          filter: Object.keys(filter).length ? filter : undefined,
+          ...(req.query.include_retired === "1" || req.query.include_retired === "true" ? { include_retired: true } : {}),
+        },
+        { userId: req.session?.id, role: req.tenant!.role },
+      );
+      if (!out) {
+        res.status(404).json({ error: { code: "unknown_kind", message: "There is no collection of that kind here." } });
+        return;
+      }
+      res.set(csvDownloadHeaders(out.filename, out.complete)).send(out.csv);
     } catch (err) {
       next(err);
     }
@@ -318,6 +364,7 @@ platformOrgRouter.get(
 // a query string. Each hop's shape matches walkPairings's spec.
 // AI-REACH: a read. POST only because a list of hops does not fit a query
 // string; it writes nothing, and the assistant reads pairings with its own tools.
+// UI-REACH: a read sent as POST because its hops do not fit a query string
 platformOrgRouter.post(
   "/:slug/entities/:kind/:id/walk-path",
   requireAuth,
@@ -484,16 +531,22 @@ async function argChoicesFor(orgId: string, kind: string, schemas: readonly unkn
   type Spec = { choicesFrom?: string } & Record<string, unknown>;
   const specsOf = (schema: unknown): [string, Spec][] =>
     schema && typeof schema === "object" ? Object.entries(schema as Record<string, Spec>) : [];
-  const wanted = schemas.some((schema) => specsOf(schema).some(([, spec]) => spec?.choicesFrom === "counters"));
+  const wants = (from: string) => schemas.some((schema) => specsOf(schema).some(([, spec]) => spec?.choicesFrom === from));
   let counters: { value: string; label: string }[] = [];
-  if (wanted) {
-    const w = await platform().entities.getWriter(orgId, kind).catch(() => null);
-    counters = (w?.counters?.defs ?? []).map((d) => ({ value: d.key, label: d.label }));
+  if (wants("counters")) {
+    counters = (await platform().entities.countersFor(orgId, kind).catch(() => [])).map((d) => ({ value: d.key, label: d.label }));
   }
+  // The workspace's People (members and anyone listed by name): what a
+  // "who" argument picks from, so "lend it to" is a list of names, never an id.
+  let people: { value: string; label: string }[] = [];
+  if (wants("people")) {
+    people = (await listPeople(orgId).catch(() => [])).map((p) => ({ value: p.id, label: p.name }));
+  }
+  const choicesOf = (from: unknown) => (from === "counters" ? counters : from === "people" ? people : null);
   return (schema) => {
     const entries = specsOf(schema);
     if (!entries.some(([, spec]) => spec?.choicesFrom)) return schema;
-    return Object.fromEntries(entries.map(([name, spec]) => [name, spec?.choicesFrom === "counters" ? { ...spec, choices: counters } : spec]));
+    return Object.fromEntries(entries.map(([name, spec]) => [name, choicesOf(spec?.choicesFrom) ? { ...spec, choices: choicesOf(spec?.choicesFrom) } : spec]));
   };
 }
 
@@ -660,6 +713,18 @@ platformOrgRouter.post(
           },
         });
         return;
+      }
+
+      // An assistant with no way to show a person a confirmation (any MCP
+      // door, or the in-app chat's relay) never runs an action that needs
+      // one. Asked here because every door arrives here; asking only in the
+      // relay's tool call left the others running it unasked.
+      if (req.session?.ai_door) {
+        const refused = actionRefusal(await actionSafety(parsed.data.actionId));
+        if (refused) {
+          res.status(403).json({ error: { code: "needs_a_person", message: refused } });
+          return;
+        }
       }
 
       // Authorize: owner/admin pass; members/guests need an explicit
@@ -942,6 +1007,22 @@ const BindingCreate = z
     }
   });
 
+/** Every event some module declares it emits (manifest `exposes.events`,
+ *  held to having an emitter by lint:manifest-advertises-what-it-has). A wire
+ *  on anything else never runs. */
+function declaredWireEvents(): Set<string> {
+  const out = new Set<string>();
+  for (const entry of listEntries()) for (const ev of entry.manifest.exposes?.events ?? []) out.add(ev);
+  return out;
+}
+
+/** Why a wire on this event would never run, or null when something sends it. */
+function silentEventRefusal(triggerType: string | null | undefined, event: string | null | undefined): string | null {
+  if (triggerType !== "event" || !event) return null;
+  if (declaredWireEvents().has(event)) return null;
+  return `Nothing sends "${event}", so a wire on it would never run. Pick an event from the list.`;
+}
+
 // The events an event-triggered wire can fire on — the union of every
 // ENABLED module's manifest-declared `exposes.events`. Powers the wire
 // composer's trigger-event typeahead so a user picks from real events
@@ -985,7 +1066,10 @@ platformOrgRouter.get(
         .where("org_id", "=", req.tenant!.org.id)
         .orderBy("created_at", "desc")
         .execute();
-      res.json({ items: rows });
+      // A wire made before its event stopped being sent (or on a name nothing
+      // ever sent) never runs; the list says so rather than showing it as live.
+      const declared = declaredWireEvents();
+      res.json({ items: rows.map((r) => ({ ...r, trigger_silent: r.trigger_type === "event" && !!r.trigger_event && !declared.has(r.trigger_event) })) });
     } catch (err) {
       next(err);
     }
@@ -1006,6 +1090,11 @@ platformOrgRouter.post(
         res.status(400).json({
           error: { code: "invalid_body", message: "Bad binding payload", details: parsed.error.issues },
         });
+        return;
+      }
+      const silent = silentEventRefusal(parsed.data.trigger_type, parsed.data.trigger_event);
+      if (silent) {
+        res.status(400).json({ error: { code: "unknown_event", message: silent } });
         return;
       }
       if (parsed.data.filter != null) {
@@ -1096,6 +1185,13 @@ platformOrgRouter.patch(
           error: { code: "invalid_body", message: "Bad patch", details: parsed.error.issues },
         });
         return;
+      }
+      if (parsed.data.trigger_event) {
+        const silent = silentEventRefusal("event", parsed.data.trigger_event);
+        if (silent) {
+          res.status(400).json({ error: { code: "unknown_event", message: silent } });
+          return;
+        }
       }
       if (parsed.data.filter != null) {
         const { error: ferr } = parseWireFilter(parsed.data.filter);
@@ -2012,6 +2108,7 @@ platformOrgRouter.get(
             // Whether a mistaken run can be put right here. A caller that
             // cannot show a confirmation reads this to know what it may run.
             undoable: a.undoable === true,
+            effect: a.effect ?? null,
             internal: a.internal === true,
             // The BUTTON flag: false means no button on the record's page,
             // and says nothing about the assistant (placing, tagging and

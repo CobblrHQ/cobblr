@@ -15,6 +15,7 @@ import type { ActionUndoStep } from "@cobblr/platform-contract/action-undo";
 import { statedQuantity } from "@cobblr/platform-contract/stated-quantity";
 import type { InventoryDB } from "../db.js";
 import { recordConsumption } from "./stock-ledger.js";
+import { stockMoved } from "./stock-moved.js";
 import { reserveAllocation, settleAllocation } from "./allocations.js";
 import {
   estimateShelfLife,
@@ -164,50 +165,20 @@ export async function applyStockDelta(
     .executeTakeFirst();
   if (!updated) return { ok: false, error: "part_not_found" };
 
-  // Consumption ledger (append-only): WHAT drew the part down and HOW MUCH —
-  // also the raw data the burn-rate predictor reads. Through the ONE shared
-  // writer (stock-ledger.ts) so every qty path leaves the same statement line.
-  // Best-effort here; a ledger hiccup must never fail a standalone stock change.
-  try {
-    await recordConsumption(db, {
-      partId,
-      delta: applied,
-      reason: reason ?? null,
-      sourceKind: p.sourceKind ?? null,
-      sourceId: p.sourceId ?? null,
-      kind: p.correction ? "correction" : null,
-    });
-  } catch (e) {
-    console.error("[inventory.applyStockDelta] ledger write failed:", (e as Error).message);
-  }
-
-  await platform().events.emit("inventory.stock.changed", {
-    orgId,
-    partId: updated.id,
-    delta: applied,
-    newQty: Number(updated.qty),
-    reason,
-  });
-
-  // Low-stock signal on a DECREASE landing at/below min_qty (only decreases, so
-  // a restock doesn't re-alert). This is what trips "running low → shopping
-  // list", so a one-tap "use one" that crosses the threshold reorders for free.
+  // The statement line (WHAT drew it down, HOW MUCH: also what the burn-rate
+  // predictor reads), stock.changed, and low stock on a decrease, the one
+  // sequence every count change runs (stock-moved.ts). A one-tap "use one"
+  // that crosses the minimum reorders for free.
   const newQty = Number(updated.qty);
   const minQty = updated.min_qty == null ? null : Number(updated.min_qty);
-  // On what is on hand, open units included (on-hand.ts).
-  const onHand = onHandCount(newQty, (await openUnitsFor(db, [updated.id])).get(updated.id) ?? []);
-  if (applied < 0 && minQty != null && minQty > 0 && isLowStock({ onHand, minQty })) {
-    await platform().events.emit("inventory.stock.low", { orgId, partId: updated.id, newQty, minQty });
-  }
-  // Taken off an open unit: its model may now be down to its minimum with no
-  // write of its own to notice (on-hand.ts).
-  if (applied < 0) {
-    const model = await modelOfUnit(db, updated.id);
-    if (model && model.minQty != null && model.minQty > 0) {
-      const state = await modelIsLow(db, model);
-      if (state.low) await platform().events.emit("inventory.stock.low", { orgId, partId: model.id, newQty: state.onHand, minQty: model.minQty });
-    }
-  }
+  const { low } = await stockMoved(db, orgId, {
+    partId: updated.id,
+    delta: applied,
+    newQty,
+    minQty,
+    reason: reason ?? null,
+    ledger: { sourceKind: p.sourceKind ?? null, sourceId: p.sourceId ?? null, kind: p.correction ? "correction" : null },
+  });
   // `delta` is what actually moved (the inverse of this is +delta); a clamp
   // says what was asked and why less happened.
   return {
@@ -219,7 +190,7 @@ export async function applyStockDelta(
     // Where it now stands against the minimum kept, so a surface that just
     // took one off can offer the shopping list there and then (#3897).
     minQty,
-    low: minQty != null && minQty > 0 && isLowStock({ onHand, minQty }),
+    low,
     ...(verdict.kind === "clamp" ? { clamped: true, requested: delta, note: verdict.note } : {}),
   };
 }
@@ -394,6 +365,18 @@ async function roleExpiry(orgId: string, partId: string, md: Record<string, unkn
  * expect means the oldest went, more means stock arrived by a route that recorded
  * no date.
  */
+/** What a positive move does to the lots, for every door that adds stock:
+ *  a restock, or anything landing on an empty shelf, is a fresh lot dated
+ *  today, good until today plus the item's shelf life (fresh-lot.ts). A
+ *  correction on a stocked record stays a bare count; reconcile files it as
+ *  an undated lot. */
+export function arrivingLots(delta: number, restock: boolean) {
+  return (batches: Batch[], { today, shelfLifeDays, qtyBefore }: { today: string; shelfLifeDays: number | null; qtyBefore: number }): Batch[] => {
+    if (delta <= 0 || !startsFreshLot({ delta, qtyBefore, restock })) return batches;
+    return addBatch(batches, { received_on: today, expires_on: expiryFor(today, shelfLifeDays) ?? "", qty: delta });
+  };
+}
+
 export async function withBatches(
   orgId: string,
   partId: string,
@@ -624,10 +607,7 @@ export function registerInventoryActionHandlers(): void {
           partId,
           reason,
           delta,
-          (batches, { today, shelfLifeDays, qtyBefore }) => {
-            if (!startsFreshLot({ delta, qtyBefore, restock })) return batches;
-            return addBatch(batches, { received_on: today, expires_on: expiryFor(today, shelfLifeDays) ?? "", qty: delta });
-          },
+          arrivingLots(delta, restock),
           {
             ...(typeof args.timezone === "string" ? { timezone: args.timezone } : {}),
             userId: ctx.userId,
@@ -1076,6 +1056,8 @@ export function registerInventoryActionHandlers(): void {
       }
       if (qty < 0) return { ok: false, error: BELOW_ZERO, partId, requested: qty };
       const db = (await platform().tenants.getDb(ctx.orgId)) as Kysely<InventoryDB>;
+      const was = await db.selectFrom("inventory_parts").select("qty").where("id", "=", partId).executeTakeFirst();
+      if (!was) return { ok: false, error: "part_not_found" };
       const updated = await db
         .updateTable("inventory_parts")
         .set({ qty: sql<string>`${qty}::numeric`, updated_at: new Date() })
@@ -1084,22 +1066,16 @@ export function registerInventoryActionHandlers(): void {
         .executeTakeFirst();
       if (!updated) return { ok: false, error: "part_not_found" };
       const newQty = Number(updated.qty);
-      await platform().events.emit("inventory.stock.changed", {
-        orgId: ctx.orgId,
+      // A recount is a correction: a statement line the burn rate never reads
+      // as use, and low stock when it lands the part at its minimum.
+      await stockMoved(db, ctx.orgId, {
         partId: updated.id,
+        delta: newQty - Number(was.qty),
         newQty,
+        minQty: updated.min_qty == null ? null : Number(updated.min_qty),
         reason,
+        ledger: { kind: "correction" },
       });
-      const minQty = updated.min_qty == null ? null : Number(updated.min_qty);
-      const onHand = onHandCount(newQty, (await openUnitsFor(db, [updated.id])).get(updated.id) ?? []);
-      if (minQty != null && minQty > 0 && isLowStock({ onHand, minQty })) {
-        await platform().events.emit("inventory.stock.low", {
-          orgId: ctx.orgId,
-          partId: updated.id,
-          newQty,
-          minQty,
-        });
-      }
       return { ok: true, partId: updated.id, newQty };
     }),
   );
@@ -1550,8 +1526,10 @@ export function registerInventoryActionHandlers(): void {
     }
 
     // 4. Events: the lot's stock fell; a new item exists.
-    await platform().events.emit("inventory.stock.changed", {
-      orgId: ctx.orgId, partId, delta: -splitQty, newQty: srcQty - splitQty, reason: "split-lot",
+    // Moved, not used: no statement line (the burn rate would read it as
+    // use) and no low stock (the split-off record still holds it).
+    await stockMoved(db, ctx.orgId, {
+      partId, delta: -splitQty, newQty: srcQty - splitQty, minQty: null, reason: "split-lot", ledger: false, announceLow: false,
     });
     await platform().events.emit("inventory.part.created", { orgId: ctx.orgId, partId: created.id });
 

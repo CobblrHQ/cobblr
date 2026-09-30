@@ -7,6 +7,7 @@
 import type {
   FileAttacher,
   FileAttachResult,
+  FileSource,
   FileAttachSpec,
   FileAttachmentLister,
   FileAttachmentRow,
@@ -16,7 +17,7 @@ import type {
   FileVariant,
   FilesDriver,
   FileWriter,
-  FileWriteResult, FileAttachedTo, FileAttachmentsOfFile} from "@cobblr/platform-contract";
+  FileWriteResult, FileAttachedTo, FileAttachmentsOfFile, FileFolders, WorkspaceFolder } from "@cobblr/platform-contract";
 
 let reader: FileReader | null = null;
 
@@ -32,11 +33,11 @@ export function registerWriter(w: FileWriter): void {
 
 export async function write(
   orgId: string,
-  bytes: Uint8Array,
+  source: FileSource,
   opts: { filename?: string; mimeType?: string },
 ): Promise<FileWriteResult | null> {
   if (!writer) return null;
-  return writer(orgId, bytes, opts);
+  return writer(orgId, source, opts);
 }
 
 let attacher: FileAttacher | null = null;
@@ -86,6 +87,22 @@ export async function attachmentsOfFile(orgId: string, fileId: string): Promise<
   return ofFile(orgId, fileId);
 }
 
+let folders: FileFolders | null = null;
+
+export function registerFolders(f: FileFolders): void {
+  folders = f;
+}
+
+export async function ensureFolder(orgId: string, path: string[]): Promise<string | null> {
+  if (!folders) return null;
+  return folders.ensure(orgId, path);
+}
+
+export async function fileInto(orgId: string, fileId: string, folderId: string): Promise<boolean | null> {
+  if (!folders) return null;
+  return folders.file(orgId, fileId, folderId);
+}
+
 // Blob-storage driver override. Null → core-files uses its built-in local-disk
 // driver. The hosted overlay registers an S3/R2 driver at boot.
 let driver: FilesDriver | null = null;
@@ -94,6 +111,22 @@ export function registerDriver(d: FilesDriver): void {
 }
 export function getDriver(): FilesDriver | null {
   return driver;
+}
+
+let workspaceEraser: ((orgId: string) => Promise<void>) | null = null;
+export function registerWorkspaceEraser(eraser: (orgId: string) => Promise<void>): void {
+  workspaceEraser = eraser;
+}
+export async function eraseWorkspace(orgId: string): Promise<void> {
+  if (workspaceEraser) await workspaceEraser(orgId);
+}
+
+let folderLister: (() => Promise<WorkspaceFolder[] | null>) | null = null;
+export function registerWorkspaceFolderLister(lister: () => Promise<WorkspaceFolder[] | null>): void {
+  folderLister = lister;
+}
+export async function listWorkspaceFolders(): Promise<WorkspaceFolder[] | null> {
+  return folderLister ? folderLister() : null;
 }
 
 export async function read(

@@ -19,10 +19,10 @@ import { defineModule } from "@cobblr/platform-contract";
 
 export default defineModule({
   name: "core-catalogs",
-  version: "0.1.2",
+  version: "0.1.4",
   displayName: "Catalogs",
   description:
-    "Import reference datasets (parts catalogs, ingredient databases, etc.) and MATCH your own entities to entries inside them. v0.1 supports CSV upload; live-API pullers + auto-match deferred.",
+    "Bring in reference lists (a parts catalog, an ingredient list) and match your own things to them.",
   icon: "library",
   band: "stock",
   autoEnable: true, // ambient capability — on for every workspace
@@ -49,6 +49,7 @@ export default defineModule({
           { name: "description", type: "text", role: "summary" },
           { name: "source_url", type: "url" },
           { name: "puller_id", type: "text" },
+          { name: "metadata", type: "object" },
           // Recomputed from COUNT(*) of the catalog's entries on every sync, so a
           // caller setting it is overwritten without being told. Found by the
           // no-silent-field-drop probe.
@@ -106,10 +107,7 @@ export default defineModule({
       "core-catalogs.catalog.updated",
       "core-catalogs.catalog.deleted",
       "core-catalogs.catalog.synced",
-      "core-catalogs.entry.matched",
-      "core-catalogs.entry.unmatched",
     ],
-    api: [],
     actions: [
       {
         id: "core-catalogs:refresh",

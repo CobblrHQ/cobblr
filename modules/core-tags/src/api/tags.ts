@@ -19,7 +19,7 @@ const TagCreate = z.object({
 
 // `pinned` is update-only on purpose: you pin a tag you already have and can
 // see the ranking of, never one you are in the middle of typing.
-const TagUpdate = TagCreate.partial().extend({ pinned: z.boolean().optional() });
+const TagUpdate = TagCreate.partial().extend({ pinned: z.boolean().optional(), metadata: z.record(z.unknown()).optional() });
 
 const TagMerge = z.object({ into_tag_id: z.string().uuid() });
 
@@ -199,6 +199,8 @@ tagsRouter.patch(
     if (parsed.data.color !== undefined) patch.color = parsed.data.color;
     if (parsed.data.icon !== undefined) patch.icon = parsed.data.icon;
     if (parsed.data.pinned !== undefined) patch.pinned = parsed.data.pinned;
+    // A custom field saved on its own merges into what the tag holds.
+    if (parsed.data.metadata !== undefined) patch.metadata = platform().db.mergeJsonb("metadata", parsed.data.metadata);
     if (parsed.data.parent_id !== undefined) {
       const newParent = parsed.data.parent_id;
       // Guard against loops: a tag can't be its own parent, and a parent can't

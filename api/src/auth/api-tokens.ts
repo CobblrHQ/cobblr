@@ -52,12 +52,21 @@ export async function resolveApiToken(
   const row = await meta
     .selectFrom("api_tokens as t")
     .leftJoin("orgs as o", "o.id", "t.org_id")
-    .select(["t.id as id", "t.user_id as user_id", "t.expires_at as expires_at", "t.revoked_at as revoked_at", "t.scopes as scopes", "t.access as access", "t.org_id as org_id", "o.slug as org_slug", "t.source as source", "t.meta as meta"])
+    .select(["t.id as id", "t.user_id as user_id", "t.expires_at as expires_at", "t.revoked_at as revoked_at", "t.scopes as scopes", "t.access as access", "t.org_id as org_id", "o.slug as org_slug", "t.source as source", "t.meta as meta", "t.parent_token_id as parent_token_id"])
     .where("t.token_hash", "=", hash)
     .executeTakeFirst();
   if (!row) return null;
   if (row.revoked_at) return null;
   if (row.expires_at && new Date(row.expires_at) < new Date()) return null;
+  // A token made with another token lives only while every token above it
+  // does (auth/token-lineage.ts): the revoke cascades, and this is the
+  // backstop for one that expired rather than being revoked.
+  let parentId = row.parent_token_id;
+  for (let depth = 0; parentId && depth < 8; depth++) {
+    const p = await meta.selectFrom("api_tokens").select(["parent_token_id", "revoked_at", "expires_at"]).where("id", "=", parentId).executeTakeFirst();
+    if (!p || p.revoked_at || (p.expires_at && new Date(p.expires_at) < new Date())) return null;
+    parentId = p.parent_token_id;
+  }
 
   // Touch last_used_at — best-effort, don't block auth on it.
   void meta

@@ -6,10 +6,10 @@
 // Self-contained (no extra shared component needed) — it reaches
 // core-files directly via the inventory module's orgSlug + getToken.
 
-import { useRef, useState } from "react";
+import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Camera, Scissors, Star, Trash2, Upload, X } from "lucide-react";
-import { useConfirm, useImageSrc, useToast, EntityPhoto, MutationError } from "@cobblr/platform-web";
+import { useConfirm, useImageSrc, usePhotoPick, useToast, EntityPhoto, MutationError, uploadJson } from "@cobblr/platform-web";
 import { useInventory } from "./context";
 import { cutoutPlainBackground } from "./remove-background";
 import { isCoverFile } from "./gallery-cover";
@@ -37,7 +37,6 @@ export function PartGallery({ partId, coverImagePath, onSetCover }: Props) {
   const qc = useQueryClient();
   const toast = useToast();
   const confirm = useConfirm();
-  const fileInput = useRef<HTMLInputElement>(null);
   const [dragOver, setDragOver] = useState(false);
 
   const auth = (): Record<string, string> => {
@@ -64,13 +63,7 @@ export function PartGallery({ partId, coverImagePath, onSetCover }: Props) {
     mutationFn: async (file: File) => {
       const fd = new FormData();
       fd.append("file", file);
-      const ures = await fetch(`${base}/files`, {
-        method: "POST",
-        headers: auth(),
-        body: fd,
-      });
-      if (!ures.ok) throw new Error(`upload ${ures.status}`);
-      const f = (await ures.json()) as { id: string };
+      const f = await uploadJson<{ id: string }>(`${base}/files`, fd, { token: getToken(), file });
       const ares = await fetch(`${base}/attachments`, {
         method: "POST",
         headers: { ...auth(), "Content-Type": "application/json" },
@@ -119,9 +112,7 @@ export function PartGallery({ partId, coverImagePath, onSetCover }: Props) {
       }
       const fd = new FormData();
       fd.append("file", new File([out], (att.filename.replace(/\.\w+$/, "") || "cutout") + "-cutout.png", { type: "image/png" }));
-      const ures = await fetch(`${base}/files`, { method: "POST", headers: auth(), body: fd });
-      if (!ures.ok) throw new Error(`upload ${ures.status}`);
-      const f = (await ures.json()) as { id: string };
+      const f = await uploadJson<{ id: string }>(`${base}/files`, fd, { token: getToken() });
       const ares = await fetch(`${base}/attachments`, {
         method: "POST",
         headers: { ...auth(), "Content-Type": "application/json" },
@@ -138,7 +129,7 @@ export function PartGallery({ partId, coverImagePath, onSetCover }: Props) {
     }
   }
 
-  async function handleFiles(files: FileList | null) {
+  async function handleFiles(files: FileList | File[] | null) {
     if (!files) return;
     for (const f of Array.from(files)) {
       try {
@@ -147,8 +138,8 @@ export function PartGallery({ partId, coverImagePath, onSetCover }: Props) {
         /* toast already fired */
       }
     }
-    if (fileInput.current) fileInput.current.value = "";
   }
+  const photo = usePhotoPick((files) => void handleFiles(files), { multiple: true, title: "Photo of this item", label: "Choose photos" });
 
   function thumbUrl(fileId: string): string {
     return `${base}/files/${fileId}/raw?variant=thumb`;
@@ -197,17 +188,14 @@ export function PartGallery({ partId, coverImagePath, onSetCover }: Props) {
             </span>
           )}
         </h3>
-        <label className="text-[11px] font-mono uppercase tracking-widest text-muted hover:text-accent cursor-pointer inline-flex items-center gap-1">
+        <button
+          type="button"
+          onClick={photo.pick}
+          className="text-[11px] font-mono uppercase tracking-widest text-muted hover:text-accent inline-flex items-center gap-1"
+        >
           <Upload size={11} /> {upload.isPending ? "uploading…" : "add"}
-          <input
-            ref={fileInput}
-            type="file"
-            accept="image/*"
-            multiple
-            className="hidden"
-            onChange={(e) => void handleFiles(e.target.files)}
-          />
-        </label>
+        </button>
+        {photo.input}
       </div>
       {list.isLoading && (
         <div className="text-xs text-faint">loading…</div>

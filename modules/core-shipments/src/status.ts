@@ -95,11 +95,17 @@ export interface CarrierDriver {
  *  not answer" (ask again later), and treating either as delivery would mark
  *  an order arrived that is still in a truck. */
 export class CarrierError extends Error {
+  /** The service answered that it is full (no more trackers on this plan).
+   *  Not retryable, and not "it did not answer": the person has to free a
+   *  slot or upgrade. */
+  readonly quotaExhausted: boolean;
   constructor(
     message: string,
     readonly retryable: boolean,
+    opts: { quotaExhausted?: boolean } = {},
   ) {
     super(message);
     this.name = "CarrierError";
+    this.quotaExhausted = opts.quotaExhausted === true;
   }
 }

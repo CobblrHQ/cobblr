@@ -208,6 +208,10 @@ export interface PlatformWebApi {
     kind: string,
     q?: string,
   ): Promise<{ items: PlatformResolvedEntity[] }>;
+  /** A collection as a spreadsheet, read as the viewer (`GET
+   *  /orgs/:slug/entities/:kind/export.csv`). Optional: a host without it
+   *  shows no Export on a collection's header. */
+  exportEntitiesCsv?(slug: string, kind: string, q?: string): Promise<{ blob: Blob; filename: string; complete: boolean }>;
   /** The workspace's members — the data source for `member`-field pickers.
    *  Optional, exactly like listEntities: a host that does not wire it renders
    *  the value read-only rather than a picker it cannot populate. */
@@ -218,6 +222,16 @@ export interface PlatformWebApi {
   /** Add someone by name from a person picker ("+ Someone else…"). */
   addPerson?(slug: string, name: string): Promise<PlatformPerson>;
   listFieldDefs(slug: string, kind: string): Promise<{ items: PlatformFieldDef[]; sections?: FieldSection[] }>;
+  /** The workspace's wires, and the door to make or remove one: the same one
+   *  the Wires page uses. A module offers a wire here only on a person's
+   *  say-so (an update never opts anyone in). Optional: a host without them
+   *  shows no such offer. */
+  listWires?(slug: string): Promise<{ items: PlatformWire[] }>;
+  createWire?(slug: string, wire: PlatformWireInput): Promise<PlatformWire>;
+  deleteWire?(slug: string, id: string): Promise<void>;
+  /** The events this workspace's enabled modules can raise, so an offer to
+   *  wire one is shown only where it can fire. */
+  listWireEvents?(slug: string): Promise<{ items: Array<{ event: string; module: string }> }>;
   /** Manifest-declared UI contributions from the workspace's ENABLED modules
    *  (`contributes.panels`). Optional: a host that doesn't wire it simply
    *  renders no contributed panels. See panels.tsx. */
@@ -302,4 +316,24 @@ export interface PhotoSuggestionRow {
   status: "queued" | "suggested" | "none";
   image_path: string | null;
   query: string | null;
+}
+
+/** A wire, as a module's offer reads it. */
+export interface PlatformWire {
+  id: string;
+  source_kind: string;
+  action_id: string;
+  trigger_type: string;
+  trigger_event: string | null;
+  args: unknown;
+  enabled: boolean;
+  bundle_id: string | null;
+}
+
+export interface PlatformWireInput {
+  source_kind: string;
+  action_id: string;
+  trigger_type: "event";
+  trigger_event: string;
+  args?: Record<string, unknown>;
 }

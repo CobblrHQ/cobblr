@@ -8,10 +8,11 @@
 // areas) are invisible regions with faint toggleable labels; dropping a
 // container inside one reparents it there (the plan is the filing UI).
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Check, Flame, Loader2, MapPin, Pencil, Plus, Printer, ScanLine, Sparkles, Tag, X } from "lucide-react";
+import { Check, Flame, Loader2, MapPin, Pencil, Plus, Printer, Redo2, ScanLine, Sparkles, Tag, Undo2, X } from "lucide-react";
+import { diffPlaces, historyKey, planHistoryFor, type PlanChange, type PlanStep } from "../lib/planHistory";
 import { Modal, useImageSrc, useToast } from "@cobblr/platform-web";
 import { ApiError, api, type Location } from "../lib/api";
 import { totalUsage, useLocationUsage } from "../lib/useLocationUsage";
@@ -44,6 +45,8 @@ import { parseRange } from "../lib/nameRange";
 import { LOCATION_KIND } from "../lib/placeItems";
 import { usePlaceableRecords } from "../lib/placeableRecords";
 import { PLACE_PLAN, PLACE_TARGET, pinAt, usePlacing } from "./placeItems/placing";
+import { usePlanHeightCap } from "./plan-fits-the-screen";
+import { jsonbPatchBetween } from "@cobblr/platform-contract/jsonb-merge";
 
 type Sel =
   | { type: "item"; id: string }
@@ -195,6 +198,7 @@ function PlanFor({
     hasOwnLayout(self.metadata) ||
     items.some((l) => l.parent_id === room.id && readRect(l.metadata));
   const bound = ownsLayout ? readBound(self.metadata) : null;
+  const heightCap = usePlanHeightCap(planRef, capVh, !!bound);
   // Place mode (a place-items view wraps the plan): every place is a target
   // and the plan itself is not edited.
   const placing = usePlacing();
@@ -395,27 +399,108 @@ function PlanFor({
     void qc.invalidateQueries({ queryKey: ["location", slug, room.id] });
   };
 
+  // Undo / redo (planHistory.ts): every edit below records what it changed,
+  // one history per workspace, so every plan on screen undoes in order.
+  const history = planHistoryFor(slug);
+  const historyTick = useSyncExternalStore(history.subscribe, () => `${history.nextUndo()?.label ?? ""}|${history.nextRedo()?.label ?? ""}|${history.canUndo()}|${history.canRedo()}`);
+  const note = (label: string, changes: PlanChange[]) => history.record({ label, changes });
+  const runHistory = async (dir: "undo" | "redo") => {
+    try {
+      const step: PlanStep | null = await (dir === "undo" ? history.undo() : history.redo());
+      if (!step) return;
+      void qc.invalidateQueries({ queryKey: ["core-locations", slug] });
+      void qc.invalidateQueries({ queryKey: ["location"] });
+      void qc.invalidateQueries({ queryKey: ["location-contents", slug] });
+      void qc.invalidateQueries({ queryKey: ["kind-list", slug] });
+      toast.success(`${dir === "undo" ? "Undone" : "Redone"}: ${step.label}`);
+    } catch (e) {
+      toast.error(`Could not ${dir} that: ${e instanceof ApiError ? e.message : String(e)}`);
+    }
+  };
+  const runHistoryRef = useRef(runHistory);
+  runHistoryRef.current = runHistory;
+  useEffect(() => {
+    if (!edit) return;
+    const onKey = (e: KeyboardEvent) => {
+      const dir = historyKey(e);
+      // A plan inside a peek and the plan behind it both listen; one press
+      // is one undo.
+      if (!dir || (e as KeyboardEvent & { planHistoryDone?: boolean }).planHistoryDone) return;
+      (e as KeyboardEvent & { planHistoryDone?: boolean }).planHistoryDone = true;
+      e.preventDefault();
+      void runHistoryRef.current(dir);
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [edit]);
+
+  // A layout write shows on the plan the moment it is made. It used to wait
+  // for the list to be read again, so a second tap in quick succession
+  // ("Pantry", then "Fridge") worked from the list as it was before the first,
+  // picked the same free spot, and the tray and the plan disagreed with what
+  // was saved until something refetched (#4147). The list is patched in
+  // place, the server's answer replaces the guess, and a refused write puts
+  // the old metadata back.
+  const listKey = ["core-locations", slug] as const;
+  type LocList = { items: Location[] } | undefined;
+  const patchCached = (id: string, metadata: Record<string, unknown>) =>
+    qc.setQueryData<LocList>(listKey, (old) => (old ? { ...old, items: old.items.map((l) => (l.id === id ? { ...l, metadata } : l)) } : old));
+  const saveKey = ["floorplan-save", slug] as const;
   const saveMeta = useMutation({
-    mutationFn: (p: { id: string; metadata: Record<string, unknown> }) =>
-      api.updateLocation(slug, p.id, { metadata: p.metadata }),
-    onSuccess: invalidate,
-    onError: (e) => toast.error(e instanceof ApiError ? e.message : String(e)),
+    mutationKey: saveKey,
+    // The server MERGES metadata: a key left out is kept, and only null removes
+    // one. The geometry helpers return the whole bag they want, deleting
+    // `floorplan` when nothing is left in it, so the bag itself would never
+    // take a place off the plan; the patch between the two does.
+    mutationFn: (p: { id: string; metadata: Record<string, unknown>; before: Record<string, unknown> | null | undefined }) =>
+      api.updateLocation(slug, p.id, { metadata: jsonbPatchBetween(p.before, p.metadata) }),
+    onMutate: async (p) => {
+      await qc.cancelQueries({ queryKey: listKey });
+      const before = qc.getQueryData<LocList>(listKey)?.items.find((l) => l.id === p.id)?.metadata;
+      patchCached(p.id, p.metadata);
+      return { before };
+    },
+    onSuccess: (saved, p) => {
+      if (saved && typeof saved === "object" && "metadata" in saved) patchCached(p.id, (saved as Location).metadata ?? p.metadata);
+      void qc.invalidateQueries({ queryKey: ["location", slug, room.id] });
+    },
+    onError: (e, p, ctx) => {
+      if (ctx?.before) patchCached(p.id, ctx.before as Record<string, unknown>);
+      toast.error(e instanceof ApiError ? e.message : String(e));
+    },
+    onSettled: () => {
+      // Once nothing else is in flight, read the list again for anything
+      // this write changed besides the one row (counts, a parent's face).
+      if (qc.isMutating({ mutationKey: saveKey }) <= 1) invalidate();
+    },
   });
 
   // Every write goes through the geometry seam (withRect / withBound /
   // withDecor), which keeps the rest of the blob: a drag never strips
   // decoration, and moving a toolbox on the floor never stretches its face.
-  const saveRect = (loc: Location, rect: FpRect | null) => {
+  const rectFor = (loc: Location, rect: FpRect | null) => {
     const laidOut = hasOwnLayout(loc.metadata) || (placedByOwner.get(loc.id)?.length ?? 0) > 0;
-    saveMeta.mutate({ id: loc.id, metadata: withRect(loc.metadata, rect, { keepFace: loc.kind !== "area" && laidOut }) });
+    return withRect(loc.metadata, rect, { keepFace: loc.kind !== "area" && laidOut });
+  };
+  const saveRect = (loc: Location, rect: FpRect | null) => {
+    const metadata = rectFor(loc, rect);
+    const was = readRect(loc.metadata);
+    note(!rect ? `Took ${loc.name} off the plan` : !was ? `Put ${loc.name} on the plan` : was.x_mm === rect.x_mm && was.y_mm === rect.y_mm ? `Resized ${loc.name}` : `Moved ${loc.name}`, [
+      { kind: "place", id: loc.id, before: { metadata: loc.metadata }, after: { metadata } },
+    ]);
+    saveMeta.mutate({ id: loc.id, before: loc.metadata, metadata });
   };
   /** Patch decoration keys (fill/outline) on a placed location's blob. */
   const patchLocFloorplan = (loc: Location, patch: Record<string, unknown>) => {
-    saveMeta.mutate({ id: loc.id, metadata: withDecor(loc.metadata, patch) });
+    const metadata = withDecor(loc.metadata, patch);
+    note(`Changed how ${loc.name} looks`, [{ kind: "place", id: loc.id, before: { metadata: loc.metadata }, after: { metadata } }]);
+    saveMeta.mutate({ id: loc.id, before: loc.metadata, metadata });
   };
-  const saveBound = (next: FpBound) => {
+  const saveBound = (next: FpBound, label = `Changed the outline of ${room.name}`) => {
     const self = byId.get(room.id) ?? room;
-    saveMeta.mutate({ id: room.id, metadata: withBound(self.metadata, next, self.kind === "area" ? "area" : "container") });
+    const metadata = withBound(self.metadata, next, self.kind === "area" ? "area" : "container");
+    note(label, [{ kind: "place", id: room.id, before: { metadata: self.metadata }, after: { metadata } }]);
+    saveMeta.mutate({ id: room.id, before: self.metadata, metadata });
   };
 
   const rename = useMutation({
@@ -437,15 +522,26 @@ function PlanFor({
   // Entity writes resolve the kind's manifest-declared update endpoint from
   // the registry — never a hardcoded module route (the workspace-tools rule:
   // an undeclared kind is honestly not writable, not guessed at).
-  const patchEntity = async (ent: PlanEntity, body: Record<string, unknown>) => {
+  const entityPath = (ent: PlanEntity): string | null => {
     const k = placeableKinds.find((pk) => pk.id === ent.kind);
     const tmpl = k?.endpoints?.update;
-    if (!k || !tmpl) throw new ApiError(400, "not_writable", `${ent.kind} declares no update endpoint`);
-    await api.request(
-      "PATCH",
-      `/orgs/${slug}/${k.instance_name ? `instances/${k.instance_name}` : `modules/${k.module_name}`}${tmpl.replace("{id}", ent.id)}`,
-      body,
-    );
+    if (!k || !tmpl) return null;
+    return `/orgs/${slug}/${k.instance_name ? `instances/${k.instance_name}` : `modules/${k.module_name}`}${tmpl.replace("{id}", ent.id)}`;
+  };
+  const patchEntity = async (ent: PlanEntity, body: Record<string, unknown>) => {
+    const path = entityPath(ent);
+    if (!path) throw new ApiError(400, "not_writable", `${ent.kind} declares no update endpoint`);
+    await api.request("PATCH", path, body);
+  };
+  /** Record a write to a thing on the plan: the full next value of each field
+   *  it sets, and each as it was (undo and redo send the difference between
+   *  the two, planHistory.ts). */
+  const noteEntity = (label: string, ent: PlanEntity, body: Record<string, unknown>) => {
+    const path = entityPath(ent);
+    if (!path) return;
+    const before: Record<string, unknown> = {};
+    for (const k of Object.keys(body)) before[k] = k === "metadata" ? (ent.metadata ?? {}) : k === "location_id" ? ent.location_id : null;
+    note(label, [{ kind: "record", path, before, after: body }]);
   };
   const invalidateEntities = () => {
     void qc.invalidateQueries({ queryKey: ["kind-list", slug] });
@@ -460,7 +556,9 @@ function PlanFor({
     onError: (e) => toast.error(e instanceof ApiError ? e.message : String(e)),
   });
   const saveEntityRect = (ent: PlanEntity, rect: FpRect | null) => {
-    saveEntity.mutate({ ent, body: { metadata: withRect(ent.metadata, rect) } });
+    const metadata = withRect(ent.metadata, rect);
+    noteEntity(rect ? `Put ${ent.name} on the plan` : `Took ${ent.name} off the plan`, ent, { metadata });
+    saveEntity.mutate({ ent, body: { metadata: jsonbPatchBetween(ent.metadata, metadata) } });
   };
 
   function startEntityDrag(e: React.PointerEvent, ent: PlanEntity, rect: FpRect, mode: "move" | "resize") {
@@ -509,9 +607,11 @@ function PlanFor({
         }
         const meta = withRect(ent.metadata, rectToSave);
         const moved = targetLocId !== ent.location_id;
+        const next = { metadata: meta, ...(moved ? { location_id: targetLocId } : {}) };
+        noteEntity(moved ? `Moved ${ent.name} into ${byId.get(targetLocId!)?.name ?? room.name}` : mode === "move" ? `Moved ${ent.name}` : `Resized ${ent.name}`, ent, next);
         saveEntity.mutate({
           ent,
-          body: { metadata: meta, ...(moved ? { location_id: targetLocId } : {}) },
+          body: { metadata: jsonbPatchBetween(ent.metadata, meta), ...(moved ? { location_id: targetLocId } : {}) },
           label: moved ? `Moved into ${byId.get(targetLocId!)?.name ?? room.name}` : undefined,
         });
       }
@@ -577,7 +677,15 @@ function PlanFor({
           }
           if (target !== loc.parent_id) {
             const label = zid ? (targetLoc?.name ?? "zone") : room.name;
+            // The move and the re-file are one step: undo puts it back in
+            // its old place on its old parent, together.
+            const metadata = rectFor(loc, rectToSave);
+            note(`Moved ${loc.name} into ${label}`, [
+              { kind: "place", id: loc.id, before: { parent_id: loc.parent_id, metadata: loc.metadata }, after: { parent_id: target, metadata } },
+            ]);
             reparent.mutate({ id: loc.id, parent_id: target, label });
+            saveMeta.mutate({ id: loc.id, before: loc.metadata, metadata });
+            return;
           }
         }
         saveRect(loc, rectToSave);
@@ -614,7 +722,7 @@ function PlanFor({
       if (last !== wall) {
         const walls = [...(bound.walls ?? [])];
         walls[idx] = last;
-        saveBound({ ...bound, walls });
+        saveBound({ ...bound, walls }, "Moved a wall");
       }
     };
     window.addEventListener("pointermove", onMove);
@@ -629,8 +737,8 @@ function PlanFor({
         <SectionHead room={room} edit={false} />
         <p className="text-sm text-muted dark:text-slate-400 max-w-prose">
           {room.kind === "container"
-            ? "Lay out this container's face — drawers and compartments drawn at true scale, partial-width ones visibly partial."
-            : "Draw this space to scale — walls, zones, and everything standing in it. Dimensions only set the shape; the day-to-day view shows no numbers."}
+            ? "Lay out this container's face: drawers and compartments drawn at true scale, partial-width ones visibly partial."
+            : "Draw this space to scale: walls, zones, and everything standing in it. Dimensions only set the shape; the day-to-day view shows no numbers."}
         </p>
         <div className="flex gap-2 flex-wrap">
           <BoundSetup
@@ -660,7 +768,7 @@ function PlanFor({
           )}
         </div>
         {seedOpen && (
-          <SeedModal room={room} slug={slug} onClose={() => setSeedOpen(false)} onApplied={invalidate} />
+          <SeedModal room={room} slug={slug} onClose={() => setSeedOpen(false)} onApplied={invalidate} onStep={(step) => history.record(step)} />
         )}
       </section>
     );
@@ -723,7 +831,7 @@ function PlanFor({
                   x2: snap(bound.w_mm / 2),
                   y2: snap(bound.d_mm * 0.7),
                 };
-                saveBound({ ...bound, walls: [...(bound.walls ?? []), w] });
+                saveBound({ ...bound, walls: [...(bound.walls ?? []), w] }, "Added a wall");
                 setSel({ type: "wall", idx: (bound.walls ?? []).length });
               }}
               className="rounded-md border border-line dark:border-slate-600 px-2 py-1 text-xs text-muted hover:text-content transition"
@@ -753,6 +861,30 @@ function PlanFor({
               <Sparkles size={12} /> describe
             </button>
           </>
+        )}
+        {edit && (
+          <span className="inline-flex" data-history={historyTick}>
+            <button
+              type="button"
+              aria-label="Undo"
+              title={history.nextUndo() ? `Undo: ${history.nextUndo()!.label} (⌘Z)` : "Nothing to undo"}
+              disabled={!history.canUndo()}
+              onClick={() => void runHistory("undo")}
+              className="rounded-l-md border border-line dark:border-slate-600 px-2 py-1 text-muted hover:text-content disabled:opacity-40 transition"
+            >
+              <Undo2 size={13} />
+            </button>
+            <button
+              type="button"
+              aria-label="Redo"
+              title={history.nextRedo() ? `Redo: ${history.nextRedo()!.label} (⌘⇧Z)` : "Nothing to redo"}
+              disabled={!history.canRedo()}
+              onClick={() => void runHistory("redo")}
+              className="-ml-px rounded-r-md border border-line dark:border-slate-600 px-2 py-1 text-muted hover:text-content disabled:opacity-40 transition"
+            >
+              <Redo2 size={13} />
+            </button>
+          </span>
         )}
         {!placing && (
         <button
@@ -814,8 +946,11 @@ function PlanFor({
         style={{
           aspectRatio: `${bound.w_mm} / ${bound.d_mm}`,
           // The whole room on one screen: as wide as it can be while its
-          // bottom wall stays above the fold.
-          width: `min(100%, calc(${capVh}dvh * ${(bound.w_mm / bound.d_mm).toFixed(4)}))`,
+          // bottom wall stays above the fold, measured from where it starts.
+          width:
+            heightCap != null
+              ? `min(100%, ${Math.round(heightCap * (bound.w_mm / bound.d_mm))}px)`
+              : `min(100%, calc(${capVh}dvh * ${(bound.w_mm / bound.d_mm).toFixed(4)}))`,
           // Edit-mode dots sit at the layout's REAL pitch — a 42mm Gridfinity
           // drawer shows its actual cells, not a decorative texture.
           ...(edit
@@ -880,7 +1015,7 @@ function PlanFor({
                 } else setPeekId(loc.id);
               }}
               {...(placing ? { [PLACE_TARGET]: loc.id } : {})}
-              title={`${loc.name} — open its plan`}
+              title={`${loc.name}: open its plan`}
               className={`absolute rounded border border-slate-400 dark:border-slate-500 bg-slate-500/10 dark:bg-slate-400/10
                 ${edit ? "cursor-move touch-none" : "cursor-pointer hover:border-accent"}
                 ${selected ? "ring-1 ring-accent border-accent" : ""}
@@ -1056,24 +1191,34 @@ function PlanFor({
             );
           })}
 
-        {pins.map((t) => (
+        {pins.map((t) => {
+          // A pin says what it is, on the plan and not only on hover: a bare
+          // pin on the floor was a question nobody could answer (#4147).
+          const name = pinName(t, placeable);
+          return (
           <button
             key={`pin:${t.kind}:${t.id}`}
             type="button"
             data-pin={t.id}
-            title={t.title}
-            aria-label={`${t.title}, pinned here`}
+            title={name}
+            aria-label={`${name}, pinned here`}
             onClick={(e) => {
               e.stopPropagation();
               const href = routeFor(t.kind, t.id);
               if (href && !placing) navigate(href);
             }}
-            className={`absolute -translate-x-1/2 -translate-y-full text-cobble-600 dark:text-cobble-300 ${placing ? "pointer-events-none" : ""}`}
+            className={`absolute -translate-x-2 -translate-y-full flex items-end gap-0.5 text-cobble-600 dark:text-cobble-300 ${placing ? "pointer-events-none" : ""}`}
             style={{ left: pct(t.position!.x_mm, bound.w_mm), top: pct(t.position!.y_mm, bound.d_mm) }}
           >
-            <MapPin size={16} className="fill-cobble-100 dark:fill-cobble-900" />
+            <MapPin size={16} className="shrink-0 fill-cobble-100 dark:fill-cobble-900" />
+            {pins.length <= PIN_LABELS_UP_TO && (
+              <span className="max-w-[9rem] truncate rounded bg-surface/90 dark:bg-slate-900/90 px-1 text-[10px] leading-4 text-content dark:text-mortar-100 shadow-sm">
+                {name}
+              </span>
+            )}
           </button>
-        ))}
+          );
+        })}
 
         {/* entity occupants — the THINGS themselves (ratchets, guns, parts),
             placed via their own metadata rect. Cobble-tinted = a thing;
@@ -1132,7 +1277,11 @@ function PlanFor({
           grid={bound.grid_mm}
           secondAxis={view === "front" ? "tall" : "deep"}
           onRect={saveEntityRect}
-          onDecor={(ent, patch) => saveEntity.mutate({ ent, body: { metadata: withDecor(ent.metadata, patch) } })}
+          onDecor={(ent, patch) => {
+            const metadata = withDecor(ent.metadata, patch);
+            noteEntity(`Changed how ${ent.name} looks`, ent, { metadata });
+            saveEntity.mutate({ ent, body: { metadata: jsonbPatchBetween(ent.metadata, metadata) } });
+          }}
         />
       )}
       {sel?.type !== "entity" && (
@@ -1149,10 +1298,13 @@ function PlanFor({
           onDeleteWall={(idx) => {
             const next = [...(bound.walls ?? [])];
             next.splice(idx, 1);
-            saveBound({ ...bound, walls: next });
+            saveBound({ ...bound, walls: next }, "Deleted a wall");
             setSel(null);
           }}
-          onRename={(loc, name) => rename.mutate({ id: loc.id, name })}
+          onRename={(loc, name) => {
+            note(`Renamed ${loc.name} to ${name}`, [{ kind: "place", id: loc.id, before: { name: loc.name }, after: { name } }]);
+            rename.mutate({ id: loc.id, name });
+          }}
           onOpen={(loc) => setPeekId(loc.id)}
           onAddDrawers={(loc) => {
             // No face yet: give it one on the spot (as wide as it stands,
@@ -1161,10 +1313,9 @@ function PlanFor({
             const r = readRect(loc.metadata);
             const hasFace = hasOwnLayout(loc.metadata) || items.some((l) => l.parent_id === loc.id && readRect(l.metadata));
             if (r && !hasFace) {
-              saveMeta.mutate({
-                id: loc.id,
-                metadata: withBound(loc.metadata, { w_mm: r.w_mm, d_mm: Math.max(300, snap(r.w_mm * 0.75, 50)), view: "front", unit: unit === "ft" ? "in" : unit }, "container"),
-              });
+              const metadata = withBound(loc.metadata, { w_mm: r.w_mm, d_mm: Math.max(300, snap(r.w_mm * 0.75, 50)), view: "front", unit: unit === "ft" ? "in" : unit }, "container");
+              note(`Gave ${loc.name} a front`, [{ kind: "place", id: loc.id, before: { metadata: loc.metadata }, after: { metadata } }]);
+              saveMeta.mutate({ id: loc.id, before: loc.metadata, metadata });
             }
             setPeekStart("drawers");
             setPeekId(loc.id);
@@ -1196,7 +1347,7 @@ function PlanFor({
         </div>
       )}
 
-      {seedOpen && <SeedModal room={room} slug={slug} onClose={() => setSeedOpen(false)} onApplied={invalidate} />}
+      {seedOpen && <SeedModal room={room} slug={slug} onClose={() => setSeedOpen(false)} onApplied={invalidate} onStep={(step) => history.record(step)} />}
       {createOpen && (
         <CreateOnPlanModal
           slug={slug}
@@ -1205,6 +1356,7 @@ function PlanFor({
           taken={taken}
           onClose={() => setCreateOpen(false)}
           onCreated={invalidate}
+          onStep={(step) => history.record(step)}
         />
       )}
       {drawersOpen && (
@@ -1213,13 +1365,14 @@ function PlanFor({
           room={room}
           bound={bound}
           children={ownContainers}
-          onPlaced={(loc, rect) =>
-            api.updateLocation(slug, loc.id, {
-              metadata: withRect(loc.metadata, rect, { keepFace: hasOwnLayout(loc.metadata) || (placedByOwner.get(loc.id)?.length ?? 0) > 0 }),
-            })
-          }
+          onPlaced={async (loc, rect) => {
+            const metadata = withRect(loc.metadata, rect, { keepFace: hasOwnLayout(loc.metadata) || (placedByOwner.get(loc.id)?.length ?? 0) > 0 });
+            await api.updateLocation(slug, loc.id, { metadata: jsonbPatchBetween(loc.metadata, metadata) });
+            return { kind: "place", id: loc.id, before: { metadata: loc.metadata }, after: { metadata } } satisfies PlanChange;
+          }}
           onClose={() => setDrawersOpen(false)}
           onCreated={invalidate}
+          onStep={(step) => history.record(step)}
         />
       )}
       {/* Peek drill-in: the child's own plan, zoomed, fully interactive —
@@ -1640,11 +1793,14 @@ function SeedModal({
   slug,
   onClose,
   onApplied,
+  onStep,
 }: {
   room: Location;
   slug: string;
   onClose: () => void;
   onApplied: () => void;
+  /** The whole draft as one step Undo can take back. */
+  onStep: (step: PlanStep) => void;
 }) {
   const toast = useToast();
   const [text, setText] = useState("");
@@ -1655,10 +1811,18 @@ function SeedModal({
     onError: (e) => toast.error(e instanceof ApiError ? e.message : String(e)),
   });
   const apply = useMutation({
-    mutationFn: () => api.seedFloorplan(slug, room.id, text),
+    // The server writes the whole draft in one go, so the step is what the
+    // places list looks like before and after it.
+    mutationFn: async () => {
+      const before = (await api.listLocations(slug)).items;
+      const r = await api.seedFloorplan(slug, room.id, text);
+      const after = (await api.listLocations(slug)).items;
+      onStep({ label: `Drafted the plan of ${room.name}`, changes: diffPlaces(before, after) });
+      return r;
+    },
     onSuccess: (r) => {
       toast.success(
-        `Plan drafted — ${r.zones?.length ?? 0} zone${(r.zones?.length ?? 0) === 1 ? "" : "s"}. Drag things to true it up.`,
+        `Plan drafted: ${r.zones?.length ?? 0} zone${(r.zones?.length ?? 0) === 1 ? "" : "s"}. Drag things to true it up.`,
       );
       onApplied();
       onClose();
@@ -1719,6 +1883,7 @@ function CreateOnPlanModal({
   taken,
   onClose,
   onCreated,
+  onStep,
 }: {
   slug: string;
   room: Location;
@@ -1727,6 +1892,8 @@ function CreateOnPlanModal({
   taken: FpRect[];
   onClose: () => void;
   onCreated: () => void;
+  /** What was made, as one step Undo can take back. */
+  onStep: (step: PlanStep) => void;
 }) {
   const toast = useToast();
   const face = bound.view === "front";
@@ -1734,21 +1901,30 @@ function CreateOnPlanModal({
   const [kind, setKind] = useState<"container" | "area">("container");
   // "Drawer 1-3" is three drawers here as it is in the list's form.
   const names = parseRange(name)?.names ?? (name.trim() ? [name.trim()] : []);
+  const made = useRef<string[]>([]);
+  const noteMade = () => {
+    const ids = made.current;
+    made.current = [];
+    if (ids.length) onStep({ label: ids.length === 1 ? `Added ${names[0]}` : `Added ${ids.length} places`, changes: ids.map((id) => ({ kind: "added", id })) });
+  };
   const create = useMutation({
     mutationFn: async () => {
       const placed = [...taken];
       for (const n of names) {
         const rect = newChildRect(bound, placed);
         placed.push(rect);
-        await api.createLocation(slug, { name: n, parent_id: room.id, kind, metadata: withRect({}, rect) });
+        made.current.push((await api.createLocation(slug, { name: n, parent_id: room.id, kind, metadata: withRect({}, rect) })).id);
       }
     },
     onSuccess: () => {
+      noteMade();
       toast.success(names.length === 1 ? `${names[0]} is on the plan` : `${names.length} places are on the plan`);
       onCreated();
       onClose();
     },
     onError: (e) => {
+      // What was made before it stopped is still one step to take back.
+      noteMade();
       toast.error(e instanceof ApiError ? e.message : String(e));
       onCreated();
     },
@@ -1825,7 +2001,8 @@ function NewFloorModal({
         kind: "area",
         metadata: withBound({}, bound, "area"),
       }),
-    onSuccess: () => {
+    onSuccess: (made) => {
+      planHistoryFor(slug).record({ label: `Added the floor ${made.name}`, changes: [{ kind: "added", id: made.id }] });
       toast.success(`${name.trim()} added`);
       void qc.invalidateQueries({ queryKey: ["core-locations", slug] });
       onClose();
@@ -1876,16 +2053,19 @@ function DrawersModal({
   onPlaced,
   onClose,
   onCreated,
+  onStep,
 }: {
   slug: string;
   room: Location;
   bound: FpBound;
   /** This place's own children: the drawers it already has. */
   children: Location[];
-  /** Put one of them at a rect (or take it off the face). */
-  onPlaced: (loc: Location, rect: FpRect | null) => Promise<unknown>;
+  /** Put one of them at a rect (or take it off the face); says what changed. */
+  onPlaced: (loc: Location, rect: FpRect | null) => Promise<PlanChange>;
   onClose: () => void;
   onCreated: () => void;
+  /** Everything one run did, as one step Undo can take back. */
+  onStep: (step: PlanStep) => void;
 }) {
   const toast = useToast();
   const ordered = useMemo(() => [...children].sort((x, y) => x.name.localeCompare(y.name, undefined, { numeric: true })), [children]);
@@ -1912,24 +2092,29 @@ function DrawersModal({
   const run = async () => {
     if (!rects) return;
     setProgress(0);
+    const changes: PlanChange[] = [];
+    const label = mode === "arrange" ? `Arranged the drawers in ${room.name}` : `Added ${rects.length} ${noun} to ${room.name}`;
     try {
       if (mode === "arrange") {
         for (let i = 0; i < ordered.length; i++) {
-          await onPlaced(ordered[i]!, rects[i]!);
+          changes.push(await onPlaced(ordered[i]!, rects[i]!));
           setProgress(i + 1);
         }
         toast.success(`${ordered.length} drawers arranged in ${room.name}`);
       } else {
-        if (clear) for (const o of onFace) await onPlaced(o, null);
+        if (clear) for (const o of onFace) changes.push(await onPlaced(o, null));
         for (let i = 0; i < rects.length; i++) {
-          await api.createLocation(slug, { name: labels[i]!, parent_id: room.id, kind: "container", metadata: withRect({}, rects[i]!) });
+          const made = await api.createLocation(slug, { name: labels[i]!, parent_id: room.id, kind: "container", metadata: withRect({}, rects[i]!) });
+          changes.push({ kind: "added", id: made.id });
           setProgress(i + 1);
         }
         toast.success(`${rects.length} ${noun} in ${room.name}`);
       }
+      onStep({ label, changes });
       onCreated();
       onClose();
     } catch (e) {
+      onStep({ label, changes });
       toast.error(`Stopped after ${progress ?? 0} of ${rects.length}: ${e instanceof ApiError ? e.message : String(e)}`);
       onCreated();
       setProgress(null);
@@ -2159,4 +2344,14 @@ function EntityPanel({
       </button>
     </div>
   );
+}
+
+/** Past this many pins on one plan their names would cover the room, so the
+ *  names go to hover and to a screen reader only. */
+const PIN_LABELS_UP_TO = 12;
+
+/** A pinned thing's name: its placement's own title, else the record's name
+ *  from the placeable list, never an empty label. */
+export function pinName(t: { kind: string; id: string; title?: string | null }, placeable: ReadonlyArray<{ kind: string; id: string; name: string }>): string {
+  return t.title?.trim() || placeable.find((r) => r.kind === t.kind && r.id === t.id)?.name || "Something pinned here";
 }

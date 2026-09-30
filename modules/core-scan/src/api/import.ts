@@ -14,10 +14,11 @@
 // model calls. The inbox's existing suggest/rerun flows pick them up.
 
 import { createHash } from "node:crypto";
+import { readFile } from "node:fs/promises";
 import { Router, text as expressText } from "express";
 import { z } from "zod";
-import multer from "multer";
-import { platform } from "@cobblr/platform-contract";
+import { platform, uploadOne } from "@cobblr/platform-contract";
+import { uploadedFile } from "@cobblr/platform-contract/upload";
 import { sql, type Transaction } from "kysely";
 import { bearer, sessionUser, tenantContext, tenantDb, type CoreScanDB } from "../db.js";
 
@@ -68,7 +69,7 @@ const PHOTO_CONCURRENCY = 2;
 const PHOTO_RETRIES = 3;
 const MAX_UPLOAD_BYTES = 32 * 1024 * 1024;
 
-const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: MAX_UPLOAD_BYTES } });
+const upload = uploadOne({ maxBytes: MAX_UPLOAD_BYTES });
 
 const QuerySchema = z.object({
   dry_run: z.enum(["true", "false"]).optional(),
@@ -76,11 +77,21 @@ const QuerySchema = z.object({
   fetch_photos: z.enum(["true", "false"]).optional(),
 });
 
+
+/** The request as parseRequest reads it: an uploaded file's text read from
+ *  where the upload door put it (on disk, at most MAX_UPLOAD_BYTES). */
+async function withUploadText(req: unknown): Promise<Parameters<typeof parseRequest>[0]> {
+  const r = req as { headers: Record<string, unknown>; body: unknown };
+  const file = uploadedFile(req);
+  if (!file) return { headers: r.headers, body: r.body };
+  const text = await readFile(file.path, "utf8");
+  return { headers: r.headers, body: r.body, upload: { originalname: file.originalname, mimetype: file.mimetype, text } };
+}
 /** Parse whichever body arrived: multipart `file` (CSV or JSON by extension /
  *  content), raw text/csv, or a JSON body. `mapping` comes from a multipart
  *  field or the JSON body's top level. */
 function parseRequest(req: {
-  file?: { originalname?: string; mimetype?: string; buffer: Buffer };
+  upload?: { originalname?: string; mimetype?: string; text: string };
   headers: Record<string, unknown>;
   body: unknown;
 }): ParsedImport {
@@ -95,10 +106,11 @@ function parseRequest(req: {
     }
   } else if (mRaw && typeof mRaw === "object") mapping = mRaw as Record<string, string>;
 
-  if (req.file) {
-    const name = (req.file.originalname ?? "").toLowerCase();
-    const text = req.file.buffer.toString("utf8");
-    const looksJson = name.endsWith(".json") || req.file.mimetype === "application/json" || text.trimStart().startsWith("{") || text.trimStart().startsWith("[");
+  const upload = req.upload;
+  if (upload) {
+    const name = (upload.originalname ?? "").toLowerCase();
+    const text = upload.text;
+    const looksJson = name.endsWith(".json") || upload.mimetype === "application/json" || text.trimStart().startsWith("{") || text.trimStart().startsWith("[");
     if (looksJson) {
       try {
         return parseJsonImport(JSON.parse(text));
@@ -457,10 +469,10 @@ async function mapLimit<T, R>(items: T[], limit: number, fn: (t: T) => Promise<R
 importRouter.post(
   "/import/preview",
   expressText({ type: ["text/csv", "text/plain"], limit: "32mb" }),
-  upload.single("file"),
+  upload,
   asyncHandler(async (req, res) => {
     if (!requireRole(req, res, "owner", "admin", "member")) return;
-    const parsed = parseRequest(req as never);
+    const parsed = parseRequest(await withUploadText(req));
     res.json({
       source: parsed.source,
       source_instance: parsed.source_instance,
@@ -487,7 +499,7 @@ importRouter.post(
 importRouter.post(
   "/import",
   expressText({ type: ["text/csv", "text/plain"], limit: "32mb" }),
-  upload.single("file"),
+  upload,
   asyncHandler(async (req, res) => {
     if (!requireRole(req, res, "owner", "admin", "member")) return;
     const q = QuerySchema.safeParse(req.query);
@@ -499,7 +511,7 @@ importRouter.post(
     const policy = q.data.duplicate_policy ?? "skip";
     const fetchPhotos = q.data.fetch_photos !== "false";
 
-    const parsed = parseRequest(req as never);
+    const parsed = parseRequest(await withUploadText(req));
     const errors: ImportRowError[] = [...parsed.errors];
     if (parsed.items.length === 0) {
       res.status(errors.length ? 400 : 200).json({

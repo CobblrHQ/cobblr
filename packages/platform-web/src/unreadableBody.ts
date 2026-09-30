@@ -12,6 +12,8 @@
 // there is nothing left to quote), then pass the text here.
 
 /** A user-facing message for an error response whose body would not parse. */
+import { withArticle } from "@cobblr/platform-contract/plural";
+
 export function describeUnreadableBody(status: number, raw: string): string {
   const snippet = raw
     .replace(/<[^>]*>/g, " ") // an HTML error page should read as a sentence
@@ -20,7 +22,7 @@ export function describeUnreadableBody(status: number, raw: string): string {
     .slice(0, 200);
   const lead =
     status >= 502 && status <= 504
-      ? "Cobblr couldn't finish that — the server, or a service it relies on, didn't answer in time."
-      : `Cobblr returned a ${status} it couldn't read.`;
+      ? "Cobblr couldn't finish that. The server, or a service it relies on, didn't answer in time."
+      : `Cobblr returned ${withArticle(String(status))} it couldn't read.`;
   return snippet ? `${lead} (${status}: ${snippet})` : `${lead} (${status})`;
 }

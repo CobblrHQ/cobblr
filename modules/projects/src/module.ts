@@ -8,13 +8,14 @@
 // box behavior matches the old hardcoded flow.
 
 import { defineModule } from "@cobblr/platform-contract";
+import { ENERGIES, PRIORITIES, PROJECT_STATUSES, TASK_STATUSES } from "./vocab.js";
 
 export default defineModule({
   name: "projects",
-  version: "0.3.13",
+  version: "0.3.17",
   displayName: "Projects",
   description:
-    "Projects + tasks + dependencies. Tasks can wait on other tasks or on any module's entity, the platform brokers.",
+    "Projects and their tasks, with what each task is waiting for.",
   icon: "layers",
   band: "stock",
   instanceability: "multi",
@@ -42,8 +43,8 @@ export default defineModule({
         fields: [
           { name: "name", type: "text", role: "title", required: true },
           { name: "description", type: "text", role: "summary" },
-          { name: "status", type: "text" },
-          { name: "priority", type: "text" },
+          { name: "status", type: "text", choices: [...PROJECT_STATUSES] },
+          { name: "priority", type: "text", choices: [...PRIORITIES] },
           { name: "start_date", type: "date" },
           { name: "target_date", type: "date" },
           // A bundle's custom fields, as on every other instance-backed kind.
@@ -75,10 +76,13 @@ export default defineModule({
         fields: [
           { name: "title", type: "text", role: "title", required: true },
           { name: "description", type: "text", role: "summary" },
-          { name: "status", type: "text" },
-          { name: "priority", type: "text" },
-          { name: "energy", type: "text" },
+          { name: "status", type: "text", choices: [...TASK_STATUSES] },
+          { name: "priority", type: "text", choices: [...PRIORITIES] },
+          { name: "energy", type: "text", choices: [...ENERGIES] },
           { name: "due_date", type: "date" },
+          // A task's custom fields: without it a view grouped or laid out by
+          // one reads every task as "No value".
+          { name: "metadata", type: "object" },
         ],
         // All fields are public-facing — tasks show up everywhere (notifications,
         // dependent-of-X views, dashboards).
@@ -89,16 +93,12 @@ export default defineModule({
           "priority",
           "energy",
           "due_date",
+          "metadata",
         ],
         detailRoute: "/projects/tasks/{id}",
       },
     ],
   },
-
-  intents: [
-    { name: "add_task", description: "Add a task to a project (or standalone)" },
-    { name: "complete_task", description: "Mark a task done" },
-  ],
 
   dependencies: [],
 
@@ -116,7 +116,6 @@ export default defineModule({
       "projects.task.completed",
       "projects.task.unblocked",
     ],
-    api: ["getProjectById", "getTaskById", "createTask", "completeTask"],
     actions: [
       {
         id: "projects:blocked-by",

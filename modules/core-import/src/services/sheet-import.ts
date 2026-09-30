@@ -18,7 +18,7 @@
 
 import { createHash } from "node:crypto";
 import { sql } from "kysely";
-import { platform } from "@cobblr/platform-contract";
+import { platform, SYSTEM_VIEWER } from "@cobblr/platform-contract";
 import { splitEntityKind } from "@cobblr/platform-contract/entity-kind";
 import { isStockPreviewUrl } from "@cobblr/platform-contract/stock-preview";
 import type { CoreImportDB, ImportDb } from "../db.js";
@@ -63,7 +63,29 @@ export interface SheetSummary {
   /** Things imported as no longer the person's (sold, given away, …). */
   retired?: number;
   checks?: SummaryCheck[];
+  /** The first fifty, as sentences, for a reader that predates `issues`. */
   problems: string[];
+  /** Every row that did not go in exactly as written, and why: a value that
+   *  did not fit its field (kept as written), a picture left out, a row that
+   *  could not be written. Complete up to ISSUE_LIMIT; `issue_count` is the
+   *  true total. The result screen lists them and offers them as a file. */
+  issues?: ImportIssue[];
+  issue_count?: number;
+}
+
+export interface ImportIssue {
+  row: number;
+  name: string;
+  problem: string;
+}
+
+const ISSUE_LIMIT = 10_000;
+
+/** Record one row's problem, in full and in the old fifty-line list. */
+function note(sum: SheetSummary, row: number, name: string, problem: string): void {
+  sum.issue_count = (sum.issue_count ?? 0) + 1;
+  if ((sum.issues ??= []).length < ISSUE_LIMIT) sum.issues.push({ row, name, problem });
+  if (sum.problems.length < 50) sum.problems.push(`Row ${row} (${name}): ${problem}`);
 }
 
 export interface StepRow {
@@ -385,7 +407,7 @@ export async function runImport(orgId: string, runId: string): Promise<void> {
 
   try {
     for (const ws of work.sheets) {
-      const sum: SheetSummary = { sheet: ws.sheet, label: ws.label, kind: ws.kind, created: 0, updated: 0, unchanged: 0, failed: 0, retired: 0, ...(ws.checks ? { checks: ws.checks } : {}), problems: [] };
+      const sum: SheetSummary = { sheet: ws.sheet, label: ws.label, kind: ws.kind, created: 0, updated: 0, unchanged: 0, failed: 0, retired: 0, ...(ws.checks ? { checks: ws.checks } : {}), problems: [], issues: [], issue_count: 0 };
       summaries.push(sum);
       const writer = await platform().entities.getWriter(orgId, ws.kind);
       if (!writer) {
@@ -398,6 +420,10 @@ export async function runImport(orgId: string, runId: string): Promise<void> {
       const knownValues = new Set((axis?.values ?? []).map((v) => v.toLowerCase()));
 
       for (const rec of ws.records) {
+        // What the dry run found about this row's values (a date that is not a
+        // date, a count that is not a number) goes in as written; said here too,
+        // so the result names every one, not only the plan the person closed.
+        for (const p of rec.problems ?? []) note(sum, rec.row, rec.name, p);
         try {
           const { top, metadata } = recordFields(rec, ws);
           if (rec.category) {
@@ -406,7 +432,7 @@ export async function runImport(orgId: string, runId: string): Promise<void> {
               // The collection had nowhere to file it after all. The value is
               // kept on the record, and said, never dropped.
               metadata.category = rec.category;
-              if (sum.problems.length < 50) sum.problems.push(`Row ${rec.row} (${rec.name}): kept "${rec.category}" as text, ${ws.label} has no category list`);
+              note(sum, rec.row, rec.name, `kept "${rec.category}" as text, ${ws.label} has no category list`);
             } else {
               if (assignment.slot.kind === "extras") metadata[assignment.slot.name] = assignment.value;
               else top[assignment.slot.column] = assignment.value;
@@ -431,7 +457,7 @@ export async function runImport(orgId: string, runId: string): Promise<void> {
           if (wantsPicture && rec.photo_url) {
             const got = await storeRowPicture(orgId, rec.photo_url);
             if ("refused" in got) {
-              if (sum.problems.length < 50) sum.problems.push(`Row ${rec.row} (${rec.name}): the picture was left out, ${got.refused}`);
+              note(sum, rec.row, rec.name, `the picture was left out, ${got.refused}`);
             } else {
               picture = got;
               top.image_path = `/api/v1/orgs/${work.slug}/modules/core-files/files/${got.fileId}/raw`;
@@ -449,7 +475,7 @@ export async function runImport(orgId: string, runId: string): Promise<void> {
           const retire = async (id: string) => {
             if (!rec.disposition) return;
             if (!writer.retire) {
-              if (sum.problems.length < 50) sum.problems.push(`Row ${rec.row} (${rec.name}): ${ws.label} cannot mark things as no longer yours, so "${rec.disposition.text}" is kept as written`);
+              note(sum, rec.row, rec.name, `${ws.label} cannot mark things as no longer yours, so "${rec.disposition.text}" is kept as written`);
               return;
             }
             await writer.retire(orgId, id, { disposition: rec.disposition.kind });
@@ -491,7 +517,7 @@ export async function runImport(orgId: string, runId: string): Promise<void> {
           }
         } catch (err) {
           sum.failed++;
-          if (sum.problems.length < 50) sum.problems.push(`Row ${rec.row} (${rec.name}): ${(err as Error).message}`);
+          note(sum, rec.row, rec.name, `not written: ${(err as Error).message}`);
         }
         done++;
         if (done % PROGRESS_EVERY === 0) await setProgress(db, runId, done);
@@ -695,7 +721,9 @@ export async function undoRun(orgId: string, db: ImportDb, lb: Loopback, runId: 
           const detail = (typeof s.detail === "string" ? JSON.parse(s.detail) : s.detail) as { name?: string };
           const name = detail?.name ?? "";
           if (!force && name) {
-            const rows = await platform().entities.listAll(orgId, s.entity_kind ?? "", { include_retired: true }, undefined, { cap: 5000 });
+            // SYSTEM-READ: an undo deciding whether a field still holds values
+            // must see every value, a field hidden from some members included.
+            const rows = await platform().entities.listAll(orgId, s.entity_kind ?? "", { include_retired: true }, SYSTEM_VIEWER, { cap: 5000 });
             const used = rows.items.some((r) => {
               const f = (r as { fields?: Record<string, unknown> }).fields ?? {};
               const meta = (f.metadata ?? {}) as Record<string, unknown>;

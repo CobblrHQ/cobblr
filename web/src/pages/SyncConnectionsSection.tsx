@@ -82,9 +82,9 @@ function validateSection(
   }
   if (typeof s.key !== "string" || !s.key) errors.push('Missing "key" (the section id).');
   if (typeof s.targetKind !== "string" || !s.targetKind) errors.push('Missing "targetKind" (e.g. "machines:machine").');
-  if (!(s.list as { path?: string })?.path) warnings.push('No "list.path" — nothing will be fetched.');
-  if (!s.idField) warnings.push('No "idField" — rows need a stable external id (e.g. "$.id").');
-  if (!s.map || typeof s.map !== "object") warnings.push('No "map" — no fields will be written.');
+  if (!(s.list as { path?: string })?.path) warnings.push('No "list.path": nothing will be fetched.');
+  if (!s.idField) warnings.push('No "idField": rows need a stable external id (e.g. "$.id").');
+  if (!s.map || typeof s.map !== "object") warnings.push('No "map": no fields will be written.');
 
   // Instance existence — the high-value check.
   const allNames = new Set(instances.map((i) => i.instance_name));
@@ -95,7 +95,7 @@ function validateSection(
     if (allNames.has(slug)) return;
     const sug = suggestInstance(slug, moduleInstances.length ? moduleInstances : [...allNames]);
     warnings.push(
-      `${where} "${slug}" isn't an instance in this workspace${sug ? ` — did you mean "${sug}"?` : ""}.` +
+      `${where} "${slug}" isn't an instance in this workspace${sug ? ` (did you mean "${sug}"?)` : ""}.` +
         (moduleInstances.length ? ` Available: ${moduleInstances.join(", ")}.` : " Create it first, or fix the slug."),
     );
   };
@@ -104,7 +104,7 @@ function validateSection(
   if (ib && typeof ib === "object") {
     for (const v of Object.values(ib.map ?? {})) checkInstance(v, "instanceBy →");
     checkInstance(ib.default, "instanceBy default");
-    if (s.targetInstance) warnings.push("Both targetInstance and instanceBy are set — instanceBy wins per row.");
+    if (s.targetInstance) warnings.push("Both targetInstance and instanceBy are set, so instanceBy wins per row.");
   }
   return { errors, warnings };
 }
@@ -339,7 +339,7 @@ export function SyncConnectionsSection() {
             // an edit can add/remove entity types — refresh open connections too.
             void qc.invalidateQueries({ queryKey: ["sync-connection", activeSlug] });
             toast.success(
-              wasEdit ? "Source updated — connections pick up the change." : "Source installed — add a connection through it.",
+              wasEdit ? "Source updated. Connections pick up the change." : "Source installed. Add a connection through it.",
             );
           }}
         />
@@ -550,7 +550,7 @@ function InstallSourceModal({
         <p className="text-[11px] text-muted dark:text-slate-400">
           {editing
             ? "The whole source manifest (container + its sections). Re-installing updates it in place; connections pick up the change. To just add another thing to sync, use Add section instead."
-            : "Paste a sync-source manifest (JSON) — the container that declares how to read an external API and map it into Cobblr entities. Install once, then add sections + connections. Nothing source-specific is baked into Cobblr."}
+            : "Paste a sync-source manifest (JSON): the container that declares how to read an external API and map it into Cobblr entities. Install once, then add sections + connections. Nothing source-specific is baked into Cobblr."}
         </p>
         <JsonField
           value={manifest}
@@ -604,7 +604,7 @@ function AddSectionModal({
       return;
     }
     if (existingKeys.includes(s.key)) {
-      setErr(`This source already has a "${s.key}" section — remove it first, or use a different key.`);
+      setErr(`This source already has a "${s.key}" section. Remove it first, or use a different key.`);
       return;
     }
     if (issues.errors.length) {
@@ -693,7 +693,7 @@ function EditSectionModal({
     onSave(section as Record<string, unknown>);
   };
   return (
-    <Modal open onClose={onClose} title={`Edit section — ${label}`} size="md">
+    <Modal open onClose={onClose} title={`Edit section: ${label}`} size="md">
       <div className="space-y-3">
         <p className="text-[11px] text-muted dark:text-slate-400">
           Edit just this section's JSON - map, references, images, targetInstance. Saving re-installs the source;
@@ -741,7 +741,7 @@ function ArchivedConnectionRow({ conn, onChange }: { conn: SyncConnection; onCha
   const unarchive = useMutation({
     mutationFn: () => api.unarchiveSyncConnection(activeSlug, conn.id),
     onSuccess: () => {
-      toast.success(`"${conn.label}" re-activated — back in the list. Re-enable a sync to resume mirroring.`);
+      toast.success(`"${conn.label}" re-activated and back in the list. Re-enable a sync to resume mirroring.`);
       onChange();
     },
     onError: (e) => toast.error(e instanceof ApiError ? e.message : String(e)),
@@ -808,7 +808,7 @@ function SyncConnectionCard({ conn, onChange, nested }: { conn: SyncConnection; 
     onSuccess: (r) => {
       if (r.ok && r.result) {
         const { created, updated, tombstoned } = r.result;
-        toast.success(`Synced — ${created} new, ${updated} updated, ${tombstoned} removed`);
+        toast.success(`Synced: ${created} new, ${updated} updated, ${tombstoned} removed`);
         setPreviewKey(null); // sync was launched from the preview — close it
       } else toast.error(r.error ?? "Sync failed");
       void qc.invalidateQueries({ queryKey: ["sync-connection", activeSlug, conn.id] });
@@ -844,7 +844,7 @@ function SyncConnectionCard({ conn, onChange, nested }: { conn: SyncConnection; 
     onSuccess: (r) => {
       if (r.ok && r.result) {
         const { created, linked, updated } = r.result;
-        toast.success(`Imported — ${created} created, ${linked} merged, ${updated} updated. Live sync is on.`);
+        toast.success(`Imported: ${created} created, ${linked} merged, ${updated} updated. Live sync is on.`);
         setPreviewKey(null);
         void qc.invalidateQueries({ queryKey: ["sync-connection", activeSlug, conn.id] });
       } else toast.error(r.error ?? "Import failed");
@@ -970,7 +970,7 @@ function SyncConnectionCard({ conn, onChange, nested }: { conn: SyncConnection; 
       {/* Preview before committing: what a pull WOULD do — for the first import
           AND for every later re-sync, so a mapping edit is reviewed before it writes. */}
       {previewKey && (
-        <Modal open onClose={() => setPreviewKey(null)} title={`${previewApproved ? "Sync" : "Import"} preview — ${previewLabel}`} size="md">
+        <Modal open onClose={() => setPreviewKey(null)} title={`${previewApproved ? "Sync" : "Import"} preview: ${previewLabel}`} size="md">
           {previewQ.isFetching && !previewQ.data && (
             <div className="text-sm text-muted dark:text-slate-400 py-6 text-center">Pulling from the source…</div>
           )}
@@ -1197,8 +1197,8 @@ function AddSyncConnectionModal({
           </div>
           <p className="mt-1 text-[11px] text-muted dark:text-slate-400">
             {transport === "direct"
-              ? "The cloud fetches the URL itself. On the hosted service this only works for public URLs — a LAN address won't be reachable."
-              : "A local edge bridge on your network fetches the URL and relays it up — the way to connect a LAN source (like a self-hosted inventory system) to hosted Cobblr."}
+              ? "The cloud fetches the URL itself. On the hosted service this only works for public URLs. A LAN address won't be reachable."
+              : "A local edge bridge on your network fetches the URL and relays it up: the way to connect a LAN source (like a self-hosted inventory system) to hosted Cobblr."}
           </p>
           {transport === "edge" && (
             <div className="mt-2">
@@ -1228,7 +1228,7 @@ function AddSyncConnectionModal({
                 schema={credsSchema}
                 rows={5}
                 placeholder={`{\n  ${Object.keys(def.credentials).map((k) => `"${k}": ""`).join(",\n  ")}\n}`}
-                hint="Paste the credentials object — validated against the connector's shape."
+                hint="Paste the credentials object (validated against the connector's shape)."
               />
             ) : (
               <div className="space-y-2">

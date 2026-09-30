@@ -2,6 +2,7 @@ import { Router } from "express";
 import { z } from "zod";
 import { sql } from "kysely";
 import { platform } from "@cobblr/platform-contract";
+import { pagedAnswer, readListPage, TOTAL_COLUMN } from "@cobblr/platform-contract/list-page";
 import { instanceOf, sessionUser, tenantContext, tenantDb } from "../db.js";
 import { asyncHandler, badBody, requireRole } from "./util.js";
 import { routeUnknownToMetadata, refuseUnknownFields, coerceMetadata, withMetadataMerged } from "@cobblr/platform-contract/entity-metadata";
@@ -29,6 +30,8 @@ const AssetCreate = z.object({
   quantity: z.number().int().min(0).optional(),
   serial_number: z.string().max(160).nullable().optional(),
   purchased_at: z.string().nullable().optional(),
+  purchase_price_cents: z.number().int().min(0).max(10_000_000_000).nullable().optional(),
+  vendor: z.string().max(200).nullable().optional(),
   warranty_until: z.string().nullable().optional(),
   last_service_at: z.string().nullable().optional(),
   image_path: z.string().max(500).nullable().optional(),
@@ -53,18 +56,40 @@ const ASSET_NATIVE_KEYS = new Set(Object.keys(AssetCreate.shape));
 const jsonbArray = (v: unknown): unknown => (Array.isArray(v) ? JSON.stringify(v) : v);
 const AssetUpdate = AssetCreate.partial();
 
+/** The kind these rows are: an instance's items, or plain assets. */
+const kindOf = (req: Parameters<typeof instanceOf>[0]): string => (instanceOf(req) === "assets" ? "assets:asset" : `${instanceOf(req)}:item`);
+
 assetsRouter.get(
   "/",
   asyncHandler(async (req, res) => {
     const db = tenantDb(req);
-    const items = await db
+    // The register is what you have: archived things only on ?archived=1.
+    const archived = req.query.archived === "1" || req.query.archived === "true";
+    const page = readListPage(req.query);
+    const rows = await db
       .selectFrom("assets_assets")
       .selectAll()
+      .select(sql<string>`count(*) over()`.as(TOTAL_COLUMN))
       .where("instance", "=", instanceOf(req))
+      .where("archived_at", archived ? "is not" : "is", null)
       .orderBy("name")
-      .limit(500)
+      .orderBy("id")
+      .limit(page.limit)
+      .offset(page.offset)
       .execute();
-    res.json({ items });
+    const put = await db
+      .selectFrom("assets_assets")
+      .select((eb) => eb.fn.countAll<string>().as("n"))
+      .where("instance", "=", instanceOf(req))
+      .where("archived_at", "is not", null)
+      .executeTakeFirst();
+    const answer = pagedAnswer(rows, page);
+    // Person and relation fields read as names (assigned_to_label).
+    res.json({
+      ...answer,
+      items: await platform().entities.withFieldLabels(tenantContext(req).org.id, kindOf(req), answer.items),
+      archived_count: Number(put?.n ?? 0),
+    });
   }),
 );
 
@@ -87,7 +112,8 @@ assetsRouter.get(
       res.status(404).json({ error: { code: "not_found", message: "asset not found" } });
       return;
     }
-    res.json(row);
+    const [labelled] = await platform().entities.withFieldLabels(tenantContext(req).org.id, kindOf(req), [row as Record<string, unknown>]);
+    res.json(labelled);
   }),
 );
 
@@ -253,7 +279,7 @@ assetsRouter.delete(
       .deleteFrom("assets_assets")
       .where("id", "=", id)
       .where("instance", "=", instanceOf(req))
-      .returning("id")
+      .returning(["id", "name"])
       .executeTakeFirst();
     if (!deleted) {
       res.status(404).json({ error: { code: "not_found", message: "asset not found" } });
@@ -265,6 +291,7 @@ assetsRouter.delete(
       action: "asset_deleted",
       ref: { module: "assets", entityType: "asset", entityId: id },
     });
+    await platform().events.emit("assets.asset.deleted", { orgId: ctx.org.id, assetId: id, name: deleted.name });
     res.status(204).end();
   }),
 );

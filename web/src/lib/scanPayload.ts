@@ -99,3 +99,36 @@ export function typedVerdict(raw: string): TypedVerdict {
 export function scannerIgnores(raw: string, ownOrigins?: readonly string[]): boolean {
   return classifyScanPayload(raw, ownOrigins).kind === "own-link";
 }
+
+/** What a hardware scanner (a keyboard wedge) does with a payload, outside the
+ *  Scan page. The same rule the lens reads: a Cobblr label jumps to its place,
+ *  a link to a page here (an action label, a record) opens it, a link to
+ *  Cobblr itself is ignored, a retail code is staged, and anything else asks
+ *  the resolvers (a declared identifier, a spool's URL). */
+export type WedgeVerdict =
+  | { action: "route-qr"; token: string }
+  | { action: "open"; path: string }
+  | { action: "ignore" }
+  | { action: "stage"; code: string }
+  | { action: "resolve"; code: string };
+
+export function wedgeVerdict(raw: string, ownOrigins?: readonly string[]): WedgeVerdict {
+  const p = classifyScanPayload(raw, ownOrigins);
+  switch (p.kind) {
+    case "cobblr-qr":
+      return { action: "route-qr", token: p.token };
+    case "own-route":
+      return { action: "open", path: p.path };
+    case "own-link":
+    case "empty":
+      return { action: "ignore" };
+    case "product-code":
+      return { action: "stage", code: p.code };
+    case "code":
+      return { action: "resolve", code: p.code };
+    case "link":
+      return { action: "resolve", code: p.url };
+    case "words":
+      return { action: "resolve", code: p.text };
+  }
+}

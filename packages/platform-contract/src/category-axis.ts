@@ -108,13 +108,17 @@ export interface AxisDefLike {
  *  def-backed, whatever the manifest says, and the flip is one observable
  *  change on the day the def goes.
  *
- *  Returns null when the kind has neither. */
+ *  A kind whose category is a native field of its own (`categoryField`, an
+ *  asset's `type`) answers from that field when no def is present. Returns
+ *  null when the kind has none of the three. */
 export function chooseAxisBacking(
   defs: readonly AxisDefLike[],
   nativeKind: string | null,
+  nativeField: string | null = null,
 ):
   | { kind: "extras"; label: string; values: string[]; slot: { kind: "extras"; name: string; defId: string } }
   | { kind: "native"; entityKind: string }
+  | { kind: "field"; column: string }
   | null {
   const def = defs.find((d) => d.field_role === "category");
   if (def) {
@@ -130,5 +134,6 @@ export function chooseAxisBacking(
       slot: { kind: "extras", name: def.name, defId: def.id },
     };
   }
-  return nativeKind ? { kind: "native", entityKind: nativeKind } : null;
+  if (nativeKind) return { kind: "native", entityKind: nativeKind };
+  return nativeField ? { kind: "field", column: nativeField } : null;
 }

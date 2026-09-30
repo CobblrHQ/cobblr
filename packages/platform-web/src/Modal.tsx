@@ -19,13 +19,14 @@
 // relative to the navbar strip and intercept clicks only there.
 
 import { lockPageScroll } from "./scrollLock";
-import { useEffect, useRef, type ReactNode } from "react";
+import { useEffect, useId, useRef, type ReactNode, type RefObject } from "react";
 import { createPortal } from "react-dom";
 import { Sparkles, X } from "lucide-react";
 import { useOverlayOpenFlag } from "./overlay-open";
 import { useOverLiveSurface } from "./live-surface";
 import { modalPanelLayout, modalOverlayPadding } from "./modal-layout";
 import { useLayerStack } from "./layer-stack";
+import { useDialogFocus } from "./useDialogFocus";
 
 interface Props {
   open: boolean;
@@ -115,6 +116,8 @@ export function Modal({ open, onClose, title, subtitle, children, size = "md", d
   // fields don't fire these), so a view modal with pre-filled controls still
   // closes on a backdrop click until you actually touch something.
   const dirtyRef = useRef(false);
+  const panelRef = useRef<HTMLDivElement | null>(null);
+  const titleId = useId();
   useEffect(() => {
     if (open) dirtyRef.current = false; // reset each time it opens
   }, [open]);
@@ -157,6 +160,7 @@ export function Modal({ open, onClose, title, subtitle, children, size = "md", d
 
   const panel = (
       <div
+        ref={panelRef}
         className={
           // Height-constrained + column layout so a tall form scrolls WITHIN the
           // modal (header pinned) instead of running off the page (the bug a beta tester
@@ -195,6 +199,7 @@ export function Modal({ open, onClose, title, subtitle, children, size = "md", d
             <div className="flex-1 min-w-0">
               {title && (
                 <div
+                  id={titleId}
                   className={
                     "font-display text-lg font-bold " +
                     (destructive
@@ -218,7 +223,7 @@ export function Modal({ open, onClose, title, subtitle, children, size = "md", d
                   window.dispatchEvent(new CustomEvent("cobblr:open-chat", { detail: { opener: cobb.opener } }))
                 }
                 className="inline-flex items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-[13px] font-medium text-accent hover:bg-subtle dark:hover:bg-slate-800 transition shrink-0"
-                title="Ask Cobb about this — opens chat with Cobb ready to help"
+                title="Ask Cobb about this (opens chat with Cobb ready to help)"
               >
                 <Sparkles size={15} className="shrink-0" />
                 <span className="hidden sm:inline">{cobb.label ?? "Ask Cobb"}</span>
@@ -260,15 +265,18 @@ export function Modal({ open, onClose, title, subtitle, children, size = "md", d
     );
   }
 
-  return createPortal(<ModalOverlay overLive={overLive} onBackdrop={handleBackdrop}>{panel}</ModalOverlay>, document.body);
+  return createPortal(<ModalOverlay overLive={overLive} onBackdrop={handleBackdrop} panel={panelRef} labelledBy={title ? titleId : undefined}>
+      {panel}
+    </ModalOverlay>, document.body);
 }
 
 /** The modal's backdrop and frame, mounted only while the modal is open, so it
  *  takes its place in the layer stack at the moment it opens: above the Ask
  *  Cobb panel it was opened from, not under it (#3954). */
-function ModalOverlay({ overLive, onBackdrop, children }: { overLive: boolean; onBackdrop: () => void; children: ReactNode }) {
+function ModalOverlay({ overLive, onBackdrop, panel, labelledBy, children }: { overLive: boolean; onBackdrop: () => void; panel: RefObject<HTMLDivElement | null>; labelledBy?: string; children: ReactNode }) {
   const ref = useRef<HTMLDivElement | null>(null);
   useLayerStack(ref);
+  useDialogFocus(true, panel, ref);
   return (
     <div
       ref={ref}
@@ -284,6 +292,7 @@ function ModalOverlay({ overLive, onBackdrop, children }: { overLive: boolean; o
       onClick={onBackdrop}
       role="dialog"
       aria-modal="true"
+      aria-labelledby={labelledBy}
     >
       {children}
     </div>

@@ -5,13 +5,18 @@
 // setting you could come back and change. It is a workspace setting, so it
 // lives on a workspace settings page.
 
+import { useAuth } from "../auth/AuthContext";
 import { useState } from "react";
-import { Eye } from "lucide-react";
+import { Link } from "react-router-dom";
+import { useQueryClient } from "@tanstack/react-query";
+import { Eye, LogOut, Trash2 } from "lucide-react";
 import { usePageTitle, useToast } from "@cobblr/platform-web";
 import { useActiveOrg } from "../auth/ActiveOrgContext";
 import { roleSatisfies } from "@cobblr/platform-contract/org-roles";
 import { displaySlug } from "../lib/workspaceSlug";
-import { isFocused, setFocused } from "../lib/api";
+import { api, isFocused, setFocused } from "../lib/api";
+import { untilDate } from "../components/WorkspaceStateBar";
+import { useKeepWorkspace, useWorkspaceDeletion, workspaceStateKey } from "../components/WorkspaceDeletionBar";
 
 export function GeneralSettingsPage() {
   usePageTitle("General");
@@ -45,6 +50,8 @@ export function GeneralSettingsPage() {
       </section>
 
       {canFocus && <FocusedModeCard slug={activeSlug} focused={!!activeOrg?.focused} />}
+      {activeOrg && <LeaveWorkspaceCard slug={activeSlug} name={activeOrg.name} />}
+      {activeOrg?.role === "owner" && <DeleteWorkspaceCard slug={activeSlug} name={activeOrg.name} />}
     </div>
   );
 }
@@ -102,4 +109,160 @@ function FocusedModeCard({ slug, focused }: { slug: string; focused: boolean }) 
   );
 }
 
+/** Owner only. Deleting a workspace is a request with a date, not an instant
+ *  drop: a backup first, a grace period in which every member sees the date and
+ *  an owner can keep it, then the database is dropped (CLAUDE.md section 7). */
+function DeleteWorkspaceCard({ slug, name }: { slug: string; name: string }) {
+  const toast = useToast();
+  const qc = useQueryClient();
+  const { dueAt, loading } = useWorkspaceDeletion(slug);
+  const keep = useKeepWorkspace(slug);
+  const [typed, setTyped] = useState("");
+  const [busy, setBusy] = useState(false);
+  const matches = typed.trim().toLowerCase() === name.trim().toLowerCase();
+  const schedule = async () => {
+    setBusy(true);
+    try {
+      await api.scheduleWorkspaceDeletion(slug, typed);
+      setTyped("");
+      await qc.invalidateQueries({ queryKey: workspaceStateKey(slug) });
+      toast.success("This workspace is set to be deleted. You can keep it until the day it goes.");
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Couldn't delete the workspace");
+    } finally {
+      setBusy(false);
+    }
+  };
+  return (
+    <section
+      className="rounded-xl border border-ember-300 dark:border-ember-800 bg-surface dark:bg-slate-900 p-4 space-y-3"
+      data-testid="delete-workspace"
+    >
+      <div className="flex items-start gap-3">
+        <Trash2 size={18} className="mt-0.5 shrink-0 text-ember-600 dark:text-ember-400" />
+        <div className="min-w-0 space-y-1">
+          <h2 className="text-sm font-semibold text-content dark:text-mortar-100">Delete this workspace</h2>
+          {loading ? null : dueAt != null ? (
+            <p className="text-xs text-faint dark:text-slate-400">
+              It will be deleted on <strong className="text-content dark:text-mortar-100">{untilDate(dueAt)}</strong>, with
+              everything in it. Until then it works as usual and everyone in it sees the date. A full backup is taken just
+              before it goes, and every owner can download it from Your account for 30 days.
+            </p>
+          ) : (
+            <p className="text-xs text-faint dark:text-slate-400">
+              Everything in it goes: records, photos, files and history, for everyone in it. It is not deleted at once:
+              everyone sees the date, and any owner can keep it until then. A full backup is taken just before it goes and
+              kept for 30 days under Your account.{" "}
+              <Link to="/configuration/backup" className="underline">
+                Download a backup
+              </Link>{" "}
+              now as well if you want one in hand.
+            </p>
+          )}
+        </div>
+      </div>
+      {loading ? null : dueAt != null ? (
+        <button
+          type="button"
+          onClick={() => keep.mutate()}
+          disabled={keep.isPending}
+          className="rounded-md bg-cobble-600 hover:bg-cobble-700 text-white text-sm font-medium px-3 py-1.5 transition disabled:opacity-50"
+        >
+          {keep.isPending ? "Keeping…" : "Keep this workspace"}
+        </button>
+      ) : (
+        <div className="flex flex-col sm:flex-row gap-2">
+          <label className="flex-1 min-w-0">
+            <span className="sr-only">Type the workspace's name to delete it</span>
+            <input
+              value={typed}
+              onChange={(e) => setTyped(e.target.value)}
+              placeholder={`Type ${name} to confirm`}
+              autoComplete="off"
+              className="w-full rounded-md border border-line dark:border-slate-600 bg-surface dark:bg-slate-950 px-3 py-1.5 text-sm"
+            />
+          </label>
+          <button
+            type="button"
+            onClick={schedule}
+            disabled={!matches || busy}
+            className="shrink-0 rounded-md bg-ember-600 hover:bg-ember-700 text-white text-sm font-medium px-3 py-1.5 transition disabled:opacity-40"
+          >
+            {busy ? "…" : "Delete workspace"}
+          </button>
+        </div>
+      )}
+    </section>
+  );
+}
+
 export { isFocused };
+
+/** Anyone may leave a workspace; an owner only once somebody else is one too
+ *  (the api says so in words when they are not). Their things stay, named as
+ *  somebody who has left, never silently unowned. */
+function LeaveWorkspaceCard({ slug, name }: { slug: string; name: string }) {
+  const toast = useToast();
+  const { user } = useAuth();
+  const [asking, setAsking] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const leave = async () => {
+    if (!user) return;
+    setBusy(true);
+    try {
+      await api.removeMember(slug, user.id);
+      window.location.assign("/");
+    } catch (e) {
+      setBusy(false);
+      setAsking(false);
+      toast.error(e instanceof Error ? e.message : "Couldn't leave the workspace");
+    }
+  };
+  return (
+    <section
+      className="rounded-xl border border-line dark:border-slate-700 bg-surface dark:bg-slate-900 p-4"
+      data-testid="leave-workspace"
+    >
+      <div className="flex flex-col sm:flex-row sm:items-start gap-2 sm:gap-3">
+        <div className="flex items-start gap-3 flex-1 min-w-0">
+          <LogOut size={18} className="mt-0.5 shrink-0 text-faint" />
+          <div className="min-w-0">
+            <div className="text-sm font-medium text-content dark:text-mortar-100">Leave this workspace</div>
+            <p className="mt-0.5 text-xs text-faint dark:text-slate-400">
+              You stop seeing {name}; everything in it stays for the people who remain. To come back, somebody has to
+              invite you again.
+            </p>
+          </div>
+        </div>
+        {asking ? (
+          <div className="flex gap-2 shrink-0 self-end sm:self-auto">
+            <button
+              type="button"
+              onClick={() => setAsking(false)}
+              disabled={busy}
+              className="rounded-md border border-line dark:border-slate-600 px-3 py-1.5 text-sm font-medium hover:bg-subtle"
+            >
+              Stay
+            </button>
+            <button
+              type="button"
+              onClick={leave}
+              disabled={busy}
+              className="rounded-md bg-ember-600 hover:bg-ember-700 text-white px-3 py-1.5 text-sm font-medium disabled:opacity-50"
+            >
+              {busy ? "…" : "Leave"}
+            </button>
+          </div>
+        ) : (
+          <button
+            type="button"
+            onClick={() => setAsking(true)}
+            className="shrink-0 self-end sm:self-auto rounded-md border border-line dark:border-slate-600 px-3 py-1.5 text-sm font-medium hover:bg-subtle"
+          >
+            Leave…
+          </button>
+        )}
+      </div>
+    </section>
+  );
+}

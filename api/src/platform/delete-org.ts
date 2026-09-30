@@ -4,6 +4,8 @@
 // DELETE /super-admin/workspaces/:id (cleaning up e2e/test detritus is an
 // operator chore — console audit 2026-06-11). AUTHZ IS THE CALLER'S JOB.
 
+import { platform } from "@cobblr/platform-contract";
+import { sql } from "kysely";
 import { meta } from "../db/meta.js";
 import { createClient } from "../db/client-error-guard.js";
 import { metaPool } from "../db/meta.js";
@@ -19,6 +21,16 @@ import { dropModuleRole } from "../sandbox/module-role.js";
 const DRAIN_MS = Number(process.env.COBBLR_DELETE_DRAIN_MS) || 5_000;
 
 export async function hardDeleteOrg(orgId: string): Promise<void> {
+  // The workspace's stored files first, while its database (which lists them)
+  // still opens: inside withTenantDeleting nothing can open it. Dropping the
+  // database used to be the whole delete, so every photo and file of every
+  // deleted workspace stayed on disk for good. A failure is loud but does not
+  // keep the workspace: the person asked for it gone.
+  try {
+    await platform().files.eraseWorkspace(orgId);
+  } catch (err) {
+    console.error(`[delete-org] org ${orgId}: its stored files were not all removed:`, (err as Error).message);
+  }
   // Marked as deleting for the whole run: a request that lands in here gets a
   // refusal from getTenantDb instead of opening a fresh pool to a database
   // whose backends are about to be terminated (#2957).
@@ -109,5 +121,17 @@ async function deleteOrg(orgId: string): Promise<void> {
   await meta.deleteFrom("activity_log").where("org_id", "=", orgId).execute();
   await meta.deleteFrom("notifications").where("org_id", "=", orgId).execute();
   await meta.deleteFrom("notification_subscriptions").where("org_id", "=", orgId).execute();
+  // Feedback is the operator's, not the workspace's: the report stays, under
+  // the name it was filed from. (The foreign key clears org_id on its own too;
+  // this is what keeps the name.)
+  await meta
+    .updateTable("feedback")
+    .set((eb) => ({
+      workspace_name: eb.selectFrom("orgs").select("name").where("id", "=", orgId),
+      org_id: null,
+      updated_at: sql`updated_at`,
+    }))
+    .where("org_id", "=", orgId)
+    .execute();
   await meta.deleteFrom("orgs").where("id", "=", orgId).execute();
 }

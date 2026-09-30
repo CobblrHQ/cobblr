@@ -163,6 +163,20 @@ export const GENERATED_SURFACE: Capability[] = [
     "module": "core-devices"
   },
   {
+    "feature": "Email",
+    "does": "How this workspace emails customers, from your own address through your own provider (SMTP, Mailgun, Resend or Postmark). Nothing is sent until someone presses send.",
+    "where": "/configuration/email",
+    "also": [
+      "smtp",
+      "outbound",
+      "customer email",
+      "shipping notice",
+      "mailgun",
+      "resend",
+      "postmark"
+    ]
+  },
+  {
     "feature": "General",
     "does": "How this workspace behaves day to day, including simple mode, which tucks the builder tools away for a calmer everyday view.",
     "where": "/configuration/general",

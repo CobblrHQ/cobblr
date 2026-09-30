@@ -12,10 +12,10 @@ import { defineModule } from "@cobblr/platform-contract";
 
 export default defineModule({
   name: "lists",
-  version: "0.1.12",
+  version: "0.1.17",
   displayName: "Lists",
   description:
-    "Lightweight checklists: a list + check-off-able items. Shopping lists, to-do, packing. Other modules can auto-add items via a wire (e.g. 'running low' → shopping list).",
+    "Simple checklists for shopping, packing or to-dos, which can fill themselves when something runs low.",
   icon: "list-checks",
   band: "stock",
   autoEnable: false,
@@ -81,6 +81,11 @@ export default defineModule({
   },
 
   exposes: {
+    // What a check-off carries. The item's record rides under its kind's own
+    // id key (partId for a part), with sourceRef beside it.
+    eventPayloads: {
+      "lists.item.checked": ["listId", "itemId", "checked", "partId", "sourceRef", "quantity"],
+    },
     // The KINDS of workspace notification this module sends, so the
     // workspace can say who each kind is for (Configuration > Who gets told).
     notifications: [
@@ -105,7 +110,6 @@ export default defineModule({
       // person can say that.
       "lists.item.expired",
     ],
-    api: [],
     actions: [
       {
         id: "lists:clear-done",
@@ -123,7 +127,7 @@ export default defineModule({
         undoable: true,
         label: "Add to a list",
         description:
-          "Append an item to a list: a record (its title) or just words (\"milk\"), with no record needed. The list is found by name and made if it does not exist. Wire it to an event (e.g. inventory.stock.low) to auto-build a shopping list. Dedupes by title within the list.",
+          "Append an item to a list: a record (its title) or just words (\"milk\"), with no record needed. Name the list by id or by name (made if it does not exist). A person adding a record without naming a list gets the list that record last went on, or, the first time, `needs_list` with the lists to choose from; a wire with no list still uses \"Shopping list\". Wire it to an event (e.g. inventory.stock.low) to auto-build a shopping list. Dedupes by title within the list.",
         // DELIBERATELY universal: anything — physical or digital — can be put
         // on a list. The one honest any:true among the entity-bound actions.
         appliesTo: { any: true },

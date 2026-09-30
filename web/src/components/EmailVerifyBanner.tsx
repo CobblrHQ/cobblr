@@ -48,7 +48,7 @@ export function EmailVerifyBanner({ variant = "bar" }: { variant?: "bar" | "side
         <div className="flex items-start gap-1.5">
           <MailWarning size={12} className="shrink-0 mt-0.5 text-accent" />
           <span className="flex-1 min-w-0">
-            {sent ? "Verification email sent — check your inbox." : "Verify your email to secure your account."}
+            {sent ? "Verification email sent. Check your inbox." : "Verify your email to secure your account."}
           </span>
           <button type="button" onClick={dismiss} className="shrink-0 text-faint hover:text-content dark:hover:text-mortar-200 transition" title="Dismiss" aria-label="Dismiss">
             <X size={12} />
@@ -74,7 +74,7 @@ export function EmailVerifyBanner({ variant = "bar" }: { variant?: "bar" | "side
         <MailWarning size={14} className="shrink-0 text-accent" />
         <span className="flex-1 min-w-0">
           {sent ? (
-            "Verification email sent — check your inbox (and spam)."
+            "Verification email sent. Check your inbox (and spam)."
           ) : (
             <>
               Verify your email <strong className="break-all">{user.email}</strong> to secure your

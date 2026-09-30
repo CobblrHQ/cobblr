@@ -13,9 +13,14 @@
 // cap on how many entries and how much in total.
 
 import { Router } from "express";
-import multer from "multer";
-import { unzipSync } from "fflate";
-import { platform } from "@cobblr/platform-contract";
+import { createHash } from "node:crypto";
+import { createWriteStream } from "node:fs";
+import { rm } from "node:fs/promises";
+import { Transform } from "node:stream";
+import { pipeline } from "node:stream/promises";
+import unzipper from "unzipper";
+import { platform, uploadOne } from "@cobblr/platform-contract";
+import { tooLargeMessage, uploadedFile } from "@cobblr/platform-contract/upload";
 import { sessionUser, tenantContext, tenantDb } from "../db.js";
 import { asyncHandler, requireRole } from "./util.js";
 import { ensureFolderPath, intakeFile, resolveTarget, sameBytes } from "./intake.js";
@@ -23,13 +28,13 @@ import { bytesUsed, QUOTA_BYTES, quotaDecision } from "./quota.js";
 
 export const importZipRouter = Router({ mergeParams: true });
 
-/** One file's ceiling, the same as a single upload. */
-export const ENTRY_MAX_BYTES = 25 * 1024 * 1024;
-export const ZIP_MAX_BYTES = 200 * 1024 * 1024;
 export const UNPACKED_MAX_BYTES = 1024 * 1024 * 1024;
 export const ENTRIES_MAX = 2000;
 
-const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: ZIP_MAX_BYTES, files: 1 } });
+// A zip may be as big as the biggest file this deployment takes; each entry
+// is then judged like a single upload of it (PDFs and design files by the
+// deployment's own limit, everything else 25 MB).
+const upload = uploadOne({ maxBytes: "largest", noun: "zip" });
 
 const MIME: Record<string, string> = {
   pdf: "application/pdf",
@@ -70,19 +75,20 @@ export function isJunk(path: string): boolean {
 export type ImportLine =
   | { path: string; filename: string; status: "stored"; file_id: string; folder_id: string | null; mime_type: string }
   | { path: string; filename: string; status: "duplicate"; file_id: string; folder_id: string | null; mime_type: string; existing_filename: string; existing_folder: string[] }
-  | { path: string; filename: string; status: "too_big"; bytes: number }
+  | { path: string; filename: string; status: "too_big"; bytes: number; reason: string }
   | { path: string; filename: string; status: "failed"; reason: string };
 
 // AI-REACH: exempt — takes a file (a zip archive, multipart), which an action cannot carry
+// UI-SCREEN: /files
 importZipRouter.post(
   "/",
-  upload.single("file"),
+  upload,
   asyncHandler(async (req, res) => {
     if (!requireRole(req, res, "owner", "admin", "editor", "member")) return;
     const ctx = tenantContext(req);
     const userId = sessionUser(req)?.id ?? null;
-    const file = (req as unknown as { file?: Express.Multer.File }).file;
-    if (!file?.buffer) {
+    const file = uploadedFile(req);
+    if (!file) {
       res.status(400).json({ error: { code: "missing_file", message: "Multipart field 'file' (a .zip) is required." } });
       return;
     }
@@ -96,38 +102,36 @@ importZipRouter.post(
     }
     const target = resolved;
 
-    // Read the directory first: sizes as the zip declares them, nothing
-    // inflated yet.
-    const wanted: Array<{ path: string; size: number }> = [];
+    // Read the directory first, from the zip on disk: sizes as the zip
+    // declares them, nothing inflated yet. Each entry is inflated on its own
+    // when its turn comes, so the archive is never in memory whole.
+    type Entry = unzipper.File;
+    const wanted: Entry[] = [];
     const tooBig: ImportLine[] = [];
     let total = 0;
     let entries = 0;
-    let unzipped: Record<string, Uint8Array>;
     try {
-      unzipped = unzipSync(new Uint8Array(file.buffer), {
-        filter: (f) => {
-          if (f.name.endsWith("/") || isJunk(f.name)) return false;
-          entries += 1;
-          if (f.originalSize > ENTRY_MAX_BYTES) {
-            tooBig.push({ path: f.name, filename: f.name.split("/").pop() ?? f.name, status: "too_big", bytes: f.originalSize });
-            return false;
-          }
-          total += f.originalSize;
-          wanted.push({ path: f.name, size: f.originalSize });
-          return entries <= ENTRIES_MAX && total <= UNPACKED_MAX_BYTES;
-        },
-      });
+      const dir = await unzipper.Open.file(file.path);
+      for (const f of dir.files) {
+        if (f.type !== "File" || f.path.endsWith("/") || isJunk(f.path)) continue;
+        entries += 1;
+        const name = f.path.split("/").pop() ?? f.path;
+        const row = platform().http.uploadSizeFor(name, mimeFor(name));
+        if (f.uncompressedSize > row.maxBytes) {
+          tooBig.push({ path: f.path, filename: name, status: "too_big", bytes: f.uncompressedSize, reason: tooLargeMessage(f.uncompressedSize, row.maxBytes, "file", row.label) });
+          continue;
+        }
+        total += f.uncompressedSize;
+        wanted.push(f);
+      }
     } catch {
       res.status(400).json({ error: { code: "not_a_zip", message: "That file could not be opened as a .zip." } });
       return;
     }
     if (entries > ENTRIES_MAX || total > UNPACKED_MAX_BYTES) {
-      res.status(413).json({
-        error: {
-          code: "zip_too_large",
-          message: `A zip can hold up to ${ENTRIES_MAX} files and ${Math.round(UNPACKED_MAX_BYTES / 1024 / 1024)} MB unpacked; this one has ${entries} files and ${Math.round(total / 1024 / 1024)} MB. Split it and import the parts.`,
-        },
-      });
+      const message = `A zip can hold up to ${ENTRIES_MAX} files and ${Math.round(UNPACKED_MAX_BYTES / 1024 / 1024)} MB unpacked; this one has ${entries} files and ${Math.round(total / 1024 / 1024)} MB. Split it and import the parts.`;
+      platform().http.uploadRefused(req, { reason: "zip_too_large", sizeBytes: total, limitBytes: UNPACKED_MAX_BYTES, mimeType: file.mimetype, message });
+      res.status(413).json({ error: { code: "zip_too_large", message } });
       return;
     }
 
@@ -136,38 +140,68 @@ importZipRouter.post(
     const used = await bytesUsed(db);
     const ent = await platform().entitlements.check({ orgId: ctx.org.id, feature: "files.upload", userId: userId ?? undefined, quantity: total, used });
     if (!ent.allow) {
-      res.status(402).json({ error: { code: "plan_limit", message: ent.reason ?? "File uploads aren't available on your plan." } });
+      const message = ent.reason ?? "File uploads aren't available on your plan.";
+      platform().http.uploadRefused(req, { reason: "plan_limit", sizeBytes: total, mimeType: file.mimetype, message });
+      res.status(402).json({ error: { code: "plan_limit", message } });
       return;
     }
     const room = quotaDecision(used, total, QUOTA_BYTES);
     if (!room.allow) {
+      platform().http.uploadRefused(req, { reason: "storage_full", sizeBytes: total, limitBytes: QUOTA_BYTES, mimeType: file.mimetype, message: room.reason ?? "This workspace's storage is full." });
       res.status(413).json({ error: { code: "storage_full", message: room.reason } });
       return;
     }
 
     const cache = new Map<string, string | null>();
     const lines: ImportLine[] = [];
-    for (const { path } of wanted.sort((a, b) => a.path.localeCompare(b.path))) {
-      const bytes = unzipped[path];
-      if (!bytes) continue;
-      const parts = path.split("/").filter(Boolean);
-      const filename = parts.pop() ?? path;
-      try {
-        const folderId = await ensureFolderPath(db, target, parts, cache);
-        const buffer = Buffer.from(bytes);
-        const same = await sameBytes(db, buffer);
-        if (same) {
-          lines.push({ path, filename, status: "duplicate", file_id: same.id, folder_id: same.folder_id, mime_type: same.mime_type, existing_filename: same.filename, existing_folder: same.folder_names });
-          continue;
+    const spent: string[] = [];
+    try {
+      for (const entry of wanted.sort((a, b) => a.path.localeCompare(b.path))) {
+        const path = entry.path;
+        const parts = path.split("/").filter(Boolean);
+        const filename = parts.pop() ?? path;
+        try {
+          const folderId = await ensureFolderPath(db, target, parts, cache);
+          // One entry at a time, inflated to disk beside the zip and hashed on
+          // the way, never held whole.
+          const at = `${file.path}.${spent.length}`;
+          spent.push(at);
+          const unpacked = await unpackEntry(entry, at, platform().http.uploadSizeFor(filename, mimeFor(filename)).maxBytes);
+          const fingerprint = { sha256: unpacked.sha256, size: unpacked.size };
+          const same = await sameBytes(db, fingerprint);
+          if (same) {
+            lines.push({ path, filename, status: "duplicate", file_id: same.id, folder_id: same.folder_id, mime_type: same.mime_type, existing_filename: same.filename, existing_folder: same.folder_names });
+            continue;
+          }
+          const { row } = await intakeFile(db, ctx.org.id, userId, { source: unpacked, fingerprint, filename, mime: mimeFor(filename), folderId });
+          lines.push({ path, filename, status: "stored", file_id: row.id, folder_id: row.folder_id, mime_type: row.mime_type });
+        } catch (err) {
+          lines.push({ path, filename, status: "failed", reason: (err as Error).message.slice(0, 200) });
         }
-        const { row } = await intakeFile(db, ctx.org.id, userId, { buffer, filename, mime: mimeFor(filename), folderId });
-        lines.push({ path, filename, status: "stored", file_id: row.id, folder_id: row.folder_id, mime_type: row.mime_type });
-      } catch (err) {
-        lines.push({ path, filename, status: "failed", reason: (err as Error).message.slice(0, 200) });
       }
+    } finally {
+      await Promise.all(spent.map((p) => rm(p, { force: true })));
     }
     lines.push(...tooBig);
     const count = (s: ImportLine["status"]) => lines.filter((l) => l.status === s).length;
     res.json({ stored: count("stored"), duplicates: count("duplicate"), too_big: count("too_big"), failed: count("failed"), lines });
   }),
 );
+
+/** One zip entry to a file of its own, hashed as it inflates, and stopped at
+ *  `limit`: the size the zip declares for an entry is only a claim, and a
+ *  bomb lies about it. */
+async function unpackEntry(entry: unzipper.File, path: string, limit: number): Promise<{ path: string; size: number; sha256: string }> {
+  const hash = createHash("sha256");
+  let size = 0;
+  const meter = new Transform({
+    transform(chunk: Buffer, _enc, done) {
+      size += chunk.length;
+      if (size > limit) return done(new Error(`unpacks to more than the ${Math.round(limit / 1024 / 1024)} MB it can be`));
+      hash.update(chunk);
+      done(null, chunk);
+    },
+  });
+  await pipeline(entry.stream(), meter, createWriteStream(path, { flags: "wx" }));
+  return { path, size, sha256: hash.digest("hex") };
+}

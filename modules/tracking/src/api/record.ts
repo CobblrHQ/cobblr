@@ -73,11 +73,11 @@ export async function logMeasurement(opts: {
           orgId,
           userId,
           eventType: "tracking.goal-reached",
-          message: `🎯 Goal reached — ${metric.name} hit ${goal}${unit}`,
+          message: `🎯 Goal reached: ${metric.name} hit ${goal}${unit}`,
           // Straight to the metric, opened. It said "you hit your goal" and
           // then went nowhere, so the only way to see the number behind it was
           // to remember where the metric lived.
-          link_url: `/tracking?metric=${metric.id}`,
+          link_url: `/tracking/${metric.id}`,
           module: "tracking",
           entityType: "tracking:metric",
           entityId: metric.id,

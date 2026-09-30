@@ -21,7 +21,7 @@ import type { Kysely } from "kysely";
 import { platform } from "@cobblr/platform-contract";
 import { getTenantDb } from "../db/tenant.js";
 import { list, listKindsForOrg } from "./entities.js";
-import { disableModuleForOrg } from "../modules/enable.js";
+import { disableModuleForOrg, isDefaultModule } from "../modules/enable.js";
 import { getEntry } from "../modules/registry.js";
 import { listInstances } from "./instances.js";
 import type { ResourceClaim } from "./bundle-claims.js";
@@ -138,9 +138,15 @@ export async function releaseUnclaimed(orgId: string, released: ResourceClaim[])
     out.kept.push({ type: "place", key: id, name: c.name, reason });
   }
 
-  // Modules: dependents first.
+  // Modules: dependents first. Never one every workspace is born with: a
+  // bundle that switched it on while it was still optional does not get to
+  // take it away now.
   const modules = released
     .filter((c) => c.resource_type === "module")
+    .filter((c) => {
+      const e = getEntry(c.resource_key);
+      return !e || !isDefaultModule(e);
+    })
     .map((c) => c.resource_key)
     .sort((a, b) => (getEntry(b)?.manifest.dependencies.length ?? 0) - (getEntry(a)?.manifest.dependencies.length ?? 0));
   for (const name of modules) {

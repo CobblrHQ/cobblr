@@ -11,6 +11,7 @@ import { columnSet, platform, type EntityListQuery, type ResolvedEntity, textSea
 import type { ProjectsDB } from "../db.js";
 import { resolveDetailPath } from "@cobblr/platform-contract/instance-detail";
 import { patternTextMatches, snippetsFor } from "./pattern-text.js";
+import { announceUnblocked, releaseDependentsOf } from "./deps.js";
 
 let registered = false;
 
@@ -220,14 +221,9 @@ export function registerProjectsHandlers(): void {
         .where("satisfied", "=", false)
         .returning(["id", "task_id"])
         .execute();
-      for (const dep of updated) {
-        platform().events.emit("projects.task.unblocked", {
-          orgId: ctx.orgId,
-          taskId: dep.task_id,
-          via: { kind: sourceKind, id: sourceId },
-        });
-      }
-      return { ok: true, flipped: updated.length };
+      // Announce a task only when this was its last open blocker.
+      const freed = await announceUnblocked(ctx.orgId, db, updated.map((d) => d.task_id), { kind: sourceKind, id: sourceId });
+      return { ok: true, flipped: updated.length, unblocked: freed.length };
     },
   );
 
@@ -256,6 +252,7 @@ export function registerProjectsHandlers(): void {
       .executeTakeFirst();
     if (!updated) return { ok: true, completed: 0, reason: "missing or already done" };
     platform().events.emit("projects.task.completed", { orgId: ctx.orgId, taskId: updated.id });
+    await releaseDependentsOf(ctx.orgId, db, updated.id);
     return { ok: true, completed: 1, taskId: updated.id, was: { status: before?.status ?? "todo", completed_at: before?.completed_at ?? null } };
   });
 }

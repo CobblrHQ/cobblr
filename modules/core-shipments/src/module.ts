@@ -21,28 +21,28 @@ import { defineModule } from "@cobblr/platform-contract";
 
 export default defineModule({
   name: "core-shipments",
-  version: "0.6.4",
+  version: "0.6.6",
   maturity: "beta",
   displayName: "Shipments",
   description:
-    "Tells you where a parcel is. Paste a tracking number and Cobblr works out the carrier from the number itself, links you straight to their page, and (once a carrier is connected) follows the parcel so an order marks itself arrived instead of asking you.",
+    "Paste a tracking number to see where a parcel is, and have an order mark itself arrived.",
   icon: "truck",
   band: "stock",
   // Ambient: inert until something carries a tracking number, so there is no
   // decision to put in front of the user.
   autoEnable: true,
 
-  // No table yet. Poll state arrives with the first carrier driver; detection
-  // is a pure function over the number and stores nothing.
+  // No table. Detection is a pure function over the number, and a parcel's
+  // poll state is stored by the record that carries it (a purchase order, a
+  // scanned receipt), which calls core-shipments:track and keeps the answer.
 
   api: () => import("./api/index.js"),
 
-  intents: [],
   dependencies: [],
 
-  // Purchases owns the order that carries the number today. The panel below is
-  // gated on this, and stays inert in a workspace without purchases.
-  operatesOn: ["purchases"],
+  // The records that carry a number: a purchase coming in, a sale going out.
+  // Each panel below is gated on its module and stays inert without it.
+  operatesOn: ["purchases", "sales"],
 
   provides: {
     entityKinds: [],
@@ -57,14 +57,33 @@ export default defineModule({
         target: "purchases:order",
         title: "Shipment",
       },
+      {
+        id: "core-shipments:shipment",
+        surface: "entity-detail-panel" as const,
+        target: "sales:order",
+        title: "Shipment",
+      },
     ],
     wires: [],
   },
 
   exposes: {
     events: ["core-shipments.tracker.pushed"],
-    api: [],
     actions: [
+      {
+        // NO-PHRASING: a record asks it for the words of a shipping notice; nobody asks for it by name
+        // UI-REACH: a sales order's Ship dialog names the carrier and the tracking link from it (sales ship preview and notice)
+        id: "core-shipments:identify",
+        label: "Name a tracking number's carrier",
+        description:
+          "Which carrier a tracking number belongs to, and the page where anyone can follow it (the carrier's own, or a universal tracker when the carrier is not recognised). Never calls a carrier. Args: { number }.",
+        scope: "workspace" as const,
+        invokeHandler: "core-shipments.identify",
+        argsSchema: {
+          number: { label: "The tracking number", type: "text", required: true },
+        },
+        userInvokable: false,
+      },
       {
         // The whole cross-module surface. A module owning records that carry
         // tracking numbers passes what it has stored and gets back what to

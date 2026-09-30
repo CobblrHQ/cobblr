@@ -2,7 +2,7 @@
 // platform().entities.lookup()/list() without knowing our tables.
 
 import { type Kysely } from "kysely";
-import { platform, type ResolvedEntity } from "@cobblr/platform-contract";
+import { platform, type ResolvedEntity, textSearchWhere } from "@cobblr/platform-contract";
 import type { BuildsDB } from "../db.js";
 
 let registered = false;
@@ -19,9 +19,9 @@ export function registerBuildsResolvers(): void {
 
   platform().entities.registerListResolver("builds:build", async (orgId, query) => {
     const db = (await platform().tenants.getDb(orgId)) as Kysely<BuildsDB>;
-    const rows = await db
-      .selectFrom("builds_builds")
-      .selectAll()
+    let q = db.selectFrom("builds_builds").selectAll();
+    if (query.q?.trim()) q = q.where((eb) => textSearchWhere(eb, query.q, { text: ["name", "description", "notes"] })!);
+    const rows = await q
       .limit(Math.min(query.limit ?? 50, 200))
       .offset(query.offset ?? 0)
       .orderBy("name", "asc")

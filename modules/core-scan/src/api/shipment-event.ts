@@ -53,6 +53,7 @@ function isoDate(d: Date): string {
 // the caller. The assistant reaches parcel state through the shipments
 // capability and the receipt's tracking route, which is where a person would
 // type it.)
+// UI-REACH: the email ingest's own door; a store's email is the caller
 shipmentEventRouter.post(
   "/scan/receipt/shipment-event",
   asyncHandler(async (req, res) => {
@@ -250,6 +251,7 @@ const RETURN_WORDS = {
 } as const;
 
 // AI-REACH: exempt (the email ingest's door; see shipment-event above).
+// UI-REACH: the email ingest's own door; a store's email is the caller
 shipmentEventRouter.post(
   "/scan/receipt/return-event",
   asyncHandler(async (req, res) => {

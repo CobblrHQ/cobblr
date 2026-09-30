@@ -5,19 +5,20 @@
 // bytes to the chosen printer/pool (the existing send+poll path).
 
 import { Router } from "express";
-import multer from "multer";
 import { z } from "zod";
-import { platform } from "@cobblr/platform-contract";
+import { platform, uploadOne } from "@cobblr/platform-contract";
+import { uploadedFile } from "@cobblr/platform-contract/upload";
 import { tenantDb, tenantContext, sessionUser } from "../db.js";
 import { asyncHandler, badBody, requireRole } from "./util.js";
 import { extractThumbnail, isLibraryFile } from "../library/extract-thumbnail.js";
 import { extractPlateMetadata } from "../library/extract-metadata.js";
-import { enqueuePoll } from "../poll-worker.js";
+import { plateView } from "../library/plate-view.js";
 
 export const libraryRouter = Router({ mergeParams: true });
 
-const MAX_BYTES = 200 * 1024 * 1024; // 200 MB — a large multi-plate 3MF fits.
-const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: MAX_BYTES, files: 1 } });
+// A 3MF or gcode is a design file: up to this deployment's design-file limit
+// (200 MB self-hosted), streamed to disk by the upload door.
+const upload = uploadOne({});
 
 const ROW = ["id", "name", "file_id", "thumbnail_file_id", "kind", "size_bytes", "plate_count", "notes", "metadata", "created_at", "updated_at"] as const;
 
@@ -34,23 +35,25 @@ libraryRouter.get(
 // AI-REACH: sends work to a physical machine through its manager; run-command is the one deliberate door
 libraryRouter.post(
   "/",
-  upload.single("file"),
+  upload,
   asyncHandler(async (req, res) => {
     if (!requireRole(req, res, "owner", "admin")) return;
     const orgId = tenantContext(req).org.id;
-    const file = (req as unknown as { file?: { buffer: Buffer; originalname: string; mimetype: string; size: number } }).file;
-    if (!file?.buffer) return void res.status(400).json({ error: { code: "missing_file", message: "Multipart field 'file' is required." } });
+    const file = uploadedFile(req);
+    if (!file) return void res.status(400).json({ error: { code: "missing_file", message: "Multipart field 'file' is required." } });
     if (!isLibraryFile(file.originalname)) {
       return void res.status(400).json({ error: { code: "bad_type", message: "Upload a .3mf or .gcode file." } });
     }
-    const stored = await platform().files.write(orgId, file.buffer, { filename: file.originalname, mimeType: file.mimetype || "application/octet-stream" });
+    const stored = await platform().files.write(orgId, { path: file.path, size: file.size, sha256: file.sha256 }, { filename: file.originalname, mimeType: file.mimetype || "application/octet-stream" });
     if (!stored) return void res.status(500).json({ error: { code: "store_failed", message: "File storage is unavailable." } });
 
+    // What the extractors read, taken from the file on disk (never read whole).
+    const view = await plateView(file.path, file.originalname).catch(() => Buffer.alloc(0));
     // Pull the slicer thumbnail; store it as its own small image (best-effort).
     let thumbId: string | null = null;
     let plateCount = 1;
     try {
-      const ex = extractThumbnail(file.originalname, file.buffer);
+      const ex = extractThumbnail(file.originalname, view);
       plateCount = ex.plateCount;
       if (ex.png) {
         const t = await platform().files.write(orgId, ex.png, { filename: "thumb.png", mimeType: "image/png" });
@@ -67,7 +70,7 @@ libraryRouter.post(
     // fallback. Best-effort — a parse failure must never block an upload.
     let metadata: Record<string, unknown> = {};
     try {
-      metadata = extractPlateMetadata(file.originalname, file.buffer) as Record<string, unknown>;
+      metadata = extractPlateMetadata(file.originalname, view) as Record<string, unknown>;
     } catch (e) {
       console.warn(`[digifab] metadata extract failed for ${file.originalname}:`, (e as Error).message);
     }
@@ -154,10 +157,9 @@ libraryRouter.post(
       return void res.status(201).json({ job_id: job.id, status: "queued" });
     }
     // Direct send to a connection/device — fire it now, then hand to the poller.
-    const { sendJob } = await import("../jobs-core.js");
-    const r = await sendJob(db, orgId, job.id);
+    const { sendAndWatch } = await import("./jobs.js");
+    const r = await sendAndWatch(db, orgId, job.id);
     if (!r.ok) return void res.status(502).json({ error: { code: r.code, message: "send failed" }, job_id: job.id });
-    if (r.shouldPoll) await enqueuePoll(orgId, job.id);
     res.status(201).json({ job_id: job.id, status: r.status });
   }),
 );

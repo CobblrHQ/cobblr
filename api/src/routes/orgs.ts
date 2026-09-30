@@ -10,6 +10,7 @@
 //   5. Two different orgs see two different `platform_local`
 //      contents (different `created_at` values)
 
+import { roleSatisfies } from "@cobblr/platform-contract/org-roles";
 import { Router } from "express";
 import { sql } from "kysely";
 import { z } from "zod";
@@ -17,6 +18,7 @@ import { meta } from "../db/meta.js";
 import { getManagedApp } from "../platform/managed-apps.js";
 import { isSandboxUser } from "../platform/try-sandbox.js";
 import { hardDeleteOrg } from "../platform/delete-org.js";
+import { deletionGraceDays } from "../platform/reap-deletions.js";
 import { convertDemoToKeep } from "../platform/provision-demo.js";
 import { requireAuth } from "../auth/middleware.js";
 import { requireRole } from "../auth/capability.js";
@@ -27,9 +29,9 @@ import { provisionOrgForUser } from "./auth.js";
 import { applyBlueprint, BlueprintManifest } from "./blueprint.js";
 import { provisionAppWorkspace, ProvisionAppError, refreshManagedApp, importAppData, pointScanFallbackAtApp } from "../platform/provision-app.js";
 import { checkEntitlement } from "../platform/hosted-seams.js";
-import { disableModuleForOrg, enableModuleForOrg } from "../modules/enable.js";
+import { disableModuleForOrg, enableModuleForOrg, isDefaultModule } from "../modules/enable.js";
 import { USER_SOURCE } from "../platform/bundle-claims.js";
-import { lookup as lookupEntity } from "../platform/entities.js";
+import { baseKindOf, lookup as lookupEntity } from "../platform/entities.js";
 
 /** The kind a resolved record is FILED under: `<instance>:item` for a record
  *  in a named instance (read off its instance field, else its detail route,
@@ -43,6 +45,7 @@ function collectionKindOf(r: { fields?: Record<string, unknown>; detailUrl?: str
   return m?.[1] ? `${m[1]}:item` : moduleKind;
 }
 import { getEntry as getModuleEntry } from "../modules/registry.js";
+import { encodeKeysetCursor } from "@cobblr/platform-contract/keyset-cursor";
 
 export const orgsRouter = Router();
 
@@ -140,6 +143,10 @@ orgsRouter.get("/:slug/modules", requireAuth, withTenant, async (req, res, next)
         // registry renders these into the target module's pages. Gated at
         // manifest validation: target module must be in operatesOn.
         panels: m.contributes.panels,
+        // Every workspace gets it at signup, with no decision asked (the
+        // kernel's own isDefaultModule). Tests read it so they never switch
+        // on by hand what a real signup should have given them.
+        born_with: isDefaultModule({ manifest: m }),
         enabled: !!on,
         enabled_version: on?.version ?? null,
         enabled_at: on?.enabled_at ?? null,
@@ -247,6 +254,72 @@ orgsRouter.delete("/:slug", requireAuth, withTenant, async (req, res, next) => {
   }
 });
 
+// POST /orgs/:slug/deletion: owner only. Ask for this workspace to be deleted
+// after the grace period (CLAUDE.md section 7: a backup, a grace period, then
+// the database is dropped by platform/reap-deletions.ts). The owner types the
+// workspace's name, the way every destructive setting asks. Until the day the
+// workspace works as before and every member sees the date.
+// AI-REACH: deleting a workspace is the owner's decision alone, made on the page.
+const DeletionBody = z.object({ confirm_name: z.string().max(200) });
+orgsRouter.post("/:slug/deletion", requireAuth, withTenant, async (req, res, next) => {
+  try {
+    if (req.tenant!.role !== "owner") {
+      res.status(403).json({ error: { code: "forbidden", message: "Only an owner can delete this workspace." } });
+      return;
+    }
+    const parsed = DeletionBody.safeParse(req.body);
+    const typed = parsed.success ? parsed.data.confirm_name.trim().toLowerCase() : "";
+    if (typed !== req.tenant!.org.name.trim().toLowerCase()) {
+      res.status(400).json({
+        error: { code: "name_mismatch", message: `Type the workspace's name, ${req.tenant!.org.name}, to delete it.` },
+      });
+      return;
+    }
+    const now = new Date();
+    const due = new Date(now.getTime() + deletionGraceDays() * 86_400_000);
+    await meta
+      .updateTable("orgs")
+      .set({ deletion_requested_at: now, deletion_requested_by: req.session!.id, deletion_due_at: due, updated_at: now })
+      .where("id", "=", req.tenant!.org.id)
+      .execute();
+    await activity.log({
+      orgId: req.tenant!.org.id,
+      userId: req.session!.id,
+      action: "workspace_deletion_scheduled",
+      ref: { module: null, entityType: "org", entityId: req.tenant!.org.id },
+      diff: { deletion_due_at: due.toISOString() },
+    });
+    res.status(202).json({ deletion_due_at: due.toISOString() });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// DELETE /orgs/:slug/deletion: owner only. Keep the workspace: clears the request.
+// AI-REACH: the other half of the owner's deletion decision; on the page with it.
+orgsRouter.delete("/:slug/deletion", requireAuth, withTenant, async (req, res, next) => {
+  try {
+    if (req.tenant!.role !== "owner") {
+      res.status(403).json({ error: { code: "forbidden", message: "Only an owner can keep this workspace." } });
+      return;
+    }
+    await meta
+      .updateTable("orgs")
+      .set({ deletion_requested_at: null, deletion_requested_by: null, deletion_due_at: null, updated_at: new Date() })
+      .where("id", "=", req.tenant!.org.id)
+      .execute();
+    await activity.log({
+      orgId: req.tenant!.org.id,
+      userId: req.session!.id,
+      action: "workspace_deletion_cancelled",
+      ref: { module: null, entityType: "org", entityId: req.tenant!.org.id },
+    });
+    res.status(204).end();
+  } catch (err) {
+    next(err);
+  }
+});
+
 // GET /orgs/:slug/trial — what kind of workspace this is, for the strip at the
 // foot of the page that says so. Three answers:
 //   sandbox  the no-account hour; expires_at is when it is deleted
@@ -260,7 +333,7 @@ orgsRouter.get("/:slug/trial", requireAuth, withTenant, async (req, res, next) =
   try {
     const org = await meta
       .selectFrom("orgs")
-      .select(["sandbox", "trial_expires_at"])
+      .select(["sandbox", "trial_expires_at", "deletion_due_at"])
       .where("id", "=", req.tenant!.org.id)
       .executeTakeFirstOrThrow();
     const user = await meta
@@ -291,6 +364,9 @@ orgsRouter.get("/:slug/trial", requireAuth, withTenant, async (req, res, next) =
       // A sandbox user's address is a placeholder nobody can read mail at.
       email: kind === "trial" ? user.email : null,
       link_open: !!open,
+      // An owner asked for this workspace to be deleted: the day it goes, for
+      // every member, whatever the kind above.
+      deletion_due_at: org.deletion_due_at?.toISOString() ?? null,
     });
   } catch (err) {
     next(err);
@@ -743,15 +819,21 @@ orgsRouter.get("/:slug/activity", requireAuth, withTenant, async (req, res, next
     // a page is where the next one starts, and new entries arriving meanwhile
     // cannot shift it.
     const before = Number(req.query.before);
-    const items = await activity.list({
-      orgId: req.tenant!.org.id,
-      limit,
-      actions,
-      authMethods,
-      apiTokenId,
-      entityType,
-      ...(Number.isSafeInteger(before) && before > 0 ? { cursorBeforeId: before } : {}),
-    });
+    // One record's history (the History panel on every record): its kind is
+    // resolved to the module kind it is logged under, so a collection's item
+    // ("vehicles:item") reads the same log as the module's own kind.
+    const entityKind = typeof req.query.entity_kind === "string" ? req.query.entity_kind : "";
+    const entityId = typeof req.query.entity_id === "string" ? req.query.entity_id : "";
+    let entity: { module: string; type: string; id: string } | undefined;
+    if (entityKind && entityId) {
+      const [module, type] = (await baseKindOf(req.tenant!.org.id, entityKind)).split(":");
+      if (module && type) entity = { module, type, id: entityId };
+    }
+    const filters = { orgId: req.tenant!.org.id, limit, actions, authMethods, apiTokenId, entityType, ...(entity ? { entity } : {}) };
+    const [items, total] = await Promise.all([
+      activity.list({ ...filters, ...(Number.isSafeInteger(before) && before > 0 ? { cursorBeforeId: before } : {}) }),
+      activity.count(filters),
+    ]);
 
     // Enrich with token names + user display names so the UI can
     // show "via 'claude-on-mac'" instead of bare UUIDs.
@@ -760,7 +842,7 @@ orgsRouter.get("/:slug/activity", requireAuth, withTenant, async (req, res, next
     const tokenRows = tokenIds.length
       ? await meta
           .selectFrom("api_tokens")
-          .select(["id", "name", "token_prefix"])
+          .select(["id", "name", "token_prefix", "user_id"])
           .where("id", "in", tokenIds)
           .execute()
       : [];
@@ -772,6 +854,14 @@ orgsRouter.get("/:slug/activity", requireAuth, withTenant, async (req, res, next
           .execute()
       : [];
     const tokenById = new Map(tokenRows.map((t) => [t.id, t]));
+    // A personal API token is its owner's: its name and prefix are shown to
+    // them and to an owner or admin. Everyone else reads "an API token".
+    const seesTokens = roleSatisfies(req.tenant!.role, ["owner", "admin"]);
+    const tokenFor = (id: string) => {
+      const t = tokenById.get(id);
+      if (t && !seesTokens && t.user_id !== req.session!.id) return { id, name: "an API token", prefix: null };
+      return { id, name: t?.name ?? "(revoked)", prefix: t?.token_prefix ?? null };
+    };
     const userById = new Map(userRows.map((u) => [u.id, u]));
 
     // Resolve a display title for each entry from its LIVE record, so the feed
@@ -827,14 +917,11 @@ orgsRouter.get("/:slug/activity", requireAuth, withTenant, async (req, res, next
               email: userById.get(i.user_id)?.email ?? null,
             }
           : null,
-        token: i.api_token_id
-          ? {
-              id: i.api_token_id,
-              name: tokenById.get(i.api_token_id)?.name ?? "(revoked)",
-              prefix: tokenById.get(i.api_token_id)?.token_prefix ?? null,
-            }
-          : null,
+        token: i.api_token_id ? tokenFor(i.api_token_id) : null,
       })),
+      total,
+      // The next page starts below the last id shown; null once this page is short.
+      next_before: items.length === limit ? items[items.length - 1]!.id : null,
     });
   } catch (err) {
     next(err);
@@ -856,7 +943,7 @@ orgsRouter.get("/:slug/notifications", requireAuth, withTenant, async (req, res,
     const last = items[items.length - 1];
     res.json({
       items,
-      next_before: items.length === limit && last ? `${new Date(last.created_at).toISOString()}|${last.id}` : null,
+      next_before: items.length === limit && last ? encodeKeysetCursor(last.created_at, last.id) : null,
     });
   } catch (err) {
     next(err);

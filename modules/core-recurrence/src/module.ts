@@ -19,15 +19,14 @@ import { defineModule } from "@cobblr/platform-contract";
 
 export default defineModule({
   name: "core-recurrence",
-  version: "0.1.0",
+  version: "0.1.1",
   displayName: "Recurrence",
   description:
-    "Schedule-triggered wires. Enable any wire to fire on an RRULE (every Monday 9am, the 1st of every month, etc.). Q4 from the wires-and-bundles spec.",
+    "Run an automation on a schedule: every Monday morning, the first of the month, whenever you set.",
   icon: "calendar",
   band: "stock",
   autoEnable: true, // ambient capability — on for every workspace
 
-  intents: [],
   dependencies: [],
 
   api: () => import("./api/index.js"),
@@ -38,7 +37,6 @@ export default defineModule({
 
   exposes: {
     events: ["core-recurrence.rule.fired"],
-    api: ["tick"],
     actions: [],
   },
 

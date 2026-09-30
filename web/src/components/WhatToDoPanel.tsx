@@ -39,6 +39,7 @@ import { AddPhotosTile } from "./AddPhotosTile";
 import { itemEnriching } from "../pages/scan-status";
 import { useMaterializeCapture } from "../lib/useMaterializeCapture";
 import { openSheetImport } from "../lib/sheet-import";
+import { withArticle } from "@cobblr/platform-contract/plural";
 
 function firstSentence(s: string): string {
   const m = s.match(/^.*?[.!?](\s|$)/);
@@ -351,7 +352,7 @@ export function WhatToDoPanel({
       // hunting (Inventory silently appeared in the navbar).
       const dest = v.body.instance ?? r.item.target_module ?? v.body.target_module ?? "Inventory";
       const destLabel = dest.charAt(0).toUpperCase() + dest.slice(1);
-      toast.success(`Saved to ${destLabel} — it's in your navbar.`);
+      toast.success(`Saved to ${destLabel}. It's in your navbar.`);
       if (v.body.instance) navigate(`/instances/${v.body.instance}`);
       else if (v.body.target_module) navigate(`/${v.body.target_module}`);
     },
@@ -489,7 +490,7 @@ export function WhatToDoPanel({
           </span>
           <span className="flex-1 min-w-0">
             <span className="block font-medium text-content dark:text-mortar-100 text-sm">{s.label}</span>
-            <span className="block text-xs text-faint dark:text-slate-400 line-clamp-2">{s.description}</span>
+            <span className="text-xs text-faint dark:text-slate-400 line-clamp-2">{s.description}</span>
           </span>
           <ArrowRight size={13} className={(on ? "text-accent" : "text-faint dark:text-slate-600 group-hover:text-accent") + " transition mt-1 shrink-0"} />
         </button>
@@ -621,7 +622,7 @@ export function WhatToDoPanel({
                                 {d ? <>looks like <span className="text-accent">{d.label}</span>, still filling in…</> : it.suggested_name ? "looking it up…" : "finding a home…"}
                               </span>
                             ) : d ? <>looks like <span className="text-accent">{d.label}</span></>
-                              : done ? "no match — save it as a general item"
+                              : done ? "no match, save it as a general item"
                               : <span className="inline-flex items-center gap-1"><Loader2 size={11} className="animate-spin" /> finding a home…</span>}
                           </span>
                           {d?.bundle_external_id ? (
@@ -719,7 +720,7 @@ export function WhatToDoPanel({
             kicker="// just add it"
             title={
               selectedRecipe ? `Set up ${selectedRecipe.manifest.name}`
-              : selectedModuleObj ? (kindIsMulti ? `New ${selectedModuleObj.displayName} category` : `Add a ${selectedModuleObj.displayName}`)
+              : selectedModuleObj ? (kindIsMulti ? `New ${selectedModuleObj.displayName} category` : `Add ${withArticle(selectedModuleObj.displayName)}`)
               // startCollapsed ⇒ an established workspace (Dashboard only collapses
               // the panel once it has content), so "first thing" would be wrong.
               : startCollapsed ? "Add another thing"
@@ -733,7 +734,7 @@ export function WhatToDoPanel({
                 : "We'll set it up and take you straight in to add your first one."
               : selectedModuleObj
                 ? (kindIsMulti
-                    ? `Name a category${kindVocab ? ` — like ${kindVocab.categoryEg}` : ""} — then add things inside it.`
+                    ? `Name a category${kindVocab ? ` (like ${kindVocab.categoryEg})` : ""}, then add things inside it.`
                     : `Turn on ${selectedModuleObj.displayName} and add your first one.`)
                 : "Type what you've got - Cobblr finds or builds the right home and files it."}
           </p>

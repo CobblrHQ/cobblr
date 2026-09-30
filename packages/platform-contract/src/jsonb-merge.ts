@@ -34,3 +34,17 @@ export function applyJsonbMerge(before: Record<string, unknown> | null | undefin
   Object.assign(next, plan.set);
   return next;
 }
+
+/** The merge patch that turns `from` into `to`: every key whose value changed,
+ *  and null for every key `to` no longer has. A caller that computes the WHOLE
+ *  bag it wants (a geometry helper that deletes a key when nothing is left in
+ *  it) must send this, not the bag: under the merge a missing key is "leave
+ *  it", so a deleted key came straight back and "take it off the plan" never
+ *  stuck (#4195). */
+export function jsonbPatchBetween(from: Record<string, unknown> | null | undefined, to: Record<string, unknown>): Record<string, unknown> {
+  const before = from ?? {};
+  const patch: Record<string, unknown> = {};
+  for (const [k, v] of Object.entries(to)) if (JSON.stringify(before[k]) !== JSON.stringify(v)) patch[k] = v;
+  for (const k of Object.keys(before)) if (!(k in to) || to[k] === undefined) patch[k] = null;
+  return patch;
+}

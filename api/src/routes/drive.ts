@@ -221,6 +221,7 @@ driveRouter.get("/:slug/drive/driver/stream", requireAuth, withTenant, async (re
   });
 });
 
+// UI-REACH: the driver's side of a drive session (an MCP client); the tab being driven is the screen
 driveRouter.post("/:slug/drive/driver/request", requireAuth, withTenant, async (req, res, next) => {
   try {
     if ((await getMode(req.session!.id, req.tenant!.org.id)) === "off") {
@@ -234,6 +235,7 @@ driveRouter.post("/:slug/drive/driver/request", requireAuth, withTenant, async (
 });
 
 const NavigateBody = z.object({ path: z.string().min(1).max(2000) });
+// UI-REACH: the driver's side of a drive session (an MCP client); the tab being driven is the screen
 driveRouter.post("/:slug/drive/driver/navigate", requireAuth, withTenant, async (req, res, next) => {
   try {
     const parsed = NavigateBody.safeParse(req.body);
@@ -267,6 +269,7 @@ const PresentBody = z.object({
   label: z.string().max(120).optional(),
   ripple: z.boolean().optional(),
 });
+// UI-REACH: the driver's side of a drive session (an MCP client); the tab being driven is the screen
 driveRouter.post("/:slug/drive/driver/present", requireAuth, withTenant, async (req, res, next) => {
   try {
     const parsed = PresentBody.safeParse(req.body ?? {});

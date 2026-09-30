@@ -36,7 +36,7 @@ export function PlanPrintPage() {
   const items = useMemo(() => locs.data?.items ?? [], [locs.data]);
   const byId = useMemo(() => new Map(items.map((l) => [l.id, l] as const)), [items]);
   const root = id ? byId.get(id) : undefined;
-  usePageTitle(root ? `${root.name} — plan` : "Plan");
+  usePageTitle(root ? `${root.name} (plan)` : "Plan");
 
   if (locs.isLoading) return <div style={{ padding: 24 }}>Loading…</div>;
   if (!root) return <div style={{ padding: 24 }}>Location not found.</div>;

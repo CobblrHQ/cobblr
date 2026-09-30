@@ -171,12 +171,16 @@ membersRouter.patch("/:userId", requireAuth, withTenant, async (req, res, next) 
 // DELETE /:slug/members/:userId — remove member from workspace.
 membersRouter.delete("/:userId", requireAuth, withTenant, async (req, res, next) => {
   try {
-    if (!(await assertAdmin(req, res))) return;
     const userId = req.params.userId;
     if (!userId) {
       res.status(400).json({ error: { code: "missing_id", message: "userId required" } });
       return;
     }
+    // Anyone may leave a workspace: removing yourself needs no admin, only
+    // not being its last owner. Before this a member or guest could not leave
+    // at all, since removing a membership was admins' only (2026-09 audit).
+    const selfLeave = userId === req.session!.id;
+    if (!selfLeave && !(await assertAdmin(req, res))) return;
     const target = await meta
       .selectFrom("org_memberships")
       .select("role")
@@ -187,8 +191,8 @@ membersRouter.delete("/:userId", requireAuth, withTenant, async (req, res, next)
     // PATCH twin gates the same thing; DELETE had no canActOnRole check at all,
     // so an admin could remove a co-owner (the last-owner guard below only
     // fires for the LAST owner). "admin: can change NON-owner roles" means an
-    // admin must not evict an owner either.
-    if (target && !canActOnRole(req.tenant!.role, target.role)) {
+    // admin must not evict an owner either. Leaving is not evicting.
+    if (target && !selfLeave && !canActOnRole(req.tenant!.role, target.role)) {
       res.status(403).json({
         error: {
           code: "forbidden",
@@ -207,7 +211,12 @@ membersRouter.delete("/:userId", requireAuth, withTenant, async (req, res, next)
         .executeTakeFirstOrThrow();
       if (Number(ownerCount.c) <= 1) {
         res.status(400).json({
-          error: { code: "last_owner", message: "Can't remove the last owner." },
+          error: {
+            code: "last_owner",
+            message: selfLeave
+              ? "You are this workspace's only owner. Make somebody else an owner first, or delete the workspace."
+              : "Can't remove the last owner.",
+          },
         });
         return;
       }
@@ -240,7 +249,8 @@ membersRouter.delete("/:userId", requireAuth, withTenant, async (req, res, next)
     clearPeopleCache(req.tenant!.org.id);
     await activity.log({
       orgId: req.tenant!.org.id,
-      action: "member_removed",
+      ...(selfLeave ? { userId } : {}),
+      action: selfLeave ? "member_left" : "member_removed",
       ref: { module: null, entityType: "membership", entityId: userId },
       ...(handOff ? { diff: { handed_to: handTo, moved: handOff.moved, kept: handOff.kept.length } } : {}),
     });

@@ -6,11 +6,10 @@ import { Router } from "express";
 import { checkoutTestOrg, poolStatus } from "../db/test-org-pool.js";
 import { workspaceShape } from "../db/workspace-shape.js";
 import { retireReceiptFailurePlaceholders } from "../platform/retire-receipt-failure-placeholders.js";
-import { migrateBookshelfToInstance } from "../platform/migrate-bookshelf-to-instance.js";
 import { retireGroceriesBaseKindTwin } from "../platform/migrate-groceries-twin-to-instance.js";
 import { rehomeAssetsInstanceToRecords } from "../platform/rehome-instance.js";
 import { reconcileScanCategoryFields, retireScanCategoryPlaceholders } from "../platform/reconcile-scan-category.js";
-import { runTenantSweep } from "../platform/tenant-sweeps.js";
+import { runAllTenantSweeps, runTenantSweep } from "../platform/tenant-sweeps.js";
 import { setSubscriberDelayForTests } from "../platform/events.js";
 import { registerHandler } from "../platform/actions.js";
 import { ActionRefusal, PLATFORM_OWNER } from "@cobblr/platform-contract";
@@ -24,6 +23,7 @@ import {
   registerOutboundHold,
   releaseOutboundHold,
 } from "@cobblr/platform-net";
+import { arrivedEverywhere } from "@cobblr/platform-contract";
 
 export const testSupportRouter = Router();
 
@@ -90,14 +90,6 @@ const onlyOrg = (req: { body?: unknown }): { onlyOrgId?: string } => {
   return org_id ? { onlyOrgId: org_id } : {};
 };
 
-testSupportRouter.post("/test-support/run-migration/bookshelf", async (req, res, next) => {
-  try {
-    res.json(await migrateBookshelfToInstance({ force: true, ...onlyOrg(req) }));
-  } catch (err) {
-    next(err);
-  }
-});
-
 // Same reason, for the pass that retires the Groceries base-kind twin (#2860).
 testSupportRouter.post("/test-support/run-migration/groceries-twin", async (req, res, next) => {
   try {
@@ -158,6 +150,68 @@ testSupportRouter.post("/test-support/run-sweep", async (req, res, next) => {
       return;
     }
     res.json(await runTenantSweep(name, { orgIds: [org_id], ...(at ? { now: at } : {}) }));
+  } catch (err) {
+    next(err);
+  }
+});
+
+// The late-card pass the boot and "turn Discord on" run, narrowed to the
+// caller's own feedback items so a test never posts anybody else's.
+// Body: { ids: string[] }.
+testSupportRouter.post("/test-support/post-cardless-feedback", async (req, res, next) => {
+  try {
+    const ids = ((req.body ?? {}) as { ids?: unknown }).ids;
+    if (!Array.isArray(ids) || !ids.every((x) => typeof x === "string")) {
+      res.status(400).json({ error: { code: "bad_request", message: "body needs { ids: string[] }" } });
+      return;
+    }
+    const { postCardlessFeedback } = await import("./feedback-card-post.js");
+    res.json({ posted: await postCardlessFeedback({ onlyIds: ids as string[] }) });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// Put ONE order in the shape the old "Mark arrived" left: status arrived, its
+// lines never received. No door makes that shape any more, which is the
+// point, so the purchases arrival heal's test builds it here. Body:
+// { org_id, order_id, arrived_at? }.
+testSupportRouter.post("/test-support/legacy-order-arrival", async (req, res, next) => {
+  try {
+    const { org_id, order_id, arrived_at } = (req.body ?? {}) as { org_id?: string; order_id?: string; arrived_at?: string };
+    if (!org_id || !order_id) {
+      res.status(400).json({ error: { code: "bad_request", message: "body needs { org_id, order_id, arrived_at? }" } });
+      return;
+    }
+    const db = await getTenantDb(org_id);
+    await sql`update purchases_orders set status = 'arrived', arrived_at = ${arrived_at ?? arrivedEverywhere(new Date())}::date where id = ${order_id}`.execute(db);
+    res.json({ ok: true });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// Every registered sweep, one round, for ONE workspace: the parity test's
+// way to bring a pooled workspace up to "after its heals" before comparing it
+// with a new one, whatever the scheduler had reached. Body: { org_id }.
+// Answers each pass's own result, and 500 naming any pass whose visit failed.
+testSupportRouter.post("/test-support/run-all-sweeps", async (req, res, next) => {
+  try {
+    const { org_id } = (req.body ?? {}) as { org_id?: string };
+    if (!org_id) {
+      res.status(400).json({ error: { code: "bad_request", message: "body needs { org_id }" } });
+      return;
+    }
+    const passes = await runAllTenantSweeps({ orgIds: [org_id] });
+    // A pass the scheduler is walking right now holds its lock and sits this
+    // call out; it is run again on its own until it runs, within a minute.
+    const deadline = Date.now() + 60_000;
+    for (let skipped = Object.keys(passes).filter((n) => passes[n]!.skipped); skipped.length && Date.now() < deadline; skipped = skipped.filter((n) => passes[n]!.skipped)) {
+      await new Promise((r) => setTimeout(r, 500));
+      for (const name of skipped) passes[name] = await runTenantSweep(name, { orgIds: [org_id] });
+    }
+    const failed = Object.entries(passes).filter(([, r]) => r.failed > 0 || r.skipped).map(([name, r]) => ({ name, skipped: r.skipped, failures: r.failures }));
+    res.status(failed.length ? 500 : 200).json({ passes: Object.keys(passes).length, failed });
   } catch (err) {
     next(err);
   }

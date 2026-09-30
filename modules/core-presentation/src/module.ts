@@ -16,18 +16,18 @@ import { defineModule } from "@cobblr/platform-contract";
 
 export default defineModule({
   name: "core-presentation",
-  version: "0.1.3",
+  version: "0.1.5",
   displayName: "Presentation",
   description:
-    "The shape of your navigation: group sections under a heading, and take them out again. Lets the assistant rearrange the nav for you instead of telling you where to click.",
+    "Arrange your sidebar: group sections under a heading, and let the assistant tidy it for you.",
   icon: "layout-dashboard",
-  band: "foundational",
+  band: "stock",
+  autoEnable: true, // ambient capability — on for every workspace
 
   api: () => import("./api/index.js"),
 
   exposes: {
     events: [],
-    api: [],
     actions: [
     {
       // NO-PHRASING: the way back for another action, run only from Undo
@@ -44,6 +44,7 @@ export default defineModule({
       },
     },
     {
+      // UI-SCREEN: /configuration/presentation
       id: "core-presentation:group-nav",
       label: "Group nav sections",
       description:
@@ -65,6 +66,7 @@ export default defineModule({
       },
     },
     {
+      // UI-SCREEN: /configuration/presentation
       id: "core-presentation:ungroup-nav",
       label: "Ungroup nav sections",
       description:

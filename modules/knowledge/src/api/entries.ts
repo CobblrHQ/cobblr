@@ -9,16 +9,16 @@
 
 import { Router } from "express";
 import { sql } from "kysely";
-import { platform } from "@cobblr/platform-contract";
+import { platform, uploadOne } from "@cobblr/platform-contract";
+import { uploadedFile } from "@cobblr/platform-contract/upload";
 import { z } from "zod";
-import multer from "multer";
 import { tenantDb, tenantContext, sessionUser } from "../db.js";
 import { asyncHandler, badBody, requireRole } from "./util.js";
 
 export const entriesRouter = Router({ mergeParams: true });
 
 const jsonb = (v: unknown) => sql`${JSON.stringify(v ?? {})}::jsonb`;
-const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 20 * 1024 * 1024 } });
+const upload = uploadOne({ maxBytes: 20 * 1024 * 1024 });
 
 const EntryCreate = z.object({
   title: z.string().min(1).max(300),
@@ -159,10 +159,10 @@ entriesRouter.delete(
 // AI-REACH: takes or produces a file (multipart or binary), which an action cannot carry
 entriesRouter.post(
   "/entries/:id/image",
-  upload.single("file"),
+  upload,
   asyncHandler(async (req, res) => {
     if (!requireRole(req, res, "member")) return;
-    const file = (req as unknown as { file?: { buffer: Buffer; originalname?: string; mimetype?: string } }).file;
+    const file = uploadedFile(req);
     if (!file) return void res.status(400).json({ error: { code: "no_file", message: "No file uploaded." } });
     const db = tenantDb(req);
     const ctx = tenantContext(req);
@@ -172,7 +172,7 @@ entriesRouter.post(
       .where("id", "=", req.params.id!)
       .executeTakeFirst();
     if (!exists) return void res.status(404).json({ error: { code: "not_found", message: "Entry not found." } });
-    const w = await platform().files.write(ctx.org.id, new Uint8Array(file.buffer), {
+    const w = await platform().files.write(ctx.org.id, { path: file.path, size: file.size, sha256: file.sha256 }, {
       filename: file.originalname || "entry-image",
       mimeType: file.mimetype || "application/octet-stream",
     });

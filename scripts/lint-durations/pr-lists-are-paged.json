@@ -1,0 +1,10 @@
+{
+  "lint": "lint:pr-lists-are-paged",
+  "run": "node scripts/lint-pr-lists-are-paged.ts",
+  "rows": [
+    "dev-script"
+  ],
+  "ms": 500,
+  "recorded": "2026-09-30",
+  "source": "scaffolded by new-lint.sh at twice a local run (a shared box); replaced from its first CI measurement"
+}

@@ -155,6 +155,9 @@ export function OrganizeWalkSheet({
     <OverlayLayer
       className="z-[70] bg-surface dark:bg-slate-950 flex flex-col"
       data-testid="organize-walk-sheet"
+      role="dialog"
+      aria-modal="true"
+      aria-label="Organize"
     >
       <div className="flex items-center gap-3 border-b border-line dark:border-slate-800 px-4 py-3">
         <div className="min-w-0 flex-1">

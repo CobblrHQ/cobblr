@@ -86,7 +86,7 @@ export function HomeboxImportModal({ open, onClose }: { open: boolean; onClose: 
   function close() { reset(); onClose(); }
 
   return (
-    <Modal open={open} onClose={close} title="Import from Homebox" subtitle="Upload Homebox's CSV export — your items, locations and labels come across." size="lg">
+    <Modal open={open} onClose={close} title="Import from Homebox" subtitle="Upload Homebox's CSV export. Your items, locations and labels come across." size="lg">
       <div className="space-y-4">
         <p className="text-sm text-muted dark:text-slate-400">
           In Homebox, go to <strong>Tools → Import/Export → Export</strong> and download the CSV. Items land in <strong>Inventory</strong>,

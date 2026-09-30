@@ -4,12 +4,13 @@
 import { Router } from "express";
 import { platform } from "@cobblr/platform-contract";
 import { connectionsRouter } from "./connections.js";
-import { jobsRouter } from "./jobs.js";
+import { jobsRouter, registerSendAction } from "./jobs.js";
 import { linksRouter } from "./links.js";
 import { driversRouter } from "./drivers.js";
 import { fleetRouter } from "./fleet.js";
 import { poolsRouter } from "./pools.js";
 import { runsRouter } from "./runs.js";
+import { makesRouter } from "./makes.js";
 import { importRouter } from "./import.js";
 import { bulkRouter } from "./bulk.js";
 import { bambuRouter } from "./bambu.js";
@@ -20,15 +21,24 @@ import { libraryRouter } from "./library.js";
 import { printRulesRouter } from "./print-rules.js";
 import { failureRouter } from "./failure.js";
 import { registerFarmResolvers } from "./resolvers.js";
+import { registerMakeActions } from "../make-actions.js";
 import { registerDeviceSeam } from "./device-provider.js";
 import { registerDetectorServices } from "../detectors/services.js";
+import { registerDetectorAdapters } from "../detectors/adapters.js";
+import { printingProfilesRouter, registerPickPrinter } from "./printing-profiles.js";
+import { registerPrintThis } from "../print-this.js";
 import { asyncHandler } from "./util.js";
 import { tenantContext } from "../db.js";
 import { extractPlateMetadata } from "../library/extract-metadata.js";
 
 registerFarmResolvers();
+registerMakeActions();
 registerDeviceSeam(); // back platform().devices.getDriver + the digifab:run-command alias
 registerDetectorServices(); // the in-process print checks as inspect.print built-ins
+registerDetectorAdapters(); // PrintGuard, Obico, a LAN box: adapters on a person's connection
+registerSendAction(); // digifab:send, the one door a job reaches a machine by (effect: physical)
+registerPickPrinter(); // digifab:pick-printer (Services §14.3)
+registerPrintThis(); // digifab:print-this, and the slice's completion into the one yes
 
 // Edge-bridge consumer: the generic Edge-bridges page renders this card, so a
 // user who already has a bridge connected sees "attach machine managers"
@@ -48,7 +58,9 @@ router.use("/links", linksRouter);
 router.use("/drivers", driversRouter);
 router.use("/fleet", fleetRouter);
 router.use("/pools", poolsRouter);
+router.use("/printing-profiles", printingProfilesRouter); // a machine's Printing profile (Services §14.3)
 router.use("/runs", runsRouter); // quantity-driven production runs (mint-to-ceiling on pools)
+router.use("/makes", makesRouter); // Makes: one fabrication run, request to outcome (services.md §13)
 router.use("/import", importRouter);
 router.use("/bulk", bulkRouter);
 router.use("/bambu", bambuRouter);

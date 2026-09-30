@@ -39,7 +39,6 @@
     "@cobblr/platform-net": "workspace:*",
     "express": "^4.21.2",
     "kysely": "^0.27.5",
-    "multer": "^2.0.0",
     "pdf-parse": "^2.4.5",
     "sharp": "^0.33.5",
     "zod": "^3.24.1"

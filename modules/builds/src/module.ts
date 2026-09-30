@@ -17,10 +17,10 @@ import { defineModule } from "@cobblr/platform-contract";
 
 export default defineModule({
   name: "builds",
-  version: "0.1.4",
+  version: "0.1.11",
   displayName: "Builds",
   description:
-    "Light bill-of-materials: define a build as a recipe of inventory parts, see how many you can build right now (and the limiting component), and consume the parts from stock when you build one. For makers assembling things from tracked parts.",
+    "Describe what you make as a recipe of parts, see how many you could build right now and what runs out first, and take the parts from stock when you build one.",
   icon: "hammer",
   band: "stock",
   autoEnable: false,
@@ -51,7 +51,9 @@ export default defineModule({
           { name: "notes", type: "text" },
           { name: "metadata", type: "object" },
         ],
-        exposableFields: ["name", "description"],
+        // A bundle's own fields ride in `metadata`, readable like a part's,
+        // so a view or a label naming one prints its value.
+        exposableFields: ["name", "description", "metadata"],
         detailRoute: "/builds/{id}",
         getEndpoint: "/builds/{id}",
       },
@@ -85,7 +87,6 @@ export default defineModule({
       // A planned order crossed into 'done' — wire to mark a task done / notify.
       "builds.planned.completed",
     ],
-    api: [],
     actions: [
       {
         id: "builds:build-one",
@@ -101,6 +102,65 @@ export default defineModule({
           build_id: { label: "Build id", type: "text" },
           qty: { label: "How many to build", type: "number" },
         },
+      },
+      {
+        // NO-PHRASING: a wire target the good print verdict fires; nobody asks for it by name
+        id: "builds:credit-output",
+        label: "Count a build's output as made",
+        description:
+          "Add a build's output part to stock for N builds that came out good. The second half of builds:build-one when a fabrication job defers its output to the good verdict (a failed or scrapped print adds nothing). Args: { build_id, qty? }.",
+        appliesTo: { kinds: ["builds:build"] },
+        invokeHandler: "builds.credit-output",
+        argsSchema: {
+          build_id: { label: "Which build made the output, defaults to the record this ran on", type: "text" },
+          qty: { label: "How many builds came out good, defaults to 1", type: "number" },
+        },
+        userInvokable: false,
+      },
+      {
+        // NO-PHRASING: a wire target the print verdict fires; nobody asks for it by name
+        id: "builds:record-yield",
+        label: "Record a print's good and scrap",
+        description:
+          "Write a judged print's counts (good, scrap) into the build's quantity log, so the build and its work orders read one yield. Fired by digifab.job.outcome; counts once per job. Args: none (reads the event).",
+        appliesTo: { kinds: ["builds:build"] },
+        invokeHandler: "builds.record-yield",
+        argsSchema: {},
+        userInvokable: false,
+        wireOnly: true,
+      },
+      {
+        // NO-PHRASING: the door behind an order line's "Make this"; people ask the order, not builds
+        // UI-REACH: a sales order line's "Make this" button plans it (sales POST /orders/:id/items/:itemId/make)
+        id: "builds:plan-for",
+        label: "Plan a work order for a part",
+        description:
+          "Plan the build that makes a part, for a record in another module (a sales order): a work order of qty, which closes by itself when that many good ones have been counted. Refuses when no build makes the part. Asking again for the same record sets the qty. Args: { part_id, qty, source_kind?, source_id?, due_date? }.",
+        scope: "workspace" as const,
+        invokeHandler: "builds.plan-for",
+        argsSchema: {
+          part_id: { label: "The part to make", type: "text", required: true },
+          qty: { label: "How many", type: "number", required: true },
+          source_kind: { label: "The kind of record it is made for", type: "text" },
+          source_id: { label: "The record it is made for", type: "text" },
+          due_date: { label: "When it is due, ISO date", type: "text" },
+        },
+        userInvokable: false,
+      },
+      {
+        // NO-PHRASING: a read another module makes of its own work orders; nobody asks for it by name
+        // UI-REACH: a sales order's lines show what is being made for them and how many are made (sales GET /orders/:id)
+        id: "builds:work-orders-for",
+        label: "Work orders made for a record",
+        description:
+          "The work orders planned for one record, each with its build, qty, how many are made (good parts, handed out oldest order first) and whether it is done. Changes nothing. Args: { source_kind, source_id }.",
+        scope: "workspace" as const,
+        invokeHandler: "builds.work-orders-for",
+        argsSchema: {
+          source_kind: { label: "The kind of record", type: "text", required: true },
+          source_id: { label: "The record", type: "text", required: true },
+        },
+        userInvokable: false,
       },
       {
         id: "builds:reverse-one",
@@ -120,12 +180,12 @@ export default defineModule({
     ],
   },
 
-  // A fabrication job that produces this build consumes its components on send.
-  // digifab fires digifab.job.build_committed { buildId, qty }; build-one reads
-  // them off the event. Belongs to builds: it owns the action. Inert for a
+  // A fabrication job that produces this build consumes its components on send
+  // (digifab.job.build_committed { buildId, qty }, read by build-one) and
+  // counts its output when the plate is judged good (digifab.job.build_output). Belongs to builds: it owns the action. Inert for a
   // workspace without digifab (the event never fires) and for a job with no
   // linked build (the event never fires).
-  subscribes: ["digifab.job.build_committed", "digifab.job.build_reversed"],
+  subscribes: ["digifab.job.build_committed", "digifab.job.build_output", "digifab.job.build_reversed", "digifab.job.outcome"],
 
   contributes: {
     wires: [
@@ -134,6 +194,23 @@ export default defineModule({
         action_id: "builds:build-one",
         trigger_type: "event",
         trigger_event: "digifab.job.build_committed",
+      },
+      // The output leg: the plate was judged good, so its output counts as made
+      // (#4050). Payload { buildId, qty } is the good count.
+      {
+        source_kind: "digifab:job",
+        action_id: "builds:credit-output",
+        trigger_type: "event",
+        trigger_event: "digifab.job.build_output",
+      },
+      // The quality leg: every judged print that produced a build writes its
+      // good and scrap into the build's quantity log (#4053), so the plate
+      // verdict and the build's own yield are one record, not two.
+      {
+        source_kind: "digifab:job",
+        action_id: "builds:record-yield",
+        trigger_type: "event",
+        trigger_event: "digifab.job.outcome",
       },
       // The failure leg: a committed build whose job then failed / was cancelled
       // / was scrapped never produced its output — put the components back and

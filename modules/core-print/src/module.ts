@@ -18,10 +18,10 @@ import { defineModule } from "@cobblr/platform-contract";
 
 export default defineModule({
   name: "core-print",
-  version: "0.1.2",
+  version: "0.1.3",
   displayName: "Printing",
   description:
-    "Send documents to a print manager (CUPS/IPP). Configure a printer once, then any module or user can print to it. Direct on your LAN, or, on a hosted Cobblr, through an on-site edge bridge.",
+    "Print documents and labels to your printers, at home or through an on-site bridge.",
   icon: "printer",
   band: "stock",
   autoEnable: false, // opt-in: a workspace turns it on when it has a printer
@@ -45,7 +45,6 @@ export default defineModule({
     },
   },
 
-  intents: [],
   dependencies: [],
 
   // AI-REACH: no kinds/actions of its own by design — printing is reached through
@@ -59,7 +58,6 @@ export default defineModule({
 
   exposes: {
     events: ["core-print.job.submitted", "core-print.job.failed"],
-    api: [],
     actions: [],
   },
 

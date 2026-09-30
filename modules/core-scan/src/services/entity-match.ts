@@ -20,7 +20,7 @@
 // EZ-Reach" matches "WD-40 EZ-Reach Lubricant" but not "WD External Drive".
 
 import type { Kysely } from "kysely";
-import { identifierFieldNames, platform, type ResolvedEntity, type ScannableKind } from "@cobblr/platform-contract";
+import { identifierFieldNames, platform, type ResolvedEntity, type ScannableKind, SYSTEM_VIEWER } from "@cobblr/platform-contract";
 import { scanTargetsForOrg, scanTargetsRegistered } from "./scan-target.js";
 import { isJunkName } from "./enrich.js";
 import { identifierEquals, identifierForms } from "./identifier-equals.js";
@@ -376,7 +376,9 @@ export async function findTracked(
           // UPC-A is the product its bulk sticker's GTIN-14 names (#3729).
           const found = new Map<string, ResolvedEntity>();
           for (const form of identifierForms(barcode)) {
-            const res = await platform().entities.list(orgId, k.kind, { filter: { barcode: form }, limit: 3 });
+            // SYSTEM-READ: the post-verify below reads the code from the row;
+            // a hidden identifier must still match, or the scan files a duplicate.
+            const res = await platform().entities.list(orgId, k.kind, { filter: { barcode: form }, limit: 3 }, SYSTEM_VIEWER);
             for (const e of res.items) found.set(`${e.kind}:${e.id}`, e);
           }
           // Post-verify: only rows whose metadata REALLY carries this code, in
@@ -398,7 +400,8 @@ export async function findTracked(
           for (const f of idFields) {
             for (const form of identifierForms(barcode)) {
               const r = await platform()
-                .entities.list(orgId, k.kind, { filter: { [f.name]: form }, limit: 3 })
+                // SYSTEM-READ: verifies the identifier on the row, hidden or not.
+                .entities.list(orgId, k.kind, { filter: { [f.name]: form }, limit: 3 }, SYSTEM_VIEWER)
                 .catch(() => ({ items: [] as ResolvedEntity[] }));
               for (const e of r.items) {
                 const key = `${e.kind}:${e.id}`;

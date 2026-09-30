@@ -12,6 +12,8 @@ import type { Kysely } from "kysely";
 import { asyncHandler, badBody, requireRole } from "./util.js";
 import { counterDefs, dueOf, ensureOccurrence, readCounter, type ScheduleRow } from "../schedules-store.js";
 import { INTERVAL_UNITS, describeRule, hasCalendar, hasCounter } from "../schedule.js";
+import { sql } from "kysely";
+import { pagedAnswer, readListPage, TOTAL_COLUMN } from "@cobblr/platform-contract/list-page";
 
 export const schedulesRouter = Router({ mergeParams: true });
 
@@ -121,8 +123,16 @@ schedulesRouter.get(
     if (q.data.entity_module) query = query.where("entity_module", "=", q.data.entity_module);
     if (q.data.entity_type) query = query.where("entity_type", "=", q.data.entity_type);
     if (q.data.entity_id) query = query.where("entity_id", "=", q.data.entity_id);
-    const rows = await query.orderBy("created_at", "asc").limit(200).execute();
-    res.json({ items: await Promise.all(rows.map((r) => present(ctx.org.id, r, q.data.tz ?? null))) });
+    const page = readListPage(req.query, 200);
+    const rows = await query
+      .select(sql<string>`count(*) over()`.as(TOTAL_COLUMN))
+      .orderBy("created_at", "asc")
+      .orderBy("id")
+      .limit(page.limit)
+      .offset(page.offset)
+      .execute();
+    const answer = pagedAnswer(rows, page);
+    res.json({ ...answer, items: await Promise.all(answer.items.map((r) => present(ctx.org.id, r, q.data.tz ?? null))) });
   }),
 );
 

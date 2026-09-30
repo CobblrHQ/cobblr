@@ -8,7 +8,12 @@
 //     next to the dash.
 // It catches em dashes (U+2014) and horizontal bars (U+2015) in: JSX text, the
 // user-facing JSX attributes below, toast.*() message args, and COPY PROPERTIES
-// in object literals. Fix by rewording (a spaced hyphen, a comma, a colon, or
+// in object literals, everywhere it looks; and in UI CODE (web/src,
+// packages/platform-web/src, a module's ui/) in EVERY string a person could
+// be shown. The narrower shapes let 579 dashes through across 130 UI files
+// (2026-09-30): an error set with setError("… — …"), a sentence built in a
+// helper and returned, a confirm message assembled in a variable. In UI code a
+// string with words and a dash in it is copy unless it goes to the console. Fix by rewording (a spaced hyphen, a comma, a colon, or
 // two sentences — whatever reads plain).
 //
 // Why copy properties (added 2026-07-30): much of Cobblr's user-facing text is
@@ -19,13 +24,13 @@
 // revamp shipped a section blurb reading "What we run for you — your plan…"
 // straight past a green lint, which is how the gap surfaced.
 //
-// That exposed real pre-existing debt, so the existing ones are BASELINED
-// (scripts/no-emdash-baseline.json): green today, FAILS on any new one. Shrink
-// the baseline, never grow it. Refresh it deliberately with --update after
-// fixing some.
+// That exposed real pre-existing debt, which was baselined for a while and
+// then swept to zero (2026-09-30), when the baseline went: there is no list of
+// allowed ones any more, so every hit fails.
 
 import ts from "typescript";
-import { readdirSync, readFileSync, statSync, existsSync, writeFileSync } from "node:fs";
+import { stripComments } from "./lib/source-scan.js";
+import { readdirSync, readFileSync, statSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { dirname, join, relative } from "node:path";
 
@@ -33,7 +38,16 @@ const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
 const DASH = /[—―]/;
 const UI_ATTRS = new Set(["title", "placeholder", "alt", "aria-label", "label"]);
 const TOAST = /^(toast\.(success|error|info|warning|action)|usePageTitle)$/;
-const BASELINE_PATH = join(ROOT, "scripts/no-emdash-baseline.json");
+
+/** Where every string is read as copy. */
+function isUiFile(rel: string): boolean {
+  return rel.startsWith("web/src/") || rel.startsWith("packages/platform-web/src/") || /^modules\/[^/]+\/src\/ui\//.test(rel);
+}
+
+/** Strings in UI code that are not for a person: console output, and text
+ *  written for a model rather than a reader. */
+const NOT_COPY_CALL = /^console\.|^debug$/;
+const MODEL_PROPS = new Set(["ai_notes", "prompt", "system", "instructions"]);
 
 /** Object-literal properties that hold user-facing COPY. Deliberately narrow:
  *  `id`, `route` or `key` can hold anything, but these are words a person
@@ -77,6 +91,12 @@ const COPY_PROPS = new Set([
 /** Prose = a dash with an actual word somewhere in the string. A dash-only value
  *  ("—", " — ") is an empty-state placeholder, not prose, and is allowed. */
 function isProseDash(s: string): boolean {
+  // Code a page emits is not shown: the comments in an embedded app's
+  // stylesheet and script (a string that carries a <style> or <script>, read
+  // by the one comment scanner), and a quoted lone dash, which is the
+  // empty-value placeholder again, one level of quoting in ("—").
+  if (/<(style|script)\b/i.test(s)) s = stripComments(s);
+  s = s.replace(/(["'])[—―]\1/g, "");
   return DASH.test(s) && /[A-Za-z0-9]/.test(s);
 }
 
@@ -121,13 +141,30 @@ function scanFile(path: string) {
     return null;
   };
 
+  const ui = isUiFile(relative(ROOT, path));
+  /** Inside a console call, or a model's instructions: not copy. */
+  const notCopy = (node: ts.Node): boolean => {
+    for (let p = node.parent; p; p = p.parent) {
+      if (ts.isCallExpression(p) && NOT_COPY_CALL.test(calleeText(p))) return true;
+      if (ts.isPropertyAssignment(p) && (ts.isIdentifier(p.name) || ts.isStringLiteral(p.name)) && MODEL_PROPS.has(p.name.text)) return true;
+    }
+    return false;
+  };
+
   const visit = (node: ts.Node) => {
+    // 0) UI code: every string with words and a dash is copy.
+    if (ui && (ts.isStringLiteralLike(node) || ts.isTemplateExpression(node)) && !ts.isImportDeclaration(node.parent) && !ts.isExportDeclaration(node.parent)) {
+      const lit = strVal(node);
+      if (lit && isProseDash(lit) && !notCopy(node)) add(node, lit);
+      if (ts.isTemplateExpression(node)) ts.forEachChild(node, visit);
+      return;
+    }
     // 1) JSX text between tags — the most common user-facing surface.
     if (ts.isJsxText(node)) {
       if (isProseDash(node.text)) add(node, node.text);
     }
     // 2) User-facing JSX attribute string values (title=, placeholder=, …).
-    else if (ts.isJsxAttribute(node) && node.initializer) {
+    else if (!ui && ts.isJsxAttribute(node) && node.initializer) {
       const name = node.name.getText();
       if (UI_ATTRS.has(name)) {
         const lit =
@@ -139,7 +176,7 @@ function scanFile(path: string) {
       }
     }
     // 3) toast.*() / usePageTitle() message arguments.
-    else if (ts.isCallExpression(node) && TOAST.test(calleeText(node))) {
+    else if (!ui && ts.isCallExpression(node) && TOAST.test(calleeText(node))) {
       for (const arg of node.arguments) {
         const lit = strVal(arg);
         if (lit && isProseDash(lit)) add(arg, lit);
@@ -147,7 +184,7 @@ function scanFile(path: string) {
     }
     // 4) Copy properties in object literals — the registries and manifests
     //    whose strings ARE the UI text, just one render away.
-    else if (ts.isPropertyAssignment(node)) {
+    else if (!ui && ts.isPropertyAssignment(node)) {
       const name =
         ts.isIdentifier(node.name) || ts.isStringLiteral(node.name)
           ? node.name.text
@@ -172,7 +209,7 @@ function walk(dir: string) {
   }
 }
 
-for (const root of ["web/src", "modules"]) {
+for (const root of ["web/src", "packages/platform-web/src", "modules"]) {
   try {
     walk(join(ROOT, root));
   } catch {
@@ -180,44 +217,15 @@ for (const root of ["web/src", "modules"]) {
   }
 }
 
-// Baseline is keyed on file + text, NOT line number, so unrelated edits above a
-// known violation don't spuriously fail. Moving one around is fine; adding one
-// is not.
-const key = (v: { file: string; text: string }) => `${v.file}::${v.text}`;
-
-if (process.argv.includes("--update")) {
-  const rows = violations
-    .map((v) => ({ file: v.file, text: v.text }))
-    .sort((a, b) => key(a).localeCompare(key(b)));
-  writeFileSync(BASELINE_PATH, `${JSON.stringify(rows, null, 2)}\n`);
-  console.log(`lint:no-emdash — baseline rewritten with ${rows.length} entries.`);
-  process.exit(0);
-}
-
-const baseline: { file: string; text: string }[] = existsSync(BASELINE_PATH)
-  ? (JSON.parse(readFileSync(BASELINE_PATH, "utf8")) as { file: string; text: string }[])
-  : [];
-const known = new Set(baseline.map(key));
-const fresh = violations.filter((v) => !known.has(key(v)));
-const fixed = baseline.filter((b) => !violations.some((v) => key(v) === key(b)));
-
-if (fixed.length) {
-  console.log(
-    `lint:no-emdash — ${fixed.length} baselined em dash(es) are gone. Run \`pnpm run lint no-emdash -- --update\` to shrink the baseline.`,
-  );
-}
-
-if (fresh.length) {
+if (violations.length) {
   console.error(
-    `Em dash in user-facing text (${fresh.length} new) — reword to plain prose (hyphen, comma, colon, or two sentences):`,
+    `Em dash in user-facing text (${violations.length}): reword to plain prose (a comma, a colon, or two sentences):`,
   );
-  for (const v of fresh) console.error(`  ${v.file}:${v.line}  ${v.text}`);
+  for (const v of violations) console.error(`  ${v.file}:${v.line}  ${v.text}`);
   console.error(
-    `\nNote: object-literal copy properties (${[...COPY_PROPS].slice(0, 5).join(", ")}, …) count as\n` +
-      `user-facing — a registry or manifest string is UI text one render away.`,
+    `\nNote: in UI code every string with words in it is copy; elsewhere, object-literal copy properties\n` +
+      `(${[...COPY_PROPS].slice(0, 5).join(", ")}, …) count, since a registry or manifest string is UI text one render away.`,
   );
   process.exit(1);
 }
-console.log(
-  `lint:no-emdash — no NEW em dashes in user-facing text (${baseline.length} baselined).`,
-);
+console.log("lint:no-emdash: no em dashes in user-facing text.");

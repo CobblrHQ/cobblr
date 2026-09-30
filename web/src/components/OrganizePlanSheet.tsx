@@ -913,7 +913,7 @@ export function SortingPlanView({
                           }
                           title={
                             renderItemCard && item
-                              ? "Expand to fix a wrong name, photo, or identification — right here, no new window"
+                              ? "Expand to fix a wrong name, photo, or identification (right here, no new window)"
                               : undefined
                           }
                           className={`min-w-0 flex-1 flex items-center gap-2 rounded px-1 -mx-1 py-0.5 ${

@@ -44,6 +44,7 @@ const EVENT_BY_KIND = {
 } as const;
 
 // AI-REACH: the device wire; a sensor or a bridge posts readings here, not a person
+// UI-REACH: the device wire; a sensor or a bridge posts readings here
 ingestRouter.post(
   "/",
   asyncHandler(async (req, res) => {

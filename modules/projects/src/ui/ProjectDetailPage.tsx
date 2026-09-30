@@ -104,7 +104,7 @@ function DescriptionField({ value, onCommit }: { value: string; onCommit: (v: st
 
 export function ProjectDetailPage() {
   const { id } = useParams<{ id: string }>();
-  const { api, orgSlug, entityKind, instance, displayName } = useProjects();
+  const { api, orgSlug, entityKind, instance, displayName, holdsPatterns } = useProjects();
   // Route "back" to the collection the user actually came from: a Designs (or
   // any named) instance lives at /instances/<name>, not the empty base
   // /projects. Mirrors ProjectsListPage's basePath.
@@ -273,6 +273,8 @@ export function ProjectDetailPage() {
         />
       </div>
 
+      {holdsPatterns && (
+        <>
       <PatternNeedsPanel designId={project.data.id} api={api} bodyText={project.data.description} />
 
       <DesignFiles designId={project.data.id} />
@@ -292,6 +294,8 @@ export function ProjectDetailPage() {
           })
         }
       />
+        </>
+      )}
 
       <div className="rounded-xl border border-line dark:border-slate-700 bg-surface dark:bg-slate-900 p-5">
         <div className="text-[10px] font-mono uppercase tracking-widest text-accent mb-3">

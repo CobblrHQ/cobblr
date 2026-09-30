@@ -16,14 +16,13 @@ import { defineModule } from "@cobblr/platform-contract";
 
 export default defineModule({
   name: "core-notifications",
-  version: "0.1.0",
+  version: "0.1.2",
   displayName: "Notifications",
   description:
-    "In-app notifications, dispatched via a per-user-per-event subscription. Other channels (Discord, email, browser push, webhook) plug in via the channel-adapter contract.",
+    "Get told about what matters to you, in the app and through the channels you choose.",
   icon: "bell",
   band: "foundational",
 
-  intents: [],
   dependencies: [],
 
   // AI-REACH: no kinds/actions by design. Read through the shared registry's
@@ -31,11 +30,7 @@ export default defineModule({
   // authored by one, so there is nothing for an agent to create or edit.
 
   exposes: {
-    events: [
-      "core-notifications.dispatched",
-      "core-notifications.read",
-    ],
-    api: ["dispatch", "list", "markRead"],
+    events: [],
     actions: [],
   },
 

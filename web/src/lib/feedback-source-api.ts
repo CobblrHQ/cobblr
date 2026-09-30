@@ -22,6 +22,10 @@ export const apiFeedbackSource: FeedbackSource = {
   update(item, body: FeedbackUpdate) {
     return api.updateFeedback(item.id, body);
   },
+  async postToDiscord(item) {
+    const r = await api.postFeedbackToDiscord(item.id);
+    return { announce_message_id: r.announce_message_id };
+  },
   imageUrl(item, fileId, variant) {
     return api.feedbackAttachmentRawUrl(item.id, fileId, variant);
   },

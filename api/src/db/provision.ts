@@ -61,6 +61,9 @@ function randomPassword(): string {
 //   08xxx/57P01 connection dropped mid-statement.
 const TRANSIENT_PROVISION_CODES = new Set([
   "55006", "53300", "57P03", "40P01", "40001", "08006", "08003", "08000", "57P01",
+  // 53200 out_of_memory: "out of shared memory" on a busy server (a staging
+  // Postgres ran out mid-provision and left five half-made workspaces).
+  "53200",
 ]);
 
 function isTransientProvisionError(err: unknown): boolean {
@@ -150,7 +153,7 @@ async function provisionOnce(
   }
 }
 
-export async function provisionTenantDb(dbName: string): Promise<ProvisionResult> {
+export async function provisionTenantDb(dbName: string, opts: { resetFirst?: boolean } = {}): Promise<ProvisionResult> {
   if (!env.SUPERUSER_DATABASE_URL) {
     throw new Error("SUPERUSER_DATABASE_URL must be set to provision tenants");
   }
@@ -171,7 +174,9 @@ export async function provisionTenantDb(dbName: string): Promise<ProvisionResult
   let migrationsApplied = 0;
   for (let attempt = 1; ; attempt++) {
     try {
-      migrationsApplied = await provisionOnce(dbName, userName, password, attempt > 1);
+      // resetFirst: a later attempt at a workspace an earlier one left half
+      // made (platform/provision-workspace.ts) starts from a clean slate too.
+      migrationsApplied = await provisionOnce(dbName, userName, password, attempt > 1 || !!opts.resetFirst);
       break;
     } catch (err) {
       if (attempt < MAX_ATTEMPTS && isTransientProvisionError(err)) {

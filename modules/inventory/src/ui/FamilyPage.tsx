@@ -16,7 +16,7 @@ import { Link, useSearchParams } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { MoreHorizontal } from "lucide-react";
 import { AmountControl, colorSwatch, PopoverLayer, Swatch, swatchFill, useConfirm, useToast } from "@cobblr/platform-web";
-import { countOf, pluralise } from "@cobblr/platform-contract";
+import { countOf, pluralise, withArticle } from "@cobblr/platform-contract";
 import { useInventory } from "./context";
 import type { FamilyPayload, FamilyThing, FamilyType } from "./api";
 
@@ -105,7 +105,7 @@ function ThingRow({ t, childInstance, childPath, place, highlighted, named, noun
                   close();
                   const ok = await confirm({
                     title: `Remove this ${noun}?`,
-                    message: `Use this for a ${noun} entered twice, or one you no longer have. Its history stays in the activity.`,
+                    message: `Use this for ${withArticle(noun)} entered twice, or one you no longer have. Its history stays in the activity.`,
                     confirmLabel: `Remove ${noun}`,
                     destructive: true,
                   });
@@ -431,7 +431,7 @@ export function FamilyPage({ childPath, tablePath }: { childPath: string; tableP
           ))}
         </div>
       ))}
-      {shown.length === 0 && <p className="text-sm text-muted">{view === "low" ? "Nothing is low." : `No ${pluralise(typeNoun)} yet. Add a ${noun} and name its ${typeNoun}.`}</p>}
+      {shown.length === 0 && <p className="text-sm text-muted">{view === "low" ? "Nothing is low." : `No ${pluralise(typeNoun)} yet. Add ${withArticle(noun)} and name its ${typeNoun}.`}</p>}
       {data.unclaimed.length > 0 && view !== "low" && (
         <section className="rounded-xl border border-dashed border-line dark:border-slate-700 p-3 space-y-1" data-testid="family-unclaimed">
           <div className="text-xs text-muted">

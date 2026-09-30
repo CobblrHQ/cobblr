@@ -12,6 +12,12 @@ import type { ApprovalRemedy } from "@cobblr/platform-contract/blocked-action";
 // Type-only: the card's one definition lives with the channels that render it.
 import type { NotificationCard } from "../platform/channels/types.js";
 
+/** What a person has been shown and has dismissed, by tip id: ISO times. */
+export interface UserTips {
+  shown?: Record<string, string>;
+  dismissed?: Record<string, string>;
+}
+
 export interface UsersTable {
   id: Generated<string>;
   email: string;
@@ -32,6 +38,9 @@ export interface UsersTable {
    *  ACCOUNT because localStorage forgets on a new device, a different origin
    *  (the main host vs a preview host) and a cleared cache. */
   tour_seen_at: Date | null;
+  /** Tips shown and dismissed, per tip id (first shown at / dismissed at).
+   *  Account-level, like tour_seen_at: a dismissal holds on every device. */
+  tips: Generated<UserTips>;
   /** True when an admin minted this account with a temp password.
    *  Login succeeds; the response carries the flag and the web
    *  client renders the set-a-password screen IN PLACE OF every route
@@ -123,6 +132,12 @@ export interface OrgsTable {
    *  so an un-warned trial can never be silently reaped. See
    *  platform/reap-trials.ts. */
   trial_expiry_warned_at: Generated<Date | null>;
+  /** An owner asked for this workspace to be deleted: when, by whom, and the
+   *  day platform/reap-deletions.ts drops it. All NULL = not being deleted;
+   *  an owner keeping the workspace clears all three. */
+  deletion_requested_at: Generated<Date | null>;
+  deletion_requested_by: Generated<string | null>;
+  deletion_due_at: Generated<Date | null>;
   /** Slice 4 (demo workspaces): per-workspace entitlement overrides — an allow-list of
    *  feature keys ("files.upload", "workspaces.create") and module names ("core-ai") the
    *  trial guard + module-enable gate honour for THIS workspace, so an operator-provisioned
@@ -300,7 +315,20 @@ export interface EntityPairingsTable {
   created_by: string | null;
 }
 
-export interface ApiTokensTable {
+export /** "Download my data" (personal-export.ts). */
+interface PersonalExportsTable {
+  id: Generated<string>;
+  user_id: string;
+  status: Generated<"building" | "ready" | "failed">;
+  error: string | null;
+  bytes: Buffer | null;
+  size_bytes: number | null;
+  created_at: Generated<Date>;
+  ready_at: Date | null;
+  expires_at: Date;
+}
+
+interface ApiTokensTable {
   id: Generated<string>;
   user_id: string;
   name: string;
@@ -322,6 +350,8 @@ export interface ApiTokensTable {
   access: string | null;
   /** The connector connection (oauth_grants) this access token was issued for; NULL = a personal token. */
   grant_id: string | null;
+  /** The token that minted this one; NULL = minted by a person's session. See auth/token-lineage.ts. */
+  parent_token_id: string | null;
 }
 
 export interface OauthClientsTable {
@@ -410,6 +440,17 @@ export interface UserCredentialOrgsTable {
   capability: string | null;
 }
 
+/** The manifest a connected service published, cached per connection
+ *  (docs/design-decisions/services.md §6). */
+export interface ServiceManifestsTable {
+  credential_id: string;
+  manifest: unknown;
+  /** sha256 of the manifest's bytes, as the service reports it on a job. */
+  manifest_version: string;
+  etag: string | null;
+  fetched_at: Generated<Date>;
+}
+
 export interface PlatformAnnounceSettingsTable {
   category: string;
   enabled: Generated<boolean>;
@@ -449,6 +490,30 @@ export interface BackupDestinationsTable {
   next_run_at: Date | null;
   created_at: Generated<Date>;
   updated_at: Generated<Date>;
+}
+
+export interface OrgOutboundEmailTable {
+  org_id: string;
+  provider: "smtp" | "mailgun" | "resend" | "postmark";
+  from_address: string;
+  config_enc: string;
+  updated_by: string | null;
+  created_at: Generated<Date>;
+  updated_at: Generated<Date>;
+}
+
+export interface OutboundEmailLogTable {
+  id: Generated<string>;
+  org_id: string;
+  to_address: string;
+  subject: string;
+  sent_by: string | null;
+  source_kind: string | null;
+  source_id: string | null;
+  status: "sent" | "failed" | "skipped";
+  message_id: string | null;
+  error: string | null;
+  created_at: Generated<Date>;
 }
 
 export interface WorkspaceInvitesTable {
@@ -880,6 +945,10 @@ export interface EntityActionsTable {
    *  AI connection with no way to show a confirmation may run it. Re-synced
    *  from the manifest on every boot; false until it is. */
   undoable: Generated<boolean>;
+  /** What running it does to the world (none, writes, physical, spends), or
+   *  null when undeclared. `physical` and `spends` always need a person's
+   *  yes (actionRunsUnconfirmed). */
+  effect: string | null;
   /** How a person asks for this, in their own words. Rides in the assistant's
    *  prompt so a model can map a sentence to an action. */
   examples: Generated<unknown>;
@@ -1251,6 +1320,9 @@ export interface FeedbackTable {
   // or the webhook targets a non-tracked channel.
   announce_message_id: string | null;
   announce_channel_id: string | null;
+  // The workspace's name, kept when the workspace is deleted (org_id is then
+  // null), so the operator's queue still says where the report came from.
+  workspace_name: string | null;
   created_at: Generated<Date>;
   updated_at: Generated<Date>;
 }
@@ -1296,6 +1368,8 @@ export interface EdgeBridgesTable {
   allowlist: string[] | null;
   /** The API token it last registered with: the key Disconnect revokes. */
   token_id: string | null;
+  /** What the bridge said it can do at register (abort, headers, lanes, …). */
+  features: string[] | null;
 }
 
 /** One relayed request. The bridge claims it from whichever process it polled,
@@ -1310,6 +1384,22 @@ export interface EdgeRelayJobsTable {
   created_at: Generated<Date>;
   claimed_at: Date | null;
   done_at: Date | null;
+  expires_at: Date;
+  /** The bridge lane the call runs in; null matches any poll. */
+  lane: string | null;
+}
+
+/** A file in transit through a bridge (the blob side-channel). */
+export interface EdgeBlobsTable {
+  id: string;
+  channel_key: string;
+  direction: "down" | "up";
+  path: string;
+  sha256: string | null;
+  size: string | number | null;
+  received: Generated<string | number>;
+  complete: Generated<boolean>;
+  created_at: Generated<Date>;
   expires_at: Date;
 }
 
@@ -1334,11 +1424,38 @@ export interface ServiceCapabilityPoliciesTable {
   updated_at: Generated<Date>;
 }
 
+export interface AiHeldChangesTable {
+  id: Generated<string>;
+  org_id: string;
+  user_id: string;
+  method: string;
+  path: string;
+  summary: string;
+  door: string;
+  status: Generated<"waiting" | "done" | "kept" | "expired" | "failed">;
+  outcome: string | null;
+  notification_id: string | null;
+  created_at: Generated<Date>;
+  decided_at: Date | null;
+}
+
+/** The cards a service job sent to people, by kind (20260929-155). */
+export interface ServiceJobCardsTable {
+  org_id: string;
+  job_id: string;
+  kind: string;
+  user_id: string;
+  notification_id: string | null;
+  created_at: Generated<Date>;
+  settled_at: Date | null;
+}
+
 export interface MetaDB {
   feedback: FeedbackTable;
   edge_bridges: EdgeBridgesTable;
   edge_pairing_codes: EdgePairingCodesTable;
   edge_relay_jobs: EdgeRelayJobsTable;
+  edge_blobs: EdgeBlobsTable;
   users: UsersTable;
   orgs: OrgsTable;
   org_memberships: OrgMembershipsTable;
@@ -1352,16 +1469,23 @@ export interface MetaDB {
   signup_invites: SignupInvitesTable;
   waitlist: WaitlistTable;
   api_tokens: ApiTokensTable;
+  personal_exports: PersonalExportsTable;
   oauth_clients: OauthClientsTable;
   oauth_grants: OauthGrantsTable;
   oauth_codes: OauthCodesTable;
   oauth_refresh_tokens: OauthRefreshTokensTable;
   user_credentials: UserCredentialsTable;
   user_credential_orgs: UserCredentialOrgsTable;
+  service_manifests: ServiceManifestsTable;
   service_capability_policies: ServiceCapabilityPoliciesTable;
+  ai_held_changes: AiHeldChangesTable;
+  service_job_cards: ServiceJobCardsTable;
+  service_pending_confirms: { org_id: string; job_id: string; since: Generated<Date> };
   platform_announce_settings: PlatformAnnounceSettingsTable;
   impersonation_sessions: ImpersonationSessionsTable;
   backup_destinations: BackupDestinationsTable;
+  org_outbound_email: OrgOutboundEmailTable;
+  outbound_email_log: OutboundEmailLogTable;
   test_org_pool: TestOrgPoolTable;
   entity_pairings: EntityPairingsTable;
   tags: TagsTable;
@@ -1397,9 +1521,12 @@ export interface MetaDB {
   auth_magic_tokens: AuthMagicTokensTable;
   try_sandbox_tokens: TrySandboxTokensTable;
   try_sandbox_exports: TrySandboxExportsTable;
+  workspace_final_exports: WorkspaceFinalExportsTable;
   try_carry_tokens: TryCarryTokensTable;
+  try_keep_joins: TryKeepJoinsTable;
   auth_password_reset_tokens: AuthPasswordResetTokensTable;
   auth_email_verify_tokens: AuthEmailVerifyTokensTable;
+  auth_email_change_tokens: AuthEmailChangeTokensTable;
   auth_pair_codes: AuthPairCodesTable;
   login_attempts: LoginAttemptsTable;
   workspace_module_instances: WorkspaceModuleInstancesTable;
@@ -1521,6 +1648,19 @@ interface TrySandboxTokensTable {
 /** The one file a sandbox visitor asked us to email them. No FK to orgs: the
  *  org is dropped an hour later and this has to outlive it, which is the point. */
 /** A person's grant to read their trial from another deployment (the replay). */
+/** A sandbox waiting to join an account that already keeps a trial here
+ *  (try-keep-join.ts). */
+interface TryKeepJoinsTable {
+  id: Generated<string>;
+  org_id: string;
+  account_user_id: string;
+  guest_user_id: string;
+  token_hash: string;
+  created_at: Generated<Date>;
+  expires_at: Date;
+  consumed_at: Date | null;
+}
+
 interface TryCarryTokensTable {
   id: Generated<string>;
   org_id: string;
@@ -1530,6 +1670,21 @@ interface TryCarryTokensTable {
   expires_at: Date;
   last_read_at: Date | null;
   read_count: Generated<number>;
+}
+
+/** The backup kept after a workspace set to be deleted is dropped
+ *  (platform/workspace-final-export.ts). No foreign key to orgs: it outlives
+ *  the workspace. */
+interface WorkspaceFinalExportsTable {
+  id: Generated<string>;
+  org_id: string;
+  org_name: string;
+  owner_ids: string[];
+  filename: string;
+  size_bytes: number | string;
+  created_at: Generated<Date>;
+  expires_at: Date;
+  download_count: Generated<number>;
 }
 
 interface TrySandboxExportsTable {
@@ -1578,6 +1733,19 @@ export interface AuthPasswordResetTokensTable {
 
 /** Email-verification tokens — hashed, single-use, 24h default. Carries the
  *  email it was issued for so a stale token can't verify a changed address. */
+/** A pending or used change of sign-in address (platform/email-change.ts). */
+export interface AuthEmailChangeTokensTable {
+  id: Generated<string>;
+  user_id: string;
+  kind: "confirm" | "revert";
+  old_email: string;
+  new_email: string;
+  token_hash: string;
+  expires_at: Date;
+  consumed_at: Date | null;
+  created_at: Generated<Date>;
+}
+
 export interface AuthEmailVerifyTokensTable {
   id: Generated<string>;
   user_id: string;
@@ -1637,6 +1805,7 @@ export interface CoreQueueJobsTable {
   completed_at: Date | null;
   failed_at: Date | null;
   error: string | null;
+  idempotency_key: string | null;
   created_at: Generated<Date>;
 }
 

@@ -1436,8 +1436,8 @@ function WorkspaceBridgeHint() {
       <span className={"w-1.5 h-1.5 rounded-full shrink-0 " + (on ? "bg-moss-500" : "bg-amber-500 animate-pulse")} />
       <span className="flex-1">
         {on
-          ? `${live.length === 1 ? "Your workspace bridge is" : `${live.length} workspace bridges are`} connected — calls route through it to your LAN.`
-          : "No workspace bridge is connected — calls will fail until one dials in."}{" "}
+          ? `${live.length === 1 ? "Your workspace bridge is" : `${live.length} workspace bridges are`} connected. Calls route through it to your LAN.`
+          : "No workspace bridge is connected. Calls will fail until one dials in."}{" "}
         <Link to="/configuration/edge" className="underline">Edge bridges</Link>
       </span>
     </div>

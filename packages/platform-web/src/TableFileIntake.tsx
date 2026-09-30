@@ -17,6 +17,7 @@
 import { useState } from "react";
 import type { FileIntakeDecl } from "@cobblr/platform-contract";
 import { FileIntake, type IntakeLine } from "./FileIntake";
+import { withArticle } from "@cobblr/platform-contract/plural";
 
 const TOKEN_KEY = "cobblr.token";
 
@@ -40,7 +41,7 @@ export function intakeSummary(r: Pick<TableFileIntakeResult, "created" | "existi
   const parts: string[] = [];
   if (r.created) parts.push(`${r.created} ${r.created === 1 ? noun : plural} made`);
   if (r.existing) parts.push(`${r.existing} already here`);
-  if (r.skipped) parts.push(`${r.skipped} not ${r.skipped === 1 ? `a ${noun}` : plural}`);
+  if (r.skipped) parts.push(`${r.skipped} not ${r.skipped === 1 ? withArticle(noun) : plural}`);
   if (r.failed) parts.push(`${r.failed} could not be made`);
   if (!parts.length) return `No ${plural} in that.`;
   const s = parts.join(", ");

@@ -12,10 +12,10 @@ import { defineModule } from "@cobblr/platform-contract";
 
 export default defineModule({
   name: "core-devices",
-  version: "0.2.5",
+  version: "0.2.6",
   displayName: "Devices",
   description:
-    "The device substrate. Link a physical device (a scale, an RFID reader, a relay) to the Cobblr thing it feeds, in one place. Plumbing under digifab, core-print, and edge firmware connectors.",
+    "Connect a scale, a reader or another device to the thing it measures, in one place.",
   icon: "cpu",
   band: "stock",
   autoEnable: true, // ambient capability — on for every workspace, no nav noun
@@ -27,7 +27,6 @@ export default defineModule({
 
   api: () => import("./api/index.js"),
 
-  intents: [],
   dependencies: [],
 
   provides: {
@@ -47,7 +46,6 @@ export default defineModule({
       // watches connections keeps its watch-list from (#3034).
       "core-devices.connection.changed",
     ],
-    api: [],
     actions: [
       {
         // NO-PHRASING: fires on a DEVICE reading and self-locates the entity; nobody asks for it, they ask for what it does to the thing

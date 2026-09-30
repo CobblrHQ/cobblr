@@ -1,0 +1,10 @@
+{
+  "lint": "lint:backup-covers-shared-tables",
+  "run": "node scripts/lint-backup-covers-shared-tables.ts",
+  "rows": [
+    "migration"
+  ],
+  "ms": 652,
+  "recorded": "2026-09-29",
+  "source": "scaffolded by new-lint.sh at twice a local run (a shared box); replaced from its first CI measurement"
+}

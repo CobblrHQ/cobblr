@@ -378,7 +378,10 @@ const FITS: Record<ColumnType, readonly string[]> = {
 };
 
 function matchField(c: UnderstoodColumn, all: TargetField[]): TargetField | null {
-  const fields = all.filter((f) => FITS[c.type].includes(f.type));
+  // An empty column has no values to misfit, so it goes to the field its
+  // header names whatever that field's type: an exported list's blank Cost
+  // column is Cost, not a new text field called "Cost 2".
+  const fields = c.filled === 0 ? all : all.filter((f) => FITS[c.type].includes(f.type));
   const h = norm(c.header);
   const hs = singular(h);
   const byName = fields.find((f) => [norm(f.name), norm(f.label)].some((n) => n === h || singular(n) === hs));
@@ -502,6 +505,9 @@ export function planColumns(sheet: UnderstoodSheet, target: Target, overrides: S
     } else if (match) {
       dest = { to: "field", field: match.name, label: match.label, native: match.native };
       why = match.native ? `goes in ${match.label}` : `matches the ${match.label} field`;
+    } else if (c.filled === 0) {
+      dest = { to: "skip" };
+      why = "nothing is written in it";
     } else {
       dest = newFieldFor(c, taken, heldRoles);
       why = `a new ${dest.type === "text" && dest.choices?.length ? "choice" : dest.type} field`;

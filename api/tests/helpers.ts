@@ -143,7 +143,12 @@ export async function signupBlankOrg(label: string): Promise<TestSession> {
   return session;
 }
 
-/** Enable every registered module that isn't already on for the test org.
+/** Enable every registered module that isn't already on for the test org,
+ *  EXCEPT the ones a workspace is born with (`born_with`: foundational or
+ *  autoEnable). Those must already be on from signup itself; switching them
+ *  on here hid a module the kernel never enabled at signup (core-presentation
+ *  sat in 8 of 119 workspaces, all of them made by this helper), so a missing
+ *  one now fails the test that needs it, as it fails a real person.
  *  Exported so tests that create SECONDARY workspaces (POST /orgs) — which
  *  signup no longer auto-enables under blank-slate onboarding — can turn
  *  their modules on too.
@@ -167,9 +172,9 @@ export async function enableAllModulesForTests(session: {
   });
   if (!res.ok) return;
   const { items } = (await res.json()) as {
-    items: { name: string; enabled: boolean }[];
+    items: { name: string; enabled: boolean; born_with?: boolean }[];
   };
-  let remaining = items.filter((m) => !m.enabled).map((m) => m.name);
+  let remaining = items.filter((m) => !m.enabled && !m.born_with).map((m) => m.name);
   if (remaining.length === 0) return;
 
   const enableOne = async (name: string): Promise<boolean> => {

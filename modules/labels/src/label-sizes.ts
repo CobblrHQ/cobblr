@@ -54,7 +54,7 @@ const mm = (n: number): number => n / MM_PER_IN;
  *  selectable everywhere, including system-printing to a "dumb" thermal printer
  *  that Cobblr isn't connected to. */
 function rollMedia(wMm: number, hMm: number): PaperSize {
-  return { key: `roll-${wMm}x${hMm}mm`, label: `Label roll — ${wMm} × ${hMm} mm`, width_in: mm(wMm), height_in: mm(hMm), class: "roll" };
+  return { key: `roll-${wMm}x${hMm}mm`, label: `Label roll: ${wMm} × ${hMm} mm`, width_in: mm(wMm), height_in: mm(hMm), class: "roll" };
 }
 /** A 1-up (or n-across) layout on a metric roll. faceW divides the media exactly,
  *  so n faces tile the width with no float drift. */

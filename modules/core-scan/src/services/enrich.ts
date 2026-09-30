@@ -128,7 +128,7 @@ async function revalidateStaleHit(ctx: EnrichContext, staleTitle: string | null)
   // The same catalog step a scan takes (case codes, the book catalog, the
   // listing clean-up), so a refresh never renames an item back to what the
   // scan had already corrected.
-  const answer = await catalogAnswerForCode(ctx.upc);
+  const answer = await catalogAnswerForCode(ctx.upc, ctx.orgId);
   if (!answer.hit) return; // keep serving the old value
   const fresh = answer.hit;
   const value: BarcodeCacheValue = {
@@ -204,9 +204,24 @@ function provenanceLabel(hit: BarcodeHit): string {
  *  rather than hoping each write site remembers (the identify boundary is
  *  handled at its own parser). A reply cut off mid-name otherwise lands on the
  *  card with an unclosed bracket. */
+/** Legal forms and the words that name a company rather than a product. */
+const LEGAL_FORM =
+  /\b(?:s\.?a\.?\/n\.?v\.?|s\.?a\.?|n\.?v\.?|b\.?v\.?|gmbh(?:\s*&\s*co\.?\s*kg)?|kgaa|kg|ag|inc|incorporated|llc|l\.?l\.?c\.?|ltd|limited|plc|corp|corporation|co|company|s\.?p\.?a\.?|s\.?r\.?l\.?|sarl|sas|oy|ab|asa|a\/s|pty|pte|bhd|k\.?k\.?)\.?(?=\s|,|$)/gi;
+const COMPANY_WORDS = /\b(?:services|holdings?|group|international|industries|enterprises|europe|usa|north america|trading)\b/gi;
+
+/** The brand a shopper reads, from a source's brand field: a legal entity
+ *  ("COCA-COLA SERVICES SA/NV") is trimmed to its brand ("COCA-COLA"). The
+ *  manufacturer keeps the legal name; only a product's NAME uses this. */
+export function consumerBrand(brand: string | null | undefined): string {
+  const raw = (brand ?? "").trim();
+  if (!raw) return "";
+  const cut = raw.replace(LEGAL_FORM, " ").replace(COMPANY_WORDS, " ").replace(/[\s,]+$/g, "").replace(/\s{2,}/g, " ").trim();
+  return cut || raw;
+}
+
 export function withBrandPrefix(name: string | null, brand: string | null): string | null {
   const n = tidyTruncatedName(name);
-  const b = (brand ?? "").trim();
+  const b = consumerBrand(brand);
   if (!n || !b) return name;
   const nl = n.toLowerCase();
   if (nl.includes(b.toLowerCase())) return n;
@@ -715,7 +730,7 @@ export async function enrichBarcodeItem(ctx: EnrichContext): Promise<void> {
     // the live Open Library API below (a brand-new book not yet in the mirror).
     // The chain, and for an ISBN the book catalog too, decided in one place
     // (catalog-answer.ts) that a check without a scan can ask as well.
-    const answer = await catalogAnswerForCode(ctx.upc);
+    const answer = await catalogAnswerForCode(ctx.upc, ctx.orgId);
     hit = answer.hit;
     // Throttled, refused, or could not be asked: the code is UNRESOLVED, not
     // absent. All three ride the retry path below and none is cached.

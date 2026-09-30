@@ -14,6 +14,8 @@ export interface BuildSummary {
   output_part_id: string | null;
   output_qty: string;
   notes: string | null;
+  /** A bundle's custom fields on the build, by field name. */
+  metadata?: Record<string, unknown>;
   created_at: string;
 }
 
@@ -71,6 +73,10 @@ export interface BuildDetail {
   components: ComponentRow[];
   buildable: Buildable;
   operations: OperationRow[];
+  /** Everything counted for this build: hand logs and judged prints. */
+  quality?: { good_qty: number; scrap_qty: number; yield_pct: number | null };
+  /** The part a Build press adds to stock, or null: it adds nothing. */
+  output?: { part_id: string; name: string | null; qty: number | null } | null;
 }
 
 export interface BuildRunResult {
@@ -115,6 +121,12 @@ export interface ScheduledItem {
   projected_start: string;
   projected_finish: string;
   late: boolean;
+  /** Made for this work order so far: good and scrap since it was planned. */
+  good_qty?: number;
+  scrap_qty?: number;
+  /** Whom this work order is for (a sales order), in its own words. */
+  for_title?: string | null;
+  for_url?: string | null;
 }
 export interface ScheduleLane {
   resource_label: string;
@@ -183,10 +195,10 @@ export class BuildsApi {
   getBuild(id: string) {
     return this.req<BuildDetail>("GET", `/builds/${id}`);
   }
-  createBuild(body: { name: string; description?: string | null; output_part_id?: string | null; notes?: string | null }) {
+  createBuild(body: { name: string; description?: string | null; output_part_id?: string | null; output_part_name?: string; notes?: string | null }) {
     return this.req<BuildSummary>("POST", "/builds", body);
   }
-  updateBuild(id: string, body: Partial<{ name: string; description: string | null; output_part_id: string | null; output_qty: number; notes: string | null }>) {
+  updateBuild(id: string, body: Partial<{ name: string; description: string | null; output_part_id: string | null; output_part_name: string; output_qty: number; notes: string | null; metadata: Record<string, unknown> }>) {
     return this.req<BuildSummary>("PATCH", `/builds/${id}`, body);
   }
   deleteBuild(id: string) {

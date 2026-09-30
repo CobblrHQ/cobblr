@@ -6,14 +6,16 @@
 // and intent declaration shape. Module loading wires onto these in
 // later phases.
 
+import type { UploadMiddleware, UploadOptions, UploadRefusal, UploadSizeRow } from "./upload.js";
 import { z } from "zod";
 import { SERVICE_EFFECTS, type PlatformServices } from "@cobblr/platform-contract/services";
 export type { PlatformServices } from "@cobblr/platform-contract/services";
 import type { DateFieldDirection } from "@cobblr/platform-contract/date-field-direction";
+import { isJunkCategory } from "@cobblr/platform-contract/category-reconcile";
 
 export type { DateFieldDirection } from "@cobblr/platform-contract/date-field-direction";
 export { dateFieldDirection, directionOfRole, canBeOverdue, dateEventTitle } from "@cobblr/platform-contract/date-field-direction";
-export { pluralise, countOf, wordForCount, countWordsFor, quantityWithUnit, itemNounFor, type CountWords } from "@cobblr/platform-contract/plural";
+export { pluralise, countOf, wordForCount, countWordsFor, quantityWithUnit, itemNounFor, articleFor, withArticle, type CountWords } from "@cobblr/platform-contract/plural";
 export { PLATFORM_OWNER, PLATFORM_COMMANDS, PLATFORM_COMMANDS_VERSION } from "@cobblr/platform-contract/platform-commands";
 export { expiryState, expiryPhrase, EXPIRING_WITHIN_DAYS, type ExpiryState, type ExpiryReading } from "@cobblr/platform-contract/expiry-grace";
 export { fieldDay, fieldDayUnreadable } from "@cobblr/platform-contract/field-day";
@@ -184,6 +186,7 @@ export const FIELD_ROLE_VALUES = [
   "ready-until",
   "year-made",
   "belongs-to",
+  "usage",
 ] as const;
 export type FieldRole = (typeof FIELD_ROLE_VALUES)[number];
 
@@ -209,7 +212,7 @@ export type FieldRole = (typeof FIELD_ROLE_VALUES)[number];
  */
 export const FIELD_ROLE_LABELS: Record<
   FieldRole,
-  { label: string; pickable: boolean; ownedBy?: string }
+  { label: string; pickable: boolean; ownedBy?: string; type?: "number" | "date" | "text" }
 > = {
   category: { label: "Its grouping axis", pickable: false },
   pack: { label: "How many in a pack", pickable: true },
@@ -239,7 +242,20 @@ export const FIELD_ROLE_LABELS: Record<
   // turns on Lending). A member or anyone on the workspace's People list.
   // Not called "owner": that word is the workspace role.
   "belongs-to": { label: "Who it belongs to", pickable: true },
+  // A number that only goes up as the thing is used: a car's miles, a
+  // mower's hours, a press's cycles. A service schedule can fall due every so
+  // many of it, on any kind, with no code of the kind's own.
+  usage: { label: "What it counts as it is used (miles, hours)", pickable: true, type: "number" },
 };
+
+/** Why a field of this type cannot carry this role, or null when it can. A
+ *  role that reads its value as a number (`usage`) means nothing on a text
+ *  field: the field would say "counts use" and never count. */
+export function fieldRoleTypeRefusal(role: FieldRole | null | undefined, type: string | null | undefined): string | null {
+  const want = role ? FIELD_ROLE_LABELS[role]?.type : undefined;
+  if (!want || !type || type === want) return null;
+  return `"${FIELD_ROLE_LABELS[role!].label}" is a ${want} field's meaning; this field is ${type}.`;
+}
 
 /** The capability that already owns this role's question, or null when the
  *  role is a field's to claim. A role with an owner may not be declared on a
@@ -1012,6 +1028,12 @@ const EntityKind = z
     // scanning's so a form does not ask "Category" twice, until the two are
     // joined into one axis that reads and grows these records.
     categoryAxis: z.string().min(1).optional(),
+    // A native text field on the record that IS this kind's category
+    // (assets:asset's `type`, "Type / category" on its form). The scan
+    // category axis answers from it instead of adding a "Category" custom
+    // field beside it, so a record has one category whether it was scanned
+    // or typed. A kind declares this or `categoryAxis`, never both.
+    categoryField: z.string().min(1).optional(),
     exposableFields: z.array(z.string().min(1)).optional(),
     // Per-field read-scope (H2): map a field name to the capability
     // (action_id) a viewer must hold to read it. Layered ON TOP of
@@ -1219,6 +1241,21 @@ const ActionAppliesTo = z.union([
 ]);
 
 export const ActionIdRegex = /^[a-z][a-z0-9_-]*:[a-z][a-z0-9_-]*$/;
+
+// A permission a module checks at one of its own routes that is not an action
+// anyone runs: "delete a place with places inside it" is the Delete button
+// on a bigger target, not a verb of its own. Declared here, it appears in the
+// permissions matrix beside the actions, an admin can grant it, and a member
+// refused it gets the ask (approvals.ts), because a capability nobody can
+// grant is a door only the admin tier can ever pass.
+export const ModuleCapability = z.object({
+  id: z.string().regex(ActionIdRegex, "capability id must be <module>:<name>"),
+  label: z.string().min(1),
+  // What holding it lets a person do, shown in the permissions matrix under
+  // the label, where an admin decides whether to grant it.
+  description: z.string().min(1),
+});
+export type ModuleCapability = z.infer<typeof ModuleCapability>;
 
 
 // A COMMAND a module ships: a sentence its users would type, and what to do
@@ -1454,7 +1491,8 @@ const EntityAction = z.object({
     .record(
       z.object({
         label: z.string().min(1),
-        type: z.enum(["text", "number", "boolean", "list", "json"]).default("text"),
+        // `date` is a calendar day (YYYY-MM-DD), asked with a date picker.
+        type: z.enum(["text", "number", "boolean", "list", "json", "date"]).default("text"),
         required: z.boolean().optional(),
         // Required as a group ("fields or rename_to"): at least one of the
         // arguments naming the same group must be carried.
@@ -1464,13 +1502,23 @@ const EntityAction = z.object({
         // depend on the record's kind (its counters), resolved by the server
         // when it lists the kind's actions.
         choices: z.array(z.object({ value: z.string().min(1), label: z.string().min(1) })).optional(),
-        choicesFrom: z.enum(["counters"]).optional(),
+        choicesFrom: z.enum(["counters", "people"]).optional(),
+        // Offered on the button's sheet though the action runs without it.
+        ask: z.boolean().optional(),
         // Asked and required together with that argument (every_n with
         // every_unit): the form waits for both and the door refuses one alone.
         with: z.string().min(1).optional(),
       }),
     )
     .optional(),
+  // The event payload keys this action reads when a wire fires it and the
+  // wire's own args do not say (adjust-stock takes partId and delta off the
+  // event). Every shipped wire into this action must then carry each key in
+  // its args or trigger on an event whose declared payload has it:
+  // "Mark arrived" once emitted `qty` where the stock wire read `delta`, the
+  // wire skipped in silence, and nothing added the stock
+  // (scripts/every-wire-gets-what-its-action-reads.test.ts).
+  readsFromEvent: z.array(z.string().min(1)).optional(),
   version: z.string().optional(),
 });
 
@@ -1713,11 +1761,24 @@ const ModuleManifest = z.object({
     })
     .optional(),
 
+  /** @deprecated Retired: nothing ever handled an intent; the assistant works
+   *  through record tools and `exposes.actions`. Accepted so an old
+   *  third-party manifest loads; lint:manifest-advertises-what-it-has refuses
+   *  one in a first-party manifest. */
   intents: z.array(Intent).default([]),
   dependencies: z.array(z.string()).default([]),
+  // Grantable permissions this module checks that are not actions (see
+  // ModuleCapability).
+  capabilities: z.array(ModuleCapability).default([]),
   exposes: z
     .object({
       events: z.array(z.string()).default([]),
+      // What each event carries: the payload keys every emit of it sends.
+      // An action that reads from an event (readsFromEvent) can only be
+      // wired to an event that declares the keys it reads.
+      eventPayloads: z.record(z.array(z.string().min(1))).default({}),
+      /** @deprecated Retired: nothing ever resolved these names. A module
+       *  reaches another through platform().entities, an action or an event. */
       api: z.array(z.string()).default([]),
       actions: z.array(EntityAction).default([]),
       // Sentences this module's users would type, and what to do about them.
@@ -1732,7 +1793,7 @@ const ModuleManifest = z.object({
       // everyone until it is.
       notifications: z.array(NotificationKind).default([]),
     })
-    .default({ events: [], api: [], actions: [], commands: [], live: [], notifications: [] }),
+    .default({ events: [], eventPayloads: {}, api: [], actions: [], commands: [], live: [], notifications: [] }),
   // Pillar A — entity kinds the module provides for the rest of
   // the platform to introspect.
   provides: z
@@ -1776,6 +1837,10 @@ const ModuleManifest = z.object({
              *  client's. Server-side writers (wire action handlers)
              *  bypass the router and write it directly. Default false. */
             server_managed: z.boolean().optional(),
+            /** What the field MEANS (see FIELD_ROLE_VALUES): an assets
+             *  `assigned_to` person field is the `assignee`, so the platform
+             *  knows the thing gets lent without learning the field's name. */
+            field_role: FieldRoleSchema.optional(),
           }),
         )
         .default([]),
@@ -1862,6 +1927,27 @@ const ModuleManifest = z.object({
     })
     .optional(),
 }).superRefine((m, ctx) => {
+  // A declared capability is this module's own: its id carries the module's
+  // name, and it is not one of the module's actions under a second label
+  // (grantableActions lists the action first and would drop this one's words
+  // without a sound).
+  const actionIds = new Set(m.exposes.actions.map((a) => a.id));
+  m.capabilities.forEach((c, i) => {
+    if (!c.id.startsWith(`${m.name}:`)) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["capabilities", i, "id"],
+        message: `capability "${c.id}" must start with this module's name, "${m.name}:"`,
+      });
+    }
+    if (actionIds.has(c.id)) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["capabilities", i, "id"],
+        message: `capability "${c.id}" is already one of this module's actions; an action is grantable as it is, so declare it once`,
+      });
+    }
+  });
   // The panel gate: contributing UI into another module's surfaces
   // requires DECLARING you operate on it. Keeps `operatesOn` honest
   // (it stops being decorative) and makes drive-by UI injection a
@@ -2284,6 +2370,12 @@ export interface PlatformDb {
 export interface ResolvedEntity {
   kind: string;
   id: string;
+  /** The named collection this record lives in, when its module keeps
+   *  several ("groceries" for an inventory:part filed as a grocery); absent or
+   *  null in the module's own default one. Lets a surface name the record by
+   *  its collection instead of its kind (a jar of Nutella read "Part" in the
+   *  pantry, #4146) and route to its instance page. */
+  instance?: string | null;
   title: string;
   subtitle?: string;
   image_path?: string;
@@ -2358,6 +2450,23 @@ export interface FilterPredicate {
  *  resolver implementation can decide how to apply them. Modules
  *  may safely ignore filter keys they don't support; core-views
  *  surfaces the supported set to the user via the view config. */
+/** Who is reading, for the per-field read scopes. A person's `userId` +
+ *  `role`; `publicRead` for an anonymous public page; `system` only through
+ *  SYSTEM_VIEWER. */
+export interface EntityViewer {
+  userId?: string;
+  role?: string;
+  publicRead?: boolean;
+  system?: true;
+}
+
+/** The reader for internal logic that must decide from the truth: an undo
+ *  asking whether a field still holds values, a matcher, a sweeper, a heal.
+ *  It sees every field, gated ones included, so it is never passed by code
+ *  that answers a client (lint:system-viewer-stays-internal); each use says
+ *  why on a `SYSTEM-READ:` line above it. */
+export const SYSTEM_VIEWER: EntityViewer = Object.freeze({ system: true as const });
+
 export interface EntityListQuery {
   /** Hard cap. Resolvers default to a sensible limit when omitted. */
   limit?: number;
@@ -2926,7 +3035,7 @@ export interface PlatformEntities {
     orgId: string,
     kind: string,
     id: string,
-    viewer?: { userId?: string; publicRead?: boolean },
+    viewer?: EntityViewer,
   ): Promise<ResolvedEntity | null>;
   /** List entities of a kind. Returns { items: [] } when no list
    *  resolver is registered. Each item is projected through the
@@ -2939,15 +3048,16 @@ export interface PlatformEntities {
    *  H2 — per-field read-scope: pass the viewer's identity
    *  (`userId` + `role`) and the kernel resolves their effective
    *  capabilities, dropping any field the viewer lacks the capability
-   *  for. Owner/admin see everything; omitting the viewer entirely
-   *  (trusted internal / admin-module reads) also sees everything; a
-   *  member-facing caller passes the viewer so "Tier 1 sees parts, not
-   *  prices" is enforced at the read boundary. */
+   *  for. Owner/admin see everything. Omitting the viewer is fail-closed:
+   *  a gated field (a custom one in `metadata` too) is withheld, so a door
+   *  that forgot its reader can never leak one. Internal logic that
+   *  decides something from the truth (an undo asking whether a field
+   *  still holds values, a matcher, a sweeper) passes SYSTEM_VIEWER. */
   list(
     orgId: string,
     kind: string,
     query?: EntityListQuery,
-    viewer?: { userId?: string; role?: string; publicRead?: boolean },
+    viewer?: EntityViewer,
   ): Promise<EntityListResult>;
   /** Every record the query answers, walked a page at a time (list() answers
    *  one page, usually 50, when no limit is asked). `total` is the
@@ -2958,9 +3068,25 @@ export interface PlatformEntities {
     orgId: string,
     kind: string,
     query?: EntityListQuery,
-    viewer?: { userId?: string; role?: string; publicRead?: boolean },
+    viewer?: EntityViewer,
     opts?: { pageSize?: number; cap?: number },
   ): Promise<Omit<EntityListResult, "total"> & { total: number | null; complete: boolean }>;
+  /** The fields of a kind `viewer` may not read (field read scopes). A
+   *  writer of rows that are not read through list() or lookup() (a module's
+   *  own export) drops these, so a hidden field is never a column. */
+  hiddenFields(orgId: string, kind: string, viewer: { userId?: string; role?: string }): Promise<Set<string>>;
+  /** Every record the query answers as a spreadsheet, read as `viewer`:
+   *  a field their role may not read is neither a column nor a value, a
+   *  relabelled field is under its label, a hidden one is left out. `only`
+   *  (a view's visible fields) picks and orders the columns after the name.
+   *  Null when the workspace has no such kind. */
+  exportCsv(
+    orgId: string,
+    kind: string,
+    query: EntityListQuery,
+    viewer: { userId?: string; role?: string },
+    only?: string[],
+  ): Promise<{ csv: string; filename: string; rows: number; complete: boolean } | null>;
   /** Batched lookup — resolve N (kind, id) refs in one call. Foreign
    *  callers that need joined data should use this instead of N
    *  separate single-hop calls. Same projection rules as lookup().
@@ -2970,6 +3096,7 @@ export interface PlatformEntities {
   lookupMany(
     orgId: string,
     refs: ReadonlyArray<{ kind: string; id: string }>,
+    viewer?: EntityViewer,
   ): Promise<ResolvedEntity[]>;
   /** core-resolver v0.1: multi-hop pairing walk.
    *
@@ -3032,6 +3159,12 @@ export interface PlatformEntities {
    *  bookshelf without its authors (2026-09-12), and an import that cannot
    *  name them has nowhere to put them back. */
   fieldsFor(orgId: string, kind: string): Promise<DefinedField[]>;
+  /** What a kind counts as it is used: the module's own counters
+   *  (EntityWriter.counters) and every number field marked with the `usage`
+   *  role. The one answer for "every [5000] [miles]". */
+  countersFor(orgId: string, kind: string): Promise<EntityCounterDef[]>;
+  /** One record's reading of each of those counters (null when unread). */
+  readCounters(orgId: string, kind: string, id: string): Promise<Record<string, number | null>>;
   /** The ONE resolver for where a QR/scan/search hit for an entity should land,
    *  INSTANCE AWARE — shared by the QR-token resolver, the scan registry, and
    *  search so they can't drift (they were three hand-kept copies that each
@@ -3407,7 +3540,7 @@ export interface EntityActionRecord {
   position: number;
   /** Machine-readable arg shape for the wire composer / invoke forms; null if
    *  the action declared none. */
-  args_schema: Record<string, { label: string; type: "text" | "number" | "boolean" | "list" | "json"; required?: boolean; oneOf?: string; choices?: { value: string; label: string }[]; choicesFrom?: "counters"; with?: string }> | null;
+  args_schema: Record<string, { label: string; type: "text" | "number" | "boolean" | "list" | "json" | "date"; required?: boolean; oneOf?: string; choices?: { value: string; label: string }[]; choicesFrom?: "counters" | "people"; ask?: boolean; with?: string }> | null;
   version: string;
 }
 
@@ -4467,10 +4600,85 @@ export interface PlatformAi {
 // out to multiple replicas needs a shared backplane; that swaps THIS impl while
 // keeping the seam, so providers + the agent never change.
 
+/** The HTTP methods a relayed call may use. */
+export type EdgeMethod = "GET" | "POST" | "PUT" | "PATCH" | "DELETE" | "HEAD";
+
+/** Which of a bridge's lanes a call runs in. A bridge caps the slow lanes and
+ *  keeps slots for printer status and control, so a burst of service or AI
+ *  calls never makes the farm read offline. Unset: derived by `edgeLaneOf`. */
+export type EdgeLane = "device" | "control" | "service" | "ai" | "sync";
+
+/** No bridge is there to take the call: none set up, or offline. `message` is
+ *  the sentence for the person (it names the bridge and what to check). */
+export class EdgeOffline extends Error {
+  readonly code = "edge_offline";
+  readonly key: string;
+  constructor(key: string, message: string) {
+    super(message);
+    this.name = "EdgeOffline";
+    this.key = key;
+  }
+}
+
+/** The bridge cannot do what the call needs (it has not reported the feature,
+ *  usually because it has not updated itself yet). `feature` names it; a
+ *  caller with an older way to do the same thing falls back to it. */
+export class EdgeUnsupported extends Error {
+  readonly code = "edge_unsupported";
+  readonly key: string;
+  readonly feature: string;
+  constructor(key: string, feature: string, message: string) {
+    super(message);
+    this.name = "EdgeUnsupported";
+    this.key = key;
+    this.feature = feature;
+  }
+}
+
+/** The bridge is online but the call got no answer within its time. */
+export class EdgeTimeout extends Error {
+  readonly code = "edge_timeout";
+  readonly key: string;
+  constructor(key: string, message: string) {
+    super(message);
+    this.name = "EdgeTimeout";
+    this.key = key;
+  }
+}
+
+/** A fetch-shaped call performed by a bridge on its own network. */
+export interface EdgeFetchInit {
+  /** The service's base URL on the bridge's network. The call is held to its origin. */
+  baseUrl: string;
+  path: string;
+  method?: EdgeMethod;
+  headers?: Record<string, string>;
+  /** A JSON value, or a string sent as is. */
+  body?: unknown;
+  /** This hop's budget. The bridge stops the request to the service when it runs out. */
+  timeoutMs?: number;
+  lane?: EdgeLane;
+  /** Send this file as the request body, on the bridge's streamed file channel
+   *  (no size limit, sha256 checked on the bridge before it is handed on). */
+  bodyFile?: { path: string; sha256: string; size: number };
+  /** The answer is a file: it comes back on the file channel, checked against
+   *  the sha256 the bridge computed, and the Response body streams from disk.
+   *  Its `x-cobblr-sha256` header carries the hash. */
+  download?: boolean;
+}
+
+/** A relayed call's body or answer that is a file on the blob channel. */
+export interface EdgeBlobRef {
+  id: string;
+  direction: "down" | "up";
+  sha256?: string;
+  size?: number;
+}
+
 export interface EdgeRequest {
   /** Path on the edge's local target, e.g. "/api/chat". */
   path: string;
-  method?: "GET" | "POST";
+  method?: EdgeMethod;
   body?: unknown;
   /** Per-request budget (ms). The relay rejects if the edge doesn't answer. */
   timeoutMs?: number;
@@ -4486,11 +4694,22 @@ export interface EdgeRequest {
    *  a private LAN system) over the dial-out relay — the cloud never touches the private
    *  address. Mutually exclusive with `instance`. */
   source?: { baseUrl: string; headers?: Record<string, string> };
+  lane?: EdgeLane;
+  /** The origin a source call is held to, checked on the bridge as well as here. */
+  scope?: string;
+  blob?: EdgeBlobRef;
+  /** Send this file on the bridge's blob channel (a machine upload, a service
+   *  input): `send` offers it, carries only its id, and withdraws the offer
+   *  once answered. Throws EdgeUnsupported for a bridge without "blobs". */
+  bodyFile?: { path: string; sha256: string; size: number };
 }
 
 export interface EdgeResponse {
   status: number;
   body: unknown;
+  /** The response headers a caller acts on (content-type, content-length,
+   *  etag, retry-after, last-modified), from a bridge that carries them. */
+  headers?: Record<string, string>;
 }
 
 /** A live edge connection's send function — supplied by the hosted relay when
@@ -4501,10 +4720,16 @@ export type EdgeChannelSender = (req: EdgeRequest) => Promise<EdgeResponse>;
 export interface EdgeRelayItem {
   id: string;
   path: string;
-  method: "GET" | "POST";
+  method: EdgeMethod;
   body?: unknown;
   instance?: EdgeRequest["instance"];
   source?: EdgeRequest["source"];
+  /** The bridge's own deadline for this call, a little under Cobblr's wait so
+   *  its answer (a 504 that says why) arrives before Cobblr gives up. */
+  timeoutMs?: number;
+  lane: EdgeLane;
+  scope?: string;
+  blob?: EdgeBlobRef;
 }
 
 /** A connected relay agent, as reported by the pane of glass. */
@@ -4562,6 +4787,16 @@ export interface PlatformEdge {
   hasChannel(key: string): Promise<boolean>;
   /** Send a request to the workspace's edge; rejects if none is connected. */
   send(orgId: string, req: EdgeRequest): Promise<EdgeResponse>;
+  /** Fetch-shaped call to a service on a bridge's network: the bridge performs
+   *  `baseUrl + path` there and the answer comes back as a Response, with its
+   *  status, body and headers. Throws `EdgeOffline` when no bridge is there to
+   *  take it (after one short retry across a bridge's poll gap) and
+   *  `EdgeTimeout` when the bridge took it and nothing came back in time. Every
+   *  module that reaches a LAN service through a bridge goes through here. */
+  fetch(key: string, init: EdgeFetchInit): Promise<Response>;
+  /** The bridge's file channel, GET/HEAD/PUT <relay>/blobs/:id, for the bridge
+   *  whose channel is `key`. Every relay door mounts this one handler. */
+  serveBlob(key: string, id: string, req: import("node:http").IncomingMessage, res: import("node:http").ServerResponse): Promise<void>;
 
   // ── HTTP relay primitives — the queue mechanics behind the dial-out tunnel.
   // The kernel owns the state; routers (the kernel /orgs/:slug/edge wire and
@@ -4574,7 +4809,7 @@ export interface PlatformEdge {
    *  bumps its liveness clock. At /register the bridge's own report rides
    *  along (its version and machine, and the token it installed with, whose
    *  name becomes the bridge's first name). */
-  relayTouch(key: string, report?: { version?: string | null; hostname?: string | null; tokenId?: string | null; allow?: string[] | null }): Promise<void>;
+  relayTouch(key: string, report?: { version?: string | null; hostname?: string | null; tokenId?: string | null; allow?: string[] | null; features?: string[] | null }): Promise<void>;
   /** Every bridge this workspace has, online or not, by the name a person
    *  recognises. */
   listBridges(orgId: string): Promise<EdgeBridgeRecord[]>;
@@ -4585,10 +4820,10 @@ export interface PlatformEdge {
   disconnectBridge(orgId: string, bridge: string | null): Promise<{ alsoCut: string[] } | null>;
   /** Long-poll for the next queued request; resolves null on keep-alive
    *  timeout or when the poller hangs up (pass an abort signal). */
-  relayPoll(key: string, opts?: { signal?: AbortSignal }): Promise<EdgeRelayItem | null>;
+  relayPoll(key: string, opts?: { signal?: AbortSignal; lanes?: EdgeLane[] | null }): Promise<EdgeRelayItem | null>;
   /** Deliver a polled request's result. Returns false if the id is unknown
    *  (already timed out). */
-  relayRespond(key: string, r: { id: string; status: number; body?: unknown }): Promise<boolean>;
+  relayRespond(key: string, r: { id: string; status: number; body?: unknown; headers?: Record<string, string> }): Promise<boolean>;
   /** Connected agents for a workspace (default + named bridges). */
   relayAgents(orgId: string): Promise<EdgeAgentInfo[]>;
   /** One bridge's liveness — `bridge` null = the default channel. */
@@ -4639,6 +4874,27 @@ export interface ConnectionProviderDef {
    *  person asked for it gone, and a revoke that cannot reach its issuer is
    *  not a reason to keep the secret. */
   onDelete?: (credentials: Record<string, unknown>) => Promise<void>;
+  /** The cheapest call that says whether these credentials work: what a save
+   *  and the Test button run, and what becomes the connection's verification
+   *  (connection-verification.ts). A kind without one is saved "unverified"
+   *  and says so. Credentials arrive decrypted, with `__connection_user_id`
+   *  (the owner) so a bridge transit reaches their own bridge. */
+  testConnection?: (credentials: Record<string, unknown>, ctx: ConnectionTestContext) => Promise<AiConnectionTest>;
+  /** The capability ids this connection can be ranked for, per workspace
+   *  ("who does what, in order"). Absent: the kind is ranked only as a whole. */
+  capabilities?: (credentials: Record<string, unknown>, ctx: ConnectionTestContext) => Promise<string[]>;
+  /** This definition answers for EVERY connection of its kind whose
+   *  provider_id no other definition claims. A service is named by its own
+   *  manifest id, which nobody can register ahead of time. */
+  anyProviderOfKind?: boolean;
+}
+
+/** Who a test or a capability read is for. */
+export interface ConnectionTestContext {
+  /** The person the connection belongs to. */
+  userId: string;
+  /** The stored connection, when it is one; absent for credentials being typed. */
+  credentialId?: string;
 }
 
 /** A personal connection that applies to a call, with the secret decrypted. */
@@ -4676,6 +4932,12 @@ export interface PlatformConnections {
    *  surface can CHOOSE between them. Distinct from resolve(), which answers
    *  "which one serves this call" - this answers "which ones may it name". */
   routedTo(kind: string, orgId: string): Promise<RoutedConnectionSummary[]>;
+  /** Run the provider's own probe on these credentials. A provider with no
+   *  probe answers `{ ok: true, note }`: nothing was checked, and it says so. */
+  testConnection(providerId: string, kind: string | null, credentials: Record<string, unknown>, ctx: ConnectionTestContext): Promise<AiConnectionTest>;
+  /** The capability ids a stored connection can be ranked for, from its
+   *  provider; [] for a kind ranked only as a whole. */
+  capabilities(credentialId: string): Promise<string[]>;
 }
 
 /** One connection a workspace may name, from PlatformConnections.routedTo. */
@@ -4736,6 +4998,9 @@ export interface PlatformQueue {
     payload?: Record<string, unknown>;
     runAt?: Date;
     maxAttempts?: number;
+    /** What this job is: while one with the same key on the same queue is
+     *  queued or running, enqueueing again returns it instead of a second. */
+    idempotencyKey?: string;
   }): Promise<string>;
   registerWorker(
     queue: string,
@@ -4928,7 +5193,10 @@ export type CategoryAxisSlot =
   | { kind: "extras"; name: string; defId: string }
   /** A column on the record pointing at the module's own taxonomy; the value
    *  written is a record id, never the label. */
-  | { kind: "native"; column: string; entityKind: string };
+  | { kind: "native"; column: string; entityKind: string }
+  /** A native text field on the record (a kind's `categoryField`); the value
+   *  is the label itself. */
+  | { kind: "field"; column: string };
 
 export interface CategoryAxis {
   /** What to call it on screen ("Category", "Scan category"). */
@@ -5206,9 +5474,14 @@ export interface FileWriteResult {
  *  (`existed: true`) rather than a second copy. core-files registers it; the kernel calls it to
  *  COPY a file across workspaces (e.g. the graduation import duplicating a
  *  photo into the new workspace). */
+/** What a file is written from: bytes in hand, or a file already on disk (an
+ *  upload the door streamed there, with the hash it took as it arrived), which
+ *  the store moves in without reading it into memory. */
+export type FileSource = Uint8Array | { path: string; size: number; sha256?: string };
+
 export type FileWriter = (
   orgId: string,
-  bytes: Uint8Array,
+  source: FileSource,
   opts: { filename?: string; mimeType?: string },
 ) => Promise<FileWriteResult>;
 
@@ -5266,6 +5539,18 @@ export interface FileAttachedTo {
   role: string | null;
 }
 export type FileAttachmentsOfFile = (orgId: string, fileId: string) => Promise<FileAttachedTo[]>;
+/** Folders, server-side (#3753): a module that keeps a set of files together
+ *  (a Make's model, G-code and renders) makes a place for them the way a
+ *  person would, by name under a path. */
+export interface FileFolders {
+  /** The folder at this path of names, made as needed ("Makes" / "Round
+   *  spacer"). Names match case-insensitively, as the folder list does. */
+  ensure(orgId: string, path: string[]): Promise<string>;
+  /** Put a file in a folder, but only a file still at the top: bytes are
+   *  kept once, so a file already somewhere a person (or another record)
+   *  put it stays there. Returns whether it moved. */
+  file(orgId: string, fileId: string, folderId: string): Promise<boolean>;
+}
 
 /** A table's file intake, declared by its bundle: each file dropped on the
  *  table becomes one of its records, the file attached with `role` (Yarn's
@@ -5456,7 +5741,7 @@ export interface PlatformFiles {
    *  return the existing file (`existed: true`), never a second copy. */
   write(
     orgId: string,
-    bytes: Uint8Array,
+    source: FileSource,
     opts: { filename?: string; mimeType?: string },
   ): Promise<FileWriteResult | null>;
   /** A file-storage module registers the attacher once at boot. */
@@ -5480,6 +5765,13 @@ export interface PlatformFiles {
   ): Promise<FileAttachmentRow[] | null>;
   /** A file-storage module registers the reverse lookup once at boot. */
   registerAttachmentsOfFile(lookup: FileAttachmentsOfFile): void;
+  /** A file-storage module registers its folders once at boot. */
+  registerFolders(folders: FileFolders): void;
+  /** Make the folder at a path of names. Null if no folders are registered. */
+  ensureFolder(orgId: string, path: string[]): Promise<string | null>;
+  /** File a top-level file into a folder (see FileFolders.file). Null if no
+   *  folders are registered. */
+  fileInto(orgId: string, fileId: string, folderId: string): Promise<boolean | null>;
   /** Every entity one file is attached to. Null if no lookup is registered
    *  (distinct from [] - attached to nothing). */
   attachmentsOfFile(orgId: string, fileId: string): Promise<FileAttachedTo[] | null>;
@@ -5488,6 +5780,28 @@ export interface PlatformFiles {
   registerDriver(driver: FilesDriver): void;
   /** The registered driver, or null → core-files falls back to local disk. */
   getDriver(): FilesDriver | null;
+  /** core-files says how a whole workspace's stored bytes are removed. */
+  registerWorkspaceEraser(eraser: (orgId: string) => Promise<void>): void;
+  /** Remove every byte a workspace ever stored, through whichever driver holds
+   *  them. The kernel's workspace delete calls it while the workspace's
+   *  database still exists (the file list lives there). Nothing registered
+   *  resolves: nothing was stored. */
+  eraseWorkspace(orgId: string): Promise<void>;
+  /** core-files says how to list the per-workspace folders its storage holds. */
+  registerWorkspaceFolderLister(lister: () => Promise<WorkspaceFolder[] | null>): void;
+  /** Every workspace folder the file store holds, with its size and newest
+   *  write, whether or not that workspace still exists. Null when the active
+   *  storage cannot be listed this way (nothing registered, or a driver keyed
+   *  only by file). Read-only. */
+  listWorkspaceFolders(): Promise<WorkspaceFolder[] | null>;
+}
+
+/** One workspace's folder in the file store. */
+export interface WorkspaceFolder {
+  orgId: string;
+  bytes: number;
+  /** The newest write anywhere under it, ms since the epoch. */
+  newestAt: number;
 }
 
 /** Multi-instance support hooks. A multi-instance module (inventory, assets,
@@ -5712,6 +6026,22 @@ export interface PlatformHttp {
    *  and captures rawBody for signature checks. Open core mounts the dispatch
    *  route regardless, 404-ing unregistered ids. */
   registerWebhook(h: PublicWebhookHandler): void;
+  /** The one upload door (./upload): a multipart middleware for one file,
+   *  streamed to a temporary file on disk and hashed as it arrives (read it
+   *  with `uploadedFile(req)`), its limit by its kind unless the route sets
+   *  one. A refusal (too large, too many files, the wrong field) answers
+   *  413/400 with its code, the file's size and the limit, never a 500, and
+   *  writes one log line of the facts. Every multer route goes through here
+   *  (lint:uploads-through-one-door). */
+  upload(opts: UploadOptions): UploadMiddleware;
+  /** The size row a file falls in on this deployment (its design-file limit
+   *  is a per-deployment setting): for a route judging files it unpacks
+   *  itself, a zip's entries. */
+  uploadSizeFor(filename: string, mimeType: string | null): UploadSizeRow;
+  /** A route refusing an upload itself, after the door let it in (a full
+   *  workspace, a type it does not take): the same log line as the door's
+   *  own refusals. Never the file's name or bytes. */
+  uploadRefused(req: unknown, refusal: UploadRefusal): void;
 }
 
 // ── Hosted settings panels ───────────────────────────────────────────────────
@@ -5796,11 +6126,19 @@ export interface PlatformHostedPanels {
  *  driver; the overlay registers an S3/R2 driver via platform().files. */
 export interface FilesDriver {
   put(orgId: string, fileId: string, relPath: string, bytes: Uint8Array): Promise<void>;
+  /** Store a file that is already on disk without reading it into memory (a
+   *  link or copy on local disk, a streamed PUT to object storage). Optional:
+   *  a driver without it is given the bytes through put(). */
+  putFile?(orgId: string, fileId: string, relPath: string, srcPath: string): Promise<void>;
   getBytes(orgId: string, fileId: string, relPath: string): Promise<Uint8Array | null>;
   remove(orgId: string, fileId: string): Promise<void>;
   /** Local drivers return an absolute path (Express sendFile fast path);
    *  remote drivers return null and the route streams getBytes. */
   localPath(orgId: string, fileId: string, relPath: string): string | null;
+  /** Remove whatever is left under a workspace once each of its files has
+   *  been removed (an empty folder, a stray a crash left). Optional: a driver
+   *  keyed purely by file needs nothing more. */
+  removeWorkspace?(orgId: string): Promise<void>;
 }
 
 /** Platform-level (pre-workspace) auth email — verification, password reset,
@@ -5916,6 +6254,39 @@ export interface PlatformLive {
   applicable(orgId: string): Promise<LiveControlPublic[]>;
 }
 
+/**
+ * A WORKSPACE'S OWN OUTBOUND EMAIL — the one door to somebody who is not a
+ * member (a shop's customer), from the workspace's own address through the
+ * provider it brought. `notifications` reaches members; this reaches everyone
+ * else, and only when the workspace has set it up. Every send is logged by the
+ * platform, and names the member who pressed send: there is no automated send
+ * to a third party.
+ */
+export interface PlatformOutboundEmail {
+  /** Whether the workspace can send, and from which address. */
+  status(orgId: string): Promise<{ configured: boolean; from: string | null }>;
+  send(
+    orgId: string,
+    message: {
+      to: string;
+      subject: string;
+      text: string;
+      /** The member who pressed send. */
+      sentBy: string;
+      replyTo?: string;
+      source?: { kind: string; id: string };
+    },
+  ): Promise<
+    | { ok: true; logId: string; messageId: string | null; status: "sent" | "skipped" }
+    | { ok: false; logId: string | null; reason: "not_configured" | "no_sender" | "bad_address" | "failed"; message: string }
+  >;
+  /** The sends about one record, newest first. */
+  log(
+    orgId: string,
+    source: { kind: string; id: string },
+  ): Promise<Array<{ id: string; to: string; subject: string; sentBy: string | null; status: "sent" | "failed" | "skipped"; messageId: string | null; error: string | null; at: string }>>;
+}
+
 export interface Platform {
   activity: PlatformActivity;
   events: PlatformEvents;
@@ -5936,6 +6307,7 @@ export interface Platform {
   sweeps: PlatformSweeps;
   sharedCache: PlatformSharedCache;
   notifications: PlatformNotifications;
+  outboundEmail: PlatformOutboundEmail;
   integrations: PlatformIntegrations;
   ai: PlatformAi;
   units: PlatformUnits;
@@ -6148,6 +6520,17 @@ export function platform(): Platform {
     throw new Error("Platform not initialised — setPlatform() must run during boot");
   }
   return _platform;
+}
+
+/** A route's upload middleware through the one upload door
+ *  (platform().http.upload), built on its first request so a module can
+ *  declare its router before the platform is set. */
+export function uploadOne(opts: UploadOptions): UploadMiddleware {
+  let door: UploadMiddleware | null = null;
+  return (req, res, next) => {
+    door ??= platform().http.upload(opts);
+    door(req, res, next);
+  };
 }
 
 // ── AI-reply JSON hygiene ────────────────────────────────────────────────────
@@ -6425,6 +6808,44 @@ export async function mergeRowMetadata(db: unknown, table: string, id: string, f
     .set({ metadata: platform().db.mergeJsonb("metadata", fields), updated_at: new Date() })
     .where("id", "=", id)
     .execute();
+}
+
+/** A writer's `adoptAxisValues` for a kind whose category is a native text
+ *  field (`categoryField`): the scan placeholder's value under
+ *  `metadata[field]` moves into `column` when the record has nothing there
+ *  (a value somebody typed stays), then the key is dropped. A placeholder
+ *  word ("unknown", "n/a") moves nowhere. Idempotent; `remaining` counts the
+ *  records still holding the key, and the platform removes the field at 0. */
+export async function adoptAxisValuesIntoField(
+  db: unknown,
+  table: string,
+  args: { field: string; column: string },
+): Promise<{ moved: number; remaining: number }> {
+  if (!/^[a-z_][a-z0-9_]*$/i.test(args.column) || !/^[a-z_][a-z0-9_]*$/i.test(args.field)) return { moved: 0, remaining: 0 };
+  /* eslint-disable @typescript-eslint/no-explicit-any */
+  const q = db as { selectFrom: (t: string) => any; updateTable: (t: string) => any };
+  /* eslint-enable @typescript-eslint/no-explicit-any */
+  const rows = (await q.selectFrom(table).select(["id", args.column, "metadata"]).execute()) as Array<Record<string, unknown>>;
+  let moved = 0;
+  let remaining = 0;
+  for (const row of rows) {
+    const meta = (row.metadata ?? {}) as Record<string, unknown>;
+    if (!(args.field in meta)) continue;
+    const raw = meta[args.field];
+    const value = typeof raw === "string" ? raw.trim() : "";
+    const current = typeof row[args.column] === "string" ? String(row[args.column]).trim() : "";
+    const set: Record<string, unknown> = { metadata: platform().db.mergeJsonb("metadata", { [args.field]: null }) };
+    if (!current && value && !isJunkCategory(value)) {
+      set[args.column] = value;
+      moved++;
+    }
+    try {
+      await q.updateTable(table).set(set).where("id", "=", row.id).execute();
+    } catch {
+      remaining++;
+    }
+  }
+  return { moved, remaining };
 }
 
 export async function findRowIdByKey(

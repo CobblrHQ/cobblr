@@ -44,7 +44,7 @@ export function ImportLocationsDialog({ slug, onClose }: { slug: string; onClose
     mutationFn: () => api.importLocations(slug, { csv, match_on: matchOn, dry_run: false }),
     onSuccess: (r) => {
       void qc.invalidateQueries({ queryKey: ["core-locations", slug] });
-      toast.success(`Imported — ${r.created ?? 0} created, ${r.updated ?? 0} updated`);
+      toast.success(`Imported: ${r.created ?? 0} created, ${r.updated ?? 0} updated`);
       onClose();
     },
     onError: (e) => setError(e instanceof ApiError ? e.message : "Import failed"),
@@ -92,7 +92,7 @@ export function ImportLocationsDialog({ slug, onClose }: { slug: string; onClose
               </label>
             </div>
             <div className="text-[11px] text-faint">
-              The <b>match column</b> identifies an existing location (a row whose value already exists → update, otherwise create). Default <code>name</code>; pick your own id column (e.g. <code>ext_id</code>) to round-trip an external system. <code>parent</code> references the parent by that same column.
+              The <b>match column</b> identifies an existing location (a row whose value already exists → update, otherwise create). Default <code>name</code>; pick your own id column (e.g. <code>ext_id</code>) to round-trip an external system. <code>parent</code> references the parent by that same column. When two places share a name, write the place as its path, outermost first: <code>Attic › Shelf 1</code> (or <code>Attic &gt; Shelf 1</code>), in the parent or the name column.
             </div>
           </>
         )}
@@ -113,6 +113,16 @@ export function ImportLocationsDialog({ slug, onClose }: { slug: string; onClose
                 <AlertTriangle size={11} className="inline" /> {preview.errors.length} row{preview.errors.length === 1 ? "" : "s"} skipped: {preview.errors.slice(0, 4).map((e) => `row ${e.row_number} (${e.message})`).join("; ")}
               </div>
             )}
+            {(preview.blocking?.length ?? 0) > 0 && (
+              <div className="text-[11px] text-ember-600 dark:text-ember-400 space-y-0.5" data-testid="import-blocking">
+                <div className="font-medium">
+                  <AlertTriangle size={11} className="inline" /> {preview.blocking!.length} row{preview.blocking!.length === 1 ? "" : "s"} need{preview.blocking!.length === 1 ? "s" : ""} changing before this file can be imported:
+                </div>
+                {preview.blocking!.slice(0, 6).map((b) => (
+                  <div key={b.row_number}>Row {b.row_number}: {b.message}.</div>
+                ))}
+              </div>
+            )}
             <div className="border border-line dark:border-slate-700 rounded max-h-72 overflow-y-auto">
               <table className="w-full text-xs">
                 <thead className="text-faint text-[10px] uppercase tracking-wide sticky-in-scroller bg-subtle dark:bg-slate-800">
@@ -120,11 +130,11 @@ export function ImportLocationsDialog({ slug, onClose }: { slug: string; onClose
                 </thead>
                 <tbody className="divide-y divide-line dark:divide-slate-800">
                   {(preview.rows ?? []).map((r) => (
-                    <tr key={r.row_number}>
-                      <td className="px-2 py-1"><span className={r.action === "create" ? "text-moss-600" : "text-amber-600"}>{r.action}</span></td>
+                    <tr key={r.row_number} className={r.error ? "bg-ember-50/60 dark:bg-ember-900/20" : undefined} title={r.error ?? undefined}>
+                      <td className="px-2 py-1">{r.error ? <span className="text-ember-600 dark:text-ember-400">blocked</span> : <span className={r.action === "create" ? "text-moss-600" : "text-amber-600"}>{r.action}</span>}</td>
                       <td className="px-2 py-1 text-content dark:text-mortar-100">{r.name}{r.short_name ? <span className="text-faint"> · {r.short_name}</span> : null}</td>
                       <td className="px-2 py-1 text-faint">{r.kind}</td>
-                      <td className="px-2 py-1">{r.parent ? <span className={r.parent.resolved ? "text-faint" : "text-ember-600 dark:text-ember-400"} title={r.parent.resolved ? "" : "parent not found in the file or existing"}>{r.parent.key}{r.parent.resolved ? "" : " ⚠"}</span> : <span className="text-faint/50">—</span>}</td>
+                      <td className="px-2 py-1">{r.parent ? <span className={r.parent.resolved ? "text-faint" : "text-ember-600 dark:text-ember-400"} title={r.parent.resolved ? "" : "parent not found in the file or existing"}>{r.parent.path ?? r.parent.key}{r.parent.resolved ? "" : " ⚠"}</span> : <span className="text-faint/50">—</span>}</td>
                     </tr>
                   ))}
                 </tbody>
@@ -138,7 +148,7 @@ export function ImportLocationsDialog({ slug, onClose }: { slug: string; onClose
         {!preview ? (
           <button type="button" onClick={() => dry.mutate()} disabled={dry.isPending || !csv.trim()} className="px-3 py-1.5 text-sm rounded bg-cobble-600 hover:bg-cobble-700 text-white disabled:opacity-50">{dry.isPending ? "…" : "Preview"}</button>
         ) : (
-          <button type="button" onClick={() => commit.mutate()} disabled={commit.isPending} className="px-3 py-1.5 text-sm rounded bg-cobble-600 hover:bg-cobble-700 text-white disabled:opacity-50">{commit.isPending ? "Importing…" : `Import ${(preview.rows ?? []).length} row${(preview.rows ?? []).length === 1 ? "" : "s"}`}</button>
+          <button type="button" onClick={() => commit.mutate()} disabled={commit.isPending || (preview.blocking?.length ?? 0) > 0} className="px-3 py-1.5 text-sm rounded bg-cobble-600 hover:bg-cobble-700 text-white disabled:opacity-50">{commit.isPending ? "Importing…" : `Import ${(preview.rows ?? []).length} row${(preview.rows ?? []).length === 1 ? "" : "s"}`}</button>
         )}
         <button type="button" onClick={onClose} className="text-sm text-faint hover:text-content">Cancel</button>
       </div>

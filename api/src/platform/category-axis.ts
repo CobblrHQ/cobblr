@@ -48,13 +48,39 @@ export function nativeAxisKindFor(kind: string): string | null {
   return null;
 }
 
+/** The native field that IS a kind's category (`categoryField`), when it
+ *  declares one. Manifest-read for the same reason as nativeAxisKindFor. */
+export function nativeAxisFieldFor(kind: string): string | null {
+  for (const e of listEntries()) {
+    const k = e.manifest.provides?.entityKinds?.find((x) => x.id === kind);
+    if (k?.categoryField) return k.categoryField;
+  }
+  return null;
+}
+
+/** How many records a field-backed axis reads to learn its values. A
+ *  category vocabulary is small; this bounds a workspace with many records. */
+const FIELD_AXIS_SCAN = 2000;
+
 /** The axis for a kind: the RULE decides which store answers (chooseAxisBacking,
  *  where the reasoning lives), and this fetches whatever that store holds. */
 async function readAxis(orgId: string, kind: string): Promise<CategoryAxis | null> {
   const defs = await resolveFieldDefsForKind(orgId, kind);
-  const backing = chooseAxisBacking(defs, nativeAxisKindFor(kind));
+  const backing = chooseAxisBacking(defs, nativeAxisKindFor(kind), nativeAxisFieldFor(kind));
   if (!backing) return null;
   if (backing.kind === "extras") return { label: backing.label, values: backing.values, slot: backing.slot };
+  if (backing.kind === "field") {
+    // The values are what the records already say, one per normalised key.
+    const { items } = await listAllEntities(orgId, kind, { include_retired: true }, undefined, { cap: FIELD_AXIS_SCAN });
+    const byKey = new Map<string, string>();
+    for (const it of items) {
+      const v = (it.fields as Record<string, unknown>)[backing.column];
+      if (typeof v !== "string" || !v.trim()) continue;
+      const key = normaliseCategory(v);
+      if (key && !byKey.has(key)) byKey.set(key, v.trim());
+    }
+    return { label: "Category", values: [...byKey.values()].sort((a, b) => a.localeCompare(b)), slot: { kind: "field", column: backing.column } };
+  }
   const writer = await getEntityWriterFor(orgId, backing.entityKind);
   const rows = (await writer?.listForMatch?.(orgId)) ?? [];
   const slot: CategoryAxisSlot = { kind: "native", column: "category_id", entityKind: backing.entityKind };
@@ -95,6 +121,13 @@ export async function commitAxisValue(args: {
     if (!value || !key) return null;
     const axis = await axisFor(args);
     if (!axis) return null;
+    if (axis.slot.kind === "field") {
+      // Snap onto a spelling the records already use; a new one is simply
+      // written, the field is its own vocabulary.
+      const existing = axis.values.find((v) => normaliseCategory(v) === key);
+      if (!existing) forgetAxis(args.orgId, args.kind, args.instance);
+      return { slot: axis.slot, value: existing ?? value };
+    }
     if (axis.slot.kind === "native") {
       const writer = await getEntityWriterFor(args.orgId, axis.slot.entityKind);
       if (!writer) return null;
@@ -145,6 +178,7 @@ export async function keepAxisValue(args: {
       // it can be; kept as typed when it cannot, as it always was.
       return (await commitAxisValue({ ...args, value })) ?? { slot: axis.slot, value };
     }
+    if (axis.slot.kind === "field") return { slot: axis.slot, value };
     const writer = await getEntityWriterFor(args.orgId, axis.slot.entityKind);
     if (!writer) return null;
     const rows = (await writer.listForMatch?.(args.orgId)) ?? [];
@@ -175,6 +209,9 @@ export async function withdrawAxisValue(args: {
     forgetAxis(args.orgId, args.kind, args.instance);
     const axis = await axisFor(args);
     if (!axis) return "unsupported";
+    // A field-backed axis keeps no vocabulary apart from the records, so there
+    // is nothing to take back: the value leaves with the last record using it.
+    if (axis.slot.kind === "field") return "absent";
     if (axis.slot.kind === "native") {
       const writer = await getEntityWriterFor(args.orgId, axis.slot.entityKind);
       if (!writer) return "unsupported";

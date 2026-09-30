@@ -10,10 +10,10 @@ import { defineModule } from "@cobblr/platform-contract";
 
 export default defineModule({
   name: "sales",
-  version: "0.1.7",
+  version: "0.1.18",
   displayName: "Sales",
   description:
-    "Outbound order management: customers, sales orders, and line items. Fulfilling an order decrements the sold inventory parts from stock, closing the sale → fulfil → decrement → reorder loop. For makers and small shops selling finished goods.",
+    "Customers and the orders they place; fulfilling an order takes what you sold out of stock.",
   icon: "shopping-cart",
   band: "stock",
   instanceability: "multi",
@@ -67,6 +67,9 @@ export default defineModule({
           { name: "status", type: "text" },
           { name: "order_date", type: "date" },
           { name: "fulfilled_at", type: "date" },
+          { name: "carrier", type: "text" },
+          { name: "tracking_number", type: "text" },
+          { name: "shipped_at", type: "date" },
           { name: "shipping_address", type: "text" },
           { name: "notes", type: "text" },
           // A bundle's custom fields, as on every other instance-backed kind.
@@ -76,7 +79,7 @@ export default defineModule({
         // ("blocked until sales order #12 ships"). Address / notes stay private.
         // A bundle's own fields ride in `metadata`, readable like a part's, so
         // a label or view naming one prints its value (#3591).
-        exposableFields: ["customer_name", "order_number", "status", "order_date", "fulfilled_at", "metadata"],
+        exposableFields: ["customer_name", "order_number", "status", "order_date", "fulfilled_at", "carrier", "tracking_number", "shipped_at", "metadata"],
         detailRoute: "/sales/{id}",
       },
       {
@@ -105,8 +108,12 @@ export default defineModule({
       // Fired when an order is fulfilled (stock decremented). Carries order_id +
       // the decremented lines — wire it to anything that reacts to a sale.
       "sales.order.fulfilled",
+      // An order went out: carrier + tracking number. Wire it to anything that
+      // reacts to a shipment. The customer is emailed only by a person.
+      "sales.order.shipped",
+      // An order was deleted: its id, for anything that kept a copy of it.
+      "sales.order.deleted",
     ],
-    api: [],
     actions: [
       {
         // NO-PHRASING: the way back for another action, run only from Undo
@@ -144,12 +151,43 @@ export default defineModule({
         examples: ["that order went out", "mark it shipped"],
         label: "Fulfill order",
         description:
-          "Mark a sales order fulfilled: decrement each line item's inventory part from stock (via inventory:adjust-stock) and stamp fulfilled_at. Generic capability a bundle/app composes. Args: { order_id }.",
+          "Ship a sales order from stock: take each line's inventory part out of stock (via inventory:adjust-stock) and stamp fulfilled_at. Refuses, naming what is short, when stock does not cover the order; ship: \"available\" ships what is on hand and leaves the rest of the order open. Args: { order_id, ship? }.",
         appliesTo: { kinds: ["sales:order"] },
         invokeHandler: "sales.fulfill-order",
         userInvokable: true,
         argsSchema: {
           order_id: { label: "Sales order id", type: "text" },
+          ship: { label: "\"all\" (the default) ships the whole order or nothing; \"available\" ships what is in stock now", type: "text" },
+        },
+      },
+      {
+        id: "sales:make-line",
+        examples: ["make the brackets for that order", "put 5 of those in to be made"],
+        label: "Make this for the order",
+        description:
+          "Put a sales order line's part in to be made: a work order in Builds for the build that makes that part, made for this order, which closes itself when that many good ones are counted. With Digital Fabrication on, a new work order also starts a Make for the order (returned as makeId; the same work order put in again keeps its Make). Refuses when nothing is set up to make the part. Args: { order_id, line_id, qty }.",
+        appliesTo: { kinds: ["sales:order"] },
+        invokeHandler: "sales.make-line",
+        userInvokable: true,
+        argsSchema: {
+          order_id: { label: "Sales order id", type: "text" },
+          line_id: { label: "The order line", type: "text", required: true },
+          qty: { label: "How many to make", type: "number", required: true },
+        },
+      },
+      {
+        id: "sales:ship-order",
+        examples: ["that order went out with UPS", "it shipped, here is the tracking number"],
+        label: "Ship order",
+        description:
+          "Mark a sales order shipped with its carrier and tracking number (the carrier is worked out from the number when you leave it out). An order not yet fulfilled is fulfilled first, or refused naming what is short. Never emails the customer: a person does that from the order's Ship button. Args: { order_id, tracking_number?, carrier? }.",
+        appliesTo: { kinds: ["sales:order"] },
+        invokeHandler: "sales.ship-order",
+        userInvokable: true,
+        argsSchema: {
+          order_id: { label: "Sales order id", type: "text" },
+          tracking_number: { label: "The tracking number", type: "text" },
+          carrier: { label: "The carrier, if the number does not say", type: "text" },
         },
       },
       {

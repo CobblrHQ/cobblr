@@ -28,6 +28,8 @@ import { useLater, Modal, useToast, useConfirm, useImageSrc, OverlayLayer, relat
 import { Combobox } from "../../components/Combobox";
 import type { ModulePageTabCtx, EntityDetailPanelCtx } from "../../panels/types";
 import { capitalise, machineWords, type MachineWords } from "../../lib/machine-words";
+import { withArticle } from "@cobblr/platform-contract/plural";
+import { useReprint } from "./useReprint";
 
 export type LinkableMachine = { id: string; name: string; instLabel: string | null; image: string | null };
 
@@ -784,7 +786,7 @@ export function FleetView({ slug, machineIds, scopeNoun }: {
       <section className="rounded-xl border border-line dark:border-slate-700 bg-surface dark:bg-slate-900 p-4 space-y-3">
         <div className="flex items-center gap-3">
           <h2 className="text-sm font-semibold text-content dark:text-mortar-100">Fleet</h2>
-          <span className="text-xs font-mono text-faint">{fleet.isError ? "couldn't reach the farm — retrying" : "checking your machines…"}</span>
+          <span className="text-xs font-mono text-faint">{fleet.isError ? "couldn't reach the farm, retrying" : "checking your machines…"}</span>
           {!fleet.isError && <RefreshCw size={13} className="animate-spin text-faint" />}
         </div>
         <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-2">
@@ -856,7 +858,7 @@ export function FleetView({ slug, machineIds, scopeNoun }: {
               type="button"
               onClick={() => pickMode(m)}
               className={"text-[11px] px-2 py-0.5 transition " + (mode === m ? "bg-cobble-600 text-white" : "text-muted hover:text-accent")}
-              title={m === "cams" ? "Webcam wall — every machine's camera" : m === "dense" ? "Compact cards (fit more machines)" : "Full cards"}
+              title={m === "cams" ? "Webcam wall: every machine's camera" : m === "dense" ? "Compact cards (fit more machines)" : "Full cards"}
             >
               {label}
             </button>
@@ -987,7 +989,7 @@ export function FleetView({ slug, machineIds, scopeNoun }: {
                 {bucket !== "all"
                   ? "Nothing in this bucket right now."
                   : machineIds
-                    ? `No ${scopeNoun ?? "machine"}s are linked to the farm yet — link one from its page (or on Digital Fabrication → Setup).`
+                    ? `No ${scopeNoun ?? "machine"}s are linked to the farm yet. Link one from its page (or on Digital Fabrication → Setup).`
                     : "No machines reported."}
               </div>
             )}
@@ -995,7 +997,7 @@ export function FleetView({ slug, machineIds, scopeNoun }: {
                 farm devices (machines-digifab-unification.md §4). */}
             {machineIds && scopedOutCount > 0 && (
               <div className="text-[11px] text-faint">
-                {scopedOutCount} device{scopedOutCount === 1 ? " on the farm isn't" : "s on the farm aren't"} linked to a {scopeNoun ?? "machine"} in this collection - {" "}
+                {scopedOutCount} device{scopedOutCount === 1 ? " on the farm isn't" : "s on the farm aren't"} linked to {withArticle(scopeNoun ?? "machine")} in this collection - {" "}
                 <Link to="/digifab" className="text-accent hover:underline">see Digital Fabrication</Link>
               </div>
             )}
@@ -1144,13 +1146,13 @@ function LanCameraFill({ slug, connId, deviceId, name, live, klass }: { slug: st
         hint = "checking the bridge…";
       } else if (!bridgeUp) {
         msg = "bridge offline";
-        hint = "nothing on-site can be reached — start the bridge / check its box";
+        hint = "nothing on-site can be reached; start the bridge / check its box";
       } else if (klass === "offline" || klass === "unknown") {
         msg = "printer unreachable";
-        hint = "the bridge is connected, so it's probably the printer — powered off (maybe on purpose) or unplugged";
+        hint = "the bridge is connected, so it's probably the printer: powered off (maybe on purpose) or unplugged";
       } else {
         msg = "camera unreachable";
-        hint = "the printer itself is responding and the bridge is fine — check the camera / LAN-access settings";
+        hint = "the printer itself is responding and the bridge is fine; check the camera / LAN-access settings";
       }
     }
     return (
@@ -1188,14 +1190,24 @@ function DeviceCard({ d, connId, slug, title, subtitle, dense, cams, selecting, 
   const invalidateFleet = () => void qc.invalidateQueries({ queryKey: ["digifab-fleet", slug] });
   const [camOpen, setCamOpen] = useState(false);
   const [camUrl, setCamUrl] = useState(d.camera_url ?? "");
+  // The part-by-part verdict ("9 good, 1 scrap") for a plate that makes more
+  // than one; the two buttons stay the one-tap answer for a whole plate.
+  const [splitOpen, setSplitOpen] = useState(false);
+  const [goodCount, setGoodCount] = useState(0);
   const ready = useMutation({
-    mutationFn: (outcome: "good" | "scrapped") => api.markDigifabDeviceReady(slug, connId, d.id, outcome),
-    onSuccess: (_r, outcome) => {
+    mutationFn: (v: "good" | "scrapped" | { good: number; scrap: number }) =>
+      typeof v === "string"
+        ? api.markDigifabDeviceReady(slug, connId, d.id, v)
+        : api.markDigifabDeviceReady(slug, connId, d.id, v.good > 0 ? "good" : "scrapped", v),
+    onSuccess: (_r, v) => {
       toast.success(
-        outcome === "scrapped"
-          ? `${d.name} cleared — scrapped, filament & usage restored`
-          : `${d.name} cleared — ready for the next job`,
+        typeof v !== "string"
+          ? `${d.name} cleared: ${v.good} good, ${v.scrap} scrap`
+          : v === "scrapped"
+            ? `${d.name} cleared. Scrapped: filament and usage restored`
+            : `${d.name} cleared, ready for the next job`,
       );
+      setSplitOpen(false);
       invalidateFleet();
     },
     onError: (e) => toast.error(e instanceof ApiError ? e.message : String(e)),
@@ -1235,7 +1247,7 @@ function DeviceCard({ d, connId, slug, title, subtitle, dense, cams, selecting, 
       const job = await api.createDigifabJob(slug, { connection_id: connId, target_device: d.id, file_ref: item.name, file_id: item.file_id });
       return api.sendDigifabJob(slug, job.id);
     },
-    onSuccess: () => { toast.success(`Sent to ${d.name} — printing`); invalidateFleet(); void qc.invalidateQueries({ queryKey: ["digifab-jobs", slug] }); },
+    onSuccess: () => { toast.success(`Sent to ${d.name}, printing`); invalidateFleet(); void qc.invalidateQueries({ queryKey: ["digifab-jobs", slug] }); },
     onError: (e) => toast.error(e instanceof ApiError ? e.message : String(e)),
   });
   const onDrop = async (e: React.DragEvent) => {
@@ -1265,7 +1277,7 @@ function DeviceCard({ d, connId, slug, title, subtitle, dense, cams, selecting, 
   const doneBy = etaMin != null && etaMin > 0 ? new Date(Date.now() + etaMin * 60_000).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" }) : null;
   // Blocking reason — say WHY a machine isn't doing anything (SimplyPrint's
   // strongest pattern). Attention has its own richer banner below.
-  const blocked = !d.enabled ? "disabled — not taking jobs" : d.klass === "offline" ? "offline — check the machine" : d.klass === "error" && !att ? "error — see the manager" : null;
+  const blocked = !d.enabled ? "disabled, not taking jobs" : d.klass === "offline" ? "offline, check the machine" : d.klass === "error" && !att ? "error, see the manager" : null;
   // WHY this machine is in the "Needs you" bucket — always named on the tile,
   // never a bare amber ring. The deviceBucket() rule is: needs_attention (the
   // Cobblr bed-clear gate), OR klass "error", OR klass "complete". The last one
@@ -1275,11 +1287,11 @@ function DeviceCard({ d, connId, slug, title, subtitle, dense, cams, selecting, 
   // it clears itself once the printer reports idle again. (Firmware-update-
   // available is NOT a needs reason — it never enters deviceBucket.)
   const needsReason =
-    att?.reason === "print-failed" ? "print failed — check the bed"
-    : att?.reason === "print-cancelled" ? "print cancelled — clear the bed"
-    : att ? "print done — clear the bed"
-    : d.klass === "complete" ? "print finished — clear the bed"
-    : d.klass === "error" ? "error — see the manager"
+    att?.reason === "print-failed" ? "print failed, check the bed"
+    : att?.reason === "print-cancelled" ? "print cancelled, clear the bed"
+    : att ? "print done, clear the bed"
+    : d.klass === "complete" ? "print finished, clear the bed"
+    : d.klass === "error" ? "error, see the manager"
     : null;
   const needsShort =
     att?.reason === "print-failed" ? "failed"
@@ -1331,7 +1343,7 @@ function DeviceCard({ d, connId, slug, title, subtitle, dense, cams, selecting, 
                       ? "bg-amber-500/90 text-slate-900"
                       : "bg-emerald-600/85 text-white"
                 }`}
-                title={`AI failure watch — rolling score ${d.failure.score.toFixed(2)}`}
+                title={`AI failure watch: rolling score ${d.failure.score.toFixed(2)}`}
               >
                 <ShieldCheck size={10} /> {Math.round(d.failure.score * 100)}%
               </span>
@@ -1417,7 +1429,7 @@ function DeviceCard({ d, connId, slug, title, subtitle, dense, cams, selecting, 
       ) : null}
       <div className="flex items-center gap-1.5">
         <span className={`w-2 h-2 rounded-full shrink-0 ${st.dot} ${d.klass === "printing" ? "animate-pulse" : ""}`} />
-        <button type="button" onClick={(e) => { if (selecting) { e.stopPropagation(); onToggleSelect?.(); } else setDetailOpen(true); }} className="text-sm font-medium text-content dark:text-mortar-100 truncate hover:text-accent text-left" title={`${title ?? d.name} — open details`}>{title ?? d.name}</button>
+        <button type="button" onClick={(e) => { if (selecting) { e.stopPropagation(); onToggleSelect?.(); } else setDetailOpen(true); }} className="text-sm font-medium text-content dark:text-mortar-100 truncate hover:text-accent text-left" title={`${title ?? d.name}: open details`}>{title ?? d.name}</button>
         <div className="flex-1" />
         <button
           onClick={() => { setCamUrl(d.camera_url ?? ""); setCamOpen((o) => !o); }}
@@ -1464,7 +1476,7 @@ function DeviceCard({ d, connId, slug, title, subtitle, dense, cams, selecting, 
                 ? "text-amber-600 dark:text-amber-500"
                 : "text-emerald-600 dark:text-emerald-500"
           }`}
-          title={`AI failure watch is live — rolling score ${d.failure.score.toFixed(2)}; auto-pause trips when it crosses your threshold`}
+          title={`AI failure watch is live: rolling score ${d.failure.score.toFixed(2)}; auto-pause trips when it crosses your threshold`}
         >
           <ShieldCheck size={10} /> AI watch · {Math.round(d.failure.score * 100)}%
         </div>
@@ -1499,7 +1511,7 @@ function DeviceCard({ d, connId, slug, title, subtitle, dense, cams, selecting, 
         // works for a REMOTE viewer (not on the printer's LAN). Costs bandwidth.
         <label className="mt-1 flex items-center gap-1.5 text-[10px] text-faint cursor-pointer">
           <input type="checkbox" checked={d.snapshot_relay} disabled={relay.isPending} onChange={(e) => relay.mutate(e.target.checked)} />
-          Relay snapshots to cloud (for remote viewing){d.snapshot_relay && !d.snapshot_fresh ? " — waiting for the agent…" : ""}
+          Relay snapshots to cloud (for remote viewing){d.snapshot_relay && !d.snapshot_fresh ? " (waiting for the agent…)" : ""}
         </label>
       )}
       {att && (
@@ -1508,10 +1520,10 @@ function DeviceCard({ d, connId, slug, title, subtitle, dense, cams, selecting, 
         <div className="mt-1.5 rounded border border-amber-300 dark:border-amber-800 bg-amber-50 dark:bg-amber-950/40 px-1.5 py-1">
           <div className="text-[10px] text-amber-700 dark:text-amber-400 leading-tight">
             {att.reason === "print-failed"
-              ? "Print failed — check the bed"
+              ? "Print failed. Check the bed"
               : att.reason === "print-cancelled"
-                ? "Print cancelled — clear the bed"
-                : "Print done — clear the bed. Come out good?"}
+                ? "Print cancelled. Clear the bed"
+                : "Print done. Clear the bed. Come out good?"}
           </div>
           {/* No verdict for a failed or CANCELLED print: there is no finished
               part to judge, and "came out good" would credit the production run
@@ -1522,11 +1534,12 @@ function DeviceCard({ d, connId, slug, title, subtitle, dense, cams, selecting, 
               disabled={ready.isPending}
               className="mt-1 w-full text-[11px] rounded bg-amber-500 hover:bg-amber-600 disabled:opacity-50 text-white py-0.5"
             >
-              {ready.isPending ? "…" : "Cleared — ready"}
+              {ready.isPending ? "…" : "Cleared, ready"}
             </button>
           ) : (
             // F-13: the verdict. "Good" closes the linked task; "Scrapped" puts
             // the filament + machine usage back. Both clear the bed.
+            <>
             <div className="mt-1 flex gap-1">
               <button
                 onClick={() => ready.mutate("good")}
@@ -1543,6 +1556,41 @@ function DeviceCard({ d, connId, slug, title, subtitle, dense, cams, selecting, 
                 Scrapped
               </button>
             </div>
+            {(att.plate_qty ?? 0) > 1 && !splitOpen && (
+              <button
+                type="button"
+                onClick={() => { setGoodCount((att.plate_qty ?? 1) - 1); setSplitOpen(true); }}
+                className="mt-0.5 w-full text-[10px] text-amber-700 dark:text-amber-400 hover:underline"
+              >
+                Some scrapped…
+              </button>
+            )}
+            {splitOpen && (att.plate_qty ?? 0) > 1 && (
+              <div className="mt-1 flex items-center gap-1 text-[11px]" data-testid="plate-verdict-counts">
+                <label className="flex items-center gap-1">
+                  <input
+                    type="number"
+                    min={0}
+                    max={att.plate_qty ?? 1}
+                    value={goodCount}
+                    onChange={(e) => setGoodCount(Math.max(0, Math.min(att.plate_qty ?? 1, Math.floor(Number(e.target.value) || 0))))}
+                    className="w-12 rounded border border-line dark:border-slate-600 bg-surface dark:bg-slate-900 px-1 py-0.5 text-[11px]"
+                    aria-label="How many came out good"
+                  />
+                  good
+                </label>
+                <span className="text-muted">· {(att.plate_qty ?? 1) - goodCount} scrap</span>
+                <button
+                  type="button"
+                  onClick={() => ready.mutate({ good: goodCount, scrap: (att.plate_qty ?? 1) - goodCount })}
+                  disabled={ready.isPending}
+                  className="ml-auto rounded bg-moss-600 hover:bg-moss-700 disabled:opacity-50 text-white px-1.5 py-0.5"
+                >
+                  Save
+                </button>
+              </div>
+            )}
+            </>
           )}
         </div>
       )}
@@ -1872,7 +1920,7 @@ function SourceChip({ kind }: { kind: "sd" | "cloud" }) {
           ? "text-faint border-line dark:border-slate-700"
           : "text-accent border-accent/40 bg-accent/5")
       }
-      title={kind === "sd" ? "On the printer's SD card — printable now" : "Known to the cloud print history — name, picture & outcome come from there"}
+      title={kind === "sd" ? "On the printer's SD card, printable now" : "Known to the cloud print history: name, picture & outcome come from there"}
     >
       {kind === "sd" ? "SD" : "Cloud"}
     </span>
@@ -1952,7 +2000,7 @@ function FileRow({
         {printed && (
           <span
             className={"shrink-0 inline-flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded " + (printed.status === "completed" ? "text-moss-600 bg-moss-500/10" : "text-ember-600 dark:text-ember-400 bg-ember-500/10")}
-            title={`Last printed ${new Date(printed.at).toLocaleString()} — ${printed.status}`}
+            title={`Last printed ${new Date(printed.at).toLocaleString()} (${printed.status})`}
           >
             {printed.status === "completed" ? "✓" : "✗"} {new Date(printed.at).toLocaleDateString()}
           </span>
@@ -2036,7 +2084,7 @@ function FilesPanel({ slug, connId, deviceId, onZoom, history, onOpenPrint, onRe
     setPrinting(name);
     try {
       await api.printDigifabFile(slug, connId, deviceId, name);
-      toast.success(`Sent "${name}" — the print is starting.`);
+      toast.success(`Sent "${name}". The print is starting.`);
     } catch (e) {
       toast.error(e instanceof ApiError ? e.message : "Couldn't start the print");
     } finally {
@@ -2161,7 +2209,7 @@ function FilesPanel({ slug, connId, deviceId, onZoom, history, onOpenPrint, onRe
 // header's backdrop-blur can't trap it.
 export function Lightbox({ src, onClose }: { src: string; onClose: () => void }) {
   return createPortal(
-    <OverlayLayer className="z-[120] bg-black/80 flex items-center justify-center p-6 cursor-zoom-out" onClick={onClose}>
+    <OverlayLayer className="z-[120] bg-black/80 flex items-center justify-center p-6 cursor-zoom-out" onClick={onClose} role="dialog" aria-modal="true" aria-label="Photo">
       {/* EXTERNAL-IMAGE-OK: the caller hands this an already-resolved URL. */}
       {/* photo-frame: the fleet's lightbox shows the whole picture at its own shape */}
       <img src={src} alt="" className="max-w-full max-h-full object-contain rounded shadow-2xl" />
@@ -2331,7 +2379,6 @@ function TempStat({ label, actual, target }: { label: string; actual: number | n
 export function PrinterDetailModal({ slug, connId, device, onClose }: { slug: string; connId: string; device: DigifabFleetDevice; onClose: () => void }) {
   const qc = useQueryClient();
   const toast = useToast();
-  const confirm = useConfirm();
   const [lightbox, setLightbox] = useState<string | null>(null);
   const [printOpen, setPrintOpen] = useState<DigifabHistory["recent"][number] | null>(null);
   const [linkEdit, setLinkEdit] = useState(false);
@@ -2354,7 +2401,7 @@ export function PrinterDetailModal({ slug, connId, device, onClose }: { slug: st
       if (!r.available) toast.info(`No reading: ${r.reason ?? "no camera frame available"}`);
       else
         toast[r.would_trip ? "error" : "success"](
-          `Live reading: ${Math.round((r.probability ?? 0) * 100)}% failure risk via ${r.source ?? "detector"}${r.would_trip ? " — this would trip the auto-pause" : ""}`,
+          `Live reading: ${Math.round((r.probability ?? 0) * 100)}% failure risk via ${r.source ?? "detector"}${r.would_trip ? " (this would trip the auto-pause)" : ""}`,
         );
       void failQ.refetch();
     },
@@ -2376,26 +2423,7 @@ export function PrinterDetailModal({ slug, connId, device, onClose }: { slug: st
 
   // "Print again" — clone the source job + send. Only history rows backed by a
   // Cobblr job can be cloned; Bambu cloud tasks (id "task:…") are view-only.
-  const reprint = useMutation({
-    mutationFn: (jobId: string) => api.reprintDigifabJob(slug, jobId),
-    onSuccess: (r) => {
-      toast[r.sent === false && !r.pooled ? "info" : "success"](
-        r.pooled ? "Queued to the pool — auto-assigns to a free printer" : r.sent ? "Sent — printing again" : `Queued — send it from the print queue${r.reason ? ` (${r.reason})` : ""}`,
-      );
-      void qc.invalidateQueries({ queryKey: ["digifab-jobs", slug] });
-      void qc.invalidateQueries({ queryKey: ["digifab-fleet", slug] });
-    },
-    onError: (e) => toast.error(e instanceof ApiError ? e.message : "Couldn't reprint"),
-  });
-  const askReprint = async (r: DigifabHistory["recent"][number]) => {
-    const ok = await confirm({
-      title: `Print "${r.file_ref}" again?`,
-      message: "Clones the original job (same file, routing, material and build) and sends it to the printer. On a live farm this physically starts the print.",
-      confirmLabel: "Print again",
-      destructive: true,
-    });
-    if (ok) reprint.mutate(r.id);
-  };
+  const askReprint = useReprint(slug, [["digifab-jobs", slug], ["digifab-fleet", slug]]);
 
   const t = detail.data?.telemetry;
   const machineList = machines.data?.items ?? [];
@@ -2475,7 +2503,7 @@ export function PrinterDetailModal({ slug, connId, device, onClose }: { slug: st
                             ? "bg-amber-500/90 text-slate-900"
                             : "bg-emerald-600/85 text-white"
                       }`}
-                      title={`AI failure watch — rolling score ${fail.score.toFixed(2)} over ${fail.samples} sample${fail.samples === 1 ? "" : "s"}`}
+                      title={`AI failure watch: rolling score ${fail.score.toFixed(2)} over ${fail.samples} sample${fail.samples === 1 ? "" : "s"}`}
                     >
                       <ShieldCheck size={11} /> {Math.round(fail.score * 100)}%
                     </div>

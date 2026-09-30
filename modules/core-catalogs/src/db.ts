@@ -17,6 +17,8 @@ export interface CatalogsTable {
   last_sync_at: Date | null;
   entry_count: Generated<number>;
   bundle_external_id: string | null;
+  /** Custom fields a bundle or a person defines for catalogs (0005). */
+  metadata: Generated<Record<string, unknown>>;
   created_at: Generated<Date>;
   updated_at: Generated<Date>;
 }

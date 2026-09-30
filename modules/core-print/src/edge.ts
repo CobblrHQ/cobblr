@@ -31,7 +31,7 @@ export function buildEdgeRelay(orgId: string, baseUrl: string, bridgeName?: stri
   if (!isEdgeManagerUrl(baseUrl)) return null;
   const key = edgeChannelKey(orgId, bridgeName);
   return async (r) => {
-    const res = await platform().edge.send(key, { path: r.path, method: r.method, body: r.body });
+    const res = await platform().edge.send(key, { path: r.path, method: r.method, body: r.body, lane: "control" });
     return { status: res.status, body: res.body };
   };
 }

@@ -2,6 +2,8 @@
 // Kept out of the component so it can be unit-tested: the recurrence→RRULE
 // builder, the {{token}} extractor, and the plain-language wire preview.
 
+import { withArticle } from "@cobblr/platform-contract/plural";
+
 export type TriggerType =
   | "user-invoked"
   | "event"
@@ -153,11 +155,11 @@ export function describeWire(i: WirePreviewInput): string {
     case "event":
       return `When the event ${i.triggerEvent ? `“${i.triggerEvent}”` : "(pick one)"} fires → ${doPart}.`;
     case "on-create":
-      return `When a ${src} is created → ${doPart}.`;
+      return `When ${withArticle(src)} is created → ${doPart}.`;
     case "on-update":
-      return `When a ${src} is updated → ${doPart}.`;
+      return `When ${withArticle(src)} is updated → ${doPart}.`;
     case "on-delete":
-      return `When a ${src} is deleted → ${doPart}.`;
+      return `When ${withArticle(src)} is deleted → ${doPart}.`;
     case "schedule":
       return `${i.recurrence ? capitalize(describeRecurrence(i.recurrence)) : "On a schedule"} → ${doPart} for each ${src}.`;
     case "user-invoked":

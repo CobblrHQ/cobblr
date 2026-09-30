@@ -51,7 +51,8 @@ import { noReceiptShape, scoreReceiptShape, type ReceiptShape } from "./receipt-
 import { classifyAiFailure } from "@cobblr/platform-contract/ai-refusal";
 import { providerReasonOf } from "@cobblr/platform-contract/provider-reason";
 import { identifyFailureWords, type IdentifyFailure } from "@cobblr/platform-contract/scan-fallback";
-import { hostedIdentifyWhy, toPhotoIdentity, receiptAsIdentity } from "./hosted-identify.js";
+import { toPhotoIdentity, receiptAsIdentity } from "./hosted-identify.js";
+import { identifyWhyFor } from "./operator-services.js";
 
 /** Re-fetch the catalog image to match a (corrected) name. The card prefers the
  *  downloaded `catalog_image_file_id` over `catalog_image_url`, so a rename left
@@ -525,10 +526,10 @@ export async function identifyPhoto({
   // keyed self-host). Null falls through to the tenant path unchanged, so the
   // hosted service being down is never worse than never having had it.
   let hostedDegraded: IdentifyFailure["hosted"];
-  // hostedIdentifyWhy asks hostedIdentifyReach first, the question
+  // identifyWhyFor → hostedIdentifyWhy asks hostedIdentifyReach first, the question
   // /ai-status asks too: no second, looser "is it on" check here.
   {
-    const why = await hostedIdentifyWhy({ orgId, imageB64, visitorIp, userId });
+    const why = await identifyWhyFor({ orgId, imageB64, visitorIp, userId, mimeType: mediaType });
     const hosted = why.answer;
     if (why.degraded && why.degraded !== "off") hostedDegraded = why.degraded;
     if (hosted?.kind === "item" && hosted.item) {

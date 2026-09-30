@@ -19,8 +19,9 @@ modulesRouter.get("/", requireAuth, (_req, res) => {
     // the workspace UI can hide the disable toggle for foundationals
     // and labels stock modules as "default-enabled."
     band: m.band,
-    intents: m.intents.map((i) => ({ name: i.name, description: i.description })),
-    exposes: m.exposes,
+    // `intents` and `exposes.api` are retired (manifest-contract.md): not
+    // listed, since nothing stands behind either.
+    exposes: { events: m.exposes.events, actions: m.exposes.actions, commands: m.exposes.commands, live: m.exposes.live, notifications: m.exposes.notifications },
     dependencies: m.dependencies,
   }));
   res.json({ items });

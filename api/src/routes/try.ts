@@ -35,6 +35,7 @@ import {
   redeemSandboxToken,
   sandboxCapacity,
   sandboxEnabled,
+  sandboxLifetime,
   type SandboxResult,
 } from "../platform/try-sandbox.js";
 import { seedSandbox } from "../platform/try-sandbox-seed.js";
@@ -50,6 +51,7 @@ import {
   type CarryPackage,
 } from "../platform/trial-carry.js";
 import { platform } from "@cobblr/platform-contract";
+import { lifetimeSentence } from "@cobblr/platform-contract/sandbox-lifetime";
 import { publicBaseUrl } from "../platform/public-url.js";
 import { emptySandboxRecords } from "../platform/try-sandbox-records.js";
 import { takeFromPool } from "../platform/try-sandbox-pool.js";
@@ -60,6 +62,7 @@ import { sendAuthEmail } from "../platform/hosted-seams.js";
 import { intentQuery, startHtml, startIntentOf, startNonce, startPolicy } from "./try-start-page.js";
 import { trackProductEvent } from "../platform/product-events.js";
 import { goneHtml } from "./try-gone-page.js";
+import { KEPT_TRIALS_PER_ADDRESS, consumeKeepJoin, requestKeepJoin } from "../platform/try-keep-join.js";
 
 /** Not an error: a pooled sandbox was filled before it was handed over, so the
  *  seed step is skipped rather than run a second time and double everything. */
@@ -299,13 +302,26 @@ tryRouter.post(
         });
         return issued.sent;
       }, days);
+      if (!r.ok && r.reason === "email_taken") {
+        // The address keeps a trial here already: this sandbox can join it,
+        // once the address says yes (try-keep-join.ts). Never a dead end.
+        const join = await requestKeepJoin({ orgId: membership.org_id, guestUserId: userId, accountUserId: r.accountUserId, email, absBase });
+        if (!join.ok) {
+          res.status(409).json({
+            error: {
+              code: "keep_limit",
+              message: `That address already keeps ${KEPT_TRIALS_PER_ADDRESS} trials here, the most one address can. Move one to a real Cobblr account to make room, or use another address.`,
+              details: { kept: join.kept },
+            },
+          });
+          return;
+        }
+        console.log(`[try-sandbox] keep ${membership.org_id}: joins an existing account once its address says yes` + (join.emailed ? "" : " (NO EMAIL SENT)"));
+        res.json({ ok: true, kind: "join_pending", expires_at: join.heldUntil.toISOString(), emailed: join.emailed, days, ...(join.devToken ? { dev_join_token: join.devToken } : {}) });
+        return;
+      }
       if (!r.ok) {
-        const status = r.reason === "email_taken" ? 409 : 400;
-        const message =
-          r.reason === "email_taken"
-            ? "That email already has an account. Sign in with it instead."
-            : "This is not a sandbox workspace.";
-        res.status(status).json({ error: { code: r.reason, message } });
+        res.status(400).json({ error: { code: r.reason, message: "This is not a sandbox workspace." } });
         return;
       }
       console.log(
@@ -316,6 +332,39 @@ tryRouter.post(
       // inbox nothing was sent to.
       res.json({ ok: true, kind: r.kind, expires_at: r.expiresAt.toISOString(), emailed: r.emailed, days });
       return;
+    } catch (err) {
+      next(err);
+    }
+  },
+);
+
+// POST /try/join { token } — the address said yes: this sandbox becomes
+// another of its workspaces, and the link signs the address in. No session:
+// the token, sent only to that address, is the proof.
+// AI-REACH: consumes a link from a person's own inbox; not an agent's to open.
+tryRouter.post(
+  "/try/join",
+  async (req: Request, res: Response, next: NextFunction): Promise<void> => {
+    try {
+      if (!sandboxEnabled()) {
+        res.status(404).json({ error: { code: "not_found", message: "Not found" } });
+        return;
+      }
+      const token = typeof req.body?.token === "string" ? req.body.token : "";
+      const r = await consumeKeepJoin(token);
+      if (!r.ok) {
+        const message = {
+          unknown: "This link is not one we sent.",
+          used: "This link was already used. Sign in to find the workspace.",
+          expired: "This link ran out, and the sandbox it was for is gone.",
+          gone: "The sandbox this link was for is gone.",
+          keep_limit: `That address already keeps ${KEPT_TRIALS_PER_ADDRESS} trials here, the most one address can.`,
+        }[r.reason];
+        res.status(r.reason === "unknown" ? 404 : 410).json({ error: { code: r.reason, message } });
+        return;
+      }
+      console.log(`[try-sandbox] a sandbox joined an existing account as ${r.slug}`);
+      res.json({ ok: true, token: await signSession(r.accountUserId), slug: r.slug, expires_at: r.expiresAt.toISOString() });
     } catch (err) {
       next(err);
     }
@@ -419,7 +468,22 @@ tryRouter.post(
 // It sends the same two paths the modal shows - the hosted service and running
 // it yourself - because a person who has just built something in a sandbox is
 // exactly the one who has not decided, and the export opens either door.
-const TakeBody = z.object({ email: z.string().email().max(255) });
+const TakeBody = z.object({
+  email: z.string().email().max(255),
+  /** Also the examples the sandbox came with. Off unless asked. */
+  keep_examples: z.boolean().optional(),
+});
+
+/** The hosted product's /bring door for a take link, or null where this box
+ *  names no hosted product (COBBLR_CLOUD_SIGNUP_URL). */
+function bringUrl(link: string): string | null {
+  if (!env.COBBLR_CLOUD_SIGNUP_URL) return null;
+  try {
+    return `${new URL(env.COBBLR_CLOUD_SIGNUP_URL).origin}/bring?file=${encodeURIComponent(link)}`;
+  } catch {
+    return null;
+  }
+}
 
 tryRouter.post(
   "/try/take",
@@ -448,7 +512,7 @@ tryRouter.post(
       }
 
       const email = parsed.data.email.toLowerCase().trim();
-      const made = await createSandboxExport(membership.org_id, membership.slug, email);
+      const made = await createSandboxExport(membership.org_id, membership.slug, email, Date.now(), { keepExamples: parsed.data.keep_examples === true });
       if (!made.ok) {
         res.status(413).json({
           error: { code: "export_too_large", message: "That workspace is too big to email. Keep it instead." },
@@ -462,6 +526,8 @@ tryRouter.post(
       const mail = takeYourWorkEmail({
         link,
         days,
+        lifetime: lifetimeSentence(await sandboxLifetime(membership.org_id)),
+        continueUrl: bringUrl(link),
         cloudUrl: env.COBBLR_CLOUD_SIGNUP_URL,
         selfhostUrl: env.COBBLR_SELFHOST_DOCS_URL,
       });
@@ -473,7 +539,7 @@ tryRouter.post(
       // `emailed: false` is not a failure of the export - the file exists and
       // the link is returned, so the modal can show it rather than pretending an
       // inbox has something in it.
-      res.json({ ok: true, emailed: sent, link, expires_at: made.expiresAt.toISOString(), days });
+      res.json({ ok: true, emailed: sent, link, continue_url: bringUrl(link), expires_at: made.expiresAt.toISOString(), days });
       return;
     } catch (err) {
       next(err);
@@ -590,6 +656,39 @@ tryRouter.get(
   },
 );
 
+// ── GET /try/lifetime — what is true of the sandbox's work right now ──────
+//
+// The ending page and the take email say it in the same sentence
+// (@cobblr/platform-contract/sandbox-lifetime), from this one read. Found
+// through the person's sandbox link, like the ledger, so it answers during the
+// hold when every workspace route is 410.
+// AI-REACH: read-state (the person's own sandbox clock, for the ending page)
+tryRouter.get(
+  "/try/lifetime",
+  requireAuth,
+  async (req: Request, res: Response, next: NextFunction): Promise<void> => {
+    try {
+      if (!sandboxEnabled()) {
+        res.status(404).json({ error: { code: "not_found", message: "Not found" } });
+        return;
+      }
+      const own = await meta
+        .selectFrom("try_sandbox_tokens as t")
+        .select(["t.org_id"])
+        .where("t.user_id", "=", req.session!.id)
+        .orderBy("t.expires_at", "desc")
+        .executeTakeFirst();
+      if (!own) {
+        res.status(400).json({ error: { code: "not_sandbox", message: "This is not a sandbox workspace." } });
+        return;
+      }
+      res.json(await sandboxLifetime(own.org_id));
+    } catch (err) {
+      next(err);
+    }
+  },
+);
+
 // ── The carry door: "bring what I built" (docs/design-decisions/trial-ledger.md)
 //
 // POST /try/carry mints the person's grant to read their trial from another
@@ -678,6 +777,7 @@ tryRouter.get(
 //
 // AI-REACH: server to server, on a grant that only the replaying server holds;
 // ending a workspace is not an agent's to do.
+// UI-REACH: server to server, on a grant only the replaying server holds
 tryRouter.post(
   "/try/carry/:token/done",
   async (req: Request, res: Response, next: NextFunction): Promise<void> => {

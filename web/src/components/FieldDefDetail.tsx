@@ -55,7 +55,7 @@ export function FieldDefDetail({ onClose, slug, fieldDef, scopeLabel }: Props) {
       ),
     onSuccess: () => {
       toast.success(
-        choices.length ? "Choices updated." : "Dropdown removed — it's a plain text box now.",
+        choices.length ? "Choices updated." : "Dropdown removed. It's a plain text box now.",
       );
     },
     onError: (e: unknown) =>

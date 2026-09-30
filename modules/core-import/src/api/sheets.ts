@@ -209,7 +209,7 @@ async function buildPlans(input: z.infer<typeof PlanBody>, ctx: PlanCtx) {
     const targets = fresh ? [...picture.targets, fresh] : picture.targets;
     const scores = scoreTargets(sheet, filename, targets);
     const chosen = (overrides.target ? scores.find((s) => s.target.id === overrides.target) : undefined) ?? chooseTarget(scores);
-    const existing = chosen.target.status === "existing" ? await existingRecords(ctx.orgId, chosen.target.kind) : [];
+    const existing = chosen.target.status === "existing" ? await existingRecords(ctx.orgId, chosen.target.kind, { userId: ctx.userId ?? undefined, role: ctx.role ?? undefined }) : [];
     plans.push(planSheet({ sheet, filename, targets, locations: picture.locations, existing, overrides, scores }));
   }
   return { source, filename, plans, picture };

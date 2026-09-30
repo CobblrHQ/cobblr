@@ -187,7 +187,7 @@ export function ConnectPrinterModal(props: ConnectPrinterModalProps) {
       if (!id.responded) {
         setError(
           "Found the printer but it did not respond. Switch it off and on and try once more. " +
-          "If it stays quiet, this printer probably cannot be driven from a browser — some " +
+          "If it stays quiet, this printer probably cannot be driven from a browser. Some " +
           "Bluetooth printers only respond to a native connection. It will still work through " +
           "an on-site bridge.",
         );
@@ -200,7 +200,7 @@ export function ConnectPrinterModal(props: ConnectPrinterModalProps) {
       // its roll goes to the manual form instead, saying so plainly.
       if (!id.widthMm || !id.heightMm) {
         setError(
-          "Connected, but this printer did not report its media size — that is normal for a roll " +
+          "Connected, but this printer did not report its media size. That is normal for a roll " +
           "with no size code in it. Set the label size by hand to finish.",
         );
         onNeedsManualSetup?.("browser-serial");
@@ -365,7 +365,7 @@ export function ConnectPrinterModal(props: ConnectPrinterModalProps) {
               <>
                 <p className="text-sm text-muted dark:text-slate-400">
                   No edge bridge is running on this computer yet. It is one command, and it needs no
-                  account, token, or pairing — it only talks to this browser, on this machine.
+                  account, token, or pairing. It only talks to this browser, on this machine.
                 </p>
                 <ol className="text-xs text-muted dark:text-slate-400 list-decimal ml-4 space-y-1.5">
                   <li>
@@ -392,7 +392,7 @@ export function ConnectPrinterModal(props: ConnectPrinterModalProps) {
                 </button>
                 <p className="text-xs text-muted dark:text-slate-400">
                   Running one somewhere else already, like a Pi in a workshop? That one pairs to your workspace
-                  instead — add its printer from Configuration &rarr; Printers, choosing <strong>Via edge bridge</strong>.
+                  instead. Add its printer from Configuration &rarr; Printers, choosing <strong>Via edge bridge</strong>.
                 </p>
               </>
             )}

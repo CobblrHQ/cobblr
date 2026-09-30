@@ -7,6 +7,8 @@ import { useMemo, useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import {
   ContributedDetailPanels,
+  useRecordInPath,
+  CustomFieldsPanel,
   Modal,
   Markdown,
   MarkdownEditor,
@@ -16,7 +18,10 @@ import {
   useToast,
   useConfirm,
   usePageTitle,
-  EntityPhoto, SearchInput } from "@cobblr/platform-web";
+  EntityPhoto,
+  SearchInput,
+  usePhotoPick,
+} from "@cobblr/platform-web";
 import { BookOpen, Plus, Pin, PinOff, Trash2, ImagePlus, X } from "lucide-react";
 import { KnowledgeApi, type Entry, type EntryInput, KnowledgeApiError } from "./api.js";
 
@@ -38,10 +43,24 @@ export function KnowledgeUI({ orgSlug, getToken }: Props) {
 
   const [q, setQ] = useState("");
   const [kindFilter, setKindFilter] = useState<string | null>(null);
-  const [editing, setEditing] = useState<Entry | "new" | null>(null);
-
   const key = ["knowledge", orgSlug];
   const entries = useQuery({ queryKey: key, queryFn: () => api.listEntries() });
+
+  // An entry's address (/knowledge/<id>) opens it; a new one is local until saved.
+  const [entryId, setEntryId] = useRecordInPath("knowledge");
+  const [creatingNew, setCreatingNew] = useState(false);
+  const listedEntry = entryId ? entries.data?.items.find((e) => e.id === entryId) : undefined;
+  const addressed = useQuery({
+    queryKey: ["knowledge-entry", orgSlug, entryId],
+    queryFn: () => api.getEntry(entryId!),
+    enabled: !!entryId && !!entries.data && !listedEntry,
+  });
+  const openEntry = listedEntry ?? addressed.data ?? null;
+  const editing: Entry | "new" | null = creatingNew ? "new" : openEntry;
+  const setEditing = (v: Entry | "new" | null) => {
+    setCreatingNew(v === "new");
+    setEntryId(v && v !== "new" ? v.id : null);
+  };
 
   const del = useMutation({
     mutationFn: (id: string) => api.deleteEntry(id),
@@ -100,7 +119,7 @@ export function KnowledgeUI({ orgSlug, getToken }: Props) {
       {entries.isLoading && <div className="text-sm text-muted">Loading…</div>}
       {!entries.isLoading && items.length === 0 && (
         <div className="rounded-lg border border-dashed border-line dark:border-slate-700 p-6 text-center text-sm text-muted italic">
-          {q || kindFilter ? "No entries match." : "No entries yet — capture a note, an SOP, a reference, a prompt."}
+          {q || kindFilter ? "No entries match." : "No entries yet. Capture a note, an SOP, a reference, a prompt."}
         </div>
       )}
 
@@ -151,6 +170,7 @@ export function KnowledgeUI({ orgSlug, getToken }: Props) {
 
       {editing && (
         <EntryEditor
+          key={editing === "new" ? "new" : editing.id}
           api={api}
           orgSlug={orgSlug}
           entry={editing === "new" ? null : editing}
@@ -226,6 +246,17 @@ function EntryEditor({
       setImagePath(r.image_path);
       toast.success("Image added");
     },
+    onError: (e) => toast.error(e instanceof KnowledgeApiError ? e.message : String(e)),
+  });
+  // A screenshot, not a photo of something in front of you: the file picker.
+  const imagePick = usePhotoPick((files) => files[0] && uploadImage.mutate(files[0]), { camera: false, label: "Add an image" });
+
+  // A field a bundle or a person adds to entries saves on its own, as it is
+  // edited, like every other sheet's; Save is for the entry's text above.
+  const [fields, setFields] = useState<Record<string, unknown>>(entry?.metadata ?? {});
+  const setField = useMutation({
+    mutationFn: (m: Record<string, unknown>) => api.updateEntry(entry!.id, { metadata: m }),
+    onSuccess: (e) => setFields(e.metadata ?? {}),
     onError: (e) => toast.error(e instanceof KnowledgeApiError ? e.message : String(e)),
   });
 
@@ -306,19 +337,13 @@ function EntryEditor({
               </button>
             </div>
           ) : entry ? (
-            <label className="mt-1 flex cursor-pointer items-center gap-2 text-sm text-accent hover:underline">
-              <ImagePlus size={15} />
-              {uploadImage.isPending ? "Uploading…" : "Add an image (e.g. a barcode screenshot)"}
-              <input
-                type="file"
-                accept="image/*"
-                className="hidden"
-                onChange={(e) => {
-                  const f = e.target.files?.[0];
-                  if (f) uploadImage.mutate(f);
-                }}
-              />
-            </label>
+            <>
+              <button type="button" onClick={imagePick.pick} className="mt-1 flex cursor-pointer items-center gap-2 text-sm text-accent hover:underline">
+                <ImagePlus size={15} />
+                {uploadImage.isPending ? "Uploading…" : "Add an image (e.g. a barcode screenshot)"}
+              </button>
+              {imagePick.input}
+            </>
           ) : (
             <p className="mt-1 text-xs text-faint">Save the entry first, then add an image.</p>
           )}
@@ -349,6 +374,9 @@ function EntryEditor({
         {/* Only once the entry EXISTS. There is nothing to tag or talk about
             while it is still being typed, and a conversation attached to a
             record that may never be saved would have nowhere to live. */}
+        {entry && (
+          <CustomFieldsPanel entityKind="knowledge:entry" entityId={entry.id} values={fields} onCommit={(name, value) => setField.mutate({ [name]: value })} />
+        )}
         {entry && (
           <ContributedDetailPanels
             target="knowledge:entry"

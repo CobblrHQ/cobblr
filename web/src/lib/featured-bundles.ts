@@ -20,6 +20,9 @@ import type { PlatformBundleManifest, PlatformBundleFeature } from "./api";
 import { OUTFIT_PLANNER_HTML } from "./outfit-planner-app";
 import { CATALOGING_BENCH_HTML } from "./bench-app";
 import { pluralise } from "@cobblr/platform-contract";
+import { withArticle } from "@cobblr/platform-contract/plural";
+
+const capitalise = (s: string) => s.charAt(0).toUpperCase() + s.slice(1);
 import { machineWordsFor } from "./machine-words";
 import { DISCORD_REMINDER_STEP } from "./discord-connect";
 
@@ -183,7 +186,7 @@ function machineBundleRelease(
   const latest =
     w.kind === "3d-printer"
       ? `Connecting your 3D printers now names every ${w.manager} it can send to: ${w.managerExamples}.`
-      : `A ${w.device}'s page now uses its own words: it sends ${w.jobs} to a ${w.manager} (${w.managerExamples}), and asks only what fits a ${w.device}.`;
+      : `${capitalise(withArticle(w.device))}'s page now uses its own words: it sends ${w.jobs} to ${withArticle(w.manager)} (${w.managerExamples}), and asks only what fits ${withArticle(w.device)}.`;
   const releases = [
     { version: "0.3.2", released_at: "2026-09-28", notes: latest },
     { version: "0.3.1", released_at: "2026-06-19", notes: machineBundleChangelog(instance, tab, fields) },
@@ -3075,7 +3078,7 @@ export const FEATURED_BUNDLES: FeaturedBundle[] = [
   {
     glyph: "🖨️🧵",
     blurb:
-      "Two tables that work together. A filament TYPE (Royal Blue PLA) defines everything about the filament once: material, colour, diameter, the nozzle/bed temps, whether it needs drying. Then your SPOOLS just pick a type and add what's unique to the physical spool: its size, the maker's batch code, and how much is left. Each type rolls up how many spools + total kg you have.",
+      "Two tables that work together. A filament type (Royal Blue PLA) says everything about the filament once: material, colour, diameter, nozzle and bed temperatures, and whether it needs drying. Each spool picks its type and adds only what belongs to that spool: its size, the maker's batch code and how much is left. Each type adds up how many spools and how many kilograms you have.",
     item_example: "a spool of Royal Blue PLA", // first instance noun is "type"; a spool reads better
     // A type first (defines the filament), then spools of it.
     next_steps: [
@@ -3084,14 +3087,15 @@ export const FEATURED_BUNDLES: FeaturedBundle[] = [
     ],
     manifest: {
       id: "cobblr.flagship.filament",
-      version: "0.8.0",
+      version: "0.8.1",
       name: "Filament",
-      description: "A filament TYPE (Royal Blue PLA) defines the filament once: material, colour, diameter, nozzle/bed temps, needs-drying. SPOOLS pick a type + add only what's per-spool: size, batch code, remaining, state. Each type rolls up its spool count + total kg.",
+      description: "A filament type (Royal Blue PLA) says the filament once: material, colour, diameter, temperatures, whether it needs drying. Each spool picks its type and adds its own size, batch code, how much is left and its state. Each type adds up its spools and kilograms.",
       author: "Cobblr",
       released_at: "2026-06-17",
       changelog:
-        "A filament type's fields sit under three headings, Identity, Printing and Spool, and each folds away, so a type's page reads in parts instead of one long list. A field you moved to another section stays where you put it when Filament updates. Earlier: A filament type has ONE colour field. It holds one colour, a blend or several, so a rainbow reads as a rainbow, and the separate colour swatch field is folded into it. Earlier: A scanned spool files as a spool: its type is found or made under it, and a scan never offers the table of types. The spools also know what filament is called (PLA, PETG, 1.75 mm), so a spool is not filed as generic inventory. Earlier: Scanning a spool's QR fills in everything its maker publishes: the exact colour swatch, the UPC, the nozzle and bed temperature ranges, the drying temperature, density, the empty spool weight, and the date the spool was made and its measured length. The UPC is the type's identifier, so scanning the box barcode finds the same type. Earlier: Opens as a catalog of things you own, and stays one: a number typed into one item no longer turns the whole collection into stock tracking with Use one, Used up and a reorder point. Earlier: Types and Spools now sit together in the navbar as one element, a quiet \"Filament\" stem with \"Types │ Spools\" links, so the two related tables read as one thing. (0.5.1: scanning a spool's QR find-or-creates its filament TYPE and links the spool automatically, a scan lands in the type→spool model instead of a flat row. 0.5.0: the TYPE defines the whole filament: colour, diameter, nozzle/bed temps and needs-drying live on the type, not re-entered per spool; a SPOOL just picks its type and carries the per-spool facts: size, batch code, remaining, state. Upgrading carries your existing temps + colour up onto the type automatically.)",
+        "Filament's description in the bundle list reads plainly, without capitals shouting TYPE and SPOOLS. Earlier: A filament type's fields sit under three headings, Identity, Printing and Spool, and each folds away, so a type's page reads in parts instead of one long list. A field you moved to another section stays where you put it when Filament updates. Earlier: A filament type has ONE colour field. It holds one colour, a blend or several, so a rainbow reads as a rainbow, and the separate colour swatch field is folded into it. Earlier: A scanned spool files as a spool: its type is found or made under it, and a scan never offers the table of types. The spools also know what filament is called (PLA, PETG, 1.75 mm), so a spool is not filed as generic inventory. Earlier: Scanning a spool's QR fills in everything its maker publishes: the exact colour swatch, the UPC, the nozzle and bed temperature ranges, the drying temperature, density, the empty spool weight, and the date the spool was made and its measured length. The UPC is the type's identifier, so scanning the box barcode finds the same type. Earlier: Opens as a catalog of things you own, and stays one: a number typed into one item no longer turns the whole collection into stock tracking with Use one, Used up and a reorder point. Earlier: Types and Spools now sit together in the navbar as one element, a quiet \"Filament\" stem with \"Types │ Spools\" links, so the two related tables read as one thing. (0.5.1: scanning a spool's QR find-or-creates its filament TYPE and links the spool automatically, a scan lands in the type→spool model instead of a flat row. 0.5.0: the TYPE defines the whole filament: colour, diameter, nozzle/bed temps and needs-drying live on the type, not re-entered per spool; a SPOOL just picks its type and carries the per-spool facts: size, batch code, remaining, state. Upgrading carries your existing temps + colour up onto the type automatically.)",
       releases: [
+        { version: "0.8.1", released_at: "2026-09-30", notes: "Filament's description in the bundle list reads plainly, without capitals shouting TYPE and SPOOLS." },
         { version: "0.8.0", released_at: "2026-09-29", notes: "A filament type's fields sit under three headings, Identity, Printing and Spool, and each folds away, so a type's page reads in parts instead of one long list. A field you moved to another section stays where you put it when Filament updates." },
         { version: "0.7.0", released_at: "2026-09-29", notes: "A filament type has ONE colour field. It holds one colour, a blend or several, so a rainbow reads as a rainbow, and the separate colour swatch field is folded into it." },
         { version: "0.6.1", released_at: "2026-09-28", notes: "A scanned spool files as a spool: its type is found or made under it, and a scan never offers the table of types. The spools also know what filament is called (PLA, PETG, 1.75 mm), so a spool is not filed as generic inventory. Earlier: Scanning a spool's QR fills in everything its maker publishes: the exact colour swatch, the UPC, the nozzle and bed temperature ranges, the drying temperature, density, the empty spool weight, and the date the spool was made and its measured length. The UPC is the type's identifier, so scanning the box barcode finds the same type. Earlier: Opens as a catalog of things you own, and stays one: a number typed into one item no longer turns the whole collection into stock tracking with Use one, Used up and a reorder point. Earlier: Types and Spools now sit together in the navbar as one element, a quiet \\\"Filament\\\" stem with \\\"Types │ Spools\\\" links, so the two related tables read as one thing. (0.5.1: scanning a spool's QR find-or-creates its filament TYPE and links the spool automatically, a scan lands in the type→spool model instead of a flat row. 0.5.0: the TYPE defines the whole filament: colour, diameter, nozzle/bed temps and needs-drying live on the type, not re-entered per spool; a SPOOL just picks its type and carries the per-spool facts: size, batch code, remaining, state. Upgrading carries your existing temps + colour up onto the type automatically.)" },
@@ -3469,11 +3473,18 @@ export const FEATURED_BUNDLES: FeaturedBundle[] = [
     ],
     manifest: {
       id: "cobblr.flagship.plants",
-      version: "0.3.2",
+      version: "0.3.3",
       name: "Plants",
       description: "Your houseplants as their own table: species, light, watering interval + pot size, grouped by light.",
       author: "Cobblr",
-      released_at: "2026-06-10",
+      released_at: "2026-09-30",
+      releases: [
+        {
+          version: "0.3.3",
+          released_at: "2026-09-30",
+          notes: "The Smart irrigation setup step's “Connect your controller” link now opens the machines page, where the controller's connection is added.",
+        },
+      ],
       changelog:
         "Turn on Smart irrigation to let each plant water itself: its watering interval fires a Home Assistant service (or any controller) for that plant's zone + seconds, hands-free.. Now its OWN table (an assets instance), not generic Assets with extra columns: its own nav entry, a “New plant” button, only plant fields (the make/model/serial cruft is hidden). Plain-language hints + a pinned “By light” view.",
       requires: [{ module: "assets" }],
@@ -3519,7 +3530,7 @@ export const FEATURED_BUNDLES: FeaturedBundle[] = [
           default: false,
           requires: [{ module: "digifab" }],
           next_steps: [
-            { label: "Connect your controller", module: "digifab", path: "/configuration/farm", hint: "Install the Home Assistant driver, add a connection labelled “Irrigation”, paste a long-lived token." },
+            { label: "Connect your controller", module: "digifab", path: "/configuration/devices?tab=machines", hint: "Install the Home Assistant driver, add a connection labelled “Irrigation”, paste a long-lived token." },
             { label: "Set each plant's zone + seconds", module: "assets", path: "/instances/plants", hint: "Which valve/zone waters it, and for how long." },
           ],
           // Add the two actuator fields to the SAME plants instance.
@@ -4017,13 +4028,16 @@ export const FEATURED_BUNDLES: FeaturedBundle[] = [
     manifest: {
       id: "cobblr.flagship.wardrobe",
       catalog: "extended",
-      version: "0.1.4",
+      version: "0.1.5",
       name: "Wardrobe",
       description: "Catalog your clothing as its own table (type, colour, season, formality, a photo each) grouped by type. Optional Outfits table for planning looks.",
       author: "Cobblr",
-      released_at: "2026-06-08",
+      released_at: "2026-09-30",
       changelog:
-        "Opens as a catalog of things you own, and stays one: a number typed into one item no longer turns the whole collection into stock tracking with Use one, Used up and a reorder point. Earlier: First release: your wardrobe as its own inventory table (a “New garment” button, only clothing fields, the parts/stock cruft hidden), with a pinned “By type” view + plain-language hints. Turn on Outfits to plan looks by occasion + the date you'll wear them (they land on your calendar); the Outfit Planner app drags garments onto a figure.",
+        "The Outfit Planner reads in plain sentences. Earlier: Opens as a catalog of things you own, and stays one: a number typed into one item no longer turns the whole collection into stock tracking with Use one, Used up and a reorder point. Earlier: First release: your wardrobe as its own inventory table (a “New garment” button, only clothing fields, the parts/stock cruft hidden), with a pinned “By type” view + plain-language hints. Turn on Outfits to plan looks by occasion + the date you'll wear them (they land on your calendar); the Outfit Planner app drags garments onto a figure.",
+      releases: [
+        { version: "0.1.5", released_at: "2026-09-30", notes: "The Outfit Planner reads in plain sentences." },
+      ],
       requires: [{ module: "inventory" }],
       provides_instances: [
         {
@@ -4124,14 +4138,17 @@ export const FEATURED_BUNDLES: FeaturedBundle[] = [
     manifest: {
       id: "cobblr.flagship.cnc-tooling",
       catalog: "extended",
-      version: "0.2.2",
+      version: "0.2.3",
       name: "CNC Tooling",
       description:
         "Your CNC tooling as its own table (end mills, drills, taps, reamers, inserts) by type/diameter/flutes/material, with the bin each lives in. Ships the guided Cataloging Bench app: capture an unknown tool's measurements + observations and it composes the spec for you (AI-enriched when a provider is connected).",
       author: "Cobblr",
-      released_at: "2026-06-12",
+      released_at: "2026-09-30",
       changelog:
-        "Says up front that it tracks stock, so counts and Use one or Used up are there from the first item rather than after one is counted. Earlier: The guided Cataloging Bench: measure (caliper) → weigh (scale) → observe → photograph → bin, hands-busy, no typing, with a live edge mode that streams real readings from an on-site agent. The structured spec is composed deterministically; a best-effort multimodal AI identify enriches the name/brand from the measurements when a provider is connected. Built on two GENERIC capabilities the bench app wires together, inventory:create-item + core-scan:identify, not a bench-specific module action. See docs/product/cataloging-bench.md.",
+        "The Cataloging Bench reads in plain sentences. Earlier: Says up front that it tracks stock, so counts and Use one or Used up are there from the first item rather than after one is counted. Earlier: The guided Cataloging Bench: measure (caliper) → weigh (scale) → observe → photograph → bin, hands-busy, no typing, with a live edge mode that streams real readings from an on-site agent. The structured spec is composed deterministically; a best-effort multimodal AI identify enriches the name/brand from the measurements when a provider is connected. Built on two GENERIC capabilities the bench app wires together, inventory:create-item + core-scan:identify, not a bench-specific module action. See docs/product/cataloging-bench.md.",
+      releases: [
+        { version: "0.2.3", released_at: "2026-09-30", notes: "The Cataloging Bench reads in plain sentences." },
+      ],
       requires: [{ module: "inventory" }, { module: "core-apps" }, { module: "core-scan" }],
       provides_instances: [
         {

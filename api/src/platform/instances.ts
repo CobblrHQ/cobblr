@@ -6,6 +6,7 @@
 // See docs/architecture/instances.md for the full design.
 
 import { sql } from "kysely";
+import { applyContributedFieldDefsToCollection } from "./contributed-fields.js";
 import { meta } from "../db/meta.js";
 import { getEntry } from "../modules/registry.js";
 import { getTenantDb } from "../db/tenant.js";
@@ -108,6 +109,13 @@ export async function createInstance(args: CreateInstanceArgs): Promise<ModuleIn
     .executeTakeFirstOrThrow();
   // A new collection is a new menu entry and a new filing destination.
   await bumpWorkspaceShape(args.orgId);
+  // And its items carry the fields modules contribute to the kind they are
+  // (Who has it on a collection of assets), from the moment it exists.
+  if (!args.isDefault) {
+    await applyContributedFieldDefsToCollection(args.orgId, args.moduleName).catch((err) =>
+      console.error(`[instances] contributed fields for ${args.instanceName} failed`, err),
+    );
+  }
   return inserted as ModuleInstance;
 }
 

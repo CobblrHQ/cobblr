@@ -1,10 +1,11 @@
 // /api/v1/me — current session profile + org memberships. Mirrors
 // the shape /auth/login returns so the web can reuse the same hook.
 
+import { childTerms } from "../auth/token-lineage.js";
 import { OPERATOR_ONLY_ACTIONS } from "../platform/activity.js";
 import { forgetTimeZone } from "../platform/person-day.js";
 import { TITLE_FORMATS, type TitleFormat } from "@cobblr/platform-contract/display-identity";
-import { Router } from "express";
+import { Router, type Request, type Response, type NextFunction } from "express";
 import { randomBytes } from "node:crypto";
 import { z } from "zod";
 import { sql } from "kysely";
@@ -13,11 +14,13 @@ import { PhotoConsentRefused, photoConsentOf, setPhotoConsent } from "../platfor
 import { deliveryTick } from "../platform/delivery-sweeper.js";
 import { requireAuth } from "../auth/middleware.js";
 import { mintTokenString } from "../auth/api-tokens.js";
-import { TOKEN_ACCESS } from "../auth/token-access.js";
+import { TOKEN_ACCESS, isTokenAccess, type TokenAccess } from "../auth/token-access.js";
 import { listScopeChoices, sanitizeScopes } from "../auth/scopes.js";
 import { hashPassword, verifyPassword } from "../auth/password.js";
+import { pendingEmailChange, requestEmailChange } from "../platform/email-change.js";
 import { signSession } from "../auth/jwt.js";
 import * as notifications from "../platform/notifications.js";
+import type { NotificationChannel } from "../db/schema.js";
 import { pressNotificationAction } from "../platform/notification-press.js";
 import { loadSessionUser } from "../auth/session-user.js";
 import * as activity from "../platform/activity.js";
@@ -26,6 +29,7 @@ import { hasAuthEmailSender, sendAuthEmail } from "../platform/hosted-seams.js";
 import { selfServeInvitesEnabled, inviteExpiresAt } from "../auth/signup-gate.js";
 import { browserBase, identityCallbackEnabled } from "../auth/identity-client.js";
 import { hardDeleteUser, SoleOwnerRefusal, soleOwnedWorkspaces } from "../platform/delete-user.js";
+import { finalExportPath, finalExportsFor } from "../platform/workspace-final-export.js";
 import { issueAndSendVerifyEmail } from "./auth.js";
 import { captureBlueprint } from "./blueprint.js";
 import {
@@ -36,8 +40,9 @@ import {
   exchangeCodeForIdentity, discordAppId } from "../platform/discord-oauth.js";
 import { communityLinks, discordInviteUrl } from "../platform/community.js";
 import { sendDiscordDm } from "../platform/discord-bot-trigger.js";
-import { discordConnectionState, needsAppStamp } from "../platform/discord-connection.js";
+import { canDeliverDiscordDm, discordConnectionState, needsAppStamp } from "../platform/discord-connection.js";
 import { publicBaseUrl } from "../platform/public-url.js";
+import { PERSONAL_EXPORT_DAYS, personalExportFile, personalExportsOf, requestPersonalExport } from "../platform/personal-export.js";
 import {
   NOTIFICATION_TYPES,
   PREF_CHANNELS,
@@ -45,6 +50,7 @@ import {
   isPrefChannel,
 } from "../platform/notification-catalog.js";
 import { ORG_ROLES, roleSatisfies } from "@cobblr/platform-contract/org-roles";
+import { decodeKeysetCursor, encodeKeysetCursor } from "@cobblr/platform-contract/keyset-cursor";
 
 export const meRouter = Router();
 
@@ -253,6 +259,41 @@ meRouter.patch("/me", requireAuth, async (req, res, next) => {
   }
 });
 
+// POST /me/tips/:id/shown and /me/tips/:id/dismissed — a tip the person has
+// been shown (the first time only: the day it first showed is what "one new
+// tip a day" counts) and one they dismissed, which is final. Each writes one
+// key, so two tabs recording two tips cannot overwrite each other.
+const TIP_ID = /^[a-z0-9][a-z0-9:._-]{0,79}$/;
+function recordTip(field: "shown" | "dismissed") {
+  return async (req: Request, res: Response, next: NextFunction) => {
+    try {
+      const id = String(req.params.id);
+      if (!TIP_ID.test(id)) {
+        res.status(400).json({ error: { code: "invalid_tip", message: "That is not a tip id." } });
+        return;
+      }
+      const updated = await meta
+        .updateTable("users")
+        .set({
+          // Only the first time counts: an existing entry keeps its date.
+          tips: sql`jsonb_set(
+            jsonb_set(coalesce(tips, '{}'::jsonb), ${sql.lit(`{${field}}`)}::text[], coalesce(tips->${field}, '{}'::jsonb)),
+            array[${field}, ${id}]::text[],
+            coalesce(tips->${field}->${id}, to_jsonb(now()))
+          )` as never,
+        })
+        .where("id", "=", req.session!.id)
+        .returning(["tips"])
+        .executeTakeFirstOrThrow();
+      res.json({ tips: updated.tips });
+    } catch (err) {
+      next(err);
+    }
+  };
+}
+meRouter.post("/me/tips/:id/shown", requireAuth, recordTip("shown"));
+meRouter.post("/me/tips/:id/dismissed", requireAuth, recordTip("dismissed"));
+
 // POST /me/password — verifies current password then updates.
 const PasswordChange = z.object({
   current_password: z.string().min(1),
@@ -319,6 +360,44 @@ meRouter.post("/me/password", requireAuth, async (req, res, next) => {
   }
 });
 
+// GET /me/email: the sign-in address and a change waiting for its link.
+// AI-REACH: exempt: a person's own sign-in address, read on their account page.
+meRouter.get("/me/email", requireAuth, async (req, res, next) => {
+  try {
+    const u = await meta.selectFrom("users").select(["email", "identity_id", "password_hash"]).where("id", "=", req.session!.id).executeTakeFirstOrThrow();
+    res.json({
+      email: u.email,
+      pending: await pendingEmailChange(req.session!.id),
+      managed_by_identity: !!u.identity_id && u.password_hash.length === 0,
+    });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// POST /me/email: ask to change the sign-in address (platform/email-change.ts).
+// A link goes to the new address; nothing changes until it is used.
+// AI-REACH: exempt: changing how a person signs in is theirs alone, with their password.
+const EmailChangeBody = z.object({ new_email: z.string().email().max(254), current_password: z.string().min(1) });
+meRouter.post("/me/email", requireAuth, async (req, res, next) => {
+  try {
+    const parsed = EmailChangeBody.safeParse(req.body);
+    if (!parsed.success) {
+      res.status(400).json({ error: { code: "invalid_body", message: "Give the new address and your current password.", details: parsed.error.issues } });
+      return;
+    }
+    const origin = `${req.protocol}://${req.get("host") ?? ""}`;
+    const out = await requestEmailChange(req.session!.id, parsed.data.new_email, parsed.data.current_password, origin);
+    if ("refused" in out) {
+      res.status(out.refused.status).json({ error: { code: out.refused.code, message: out.refused.message } });
+      return;
+    }
+    res.status(202).json({ pending: out.pending, expires_at: out.expires_at, emailed: out.emailed, ...(out.devToken ? { dev_token: out.devToken } : {}) });
+  } catch (err) {
+    next(err);
+  }
+});
+
 // Sign out everywhere without changing the password. Until now the ONLY way to
 // revoke a session (a lost/stolen token, a shared device) was a password change
 // — so a user who suspected a token was exposed had to rotate their password to
@@ -355,6 +434,49 @@ meRouter.post("/me/sign-out-everywhere", requireAuth, async (req, res, next) => 
         .catch((err) => console.error("[me/sign-out-everywhere] activity log failed:", err));
     }
     res.status(200).json({ token: freshToken });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// ── Download my data (#4185) ──────────────────────────────────────────────
+// A person's own copy of what Cobblr holds about them: personal-export.ts.
+// AI-REACH: exempt (a person taking their own data; never on behalf of a workspace, never by an agent)
+meRouter.post("/me/export", requireAuth, async (req, res, next) => {
+  try {
+    const r = await requestPersonalExport(req.session!.id, { origin: publicBaseUrl() || `${req.protocol}://${req.get("host") ?? ""}` });
+    if (!r.ok) {
+      res.status(429).json({
+        error: { code: "too_soon", message: "You can take one copy a day. The one you asked for today is below.", details: { retry_at: r.retryAt.toISOString() } },
+      });
+      return;
+    }
+    res.status(202).json({ id: r.id, status: r.status });
+  } catch (err) {
+    next(err);
+  }
+});
+
+meRouter.get("/me/export", requireAuth, async (req, res, next) => {
+  try {
+    res.json({ items: await personalExportsOf(req.session!.id), days: PERSONAL_EXPORT_DAYS });
+  } catch (err) {
+    next(err);
+  }
+});
+
+meRouter.get("/me/export/:id/download", requireAuth, async (req, res, next) => {
+  try {
+    const bytes = await personalExportFile(String(req.params.id ?? ""), req.session!.id);
+    if (!bytes) {
+      // Somebody else's, run out, or not built: one answer, so an id says nothing.
+      res.status(404).json({ error: { code: "not_found", message: "That copy is not here. Ask for a new one." } });
+      return;
+    }
+    res.setHeader("Content-Type", "application/zip");
+    // UTC-DAY OK: the download's filename stamp, not a claim about anybody's calendar.
+    res.setHeader("Content-Disposition", `attachment; filename="my-cobblr-data-${new Date().toISOString().slice(0, 10)}.zip"`);
+    res.send(bytes);
   } catch (err) {
     next(err);
   }
@@ -415,7 +537,7 @@ meRouter.delete("/me", requireAuth, async (req, res, next) => {
       res.status(409).json({
         error: {
           code: "sole_owner",
-          message: "You are the only owner of a workspace. Delete it, or make somebody else an owner, first.",
+          message: "You are the only owner of a workspace. Delete it (its Settings, General), or make somebody else an owner, first.",
           details: { workspaces: sole.map((w) => ({ slug: w.slug, name: w.name })) },
         },
       });
@@ -431,7 +553,7 @@ meRouter.delete("/me", requireAuth, async (req, res, next) => {
     } catch (err) {
       if (err instanceof SoleOwnerRefusal) {
         res.status(409).json({
-          error: { code: "sole_owner", message: "You are the only owner of a workspace. Delete it, or make somebody else an owner, first.", details: { workspaces: err.workspaces.map((w) => ({ slug: w.slug, name: w.name })) } },
+          error: { code: "sole_owner", message: "You are the only owner of a workspace. Delete it (its Settings, General), or make somebody else an owner, first.", details: { workspaces: err.workspaces.map((w) => ({ slug: w.slug, name: w.name })) } },
         });
         return;
       }
@@ -448,6 +570,50 @@ meRouter.delete("/me", requireAuth, async (req, res, next) => {
 // the (user_id, org_id) shape already, so this is one indexed query.
 // Returns each row joined with the org's slug so the client can
 // attribute "you tagged a part in 'Workshop'" vs "in 'Lego'".
+// GET /me/workspace-exports: the final backups of deleted workspaces this
+// person owned, kept for a while after the workspace went
+// (platform/workspace-final-export.ts).
+// AI-REACH: a person's own downloads, read on their account page.
+meRouter.get("/me/workspace-exports", requireAuth, async (req, res, next) => {
+  try {
+    const rows = await finalExportsFor(req.session!.id);
+    res.json({
+      items: rows.map((r) => ({
+        id: r.id,
+        workspace: r.org_name,
+        filename: r.filename,
+        size_bytes: Number(r.size_bytes),
+        created_at: r.created_at,
+        expires_at: r.expires_at,
+      })),
+    });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// GET /me/workspace-exports/:id/download: the zip, for an owner of the
+// workspace it came from, until it expires.
+// AI-REACH: a file download for the person it belongs to; nothing to act on.
+meRouter.get("/me/workspace-exports/:id/download", requireAuth, async (req, res, next) => {
+  try {
+    const id = String(req.params.id);
+    const mine = (await finalExportsFor(req.session!.id)).find((r) => r.id === id);
+    if (!mine) {
+      res.status(404).json({ error: { code: "not_found", message: "No backup of yours by that id, or it has expired." } });
+      return;
+    }
+    await meta
+      .updateTable("workspace_final_exports")
+      .set((eb) => ({ download_count: eb("download_count", "+", 1) }))
+      .where("id", "=", id)
+      .execute();
+    res.download(finalExportPath(id), mine.filename);
+  } catch (err) {
+    next(err);
+  }
+});
+
 meRouter.get("/me/activity", requireAuth, async (req, res, next) => {
   try {
     const userId = req.session!.id;
@@ -455,14 +621,23 @@ meRouter.get("/me/activity", requireAuth, async (req, res, next) => {
     // Optional explicit ?org=<slug> narrows to one workspace; default
     // is "across all of mine."
     const orgFilter = typeof req.query.org === "string" ? req.query.org : null;
-    // Cursor pagination (see docs/design-decisions/list-pagination.md) — keyset
-    // on occurred_at desc; return next_cursor + a real total so the UI shows
-    // "N of total", not a capped items.length that lies once you pass the page.
-    const cursor = typeof req.query.cursor === "string" ? req.query.cursor : null;
-    let q = meta
+    // Keyset on (occurred_at to the millisecond, id) desc, the precision the
+    // cursor carries (@cobblr/platform-contract/keyset-cursor). An old
+    // time-only cursor still reads.
+    const c = decodeKeysetCursor(typeof req.query.cursor === "string" ? req.query.cursor : null);
+    const cursorId = c?.id && /^\d+$/.test(c.id) ? Number(c.id) : null;
+    // What the CALLER did, in the workspaces they still belong to. Reading
+    // through the membership alone listed every member's work here as theirs.
+    const mine = meta
       .selectFrom("activity_log as a")
       .innerJoin("orgs as o", "o.id", "a.org_id")
-      .innerJoin("org_memberships as m", "m.org_id", "a.org_id")
+      .innerJoin("org_memberships as m", (j) => j.onRef("m.org_id", "=", "a.org_id").on("m.user_id", "=", userId))
+      .where("a.user_id", "=", userId)
+      // Operator-side records (a support "View as") never reach a member's feed.
+      .where("a.action", "not in", [...OPERATOR_ONLY_ACTIONS])
+      .where("a.action", "not like", "impersonation\\_%")
+      .$if(!!orgFilter, (q) => q.where("o.slug", "=", orgFilter!));
+    let q = mine
       .select([
         "a.id as id",
         "a.action as action",
@@ -475,36 +650,21 @@ meRouter.get("/me/activity", requireAuth, async (req, res, next) => {
         "o.name as org_name",
         "o.slug as org_slug",
       ])
-      .where("m.user_id", "=", userId)
-      // Operator-side records (a support "View as") never reach a member's feed.
-      .where("a.action", "not in", [...OPERATOR_ONLY_ACTIONS])
-      .where("a.action", "not like", "impersonation\\_%")
-      .orderBy("a.occurred_at", "desc")
+      .orderBy(sql`date_trunc('milliseconds', a.occurred_at)`, "desc")
+      .orderBy("a.id", "desc")
       .limit(limit + 1); // +1 to detect "there's more" without a second query
-    if (orgFilter) q = q.where("o.slug", "=", orgFilter);
-    if (cursor) q = q.where("a.occurred_at", "<", new Date(cursor));
+    if (c) {
+      q = cursorId !== null
+        ? q.where(sql<boolean>`(date_trunc('milliseconds', a.occurred_at), a.id) < (${c.at}, ${cursorId})`)
+        : q.where(sql<boolean>`date_trunc('milliseconds', a.occurred_at) < ${c.at}`);
+    }
     const rows = await q.execute();
     const hasMore = rows.length > limit;
     const items = rows.slice(0, limit);
-    const next_cursor = hasMore ? new Date(items[items.length - 1]!.occurred_at).toISOString() : null;
-    // Real total (same membership + org filter, ignoring pagination). Built as a
-    // ternary rather than reassigning — a conditional innerJoin changes the
-    // query's type, which a `let cq = …; cq = cq.innerJoin()` can't hold.
-    const totalRow = orgFilter
-      ? await meta
-          .selectFrom("activity_log as a")
-          .innerJoin("org_memberships as m", "m.org_id", "a.org_id")
-          .innerJoin("orgs as o", "o.id", "a.org_id")
-          .select(({ fn }) => fn.countAll<number>().as("n"))
-          .where("m.user_id", "=", userId)
-          .where("o.slug", "=", orgFilter)
-          .executeTakeFirst()
-      : await meta
-          .selectFrom("activity_log as a")
-          .innerJoin("org_memberships as m", "m.org_id", "a.org_id")
-          .select(({ fn }) => fn.countAll<number>().as("n"))
-          .where("m.user_id", "=", userId)
-          .executeTakeFirst();
+    const last = items[items.length - 1];
+    const next_cursor = hasMore && last ? encodeKeysetCursor(last.occurred_at, last.id) : null;
+    // The total is the count of this same list, filters and all.
+    const totalRow = await mine.select(({ fn }) => fn.countAll<number>().as("n")).executeTakeFirst();
     res.json({ items, next_cursor, total: Number(totalRow?.n ?? items.length) });
   } catch (err) {
     next(err);
@@ -661,6 +821,7 @@ meRouter.put("/me/delivery-windows", requireAuth, async (req, res, next) => {
  */
 // AI-REACH: exempt — an operator/self diagnostic that delivers mail already
 // queued; an agent has no reason to trigger someone's digest early.
+// UI-REACH: an operator's diagnostic that delivers mail already queued
 meRouter.post("/me/delivery-windows/flush", requireAuth, async (req, res, next) => {
   try {
     const out = await deliveryTick(new Date(), req.session!.id);
@@ -680,11 +841,18 @@ meRouter.get("/me/notifications", requireAuth, async (req, res, next) => {
   try {
     const limit = Math.min(Number(req.query.limit ?? 25) || 25, 100);
     const unreadOnly = req.query.unread === "1" || req.query.unread === "true";
+    const before = typeof req.query.before === "string" ? req.query.before : undefined;
+    const orgSlug = typeof req.query.org === "string" && req.query.org ? req.query.org : undefined;
     const items = await notifications.listForUserAcrossOrgs(req.session!.id, {
       limit,
       unreadOnly,
+      ...(before ? { before } : {}),
+      ...(orgSlug ? { orgSlug } : {}),
     });
-    res.json({ items });
+    // A full page may have more behind it: the cursor is the last row's
+    // `<created_at>|<id>`, which the next call hands back as `before`.
+    const last = items.length === limit ? items[items.length - 1] : undefined;
+    res.json({ items, next_cursor: last ? encodeKeysetCursor(last.created_at, last.id) : null });
   } catch (err) {
     next(err);
   }
@@ -784,24 +952,22 @@ meRouter.post("/me/notifications/read-all", requireAuth, async (req, res, next) 
 // Subscription unique key: (user_id, org_id, event_type, channel).
 // Use event_type = '*' for wildcard (all events).
 
-const ChannelEnum = z.enum([
-  "in_app",
-  "browser_push",
-  "email",
-  "discord",
-  "webhook",
-  "slack",
-  "sms",
-]);
+// Every channel the dispatcher can deliver through, and nothing else: the
+// list is the registry's own keys, so a channel added there is one a person
+// can bind, and the settings page cannot offer one this refuses (it offered
+// Discord DM, which this list had left out, so saving it failed).
+export const ChannelEnum = z.enum(Object.keys(notifications.REGISTRY) as [NotificationChannel, ...NotificationChannel[]]);
 const PriorityEnum = z.enum(["low", "normal", "high", "urgent"]);
 
 // Channel-specific config validators. The dispatcher's drivers
 // re-validate at delivery time (so a row with stale config doesn't
 // blow up the dispatcher), but we validate at write time too so
 // users get immediate feedback when they paste a malformed URL.
-const ChannelConfigSchemas: Record<string, z.ZodTypeAny> = {
+const ChannelConfigSchemas: Record<NotificationChannel, z.ZodTypeAny> = {
   in_app: z.object({}).strict(),
   browser_push: z.object({}).strict(),
+  // The person's own linked Discord account; nothing to configure here.
+  discord_dm: z.object({}).strict(),
   discord: z.object({
     webhook_url: z
       .string()
@@ -991,6 +1157,21 @@ meRouter.post(
           error: { code: "not_a_member", message: "Workspace not found." },
         });
         return;
+      }
+      // A DM goes to the Discord account this person linked; a binding made
+      // before that would save and then never deliver, so it says what to do.
+      if (parsed.data.channel === "discord_dm") {
+        const conn = await meta
+          .selectFrom("discord_connections")
+          .select(["discord_user_id", "verified", "verified_app_id"])
+          .where("user_id", "=", req.session!.id)
+          .executeTakeFirst();
+        if (!canDeliverDiscordDm(conn)) {
+          res.status(409).json({
+            error: { code: "discord_not_connected", message: "Connect your Discord account under your profile first, then add Discord DM here." },
+          });
+          return;
+        }
       }
       // Validate channel-specific config shape.
       const schema = ChannelConfigSchemas[parsed.data.channel];
@@ -1363,6 +1544,36 @@ meRouter.post("/me/api-tokens", requireAuth, async (req, res, next) => {
       });
       return;
     }
+    // Minted with a token: the child never outlives or out-reaches it
+    // (auth/token-lineage.ts).
+    let terms = {
+      expires_at: parsed.data.expires_at ? new Date(parsed.data.expires_at) : null,
+      org_id: orgId,
+      scopes: cleanScopes.length > 0 ? cleanScopes : null,
+      access: access as TokenAccess | null,
+    };
+    let parentTokenId: string | null = null;
+    if (req.session!.auth_method === "api_token" && req.session!.api_token_id) {
+      const parent = await meta
+        .selectFrom("api_tokens")
+        .select(["id", "expires_at", "org_id", "scopes", "access"])
+        .where("id", "=", req.session!.api_token_id)
+        .executeTakeFirst();
+      if (!parent) {
+        res.status(401).json({ error: { code: "token_gone", message: "The token making this one no longer exists." } });
+        return;
+      }
+      const child = childTerms(
+        { expires_at: parent.expires_at, org_id: parent.org_id, scopes: parent.scopes?.length ? parent.scopes : null, access: isTokenAccess(parent.access) ? parent.access : null },
+        terms,
+      );
+      if (!child.ok) {
+        res.status(400).json({ error: { code: "token_beyond_parent", message: `${child.message} No token was created.` } });
+        return;
+      }
+      terms = child.terms;
+      parentTokenId = parent.id;
+    }
     const inserted = await meta
       .insertInto("api_tokens")
       .values({
@@ -1370,17 +1581,23 @@ meRouter.post("/me/api-tokens", requireAuth, async (req, res, next) => {
         name: parsed.data.name.trim(),
         token_hash: hash,
         token_prefix: tokenPrefix,
-        expires_at: parsed.data.expires_at ? new Date(parsed.data.expires_at) : null,
+        expires_at: terms.expires_at,
         // Empty → NULL = unrestricted (legacy). Non-empty = deny-by-default.
-        scopes: cleanScopes.length > 0 ? cleanScopes : null,
+        scopes: terms.scopes,
+        parent_token_id: parentTokenId,
         source: parsed.data.source?.trim() || null,
         // jsonb: pg parses the JSON string on insert (same idiom as blueprint).
         meta: parsed.data.meta ? JSON.stringify(parsed.data.meta) : null,
-        org_id: orgId,
-        access,
+        org_id: terms.org_id,
+        access: terms.access,
       })
       .returning(["id", "name", "token_prefix", "expires_at", "created_at", "scopes", "source", "meta", "org_id", "access"])
       .executeTakeFirstOrThrow();
+    // A key to a workspace is that workspace's business: its activity says
+    // a token was made for it, and by whom (never the secret).
+    if (inserted.org_id) {
+      await activity.log({ orgId: inserted.org_id, action: "api_token_created", ref: { module: null, entityType: "api_token", entityId: inserted.id }, diff: { name: inserted.name, access: inserted.access, expires_at: inserted.expires_at, minted_by_token: !!parentTokenId } }).catch(() => {});
+    }
     // Plaintext goes back exactly once. The DB only ever has the hash.
     res.status(201).json({ ...inserted, token: plaintext });
   } catch (err) {
@@ -1961,11 +2178,22 @@ meRouter.delete("/me/api-tokens/:id", requireAuth, async (req, res, next) => {
       .where("id", "=", id)
       .where("user_id", "=", req.session!.id)
       .where("revoked_at", "is", null)
-      .returning("id")
+      .returning(["id", "name", "org_id"])
       .executeTakeFirst();
     if (!updated) {
       res.status(404).json({ error: { code: "not_found", message: "Token not found or already revoked" } });
       return;
+    }
+    // Every token it made, and theirs, goes with it.
+    await sql`
+      with recursive kids(id) as (
+        select id from api_tokens where parent_token_id = ${updated.id}
+        union all
+        select t.id from api_tokens t join kids on t.parent_token_id = kids.id
+      )
+      update api_tokens set revoked_at = now() where id in (select id from kids) and revoked_at is null`.execute(meta);
+    if (updated.org_id) {
+      await activity.log({ orgId: updated.org_id, action: "api_token_revoked", ref: { module: null, entityType: "api_token", entityId: updated.id }, diff: { name: updated.name } }).catch(() => {});
     }
     res.status(204).end();
   } catch (err) {

@@ -10,6 +10,7 @@
 // card instead of failing the whole fleet (one dead printer farm can't blank
 // the view of the others).
 
+import { recordVerdictOnMake } from "../makes-core.js";
 import { Router, raw } from "express";
 import { isEdgeManagerUrl } from "@cobblr/platform-contract/edge-bridge-client";
 import { z } from "zod";
@@ -18,8 +19,7 @@ import { tenantDb, tenantContext } from "../db.js";
 import { asyncHandler, requireRole } from "./util.js";
 import { putSnapshot, getSnapshot, freshSnapshotKeys } from "../snapshot-store.js";
 import { getBambuStatusMap } from "../bambu-status-store.js";
-import { buildDriverById, bambuLanDriverFor, runControlWithCloudFallback, parseBambuLan, bambuLanMode, reverseBuildIfCommitted, sendJob, type BambuLan } from "../jobs-core.js";
-import { enqueuePoll } from "../poll-worker.js";
+import { buildDriverById, bambuLanDriverFor, runControlWithCloudFallback, parseBambuLan, bambuLanMode, recordJobOutcome, type BambuLan } from "../jobs-core.js";
 import { recordRunVerdict } from "../runs-core.js";
 import { availableDriverKeys } from "../drivers/registry.js";
 import { ownedDeviceRefs } from "../detectors/owned.js";
@@ -240,8 +240,22 @@ fleetRouter.get(
     // bed before they can take new work (the assign worker skips these).
     const attention = await db
       .selectFrom("digifab_device_attention")
-      .select(["connection_id", "remote_device_id", "reason", "created_at"])
+      .select(["connection_id", "remote_device_id", "reason", "created_at", "job_id"])
       .execute();
+    // How many one plate makes, for the verdict's counts ("9 good, 1 scrap").
+    // Only a plate that produces a build has a number worth splitting.
+    const attJobIds = attention.map((a) => a.job_id).filter((id): id is string => !!id);
+    const plateQty = new Map<string, number>();
+    if (attJobIds.length > 0) {
+      const attJobs = await db
+        .selectFrom("digifab_jobs")
+        .select(["id", "linked_build_id", "build_qty"])
+        .where("id", "in", attJobIds)
+        .execute();
+      for (const j of attJobs) {
+        if (j.linked_build_id) plateQty.set(j.id, j.build_qty != null ? Number(j.build_qty) : 1);
+      }
+    }
 
     // Cockpit: per-device manual overrides (a camera URL the manager doesn't
     // report). Merged over any driver-reported camera below.
@@ -347,7 +361,9 @@ fleetRouter.get(
               sort_order: setting?.sort_order ?? null,
               row_break: setting?.row_break ?? false,
               // F-1: needs a bed-clear ack before it's assignable again.
-              needs_attention: att ? { reason: att.reason, since: att.created_at } : null,
+              needs_attention: att
+                ? { reason: att.reason, since: att.created_at, plate_qty: att.job_id ? (plateQty.get(att.job_id) ?? null) : null }
+                : null,
               // AI failure watch: live score while printing + whether it auto-paused.
               failure: fw && (fw.watch_at || fw.paused_at) ? { score: Number(fw.score), watching: !!fw.watch_at, paused: !!fw.paused_at } : null,
               active_job: job
@@ -401,7 +417,13 @@ fleetRouter.get(
 //              machine usage). The task is NOT closed.
 // Only a *completed*-print attention has effects to confirm/reverse; a
 // failed-print attention just gets cleared (a failed print fired nothing).
-const ReadyBody = z.object({ outcome: z.enum(["good", "scrapped"]).default("good") });
+// `good` / `scrap` counts (in builds) split a plate that came out partly good:
+// "9 good, 1 scrap". Without them the verdict covers the whole plate.
+const ReadyBody = z.object({
+  outcome: z.enum(["good", "scrapped"]).default("good"),
+  good: z.number().int().min(0).optional(),
+  scrap: z.number().int().min(0).optional(),
+});
 // AI-REACH: sends work to a physical machine through its manager; run-command is the one deliberate door
 fleetRouter.post(
   "/:connectionId/:deviceId/ready",
@@ -409,7 +431,11 @@ fleetRouter.post(
     if (!requireRole(req, res, "owner", "admin")) return;
     const orgId = tenantContext(req).org.id;
     const db = tenantDb(req);
-    const outcome = ReadyBody.parse(req.body ?? {}).outcome;
+    const body = ReadyBody.safeParse(req.body ?? {});
+    if (!body.success) return void res.status(400).json({ error: { code: "bad_body", message: "outcome is good or scrapped; good and scrap are whole numbers" } });
+    const counts = body.data.good != null || body.data.scrap != null ? { good: body.data.good ?? 0, scrap: body.data.scrap ?? 0 } : undefined;
+    // Counts decide the outcome when given: any good part makes the plate good.
+    const outcome: "good" | "scrapped" = counts ? (counts.good > 0 ? "good" : "scrapped") : body.data.outcome;
     const connectionId = req.params.connectionId!;
     const deviceId = req.params.deviceId!;
 
@@ -426,6 +452,10 @@ fleetRouter.post(
       // increments the run (and may close it), scrapped marks the plate
       // non-covering so the assign worker mints a replacement. Idempotent.
       await recordRunVerdict(db, orgId, att.job_id, outcome);
+      await recordVerdictOnMake(db, orgId, att.job_id, outcome);
+      // The plate's outcome: parts count as made here, on good, and never at
+      // send (#4050). A whole-plate scrap reverses the build inside it.
+      await recordJobOutcome(db, orgId, att.job_id, outcome === "good" ? "good" : "scrap", "bed-clear", counts);
       const job = await db
         .selectFrom("digifab_jobs")
         .select(["id", "linked_task_id", "linked_machine_id", "material_part_id", "material_grams"])
@@ -459,9 +489,6 @@ fleetRouter.post(
             linkedMachineId: job.linked_machine_id,
             prints: -1,
           });
-          // A scrapped print never produced its build's output either — undo the
-          // send-time component consumption + output credit (idempotent).
-          await reverseBuildIfCommitted(db, orgId, job.id, "print scrapped at bed clear");
         }
       }
     }
@@ -487,8 +514,8 @@ fleetRouter.post(
       .execute();
     for (const h of held) {
       try {
-        const r = await sendJob(db, orgId, h.id);
-        if (r.ok && r.shouldPoll) await enqueuePoll(orgId, h.id);
+        const { sendAndWatch } = await import("./jobs.js");
+        await sendAndWatch(db, orgId, h.id);
       } catch {
         /* left queued — visible in the queue with its retry note */
       }
@@ -620,6 +647,7 @@ async function resolveSelfConnection(orgId: string, connectionId: string): Promi
 // + served back by GET below. The agent dials out, so this is a normal
 // authenticated POST. Use connectionId "self" to auto-resolve (no id to paste).
 // AI-REACH: sends work to a physical machine through its manager; run-command is the one deliberate door
+// UI-REACH: the machine's agent posts its camera frames here; the fleet screen shows them
 fleetRouter.post(
   "/:connectionId/:deviceId/snapshot",
   raw({ type: ["image/jpeg", "application/octet-stream"], limit: "4mb" }),

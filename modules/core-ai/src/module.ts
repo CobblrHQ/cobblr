@@ -14,10 +14,10 @@ import { defineModule } from "@cobblr/platform-contract";
 
 export default defineModule({
   name: "core-ai",
-  version: "0.40.16",
+  version: "0.40.18",
   displayName: "AI",
   description:
-    "Use AI on your workspace data: classify photos, extract text, summarise, rank product images, match to catalogs. Configure OpenAI, Anthropic, Ollama, or any provider.",
+    "Let AI help with your things: recognise photos, read text, sum up and match items to catalogs, using the provider you choose.",
   icon: "sparkles",
   band: "stock",
   autoEnable: true, // ambient capability — on for every workspace
@@ -29,7 +29,6 @@ export default defineModule({
 
   api: () => import("./api/index.js"),
 
-  intents: [],
   dependencies: [],
 
   // AI-REACH: none needed — this module IS the assistant (and the provider
@@ -45,15 +44,10 @@ export default defineModule({
       "core-ai.provider.created",
       "core-ai.provider.updated",
       "core-ai.provider.deleted",
-      "core-ai.invocation.completed",
-      "core-ai.invocation.failed",
-      "core-ai.budget.warning",
-      "core-ai.budget.exceeded",
       "core-ai.basic.created",
       "core-ai.basic.updated",
       "core-ai.basic.deleted",
     ],
-    api: [],
     actions: [],
   },
 

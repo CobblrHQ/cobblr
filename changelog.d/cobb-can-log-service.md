@@ -2,7 +2,7 @@
 type: feature
 scope: maintenance
 date: 2026-08-18
-docs_target: docs/USER_GUIDE.md#3.16 Maintenance (foundational)
+docs_target: docs/USER_GUIDE.md#3.16 Maintenance
 docs_published: 2026-09-23
 ---
 

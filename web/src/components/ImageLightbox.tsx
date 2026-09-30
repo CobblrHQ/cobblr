@@ -19,7 +19,7 @@ import { Fragment, useEffect, useState } from "react";
 import { OverlayCloseButton } from "./OverlayCloseButton";
 import { createPortal } from "react-dom";
 
-import { useImageSrc, OverlayLayer } from "@cobblr/platform-web";
+import { useImageSrc, OverlayLayer, isShortcut } from "@cobblr/platform-web";
 import { api } from "../lib/api";
 import { payloadFromClipboard, readPastedImage, type PastedImage } from "./pastedImage";
 
@@ -165,9 +165,9 @@ export function ImageLightbox({
 
   useEffect(() => {
     function onKey(e: KeyboardEvent) {
-      if (e.key === "Escape") onClose();
-      else if (e.key === "ArrowLeft" && many) onIndex((index - 1 + items.length) % items.length);
-      else if (e.key === "ArrowRight" && many) onIndex((index + 1) % items.length);
+      if (isShortcut(e, "close")) onClose();
+      else if (isShortcut(e, "previous") && many) onIndex((index - 1 + items.length) % items.length);
+      else if (isShortcut(e, "next") && many) onIndex((index + 1) % items.length);
     }
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);

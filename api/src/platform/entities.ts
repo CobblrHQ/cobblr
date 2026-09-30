@@ -28,7 +28,7 @@ import type {
   ResolvedEntity,
 } from "@cobblr/platform-contract";
 import { walkListPages } from "./entity-list-walk.js";
-import { TRAIT_PRESETS, stockDisclosureFromConfig, traitAxisValue, type FilterPredicate } from "@cobblr/platform-contract";
+import { TRAIT_PRESETS, stockDisclosureFromConfig, traitAxisValue, type EntityViewer, type FilterPredicate } from "@cobblr/platform-contract";
 import { meta } from "../db/meta.js";
 import { instanceKindName } from "./instance-kind.js";
 import { INSTANCE_ITEM_DETAIL, resolveDetailPath } from "@cobblr/platform-contract/instance-detail";
@@ -239,6 +239,9 @@ export interface ViewerReadScope {
   caps: ReadonlySet<string>;
 }
 
+/** What SYSTEM_VIEWER reads with: everything. */
+const SYSTEM_READ_SCOPE: ViewerReadScope = { all: true, caps: new Set() };
+
 
 async function getExposableFields(kind: string): Promise<string[] | null> {
   if (exposableFieldsCache.has(kind)) {
@@ -303,6 +306,33 @@ async function getFieldReadScopes(
  *     gated field the viewer lacks the capability for. A viewer-less
  *     read (system / admin module API) or an all-access viewer
  *     (owner/admin) sees everything — fully backward-compatible. */
+/** Every string in a value, however nested. */
+function stringsIn(v: unknown, out: string[] = []): string[] {
+  if (typeof v === "string") out.push(v);
+  else if (typeof v === "number") out.push(String(v));
+  else if (Array.isArray(v)) for (const x of v) stringsIn(x, out);
+  else if (v && typeof v === "object") for (const x of Object.values(v)) stringsIn(x, out);
+  return out;
+}
+
+/** Whether `q` is in something this reader may not see and in nothing they
+ *  may: a match they could only have got by reading a hidden field. */
+function matchedOnlyWhatIsHidden(
+  row: ResolvedEntity,
+  q: string,
+  whitelist: string[] | null,
+  fieldReadScopes: Record<string, string>,
+  readScope: ViewerReadScope | undefined,
+  publicRead: boolean | undefined,
+): boolean {
+  const needle = q.trim().toLowerCase();
+  if (!needle) return false;
+  const has = (v: unknown) => stringsIn(v).some((t) => t.toLowerCase().includes(needle));
+  if (!has(row.fields) && !has(row.title) && !has(row.snippet)) return false;
+  const seen = applyExposableProjection(row, whitelist, fieldReadScopes, readScope, publicRead);
+  return !has(seen.fields) && !has(seen.title) && !has(seen.snippet);
+}
+
 function applyExposableProjection(
   resolved: ResolvedEntity,
   whitelist: string[] | null,
@@ -354,8 +384,16 @@ function applyExposableProjection(
   // readScope with `all: true`.
   if (fieldReadScopes && readScope?.all !== true) {
     const caps = readScope?.caps;
-    for (const [field, cap] of Object.entries(fieldReadScopes)) {
-      if (!caps || !caps.has(cap)) delete fields[field];
+    const hidden = Object.entries(fieldReadScopes).filter(([, cap]) => !caps || !caps.has(cap)).map(([field]) => field);
+    for (const field of hidden) delete fields[field];
+    // A custom field lives in the record's metadata (and is lifted to the top
+    // level after this runs), so a gated one is dropped from there too, or
+    // it would come back one step later.
+    const bag = fields.metadata;
+    if (hidden.length && bag && typeof bag === "object" && !Array.isArray(bag) && hidden.some((f) => Object.prototype.hasOwnProperty.call(bag, f))) {
+      const kept = { ...(bag as Record<string, unknown>) };
+      for (const field of hidden) delete kept[field];
+      fields.metadata = kept;
     }
   }
   // A search snippet quotes the record's words (a pattern's PDF, its notes),
@@ -530,10 +568,11 @@ export async function lookup(
   orgId: string,
   kind: string,
   id: string,
-  viewer?: { userId?: string; publicRead?: boolean },
+  viewer?: EntityViewer,
 ): Promise<ResolvedEntity | null> {
   const resolver = resolvers.get(kind) ?? (await instanceFallbackEntityResolver(orgId, kind));
   if (!resolver) return null;
+  const systemScope = viewer?.system ? SYSTEM_READ_SCOPE : undefined;
   const publicRead = viewer?.publicRead === true;
   const whitelist = await getExposableFields(kind);
   // Single-hop / cross-module lookups carry no resolved capability set,
@@ -560,7 +599,7 @@ export async function lookup(
       // override, computed fields on an instance never resolve. The exposable
       // whitelist above was already computed from the requested kind, so this is
       // consistent.
-      const projected = { ...applyExposableProjection(resolved, whitelist, fieldReadScopes, undefined, publicRead), kind };
+      const projected = { ...applyExposableProjection(resolved, whitelist, fieldReadScopes, systemScope, publicRead), kind };
       return applyServedTitle(await applyMemberFields(orgId, await applyRelationFields(orgId, await applyComputedFields(orgId, await applyCustomFieldValues(orgId, projected))), { publicRead }));
     }
   } catch (err) {
@@ -616,7 +655,9 @@ export async function lookup(
 export async function lookupMany(
   orgId: string,
   refs: ReadonlyArray<{ kind: string; id: string }>,
+  viewer?: EntityViewer,
 ): Promise<ResolvedEntity[]> {
+  const systemScope = viewer?.system ? SYSTEM_READ_SCOPE : undefined;
   if (refs.length === 0) return [];
   // Group refs by kind so each kind's resolver gets its own fan-out.
   const byKind = new Map<string, string[]>();
@@ -641,7 +682,7 @@ export async function lookupMany(
         ids.map(async (id) => {
           try {
             const r = await resolver(orgId, id);
-            return r ? applyExposableProjection(r, whitelist, fieldReadScopes) : null;
+            return r ? applyExposableProjection(r, whitelist, fieldReadScopes, systemScope) : null;
           } catch (err) {
             console.error(`[entities] resolver for ${kind}:${id} failed:`, err);
             return null;
@@ -800,7 +841,7 @@ export async function list(
   orgId: string,
   kind: string,
   query: EntityListQuery = {},
-  viewer?: { userId?: string; role?: string; publicRead?: boolean },
+  viewer?: EntityViewer,
 ): Promise<EntityListResult> {
   if (query.sort !== undefined) {
     query = { ...query, sort: normalizeEntitySort(query.sort) };
@@ -821,11 +862,13 @@ export async function list(
   const whitelist = await getExposableFields(kind);
   const fieldReadScopes = await getFieldReadScopes(kind, orgId);
   // Resolve the viewer's field-read access ONLY when the kind actually
-  // gates fields AND a viewer was supplied. No viewer = trusted
-  // internal / admin-module-API path = see everything (backward compat).
-  // A supplied-but-unidentified viewer is gated conservatively (no caps).
+  // gates fields AND a viewer was supplied. No viewer is fail-closed
+  // (gated fields withheld); SYSTEM_VIEWER is internal logic that must
+  // decide from the truth. A supplied-but-unidentified viewer is gated
+  // conservatively (no caps).
   let readScope: ViewerReadScope | undefined;
-  if (fieldReadScopes && viewer) {
+  if (viewer?.system) readScope = SYSTEM_READ_SCOPE;
+  else if (fieldReadScopes && viewer) {
     readScope = viewer.userId
       ? await effectiveCapabilities(orgId, viewer.userId, viewer.role ?? "member")
       : { all: false, caps: new Set() };
@@ -843,8 +886,12 @@ export async function list(
     unapplied = result.unapplied?.length ? result.unapplied : undefined;
     // Compute AFTER projection (see lookup() — gated fields are stripped
     // before the template runs, so a computed field can't leak them).
+    // A search matches the whole row, hidden fields included, so a row the
+    // reader can see only because a field they may not read matched would
+    // tell them what that field says. Those rows are left out.
+    const rows = query.q && fieldReadScopes ? result.items.filter((r) => !matchedOnlyWhatIsHidden(r, query.q!, whitelist, fieldReadScopes, readScope, publicRead)) : result.items;
     items = await Promise.all(
-      result.items.map(async (r) =>
+      rows.map(async (r) =>
         applyServedTitle(await applyMemberFields(orgId, await applyRelationFields(
           orgId,
           await applyComputedFields(
@@ -917,11 +964,23 @@ export async function list(
  *  counts those: a fleet board read "50 3D printers" with 56 on file, and a
  *  state column whose only machine fell past row 50 was not drawn at all.
  *  The walk itself is walkListPages (entity-list-walk.ts), pure and tested. */
+/** The fields of a kind this viewer may not read, by field read scope. A
+ *  reader that already drops them from every row (list, lookup) needs this
+ *  only to leave their COLUMNS out, e.g. an export, which would otherwise
+ *  print an empty column named after a field the viewer is not to know about. */
+export async function hiddenFieldsFor(orgId: string, kind: string, viewer: { userId?: string; role?: string }): Promise<Set<string>> {
+  const scopes = await getFieldReadScopes(kind, orgId);
+  if (!scopes) return new Set();
+  const rs = viewer.userId ? await effectiveCapabilities(orgId, viewer.userId, viewer.role ?? "member") : { all: false, caps: new Set<string>() };
+  if (rs.all) return new Set();
+  return new Set(Object.entries(scopes).filter(([, cap]) => !rs.caps.has(cap)).map(([field]) => field));
+}
+
 export async function listAll(
   orgId: string,
   kind: string,
   query: EntityListQuery = {},
-  viewer?: { userId?: string; role?: string; publicRead?: boolean },
+  viewer?: EntityViewer,
   opts: { pageSize?: number; cap?: number } = {},
 ): Promise<Omit<EntityListResult, "total"> & { total: number | null; complete: boolean }> {
   return walkListPages((limit, offset) => list(orgId, kind, { ...query, limit, offset }, viewer), opts);

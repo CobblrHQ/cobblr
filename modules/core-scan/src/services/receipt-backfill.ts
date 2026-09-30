@@ -19,6 +19,7 @@ import {
   roledFactsPatch,
   platform,
   type RoledFacts,
+  SYSTEM_VIEWER,
 } from "@cobblr/platform-contract";
 import type { ReceiptRecord } from "./receipt-record.js";
 
@@ -178,11 +179,13 @@ export async function runReceiptBackfill(
     // or repeat rows between reads.
     const candidates: BackfillCandidate[] = [];
     for (let offset = 0; offset < BACKFILL_KIND_CAP; offset += BACKFILL_SCAN_CAP) {
+      // SYSTEM-READ: the backfill reads the acquired/seller fields to decide
+      // what to fill, whoever they are hidden from.
       const listed = await platform().entities.list(orgId, kindId, {
         limit: BACKFILL_SCAN_CAP,
         offset,
         sort: ["id"],
-      });
+      }, SYSTEM_VIEWER);
       const page = (listed.items ?? []).map(candidateFromRow);
       candidates.push(...page);
       if (page.length < BACKFILL_SCAN_CAP) break;

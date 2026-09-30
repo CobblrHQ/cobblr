@@ -6,6 +6,7 @@
 // the parts DID land, is the whole job here.
 
 import type { BundleInstallSummary } from "./api";
+import { withArticle } from "@cobblr/platform-contract/plural";
 
 /** One thing the install changed, and where to go and look at it. */
 export interface InstallChange {
@@ -28,22 +29,40 @@ export function prettyModule(name: string): string {
     .join(" ");
 }
 
+/** The names the menu shows for modules, by module name (`digifab` ->
+ *  "Digital Fabrication"). Absent, a module reads as its prettified id. */
+export type ModuleNames = Readonly<Record<string, string>>;
+
+const moduleName = (name: string, names?: ModuleNames) => names?.[name] ?? prettyModule(name);
+
+function listed(items: string[]): string {
+  const rest = [...items];
+  const last = rest.pop()!;
+  return rest.length ? `${rest.join(", ")} and ${last}` : last;
+}
+
 /**
- * The headline: what this install means in one sentence.
+ * The headline: what this install means in one sentence. The sheet already
+ * says "<bundle> is set up." above it, so this says what that means rather
+ * than saying it again.
  *
  * An instance bundle gets a place of its own, so it can simply be pointed at.
- * A skin bundle needs the opposite said out loud, because a person who goes
- * looking for a nav entry will not find one and will reasonably conclude the
- * install failed.
+ * A bundle that turns modules on has put them in the menu, and says which. A
+ * skin bundle that does neither needs the opposite said out loud, because a
+ * person who goes looking for a nav entry will not find one and will
+ * reasonably conclude the install failed.
  */
-export function installHeadline(s: BundleInstallSummary): string {
+export function installHeadline(s: BundleInstallSummary, names?: ModuleNames): string {
   if (s.kind === "instance" && s.instance) {
     return s.instance_existed
-      ? `${s.bundle} was already set up, with its own ${prettyModule(s.instance)} table.`
-      : `${s.bundle} is set up, with its own ${prettyModule(s.instance)} table.`;
+      ? `It was already set up, with its own ${prettyModule(s.instance)} table.`
+      : `It has its own ${prettyModule(s.instance)} table.`;
   }
-  const where = s.module ? prettyModule(s.module) : "what you already have";
-  return `${s.bundle} is set up. It adds to ${where} rather than making a table of its own, so there is no new entry in the nav.`;
+  if (s.modules_enabled.length > 0) {
+    return `It turned on ${listed(s.modules_enabled.map((m) => moduleName(m, names)))}, each in your menu.`;
+  }
+  const where = s.module ? moduleName(s.module, names) : "what you already have";
+  return `It adds to ${where} rather than making a table of its own, so there is no new entry in the nav.`;
 }
 
 /**
@@ -52,20 +71,20 @@ export function installHeadline(s: BundleInstallSummary): string {
  * Deliberately silent about a count of zero: "0 automations" is noise, and a
  * list of nothings reads as a failed install.
  */
-export function installChanges(s: BundleInstallSummary): InstallChange[] {
+export function installChanges(s: BundleInstallSummary, names?: ModuleNames): InstallChange[] {
   const out: InstallChange[] = [];
   if (s.kind === "instance" && s.instance) {
     out.push({
-      text: s.instance_existed ? `The ${prettyModule(s.instance)} table you already had` : `A ${prettyModule(s.instance)} table`,
+      text: s.instance_existed ? `The ${prettyModule(s.instance)} table you already had` : `${withArticle(prettyModule(s.instance))} table`.replace(/^a/, "A"),
       href: `/instances/${s.instance}`,
       linkLabel: `Open ${prettyModule(s.instance)}`,
     });
   }
   if (s.fields > 0) {
-    const where = s.module ? ` on ${prettyModule(s.module)}` : "";
+    const where = s.module ? ` on ${moduleName(s.module, names)}` : "";
     out.push({
       text: `${plural(s.fields, "field")}${where}`,
-      ...(s.module ? { href: `/${s.module}`, linkLabel: `Open ${prettyModule(s.module)}` } : {}),
+      ...(s.module ? { href: `/${s.module}`, linkLabel: `Open ${moduleName(s.module, names)}` } : {}),
     });
   }
   if (s.wires > 0) {
@@ -82,7 +101,7 @@ export function installChanges(s: BundleInstallSummary): InstallChange[] {
   }
   if (s.modules_enabled.length > 0) {
     out.push({
-      text: `Turned on ${s.modules_enabled.map(prettyModule).join(", ")}`,
+      text: `Turned on ${listed(s.modules_enabled.map((m) => moduleName(m, names)))}`,
     });
   }
   return out;
@@ -99,7 +118,7 @@ export function installToastLine(s: BundleInstallSummary): string | null {
   const bits: string[] = [];
   // What the install DID, never the plan: a table it found already there is
   // not one it added, and saying so is the whole point of reporting (#2919).
-  if (s.kind === "instance" && s.instance && !s.instance_existed) bits.push(`a ${prettyModule(s.instance)} table`);
+  if (s.kind === "instance" && s.instance && !s.instance_existed) bits.push(`${withArticle(prettyModule(s.instance))} table`);
   if (s.fields > 0) bits.push(plural(s.fields, "field"));
   if (s.wires > 0) bits.push(plural(s.wires, "automation"));
   if (s.kind === "instance" && s.instance && s.instance_existed) {

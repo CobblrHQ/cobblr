@@ -75,7 +75,7 @@ export function QuickAccess({ activeSlug }: { activeSlug: string }) {
 
       {open &&
         createPortal(
-          <OverlayLayer className="z-[120]">
+          <OverlayLayer className="z-[120]" role="dialog" aria-modal="true" aria-label="Quick access">
             <div className="absolute inset-0 bg-black/40" onClick={() => setOpen(false)} />
             <div className="absolute inset-y-0 right-0 flex w-full max-w-md flex-col bg-surface dark:bg-slate-900 shadow-2xl">
               <div className="flex items-center justify-between border-b border-line dark:border-slate-700 px-4 py-3">

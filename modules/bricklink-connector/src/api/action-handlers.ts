@@ -49,7 +49,7 @@ export function registerBricklinkHandlers(): void {
     // 3. BOM rows for this set.
     const bomRows = await platform().catalogs.queryEntries({ orgId: ctx.orgId, catalogId: bomCat.id, payloadEq: { set_num: setNum } });
     if (bomRows.length === 0) {
-      return { ok: false, error: "no_bom_rows", message: `No BOM rows for set ${setNum}. Either the set isn't in the BOM dump or your BOM data predates the set_num enrichment — re-run the seeder.` };
+      return { ok: false, error: "no_bom_rows", message: `No BOM rows for set ${setNum}. Either the set isn't in the BOM dump or your BOM data predates the set_num enrichment. Re-run the seeder.` };
     }
 
     // 4. Part names from the parts catalog.

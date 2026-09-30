@@ -49,6 +49,14 @@ function restack() {
   }
 }
 
+/** Is `el` the layer opened last, the one a keyboard should be inside? A
+ *  layer not in the stack at all answers false. */
+export function isTopLayer(el: HTMLElement): boolean {
+  let top: Layer | null = null;
+  for (const l of open) if (!top || l.seq > top.seq) top = l;
+  return top?.el === el;
+}
+
 /** Put the element in `ref` in the stack while it is mounted. Its own z-index
  *  is read from its computed style, so callers keep saying it as they do. */
 export function useLayerStack(ref: RefObject<HTMLElement | null>): void {

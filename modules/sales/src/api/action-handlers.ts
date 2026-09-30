@@ -1,16 +1,24 @@
 // sales action handlers. `sales.fulfill-order` is the userInvokable + wire
-// target: decrement each line item's part from inventory stock + stamp
-// fulfilled. Shares the decrement logic with the route (fulfilment.ts).
+// target: take each line item's part out of inventory stock + stamp
+// fulfilled, or refuse when stock is short. One implementation with the route
+// (fulfilment.ts).
 
 import { type Kysely } from "kysely";
+import { orderHappened } from "../history.js";
+import { addLine } from "../order-lines.js";
 import { platform, readJsonArg } from "@cobblr/platform-contract";
 import type { SalesDB, SalesOrderStatus } from "../db.js";
-import { decrementForFulfilment } from "../fulfilment.js";
+import { fulfilOrder } from "../fulfilment.js";
+import { nextOrderNumber } from "../order-number.js";
+import { shipOrder } from "../ship.js";
+import { makeLine } from "../make-line.js";
 
 let registered = false;
 
 interface FulfillArgs {
   order_id?: string;
+  /** "available" ships what is on hand and leaves the rest open. */
+  ship?: string;
 }
 
 export function registerSalesActionHandlers(): void {
@@ -23,32 +31,47 @@ export function registerSalesActionHandlers(): void {
     if (!orderId) return { ok: false, skipped: "no order_id" };
 
     const db = (await platform().tenants.getDb(ctx.orgId)) as Kysely<SalesDB>;
-    const order = await db.selectFrom("sales_orders").selectAll().where("id", "=", orderId).executeTakeFirst();
-    if (!order) return { ok: false, skipped: "order not found" };
-    if (order.status === "fulfilled" || order.status === "shipped" || order.status === "closed") {
-      return { ok: true, skipped: `already ${order.status}` };
+    const result = await fulfilOrder(db, ctx.orgId, ctx.userId, orderId, args.ship === "available" ? "available" : "all");
+    if (!result.ok) {
+      if (result.code === "already_fulfilled") return { ok: true, skipped: result.message };
+      // A shortage refuses with the same sentence the order's page shows.
+      return { ok: false, error: result.message, code: result.code, shortages: result.shortages };
     }
+    const decremented = result.shipped.map((s) => ({ part_id: s.part_id, qty: s.qty }));
+    void platform().events.emit("sales.order.fulfilled", { orgId: ctx.orgId, orderId, decremented, complete: result.complete, viaWire: ctx.event?.trigger_type === "event" });
+    return { ok: true, orderId, decremented, complete: result.complete };
+  });
 
-    const lines = await db
-      .selectFrom("sales_order_items")
-      .select(["part_id", "qty"])
-      .where("order_id", "=", orderId)
-      .execute();
-    const decremented = await decrementForFulfilment(
-      ctx.orgId,
-      ctx.userId,
+  // sales.ship-order: carrier + tracking on the order and status shipped, for
+  // a wire or the assistant. It NEVER emails the customer: only a person
+  // pressing Ship with "Email the customer" ticked does that (ship.ts).
+  platform().actions.registerHandler("sales.ship-order", async (ctx) => {
+    const args = (ctx.args as { order_id?: string; tracking_number?: string; carrier?: string } | null) ?? {};
+    const orderId = args.order_id?.trim() || (ctx.entity?.kind === "sales:order" ? ctx.entity.id : undefined);
+    if (!orderId) return { ok: false, skipped: "no order_id" };
+    const db = (await platform().tenants.getDb(ctx.orgId)) as Kysely<SalesDB>;
+    const r = await shipOrder(db, ctx.orgId, {
       orderId,
-      lines.map((l) => ({ part_id: l.part_id, qty: Number(l.qty) || 0 })),
-    );
+      shop: "",
+      userId: ctx.userId,
+      trackingNumber: args.tracking_number ?? null,
+      carrier: args.carrier ?? null,
+      emailCustomer: null,
+    });
+    if (!r.ok) return { ok: false, error: r.message, code: r.code };
+    return { ok: true, orderId, carrier: r.carrier, tracking_number: r.tracking_number, tracking_url: r.lookup?.url ?? null };
+  });
 
-    await db
-      .updateTable("sales_orders")
-      .set({ status: "fulfilled" as SalesOrderStatus, fulfilled_at: new Date() as never, updated_at: new Date() })
-      .where("id", "=", orderId)
-      .execute();
-
-    void platform().events.emit("sales.order.fulfilled", { orgId: ctx.orgId, orderId, decremented, viaWire: ctx.event?.trigger_type === "event" });
-    return { ok: true, orderId, decremented };
+  // sales.make-line: "Make this" for an order line, for the assistant or a
+  // wire. Plans a builds work order for the line's part (make-line.ts).
+  platform().actions.registerHandler("sales.make-line", async (ctx) => {
+    const args = (ctx.args as { order_id?: string; line_id?: string; qty?: number } | null) ?? {};
+    const orderId = args.order_id?.trim() || (ctx.entity?.kind === "sales:order" ? ctx.entity.id : undefined);
+    const qty = Math.floor(Number(args.qty));
+    if (!orderId || !args.line_id || !(qty > 0)) return { ok: false, error: "Name the order, the line and how many to make." };
+    const db = (await platform().tenants.getDb(ctx.orgId)) as Kysely<SalesDB>;
+    const r = await makeLine(db, ctx.orgId, ctx.userId, orderId, args.line_id, qty);
+    return r.ok ? r : { ok: false, error: r.message, code: r.code };
   });
 
   // sales.create-order — programmatic create (e.g. importing a Woo/Shopify order).
@@ -119,7 +142,7 @@ export function registerSalesActionHandlers(): void {
         instance,
         customer_id: customerId,
         customer_name: customerName,
-        order_number: args.order_number ?? null,
+        order_number: args.order_number?.trim() || (await nextOrderNumber(db, instance)),
         status: (args.status as SalesOrderStatus) ?? "confirmed",
         order_date: args.order_date ?? null,
         notes: args.notes ?? null,
@@ -129,18 +152,15 @@ export function registerSalesActionHandlers(): void {
       .executeTakeFirstOrThrow();
     const orderId = (order as { id: string }).id;
 
+    await orderHappened(db, ctx.orgId, orderId, { kind: "status", to_status: (order as { status: string }).status, by_user: ctx.userId ?? null });
     for (const it of args.items ?? []) {
-      await db
-        .insertInto("sales_order_items")
-        .values({
-          order_id: orderId,
-          part_id: it.part_id ?? null,
-          description: it.description ?? null,
-          qty: it.qty ?? 1,
-          unit_price: it.unit_price ?? null,
-          metadata: it.metadata ?? {},
-        } as never)
-        .execute();
+      await addLine(db, ctx.orgId, ctx.userId ?? null, orderId, {
+        part_id: it.part_id ?? null,
+        description: it.description ?? null,
+        qty: it.qty ?? 1,
+        unit_price: it.unit_price ?? null,
+        metadata: it.metadata ?? {},
+      });
     }
 
     void platform().events.emit("sales.order.created", { orgId: ctx.orgId, orderId });

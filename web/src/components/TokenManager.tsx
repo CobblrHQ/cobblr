@@ -164,7 +164,7 @@ export function TokenManager({
                 {t.scopes && t.scopes.length > 0 ? (
                   <span
                     className="text-[10px] font-mono uppercase tracking-widest text-cobble-600 dark:text-cobble-400"
-                    title={`Restricted token — ${t.scopes.join(", ")}`}
+                    title={`Restricted token: ${t.scopes.join(", ")}`}
                   >
                     scoped: {t.scopes.join(", ")}
                   </span>

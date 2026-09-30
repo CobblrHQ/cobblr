@@ -50,7 +50,7 @@ function AxisCell({
         <span>{value.trait}</span>
         <span
           className="text-[9px] font-bold text-amber-600 dark:text-amber-400 cursor-help"
-          title={`Uncertain — the module author flagged ${axis}='${value.trait}' as a judgment call rather than a definitive assignment. Cross-module actions still see this as ${value.trait}; the badge is a UI hint that the assignment might shift if the entity's semantics get sharpened.`}
+          title={`Uncertain: the module author flagged ${axis}='${value.trait}' as a judgment call rather than a definitive assignment. Cross-module actions still see this as ${value.trait}; the badge is a UI hint that the assignment might shift if the entity's semantics get sharpened.`}
         >
           (?)
         </span>

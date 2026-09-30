@@ -156,6 +156,18 @@ async function round(now: number): Promise<void> {
   }
 }
 
+/** Every registered pass, one round, for the named workspaces: what a
+ *  workspace that has been through the scheduler's rounds carries. Tests use
+ *  it to compare an old workspace after its heals with a new one, without
+ *  depending on whether a round happened to reach the old one yet. */
+export async function runAllTenantSweeps(opts: { orgIds: string[]; now?: Date }): Promise<Record<string, TenantSweepRunResult>> {
+  const results = await walk(
+    [...registry.values()].map((r) => r.pass),
+    { now: opts.now ?? new Date(), orgIds: opts.orgIds, waitForLockMs: RUN_NOW_LOCK_WAIT_MS },
+  );
+  return Object.fromEntries(results);
+}
+
 /** Run every pass's `onEnable` for a module just enabled in a workspace, so
  *  the workspace is born with what the pass's first round would give it.
  *  One pass failing is logged and never fails the enable. */
@@ -176,11 +188,20 @@ export async function runSweepEnableSteps(
   }
 }
 
-/** Run one pass now: tests and admin doors. */
+/** How long a run asked for NOW waits for a pass's lock that a scheduled
+ *  round (or another caller) holds. Sitting the round out is right for the
+ *  scheduler, whose next tick comes anyway; a caller that asked for a run
+ *  and got a silent skip reads the world as if the pass had run. A test door
+ *  did exactly that: the retention pass skipped under a concurrent round, and
+ *  the test found a day-old job still there, one run in many. */
+export const RUN_NOW_LOCK_WAIT_MS = 60_000;
+const LOCK_RETRY_MS = 250;
+
+/** Run one pass now: tests and admin doors. Waits for the pass's lock. */
 export async function runTenantSweep(name: string, opts: { orgIds?: string[]; now?: Date } = {}): Promise<TenantSweepRunResult> {
   const r = registry.get(name);
   if (!r) throw new Error(`tenant sweep: no pass named "${name}"`);
-  const results = await walk([r.pass], { now: opts.now ?? new Date(), orgIds: opts.orgIds });
+  const results = await walk([r.pass], { now: opts.now ?? new Date(), orgIds: opts.orgIds, waitForLockMs: RUN_NOW_LOCK_WAIT_MS });
   return results.get(name)!;
 }
 
@@ -218,7 +239,9 @@ async function realDeps(): Promise<WalkDeps> {
         select o.id, array_remove(array_agg(m.module_name), null) as modules
           from orgs o
           left join org_modules m on m.org_id = o.id
-         ${orgIds ? sql`where o.id = any(${orgIds})` : sql``}
+         -- A sandbox waiting for its visitor is visited by nothing (sandbox-awaiting.ts).
+         where not (o.sandbox and o.trial_expires_at is null)
+         ${orgIds ? sql`and o.id = any(${orgIds})` : sql``}
          group by o.id, o.created_at
          order by o.created_at asc`;
       return (await q.execute(meta)).rows.map((r) => ({ id: r.id, modules: r.modules ?? [] }));
@@ -229,7 +252,7 @@ async function realDeps(): Promise<WalkDeps> {
   };
 }
 
-async function walk(passes: TenantSweepPass[], opts: { now: Date; orgIds?: string[] }): Promise<Map<string, TenantSweepRunResult>> {
+async function walk(passes: TenantSweepPass[], opts: { now: Date; orgIds?: string[]; waitForLockMs?: number }): Promise<Map<string, TenantSweepRunResult>> {
   return walkWith(await realDeps(), passes, opts);
 }
 
@@ -238,9 +261,10 @@ async function walk(passes: TenantSweepPass[], opts: { now: Date; orgIds?: strin
 export async function walkWith(
   deps: WalkDeps,
   passes: TenantSweepPass[],
-  opts: { now: Date; orgIds?: string[] },
+  opts: { now: Date; orgIds?: string[]; waitForLockMs?: number },
 ): Promise<Map<string, TenantSweepRunResult>> {
   const out = new Map<string, TenantSweepRunResult>();
+  const lockDeadline = Date.now() + (opts.waitForLockMs ?? 0);
   const scoped: Scoped[] = [];
 
   // Every pass's lock, or that pass sits this round out.
@@ -248,10 +272,15 @@ export async function walkWith(
     const result: TenantSweepRunResult = { visited: 0, failed: 0, backlog: false, stopped: false, results: [], skipped: false, failures: [] };
     out.set(pass.name, result);
     let held: { release: () => Promise<void> } | null = null;
-    try {
-      held = await deps.holdLock(pass.name);
-    } catch (err) {
-      console.warn(`[tenant-sweeps] ${pass.name}: lock unavailable, skipped this round:`, (err as Error).message);
+    for (;;) {
+      try {
+        held = await deps.holdLock(pass.name);
+      } catch (err) {
+        console.warn(`[tenant-sweeps] ${pass.name}: lock unavailable, skipped this round:`, (err as Error).message);
+        break;
+      }
+      if (held || Date.now() >= lockDeadline) break;
+      await new Promise((r) => setTimeout(r, LOCK_RETRY_MS));
     }
     if (!held) {
       result.skipped = true;

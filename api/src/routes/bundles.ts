@@ -29,7 +29,7 @@ import {
 import { getTenantDb } from "../db/tenant.js";
 import { resolveAppViewRefs, type SeededView } from "./bundle-app-view-refs.js";
 import * as activity from "../platform/activity.js";
-import { enableModuleForOrg } from "../modules/enable.js";
+import { enableModuleForOrg, isDefaultModule } from "../modules/enable.js";
 import { getEntry } from "../modules/registry.js";
 import { getFlagshipManifest, listFlagshipManifests } from "../lib/flagship-bundles.js";
 import { externalRegistry } from "./registry.js";
@@ -3034,6 +3034,9 @@ async function previewBundleUninstall(
   const goingInstances = new Set(instances.map((i) => i.name));
   for (const c of claims.filter((x) => x.resource_type === "module")) {
     if ((await countClaimsFor(orgId, "module", c.resource_key)) > 1) continue;
+    // A module every workspace is born with stays, whoever switched it on.
+    const def = getEntry(c.resource_key);
+    if (def && isDefaultModule(def)) continue;
     const label = getEntry(c.resource_key)?.manifest.displayName ?? c.resource_key;
     // Records in the module's own kinds (a collection going with this
     // uninstall takes its records with it, so those do not count).

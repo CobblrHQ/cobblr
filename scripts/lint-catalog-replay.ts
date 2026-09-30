@@ -43,7 +43,7 @@ import { existsSync, readFileSync, readdirSync } from "node:fs";
 import { join } from "node:path";
 
 const CASSETTES = "api/tests/catalog-cassettes";
-const LANES = [".forgejo/workflows/ci.yml", ".forgejo/workflows/ci-tracker.yml"];
+const LANES = [".forgejo/workflows/ci.yml", ".forgejo/workflows/ci-main.yml", ".forgejo/workflows/ci-tracker.yml"];
 const ENV_LINE = /^\s*COBBLR_CATALOG_REPLAY_DIR:\s*\$\{\{\s*github\.workspace\s*\}\}\/api\/tests\/catalog-cassettes\s*$/m;
 
 interface Violation {

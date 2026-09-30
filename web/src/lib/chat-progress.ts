@@ -9,6 +9,8 @@
 // "Reading: list records" is the shape of the call. "Reading your locations" is
 // what somebody wanted to know.
 
+import { withArticle } from "@cobblr/platform-contract/plural";
+
 /** The record kind's readable half: "core-locations:location" → "location". */
 const kindLabel = (id: string): string => id.split(":")[1] ?? id;
 
@@ -32,11 +34,11 @@ export function describeTool(name: string, args: Record<string, unknown>): strin
     case "get_putaway_plan":
       return "Reading your put-away plan";
     case "create_record":
-      return kind ? `Adding a ${kind}` : "Adding a record";
+      return kind ? `Adding ${withArticle(kind)}` : "Adding a record";
     case "update_record":
-      return kind ? `Changing a ${kind}` : "Changing a record";
+      return kind ? `Changing ${withArticle(kind)}` : "Changing a record";
     case "delete_record":
-      return kind ? `Removing a ${kind}` : "Removing a record";
+      return kind ? `Removing ${withArticle(kind)}` : "Removing a record";
     case "invoke_action": {
       const id = typeof args.action_id === "string" ? args.action_id.split(":")[1] ?? args.action_id : "";
       return id ? `Running ${id.replace(/-/g, " ")}` : "Running an action";

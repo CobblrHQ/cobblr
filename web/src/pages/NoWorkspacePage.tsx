@@ -11,10 +11,13 @@
 // account. A platform admin also gets the console, which is instance-wide.
 import { useState } from "react";
 import { usePageTitle } from "@cobblr/platform-web";
+import { MAIN_ID, SkipToContent } from "../components/a11y/shell-landmarks";
 import { useAuth } from "../auth/AuthContext";
 import { CobblestoneMark } from "../CobblestoneMark";
 import { CreateWorkspaceModal } from "../components/WorkspaceSwitcher";
+import { DownloadMyDataSection } from "../components/DownloadMyDataSection";
 import { DeleteAccountSection } from "../components/DeleteAccountSection";
+import { DeletedWorkspaceBackups } from "../components/DeletedWorkspaceBackups";
 import { goneWorkspaceMessage, takeGoneWorkspace } from "../lib/gone-workspace";
 
 const PRIMARY = "rounded-md bg-cobble-600 hover:bg-cobble-700 disabled:opacity-50 text-white font-medium px-4 py-2 transition";
@@ -26,7 +29,8 @@ export function NoWorkspacePage() {
   const [creating, setCreating] = useState(false);
   const [gone] = useState(takeGoneWorkspace);
   return (
-    <main data-testid="no-workspace" className="min-h-full flex items-center justify-center p-6">
+    <main id={MAIN_ID} tabIndex={-1} data-testid="no-workspace" className="min-h-full flex items-center justify-center p-6 focus:outline-none">
+      <SkipToContent />
       <div className="w-full max-w-md space-y-6">
         <div className="flex items-center gap-3">
           <CobblestoneMark size={32} />
@@ -57,6 +61,11 @@ export function NoWorkspacePage() {
             </a>
           )}
         </div>
+        {/* The backup of a workspace that was deleted, for its owner: most
+            often the person who lands here is the one whose only workspace
+            just went, so this is the page it has to be on. */}
+        <DeletedWorkspaceBackups />
+        <DownloadMyDataSection />
         <DeleteAccountSection />
       </div>
       <CreateWorkspaceModal

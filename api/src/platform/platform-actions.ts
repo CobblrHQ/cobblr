@@ -83,6 +83,7 @@ export interface PlatformActionDecl {
 
 export const PLATFORM_ACTIONS: PlatformActionDecl[] = [
   {
+    // UI-SCREEN: /fields
     id: "platform:add-field",
     min_role: "grantable",
     label: "Add a field",
@@ -107,6 +108,7 @@ export const PLATFORM_ACTIONS: PlatformActionDecl[] = [
     version: "0.1.0",
   },
   {
+    // UI-SCREEN: /fields
     id: "platform:edit-field",
     min_role: "grantable",
     label: "Change a field",
@@ -140,6 +142,7 @@ export const PLATFORM_ACTIONS: PlatformActionDecl[] = [
     version: "0.3.0",
   },
   {
+    // UI-SCREEN: /fields
     id: "platform:remove-field",
     min_role: "grantable",
     label: "Remove a field",
@@ -160,6 +163,7 @@ export const PLATFORM_ACTIONS: PlatformActionDecl[] = [
     version: "0.1.0",
   },
   {
+    // UI-SCREEN: /fields
     id: "platform:group-fields",
     min_role: "grantable",
     label: "Group fields under a heading",
@@ -185,6 +189,7 @@ export const PLATFORM_ACTIONS: PlatformActionDecl[] = [
     version: "0.2.0",
   },
   {
+    // UI-SCREEN: /fields
     id: "platform:ungroup-fields",
     min_role: "grantable",
     label: "Take fields out of a heading",
@@ -224,6 +229,7 @@ export const PLATFORM_ACTIONS: PlatformActionDecl[] = [
     version: "0.1.0",
   },
   {
+    // UI-SCREEN: /configuration/modules
     id: "platform:enable-module",
     min_role: "grantable",
     label: "Turn on a feature",
@@ -243,6 +249,7 @@ export const PLATFORM_ACTIONS: PlatformActionDecl[] = [
     version: "0.1.0",
   },
   {
+    // UI-SCREEN: / (the dashboard's offer to move records into the collection they belong in)
     id: "platform:move-records",
     min_role: "grantable",
     label: "Move records into another list",
@@ -287,6 +294,7 @@ export const PLATFORM_ACTIONS: PlatformActionDecl[] = [
     version: "0.1.0",
   },
   {
+    // UI-SCREEN: /configuration/modules
     id: "platform:disable-module",
     min_role: "grantable",
     label: "Turn off a feature",
@@ -368,6 +376,7 @@ export const PLATFORM_ACTIONS: PlatformActionDecl[] = [
     version: "0.1.0",
   },
   {
+    // UI-SCREEN: / (the workspace switcher's Rename, in the header of every screen)
     id: "platform:rename-workspace",
     label: "Rename this workspace",
     description:
@@ -407,6 +416,7 @@ export const PLATFORM_ACTIONS: PlatformActionDecl[] = [
     version: "0.1.0",
   },
   {
+    // UI-SCREEN: /fields
     id: "platform:set-field-preset",
     min_role: "grantable",
     label: "Switch a set of fields on or off",
@@ -426,6 +436,7 @@ export const PLATFORM_ACTIONS: PlatformActionDecl[] = [
     version: "0.1.0",
   },
   {
+    // UI-SCREEN: /wires
     id: "platform:set-wire-enabled",
     min_role: "grantable",
     label: "Turn an automation on or off",
@@ -444,6 +455,30 @@ export const PLATFORM_ACTIONS: PlatformActionDecl[] = [
     },
     version: "0.1.0",
   },
+  // ── Services (service-confirm.ts). The yes on a waiting job's card. ──
+  //
+  // wire_only keeps it off the assistant's rail: a job that waits for a
+  // person is a person's to start, never the assistant's own. The handler
+  // applies the exact rule (the person who asked, or an owner or admin for an
+  // automation's job) and checks the job is still what was shown.
+  {
+    // UI-SCREEN: /me/notifications   the job's card, and the bell; a missed one waits there
+    id: "platform:confirm-service-job",
+    min_role: "member",
+    label: "Start a service job",
+    description:
+      "Say yes to a service job that is waiting for a person: it starts exactly as it was asked. Pressed from the job's card by the person who asked for it, or by an owner or admin for a job an automation started.",
+    icon: "check",
+    scope: "workspace",
+    invoke_handler: "platform.confirm-service-job",
+    user_invokable: false,
+    undoable: false,
+    args_schema: {
+      job_id: { label: "The job", type: "text", required: true },
+    },
+    version: "0.1.0",
+    wire_only: true,
+  },
   // ── Approvals (approvals.ts). The two buttons on an approver's card. ──
   //
   // min_role "admin" is the rank floor the invoke route enforces; the handler
@@ -453,6 +488,7 @@ export const PLATFORM_ACTIONS: PlatformActionDecl[] = [
   // assistant's rail: a decision about a person is not the assistant's to
   // make, and `user_invokable: false` keeps them out of the grantable list.
   {
+    // UI-SCREEN: /configuration/permissions
     id: "platform:approve-request",
     min_role: "admin",
     label: "Approve a request",
@@ -473,6 +509,7 @@ export const PLATFORM_ACTIONS: PlatformActionDecl[] = [
     wire_only: true,
   },
   {
+    // UI-SCREEN: /configuration/permissions
     id: "platform:deny-request",
     min_role: "admin",
     label: "Decline a request",
@@ -487,6 +524,40 @@ export const PLATFORM_ACTIONS: PlatformActionDecl[] = [
       request_id: { label: "The request", type: "text", required: true },
       note: { label: "Why (optional)", type: "text" },
     },
+    version: "0.1.0",
+    wire_only: true,
+  },
+  // The two buttons on the card an assistant's held delete sends its person
+  // (ai-held-changes.ts). Only that person can press them; wire-only and not
+  // grantable, so nothing but the card reaches them.
+  {
+    // UI-SCREEN: /me/notifications   the held change's card, and the bell; a missed one waits there
+    id: "platform:confirm-held-change",
+    min_role: "member",
+    label: "Delete what an assistant asked to delete",
+    description:
+      "Say yes to a delete an assistant asked for over MCP. It runs once, as you, under your own permissions. Pressed from the card; a card more than a day old deletes nothing.",
+    icon: "trash-2",
+    scope: "workspace",
+    invoke_handler: "platform.confirm-held-change",
+    user_invokable: false,
+    undoable: false,
+    args_schema: { change_id: { label: "The held change", type: "text", required: true } },
+    version: "0.1.0",
+    wire_only: true,
+  },
+  {
+    // UI-SCREEN: /me/notifications   the held change's card, and the bell; a missed one waits there
+    id: "platform:keep-held-change",
+    min_role: "member",
+    label: "Keep what an assistant asked to delete",
+    description: "Say no to a delete an assistant asked for over MCP. Nothing is deleted and the card stops asking.",
+    icon: "x",
+    scope: "workspace",
+    invoke_handler: "platform.keep-held-change",
+    user_invokable: false,
+    undoable: false,
+    args_schema: { change_id: { label: "The held change", type: "text", required: true } },
     version: "0.1.0",
     wire_only: true,
   },

@@ -2,6 +2,7 @@
 // call so the AuthProvider can update it without rewiring the client.
 // Everything goes through `request<T>` so error shape stays uniform.
 
+import type { TipState } from "@cobblr/platform-web";
 import type { CancelResult } from "./digifab-cancel";
 import type { ScanCountReason } from "@cobblr/platform-contract/scan-count";
 import type { AiChainAnswer } from "./ai-chain";
@@ -30,8 +31,9 @@ import type {
   FieldDefType,
   AiConnectionTest,
 } from "@cobblr/platform-contract";
-import { describeUnreadableBody } from "@cobblr/platform-web";
+import { describeUnreadableBody, sendUpload, uploadErrorOf, UploadError } from "@cobblr/platform-web";
 import type { OrgRoleName } from "@cobblr/platform-contract/org-roles";
+import { walkPages } from "./list-pages";
 
 const TOKEN_KEY = "cobblr.token";
 
@@ -57,6 +59,20 @@ export async function fetchAuthBlobUrl(path: string): Promise<string | null> {
   }
 }
 
+/** A CSV the server writes for this reader, fetched with the session: the
+ *  file, the name the server gave it, and whether it is the whole collection
+ *  (a list past its cap says so in a header rather than passing as all of it). */
+export async function fetchCsv(path: string): Promise<{ blob: Blob; filename: string; complete: boolean }> {
+  const token = getToken();
+  const res = await fetch(`/api/v1${path}`, { headers: token ? { Authorization: `Bearer ${token}` } : {} });
+  if (!res.ok) {
+    const body = (await res.json().catch(() => null)) as { error?: { code?: string; message?: string } } | null;
+    throw new ApiError(res.status, body?.error?.code ?? "export_failed", body?.error?.message ?? "The file could not be made. Try again.");
+  }
+  const named = /filename="([^"]+)"/.exec(res.headers.get("content-disposition") ?? "")?.[1];
+  return { blob: await res.blob(), filename: named ?? "export.csv", complete: res.headers.get("x-export-complete") !== "false" };
+}
+
 export class ApiError extends Error {
   constructor(
     public readonly status: number,
@@ -73,6 +89,24 @@ export class ApiError extends Error {
   ) {
     super(message);
   }
+}
+
+/** A multipart upload through the page's one upload door (sendUpload): a
+ *  refusal thrown as an ApiError carrying the server's own sentence (which
+ *  names the size and the limit), a dropped connection as one that says so. */
+async function upload<T>(url: string, form: FormData, file: File | null): Promise<T> {
+  let res: Response;
+  try {
+    res = await sendUpload(url, form, { token: getToken(), file });
+  } catch (err) {
+    if (err instanceof UploadError) throw new ApiError(err.status, err.code, err.message);
+    throw err;
+  }
+  if (!res.ok) {
+    const e = await uploadErrorOf(res, file);
+    throw new ApiError(res.status, e.code, e.message);
+  }
+  return (await res.json()) as T;
 }
 
 // ── Connectivity signal ──────────────────────────────────────────────────
@@ -96,6 +130,30 @@ export function subscribeConnectivity(listener: ConnListener): () => void {
     connListeners.delete(listener);
   };
 }
+// ── Offline copies ───────────────────────────────────────────────────────
+// Offline, the service worker answers a read it kept with the time it was
+// fetched (x-cobblr-offline-as-of) and a read it never kept with 503
+// x-cobblr-offline (src/sw/sw-logic.js). The earliest such time on screen is
+// what the banner says ("what you had as of 14:02"), so a kept copy is never
+// shown as live. A real answer from the network clears it.
+type OfflineListener = (asOf: string | null) => void;
+const offlineListeners = new Set<OfflineListener>();
+let offlineAsOf: string | null = null;
+function setOfflineAsOf(next: string | null): void {
+  if (next === offlineAsOf) return;
+  offlineAsOf = next;
+  offlineListeners.forEach((l) => l(next));
+}
+export function subscribeOfflineCopies(listener: OfflineListener): () => void {
+  offlineListeners.add(listener);
+  listener(offlineAsOf);
+  return () => {
+    offlineListeners.delete(listener);
+  };
+}
+/** What a person reads when a write or an unopened read is made offline. */
+export const OFFLINE_SENTENCE = "You're offline. This will work again when you're back online.";
+
 /** Liveness ping the banner polls while down, so it auto-clears on recovery
  *  even when the user is idle (no in-flight request to flip the flag). */
 export async function pingHealth(): Promise<boolean> {
@@ -201,11 +259,23 @@ async function request<T>(
     // fetch only rejects on a network-level failure (offline, server
     // unreachable, DNS) — raise the app-wide "down" banner + a clear error.
     setApiDown(true);
+    if (typeof navigator !== "undefined" && navigator.onLine === false) throw new ApiError(0, "offline", OFFLINE_SENTENCE);
     throw new ApiError(0, "network_error", "Can't reach Cobblr. Check your connection and try again.");
   }
-  // A gateway 5xx = proxy up but api/web down; any other response (even a 4xx)
-  // proves connectivity and clears the banner.
-  setApiDown(res.status >= 502 && res.status <= 504);
+  // Offline, the service worker answered: a kept copy (marked with when it was
+  // fetched) or "never kept". Either way we are not connected, and a kept copy
+  // must be read as what you HAD, never as live.
+  const keptAsOf = res.headers.get("x-cobblr-offline-as-of");
+  if (keptAsOf !== null || res.headers.get("x-cobblr-offline") === "1") {
+    setApiDown(true);
+    if (keptAsOf !== null) setOfflineAsOf(offlineAsOf && offlineAsOf < keptAsOf ? offlineAsOf : keptAsOf || new Date(0).toISOString());
+    else throw new ApiError(0, "offline", OFFLINE_SENTENCE);
+  } else {
+    // A gateway 5xx = proxy up but api/web down; any other response (even a
+    // 4xx) proves connectivity and clears the banner.
+    setApiDown(res.status >= 502 && res.status <= 504);
+    if (res.status < 502 || res.status > 504) setOfflineAsOf(null);
+  }
   noteWorkspaceShape(path, res.headers.get("x-cobblr-workspace-shape"));
   if (res.ok && isMutating(method)) {
     noteWorkspaceWrite(path);
@@ -331,6 +401,8 @@ export interface SessionUser {
    *  account has not loaded yet. Account-level so a new device, a different
    *  origin and a new workspace all agree. */
   tour_seen_at?: string | null;
+  /** Tips this person has been shown and dismissed (users.tips); absent = not loaded. */
+  tips?: TipState;
   /** True when an admin minted this account with a temp password. UI
    *  renders the set-a-password screen in place of every route until
    *  cleared (a gate, not a URL). PATCH /me/password clears it. */
@@ -615,6 +687,9 @@ export interface Order {
    *  about yet, which is a different thing from "no information". */
   shipment_state: string | null;
   shipment_checked_at: string | null;
+  /** Whether the lines add their stock when the order arrives. Off for a
+   *  past purchase being logged, whose stock was counted long ago. */
+  add_to_stock?: boolean;
   notes: string | null;
   metadata: Record<string, unknown>;
   /** Line-item count — present on the list endpoint (GET /orders), absent on detail. */
@@ -698,6 +773,12 @@ export interface Asset {
   quantity: number;
   serial_number: string | null;
   purchased_at: string | null;
+  /** What it cost, in cents. */
+  purchase_price_cents?: number | null;
+  /** Where it came from. */
+  vendor?: string | null;
+  /** When it was put away; null or absent while it is in the register. */
+  archived_at?: string | null;
   warranty_until: string | null;
   last_service_at: string | null;
   image_path: string | null;
@@ -850,8 +931,7 @@ export interface ModuleListItem {
   displayName: string;
   description: string;
   icon: string | null;
-  intents: { name: string; description: string }[];
-  exposes: { events: string[]; api: string[] };
+  exposes: { events: string[] };
   dependencies: string[];
 }
 
@@ -912,6 +992,28 @@ function filed<T>(slug: string, p: Promise<T>, change?: (r: T) => ScanFiledChang
     announceScanFiled(slug, change ? change(r) : {});
     return r;
   });
+}
+
+export interface OutboundEmailStatus {
+  configured: boolean;
+  provider: "smtp" | "mailgun" | "resend" | "postmark" | null;
+  from: string | null;
+  settings: Record<string, unknown>;
+  secretsSet: string[];
+  updatedAt: string | null;
+}
+
+export interface OutboundEmailLogRow {
+  id: string;
+  to: string;
+  subject: string;
+  sent_by: string | null;
+  source_kind: string | null;
+  source_id: string | null;
+  status: "sent" | "failed" | "skipped";
+  message_id: string | null;
+  error: string | null;
+  at: string;
 }
 
 export const api = {
@@ -1061,6 +1163,10 @@ export const api = {
       `/super-admin/feedback${q ? `?${q}` : ""}`,
     );
   },
+  /** Post the Discord card of a feedback item that has none. 409 when it has
+   *  one, or when Discord is off for new feedback. */
+  postFeedbackToDiscord: (id: string) =>
+    request<{ ok: boolean; announce_message_id: string | null }>("POST", `/super-admin/feedback/${id}/announce`),
   listAnnounceSettings: () =>
     request<{ items: AnnounceSetting[] }>("GET", "/super-admin/announce-settings"),
   setAnnounceSetting: (
@@ -1160,6 +1266,17 @@ export const api = {
   passwordReset: (body: { token: string; password: string }) =>
     request<AuthResponse>("POST", "/auth/password/reset", body),
   // Email verification (consume link; resend for the signed-in user).
+  /** The sign-in address, a change waiting for its link, and whether the
+   *  address is managed by the central account service instead. */
+  myEmail: () =>
+    request<{ email: string; pending: { email: string; expires_at: string } | null; managed_by_identity: boolean }>("GET", "/me/email"),
+  /** Ask to change the sign-in address: a link goes to the new one. */
+  requestEmailChange: (body: { new_email: string; current_password: string }) =>
+    request<{ pending: string; expires_at: string; emailed: boolean }>("POST", "/me/email", body),
+  /** The new address's link: makes the change; every session ends. */
+  confirmEmailChange: (body: { token: string }) => request<{ email: string }>("POST", "/auth/email-change/confirm", body),
+  /** The old address's link: takes the account back. */
+  revertEmailChange: (body: { token: string }) => request<{ email: string }>("POST", "/auth/email-change/revert", body),
   verifyEmail: (body: { token: string }) =>
     request<{ ok: boolean; email: string }>("POST", "/auth/verify-email", body),
   resendVerification: () =>
@@ -1170,6 +1287,19 @@ export const api = {
   me: () => request<MeResponse>("GET", "/me"),
   orgLocal: (slug: string) => request<OrgLocalResponse>("GET", `/orgs/${slug}/local`),
   listOrgs: () => request<{ items: OrgMembership[] }>("GET", "/orgs"),
+  /** Bring a backup file in (the .zip a backup or a sandbox's email gave). */
+  restoreBackupFile: async (slug: string, file: File, opts: { replace?: boolean } = {}) => {
+    const form = new FormData();
+    form.set("file", file);
+    form.set("confirm", opts.replace ? "replace" : "true");
+    return upload<{ restored?: { rows: number; files: number } }>(`/api/v1/orgs/${slug}/backup/restore`, form, file);
+  },
+  /** Bring a backup in from a link another Cobblr made (a sandbox's file). */
+  restoreFromLink: (slug: string, url: string, opts: { replace?: boolean } = {}) =>
+    request<{ restored: { rows: number; files: number }; name: string | null }>("POST", `/orgs/${slug}/backup/restore-from-link`, {
+      url,
+      ...(opts.replace ? { confirm: "replace" } : {}),
+    }),
   createOrg: (name: string, opts?: { blueprint?: unknown }) =>
     request<{ org: OrgMembership; slug: string; blueprint_applied?: { name: string } }>("POST", "/orgs", {
       name,
@@ -1195,6 +1325,12 @@ export const api = {
     request<{ user: { nav_pref: unknown } }>("PATCH", "/me", { nav_pref }),
   /** Remember that this person has seen the tour, on the ACCOUNT — localStorage
    *  alone forgets on a new device, a different origin and a cleared cache. */
+  /** A tip was shown to this person (the account keeps the first time). */
+  tipShown: (id: string) =>
+    request<{ tips: TipState }>("POST", `/me/tips/${encodeURIComponent(id)}/shown`, {}),
+  /** This person dismissed a tip: final, on every device. */
+  tipDismissed: (id: string) =>
+    request<{ tips: TipState }>("POST", `/me/tips/${encodeURIComponent(id)}/dismissed`, {}),
   setTourSeen: (tour_seen: boolean) =>
     request<{ user: { tour_seen_at: string | null } }>("PATCH", "/me", { tour_seen }),
   /** Owner-only rename. `name` = display name (safe). `slug` = the URL handle
@@ -1220,7 +1356,9 @@ export const api = {
 
   // machines module (instance? scopes to /instances/:name/items)
   listMachines: (slug: string, instance?: string) =>
-    request<{ items: Machine[] }>("GET", primaryBase(slug, "machines/machines", instance)),
+    walkPages<Machine>((offset, limit) =>
+      request<{ items: Machine[]; total?: number | null; complete?: boolean }>("GET", `${primaryBase(slug, "machines/machines", instance)}?offset=${offset}&limit=${limit}`),
+    ),
   getMachine: (slug: string, id: string, instance?: string) =>
     request<Machine>("GET", `${primaryBase(slug, "machines/machines", instance)}/${id}`),
   createMachine: (slug: string, body: Partial<Machine>, instance?: string) =>
@@ -1317,8 +1455,14 @@ export const api = {
     request<void>("DELETE", `${primaryBase(slug, "purchases/orders", instance)}/${id}`),
   // Order items are keyed by orderId (their instance rides the parent
   // order), so this stays on the legacy nested route either way.
-  addOrderItem: (slug: string, orderId: string, body: Partial<OrderItem>) =>
+  addOrderItem: (slug: string, orderId: string, body: Partial<Omit<OrderItem, "qty" | "unit_cost">> & { qty: number; unit_cost?: number | null; add_to_stock?: boolean }) =>
     request<OrderItem>("POST", `/orgs/${slug}/modules/purchases/orders/${orderId}/items`, body),
+  /** Correct a line: what it is, how many, the price. A line whose stock was
+   *  already added refuses a new count (409 line_received). */
+  updateOrderItem: (slug: string, orderId: string, itemId: string, body: { description?: string | null; qty?: number; unit_cost?: number | null }) =>
+    request<OrderItem>("PATCH", `/orgs/${slug}/modules/purchases/orders/${orderId}/items/${itemId}`, body),
+  removeOrderItem: (slug: string, orderId: string, itemId: string) =>
+    request<{ deleted: string; items_remaining: number }>("DELETE", `/orgs/${slug}/modules/purchases/orders/${orderId}/items/${itemId}`),
 
   // Vendors — managed entity (purchasing depth). Not the primary entity,
   // so it lives on the module-root route, not primaryBase.
@@ -1350,8 +1494,20 @@ export const api = {
     ),
 
   // assets module (instance? scopes to /instances/:name/items)
-  listAssets: (slug: string, instance?: string) =>
-    request<{ items: Asset[] }>("GET", primaryBase(slug, "assets/assets", instance)),
+  /** The register, every page; `archived` lists what is put away instead.
+   *  `archived_count` is how many are put away either way. */
+  listAssets: async (slug: string, instance?: string, opts: { archived?: boolean } = {}) => {
+    let archived_count = 0;
+    const walked = await walkPages<Asset>(async (offset, limit) => {
+      const page = await request<{ items: Asset[]; total?: number | null; complete?: boolean; archived_count?: number }>(
+        "GET",
+        `${primaryBase(slug, "assets/assets", instance)}?${opts.archived ? "archived=1&" : ""}offset=${offset}&limit=${limit}`,
+      );
+      archived_count = page.archived_count ?? archived_count;
+      return page;
+    });
+    return { ...walked, archived_count };
+  },
   getAsset: (slug: string, id: string, instance?: string) =>
     request<Asset>("GET", `${primaryBase(slug, "assets/assets", instance)}/${id}`),
   createAsset: (slug: string, body: Partial<Asset>, instance?: string) =>
@@ -1363,7 +1519,9 @@ export const api = {
 
   // records module (instance? scopes to /instances/:name/items)
   listRecords: (slug: string, instance?: string) =>
-    request<{ items: RecordItem[] }>("GET", primaryBase(slug, "records/records", instance)),
+    walkPages<RecordItem>((offset, limit) =>
+      request<{ items: RecordItem[]; total?: number | null; complete?: boolean }>("GET", `${primaryBase(slug, "records/records", instance)}?offset=${offset}&limit=${limit}`),
+    ),
   getRecord: (slug: string, id: string, instance?: string) =>
     request<RecordItem>("GET", `${primaryBase(slug, "records/records", instance)}/${id}`),
   createRecord: (slug: string, body: Partial<RecordItem>, instance?: string) =>
@@ -1475,6 +1633,14 @@ export const api = {
   /** Invite someone on the list to become a member; accepting keeps what is theirs. */
   invitePerson: (slug: string, id: string, body: { email?: string }) =>
     request<WorkspaceInvite & { emailed: boolean }>("POST", `/orgs/${slug}/people/${id}/invite`, body),
+  // The workspace's own outbound email (Configuration → Email): how it mails a
+  // customer from its own address. Owner/admin.
+  getOutboundEmail: (slug: string) => request<OutboundEmailStatus>("GET", `/orgs/${slug}/outbound-email`),
+  saveOutboundEmail: (slug: string, config: Record<string, unknown>) =>
+    request<OutboundEmailStatus>("PUT", `/orgs/${slug}/outbound-email`, config),
+  deleteOutboundEmail: (slug: string) => request<void>("DELETE", `/orgs/${slug}/outbound-email`),
+  testOutboundEmail: (slug: string) => request<{ ok: true; to: string; status: "sent" | "skipped" }>("POST", `/orgs/${slug}/outbound-email/test`, {}),
+  outboundEmailLog: (slug: string) => request<{ items: OutboundEmailLogRow[] }>("GET", `/orgs/${slug}/outbound-email/log`),
   /** Who each kind of workspace notification is for (owner/admin). */
   listNotificationAudiences: (slug: string) =>
     request<{ items: NotificationAudienceKind[] }>("GET", `/orgs/${slug}/notification-audiences`),
@@ -1671,6 +1837,12 @@ export const api = {
     request<PlatformResolvedEntity>("GET", `/orgs/${slug}/entities/${encodeURIComponent(kind)}/${encodeURIComponent(id)}`),
   /** Generic entity list — the data source for relation-field pickers and any
    *  cross-module chooser. Projected through exposableFields like lookup. */
+  /** A collection as a spreadsheet, read as the viewer. */
+  exportEntitiesCsv: (slug: string, kind: string, q?: string) =>
+    fetchCsv(`/orgs/${slug}/entities/${encodeURIComponent(kind)}/export.csv${q ? `?q=${encodeURIComponent(q)}` : ""}`),
+  /** A saved view as a spreadsheet: its filter, sort and columns. */
+  exportViewCsv: (slug: string, viewId: string) =>
+    fetchCsv(`/orgs/${slug}/modules/core-views/views/${encodeURIComponent(viewId)}/export.csv`),
   listEntities: (slug: string, kind: string, q?: string) =>
     request<{ items: PlatformResolvedEntity[] }>(
       "GET",
@@ -1782,9 +1954,13 @@ export const api = {
           // Declined (nothing applied: "already confirmed") is thrown too, so
           // no caller mistakes it for done, but marked, so a surface can say
           // it calmly rather than as a failure (action-result.ts, #3141).
+          // The handler's answer rides along as `result`: some refusals are a
+          // question back ("which list?", with the lists), and a surface that
+          // asks it needs more than the sentence.
           throw Object.assign(
             new Error(typeof inner.error === "string" && inner.error.trim() ? inner.error : "That action couldn't run."),
             inner.skipped === true ? { declined: true as const } : {},
+            { result: inner },
           );
         }
         return res;
@@ -2138,15 +2314,24 @@ export const api = {
       authMethods?: ("session" | "api_token" | "system")[];
       apiTokenId?: string;
       entityType?: string;
+      /** One record's history. */
+      entity?: { kind: string; id: string };
       limit?: number;
+      /** Entries older than this id: the next page. */
+      before?: number;
     } = {},
   ) => {
     const params = new URLSearchParams({ limit: String(opts.limit ?? 50) });
+    if (opts.entity) {
+      params.set("entity_kind", opts.entity.kind);
+      params.set("entity_id", opts.entity.id);
+    }
     if (opts.actions?.length) params.set("actions", opts.actions.join(","));
     if (opts.authMethods?.length) params.set("auth_methods", opts.authMethods.join(","));
     if (opts.apiTokenId) params.set("api_token_id", opts.apiTokenId);
     if (opts.entityType) params.set("entity_type", opts.entityType);
-    return request<{ items: ActivityEntry[] }>(
+    if (opts.before) params.set("before", String(opts.before));
+    return request<{ items: ActivityEntry[]; total?: number; next_before?: number | null }>(
       "GET",
       `/orgs/${slug}/activity?${params.toString()}`,
     );
@@ -2202,13 +2387,28 @@ export const api = {
   /** Delete this account. Refused (409 sole_owner, with the workspaces) while
    *  the person is the only owner of a live workspace; 409 delete_at_identity
    *  for an account that belongs to the central account service. */
+  /** "Download my data" (#4185): ask for a copy, list them, fetch one. */
+  requestMyData: () => request<{ id: string; status: "building" }>("POST", "/me/export", {}),
+  myDataExports: () =>
+    request<{ items: Array<{ id: string; status: "building" | "ready" | "failed"; created_at: string; ready_at: string | null; expires_at: string; size_bytes: number | null }>; days: number }>("GET", "/me/export"),
+  downloadMyData: async (id: string): Promise<Blob> => {
+    const token = getToken();
+    const res = await fetch(`/api/v1/me/export/${encodeURIComponent(id)}/download`, { headers: token ? { Authorization: `Bearer ${token}` } : {} });
+    if (!res.ok) throw new ApiError(res.status, "not_found", "That copy is not here. Ask for a new one.");
+    return res.blob();
+  },
   deleteMyAccount: (currentPassword: string) =>
     request<void>("DELETE", "/me", { current_password: currentPassword }),
 
-  meNotifications: (limit = 25) =>
-    request<{ items: CrossOrgNotificationEntry[] }>(
+  meNotifications: (limit = 25, opts: { before?: string; org?: string; unread?: boolean } = {}) =>
+    request<{ items: CrossOrgNotificationEntry[]; next_cursor?: string | null }>(
       "GET",
-      `/me/notifications?limit=${limit}`,
+      `/me/notifications?${new URLSearchParams({
+        limit: String(limit),
+        ...(opts.before ? { before: opts.before } : {}),
+        ...(opts.org ? { org: opts.org } : {}),
+        ...(opts.unread ? { unread: "1" } : {}),
+      }).toString()}`,
     ),
   meNotificationsUnreadCount: () =>
     request<{ count: number }>("GET", "/me/notifications/unread-count"),
@@ -2378,7 +2578,10 @@ export const api = {
   updateFileFolder: (slug: string, id: string, body: { name?: string; parent_id?: string | null }) => request<FileFolder>("PATCH", `/orgs/${slug}/modules/core-files/folders/${id}`, body),
   deleteFileFolder: (slug: string, id: string) => request<void>("DELETE", `/orgs/${slug}/modules/core-files/folders/${id}`),
   /** Rename a file, or move it to a folder (null: the top level). */
-  updateFile: (slug: string, id: string, body: { filename?: string; folder_id?: string | null }) => request<FileRecord>("PATCH", `/orgs/${slug}/modules/core-files/files/${id}`, body),
+  getFile: (slug: string, id: string) => request<FileRecord>("GET", `/orgs/${slug}/modules/core-files/files/${id}`),
+  /** The records a file is attached to, titled and with where each opens. */
+  fileUsedBy: (slug: string, id: string) => request<{ items: FileUsedBy[] }>("GET", `/orgs/${slug}/modules/core-files/files/${id}/used-by`),
+  updateFile: (slug: string, id: string, body: { filename?: string; folder_id?: string | null; metadata?: Record<string, unknown> }) => request<FileRecord>("PATCH", `/orgs/${slug}/modules/core-files/files/${id}`, body),
   /** `folder_id` puts it in a folder. `onDuplicate: "skip"` keeps the copy
    *  already here when the same bytes are uploaded again (`duplicate: true`
    *  and the existing file come back); otherwise a second copy is stored and
@@ -2388,21 +2591,20 @@ export const api = {
     if (opts.folderId) form.set("folder_id", opts.folderId);
     if (opts.onDuplicate) form.set("on_duplicate", opts.onDuplicate);
     form.set("file", file);
-    const token = getToken();
-    const headers: Record<string, string> = {};
-    if (token) headers["Authorization"] = `Bearer ${token}`;
-    const res = await fetch(
-      `/api/v1/orgs/${slug}/modules/core-files/files`,
-      { method: "POST", headers, body: form },
-    );
-    if (!res.ok) {
-      const text = await res.text();
-      throw new ApiError(res.status, "upload_failed", text);
-    }
-    return (await res.json()) as FileRecord;
+    return upload<FileRecord>(`/api/v1/orgs/${slug}/modules/core-files/files`, form, file);
   },
   deleteFile: (slug: string, id: string) =>
     request<void>("DELETE", `/orgs/${slug}/modules/core-files/files/${id}`),
+  /** Recently deleted: files deleted in the last `days`, each with when it goes for good. */
+  listDeletedFiles: (slug: string) =>
+    request<{ days: number; items: Array<FileRecord & { deleted_at: string; purge_after: string }> }>(
+      "GET",
+      `/orgs/${slug}/modules/core-files/files/deleted`,
+    ),
+  restoreFile: (slug: string, id: string) =>
+    request<{ ok: true }>("POST", `/orgs/${slug}/modules/core-files/files/${id}/restore`),
+  deleteFileForever: (slug: string, id: string) =>
+    request<void>("DELETE", `/orgs/${slug}/modules/core-files/files/${id}/forever`),
   // IDEMPOTENT: image_path is stored as a FULL raw URL (uploads + web-image
   // enrich both do `fileRawUrl(id)`), so a caller that wraps an already-resolved
   // path/URL again must NOT double it (that yields `.../files//api/.../raw/raw`
@@ -2493,6 +2695,7 @@ export const api = {
       parent_id?: string | null;
       icon?: string | null;
       pinned?: boolean;
+      metadata?: Record<string, unknown>;
     },
   ) =>
     request<TagRecord>(
@@ -2614,8 +2817,20 @@ export const api = {
   // F-1: clear a printer's bed-clear flag — "cleared, ready for the next job".
   // F-13 — clear the bed + give the verdict. "good" closes the linked task;
   // "scrapped" reverses the optimistic filament/usage effects. Default "good".
-  markDigifabDeviceReady: (slug: string, connectionId: string, deviceId: string, outcome: "good" | "scrapped" = "good") =>
-    request<{ ok: boolean; outcome: string }>("POST", `/orgs/${slug}/modules/digifab/fleet/${connectionId}/${encodeURIComponent(deviceId)}/ready`, { outcome }),
+  // With counts, the plate is judged part by part ("9 good, 1 scrap") and the
+  // counts decide the outcome; without them it is the whole plate.
+  markDigifabDeviceReady: (
+    slug: string,
+    connectionId: string,
+    deviceId: string,
+    outcome: "good" | "scrapped" = "good",
+    counts?: { good: number; scrap: number },
+  ) =>
+    request<{ ok: boolean; outcome: string }>(
+      "POST",
+      `/orgs/${slug}/modules/digifab/fleet/${connectionId}/${encodeURIComponent(deviceId)}/ready`,
+      counts ? { outcome, good: counts.good, scrap: counts.scrap } : { outcome },
+    ),
   // Cockpit: set/clear a device's camera stream URL (manual override).
   setDigifabDevicePosition: (slug: string, connId: string, deviceId: string, pos: { x: number; y: number } | null) =>
     request<{ ok: boolean }>("PUT", `/orgs/${slug}/modules/digifab/fleet/${connId}/${encodeURIComponent(deviceId)}/position`, pos ?? { x: null, y: null }),
@@ -2813,12 +3028,7 @@ export const api = {
     const form = new FormData();
     form.set("file", file);
     if (name) form.set("name", name);
-    const token = getToken();
-    const headers: Record<string, string> = {};
-    if (token) headers["Authorization"] = `Bearer ${token}`;
-    const res = await fetch(`/api/v1/orgs/${slug}/modules/digifab/library`, { method: "POST", headers, body: form });
-    if (!res.ok) throw new ApiError(res.status, "upload_failed", await res.text());
-    return (await res.json()) as DigifabLibraryItem;
+    return upload<DigifabLibraryItem>(`/api/v1/orgs/${slug}/modules/digifab/library`, form, file);
   },
   renameDigifabLibrary: (slug: string, id: string, body: { name?: string; notes?: string | null }) =>
     request<DigifabLibraryItem>("PATCH", `/orgs/${slug}/modules/digifab/library/${id}`, body),
@@ -2881,6 +3091,30 @@ export const api = {
     request<DigifabDriver>("POST", `/orgs/${slug}/modules/digifab/drivers`, manifest as object),
   deleteDigifabDriver: (slug: string, key: string) =>
     request<void>("DELETE", `/orgs/${slug}/modules/digifab/drivers/${encodeURIComponent(key)}`),
+  /** A machine's Printing profile (Services §14.3) and the filament types a
+   *  preset hint can be set for on it. */
+  /** A capability's live choices from the connected service (Services §3),
+   *  or null when nothing connected does it. */
+  getServiceCapabilityOptions: async (slug: string, capability: string): Promise<unknown | null> => {
+    try {
+      const r = await request<{ options: unknown | null }>("GET", `/orgs/${slug}/services/capabilities/${encodeURIComponent(capability)}`);
+      return r.options ?? null;
+    } catch (e) {
+      if (e instanceof ApiError && e.status === 404) return null;
+      throw e;
+    }
+  },
+  getPrintingProfile: (slug: string, machineId: string) =>
+    request<{ machine_id: string; profile: PrintingProfile; filament_types: Array<{ id: string; name: string | null }>; updated_at: string | null }>(
+      "GET",
+      `/orgs/${slug}/modules/digifab/printing-profiles/${encodeURIComponent(machineId)}`,
+    ),
+  savePrintingProfile: (slug: string, machineId: string, body: Partial<PrintingProfile>) =>
+    request<{ machine_id: string; profile: PrintingProfile; updated_at: string }>(
+      "PUT",
+      `/orgs/${slug}/modules/digifab/printing-profiles/${encodeURIComponent(machineId)}`,
+      body,
+    ),
   listDigifabLinks: (slug: string) =>
     request<{ items: DigifabLink[] }>("GET", `/orgs/${slug}/modules/digifab/links`),
   createDigifabLink: (
@@ -2911,8 +3145,8 @@ export const api = {
   retryDigifabJob: (slug: string, id: string) =>
     request<{ status: string; sent?: boolean; pooled?: boolean; remote_job_id?: string | null; reason?: string }>("POST", `/orgs/${slug}/modules/digifab/jobs/${id}/retry`, {}),
   // "Print this again" — clones a (typically completed) job into a fresh one and sends it.
-  reprintDigifabJob: (slug: string, id: string) =>
-    request<{ job: DigifabJob; status: string; sent?: boolean; pooled?: boolean; reason?: string }>("POST", `/orgs/${slug}/modules/digifab/jobs/${id}/reprint`, {}),
+  reprintDigifabJob: (slug: string, id: string, opts: { again?: boolean } = {}) =>
+    request<{ job: DigifabJob; status: string; sent?: boolean; pooled?: boolean; reason?: string }>("POST", `/orgs/${slug}/modules/digifab/jobs/${id}/reprint`, opts.again ? { again: true } : {}),
   // Cockpit live-control: pause / resume a running job (501 if the driver can't).
   pauseDigifabJob: (slug: string, id: string) =>
     request<{ status: string }>("POST", `/orgs/${slug}/modules/digifab/jobs/${id}/pause`, {}),
@@ -2945,9 +3179,29 @@ export const api = {
    *  404s when the builds module isn't enabled — callers tolerate an empty list. */
   listDigifabBuilds: (slug: string) =>
     request<{ items: Array<{ id: string; name: string }> }>("GET", `/orgs/${slug}/modules/builds/builds`),
-  updateDigifabJob: (slug: string, id: string, body: { priority?: number; max_attempts?: number }) =>
+  updateDigifabJob: (slug: string, id: string, body: { priority?: number; max_attempts?: number; metadata?: Record<string, unknown> }) =>
     request<DigifabJob>("PATCH", `/orgs/${slug}/modules/digifab/jobs/${id}`, body),
   // ── Pools: a Cobblr-native set of devices to queue jobs onto (auto-assigned). ──
+  // Lines of orders marked arrived whose stock may never have been added.
+  listUnconfirmedReceipts: (slug: string) =>
+    request<{ items: UnconfirmedReceiptLine[] }>("GET", `/orgs/${slug}/modules/purchases/unconfirmed-receipts`),
+  settleUnconfirmedReceipt: (slug: string, id: string, decision: "add" | "counted") =>
+    request<{ settled: boolean }>("POST", `/orgs/${slug}/modules/purchases/unconfirmed-receipts/${id}`, { decision }),
+  // ─── Makes: one fabrication run, request to outcome (services.md §13) ───
+  listMakes: (slug: string, q?: string) =>
+    request<{ items: MakeSummary[] }>("GET", `/orgs/${slug}/modules/digifab/makes${q ? `?q=${encodeURIComponent(q)}` : ""}`),
+  /** Print this: a Make for the model, the printer it fits, a slice. Sends nothing. */
+  printThis: (slug: string, body: { file_id?: string; make_id?: string; material: string; color?: string }) =>
+    request<PrintThisStarted>("POST", `/orgs/${slug}/modules/digifab/makes/print-this`, body),
+  /** The one yes: start a Make's waiting print. */
+  startMakePrint: (slug: string, makeId: string) => request<{ ok: true; status: string }>("POST", `/orgs/${slug}/modules/digifab/makes/${makeId}/print/start`, {}),
+  getMake: (slug: string, id: string) => request<MakeDetail>("GET", `/orgs/${slug}/modules/digifab/makes/${id}`),
+  createMake: (slug: string, body: MakeCreateBody) => request<MakeSummary>("POST", `/orgs/${slug}/modules/digifab/makes`, body),
+  patchMake: (slug: string, id: string, body: { name?: string; outcome?: "pass" | "fail" | null; outcome_notes?: string; metadata?: Record<string, unknown> }) =>
+    request<MakeSummary>("PATCH", `/orgs/${slug}/modules/digifab/makes/${id}`, body),
+  deleteMake: (slug: string, id: string) => request<void>("DELETE", `/orgs/${slug}/modules/digifab/makes/${id}`),
+  addMakeFiles: (slug: string, id: string, body: { step: "model" | "slice"; files: Array<{ file_id: string; role: MakeFileRole }> }) =>
+    request<{ id: string }>("POST", `/orgs/${slug}/modules/digifab/makes/${id}/files`, body),
   // ─── digifab production runs (quantity-driven scheduler on pools) ───
   listDigifabRuns: (slug: string) =>
     request<{ items: DigifabRun[] }>("GET", `/orgs/${slug}/modules/digifab/runs`),
@@ -3037,10 +3291,13 @@ export const api = {
       kind?: "history" | "scheduled" | "all";
       due_within_days?: number;
       limit?: number;
+      /** One record's entries (its service history). */
+      entity_id?: string;
     },
   ) => {
     const qs = new URLSearchParams();
     if (params?.kind) qs.set("kind", params.kind);
+    if (params?.entity_id) qs.set("entity_id", params.entity_id);
     if (params?.due_within_days != null)
       qs.set("due_within_days", String(params.due_within_days));
     if (params?.limit != null) qs.set("limit", String(params.limit));
@@ -3108,6 +3365,33 @@ export const api = {
   ) => request<MaintenanceSchedule>("POST", `/orgs/${slug}/modules/core-maintenance/schedules`, body),
   deleteMaintenanceSchedule: (slug: string, id: string) =>
     request<void>("DELETE", `/orgs/${slug}/modules/core-maintenance/schedules/${id}`),
+  updateMaintenanceSchedule: (
+    slug: string,
+    id: string,
+    body: Partial<{
+      name: string;
+      every_n: number | null;
+      every_unit: MaintenanceIntervalUnit | null;
+      counter_field: string | null;
+      counter_every: number | null;
+      last_done_at: string | null;
+    }>,
+  ) => request<MaintenanceSchedule>("PATCH", `/orgs/${slug}/modules/core-maintenance/schedules/${id}`, body),
+  /** Log a service. With a schedule_id it is that schedule's, which rolls it
+   *  forward to the next time. */
+  logMaintenance: (
+    slug: string,
+    body: {
+      entity_module: string;
+      entity_type: string;
+      entity_id: string;
+      name: string;
+      performed_at: string;
+      schedule_id?: string;
+      notes?: string | null;
+      cost_cents?: number | null;
+    },
+  ) => request<MaintenanceEntry>("POST", `/orgs/${slug}/modules/core-maintenance/entries`, body),
 
   // ─── labels: QR scan tokens (merged from core-labels-qr) ──────────
   listQrTokens: (slug: string) =>
@@ -3890,21 +4174,14 @@ export const api = {
     const form = new FormData();
     form.set("file", file);
     if (mapping) form.set("mapping", JSON.stringify(mapping));
-    const token = getToken();
-    const res = await fetch(`/api/v1/orgs/${slug}/modules/core-scan/import/preview`, {
-      method: "POST",
-      headers: token ? { Authorization: `Bearer ${token}` } : {},
-      body: form,
-    });
-    if (!res.ok) throw new ApiError(res.status, "import_preview_failed", await res.text());
-    return (await res.json()) as {
+    return upload<{
       source: string | null;
       source_instance: string | null;
       count: number;
       columns: Array<{ header: string; field: string | null }> | null;
       errors: Array<{ row: number; field: string; message: string }>;
       rows: Array<{ row: number; name: string | null; barcode: string | null; status: string; source_kind: string; quantity: number; scan_area: string | null; hint_category: unknown; has_photo: boolean }>;
-    };
+    }>(`/api/v1/orgs/${slug}/modules/core-scan/import/preview`, form, file);
   },
   scanImport: async (
     slug: string,
@@ -3918,14 +4195,7 @@ export const api = {
     if (opts.dryRun) qs.set("dry_run", "true");
     if (opts.duplicatePolicy) qs.set("duplicate_policy", opts.duplicatePolicy);
     if (opts.fetchPhotos === false) qs.set("fetch_photos", "false");
-    const token = getToken();
-    const res = await fetch(`/api/v1/orgs/${slug}/modules/core-scan/import?${qs.toString()}`, {
-      method: "POST",
-      headers: token ? { Authorization: `Bearer ${token}` } : {},
-      body: form,
-    });
-    if (!res.ok) throw new ApiError(res.status, "import_failed", await res.text());
-    return (await res.json()) as {
+    return upload<{
       imported_count: number;
       skipped_count: number;
       errors: Array<{ row: number; field: string; message: string }>;
@@ -3933,7 +4203,7 @@ export const api = {
       photos_fetched: number;
       photos_failed: number;
       dry_run?: boolean;
-    };
+    }>(`/api/v1/orgs/${slug}/modules/core-scan/import?${qs.toString()}`, form, file);
   },
   /** Bind an email to a no-account sandbox: it becomes an ordinary account
    *  trial. `emailed` says whether the sign-in link actually went - when it did
@@ -3958,6 +4228,8 @@ export const api = {
    *  for bringing it along. Their own sandbox or kept trial, found through
    *  their link, so it reads past the hour when every workspace route is 410. */
   sandboxLedger: () => request<SandboxLedger>("GET", "/try/ledger"),
+  /** What is true of the sandbox's work right now (open, held, kept, gone). */
+  sandboxLifetime: () => request<import("@cobblr/platform-contract/sandbox-lifetime").SandboxLifetime>("GET", "/try/lifetime"),
   /** The person's grant for another deployment to read this kept trial, and
    *  this box's public address for it to read from. */
   startCarry: () => request<{ token: string; source: string; expires_hours: number }>("POST", "/try/carry", {}),
@@ -3972,11 +4244,11 @@ export const api = {
   /** "Email me my work": builds the workspace backup, keeps it for a short
    *  window and emails a link. `emailed` false still means the file exists -
    *  the link comes back either way. */
-  takeSandboxWork: (email: string) =>
+  takeSandboxWork: (email: string, keepExamples = false) =>
     request<{ ok: boolean; emailed: boolean; link: string; expires_at: string; days: number }>(
       "POST",
       "/try/take",
-      { email },
+      { email, ...(keepExamples ? { keep_examples: true } : {}) },
     ),
 
   /** Clear a sandbox's records, keeping its modules, fields and views. */
@@ -3984,7 +4256,7 @@ export const api = {
 
   /** Keep the sandbox as a trial. How long is the server's setting, returned as `days`. */
   keepSandbox: (email: string) =>
-    request<{ ok: boolean; kind: "trial"; expires_at: string; emailed: boolean; days: number }>("POST", "/try/keep", { email }),
+    request<{ ok: boolean; kind: "trial" | "join_pending"; expires_at: string; emailed: boolean; days: number }>("POST", "/try/keep", { email }),
 
   /** What kind of workspace this is, for the strip at the foot of the page.
    *  `link_open` is true while a kept sandbox's owner has no real door yet
@@ -3995,7 +4267,23 @@ export const api = {
       expires_at: string | null;
       email: string | null;
       link_open: boolean;
+      /** Set when an owner asked for the workspace to be deleted: the day it goes. */
+      deletion_due_at?: string | null;
     }>("GET", `/orgs/${slug}/trial`),
+
+  /** Owner only: delete this workspace after the grace period. `confirmName`
+   *  is the workspace's name, typed. Resolves to the day it goes. */
+  scheduleWorkspaceDeletion: (slug: string, confirmName: string) =>
+    request<{ deletion_due_at: string }>("POST", `/orgs/${slug}/deletion`, { confirm_name: confirmName }),
+
+  /** Owner only: keep a workspace that was set to be deleted. */
+  keepWorkspace: (slug: string) => request<void>("DELETE", `/orgs/${slug}/deletion`),
+
+  /** The backups kept after workspaces this person owned were deleted. */
+  myWorkspaceExports: () =>
+    request<{
+      items: Array<{ id: string; workspace: string; filename: string; size_bytes: number; created_at: string; expires_at: string }>;
+    }>("GET", "/me/workspace-exports"),
 
   /** Send the kept workspace's sign-in link again. */
   resendSandboxLink: () =>
@@ -4619,6 +4907,23 @@ export const api = {
       "POST",
       `/orgs/${slug}/modules/core-ai/chat/undo-turn/${encodeURIComponent(turnId)}${force ? "?force=1" : ""}`,
     ),
+  // Services (#4034): what this person can call here, in order, and the
+  // workspace's say over each capability.
+  listServiceCapabilities: (slug: string) =>
+    request<{ items: ServiceCapabilityView[] }>("GET", `/orgs/${slug}/services/capabilities`),
+  getServicePolicies: (slug: string) =>
+    request<{ items: Array<{ capability: string; policy: "always_ask" | "run" | "off" }> }>("GET", `/orgs/${slug}/services/policies`),
+  setServicePolicy: (slug: string, capability: string, policy: "default" | "always_ask" | "run" | "off") =>
+    request<{ capability: string; policy: string }>("PUT", `/orgs/${slug}/services/policies/${encodeURIComponent(capability)}`, { policy }),
+  // Services (#4034): one job, and the three things a person does to it.
+  getServiceJob: (slug: string, id: string) =>
+    request<ServiceJob>("GET", `/orgs/${slug}/services/jobs/${encodeURIComponent(id)}`),
+  confirmServiceJob: (slug: string, id: string) =>
+    request<ServiceJob>("POST", `/orgs/${slug}/services/jobs/${encodeURIComponent(id)}/confirm`, {}),
+  answerServiceJob: (slug: string, id: string, input: unknown) =>
+    request<ServiceJob>("POST", `/orgs/${slug}/services/jobs/${encodeURIComponent(id)}/input`, { input }),
+  cancelServiceJob: (slug: string, id: string) =>
+    request<ServiceJob>("POST", `/orgs/${slug}/services/jobs/${encodeURIComponent(id)}/cancel`, {}),
   runCommand: (slug: string, id: string, message: string, selectionIds?: string[], section?: string) =>
     request<{
       ok: boolean;
@@ -5378,22 +5683,51 @@ export const api = {
       "GET",
       `/orgs/${slug}/modules/core-locations/locations/${id}`,
     ),
-  createLocation: (slug: string, body: Partial<Location>) =>
+  /** `allow_duplicate`: a person who saw the place already there and still
+   *  wants a second one of that name under the same parent. */
+  createLocation: (slug: string, body: Partial<Location> & { allow_duplicate?: boolean }) =>
     request<Location>(
       "POST",
       `/orgs/${slug}/modules/core-locations/locations`,
       body,
     ),
-  updateLocation: (slug: string, id: string, body: Partial<Location>) =>
+  updateLocation: (slug: string, id: string, body: Partial<Location> & { allow_duplicate?: boolean }) =>
     request<Location>(
       "PATCH",
       `/orgs/${slug}/modules/core-locations/locations/${id}`,
       body,
     ),
+  /** Deletes the place, every place inside it, and takes out what was kept
+   *  there; says how much went, for the Undo toast. */
   deleteLocation: (slug: string, id: string) =>
-    request<void>(
+    request<{ deleted: true; name: string; places: number; things: number }>(
       "DELETE",
       `/orgs/${slug}/modules/core-locations/locations/${id}`,
+    ),
+  /** Move everything kept in a place into another; `places` moves the places
+   *  inside it too, `then_delete` merges (moves all, deletes the empty one).
+   *  The answer is the move itself, which `putBackEverything` undoes. */
+  moveEverything: (slug: string, id: string, body: { to: string; places?: boolean; then_delete?: boolean }) =>
+    request<PlaceMove>("POST", `/orgs/${slug}/modules/core-locations/locations/${id}/move-everything`, body),
+  putBackEverything: (slug: string, move: PlaceMove) =>
+    request<{ things: number; places: number; leftWhereTheyAre: number }>(
+      "POST",
+      `/orgs/${slug}/modules/core-locations/locations/move-everything/undo`,
+      { move },
+    ),
+  /** What deleting a place would take with it, for the dialog. `needs` names
+   *  the permission a member lacks when there are places inside. */
+  locationWhatGoes: (slug: string, id: string) =>
+    request<{ places: number; things: number; needs: string | null }>(
+      "GET",
+      `/orgs/${slug}/modules/core-locations/locations/${id}/what-goes`,
+    ),
+  /** Undo a place delete: the place, the places inside it, and each thing
+   *  back where it was (unless it has been put somewhere else since). */
+  restoreDeletedLocation: (slug: string, id: string) =>
+    request<{ restored: true; name: string; places: number; things: number; leftWhereTheyAre: number }>(
+      "POST",
+      `/orgs/${slug}/modules/core-locations/locations/deleted/${id}/restore`,
     ),
   importLocations: (slug: string, body: { csv: string; match_on?: string; dry_run?: boolean }) =>
     request<LocationImportResponse>("POST", `/orgs/${slug}/modules/core-locations/locations/import`, body),
@@ -5435,15 +5769,21 @@ export interface LocationImportRow {
   kind: "area" | "container";
   match_value: string | null;
   action: "create" | "update";
-  parent: { key: string; resolved: boolean } | null;
+  parent: { key: string; resolved: boolean; path?: string | null } | null;
+  /** The place's full path, "Attic › Shelf 1", once its parent is known. */
+  path?: string | null;
   metadata: Record<string, string>;
+  /** Why this row cannot be imported as written; the whole file waits on it. */
+  error?: string | null;
 }
 export interface LocationImportResponse {
   match_on?: string;
   detected_headers?: string[];
   rows?: LocationImportRow[];
   errors: { row_number: number; message: string }[];
-  summary?: { create: number; update: number; unresolved_parents: number };
+  /** Rows the file cannot be imported with until they are written apart. */
+  blocking?: { row_number: number; message: string }[];
+  summary?: { create: number; update: number; unresolved_parents: number; blocked?: number };
   committed: number;
   created?: number;
   updated?: number;
@@ -6102,6 +6442,15 @@ export interface ImageOption {
   source: string;
 }
 
+/** What "Move everything to…" did: enough to say it and to put it back. */
+export interface PlaceMove {
+  from: { id: string; name: string };
+  to: { id: string; name: string };
+  things: Array<{ kind: string; id: string; slot: string | null; position: unknown }>;
+  places: string[];
+  deleted: boolean;
+}
+
 export interface Location {
   id: string;
   name: string;
@@ -6649,6 +6998,8 @@ export interface CatalogSchema {
 
 export interface Catalog {
   id: string;
+  /** Custom fields a bundle or a person defines for catalogs. */
+  metadata?: Record<string, unknown>;
   name: string;
   description: string | null;
   source_url: string | null;
@@ -6827,6 +7178,8 @@ export interface WorkspaceLinkItem {
 // ─── Types for the methods above ────────────────────────────────────
 export interface FileRecord {
   id: string;
+  /** Custom fields a bundle or a person defines for files. */
+  metadata?: Record<string, unknown>;
   filename: string;
   mime_type: string;
   size_bytes: number;
@@ -6844,6 +7197,16 @@ export interface FileRecord {
   /** On an upload: the same bytes were already here. */
   duplicate?: boolean;
   duplicate_of?: { id: string; filename: string; folder_id: string | null } | null;
+}
+
+/** One record a file is attached to (core-files `/files/:id/used-by`). */
+export interface FileUsedBy {
+  attachment_id: string;
+  kind: string;
+  id: string;
+  role: string | null;
+  title: string;
+  detail_url: string | null;
 }
 
 /** A folder files live in (core-files), nested by `parent_id`. */
@@ -6952,6 +7315,8 @@ export interface ViewDataResponse {
 
 export interface TagRecord {
   id: string;
+  /** Custom fields a bundle or a person defines for tags. */
+  metadata?: Record<string, unknown>;
   name: string;
   color: string | null;
   parent_id: string | null;
@@ -7119,6 +7484,9 @@ export interface SuperAdminBarcodeCacheItem {
 /** A write the agentic chat proposes; the user confirms before it runs. */
 /** What one chat turn returns — the widget renders this whether it came back
  *  from the blocking POST or from a persisted turn's final event. */
+import type { ServiceCapabilityView, ServiceJob } from "@cobblr/platform-contract/services";
+export type { ServiceCapabilityView, ServiceJob };
+
 export interface AiChatResponse {
   type: "reply" | "proposal" | "proposals" | "build-proposal" | "error";
   text?: string;
@@ -7164,6 +7532,8 @@ export interface AiChatResponse {
    *  widget navigates; prefill.* params fill the form; the page's own
    *  submit stays the user's). */
   escorts?: Array<{ path: string; label: string }>;
+  /** Service jobs Cobb started this turn; each is its own card. */
+  service_jobs?: Array<{ job_id: string; capability?: string; status?: string }>;
   /** The records this turn READ whose name the words carry, so a read answer
    *  opens what it names the way a write's card does. Decided server-side
    *  from what the tools returned; never a name the turn did not read. */
@@ -7231,9 +7601,13 @@ export interface DigifabDetectorCatalogEntry {
 }
 /** A configured detector connection (credentials never returned). */
 export interface DigifabDetector {
-  id: string; key: string; label: string; base_url: string;
+  id: string; key: string; label: string;
+  /** Null once the detector moved to its connection: the address lives there. */
+  base_url: string | null;
+  /** The service connection holding its address and key, once moved. */
+  service_connection_id?: string | null;
   config: { camera_map?: Record<string, string> } & Record<string, unknown>;
-  enabled: boolean; has_credentials: boolean;
+  enabled: boolean; has_credentials: boolean | null;
   created_at?: string; updated_at?: string;
 }
 export interface DigifabDetectorInput {
@@ -7400,7 +7774,8 @@ export interface DigifabFleetDevice {
    *  down its own watch/assignment/camera pull for it. */
   managed_by_detector?: boolean;
   /** F-1: finished/failed a print — needs a human bed-clear before it's assignable. */
-  needs_attention: { reason: string; since: string } | null;
+  /** plate_qty: how many the plate's job makes, when it produces a build. */
+  needs_attention: { reason: string; since: string; plate_qty?: number | null } | null;
   active_job: { id: string; file_ref: string; status: string; progress: number | null; priority: number; attempts: number; max_attempts: number; eta_sec: number | null } | null;
   /** What this machine will do next — the top queued job aimed at it (or its pool). */
   next_job: { id: string; file_ref: string; pooled: boolean } | null;
@@ -7489,6 +7864,18 @@ export interface DigifabDriver {
   created_at: string;
 }
 
+/** What a slicer needs to know about a printer (Services §14.3). */
+export interface PrintingProfile {
+  /** A neutral printer model id, e.g. "bambulab/a1". */
+  printer_model: string | null;
+  nozzle_mm: number | null;
+  /** [x, y, z] in mm. */
+  build_volume_mm: [number, number, number] | null;
+  default_quality: string | null;
+  /** Filament type id -> preset to prefer for it on this printer. */
+  preset_hints: Record<string, string>;
+}
+
 export interface DigifabLink {
   id: string;
   connection_id: string;
@@ -7527,6 +7914,8 @@ export interface DigifabRule {
 
 export interface DigifabJob {
   id: string;
+  /** Custom fields a bundle or a person defines for this kind. */
+  metadata?: Record<string, unknown>;
   connection_id: string | null;
   file_ref: string;
   target_device: string | null;
@@ -7545,12 +7934,18 @@ export interface DigifabJob {
   file_id: string | null;
   linked_machine_id: string | null;
   linked_task_id: string | null;
-  /** A build (BoM) this job produces — consumed from inventory on send; reversed
-   *  on scrap/cancel/fail. */
+  /** A build (BoM) this job produces — components consumed from inventory on
+   *  send, the output counted when the plate is judged good; reversed on
+   *  scrap/cancel/fail. */
   linked_build_id: string | null;
   build_qty: number;
   build_consumed_at: string | null;
   build_reversed_at: string | null;
+  /** How the plate came out, once judged: good (some came out good) or scrap,
+   *  with how many of each. Null until the verdict. */
+  outcome?: "good" | "scrap" | null;
+  outcome_good_qty?: number | null;
+  outcome_scrap_qty?: number | null;
   created_at: string;
   updated_at: string;
   last_polled_at: string | null;
@@ -7564,6 +7959,103 @@ export interface DigifabPoolMember {
   remote_device_id: string;
   loaded_material: string | null;
 }
+
+/** A line of an order marked arrived whose stock may never have been added. */
+export interface UnconfirmedReceiptLine {
+  id: string;
+  order_id: string;
+  vendor: string | null;
+  order_number: string | null;
+  arrived_at: string | null;
+  description: string | null;
+  qty: number;
+  part_id: string | null;
+  part_title: string | null;
+}
+
+/** A Make's steps, in the one order they run. */
+export const MAKE_STEPS = ["request", "design", "model", "slice", "print", "outcome"] as const;
+export type MakeStepName = (typeof MAKE_STEPS)[number];
+export type MakeFileRole = "source" | "step" | "stl" | "3mf" | "preview" | "report" | "gcode" | "settings" | "snapshot" | "photo" | "other";
+
+export interface MakeSummary {
+  id: string;
+  /** Custom fields a bundle or a person defines for this kind. */
+  metadata?: Record<string, unknown>;
+  name: string;
+  prompt: string | null;
+  start_step: MakeStepName;
+  rerun_of: string | null;
+  rerun_from_step: MakeStepName | null;
+  folder_id: string | null;
+  printer_name: string | null;
+  material: string | null;
+  outcome: "pass" | "fail" | null;
+  created_at: string;
+  updated_at: string;
+  last_step?: { step: MakeStepName; status: string } | null;
+}
+
+export interface MakeStepRecord {
+  id: string;
+  step: MakeStepName;
+  status: "running" | "needs_input" | "awaiting_confirm" | "done" | "failed";
+  data: Record<string, unknown>;
+  produced_by: { kind?: string; name?: string; version?: string; capability?: string };
+  service_job_id: string | null;
+  job_id: string | null;
+  error: string | null;
+  copied_from: string | null;
+  created_at: string;
+  updated_at: string;
+  files: Array<{ id: string; file_id: string; role: MakeFileRole | null; filename: string; mime_type: string; kind: string }>;
+}
+
+export interface MakeDoor {
+  label: string;
+  href?: string;
+  action?: "upload-model" | "upload-gcode" | "rerun" | "outcome";
+}
+
+/** What Print this answers once it has a printer and a slice going. */
+export interface PrintThisStarted {
+  ok: true;
+  make_id: string;
+  created_make: boolean;
+  printer: { machine: string | null; reason: string };
+  slice_job_id: string | null;
+  summary: string;
+}
+
+export interface MakeDetail {
+  make: MakeSummary;
+  steps: MakeStepRecord[];
+  timeline: {
+    entries: Array<{ step: MakeStepName; state: "recorded"; row: MakeStepRecord } | { step: MakeStepName; state: "waiting"; hint: string }>;
+    end: null | { step: MakeStepName; reason: "not-connected" | "failed"; sentence: string; doors: MakeDoor[] };
+  };
+  reach: { design: boolean; slice: boolean; print: boolean };
+  print: null | {
+    job_id: string;
+    status: string;
+    progress: number | null;
+    file_ref: string;
+    error: string | null;
+    machine: { id: string; title: string | null; detail_url: string | null } | null;
+    spools: Array<{ part_id: string; grams: number; slot: string | null; title: string | null }>;
+    grams_measured: boolean;
+    grams_by_tool: number[] | null;
+  };
+  rerun_of: { id: string; name: string } | null;
+  /** What it was made for (an order line, a work order), when something asked for it. */
+  made_for: { kind: string; id: string; title: string | null; detail_url: string | null } | null;
+  reruns: Array<{ id: string; name: string; rerun_from_step: MakeStepName | null; outcome: "pass" | "fail" | null; created_at: string }>;
+}
+
+export type MakeCreateBody =
+  | { name: string; prompt: string; origin?: "page" }
+  | { name: string; start_at: "model" | "slice"; files: Array<{ file_id: string; role: MakeFileRole }> }
+  | { name: string; rerun_of: string; from_step: "design" | "model" | "slice" | "print" };
 
 export interface DigifabRun {
   id: string;
@@ -7605,6 +8097,8 @@ export interface MaintenanceEntry {
   recurrence_rule: string | null;
   /** The schedule this entry is an occurrence of. */
   schedule_id?: string | null;
+  /** The name of the record this is for; null when it is no longer there. */
+  entity_title?: string | null;
   /** Where an open entry stands, counted by the server in this browser's
    *  zone with the rule the record's schedule uses. `days` is negative when
    *  overdue. Absent on history. */
@@ -8034,6 +8528,9 @@ export interface BundleValidation {
 export interface PlatformResolvedEntity {
   kind: string;
   id: string;
+  /** The named collection a record lives in, when it is not its module's
+   *  default one ("groceries" for a grocery). */
+  instance?: string | null;
   title: string;
   subtitle?: string;
   image_path?: string;
@@ -8179,6 +8676,8 @@ export interface PlatformBinding {
   action_id: string;
   trigger_type: "user-invoked" | "event" | "on-create" | "on-update" | "on-delete" | "schedule";
   trigger_event: string | null;
+  /** The event it waits for is one nothing sends any more, so it never runs. */
+  trigger_silent?: boolean;
   /** iCal RRULE for schedule-triggered wires; null otherwise. */
   trigger_schedule: string | null;
   template: string | null;

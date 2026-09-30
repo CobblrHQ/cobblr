@@ -28,7 +28,7 @@
 //     earlier day.
 
 import { Kysely, sql } from "kysely";
-import { platform, expiryState, expiryPhrase, arrivedEverywhere, daysUntilField } from "@cobblr/platform-contract";
+import { platform, expiryState, expiryPhrase, arrivedEverywhere, daysUntilField, SYSTEM_VIEWER } from "@cobblr/platform-contract";
 import { expiryStages } from "./expiry-stages.js";
 import { expiryDigest, type ExpiryLine } from "./expiry-card.js";
 
@@ -180,7 +180,9 @@ export async function visitWorkspace(orgId: string, raw: unknown, now: Date = ne
       let graceDays: unknown = 0;
       if (daysUntil < 0) {
         try {
-          const ent = await platform().entities.lookup(org.id, "inventory:part", row.id);
+          // SYSTEM-READ: the sweep decides from the record's grace days,
+          // whoever that field is hidden from.
+          const ent = await platform().entities.lookup(org.id, "inventory:part", row.id, SYSTEM_VIEWER);
           graceDays = ent?.fields?.grace_days;
         } catch {
           // Unreadable grace reads as none - the pre-grace behaviour, never a

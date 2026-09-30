@@ -2,11 +2,8 @@
 // Express Router via the manifest's `api` import. The platform mounts
 // it at /api/v1/orgs/:slug/modules/<name>/ with requireAuth +
 // withTenant pre-applied — handlers don't have to repeat auth and
-// tenant resolution.
-//
-// Modules can also expose API methods callable from other modules
-// (manifest.exposes.api) — that's a separate phase-2 surface and
-// not part of this mount step. For now the mount only wires HTTP.
+// tenant resolution. A module reaches another through
+// platform().entities, an action or an event, never by calling its router.
 
 import type { Router, Request, Response, NextFunction } from "express";
 import type { Application } from "express";
@@ -227,23 +224,6 @@ async function mountSingleEntry(app: Application, entry: ReturnType<typeof listE
   // observeModuleSaves announces every create and update this module's routes
   // answer (platform/entity-saved.ts): one signal for a record, whatever door.
   app.use(mountPath, requireAuth, withTenant, requireModuleEnabled(manifest.name), observeModuleSaves(manifest.name), router);
-  // Merge-compat alias (labels 0.6.0): the former core-labels-qr module's
-  // paths keep answering, served by labels' QR routers, gated on labels
-  // being enabled.
-  // DONE WHEN: merge-labels-qr.ts's DONE WHEN reads true — the boot shim,
-  // this alias block, and migration 0004's compat views retire together.
-  if (manifest.name === "labels") { // HISTORICAL DATA MIGRATION names the module it heals (merge alias)
-    const compat = (imported as { qrCompatRouter?: Router } | undefined)?.qrCompatRouter;
-    if (compat && typeof compat === "function") {
-      app.use(
-        "/api/v1/orgs/:slug/modules/core-labels-qr",
-        requireAuth,
-        withTenant,
-        requireModuleEnabled("labels"), // HISTORICAL DATA MIGRATION names the module it heals
-        compat,
-      );
-    }
-  }
   // Capture the module's primary-entity router (if exposed) so the
   // instance-items dispatcher can route /instances/:name/items to it.
   const primary = (imported as ModuleApiModule | undefined)?.primaryRouter;

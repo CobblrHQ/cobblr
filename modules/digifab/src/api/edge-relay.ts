@@ -16,12 +16,11 @@
 //   ui      ──GET  /status  ──►  (is a bridge connected for this workspace?)
 
 import { Router } from "express";
-import { z } from "zod";
 import { platform } from "@cobblr/platform-contract";
 import type { Request } from "express";
 import { tenantContext } from "../db.js";
 import { asyncHandler, requireRole } from "./util.js";
-import { edgeBridgeName, edgeChannelKey, parseBridgeReport } from "@cobblr/platform-contract/edge-channel";
+import { edgeBridgeName, edgeChannelKey, parseBridgeReport, parsePollLanes, parseRelayResponse } from "@cobblr/platform-contract/edge-channel";
 
 // Multi-bridge: a workspace can run more than one bridge (separate sites/VLANs,
 // or LightBurn which must run its bridge on the LightBurn PC). Each bridge polls
@@ -55,23 +54,32 @@ edgeRelayRouter.get("/poll", asyncHandler(async (req, res) => {
   if (!requireRole(req, res, "owner", "admin", "member")) return;
   const ac = new AbortController();
   req.on("close", () => ac.abort());
-  const item = await platform().edge.relayPoll(channelKeyOf(req), { signal: ac.signal });
+  const item = await platform().edge.relayPoll(channelKeyOf(req), { signal: ac.signal, lanes: parsePollLanes(req.query.lanes) });
   if (item) res.json(item);
   else res.status(204).end();
 }));
 
 // POST /respond — the bridge returns a polled request's result.
-const Respond = z.object({ id: z.string().min(1), status: z.number().int(), body: z.unknown().optional() });
 edgeRelayRouter.post("/respond", asyncHandler(async (req, res) => {
   if (!requireRole(req, res, "owner", "admin", "member")) return;
-  const parsed = Respond.safeParse(req.body);
-  if (!parsed.success) {
+  const parsed = parseRelayResponse(req.body);
+  if (!parsed) {
     res.status(400).json({ error: { code: "bad_body", message: "id + numeric status required" } });
     return;
   }
-  await platform().edge.relayRespond(channelKeyOf(req), parsed.data);
+  await platform().edge.relayRespond(channelKeyOf(req), parsed);
   res.json({ ok: true });
 }));
+
+// Files through the bridge (the same handler as the kernel wire's /blobs/:id).
+// AI-REACH: exempt the bridge's own file transport (a devices:edge token moving bytes for a relayed call), never an operation a person or Cobb starts
+const blobRoute = asyncHandler(async (req, res) => {
+  if (!requireRole(req, res, "owner", "admin", "member")) return;
+  await platform().edge.serveBlob(channelKeyOf(req), String(req.params.id ?? ""), req, res);
+});
+edgeRelayRouter.get("/blobs/:id", blobRoute);
+// UI-REACH: a bridge's own file transport for a relayed call
+edgeRelayRouter.put("/blobs/:id", blobRoute);
 
 // GET /status — is a bridge connected for this workspace right now?
 // (The EdgeBridgeSetup dialog polls this while waiting for the box to dial in.)

@@ -24,6 +24,7 @@
 // and if that were the only door then a spam folder would lock them out of
 // the workspace they just decided to keep. So they can choose a password
 // right here, and the strip at the foot of the page opens this same view.
+import { KeepExamples } from "./KeepExamples";
 import { useEffect, useState } from "react";
 import { Modal, PasswordInput } from "@cobblr/platform-web";
 import { api, ApiError } from "../lib/api";
@@ -72,6 +73,9 @@ export function SandboxSaveModal({
   const [paths, setPaths] = useState<Paths | null>(null);
   const [kept, setKept] = useState<{ emailed: boolean; email: string } | null>(null);
   const [copied, setCopied] = useState<{ emailed: boolean; link: string; days: number } | null>(null);
+  const [examples, setExamples] = useState(false);
+  // Kept with an address that already keeps a trial here: waiting on its yes.
+  const [joining, setJoining] = useState<{ email: string; emailed: boolean; days: number } | null>(null);
   const [resent, setResent] = useState<null | "sent" | "failed">(null);
   const [password, setPassword] = useState("");
   const [passwordOpen, setPasswordOpen] = useState(false);
@@ -111,13 +115,20 @@ export function SandboxSaveModal({
       // Tapped with seconds left, the hour can end while this is in flight.
       // The end waits for the answer; kept, it never comes.
       const res = await holdSandboxEnd(api.keepSandbox(to), { keeps: true });
+      if (res.kind === "join_pending") {
+        // Unsent, the form stays so asking again is one tap.
+        if (!res.emailed) {
+          setError("That address already keeps a trial here, and we could not send it the link. Try again in a minute.");
+          return;
+        }
+        setJoining({ email: to, emailed: true, days: res.days });
+        return;
+      }
       setKept({ emailed: res.emailed, email: to });
       onKept?.({ email: to, expires_at: res.expires_at, emailed: res.emailed });
     } catch (err) {
       setError(
-        err instanceof ApiError && err.status === 409
-          ? "That email already has an account. Sign in with it instead."
-          : "We could not save that. Please try again.",
+        err instanceof ApiError && err.status === 409 ? err.message : "We could not save that. Please try again.",
       );
     } finally {
       setBusy(null);
@@ -129,7 +140,7 @@ export function SandboxSaveModal({
     setBusy("copy");
     setError(null);
     try {
-      const r = await holdSandboxEnd(api.takeSandboxWork(email.trim()));
+      const r = await holdSandboxEnd(api.takeSandboxWork(email.trim(), examples));
       setCopied({ emailed: r.emailed, link: r.link, days: r.days });
     } catch (err) {
       setError(
@@ -176,7 +187,12 @@ export function SandboxSaveModal({
   return (
     <Modal open={open} onClose={onClose} title={kept ? "This workspace is yours" : "Don't lose this"} size="md">
       <div className="space-y-4">
-        {kept ? (
+        {joining && !kept ? (
+          <p className="text-sm text-content dark:text-mortar-100" data-testid="kept-joining">
+            <strong>{joining.email} already keeps a trial here.</strong>{" "}
+            {`We sent it a link: open it to add this sandbox beside that one, for ${joining.days} days of its own. This sandbox waits for you until then.`}
+          </p>
+        ) : kept ? (
           <div className="space-y-3" data-testid="kept-view">
             <p className="text-sm text-content dark:text-mortar-100">
               <strong>Saved. This workspace is yours now.</strong>{" "}
@@ -303,6 +319,7 @@ export function SandboxSaveModal({
                 </span>
               </button>
             </div>
+            <KeepExamples checked={examples} onChange={setExamples} />
           </>
         )}
         {error && <p className="text-sm text-ember-600 dark:text-ember-400">{error}</p>}

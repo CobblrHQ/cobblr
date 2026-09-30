@@ -11,6 +11,7 @@
 // e2e/collection-header-one-line.mjs checks the centre line at 1440 and 390.
 import type { ReactNode } from "react";
 import { PlaceOnPlan } from "./PlaceOnPlan";
+import { ExportCsvButton } from "./ExportCsvButton";
 
 /** The one height every control in the strip takes (36px), with its content
  *  centred. A custom control in `filters` or `actions` puts this on its own
@@ -36,6 +37,8 @@ export function CollectionHeader({
   actions,
   hint,
   kind,
+  exportCsv = true,
+  exportQuery,
   below,
 }: {
   title: ReactNode;
@@ -54,6 +57,11 @@ export function CollectionHeader({
   /** The collection's kind: a collection of physical things offers the floor
    *  plan's place mode under its name. */
   kind?: string;
+  /** With a kind, the strip offers Export (the collection as a spreadsheet,
+   *  read as the viewer). False only where the page offers its own. */
+  exportCsv?: boolean;
+  /** The search the list is showing, so the file is what is on screen. */
+  exportQuery?: string;
   /** Anything else for the line under the strip. */
   below?: ReactNode;
 }) {
@@ -74,9 +82,10 @@ export function CollectionHeader({
             {filters}
           </div>
         )}
-        {(search || actions) && (
+        {(search || actions || (kind && exportCsv)) && (
           <div className="ml-auto flex flex-wrap items-center justify-end gap-2" data-header-controls>
             {search}
+            {kind && exportCsv ? <ExportCsvButton kind={kind} q={exportQuery} /> : null}
             {actions}
           </div>
         )}

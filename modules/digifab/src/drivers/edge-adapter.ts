@@ -14,6 +14,11 @@
 // `edge_adapter` is a BUILT-IN driver key (always available); no install
 // needed — just create a connection pointing base_url at your bridge.
 
+import { createHash, randomUUID } from "node:crypto";
+import { unlink, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { EdgeUnsupported } from "@cobblr/platform-contract";
 import { DriverSaid, sentenceIn } from "../job-truth.js";
 import type {
   CommandResult,
@@ -40,7 +45,7 @@ import { edgeInstanceOf } from "@cobblr/platform-contract/edge-bridge-client";
  *  through it (the cloud→edge tunnel) instead of dialing the bridge directly.
  *  Supplied by the caller (which holds platform().edge + the orgId), so this
  *  pure driver stays platform-free. Returns the agent's { status, body }. */
-export type EdgeRelay = (req: { method: string; path: string; body?: unknown }) => Promise<{ status: number; body: unknown }>;
+export type EdgeRelay = (req: { method: string; path: string; body?: unknown; file?: { path: string; sha256: string; size: number } }) => Promise<{ status: number; body: unknown }>;
 
 const JOB_STATES = new Set<JobState>([
   "queued", "printing", "paused", "completed", "failed", "cancelled", "awaiting-assignment", "unknown",
@@ -255,6 +260,31 @@ export class EdgeAdapterDriver implements MachineDriver {
   }
 
   async uploadFile(file: Uint8Array, filename: string): Promise<UploadResult> {
+    if (this.relay) {
+      // Through a bridge the file goes on its blob channel, never inside the
+      // relay's JSON (a database row, capped at 20 MB, where a real 3MF did not
+      // fit). A bridge too old for files gets it the old way.
+      const spool = join(tmpdir(), `cobblr-upload-${randomUUID()}`);
+      try {
+        await writeFile(spool, file);
+        const r = await this.relay({
+          method: "POST",
+          path: this.tunnelPrefix + "/upload",
+          body: { filename },
+          file: { path: spool, sha256: createHash("sha256").update(file).digest("hex"), size: file.length },
+        });
+        if (r.status >= 400) {
+          const said = sentenceIn(r.body);
+          throw said ? new DriverSaid(r.status, said) : new Error(`adapter POST ${this.tunnelPrefix}/upload → ${r.status} (tunnel)`);
+        }
+        const data = r.body as { fileId?: string } | null;
+        return { fileId: data?.fileId ?? filename, filename };
+      } catch (e) {
+        if (!(e instanceof EdgeUnsupported)) throw e;
+      } finally {
+        await unlink(spool).catch(() => {});
+      }
+    }
     const data = (await this.req("POST", "/upload", { file: { bytes: file, filename } })) as { fileId?: string };
     return { fileId: data?.fileId ?? filename, filename };
   }
@@ -265,7 +295,7 @@ export class EdgeAdapterDriver implements MachineDriver {
 
   async submitJob(args: SubmitArgs): Promise<SubmitResult> {
     const data = (await this.req("POST", "/submit", {
-      body: { fileId: args.fileId, target: args.deviceId ?? args.tag ?? null },
+      body: { fileId: args.fileId, target: args.deviceId ?? args.tag ?? null, ...(args.idempotencyKey ? { idempotencyKey: args.idempotencyKey } : {}) },
     })) as { jobId?: string; queued?: boolean };
     const jobId = data?.jobId ?? null;
     const queued = data?.queued ?? !!jobId;

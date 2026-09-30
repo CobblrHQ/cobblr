@@ -22,10 +22,10 @@ import { defineModule } from "@cobblr/platform-contract";
 
 export default defineModule({
   name: "core-apps",
-  version: "0.1.2",
+  version: "0.1.4",
   displayName: "Apps",
   description:
-    "Structured worker apps for the member portal: composed pages of views, actions, forms and stats, rendered by the App Player. Every block stays inside the capability + read-scope boundary.",
+    "Simple screens for the people who work with your things: the lists, buttons and forms they need, and nothing more.",
   icon: "layout-dashboard",
   band: "stock",
   autoEnable: true, // ambient capability — on for every workspace
@@ -36,11 +36,6 @@ export default defineModule({
   },
 
   api: () => import("./api/index.js"),
-
-  intents: [
-    { name: "build_app", description: "Define a worker app (pages + blocks) for the portal" },
-    { name: "open_app", description: "Open a worker app a member has access to" },
-  ],
 
   dependencies: [],
 
@@ -58,7 +53,6 @@ export default defineModule({
       "core-apps.app.updated",
       "core-apps.app.deleted",
     ],
-    api: [],
     actions: [],
   },
 

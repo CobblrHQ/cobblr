@@ -117,6 +117,7 @@ import { type ScanTarget } from "./scanInboxShared";
 import { ScanNameItInline as NameItInline } from "../components/ScanNameItInline";
 import { LOOKUP_GAVE_UP, RECEIPT_READ_AGAIN, RECEIPT_UNREAD_SENTENCE, STORE_CODE_TITLE, RECEIPT_READ_ANYWAY, receiptAlreadyInSentence } from "@cobblr/platform-contract/scan-copy";
 import { scanInboxKeys } from "../lib/scan-inbox-keys";
+import { withArticle } from "@cobblr/platform-contract/plural";
 
 /** Base-kind fallback for when the scan menu can't load — the menu
  *  (GET /modules/core-scan/menu) is the real source of truth and lists
@@ -895,7 +896,7 @@ export function InboxCard({
     mutationFn: () => api.updateScanItem(activeSlug, item.id, { name: photoSuggestedName }),
     onSuccess: () => {
       void qc.invalidateQueries({ queryKey: scanInboxKeys.all(activeSlug) });
-      toast.success(`Renamed to "${photoSuggestedName}" — fix reported to the barcode DB.`);
+      toast.success(`Renamed to "${photoSuggestedName}". Fix reported to the barcode DB.`);
     },
     onError: (e) => toast.error(e instanceof ApiError ? e.message : String(e)),
   });
@@ -1157,7 +1158,7 @@ export function InboxCard({
       toast.success(
         fresh.suggested_name
           ? `Lookup updated: ${fresh.suggested_name}`
-          : "Re-ran — still no match. Fill it in manually.",
+          : "Re-ran, still no match. Fill it in manually.",
       );
     },
     onError: (e) => {
@@ -1903,7 +1904,7 @@ export function InboxCard({
                   {answeredBy}{" "}
                   {/* The order that made it so, where it can be changed. */}
                   <Link to={`/configuration/ai#${WHO_ANSWERS_ANCHOR}`} className="text-accent hover:underline">
-                    Who answers, in order
+                    Who does what, in order
                   </Link>
                 </p>
               )}
@@ -1987,7 +1988,7 @@ export function InboxCard({
                   "reject-guess": "Said the first look was wrong",
                   "crop-again": "Cut it again from the group photo",
                   barcode: "Corrected the barcode",
-                  wrong: "Flagged wrong — re-checked everything",
+                  wrong: "Flagged wrong, re-checked everything",
                   enrich: "Asked for more detail",
                   confirm: "Locked into the barcode database",
                   combine: "Combined similar items",
@@ -3624,7 +3625,7 @@ export function InboxCard({
                             openForm(dest);
                           }}
                           className="inline-flex items-center gap-1 rounded-md bg-subtle/60 dark:bg-slate-800/60 border border-line/70 dark:border-slate-700/70 px-1.5 py-0.5 text-[11px] text-content dark:text-mortar-200 min-w-0 hover:border-cobble-400 dark:hover:border-cobble-600 transition"
-                          title={`${byNameAxis.label}: ${categoryChipLabel(byNameCategory, sessionCategoryLabel)} — tap to edit`}
+                          title={`${byNameAxis.label}: ${categoryChipLabel(byNameCategory, sessionCategoryLabel)} (tap to edit)`}
                         >
                           <span className="text-faint shrink-0">{byNameAxis.label}</span>
                           <span className="truncate">{categoryChipLabel(byNameCategory, sessionCategoryLabel)}</span>
@@ -3639,7 +3640,7 @@ export function InboxCard({
                             openForm(dest);
                           }}
                           className="inline-flex items-center gap-1 rounded-md bg-subtle/60 dark:bg-slate-800/60 border border-line/70 dark:border-slate-700/70 px-1.5 py-0.5 text-[11px] text-content dark:text-mortar-200 min-w-0 hover:border-cobble-400 dark:hover:border-cobble-600 transition"
-                          title={`${menuFieldLabel(menu, dest, k)}: ${String(v)} — tap to edit`}
+                          title={`${menuFieldLabel(menu, dest, k)}: ${String(v)} (tap to edit)`}
                         >
                           <span className="text-faint shrink-0">{menuFieldLabel(menu, dest, k)}</span>
                           {/* A colour is shown as itself: a swatch beside the
@@ -4777,7 +4778,7 @@ function ParentTypeCard({
   } else if (present.length === 0) {
     body = (
       <div className="text-[11px] text-faint dark:text-slate-500">
-        Fill {keyFields.map(labelOf).join(" / ") || "the defining fields"} and we'll match this to a {typeLabel.toLowerCase()} (or create one).
+        Fill {keyFields.map(labelOf).join(" / ") || "the defining fields"} and we'll match this to {withArticle(typeLabel.toLowerCase())} (or create one).
       </div>
     );
   } else if (match) {
@@ -4801,7 +4802,7 @@ function ParentTypeCard({
       <>
         <div className="text-[12px] text-content dark:text-mortar-100">
           <span className="font-semibold text-cobble-600 dark:text-cobble-300">✦ New {typeLabel.toLowerCase()}</span>
-          {" — "}no match yet, so a {typeLabel.toLowerCase()} will be created from these and this {childNoun} linked to it.
+          {" — "}no match yet, so {withArticle(typeLabel.toLowerCase())} will be created from these and this {childNoun} linked to it.
         </div>
         <div className="mt-1.5 flex flex-wrap gap-1.5">
           {present.map((k) => chip(k, values[k]))}

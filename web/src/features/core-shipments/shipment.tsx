@@ -1,6 +1,6 @@
 // Shipment — where the parcel is. Contributed by core-shipments onto
-// purchases:order through the panel seam, so the purchases page never names
-// core-shipments and a workspace without the capability sees nothing.
+// purchases:order and sales:order through the panel seam, so neither page
+// names core-shipments and a workspace without the capability sees nothing.
 //
 // Renders NOTHING for an order with no tracking number. Most orders never get
 // one, and an empty "no shipment" box on every order would be noise on the

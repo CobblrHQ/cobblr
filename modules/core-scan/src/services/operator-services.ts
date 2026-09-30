@@ -12,6 +12,7 @@
 // flow already calls (lookupBarcode, hostedIdentifyWhy), with its allowance,
 // entitlement and metering, and adds nothing of its own.
 
+import { randomUUID } from "node:crypto";
 import type { BuiltInServiceDef } from "@cobblr/platform-contract/services";
 import { platform } from "@cobblr/platform-contract";
 import { lookupBarcode, type BarcodeOutcome } from "./barcode-lookup.js";
@@ -146,4 +147,111 @@ export function registerOperatorServices(): void {
   registered = true;
   platform().services.registerBuiltIn(barcodeLookupBuiltIn());
   if (process.env.COBBLR_IDENTIFY_URL?.trim()) platform().services.registerBuiltIn(identifyImageBuiltIn());
+}
+
+// ── The scan flow asks the capability ────────────────────────────────────
+//
+// A self-hoster who connects their own barcode catalogue or vision service
+// puts it first in the order, and the scan flow must then ask it. When the
+// order's first answer is this instance's own built-in (every workspace that
+// connected nothing, which is the whole hosted product), the scan flow calls
+// the same function it always did, directly, so nothing about it changes:
+// not the result's detail, not the caching, not the metering.
+
+export interface ConnectedFirstDeps {
+  firstStep(orgId: string, capability: string): Promise<{ source: "connection" | "built-in"; credential_id?: string; label: string } | null>;
+  invoke(req: { orgId: string; capability: string; input: unknown; files?: Record<string, string>; via: { credentialId: string }; idempotencyKey: string }): Promise<{ id: string; status: string }>;
+  output(orgId: string, jobId: string): Promise<unknown>;
+  writeFile(orgId: string, bytes: Uint8Array, mimeType: string): Promise<string | null>;
+}
+const REAL_CONNECTED: ConnectedFirstDeps = {
+  firstStep: async (orgId, capability) => (await platform().services.chainFor(orgId, null, capability)).steps[0] ?? null,
+  invoke: (req) => platform().services.invoke(req),
+  output: async (orgId, jobId) => (await platform().services.job(orgId, jobId))?.output ?? null,
+  writeFile: async (orgId, bytes, mimeType) => (await platform().files.write(orgId, bytes, { mimeType, filename: "scan-photo" }))?.fileId ?? null,
+};
+
+/** A connected service's answer, when one is first in this workspace's order
+ *  and answers. Null means "ask the instance's own", which is also what a
+ *  connected service that fails or is still working after the inline budget
+ *  gets: the scan never waits longer, or does worse, for having one. */
+async function askConnectedFirst(
+  orgId: string,
+  capability: string,
+  input: unknown,
+  deps: ConnectedFirstDeps,
+  files?: () => Promise<Record<string, string> | null>,
+): Promise<{ label: string; output: unknown } | null> {
+  let first;
+  try {
+    first = await deps.firstStep(orgId, capability);
+  } catch {
+    return null;
+  }
+  if (!first || first.source !== "connection" || !first.credential_id) return null;
+  try {
+    const f = files ? await files() : undefined;
+    if (files && !f) return null;
+    const ref = await deps.invoke({
+      orgId,
+      capability,
+      input,
+      ...(f ? { files: f } : {}),
+      via: { credentialId: first.credential_id },
+      // Every scan asks afresh: the same code a minute later is a new question.
+      idempotencyKey: randomUUID(),
+    });
+    if (ref.status !== "done") {
+      console.log(`[services] ${capability} on ${first.label}: ${ref.status}, answering from this instance`);
+      return null;
+    }
+    return { label: first.label, output: await deps.output(orgId, ref.id) };
+  } catch (err) {
+    console.log(`[services] ${capability} on ${first.label} failed (${(err as Error).message}), answering from this instance`);
+    return null;
+  }
+}
+
+/** lookupBarcode, asked of this workspace's order first. */
+export async function lookupBarcodeFor(orgId: string, code: string, deps: ConnectedFirstDeps = REAL_CONNECTED, direct = lookupBarcode): Promise<BarcodeOutcome> {
+  const asked = await askConnectedFirst(orgId, "barcode.lookup", { code }, deps);
+  if (!asked) return direct(code);
+  const o = (asked.output ?? {}) as Record<string, unknown>;
+  if (o.found !== true || typeof o.title !== "string" || !o.title.trim()) return { outcome: "miss" };
+  const str = (v: unknown) => (typeof v === "string" && v.trim() ? v : null);
+  return {
+    outcome: "hit",
+    hit: {
+      source: asked.label,
+      title: o.title,
+      brand: str(o.brand),
+      model: str(o.model),
+      description: str(o.description),
+      category: str(o.category),
+      image_url: str(o.image_url),
+      raw: { service: asked.label },
+    },
+  };
+}
+
+/** hostedIdentifyWhy, asked of this workspace's order first. */
+export async function identifyWhyFor(
+  opts: Parameters<typeof hostedIdentifyWhy>[0] & { mimeType?: string },
+  deps: ConnectedFirstDeps = REAL_CONNECTED,
+  direct = hostedIdentifyWhy,
+): ReturnType<typeof hostedIdentifyWhy> {
+  const asked = await askConnectedFirst(
+    opts.orgId,
+    "identify.image",
+    opts.barcode ? { barcode: opts.barcode } : {},
+    deps,
+    async () => {
+      const id = await deps.writeFile(opts.orgId, Buffer.from(opts.imageB64, "base64"), opts.mimeType ?? "image/jpeg");
+      return id ? { image: id } : null;
+    },
+  );
+  if (!asked) return direct(opts);
+  const o = (asked.output ?? {}) as { kind?: unknown };
+  if (o.kind !== "item" && o.kind !== "receipt" && o.kind !== "person" && o.kind !== "unidentifiable") return direct(opts);
+  return { answer: { ...(asked.output as object), source: asked.label } as Awaited<ReturnType<typeof hostedIdentifyWhy>>["answer"] };
 }

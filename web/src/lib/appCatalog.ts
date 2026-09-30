@@ -30,7 +30,7 @@ function useNavHidden(slug: string): ReadonlySet<string> {
   return useMemo(() => new Set(hidden), [hidden]);
 }
 
-export function useAppCatalog(enabled = true): { apps: AppEntry[]; loading: boolean } {
+export function useAppCatalog(enabled = true): { apps: AppEntry[]; loading: boolean; failed: boolean; retry: () => void } {
   const { activeSlug } = useActiveOrg();
   const modules = useQuery({
     queryKey: ["org-modules", activeSlug],
@@ -40,7 +40,7 @@ export function useAppCatalog(enabled = true): { apps: AppEntry[]; loading: bool
   });
   const hidden = useNavHidden(activeSlug);
   const apps = useMemo(() => appCatalog(modules.data?.items ?? [], hidden), [modules.data, hidden]);
-  return { apps, loading: modules.isLoading };
+  return { apps, loading: modules.isLoading, failed: modules.isError, retry: () => void modules.refetch() };
 }
 
 /** What a person can do with an app from anywhere: open it; turn it on when
@@ -70,7 +70,7 @@ export function useModuleDoor() {
     onError: (e) => toast.error(e instanceof ApiError ? e.message : String(e)),
   });
   const showInSidebar = (app: AppEntry) => {
-    writeNavHidden(activeSlug, readNavHidden(activeSlug).filter((k) => k !== app.key));
+    writeNavHidden(activeSlug, readNavHidden(activeSlug).filter((k) => k !== app.key && k !== app.name));
     toast.success(`${app.label} is back in your sidebar`);
   };
   return {

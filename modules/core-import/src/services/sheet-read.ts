@@ -8,6 +8,7 @@
 // only, so without the fill every other cell of the merge reads as blank, and
 // the columns under a group header would have no header at all.
 
+import { unguardCsvText } from "@cobblr/platform-contract/csv";
 import * as XLSX from "xlsx";
 
 export type CellValue = string | number | boolean | Date;
@@ -105,6 +106,7 @@ export function readWorkbook(buf: Uint8Array, filename: string): RawSheet[] {
     throw new SheetReadError("unreadable", `That file couldn't be read as a spreadsheet (${(err as Error).message}).`);
   }
 
+  const textFile = format === "csv" || format === "tsv";
   const out: RawSheet[] = [];
   wb.SheetNames.forEach((name, i) => {
     const ws = wb.Sheets[name];
@@ -116,7 +118,13 @@ export function readWorkbook(buf: Uint8Array, filename: string): RawSheet[] {
     for (let r = 0; r < Math.min(data.length, MAX_ROWS_PER_SHEET); r++) {
       const src = data[r] ?? [];
       const row: Array<Cell | null> = [];
-      for (let c = 0; c < Math.min(src.length, MAX_COLUMNS); c++) row.push(cellOf(src[c]));
+      for (let c = 0; c < Math.min(src.length, MAX_COLUMNS); c++) {
+        const cell = cellOf(src[c]);
+        // A spreadsheet stores a guarded cell's apostrophe as formatting; a
+        // CSV writes it into the text, and here it comes off again.
+        if (cell && textFile && typeof cell.v === "string") row.push({ v: unguardCsvText(cell.v), text: unguardCsvText(cell.text) });
+        else row.push(cell);
+      }
       rows.push(row);
     }
     for (const m of ws["!merges"] ?? []) {

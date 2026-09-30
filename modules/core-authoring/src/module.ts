@@ -22,10 +22,10 @@ import { defineModule } from "@cobblr/platform-contract";
 
 export default defineModule({
   name: "core-authoring",
-  version: "0.5.1",
+  version: "0.5.3",
   displayName: "App Builder",
   description:
-    "Describe what you want; the builder compiles a prompt whose answer is a working bundle (custom fields + wires) you review and apply. The kernel validates every candidate before anything is applied.",
+    "Describe what you want to keep track of and get a ready-made setup, fields and automations included, to review before anything changes.",
   icon: "wand-2",
   band: "stock",
   autoEnable: true, // ambient capability — on for every workspace
@@ -52,7 +52,6 @@ export default defineModule({
 
   exposes: {
     events: ["core-authoring.draft.created", "core-authoring.draft.applied"],
-    api: [],
     actions: [],
   },
 

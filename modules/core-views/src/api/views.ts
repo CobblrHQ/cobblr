@@ -5,6 +5,7 @@ import { Router, type Response } from "express";
 import { z } from "zod";
 import { sql, type ExpressionBuilder } from "kysely";
 import { platform, viewQuery } from "@cobblr/platform-contract";
+import { csvDownloadHeaders } from "@cobblr/platform-contract/csv";
 import { sessionUser, tenantContext, tenantDb, type CoreViewsDB } from "../db.js";
 import { asyncHandler, badBody, requireRole } from "./util.js";
 
@@ -286,6 +287,45 @@ viewsRouter.get(
       ...result,
       collection_empty: collectionEmpty,
     });
+  }),
+);
+
+// The view as a spreadsheet: its filter, its sort and (for a table) its
+// columns, read as the viewer through the one export seam, so a field their
+// role may not read is not in the file.
+// AI-REACH: exempt (a file download for a person; the assistant reads the same rows through /data)
+viewsRouter.get(
+  "/:id/export.csv",
+  asyncHandler(async (req, res) => {
+    const id = req.params.id;
+    if (!id) {
+      res.status(400).json({ error: { code: "missing_id", message: "id required" } });
+      return;
+    }
+    const ctx = tenantContext(req);
+    const view = await tenantDb(req)
+      .selectFrom("core_views_views")
+      .select(["name", "entity_kind", "config"])
+      .where("id", "=", id)
+      .where(visibleTo(sessionUser(req)?.id ?? null))
+      .executeTakeFirst();
+    if (!view) return notFound(res);
+    const config = (view.config ?? {}) as Record<string, unknown>;
+    const today = await platform().accounts.dayFor(sessionUser(req)?.id ?? null, {
+      said: typeof req.query.today === "string" ? req.query.today : undefined,
+    });
+    const only = Array.isArray(config.visible_fields) ? config.visible_fields.filter((f): f is string => typeof f === "string") : undefined;
+    const out = await platform().entities.exportCsv(
+      ctx.org.id,
+      view.entity_kind,
+      { today, ...viewQuery(config) },
+      { userId: sessionUser(req)?.id, role: ctx.role },
+      only,
+    );
+    if (!out) return notFound(res);
+    const stamp = out.filename.match(/\d{4}-\d{2}-\d{2}\.csv$/)?.[0] ?? "export.csv";
+    const named = view.name.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");
+    res.set(csvDownloadHeaders(`${named || "view"}-${stamp}`, out.complete)).send(out.csv);
   }),
 );
 

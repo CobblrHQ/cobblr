@@ -1,0 +1,36 @@
+{
+  "key_id": "k_test0001",
+  "secret": "s3cr3t-for-vectors-only",
+  "cases": [
+    {
+      "method": "GET",
+      "path_and_query": "/v1/health",
+      "body_utf8": "",
+      "body_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "timestamp": 1759150000,
+      "nonce": "00112233445566778899aabbccddeeff",
+      "string_to_sign": "1759150000\n00112233445566778899aabbccddeeff\nGET\n/v1/health\ne3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "signature": "v1=b21611fd0a7c93e1dcc21a77afd75d8271e3461e2f65de3c4afaad35144dc4fa"
+    },
+    {
+      "method": "POST",
+      "path_and_query": "/v1/jobs",
+      "body_utf8": "{\"capability\":\"x.y\"}",
+      "body_sha256": "2b0ef8a17d3143614d04fc3bac621d9861351d2d1ec998c2af6d32a695425ffa",
+      "timestamp": 1759150001,
+      "nonce": "ffeeddccbbaa99887766554433221100",
+      "string_to_sign": "1759150001\nffeeddccbbaa99887766554433221100\nPOST\n/v1/jobs\n2b0ef8a17d3143614d04fc3bac621d9861351d2d1ec998c2af6d32a695425ffa",
+      "signature": "v1=46707af59f0f68e36b78be573e16026368c545498a78b579492870190754c075"
+    },
+    {
+      "method": "PUT",
+      "path_and_query": "/v1/blobs/abababababababababababababababababababababababababababababababab?resume=1",
+      "body_utf8": "hello",
+      "body_sha256": "2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824",
+      "timestamp": 1759150002,
+      "nonce": "0123456789abcdef0123456789abcdef",
+      "string_to_sign": "1759150002\n0123456789abcdef0123456789abcdef\nPUT\n/v1/blobs/abababababababababababababababababababababababababababababababab?resume=1\n2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824",
+      "signature": "v1=b210ee428b23bb89ebcfc60bf512642dfb8d01d7e01f006af6aaa8e104e6681e"
+    }
+  ]
+}

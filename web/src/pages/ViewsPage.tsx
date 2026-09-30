@@ -5,7 +5,7 @@
 // v0.1 renders the 'list' view_type. Future kanban/calendar/table
 // renderers swap in here as they ship.
 
-import { useState, useMemo, useEffect, type MouseEvent, type ReactNode } from "react";
+import { useState, useMemo, useEffect, type CSSProperties, type MouseEvent, type ReactNode } from "react";
 import { useKindLabels } from "../lib/useKindLabels";
 import { dayHere, daysUntilField, expiryPhrase, expiryState } from "@cobblr/platform-contract";
 import { tallyCadence, CADENCE_PRESETS } from "../lib/cadence";
@@ -13,16 +13,20 @@ import { Link, useNavigate, useSearchParams } from "react-router-dom";
 import { useDetailRoute, useListRoute } from "../lib/useDetailRoute";
 import { ViewEmptyState } from "../components/ViewEmptyState";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { ChevronLeft, ChevronRight, LayoutList, Pencil, Pin, PinOff, Plus, Trash2 } from "lucide-react";
+import { ChevronLeft, ChevronRight, FileDown, LayoutList, Pencil, Pin, PinOff, Plus, Trash2 } from "lucide-react";
 import { WEEKDAYS, MONTHS, isoLocal, buildMonthGrid, shiftMonth } from "../lib/month-grid";
 import { useMutation } from "@tanstack/react-query";
 import { ApiError, api, type SavedView } from "../lib/api";
 import { useActiveOrg } from "../auth/ActiveOrgContext";
-import { Modal, useToast, useConfirm, usePageTitle, BulkActionBar, useFlowHost, EntityPhoto, useRunAction, LOCATION_GROUP_KEY, TILE_GRID, TILE_TITLE, distinctSubtitle } from "@cobblr/platform-web";
+import { Modal, downloadBlob, useToast, useConfirm, usePageTitle, BulkActionBar, useFlowHost, EntityPhoto, useRunAction, LOCATION_GROUP_KEY, TILE_GRID, TILE_TITLE, distinctSubtitle } from "@cobblr/platform-web";
 import { groupRows, fieldVal, orderedGroups, NO_GROUP, NO_GROUP_LABEL } from "../lib/view-group-key";
 import { RowStockProvider, useRowStock } from "../components/ViewRowStock";
 import { useAreaResolver } from "../lib/useAreaResolver";
 import { useViewData, type ViewData } from "../lib/useViewData";
+import { BoardDnd, dayCoordinates, useBoardCard, useBoardColumn } from "../components/views/BoardDrag";
+import { GanttBar } from "../components/views/GanttBar";
+import { draggedBar, onDay } from "../lib/view-dates";
+import { isSettableField, useViewRecordEdit } from "../lib/recordWriter";
 import { ViewMore } from "../components/ViewMore";
 import {
   useKindFields,
@@ -38,6 +42,7 @@ import {
   type FilterRow,
   type SortRow,
 } from "../components/ViewBuilder";
+import { layoutConfig } from "../lib/view-config";
 
 export function ViewsPage() {
   usePageTitle("Views");
@@ -236,6 +241,37 @@ function ViewDataModal({
   );
 }
 
+/** The view as a spreadsheet: its filter, its sort and (a table) its columns,
+ *  written by the server as this person reads the collection. */
+function ViewExportButton({ slug, viewId }: { slug: string; viewId: string }) {
+  const toast = useToast();
+  const [busy, setBusy] = useState(false);
+  return (
+    <button
+      type="button"
+      disabled={busy}
+      data-testid="view-export"
+      title="Download this view as a spreadsheet (CSV)"
+      className="ml-auto inline-flex items-center gap-1 rounded px-1.5 py-0.5 text-xs text-accent hover:bg-subtle dark:hover:bg-slate-800 disabled:opacity-50"
+      onClick={async () => {
+        setBusy(true);
+        try {
+          const got = await api.exportViewCsv(slug, viewId);
+          downloadBlob(got.blob, got.filename);
+          if (got.complete) toast.success("Spreadsheet downloaded.");
+          else toast.info("Downloaded the first 5,000. Narrow the view to get the rest.");
+        } catch (err) {
+          toast.error((err as Error).message);
+        } finally {
+          setBusy(false);
+        }
+      }}
+    >
+      <FileDown size={12} /> {busy ? "Exporting…" : "Export"}
+    </button>
+  );
+}
+
 /** The type-switched render of one saved view's rows — shared by the config
  *  page's preview modal, the full-page /views/:viewId surface and the
  *  instance page's view tabs. `collectionEmpty` is the server's word on
@@ -288,6 +324,7 @@ export function SavedViewBody({
         <span data-testid="view-count">
           {total === null ? `${items.length}+` : total} {(total ?? items.length) === 1 ? noun : plural}
         </span>
+        {items.length > 0 && <ViewExportButton slug={activeSlug} viewId={view.id} />}
       </div>
       {/* A filter the collection could not run used to vanish, so the rows
           below read as the filtered set when they were everything. */}
@@ -349,10 +386,10 @@ export function SavedViewBody({
         <TrendRenderer items={items} cfg={cfg} />
       )}
       {items.length > 0 && view.view_type === "calendar" && (
-        <CalendarRenderer items={items} cfg={cfg} />
+        <CalendarRenderer slug={activeSlug} kind={view.entity_kind} items={items} cfg={cfg} />
       )}
       {items.length > 0 && view.view_type === "gantt" && (
-        <GanttRenderer items={items} cfg={cfg} />
+        <GanttRenderer slug={activeSlug} kind={view.entity_kind} items={items} cfg={cfg} />
       )}
       {items.length > 0 && view.view_type === "gallery" && (
         <GalleryRenderer items={items} cfg={cfg} />
@@ -458,13 +495,14 @@ function TrendRenderer({ items, cfg }: { items: ViewRow[]; cfg: ViewConfig }) {
 // cfg.date_field names the field (a top-level native or a custom metadata
 // field, read via fieldVal); values are YYYY-MM-DD (or an ISO datetime,
 // sliced). cfg.title_field overrides what's shown on the chip (default title).
-function CalendarRenderer({ items, cfg }: { items: ViewRow[]; cfg: ViewConfig }) {
+export function CalendarRenderer({ slug, kind, items, cfg }: { slug: string; kind: string; items: ViewRow[]; cfg: ViewConfig }) {
   const dateField = (cfg.date_field as string) || "due_date";
   const titleField = (cfg.title_field as string) || "title";
   const [cursor, setCursor] = useState(() => {
     const d = new Date();
     return { y: d.getFullYear(), m: d.getMonth() };
   });
+  const [openDay, setOpenDay] = useState<string | null>(null);
   const { weeks } = useMemo(() => buildMonthGrid(cursor.y, cursor.m), [cursor]);
 
   const byDay = useMemo(() => {
@@ -486,44 +524,145 @@ function CalendarRenderer({ items, cfg }: { items: ViewRow[]; cfg: ViewConfig })
     return v == null ? r.title : String(v);
   };
 
+  // An entry moves to another day by dragging it there (#4173), when its
+  // kind has a writer and the date is one a person sets (not created_at).
+  const { edit, writable } = useViewRecordEdit(slug);
+  const dateDef = useKindFields(slug, kind).find((f) => f.name === dateField);
+  const movable = writable(kind) && isSettableField(dateDef);
+  const moveTo = (row: { kind: string; id: string; title: string }, day: string) => {
+    const full = items.find((r) => r.kind === row.kind && r.id === row.id);
+    const current = full ? fieldVal(full.fields, dateField) : null;
+    if (String(current ?? "").slice(0, 10) === day) return;
+    void edit(row, { [dateField]: onDay(current, day) }, `${row.title} is on ${dayWords(day)} now`);
+  };
+
   const placed = Object.values(byDay).reduce((n, a) => n + a.length, 0);
   const todayKey = isoLocal(new Date());
+  const monthDays = Object.keys(byDay)
+    .filter((k) => k.startsWith(`${cursor.y}-${String(cursor.m + 1).padStart(2, "0")}-`))
+    .sort();
 
   return (
     <div className="space-y-2">
       <div className="flex items-center gap-2">
-        <button onClick={() => setCursor((c) => shiftMonth(c, -1))} className="p-1 rounded hover:bg-subtle dark:hover:bg-slate-800 transition" title="Previous month"><ChevronLeft size={16} /></button>
+        <button onClick={() => setCursor((c) => shiftMonth(c, -1))} className="p-1 rounded hover:bg-subtle dark:hover:bg-slate-800 transition" title="Previous month" aria-label="Previous month"><ChevronLeft size={16} /></button>
         <span className="text-sm font-medium text-content dark:text-mortar-100 min-w-[9rem] text-center">{MONTHS[cursor.m]} {cursor.y}</span>
-        <button onClick={() => setCursor((c) => shiftMonth(c, 1))} className="p-1 rounded hover:bg-subtle dark:hover:bg-slate-800 transition" title="Next month"><ChevronRight size={16} /></button>
+        <button onClick={() => setCursor((c) => shiftMonth(c, 1))} className="p-1 rounded hover:bg-subtle dark:hover:bg-slate-800 transition" title="Next month" aria-label="Next month"><ChevronRight size={16} /></button>
         <button onClick={() => { const d = new Date(); setCursor({ y: d.getFullYear(), m: d.getMonth() }); }} className="ml-1 text-[10px] font-mono uppercase tracking-widest text-accent hover:underline">today</button>
         <div className="flex-1" />
-        <span className="text-[10px] font-mono text-faint dark:text-slate-500">on <code>{dateField}</code> · {placed} of {items.length}</span>
+        <span className="hidden sm:inline text-[10px] font-mono text-faint dark:text-slate-500">on <code>{dateField}</code> · {placed} of {items.length}</span>
       </div>
-      <div className="rounded-xl border border-line dark:border-slate-700 overflow-hidden">
-        <div className="grid grid-cols-7 bg-subtle/60 dark:bg-slate-800/40 border-b border-line dark:border-slate-700">
-          {WEEKDAYS.map((w) => (
-            <div key={w} className="px-2 py-1 text-[10px] font-mono uppercase tracking-widest text-faint dark:text-slate-500 text-center">{w}</div>
-          ))}
-        </div>
-        <div className="grid grid-cols-7">
-          {weeks.flat().map((day) => {
-            const key = isoLocal(day);
-            const inMonth = day.getMonth() === cursor.m;
-            const dayRows = byDay[key] ?? [];
-            return (
-              <div key={key} className={"min-h-[4.5rem] border-b border-r border-line dark:border-slate-800 p-1 " + (inMonth ? "bg-white dark:bg-slate-950" : "bg-mortar-50/40 dark:bg-slate-900/40")}>
-                <div className={"text-[11px] font-mono mb-0.5 px-1 " + (key === todayKey ? "inline-flex items-center justify-center w-5 h-5 rounded-full bg-accent text-white" : inMonth ? "text-content dark:text-mortar-200" : "text-faint dark:text-slate-600")}>{day.getDate()}</div>
-                <div className="space-y-0.5">
-                  {dayRows.slice(0, 4).map((r) => (
-                    <RecordLink key={`${r.kind}:${r.id}`} row={r} card className="block truncate rounded px-1 py-0.5 text-[10px] leading-tight bg-cobble-100 text-accent dark:bg-cobble-900/40 dark:text-cobble-200 hover:underline">{cellTitle(r)}</RecordLink>
+
+      {/* A phone: the month as a list of the days that have something on them.
+          A seven-column grid at 390 px is seven 50 px cells with the titles
+          cut to three letters (#4173). */}
+      <div className="sm:hidden" data-testid="calendar-agenda">
+        {monthDays.length === 0 ? (
+          <p className="rounded-xl border border-dashed border-line dark:border-slate-700 p-4 text-center text-sm text-muted dark:text-slate-400">Nothing on the calendar in {MONTHS[cursor.m]}.</p>
+        ) : (
+          <ol className="space-y-3">
+            {monthDays.map((key) => (
+              <li key={key}>
+                <h3 className={"text-xs font-medium mb-1 " + (key === todayKey ? "text-accent" : "text-muted dark:text-slate-400")}>
+                  {dayWords(key)}
+                  {key === todayKey ? " · today" : ""}
+                </h3>
+                <ul className="rounded-xl border border-line dark:border-slate-700 bg-surface dark:bg-slate-900 divide-y divide-line dark:divide-slate-800">
+                  {byDay[key]!.map((r) => (
+                    <li key={`${r.kind}:${r.id}`} className="px-3 py-2 text-sm">
+                      <RecordLink row={r} card className="block truncate text-content dark:text-mortar-100 hover:text-accent">{cellTitle(r)}</RecordLink>
+                    </li>
                   ))}
-                  {dayRows.length > 4 && <div className="text-[9px] text-faint dark:text-slate-500 px-1">+{dayRows.length - 4} more</div>}
-                </div>
-              </div>
-            );
-          })}
-        </div>
+                </ul>
+              </li>
+            ))}
+          </ol>
+        )}
       </div>
+
+      <div className="hidden sm:block rounded-xl border border-line dark:border-slate-700 overflow-hidden">
+        <BoardDnd enabled={movable} label={dayWords} keys={dayCoordinates} onMove={moveTo}>
+          <div className="grid grid-cols-7 bg-subtle/60 dark:bg-slate-800/40 border-b border-line dark:border-slate-700">
+            {WEEKDAYS.map((w) => (
+              <div key={w} className="px-2 py-1 text-[10px] font-mono uppercase tracking-widest text-faint dark:text-slate-500 text-center">{w}</div>
+            ))}
+          </div>
+          <div className="grid grid-cols-7">
+            {weeks.flat().map((day) => {
+              const key = isoLocal(day);
+              const inMonth = day.getMonth() === cursor.m;
+              const dayRows = byDay[key] ?? [];
+              return (
+                <CalendarDay key={key} day={key} droppable={movable} inMonth={inMonth}>
+                  <div className={"text-[11px] font-mono mb-0.5 px-1 " + (key === todayKey ? "inline-flex items-center justify-center w-5 h-5 rounded-full bg-accent text-white" : inMonth ? "text-content dark:text-mortar-200" : "text-faint dark:text-slate-600")}>{day.getDate()}</div>
+                  <div className="space-y-0.5">
+                    {dayRows.slice(0, 4).map((r) => (
+                      <CalendarEntry key={`${r.kind}:${r.id}`} row={r} day={key}>
+                        <RecordLink row={r} card className="block truncate rounded px-1 py-0.5 text-[10px] leading-tight bg-cobble-100 text-accent dark:bg-cobble-900/40 dark:text-cobble-200 hover:underline">{cellTitle(r)}</RecordLink>
+                      </CalendarEntry>
+                    ))}
+                    {dayRows.length > 4 && (
+                      <button type="button" onClick={() => setOpenDay(key)} className="text-[10px] text-accent hover:underline px-1">
+                        +{dayRows.length - 4} more
+                      </button>
+                    )}
+                  </div>
+                </CalendarDay>
+              );
+            })}
+          </div>
+        </BoardDnd>
+      </div>
+
+      <Modal open={openDay !== null} onClose={() => setOpenDay(null)} title={openDay ? dayWords(openDay) : ""} size="sm">
+        <ul className="divide-y divide-line dark:divide-slate-800">
+          {(openDay ? byDay[openDay] ?? [] : []).map((r) => (
+            <li key={`${r.kind}:${r.id}`} className="py-2 text-sm">
+              <RecordLink row={r} card className="block truncate text-content dark:text-mortar-100 hover:text-accent">{cellTitle(r)}</RecordLink>
+            </li>
+          ))}
+        </ul>
+      </Modal>
+    </div>
+  );
+}
+
+/** "Tue 29 Sep" for a day key. */
+function dayWords(key: string): string {
+  const d = new Date(`${key}T00:00:00`);
+  return Number.isNaN(d.getTime()) ? key : d.toLocaleDateString(undefined, { weekday: "short", day: "numeric", month: "short" });
+}
+
+function CalendarDay({ day, droppable, inMonth, children }: { day: string; droppable: boolean; inMonth: boolean; children: ReactNode }) {
+  const drop = useBoardColumn(day);
+  return (
+    <div
+      ref={droppable ? drop.ref : undefined}
+      data-day={day}
+      className={
+        "min-h-[4.5rem] border-b border-r border-line dark:border-slate-800 p-1 transition-colors " +
+        (drop.over && droppable ? "bg-accent/10 " : inMonth ? "bg-white dark:bg-slate-950 " : "bg-mortar-50/40 dark:bg-slate-900/40 ")
+      }
+    >
+      {children}
+    </div>
+  );
+}
+
+function CalendarEntry({ row, day, children }: { row: ViewRow; day: string; children: ReactNode }) {
+  const drag = useBoardCard(row, day);
+  return (
+    <div
+      ref={drag.enabled ? drag.ref : undefined}
+      {...drag.props}
+      style={drag.style}
+      data-calendar-entry=""
+      // A link is natively draggable; the browser's own drag would take the
+      // gesture from the calendar's.
+      onDragStart={(e) => e.preventDefault()}
+      className={drag.dragging ? "shadow-lg ring-2 ring-accent rounded" : undefined}
+    >
+      {children}
     </div>
   );
 }
@@ -534,7 +673,7 @@ function CalendarRenderer({ items, cfg }: { items: ViewRow[]; cfg: ViewConfig })
 // all rows. A row missing a start is dropped; a row missing an end renders as a
 // short milestone bar on its start day. cfg.title_field overrides the left-rail
 // label. Dependency-free — plain divs positioned by percentage.
-function GanttRenderer({ items, cfg }: { items: ViewRow[]; cfg: ViewConfig }) {
+export function GanttRenderer({ slug, kind, items, cfg }: { slug: string; kind: string; items: ViewRow[]; cfg: ViewConfig }) {
   const startField = (cfg.start_field as string) || "start_date";
   const endField = (cfg.end_field as string) || "target_date";
   const titleField = (cfg.title_field as string) || "title";
@@ -564,6 +703,20 @@ function GanttRenderer({ items, cfg }: { items: ViewRow[]; cfg: ViewConfig }) {
     return out.sort((a, b) => a.start - b.start || a.end - b.end);
   }, [items, startField, endField]);
 
+  // Bars drag and stretch (#4173) when the kind has a writer and both dates
+  // are ones a person sets.
+  const { edit, writable } = useViewRecordEdit(slug);
+  const kindFields = useKindFields(slug, kind);
+  const editable =
+    writable(kind) && isSettableField(kindFields.find((f) => f.name === startField)) && isSettableField(kindFields.find((f) => f.name === endField));
+  const commit = (r: ViewRow, days: number, mode: "move" | "resize") => {
+    if (days === 0) return;
+    const next = draggedBar({ start: fieldVal(r.fields, startField), end: fieldVal(r.fields, endField) }, days, mode);
+    const changes: Record<string, unknown> = mode === "move" ? { [startField]: next.start, ...(next.end ? { [endField]: next.end } : {}) } : { [endField]: next.end };
+    const when = mode === "move" ? `starts ${dayWords(String(next.start).slice(0, 10))}` : `ends ${dayWords(String(next.end).slice(0, 10))}`;
+    void edit({ kind: r.kind, id: r.id, title: rowTitle(r) }, changes, `${rowTitle(r)} ${when} now`);
+  };
+
   if (bars.length === 0) {
     return (
       <div className="text-sm text-muted italic">
@@ -592,7 +745,14 @@ function GanttRenderer({ items, cfg }: { items: ViewRow[]; cfg: ViewConfig }) {
     }
   }
   const todayT = parseDay(isoLocal(new Date()));
-  const RAIL = "10rem";
+  // The names column: narrower on a phone, where it shares 390 px with the
+  // timeline it pins over.
+  const RAIL = "w-[7.5rem] sm:w-40";
+  const spanDays = span / day;
+  // On a narrow screen the timeline keeps a readable width per day and
+  // scrolls sideways under a pinned column of names (#4173), instead of
+  // squeezing months into 200 px.
+  const trackMin = Math.round(spanDays * 24);
 
   return (
     <div className="space-y-1">
@@ -600,16 +760,16 @@ function GanttRenderer({ items, cfg }: { items: ViewRow[]; cfg: ViewConfig }) {
         <span><code>{startField}</code> → <code>{endField}</code> · {bars.length} of {items.length}</span>
         <span>{fmt(axisMin)} – {fmt(axisMaxRaw)}</span>
       </div>
-      <div className="border border-line dark:border-slate-700 rounded overflow-hidden">
+      <div className="border border-line dark:border-slate-700 rounded overflow-x-auto" data-testid="gantt-scroll">
+        <div style={{ ["--gantt-min" as string]: `calc(7.5rem + ${trackMin}px)` }} className="min-w-[var(--gantt-min)] sm:min-w-0">
         {bars.map((b, i) => (
           <RecordCard
             key={`${b.r.kind}:${b.r.id}`}
             row={b.r}
-            className={"flex items-stretch " + (i % 2 ? "bg-subtle/40 dark:bg-slate-900/40" : "")}
+            className={"flex items-stretch " + (i % 2 ? "bg-subtle/40 dark:bg-slate-900/40" : "bg-surface dark:bg-slate-950")}
           >
             <div
-              className="shrink-0 px-2 py-1.5 text-xs text-content dark:text-mortar-200 truncate border-r border-line dark:border-slate-800"
-              style={{ width: RAIL }}
+              className={`${RAIL} ` + "sticky left-0 z-10 shrink-0 px-2 py-1.5 text-xs text-content dark:text-mortar-200 truncate border-r border-line dark:border-slate-800 " + (i % 2 ? "bg-subtle dark:bg-slate-900" : "bg-surface dark:bg-slate-950")}
               title={rowTitle(b.r)}
             >
               <RecordLink row={b.r} className="hover:text-accent hover:underline">{rowTitle(b.r)}</RecordLink>
@@ -624,19 +784,20 @@ function GanttRenderer({ items, cfg }: { items: ViewRow[]; cfg: ViewConfig }) {
                 <div className="absolute top-0 bottom-0 w-px bg-accent/60" style={{ left: `${pct(todayT)}%` }} title="today" />
               )}
               {/* the bar */}
-              <div
-                className={
-                  "absolute top-1/2 -translate-y-1/2 h-4 rounded " +
-                  (b.milestone
-                    ? "bg-amber-400 dark:bg-amber-500 min-w-[0.5rem]"
-                    : "bg-cobble-500 dark:bg-cobble-600 min-w-[0.25rem]")
-                }
-                style={{ left: `${pct(b.start)}%`, width: `${Math.max(pct(b.end) - pct(b.start), b.milestone ? 0 : 1)}%` }}
-                title={`${fmt(b.start)}${b.milestone ? " (milestone)" : ` – ${fmt(b.end)}`}`}
+              <GanttBar
+                left={pct(b.start)}
+                width={Math.max(pct(b.end) - pct(b.start), b.milestone ? 0 : 1)}
+                milestone={b.milestone}
+                perDay={100 / spanDays}
+                spanDays={spanDays}
+                editable={editable}
+                label={`${rowTitle(b.r)}: ${fmt(b.start)}${b.milestone ? " (milestone)" : ` – ${fmt(b.end)}`}`}
+                onCommit={(days, mode) => commit(b.r, days, mode)}
               />
             </div>
           </RecordCard>
         ))}
+        </div>
       </div>
       <div className="flex flex-wrap gap-3 text-[10px] font-mono text-faint dark:text-slate-500 px-1">
         <span className="inline-flex items-center gap-1.5"><span className="inline-block w-3 h-2 rounded-sm bg-cobble-500" /> span (start → end)</span>
@@ -693,12 +854,19 @@ function RecordCard({
   className,
   children,
   "data-testid": testId,
+  dragRef,
+  dragProps,
+  style,
 }: {
   row: ViewRow;
   as?: "div" | "li" | "tr";
   className?: string;
   children: ReactNode;
   "data-testid"?: string;
+  /** A view that lets the card be dragged (a board) hands its handle here. */
+  dragRef?: (el: HTMLElement | null) => void;
+  dragProps?: Record<string, unknown>;
+  style?: CSSProperties;
 }) {
   const { activeSlug } = useActiveOrg();
   const routeFor = useDetailRoute(activeSlug);
@@ -707,6 +875,9 @@ function RecordCard({
   const Tag = as;
   return (
     <Tag
+      ref={dragRef as never}
+      {...(dragProps ?? {})}
+      style={style}
       data-record-card=""
       data-testid={testId}
       className={(className ?? "") + (href ? " cursor-pointer" : "")}
@@ -1050,13 +1221,27 @@ export function KanbanRenderer({
   const declared = useKindFields(slug, kind).find((f) => f.name === groupBy)?.choices;
   const cols = orderedGroups(groupRows(items, groupBy, areaOf), declared);
   const stock = useRowStock();
+  // A card crosses columns only when the columns are the field's declared
+  // choices (a drop is always a legal value) and the kind has a writer.
+  const { edit, writable } = useViewRecordEdit(slug);
+  const legal = boardColumnValues(cols.map(([c]) => c), declared);
+  const draggable = !!declared?.length && writable(kind);
+  const words = (col: string) => (col === NO_GROUP ? NO_GROUP_LABEL : col);
   return (
-    <div className="flex gap-3 overflow-x-auto pb-2">
+    <BoardDnd
+      enabled={draggable}
+      label={words}
+      onMove={(row, to) => {
+        if (!legal.has(to)) return;
+        void edit(row, { [groupBy]: legal.get(to) ?? null }, `${row.title} is ${words(to)} now`);
+      }}
+    >
+    <div className="flex gap-3 overflow-x-auto pb-2" data-board-draggable={draggable ? "true" : undefined}>
       {cols.map(([col, rows]) => (
-        <div
+        <BoardColumn
           key={col}
-          data-board-column={col}
-          className="min-w-[200px] max-w-[260px] shrink-0 border border-line dark:border-slate-700 rounded bg-subtle/50 dark:bg-slate-900/40"
+          col={col}
+          droppable={draggable && legal.has(col)}
         >
           <div className="px-2 py-1.5 border-b border-line dark:border-slate-700 flex items-center justify-between">
             <span className="text-xs font-medium text-content dark:text-slate-300 truncate">
@@ -1064,14 +1249,9 @@ export function KanbanRenderer({
             </span>
             <span className="text-[10px] text-faint">{rows.length}</span>
           </div>
-          <ul className="p-2 space-y-1.5">
+          <ul className="p-2 space-y-1.5 min-h-[2.5rem]">
             {rows.map((r) => (
-              <RecordCard
-                as="li"
-                key={`${r.kind}:${r.id}`}
-                row={r}
-                className="px-2 py-1.5 text-xs rounded bg-surface dark:bg-slate-800 border border-line dark:border-slate-700"
-              >
+              <BoardCard key={`${r.kind}:${r.id}`} row={r} col={col}>
                 <div className="font-medium truncate">
                   <EntityTitleLink row={r} />
                 </div>
@@ -1081,12 +1261,63 @@ export function KanbanRenderer({
                   </div>
                 )}
                 {stock.on && <div className="mt-1 flex justify-end">{stock.stepper(r)}</div>}
-              </RecordCard>
+              </BoardCard>
             ))}
           </ul>
-        </div>
+        </BoardColumn>
       ))}
     </div>
+    </BoardDnd>
+  );
+}
+
+/** A board column's value to write, by its drawn name: each declared choice
+ *  is its own value and "No value" clears the field. A column that exists
+ *  only because a row carries an undeclared value is not a drop target. */
+export function boardColumnValues(columns: string[], declared: readonly string[] | undefined): Map<string, string | null> {
+  const out = new Map<string, string | null>();
+  if (!declared?.length) return out;
+  const byLower = new Map(declared.map((d) => [d.toLowerCase(), d] as const));
+  for (const c of columns) {
+    if (c === NO_GROUP) out.set(c, null);
+    else if (byLower.has(c.toLowerCase())) out.set(c, byLower.get(c.toLowerCase())!);
+  }
+  return out;
+}
+
+function BoardColumn({ col, droppable, children }: { col: string; droppable: boolean; children: ReactNode }) {
+  const drop = useBoardColumn(col);
+  return (
+    <div
+      ref={droppable ? drop.ref : undefined}
+      data-board-column={col}
+      className={
+        "min-w-[200px] max-w-[260px] shrink-0 border rounded transition-colors " +
+        (drop.over && droppable ? "border-accent bg-accent/10" : "border-line dark:border-slate-700 bg-subtle/50 dark:bg-slate-900/40")
+      }
+    >
+      {children}
+    </div>
+  );
+}
+
+function BoardCard({ row, col, children }: { row: ViewRow; col: string; children: ReactNode }) {
+  const drag = useBoardCard(row, col);
+  return (
+    <RecordCard
+      as="li"
+      row={row}
+      dragRef={drag.enabled ? drag.ref : undefined}
+      dragProps={drag.props}
+      style={drag.style}
+      className={
+        "px-2 py-1.5 text-xs rounded bg-surface dark:bg-slate-800 border border-line dark:border-slate-700" +
+        (drag.enabled ? " touch-manipulation" : "") +
+        (drag.dragging ? " shadow-lg ring-2 ring-accent" : "")
+      }
+    >
+      {children}
+    </RecordCard>
   );
 }
 
@@ -1444,7 +1675,7 @@ function CreateViewModal({
   const [entityKind, setEntityKind] = useState("inventory:part");
   const [name, setName] = useState("");
   const [viewType, setViewType] = useState<"list" | "table" | "kanban" | "trend" | "calendar" | "gantt" | "gallery" | "heatmap" | "vending">("list");
-  const [groupBy, setGroupBy] = useState("subtitle");
+  const [groupBy, setGroupBy] = useState("");
   const [columns, setColumns] = useState<string[]>(["title", "subtitle"]);
   const [dateField, setDateField] = useState("due_date");
   const [startField, setStartField] = useState("start_date");
@@ -1503,37 +1734,20 @@ function CreateViewModal({
         onSubmit={async (e) => {
           e.preventDefault();
           if (!name.trim()) return;
-          const config: Record<string, unknown> = {};
-          if (viewType === "kanban" && groupBy.trim()) {
-            config.group_by = groupBy.trim();
-          }
-          if (viewType === "table" && columns.length > 0) {
-            config.visible_fields = columns;
-          }
-          if (viewType === "calendar" && dateField.trim()) {
-            config.date_field = dateField.trim();
-          }
-          if (viewType === "heatmap") {
-            if (dateField.trim()) config.date_field = dateField.trim();
-            if (expectRrule.trim()) config.expect_rrule = expectRrule.trim();
-          }
-          if (viewType === "gallery") {
-            if (imageField.trim()) config.image_field = imageField.trim();
-            if (captionField.trim()) config.caption_field = captionField.trim();
-          }
-          if (viewType === "trend") {
-            if (xField.trim()) config.x = xField.trim();
-            if (yField.trim()) config.y = yField.trim();
-            const g = Number(goal);
-            if (goal.trim() && Number.isFinite(g)) config.goal = g;
-          }
-          if ((viewType === "calendar" || viewType === "gantt") && titleField.trim()) {
-            config.title_field = titleField.trim();
-          }
-          if (viewType === "gantt") {
-            if (startField.trim()) config.start_field = startField.trim();
-            if (endField.trim()) config.end_field = endField.trim();
-          }
+          const config = layoutConfig(viewType, {}, {
+            group_by: groupBy,
+            visible_fields: columns,
+            date_field: dateField,
+            expect_rrule: expectRrule,
+            image_field: imageField,
+            caption_field: captionField,
+            x: xField,
+            y: yField,
+            goal: goal.trim() && Number.isFinite(Number(goal)) ? Number(goal) : "",
+            title_field: titleField,
+            start_field: startField,
+            end_field: endField,
+          });
           // filter/sort apply to every layout.
           Object.assign(config, filterRowsToConfig(filterRows));
           const sort = rowsToSort(sortRows);
@@ -1638,7 +1852,7 @@ function CreateViewModal({
             )}
             <div className="text-[11px] text-faint mt-1">
               Outlines the days you meant to do this, so a gap reads as a miss and a rest day doesn't.
-              {!cadenceTouched && suggestedCadence && expectRrule === suggestedCadence && " Taken from this list's schedule — change it if that's not the rhythm you want to see."}
+              {!cadenceTouched && suggestedCadence && expectRrule === suggestedCadence && " Taken from this list's schedule. Change it if that's not the rhythm you want to see."}
             </div>
           </label>
         )}
@@ -1701,10 +1915,16 @@ function CreateViewModal({
           </label>
         )}
         {viewType === "table" && (
-          <div>
-            <div className="text-xs text-muted mb-1">Columns</div>
-            <ColumnPicker fields={fields} value={columns} onChange={setColumns} />
-          </div>
+          <>
+            <div>
+              <div className="text-xs text-muted mb-1">Columns</div>
+              <ColumnPicker fields={fields} value={columns} onChange={setColumns} />
+            </div>
+            <label className="block">
+              <div className="text-xs text-muted mb-1">Group rows by</div>
+              <FieldSelect fields={fields} value={groupBy} onChange={setGroupBy} allowBlank blankLabel="No grouping" />
+            </label>
+          </>
         )}
         <div>
           <div className="text-xs text-muted mb-1">Filter</div>
@@ -1744,7 +1964,7 @@ function CreateViewModal({
 }
 
 
-function EditViewModal({
+export function EditViewModal({
   slug,
   view,
   onClose,
@@ -1766,7 +1986,7 @@ function EditViewModal({
   );
   const cfg = (view.config ?? {}) as ViewConfig;
   const fields = useKindFields(slug, view.entity_kind);
-  const [groupBy, setGroupBy] = useState((cfg.group_by as string) ?? "subtitle");
+  const [groupBy, setGroupBy] = useState((cfg.group_by as string) ?? "");
   const [columns, setColumns] = useState<string[]>((cfg.visible_fields as string[]) ?? ["title", "subtitle"]);
   const [dateField, setDateField] = useState((cfg.date_field as string) ?? "due_date");
   const [startField, setStartField] = useState((cfg.start_field as string) ?? "start_date");
@@ -1785,69 +2005,26 @@ function EditViewModal({
   const toast = useToast();
 
   return (
-    <Modal open onClose={onClose} title={`Edit view — ${view.name}`}>
+    <Modal open onClose={onClose} title={`Edit view: ${view.name}`}>
       <form
         onSubmit={async (e) => {
           e.preventDefault();
           if (!name.trim()) return;
           setBusy(true);
-          const config: Record<string, unknown> = { ...cfg };
-          if (viewType === "kanban" && groupBy.trim()) {
-            config.group_by = groupBy.trim();
-          } else {
-            delete config.group_by;
-          }
-          if (viewType === "table" && columns.length > 0) {
-            config.visible_fields = columns;
-          } else {
-            delete config.visible_fields;
-          }
-          if ((viewType === "calendar" || viewType === "heatmap") && dateField.trim()) {
-            config.date_field = dateField.trim();
-          } else {
-            delete config.date_field;
-          }
-          if (viewType === "heatmap" && expectRrule.trim()) {
-            config.expect_rrule = expectRrule.trim();
-          } else {
-            delete config.expect_rrule;
-          }
-          if (viewType === "gallery") {
-            if (imageField.trim()) config.image_field = imageField.trim();
-            else delete config.image_field;
-            if (captionField.trim()) config.caption_field = captionField.trim();
-            else delete config.caption_field;
-          } else {
-            delete config.image_field;
-            delete config.caption_field;
-          }
-          if (viewType === "trend") {
-            if (xField.trim()) config.x = xField.trim();
-            else delete config.x;
-            if (yField.trim()) config.y = yField.trim();
-            else delete config.y;
-            const g = Number(goal);
-            if (goal.trim() && Number.isFinite(g)) config.goal = g;
-            else delete config.goal;
-          } else {
-            delete config.x;
-            delete config.y;
-            delete config.goal;
-          }
-          if ((viewType === "calendar" || viewType === "gantt") && titleField.trim()) {
-            config.title_field = titleField.trim();
-          } else {
-            delete config.title_field;
-          }
-          if (viewType === "gantt") {
-            if (startField.trim()) config.start_field = startField.trim();
-            else delete config.start_field;
-            if (endField.trim()) config.end_field = endField.trim();
-            else delete config.end_field;
-          } else {
-            delete config.start_field;
-            delete config.end_field;
-          }
+          const config = layoutConfig(viewType, cfg, {
+            group_by: groupBy,
+            visible_fields: columns,
+            date_field: dateField,
+            expect_rrule: expectRrule,
+            image_field: imageField,
+            caption_field: captionField,
+            x: xField,
+            y: yField,
+            goal: goal.trim() && Number.isFinite(Number(goal)) ? Number(goal) : "",
+            title_field: titleField,
+            start_field: startField,
+            end_field: endField,
+          });
           // Rebuild filter/where from the structured builder. Column-to-column
           // (`ref_col`) predicates — e.g. low-stock `qty < min_qty` — can't be
           // expressed in the simple builder, so carry any existing ones through
@@ -2008,10 +2185,16 @@ function EditViewModal({
           </label>
         )}
         {viewType === "table" && (
-          <div>
-            <div className="text-xs text-muted mb-1">Columns</div>
-            <ColumnPicker fields={fields} value={columns} onChange={setColumns} />
-          </div>
+          <>
+            <div>
+              <div className="text-xs text-muted mb-1">Columns</div>
+              <ColumnPicker fields={fields} value={columns} onChange={setColumns} />
+            </div>
+            <label className="block">
+              <div className="text-xs text-muted mb-1">Group rows by</div>
+              <FieldSelect fields={fields} value={groupBy} onChange={setGroupBy} allowBlank blankLabel="No grouping" />
+            </label>
+          </>
         )}
         <div>
           <div className="text-xs text-muted mb-1">Filter</div>

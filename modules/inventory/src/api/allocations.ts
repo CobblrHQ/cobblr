@@ -18,6 +18,7 @@ import { platform } from "@cobblr/platform-contract";
 import { sessionUser, tenantContext, tenantDb } from "../db.js";
 import { asyncHandler, badBody } from "./util.js";
 import { recordConsumption } from "./stock-ledger.js";
+import { stockMoved } from "./stock-moved.js";
 
 export const allocationsRouter = Router({ mergeParams: true });
 
@@ -271,19 +272,28 @@ export async function settleAllocation(
     ref: { module: "inventory", entityType: "allocation", entityId: result.next.id },
     diff: { part_id: result.partId, qty: result.qty },
   });
-  platform().events.emit(`inventory.${action.replace("allocation_", "allocation.")}`, {
+  platform().events.emit(status === "consumed" ? "inventory.allocation.consumed" : "inventory.allocation.released", {
     orgId,
     allocationId: result.next.id,
     partId: result.partId,
     qty: Number(result.qty),
   });
   if (status === "consumed") {
-    platform().events.emit("inventory.stock.changed", {
-      orgId,
-      partId: result.partId,
-      delta: -Number(result.qty),
-      reason: "allocation_consumed",
-    });
+    // The statement line was written inside the transaction above; the rest
+    // of what follows a count change (stock.changed, low stock) is the one
+    // sequence (stock-moved.ts). A project using up a bound skein can put it
+    // on the shopping list like any other use.
+    const part = await db.selectFrom("inventory_parts").select(["qty", "min_qty"]).where("id", "=", result.partId).executeTakeFirst();
+    if (part) {
+      await stockMoved(db, orgId, {
+        partId: result.partId,
+        delta: -Number(result.qty),
+        newQty: Number(part.qty),
+        minQty: part.min_qty == null ? null : Number(part.min_qty),
+        reason: "allocation_consumed",
+        ledger: false,
+      });
+    }
   }
   return { ok: true, next: result.next, partId: result.partId, qty: result.qty };
 }

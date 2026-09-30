@@ -14,6 +14,8 @@ export interface MetricSummary {
   latest_value: number | null;
   measurement_count: number;
   progress: number | null;
+  /** Custom fields a bundle or a person defines for metrics. */
+  metadata?: Record<string, unknown>;
   created_at: string;
 }
 
@@ -72,6 +74,10 @@ export class TrackingApi {
   }
   createMetric(body: { name: string; unit?: string; goal_value?: number; goal_direction?: GoalDirection }) {
     return this.req<MetricSummary>("POST", "/metrics", body);
+  }
+  /** Save custom fields on a metric; merged into what it holds. */
+  setMetricFields(id: string, metadata: Record<string, unknown>) {
+    return this.req<MetricSummary>("PATCH", `/metrics/${id}`, { metadata });
   }
   deleteMetric(id: string) {
     return this.req<void>("DELETE", `/metrics/${id}`);

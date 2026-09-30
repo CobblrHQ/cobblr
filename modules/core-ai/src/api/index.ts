@@ -23,6 +23,7 @@ import { register as registerAnthropic } from "../providers/anthropic.js";
 import { register as registerEdgeBridge } from "../providers/edge-bridge.js";
 import { register as registerReplay } from "../providers/replay.js";
 import { edgeStatusRouter } from "./edge-status.js";
+import { registerServiceWriteModeSource } from "@cobblr/platform-contract/service-consent";
 
 let registered = false;
 function registerBuiltins(): void {
@@ -52,6 +53,17 @@ function registerBuiltins(): void {
     description:
       "Route AI capabilities to a model running on your own machine (Ollama, LM Studio, …). Set up a personal AI bridge under Your connections, then pick the edge provider in AI settings.",
     href: "/me/connections",
+  });
+  // A service job from Cobb or an MCP client follows the person's Changes
+  // setting, which lives in this module's table; the kernel's gate asks here
+  // rather than reading it (services.md section 9).
+  registerServiceWriteModeSource(async (orgId, userId) => {
+    const db = (await platform().tenants.getDb(orgId)) as unknown as {
+      selectFrom: (t: string) => { select: (c: string[]) => { where: (a: string, o: string, v: string) => { executeTakeFirst: () => Promise<{ write_mode?: string } | undefined> } } };
+    };
+    const row = await db.selectFrom("core_ai_chat_prefs").select(["write_mode"]).where("user_id", "=", userId).executeTakeFirst();
+    const m = row?.write_mode;
+    return m === "off" || m === "auto" ? m : "ask";
   });
 }
 

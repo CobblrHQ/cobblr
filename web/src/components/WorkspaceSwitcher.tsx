@@ -12,7 +12,7 @@ import { useEffect, useLayoutEffect, useRef, useState, type FormEvent } from "re
 import { createPortal } from "react-dom";
 import { useNavigate } from "react-router-dom";
 import { useMutation } from "@tanstack/react-query";
-import { Star, ChevronDown, GripVertical, Pencil, Plus, Sliders, Users } from "lucide-react";
+import { Star, ChevronDown, GripVertical, LogOut, Pencil, Plus, Sliders, Users } from "lucide-react";
 import {
   DndContext,
   PointerSensor,
@@ -34,6 +34,7 @@ import { useActiveOrg } from "../auth/ActiveOrgContext";
 import { displaySlug, slugifyHandle } from "../lib/workspaceSlug";
 import { Modal, useToast, PopoverLayer } from "@cobblr/platform-web";
 import { MembersModal } from "./MembersModal";
+import { LeaveWorkspaceModal } from "./LeaveWorkspaceModal";
 
 export function WorkspaceSwitcher({ inline = false }: { inline?: boolean } = {}) {
   const { orgs, setOrgs, refreshMe } = useAuth();
@@ -44,6 +45,7 @@ export function WorkspaceSwitcher({ inline = false }: { inline?: boolean } = {})
   const [createOpen, setCreateOpen] = useState(false);
   const [manageSlug, setManageSlug] = useState<string | null>(null);
   const [renameSlug, setRenameSlug] = useState<string | null>(null);
+  const [leaveSlug, setLeaveSlug] = useState<string | null>(null);
   const btnRef = useRef<HTMLButtonElement>(null);
   const menuRef = useRef<HTMLDivElement>(null);
   // The menu is portaled to <body> so the header's `overflow-x-clip` (which
@@ -209,6 +211,7 @@ export function WorkspaceSwitcher({ inline = false }: { inline?: boolean } = {})
                 onPick={() => pick(o.slug)}
                 onManage={o.role === "admin" ? () => { setOpen(false); setManageSlug(o.slug); } : undefined}
                 onSetDefault={() => toggleDefault(o.slug, !!o.is_default)}
+                onLeave={() => { setOpen(false); setLeaveSlug(o.slug); }}
               />
             ))}
           </ul>
@@ -266,6 +269,7 @@ export function WorkspaceSwitcher({ inline = false }: { inline?: boolean } = {})
                 onPick={() => pick(o.slug)}
                 onManage={o.role === "admin" ? () => { setOpen(false); setManageSlug(o.slug); } : undefined}
                 onSetDefault={() => toggleDefault(o.slug, !!o.is_default)}
+                onLeave={() => { setOpen(false); setLeaveSlug(o.slug); }}
               />
             ))}
           </ul>
@@ -306,6 +310,11 @@ export function WorkspaceSwitcher({ inline = false }: { inline?: boolean } = {})
         isActive={renameSlug === activeSlug}
         onClose={() => setRenameSlug(null)}
       />
+      <LeaveWorkspaceModal
+        workspace={orgs.find((o) => o.slug === leaveSlug) ?? null}
+        isActive={leaveSlug === activeSlug}
+        onClose={() => setLeaveSlug(null)}
+      />
     </div>
   );
 }
@@ -318,6 +327,7 @@ function WorkspaceRow({
   onManage,
   onRename,
   onSetDefault,
+  onLeave,
   dragHandle,
 }: {
   org: OrgMembership;
@@ -326,6 +336,8 @@ function WorkspaceRow({
   onManage?: () => void;
   onRename?: () => void;
   onSetDefault?: () => void;
+  /** A workspace somebody else owns: leave it. */
+  onLeave?: () => void;
   dragHandle?: React.ReactNode;
 }) {
   return (
@@ -374,7 +386,7 @@ function WorkspaceRow({
           <button
             onClick={(e) => { e.stopPropagation(); onSetDefault(); }}
             className={"px-2 transition " + (o.is_default ? "text-accent dark:text-cobble-300" : "text-faint dark:text-slate-500 hover:text-accent dark:hover:text-cobble-300")}
-            title={o.is_default ? "Default workspace — click to unset." : `Make ${o.name} the default a fresh device opens into`}
+            title={o.is_default ? "Default workspace. Click to unset." : `Make ${o.name} the default a fresh device opens into`}
             aria-label={o.is_default ? "Unset default workspace" : "Set as default workspace"}
           >
             <Star size={13} className={o.is_default ? "fill-current" : ""} />
@@ -396,6 +408,16 @@ function WorkspaceRow({
             title={`Manage members + invites for ${o.name}`}
           >
             <Users size={13} />
+          </button>
+        )}
+        {onLeave && (
+          <button
+            onClick={(e) => { e.stopPropagation(); onLeave(); }}
+            className="pl-2 pr-3 text-faint dark:text-slate-500 hover:text-ember-600 dark:hover:text-ember-400 transition"
+            title={`Leave ${o.name}`}
+            aria-label={`Leave ${o.name}`}
+          >
+            <LogOut size={13} />
           </button>
         )}
       </div>
@@ -690,7 +712,7 @@ export function CreateWorkspaceModal({
                   setBlueprint({ manifest, label: typeof manifest.name === "string" ? manifest.name : f.name });
                   if (!name.trim() && typeof manifest.name === "string") setName(manifest.name.slice(0, 120));
                 } catch {
-                  setBpError("That file isn't valid JSON — export a blueprint from Configuration → Backup & blueprints.");
+                  setBpError("That file isn't valid JSON. Export a blueprint from Configuration → Backup & blueprints.");
                 }
               });
             }}

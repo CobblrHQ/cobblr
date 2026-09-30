@@ -19,7 +19,7 @@ import { useActiveOrg } from "../auth/ActiveOrgContext";
 import { useFieldPresentation } from "../lib/useFieldPresentation";
 import { CustomFieldsPanel,
   EditField, EntityActionsBar, FaceSection, FieldPack, RecordFaces,
-  FacesOn, faceShows, editFieldItem, fieldNeed,
+  FacesOn, faceShows, editFieldItem, fieldNeed, EditSelect,
   useAskCobbAboutSelection,
   Modal,
   useToast,
@@ -33,8 +33,10 @@ import {
   useViewMode,
 } from "@cobblr/platform-web";
 import { EntityAttachments } from "../components/EntityAttachments";
+import { ContributedDetailPanels } from "../panels/registry";
 import { LocationTreePicker } from "../components/LocationTreePicker";
 import { ContentsPanel, useHoldsContents } from "../components/ContentsPanel";
+import { useDeclaredChoices } from "../components/ViewBuilder";
 import { countOf, itemNounFor, pluralise } from "@cobblr/platform-contract";
 import { resolveDetailPath } from "@cobblr/platform-contract/instance-detail";
 import { PresentationGate, useFaces } from "@cobblr/platform-web";
@@ -96,9 +98,13 @@ export function AssetsPage({
     } else navigate(`/assets${searchParams.toString() ? `?${searchParams}` : ""}`);
   };
 
+  // What is put away is its own list, one tap from the register.
+  const showArchived = searchParams.get("archived") === "1";
+  const setShowArchived = (on: boolean) =>
+    setSearchParams((prev) => { if (on) prev.set("archived", "1"); else prev.delete("archived"); return prev; }, { replace: true });
   const list = useQuery({
-    queryKey: ["assets", activeSlug, instance ?? null],
-    queryFn: () => api.listAssets(activeSlug, instance),
+    queryKey: ["assets", activeSlug, instance ?? null, showArchived],
+    queryFn: () => api.listAssets(activeSlug, instance, { archived: showArchived }),
     enabled: !!activeSlug,
   });
   const fieldDefs = useQuery({
@@ -163,6 +169,8 @@ export function AssetsPage({
     : undefined;
 
   const allRows = list.data?.items ?? [];
+  // What the register cost, over every asset on this page (priced or not).
+  const paidTotal = allRows.reduce((sum, r) => sum + (r.purchase_price_cents ?? 0), 0) / 100;
   const rows = lensName
     ? allRows.filter((m) =>
         lensFieldDefs.some((d) => {
@@ -251,10 +259,19 @@ export function AssetsPage({
     <div className="space-y-4">
       <CollectionHeader
         title={displayName ?? "assets"}
-        count={`${filtered.length} of ${allRows.length}`}
+        count={showArchived ? `${list.data?.total ?? allRows.length} put away` : `${filtered.length} of ${list.data?.total ?? allRows.length}${paidTotal > 0 ? ` · paid ${paidTotal.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })} in all` : ""}`}
         hint={hint} kind={instance ? `${instance}:item` : ENTITY_KIND}
         filters={
-          lensModule ? (
+          (list.data?.archived_count ?? 0) > 0 || showArchived ? (
+            <button
+              type="button"
+              onClick={() => setShowArchived(!showArchived)}
+              aria-pressed={showArchived}
+              className={`${HEADER_CONTROL} px-2.5 rounded-md text-[10px] font-mono uppercase tracking-widest transition ${showArchived ? "bg-cobble-100 text-accent dark:bg-cobble-700/40 dark:text-cobble-200" : "text-muted dark:text-slate-400 hover:bg-subtle dark:hover:bg-slate-800"}`}
+            >
+              {showArchived ? "Back to the register" : `Put away (${list.data?.archived_count ?? 0})`}
+            </button>
+          ) : lensModule ? (
             <Link
               to="/assets"
               className={`${HEADER_CONTROL} gap-1 px-2.5 rounded-md bg-cobble-100 text-accent dark:bg-cobble-700/40 dark:text-cobble-200 text-[10px] font-mono uppercase tracking-widest hover:bg-cobble-200 transition`}
@@ -265,6 +282,7 @@ export function AssetsPage({
           ) : undefined
         }
         search={<SearchInput value={query} onChange={setQuery} placeholder="search…" aria-label={`Search ${pluralise(noun)}`} wrapperClassName="w-48 max-sm:w-full max-sm:flex-1" />}
+        exportQuery={query}
         actions={
           <>
             <ViewModeToggle mode={viewMode} onChange={setViewMode} />
@@ -299,7 +317,7 @@ export function AssetsPage({
             {allRows.length === 0
               ? `No ${pluralise(noun)} yet. Add one with New ${noun}.`
               : activeView
-                ? `Nothing in “${activeView.name}” yet — add your first with New asset.`
+                ? `Nothing in “${activeView.name}” yet. Add your first with New asset.`
                 : "No matches with the current filters."}
           </div>
         )
@@ -529,6 +547,8 @@ function AssetsTable({
             <th className="text-left px-3 py-2">Name</th>
             <th className="text-left px-3 py-2">{fp.label("manufacturer", "Manufacturer")}</th>
             <th className="text-left px-3 py-2">Model</th>
+            {/* The asset's category, typed or scanned: one field (#4115). */}
+            {!fp.hidden("type") && <th className="text-left px-3 py-2">{fp.label("type", "Type")}</th>}
             <th className="text-left px-3 py-2">State</th>
             {customCols.map((d) => (
               <th key={d.id} className="text-left px-3 py-2">{d.display_label}</th>
@@ -566,6 +586,7 @@ function AssetsTable({
               </td>
               <td className="px-3 py-2 text-muted dark:text-slate-400">{a.manufacturer || "—"}</td>
               <td className="px-3 py-2 text-muted dark:text-slate-400">{a.model || "—"}</td>
+              {!fp.hidden("type") && <td className="px-3 py-2 text-muted dark:text-slate-400">{a.type || "—"}</td>}
               <td className="px-3 py-2">
                 <span className="font-mono text-[10px] uppercase tracking-widest text-muted dark:text-slate-400">
                   {a.state}
@@ -678,6 +699,9 @@ export function AssetDetailModal({
   const kind = instance ? `${instance}:item` : ENTITY_KIND;
   const [moveOpen, setMoveOpen] = useState(false);
   const fp = useFieldPresentation(kind);
+  // The states the kind declares, in the order a thing lives them. Every
+  // collection of assets shares the base kind's native state field.
+  const assetStates = useDeclaredChoices(activeSlug, ENTITY_KIND, "state");
   const holdsContents = useHoldsContents(activeSlug, { kind: ENTITY_KIND, id: assetId ?? "" });
   // The collection's faces decide sections and verbs; the body waits for them.
   const shape = useFaces(kind);
@@ -765,7 +789,20 @@ export function AssetDetailModal({
                 brand={a.manufacturer}
                 onApplied={() => void qc.invalidateQueries({ queryKey: ["assets", activeSlug] })}
               />
-              <EntityActionsBar entityKind={ENTITY_KIND} entityId={a.id} />
+              {a.archived_at ? (
+                <p className="text-xs text-muted dark:text-slate-400">
+                  Put away on {new Date(a.archived_at).toLocaleDateString()}. It keeps its history; Restore brings it back to the register.
+                </p>
+              ) : null}
+              <EntityActionsBar
+                entityKind={ENTITY_KIND}
+                entityId={a.id}
+                excludeActionIds={[
+                  // Got it back only means something while it is lent out.
+                  ...((a.metadata as Record<string, unknown> | null)?.assigned_to ? [] : ["assets:got-back"]),
+                  a.archived_at ? "assets:archive" : "assets:restore",
+                ]}
+              />
             </div>
             <div className="min-w-0 space-y-4">
           {/* Native fields, reshaped by the workspace's field-presentation
@@ -789,7 +826,14 @@ export function AssetDetailModal({
               !fp.hidden("manufacturer") ? { need: fieldNeed("manufacturer", { control: "text", label: fp.label("manufacturer", "Manufacturer"), valueLength: (a.manufacturer ?? "").length }), node: <EditField key={`mfr-${a.manufacturer ?? ""}`} label={fp.label("manufacturer", "Manufacturer")} value={a.manufacturer ?? ""} onCommit={(v) => update.mutate({ manufacturer: v || null })} /> } : null,
               !fp.hidden("model") ? { need: fieldNeed("model", { control: "text", label: fp.label("model", "Model"), valueLength: (a.model ?? "").length }), node: <EditField key={`mdl-${a.model ?? ""}`} label={fp.label("model", "Model")} value={a.model ?? ""} onCommit={(v) => update.mutate({ model: v || null })} /> } : null,
               !fp.hidden("type") ? editFieldItem("type", { label: fp.label("type", "Type"), value: a.type ?? "", onCommit: (v) => update.mutate({ type: v || null }) }) : null,
-              !fp.hidden("state") ? editFieldItem("state", { label: fp.label("state", "State"), value: a.state, onCommit: (v) => update.mutate({ state: v }) }) : null,
+              !fp.hidden("state")
+                ? assetStates.length > 0
+                  ? {
+                      need: fieldNeed("state", { control: "choice", label: fp.label("state", "State"), choices: assetStates }),
+                      node: <EditSelect label={fp.label("state", "State")} value={a.state} options={assetStates} onCommit={(v) => update.mutate({ state: v })} />,
+                    }
+                  : editFieldItem("state", { label: fp.label("state", "State"), value: a.state, onCommit: (v) => update.mutate({ state: v }) })
+                : null,
               // A VIN carries its decode button and the fill it proposes under
               // it: the row, whatever the width.
               !fp.hidden("serial_number")
@@ -798,6 +842,18 @@ export function AssetDetailModal({
                   : editFieldItem("serial_number", { label: fp.label("serial_number", "Serial number"), value: a.serial_number ?? "", onCommit: (v) => update.mutate({ serial_number: v || null }) })
                 : null,
               !fp.hidden("purchased_at") ? editFieldItem("purchased_at", { label: fp.label("purchased_at", "Purchased at"), value: a.purchased_at ?? "", type: "date", onCommit: (v) => update.mutate({ purchased_at: v || null }) }) : null,
+              !fp.hidden("purchase_price_cents")
+                ? editFieldItem("purchase_price_cents", {
+                    label: fp.label("purchase_price_cents", "Paid"),
+                    value: a.purchase_price_cents == null ? "" : (a.purchase_price_cents / 100).toFixed(2),
+                    numeric: true,
+                    onCommit: (v) => {
+                      const n = Number(v.replace(/,/g, ""));
+                      update.mutate({ purchase_price_cents: v.trim() === "" || !Number.isFinite(n) ? null : Math.round(n * 100) });
+                    },
+                  })
+                : null,
+              !fp.hidden("vendor") ? editFieldItem("vendor", { label: fp.label("vendor", "Bought from"), value: a.vendor ?? "", onCommit: (v) => update.mutate({ vendor: v.trim() || null }) }) : null,
               // Service face: warranty + last service. Off folds them while empty; a date already set stays.
               !fp.hidden("warranty_until") && faceShows(maintainedOn, a.warranty_until) ? editFieldItem("warranty_until", { label: fp.label("warranty_until", "Warranty until"), value: a.warranty_until ?? "", type: "date", onCommit: (v) => update.mutate({ warranty_until: v || null }) }) : null,
               !fp.hidden("last_service_at") && faceShows(maintainedOn, a.last_service_at) ? editFieldItem("last_service_at", { label: fp.label("last_service_at", "Last service"), value: a.last_service_at ?? "", type: "date", onCommit: (v) => update.mutate({ last_service_at: v || null }) }) : null,
@@ -823,7 +879,14 @@ export function AssetDetailModal({
           <FaceSection face="container" kind={kind} holds={holdsContents}>
             <ContentsPanel slug={activeSlug} container={{ kind: ENTITY_KIND, id: a.id }} title="Contents" />
           </FaceSection>
-          <EntityAttachments kind={ENTITY_KIND} entityId={a.id} collection={instance ? `${instance}:item` : undefined} />
+          {/* What other modules add to an asset (its service schedule, tags,
+              the discussion) arrives as contributed panels, so the attachment
+              pills leave tags and discussion to them rather than show each twice. */}
+          <ContributedDetailPanels
+            target={ENTITY_KIND}
+            ctx={{ slug: activeSlug, entityId: a.id, entityTitle: a.name, hints: { collection: instance ? `${instance}:item` : undefined } }}
+          />
+          <EntityAttachments kind={ENTITY_KIND} entityId={a.id} collection={instance ? `${instance}:item` : undefined} omit={["tags", "discussion", "pairings"]} />
           <EditField label="Notes" value={a.notes ?? ""} multiline onCommit={(v) => update.mutate({ notes: v || null })} />
             </div>
           </div>

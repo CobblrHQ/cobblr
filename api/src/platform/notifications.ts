@@ -14,7 +14,7 @@ import { env } from "../env.js";
 import { inAppChannel } from "./channels/in-app.js";
 import { browserPushChannel } from "./channels/browser-push.js";
 import { discordChannel } from "./channels/discord.js";
-import { discordDmChannel } from "./channels/discord-dm.js";
+import { discordDmChannel, discordDmPayload } from "./channels/discord-dm.js";
 import { slackChannel } from "./channels/slack.js";
 import { webhookChannel } from "./channels/webhook.js";
 import { emailChannel } from "./channels/email.js";
@@ -30,7 +30,6 @@ import { hasAuthEmailSender, sendAuthEmail } from "./hosted-seams.js";
 import { sendDiscordDm, dmOutcome, dmResultUnverifies } from "./discord-bot-trigger.js";
 import { discordConnectionState } from "./discord-connection.js";
 import type { DeliveryOutcomes } from "@cobblr/platform-contract/delivery-outcome";
-import { absoluteAppUrl } from "./public-url.js";
 import type { NotificationDestination } from "@cobblr/platform-contract";
 import { defaultEnabled, tierOf, type PrefChannel } from "./notification-catalog.js";
 import { fallbackChannels } from "./dispatch-fallback.js";
@@ -41,6 +40,7 @@ import {
   enqueueDeferred,
   type TriggeredBy,
 } from "./delivery-windows.js";
+import { decodeKeysetCursor } from "@cobblr/platform-contract/keyset-cursor";
 
 // Exported so the delivery sweeper flushes through the SAME adapters a live
 // send uses. A second registry would drift the moment a channel is added.
@@ -441,6 +441,16 @@ export interface NotifyAccountParams {
   discordMessage?: string;
   link_url?: string;
   module?: string;
+  /** How loudly it arrives, as for a workspace notification. */
+  priority?: NotificationPriority;
+  /** The substance behind the sentence, rendered by the bell and as the
+   *  Discord embed, as for a workspace notification.
+   *
+   *  No buttons: a press runs a workspace action as the person who pressed,
+   *  inside the workspace that owns the notification, and an account notice
+   *  (a sign-in, a feedback reply) belongs to no workspace. Its link is the
+   *  way to act on it. */
+  card?: NotificationCard;
   /** Optional richer email than the generic "<message> <link>" fallback.
    *  `replyTo` (optional) carries a tokenized reply-by-email address; `html`
    *  (optional) is a rich body sent alongside `text` (the plaintext fallback). */
@@ -481,8 +491,10 @@ export async function notifyAccount(
         entity_id: null,
         message: args.message,
         link_url: args.link_url ?? null,
-        priority: "normal",
+        priority: args.priority ?? "normal",
         delivered_via: ["in_app"],
+        // jsonb-object-ok: one small document, written once, as dispatch does.
+        card: args.card ? (JSON.stringify(args.card) as never) : null,
       })
       .returning("id")
       .executeTakeFirstOrThrow();
@@ -541,11 +553,17 @@ export async function notifyAccount(
       // vanish rather than fail loudly. Say so instead of sending into it.
       outcomes.discord_dm = "stale-app";
     } else {
-      const dmBody = args.discordMessage ?? args.message;
-      const text = args.link_url
-        ? `${dmBody}\n${absoluteAppUrl(args.link_url)}`
-        : dmBody;
-      const res = await sendDiscordDm({ discord_user_id: conn!.discord_user_id!, text, summary: text });
+      // The same DM a workspace notification becomes, card and all.
+      const res = await sendDiscordDm({
+        discord_user_id: conn!.discord_user_id!,
+        ...discordDmPayload({
+          notificationId: notificationId ?? "",
+          message: args.discordMessage ?? args.message,
+          link_url: args.link_url ?? null,
+          card: args.card ?? null,
+          actions: null,
+        }),
+      });
       if (res.ok) deliveredVia.push("discord_dm");
       outcomes.discord_dm = dmOutcome(res);
       if (dmResultUnverifies(res)) {
@@ -622,10 +640,9 @@ export async function listForUser(
   if (opts.unreadOnly) q = q.where("read_at", "is", null);
   // `<created_at ISO>|<id>`: strictly after the last row of the previous page
   // in that order, the id breaking a tie between rows of the same millisecond.
-  const [at, id] = (opts.before ?? "").split("|");
-  const atDate = at ? new Date(at) : null;
-  if (atDate && !Number.isNaN(atDate.getTime()) && id && /^[0-9a-f-]{36}$/i.test(id)) {
-    q = q.where(sql<boolean>`(date_trunc('milliseconds', created_at), id) < (${atDate}, ${id}::uuid)`);
+  const c = decodeKeysetCursor(opts.before);
+  if (c?.id && /^[0-9a-f-]{36}$/i.test(c.id)) {
+    q = q.where(sql<boolean>`(date_trunc('milliseconds', created_at), id) < (${c.at}, ${c.id}::uuid)`);
   }
   return (await settleForDisplay(await q.execute())).map(({ org_id: _o, entity_type: _t, entity_id: _i, ...rest }) => rest);
 }
@@ -677,7 +694,7 @@ export interface CrossOrgNotificationListItem extends NotificationListItem {
 
 export async function listForUserAcrossOrgs(
   userId: string,
-  opts: { limit?: number; unreadOnly?: boolean } = {},
+  opts: { limit?: number; unreadOnly?: boolean; before?: string; orgSlug?: string } = {},
 ): Promise<CrossOrgNotificationListItem[]> {
   const limit = Math.min(Math.max(opts.limit ?? 25, 1), 100);
   let q = meta
@@ -703,9 +720,18 @@ export async function listForUserAcrossOrgs(
       "n.entity_id as entity_id",
     ])
     .where("n.user_id", "=", userId)
-    .orderBy("n.created_at", "desc")
+    // The same order and cursor as one workspace's list (listForUser): on the
+    // millisecond, the id breaking a tie, so a page that ends inside a
+    // millisecond neither repeats nor skips a row.
+    .orderBy(sql`date_trunc('milliseconds', n.created_at)`, "desc")
+    .orderBy("n.id", "desc")
     .limit(limit);
   if (opts.unreadOnly) q = q.where("n.read_at", "is", null);
+  if (opts.orgSlug) q = q.where("o.slug", "=", opts.orgSlug);
+  const c = decodeKeysetCursor(opts.before);
+  if (c?.id && /^[0-9a-f-]{36}$/i.test(c.id)) {
+    q = q.where(sql<boolean>`(date_trunc('milliseconds', n.created_at), n.id) < (${c.at}, ${c.id}::uuid)`);
+  }
   return (await settleForDisplay(await q.execute())).map(({ entity_type: _t, entity_id: _i, ...rest }) => rest);
 }
 

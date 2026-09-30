@@ -51,7 +51,7 @@ export function BatteryGauge({
       className={`inline-flex items-center gap-1.5 ${TONE_CLASS[tone]} ${className}`}
       title={
         battery.charging
-          ? `Charging — ${pct}% (${battery.bars}/5 on the printer's own display)`
+          ? `Charging: ${pct}% (${battery.bars}/5 on the printer's own display)`
           : `Battery ${pct}% (${battery.bars}/5 on the printer's own display)`
       }
     >

@@ -32,6 +32,7 @@ import { z } from "zod";
 import {
   FieldRoleSchema,
   fieldRoleOwner,
+  fieldRoleTypeRefusal,
   fieldRoleOwnedMessage,
   FieldTypeSchema,
   TRAIT_NAMES,
@@ -277,7 +278,7 @@ export type FieldDefCreateInput = z.infer<typeof FieldDefCreate>;
 
 export type CreateFieldDefResult =
   | { ok: true; def: FieldDefRow; warning?: string }
-  | { ok: false; code: "missing_ref_kind" | "unknown_scope" | "duplicate_name" | "role_owned_by_platform"; message: string };
+  | { ok: false; code: "missing_ref_kind" | "unknown_scope" | "duplicate_name" | "role_owned_by_platform" | "role_wrong_type"; message: string };
 
 /** Create one custom field def — the shared body of POST /field-defs and the
  *  platform:add-field action. Input is already FieldDefCreate-parsed; the
@@ -314,6 +315,8 @@ export async function createFieldDef(
       message: fieldRoleOwnedMessage(input.field_role),
     };
   }
+  const wrongType = fieldRoleTypeRefusal(input.field_role, input.type);
+  if (wrongType) return { ok: false, code: "role_wrong_type", message: wrongType };
   const scopeTraits = input.applies_to?.traits ?? parseFieldScope(input.entity_kind);
   if (isFieldScope(input.entity_kind) && scopeTraits.length === 0) {
     return {
@@ -423,7 +426,7 @@ export type FieldDefPatchInput = z.infer<typeof FieldDefPatch>;
 
 export type UpdateFieldDefResult =
   | { ok: true; def: FieldDefRow; effectiveChoices?: string[] | null }
-  | { ok: false; code: "not_found" | "unit_not_number" | "no_changes" | "role_owned_by_platform"; message: string };
+  | { ok: false; code: "not_found" | "unit_not_number" | "no_changes" | "role_owned_by_platform" | "role_wrong_type"; message: string };
 
 /** Change one field def — the shared body of PATCH /field-defs/:id and the
  *  platform:edit-field action. */
@@ -462,6 +465,8 @@ export async function updateFieldDef(
   if (patch.unit != null && def.type !== "number") {
     return { ok: false, code: "unit_not_number", message: "unit is only valid for type='number'" };
   }
+  const wrongType = patch.field_role ? fieldRoleTypeRefusal(patch.field_role, def.type) : null;
+  if (wrongType) return { ok: false, code: "role_wrong_type", message: wrongType };
 
   // Provenance: a `choices` change on a BUNDLE-owned field def routes to the
   // USER override layer (bundle_id null), never the bundle row — so the

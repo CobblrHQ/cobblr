@@ -12,7 +12,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { Download, Upload, FileArchive, Layers, Loader2, AlertTriangle, HardDrive, Play, Trash2, Plus, Clock } from "lucide-react";
 import { getToken } from "../lib/api";
 import { useActiveOrg } from "../auth/ActiveOrgContext";
-import { downloadBlob, useToast, usePageTitle, SecretInput } from "@cobblr/platform-web";
+import { downloadBlob, useToast, usePageTitle, SecretInput, sendUpload, uploadErrorOf } from "@cobblr/platform-web";
 
 interface BlueprintPlan {
   enable_modules: string[];
@@ -27,6 +27,9 @@ interface RestorePlan {
   restore_rows: number;
   restore_files: number;
   restore_tables: number;
+  /** Links, people, field sections and other workspace rows kept outside the
+   *  records. Absent from a backup taken before they were carried. */
+  restore_workspace_rows?: number;
   install_bundles: number;
   target_not_empty: boolean;
 }
@@ -178,13 +181,15 @@ export function BackupPage() {
     try {
       const form = new FormData();
       form.set("file", file);
-      const res = await fetch(`${base}/backup/restore`, { method: "POST", headers: auth(), body: form });
-      const body = await res.json();
-      if (res.status === 409 && body?.error?.code === "needs_consent") {
-        setBkPlan({ file, plan: body.error.details as RestorePlan });
-      } else if (!res.ok) {
-        throw new Error(body?.error?.message ?? `HTTP ${res.status}`);
+      const res = await sendUpload(`${base}/backup/restore`, form, { token: getToken(), file });
+      if (res.status === 409) {
+        const body = (await res.clone().json().catch(() => null)) as { error?: { code?: string; details?: unknown } } | null;
+        if (body?.error?.code === "needs_consent") {
+          setBkPlan({ file, plan: body.error.details as RestorePlan });
+          return;
+        }
       }
+      if (!res.ok) throw new Error((await uploadErrorOf(res, file)).message);
     } catch (e) {
       toast.error(e instanceof Error ? e.message : "Couldn't read backup");
     } finally {
@@ -200,11 +205,18 @@ export function BackupPage() {
       const form = new FormData();
       form.set("file", bkPlan.file);
       form.set("confirm", bkPlan.plan.target_not_empty ? "replace" : "true");
-      const res = await fetch(`${base}/backup/restore`, { method: "POST", headers: auth(), body: form });
+      const res = await sendUpload(`${base}/backup/restore`, form, { token: getToken(), file: bkPlan.file });
+      if (!res.ok) throw new Error((await uploadErrorOf(res, bkPlan.file)).message);
       const body = await res.json();
-      if (!res.ok) throw new Error(body?.error?.message ?? `HTTP ${res.status}`);
-      const r = body.restored;
-      toast.success(`Restored ${r?.rows ?? 0} rows, ${r?.files ?? 0} files.`);
+      const r = body.restored as
+        | { rows?: number; files?: number; workspace_rows?: number; refused?: Array<{ count: number; why: string }> }
+        | undefined;
+      const records = r?.rows ?? 0;
+      const linksAndSettings = r?.workspace_rows ?? 0;
+      toast.success(`Restored ${records} saved items, ${linksAndSettings} links and settings, and ${r?.files ?? 0} files.`);
+      for (const refused of r?.refused ?? []) {
+        toast.info(`${refused.count} not restored: ${refused.why}.`, { duration: 0 });
+      }
       setBkPlan(null);
     } catch (e) {
       toast.error(e instanceof Error ? e.message : "Restore failed");
@@ -310,6 +322,9 @@ export function BackupPage() {
             <div className="text-muted">
               Will restore <strong>{bkPlan.plan.restore_rows}</strong> rows across {bkPlan.plan.restore_tables} tables,{" "}
               <strong>{bkPlan.plan.restore_files}</strong> files
+              {bkPlan.plan.restore_workspace_rows
+                ? `, and ${bkPlan.plan.restore_workspace_rows} links, people and settings`
+                : ""}
               {bkPlan.plan.install_bundles > 0 ? `, ${bkPlan.plan.install_bundles} bundle(s)` : ""}.
             </div>
             <div className="flex gap-2 pt-1">

@@ -11,6 +11,7 @@
 // the destination to reach this instance; an `embed` ref is self-contained (works
 // LAN-only / air-gapped) at the cost of size. `none` → the resolver returns null.
 
+import { csvCell } from "@cobblr/platform-contract/csv";
 import { rowPictures } from "@cobblr/platform-contract/scan-pictures";
 
 /** How the caller chose to carry each photo. `url` = a fetchable link (link
@@ -339,13 +340,6 @@ export const CSV_HEADERS = [
   "notes", "research_hint", "source_url", "identify_photo_url",
   "display_photo_url", "group_photo_url", "created_at", "updated_at",
 ] as const;
-
-/** RFC 4180: quote a cell only if it contains comma, quote, CR or LF; double
- *  embedded quotes. */
-function csvCell(v: unknown): string {
-  const s = v === null || v === undefined ? "" : String(v);
-  return /[",\r\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
-}
 
 export function buildCsv(rows: ScanRowForExport[], photoUrl: (fileId: string) => string | null): string {
   // CSV is a flat, link-only shape — no place for embedded bytes. Wrap the

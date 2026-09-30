@@ -57,6 +57,7 @@ const ALLOW: Record<string, string> = {
   "web/src/components/SidePanel.tsx": "the right-side panel is an overlay layer of its own and raises the flag",
   "web/src/pages/ScanCameraPage.tsx": "the camera is a full-screen overlay layer: viewfinder, shutter and its own controls",
   "web/src/lib/outfit-planner-app.ts": "a drag ghost inside an app-player script that runs in the app's own frame, not the shell",
+  "web/src/components/a11y/shell-landmarks.tsx": "the skip link: invisible until it has keyboard focus, then the first thing on the page, pinned to the corner above every other layer; it must never yield to, or be placed by, the chrome it lets a person skip",
   "web/src/components/InstallPointer.tsx": "an arrow at the BROWSER's own bar (Safari's ⋯ or Share, a ⋮ menu), outside the page: it sits on the viewport edge above the overlay the install walk is shown in, where a corner piece would lift over the dock and yield",
 };
 

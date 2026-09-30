@@ -134,6 +134,12 @@ const Schema = z.object({
   // to try the Files page and a few patterns, never enough to be free hosting.
   // A demo unlocked for files.upload is uncapped. 0 means no uploads at all.
   COBBLR_TRIAL_UPLOAD_CAP_MB: z.coerce.number().int().min(0).default(100),
+  // How big one PDF or design file (STEP, STL, 3MF, gcode, DXF, SVG) may be,
+  // in MB. Every other file is 25 MB everywhere. Self-hosted: 200. A deployment
+  // behind a proxy with a smaller request cap sets it under that cap, so a
+  // refusal names this deployment's real number instead of the proxy cutting
+  // the upload off (the hosted app and try: 100, Cloudflare's request limit).
+  COBBLR_UPLOAD_DESIGN_MAX_MB: z.coerce.number().int().min(25).max(1024).default(200),
 
   // ── the no-account sandbox (docs/design-decisions/try-sandbox.md) ──────────
   // OFF unless COBBLR_TRY_SANDBOX=true, so prod / staging / self-host never

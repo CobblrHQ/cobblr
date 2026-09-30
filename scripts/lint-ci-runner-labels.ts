@@ -32,7 +32,10 @@ const DIR = join(ROOT, ".forgejo", "workflows");
 // committed locally, so the nightly bake has to land on each box by name.
 // docker-build is the image build's own runner: its queued runs stand down in
 // seconds there instead of waiting behind typecheck for a runner per job.
-const KNOWN = new Set(["ubuntu-latest", "light", "ci-test", "ci-test-full", "ci-e2e", "bake-a6", "bake-aurora", "bake-z87", "docker-build"]);
+// light-main and ci-main are main's own lane (ci-main.yml, generated from
+// ci.yml by scripts/gen-ci-main.mjs): runners that carry ONLY those labels, on
+// two boxes, so main's pushes never wait behind the pull-request queue.
+const KNOWN = new Set(["ubuntu-latest", "light", "ci-test", "ci-test-full", "ci-e2e", "bake-a6", "bake-aurora", "bake-z87", "bake-b550", "docker-build", "light-main", "ci-main"]);
 
 const errors: string[] = [];
 const seen = new Map<string, string[]>();

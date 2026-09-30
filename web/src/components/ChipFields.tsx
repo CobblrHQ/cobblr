@@ -368,7 +368,7 @@ function Chip({
         wide || forceWide || hosting ? "w-full" : "",
       ].join(" ")}
       data-chip-field={def.key}
-      title={editing ? undefined : `${def.label}: ${def.value || "empty"} — tap to edit`}
+      title={editing ? undefined : `${def.label}: ${def.value || "empty"} (tap to edit)`}
     >
       <span className="shrink-0 text-[10px] uppercase tracking-wide text-faint">{def.label}</span>
       {/* text-sm in BOTH states. Dropping it while editing changed the line

@@ -57,7 +57,7 @@ export function CodesPanel() {
   const overlay = useMutation({
     mutationFn: ({ groupKey, on }: { groupKey: string; on: boolean }) => api.setGroupOverlay(groupKey, on),
     onSuccess: (_r, { on }) => {
-      toast.success(on ? "Code will show in the QR — applies on the next print." : "Code hidden from the QR — applies on the next print.");
+      toast.success(on ? "Code will show in the QR. Applies on the next print." : "Code hidden from the QR. Applies on the next print.");
       void qc.invalidateQueries({ queryKey: ["labels-code-groups"] });
     },
     onError: (e) => toast.error((e as Error).message),
@@ -163,7 +163,7 @@ function KindCard({
     g.suggested
       ? "Suggested code, not saved yet. Save to lock it in, change it, or clear the box to skip a code for this list."
       : g.prefix == null
-        ? "No code — this list is opted out, so its letter is free for another list."
+        ? "No code. This list is opted out, so its letter is free for another list."
         : `${g.count} item${g.count === 1 ? "" : "s"} coded so far`;
   // A lone whole-kind group (no named instance) is the kind itself: show its
   // controls inline on the card row rather than a nameless "N codes" child.

@@ -38,6 +38,9 @@ export interface FeedbackSourceItem {
    *  item nobody has replied to (or one replied to before we recorded it). */
   reply_delivery?: Partial<Record<"in_app" | "email" | "discord_dm", string>> | null;
   attachments: Array<{ file_id: string; name?: string; content_type?: string }>;
+  /** The item's card in the team's Discord channel, or null when it has none
+   *  (filed while Discord was off, or its post failed). */
+  announce_message_id?: string | null;
   triage_priority: "urgent" | "high" | "medium" | "low" | null;
   triage_summary: string | null;
   triage_action: string | null;
@@ -76,6 +79,9 @@ export interface FeedbackSource {
    *  owning instance; a reply control that silently PATCHed the wrong deployment would
    *  be worse than one that is not there. */
   update?(item: FeedbackSourceItem, body: FeedbackUpdate): Promise<{ notified?: boolean; emailed?: boolean }>;
+  /** Post the card of an item that has none. Absent where the host cannot
+   *  (the hub, until its server forwards it to the owning instance). */
+  postToDiscord?(item: FeedbackSourceItem): Promise<{ announce_message_id: string | null }>;
   /** A URL the browser can load for a reporter's screenshot, or null when this host
    *  cannot serve it (the hub does not proxy tenant files). */
   imageUrl(item: FeedbackSourceItem, fileId: string, variant?: "thumb" | "medium"): string | null;

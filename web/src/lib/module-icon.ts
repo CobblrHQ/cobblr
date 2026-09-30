@@ -1,41 +1,108 @@
-// Resolve a module's kebab-case icon name (from its manifest) to a
-// lucide component. Curated map rather than a dynamic `import * as
-// lucide` so the bundle stays tree-shaken — extend as modules declare
-// new header-action icons. Unknown names fall back to a generic glyph
-// so something always renders.
+// Resolve a kebab-case icon name (a module's manifest, a live control, a hosted
+// settings panel) to a lucide component: the one map every such name is read
+// through (panel-icons.ts reads it too). Curated map rather than a dynamic `import * as
+// lucide` so the bundle stays tree-shaken. Every icon a manifest declares at
+// its top level, or on its `nav`, is here (lint:module-icons-resolve), and so is every live control's (lint:live-icons), because All apps draws
+// one per card; a name that is not falls back to a generic glyph.
 
 import {
   Album,
+  Bell,
+  Bot,
+  BookOpen,
+  Box,
   Boxes,
+  Calendar,
+  CalendarCheck,
   Camera,
+  CopyPlus,
+  Cpu,
+  CreditCard,
+  Download,
+  Eye,
+  FileText,
+  Files,
+  Globe,
+  Hammer,
+  HeartPulse,
+  History,
+  Image,
   Layers,
+  LayoutDashboard,
+  LayoutList,
+  Library,
   ListChecks,
+  ListTodo,
+  MapPin,
+  MessageSquare,
+  Package,
+  Plug,
+  Printer,
+  Repeat,
+  Ruler,
   ScanBarcode,
   ScanLine,
+  Search,
+  ShoppingBag,
   ShoppingCart,
   Sparkles,
   Tag,
+  TrendingUp,
+  Truck,
   Wand2,
   Wrench,
   Zap,
   type LucideIcon,
 } from "lucide-react";
 
-const MAP: Record<string, LucideIcon> = {
+export const ICON_NAMES: Record<string, LucideIcon> = {
   album: Album,
-  "scan-line": ScanLine,
-  camera: Camera,
-  "scan-barcode": ScanBarcode,
+  bell: Bell,
+  bot: Bot,
+  "book-open": BookOpen,
+  box: Box,
   boxes: Boxes,
-  wrench: Wrench,
+  calendar: Calendar,
+  "calendar-check": CalendarCheck,
+  camera: Camera,
+  "copy-plus": CopyPlus,
+  cpu: Cpu,
+  "credit-card": CreditCard,
+  download: Download,
+  eye: Eye,
+  "file-text": FileText,
+  files: Files,
+  globe: Globe,
+  hammer: Hammer,
+  "heart-pulse": HeartPulse,
+  history: History,
+  image: Image,
   layers: Layers,
-  "shopping-cart": ShoppingCart,
-  tag: Tag,
+  "layout-dashboard": LayoutDashboard,
+  "layout-list": LayoutList,
+  library: Library,
   "list-checks": ListChecks,
+  "list-todo": ListTodo,
+  "map-pin": MapPin,
+  "message-square": MessageSquare,
+  package: Package,
+  plug: Plug,
+  printer: Printer,
+  repeat: Repeat,
+  ruler: Ruler,
+  "scan-barcode": ScanBarcode,
+  "scan-line": ScanLine,
+  search: Search,
+  "shopping-bag": ShoppingBag,
+  "shopping-cart": ShoppingCart,
   sparkles: Sparkles,
+  tag: Tag,
+  "trending-up": TrendingUp,
+  truck: Truck,
   "wand-2": Wand2,
+  wrench: Wrench,
 };
 
 export function moduleIcon(name: string | null | undefined): LucideIcon {
-  return (name && MAP[name]) || Zap;
+  return (name && ICON_NAMES[name]) || Zap;
 }

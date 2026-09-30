@@ -16,7 +16,7 @@
     --c-subtle: 251 249 244;  /* mortar-50 #FBF9F4 — subtle fills */
     --c-content: 38 43 51;    /* slate-700 #262B33 — primary text */
     --c-muted: 61 68 81;      /* slate-500 #3D4451 — secondary text */
-    --c-faint: 107 114 128;   /* slate-400 #6B7280 — faint text */
+    --c-faint: 95 101 114;    /* #5F6572 — faint text: 4.5:1 on the canvas (#6B7280 was 3.75) */
     --c-line: 200 204 210;    /* slate-200 #C8CCD2 — borders */
     --c-accent: 111 92 68;    /* cobble-600 #6F5C44 — links / focus */
   }
@@ -46,8 +46,8 @@
                                  (#3232); lint:dark-line-reads holds both numbers. */
     --c-content: 244 239 229; /* mortar-100 #F4EFE5 — primary text */
     --c-muted: 180 186 194;   /* #B4BAC2 — secondary (matches the muted-lift below) */
-    --c-faint: 156 162 172;   /* #9CA2AC — faint */
-    --c-accent: 189 159 119;  /* cobble-300 #BD9F77 — links read on dark */
+    --c-faint: 167 172 181;   /* #A7ACB5 — faint: 4.5:1 on a dark card (#9CA2AC was 4.0) */
+    --c-accent: 194 167 130;  /* #C2A782 — links on dark: 4.5:1 on a card (cobble-300 was 4.1) */
   }
 
   /* A subtree that ALWAYS sits on a dark surface (the camera's capture
@@ -64,8 +64,8 @@
     --c-line: 71 85 105;
     --c-content: 244 239 229;
     --c-muted: 180 186 194;
-    --c-faint: 156 162 172;
-    --c-accent: 189 159 119;
+    --c-faint: 167 172 181;
+    --c-accent: 194 167 130;
     color-scheme: dark;
   }
 
@@ -419,4 +419,21 @@ html.desktop-app .desktop-topnav-pad {
 .dark ::highlight(cobb-selection) {
   background-color: rgb(245 158 11 / 0.92); /* amber-500, nearly solid on slate */
   color: #110d09; /* cobble-950 */
+}
+
+/* Someone who has asked their system for less motion (vestibular disorders,
+   migraine) gets none here: the app had two motion-reduce utilities in the
+   whole tree, so every sheet, drawer, collapse and spinner still moved
+   (#4115). One rule, for every element, rather than a variant each author
+   has to remember. Durations go to near zero, not zero, so a transitionend or
+   animationend a component waits on still fires. */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
 }

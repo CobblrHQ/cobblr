@@ -6,6 +6,7 @@
 // operator. Search, notifications + module quick-actions stay as their
 // own navbar affordances.
 
+import { InstallThisPhoneItem } from "../tips/install-tip";
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { Link, NavLink } from "react-router-dom";
@@ -259,6 +260,8 @@ export function UserMenu({ themed, inline = false }: { themed: boolean; inline?:
               <button type="button" onClick={() => { setOpen(false); startTour(); }} className={itemCls} role="menuitem">
                 <Compass size={14} className="text-faint dark:text-slate-400" /> Take the tour
               </button>
+              {/* On a phone browser, always a way to install, whatever "Not now" said. */}
+              <InstallThisPhoneItem className={itemCls} onOpen={() => setOpen(false)} />
               {/* Personal edge bridge liveness — only shows for users running one. */}
               <EdgeBridgeMenuRow itemCls={itemCls} onNavigate={() => setOpen(false)} />
               {/* The member portal: the curated front door (pinned views, worker
@@ -412,7 +415,7 @@ export function UserMenu({ themed, inline = false }: { themed: boolean; inline?:
         data-tour="account"
         onClick={() => setOpen((v) => !v)}
         className="relative flex items-center gap-1.5 px-2 py-1 rounded-md text-xs text-muted dark:text-slate-300 hover:bg-subtle dark:hover:bg-slate-700/60 transition"
-        title={`${user.display_name} — account menu`}
+        title={`${user.display_name}: account menu`}
       >
         <span className="font-medium">{user.display_name}</span>
         {isAdmin && <SuperAdminChip />}
@@ -502,6 +505,8 @@ export function UserMenu({ themed, inline = false }: { themed: boolean; inline?:
               <button type="button" onClick={() => { setOpen(false); startTour(); }} className={itemCls} role="menuitem">
                 <Compass size={14} className="text-faint dark:text-slate-400" /> Take the tour
               </button>
+              {/* On a phone browser, always a way to install, whatever "Not now" said. */}
+              <InstallThisPhoneItem className={itemCls} onOpen={() => setOpen(false)} />
               {/* Personal edge bridge liveness — only shows for users running one. */}
               <EdgeBridgeMenuRow itemCls={itemCls} onNavigate={() => setOpen(false)} />
               {/* The member portal: the curated front door (pinned views, worker

@@ -3,7 +3,7 @@
 // path — never silently degrade. Extracted from ScanPage (which pioneered it);
 // the scan page, the homepage funnel, and /build all render this now.
 import { aiAvailabilityKeys } from "../lib/ai-availability-keys";
-import type { ReactNode } from "react";
+import { createContext, useContext, type ReactNode } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Link } from "react-router-dom";
 import { CobbHead } from "./Cobb";
@@ -152,7 +152,14 @@ export function AiOffNotice({
   needs?: AiNeeds;
 }) {
   const line = aiStatusLine(status, needs);
+  const given = useContext(AiNoticeGivenContext);
   if (!line) return null;
+  // Said once already on this screen: keep only what is particular to this
+  // surface, as a quiet line, never a second banner (#4146: the scan page and
+  // the put-away plan inside it both showed "plan doesn't include AI").
+  if (given) {
+    return !line.text && children ? <p className="text-xs text-muted dark:text-slate-400">{children}</p> : null;
+  }
   return (
     <div
       className={
@@ -178,11 +185,19 @@ export function AiOffNotice({
           </>
         )}
         {line.cta && (
-          <Link to={line.cta.to} className="text-accent hover:underline">
+          <Link to={line.cta.to} className="text-accent underline underline-offset-2 hover:no-underline">
             {line.cta.label}
           </Link>
         )}
       </div>
     </div>
   );
+}
+
+const AiNoticeGivenContext = createContext(false);
+
+/** Wrap what sits below a page's own AI notice: a notice inside does not
+ *  repeat it. `when` is whether the page's notice actually showed. */
+export function AiNoticeGiven({ when, children }: { when: boolean; children: ReactNode }) {
+  return <AiNoticeGivenContext.Provider value={when}>{children}</AiNoticeGivenContext.Provider>;
 }

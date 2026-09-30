@@ -139,7 +139,7 @@ export function FeedbackWidget({ asRow = false }: { asRow?: boolean } = {}) {
     for (const file of Array.from(list)) {
       if (!file.type.startsWith("image/")) continue;
       if (file.size > MAX_BYTES) {
-        setError(`"${file.name}" is over 10 MB — skipped.`);
+        setError(`"${file.name}" is over 10 MB, skipped.`);
         continue;
       }
       next.push({ file, url: URL.createObjectURL(file) });
@@ -150,7 +150,7 @@ export function FeedbackWidget({ asRow = false }: { asRow?: boolean } = {}) {
         // Say so — silently dropping is exactly the "did my paste work?"
         // confusion this widget is supposed to prevent.
         merged.slice(MAX_SHOTS).forEach((p) => URL.revokeObjectURL(p.url));
-        setError(`Up to ${MAX_SHOTS} screenshots — extra ${merged.length - MAX_SHOTS === 1 ? "one was" : "ones were"} skipped.`);
+        setError(`Up to ${MAX_SHOTS} screenshots. The extra ${merged.length - MAX_SHOTS === 1 ? "one was" : "ones were"} skipped.`);
       }
       return merged.slice(0, MAX_SHOTS);
     });
@@ -267,8 +267,8 @@ export function FeedbackWidget({ asRow = false }: { asRow?: boolean } = {}) {
       const sent = hosted === false ? "saved to this instance" : "sent";
       toast.info(
         droppedShots
-          ? `Thanks — your feedback was ${sent} (couldn't attach ${droppedShots} screenshot${droppedShots === 1 ? "" : "s"}).`
-          : `Thanks — your feedback was ${sent}.`,
+          ? `Thanks, your feedback was ${sent} (couldn't attach ${droppedShots} screenshot${droppedShots === 1 ? "" : "s"}).`
+          : `Thanks, your feedback was ${sent}.`,
       );
       close();
     } catch {

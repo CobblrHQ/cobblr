@@ -9,6 +9,7 @@
 // Distinct from /me ("Your account"): configuration changes how the WORKSPACE
 // operates; your account changes how you personally see it.
 
+import { ManagedByAdmins } from "../components/ManagedByAdmins";
 import { useEffect, useState, type ReactNode } from "react";
 import { Link, useNavigate, useSearchParams } from "react-router-dom";
 import { ArrowUpCircle, ChevronRight, UserCircle } from "lucide-react";
@@ -19,6 +20,7 @@ import {
   destinationMatches,
   visibleDestinations,
   type ConfigDestination,
+  sectionAction,
 } from "../lib/configuration-nav";
 import { useActiveOrg } from "../auth/ActiveOrgContext";
 import { displaySlug } from "../lib/workspaceSlug";
@@ -104,18 +106,7 @@ export function ConfigurationPage() {
                   page, not a permissions boundary. Say what this area is and
                   where THEIR settings live instead. */}
               {sections.length === 0 && panels.length === 0 && (
-                <div className="rounded-xl border border-line dark:border-slate-700 bg-surface dark:bg-slate-900 p-6 text-center space-y-2">
-                  <div className="font-medium text-content dark:text-mortar-100">
-                    Workspace configuration is managed by this workspace's admins.
-                  </div>
-                  <p className="text-sm text-muted dark:text-slate-400">
-                    Your own settings - appearance, notifications, connections - live under{" "}
-                    <Link to="/me" className="text-accent hover:underline">
-                      Your account
-                    </Link>
-                    .
-                  </p>
-                </div>
+                <ManagedByAdmins />
               )}
 
               <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
@@ -128,7 +119,7 @@ export function ConfigurationPage() {
                     blurb={meta.blurb}
                     count={items.length}
                     leaves={items}
-                    action={meta.action}
+                    action={sectionAction(id, activeOrg?.role)}
                   />
                 ))}
                 {panels.length > 0 && (
